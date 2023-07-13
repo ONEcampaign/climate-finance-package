@@ -15,6 +15,7 @@ The `download` module contains scripts for automatically downloading and pre-pro
 the website and download the data. The downloaded data is saved as Excel files.
 
 **Settings**
+
 Some settings are needed in order for the script to work. They must be defined inside a dictionary, and they are 
 specific to each version of the data that is downloaded. The settings are:
 - url: The url of the data interface website, including the parameter that specifies the version of the data to download.
