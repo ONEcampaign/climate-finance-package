@@ -1,6 +1,6 @@
 include default.mk
 
-SRC = oda_data tests
+SRC = climate_finance tests
 
 report-coverage: .venv
 	@echo '==> Unit testing with coverage'
