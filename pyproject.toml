@@ -21,6 +21,7 @@ openpyxl = "^3.1.2"
 pytest = "^7.4.0"
 bump2version = "^1.0.1"
 black = "^23.7.0"
+pytest-cov = "^4.1.0"
 
 [build-system]
 requires = ["poetry-core"]
