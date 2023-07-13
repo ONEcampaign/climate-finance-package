@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "climate-finance"
+version = "0.1.0"
+description = "Climate Finance data"
+authors = ["Jorge Rivera, The ONE Campaign"]
+license = "MIT"
+readme = "README.md"
+packages = [{include = "climate_finance"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+pandas = "^2.0.3"
+numpy = "^1.25.1"
+requests = "^2.31.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
