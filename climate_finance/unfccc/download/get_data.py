@@ -359,7 +359,7 @@ def _click_search(driver, settings: dict) -> None:
 
 
 def get_unfccc_export(
-    settings: dict, br: int | list = None, donor: list[str] | None = None
+    settings: dict, br: int | list = None, party: list[str] | None = None
 ) -> None:
     """Download the UNFCCC export file.
 
@@ -367,7 +367,7 @@ def get_unfccc_export(
         settings (dict): A dictionary of settings.
         br (int | list, optional): The BR version(s) to download. Defaults to None.
         If None, BRs 4 and 5 will be downloaded.
-        donor (list[str] | None, optional): The donor(s) to download. Defaults to None.
+        party (list[str] | None, optional): The donor(s) to download. Defaults to None.
         If donors are specified, they will be downloaded one at a time.
     """
 
@@ -385,7 +385,7 @@ def get_unfccc_export(
     # Get page
     driver.get(settings["url"])
 
-    if donor is None:
+    if party is None:
         # Select BRs
         _select_brs(driver, settings=settings, br=br)
 
@@ -401,7 +401,7 @@ def get_unfccc_export(
             folder_name=settings["folder_name"],
         )
     else:
-        for d_ in donor:
+        for d_ in party:
             # Select BRs
             _select_brs(driver, settings=settings, br=br)
 
