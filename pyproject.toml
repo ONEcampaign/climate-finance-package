@@ -9,12 +9,13 @@ packages = [{include = "climate_finance"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"
-pandas = "^2.0.3"
 numpy = "^1.25.1"
 requests = "^2.31.0"
 selenium = "^4.10.0"
 webdriver-manager = "^3.8.6"
 openpyxl = "^3.1.2"
+pandas = "<2.0"
+bblocks = "^1.1.1"
 
 
 [tool.poetry.group.dev.dependencies]
