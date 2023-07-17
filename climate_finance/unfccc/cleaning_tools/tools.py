@@ -7,6 +7,23 @@ ADAPTATION = "Adaptation"
 MITIGATION = "Mitigation"
 OTHER = "Other"
 
+COLUMN_MAPPING: dict = {
+    "Party": "country",
+    "Status": "status",
+    "Funding source": "funding_source",
+    "Financial instrument": "financial_instrument",
+    "Contribution type": "indicator",
+    "Allocation category": "channel",
+    "Type of support": "type_of_support",
+    "Sector": "sector",
+    "Contribution": "value",
+    "Currency": "currency",
+    "Year": "year",
+    "Data source": "br",
+    "Recipient country/region": "recipient",
+    "Project/programme/activity": "activity",
+}
+
 
 def clean_currency(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -117,3 +134,17 @@ def clean_status(df: pd.DataFrame) -> pd.DataFrame:
         .fillna(d.status)
         .fillna("unknown")
     )
+
+
+def rename_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Function to rename dataframe columns based on a predefined mapping.
+
+    Args:
+    df (pd.DataFrame): The original dataframe.
+
+    Returns:
+    df (pd.DataFrame): The dataframe with renamed columns.
+    """
+
+    return df.rename(columns=COLUMN_MAPPING)
