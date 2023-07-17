@@ -336,7 +336,7 @@ from climate_finance.unfccc.cleaning_tools.tools import rename_columns
 df = rename_columns(df=df)
 ```
 
-### `climate_finance.unfccc.cleaning_tools.channels`
+### climate_finance.unfccc.cleaning_tools.channels
 
 The `channels` module in `cleaning_tools` provides functions to handle and clean channel names from the
 downloaded UNFCCC data. These functions are used to match channel names to OECD CRS channel codes in the data
@@ -365,7 +365,7 @@ name that does not match its CRS name.
 
 You can read more about each part of the process in the documentation for each function, below.
 
-#### `climate_finance.unfccc.cleaning_tools.channels.get_crs_official_mapping()`
+#### climate_finance.unfccc.cleaning_tools.channels.get_crs_official_mapping()
 
 `get_crs_official_mapping()` fetches the official CRS mapping file which maps different channel names to their
 corresponding CRS channel codes. The file also contains english and french acronyms for the channel names.
@@ -382,7 +382,7 @@ from climate_finance.unfccc.cleaning_tools.channels import get_crs_official_mapp
 mapping_df = get_crs_official_mapping()
 ```
 
-#### `climate_finance.unfccc.cleaning_tools.channels.clean_string`
+#### climate_finance.unfccc.cleaning_tools.channels.clean_string()
 
 `clean_string(text: str)` is a function that takes a string as input and performs the following cleaning operations:
 
@@ -412,7 +412,7 @@ Running the code above would return the following string:
 "example text for cleaning"
 ```
 
-#### `climate_finance.unfccc.cleaning_tools.channels.raw_data_to_unique_channels()`
+#### climate_finance.unfccc.cleaning_tools.channels.raw_data_to_unique_channels()
 
 `raw_data_to_unique_channels(raw_data: pd.DataFrame, channel_names_column: str)` is a function that takes
 a dataframe and a column name as inputs. It returns a dataframe with unique channel names from the specified column
@@ -432,8 +432,8 @@ unique_channels_df = raw_data_to_unique_channels(df, channel_names_column='chann
 The function will clean the channel names and drop any duplicates. It will only return the channel
 names column (as a dataframe).
 
-#### `climate_finance.unfccc.cleaning_tools.channels.channel_to_code(map_to: str)`
-
+#### climate_finance.unfccc.cleaning_tools.channels.channel_to_code()
+/
 `channel_to_code(map_to: str)` is a function that generates a dictionary mapping channel names or
 acronyms to their corresponding channel codes. The argument `map_to` specifies whether to map to
 'channel_name', 'en_acronym', or 'fr_acronym'.
@@ -454,7 +454,7 @@ en_acronym_to_code_dict = channel_to_code('en_acronym')
 fr_acronym_to_code_dict = channel_to_code('fr_acronym')
 ```
 
-#### `climate_finance.unfccc.cleaning_tools.channels.match_names_direct_and_fuzzy()`
+#### climate_finance.unfccc.cleaning_tools.channels.match_names_direct_and_fuzzy()
 
 `match_names_direct_and_fuzzy(channels: pd.DataFrame)` is a function that matches channel names to
 channel codes using a direct match and a fuzzy match. It takes as input a dataframe of unique channel
@@ -481,7 +481,7 @@ from climate_finance.unfccc.cleaning_tools.channels import match_names_direct_an
 df_with_codes = match_names_direct_and_fuzzy(df)
 ```
 
-#### `climate_finance.unfccc.cleaning_tools.channels.regex_to_code_dictionary`
+#### climate_finance.unfccc.cleaning_tools.channels.regex_to_code_dictionary()
 
 `regex_to_code_dictionary(channels: pd.DataFrame, names_column: str)` is a function that generates a dictionary
 mapping channel names to channel codes using regular expressions. It takes as input a dataframe containing
@@ -511,7 +511,7 @@ from climate_finance.unfccc.cleaning_tools.channels import regex_to_code_diction
 regex_dict = regex_to_code_dictionary(channels=df, names_column='channel')
 ```
 
-#### `climate_finance.unfccc.cleaning_tools.channels.generate_channel_mapping_dictionary()`
+#### climate_finance.unfccc.cleaning_tools.channels.generate_channel_mapping_dictionary()
 
 `generate_channel_mapping_dictionary(raw_data: pd.DataFrame, channel_names_column: str,
 export_missing_path: str | None)` is a function that generates a dictionary of channel names to channel codes
