@@ -1,6 +1,7 @@
 import re
 
 import pandas as pd
+from bblocks import convert_id
 
 CROSS_CUTTING = "Cross-cutting"
 ADAPTATION = "Adaptation"
@@ -177,3 +178,29 @@ def rename_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
 
     return df.rename(columns=COLUMN_MAPPING)
+
+
+def clean_recipient_names(recipients_col: pd.Series) -> pd.Series:
+    """Clean the recipient names to keep only the country names
+
+    Args:
+        recipients_col (pd.Series): The original recipients column
+
+    Returns:
+        pd.Series: The cleaned recipients column
+    """
+
+    # Keep only characters and spaces (including french accents)
+    recipients_col = recipients_col.str.replace(
+        rf"[^a-zA-Z\sô'éà]+", "", regex=True
+    ).str.strip()
+
+    # Add additional mapping
+    additional_mapping = {"Other république Démocratique Du Congo": "DR Congo"}
+
+    return convert_id(
+        recipients_col,
+        from_type="regex",
+        to_type="name",
+        additional_mapping=additional_mapping,
+    )
