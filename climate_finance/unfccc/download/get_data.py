@@ -4,7 +4,10 @@ import pathlib
 import pandas as pd
 
 from climate_finance.config import ClimateDataPath
-from climate_finance.unfccc.download.pre_process import clean_unfccc
+from climate_finance.unfccc.download.pre_process import (
+    clean_unfccc,
+    map_channel_names_to_oecd_codes,
+)
 
 
 def _concat_files(directory: pathlib.Path, filename: str) -> pd.DataFrame:
@@ -60,7 +63,9 @@ def get_unfccc_multilateral() -> pd.DataFrame:
         filename="FinancialContributionsMultilateral.xlsx",
     )
 
-    df = df.pipe(clean_unfccc)
+    df = df.pipe(clean_unfccc).pipe(
+        map_channel_names_to_oecd_codes, channel_names_column="channel"
+    )
 
     return df
 
