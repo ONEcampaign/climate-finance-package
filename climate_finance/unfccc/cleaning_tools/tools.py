@@ -24,6 +24,13 @@ COLUMN_MAPPING: dict = {
     "Project/programme/activity": "activity",
 }
 
+STATUS_MAPPING: dict = {
+    "provided": "disbursed",
+    "disbursed": "disbursed",
+    "pledged": "committed",
+    "committed": "committed",
+}
+
 
 def clean_currency(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -52,18 +59,21 @@ def clean_currency(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def fill_type_of_support_gaps(df: pd.DataFrame) -> pd.DataFrame:
+def fill_type_of_support_gaps(
+    df: pd.DataFrame, support_type_column: str = "type_of_support"
+) -> pd.DataFrame:
     """
     Function to fill missing values in the 'type_of_support' column.
 
     Args:
         df (pd.DataFrame): The original dataframe.
+        support_type_column (str): The name of the column to fill.
 
     Returns:
         df (pd.DataFrame): The dataframe with filled 'type_of_support' column.
     """
     return df.assign(
-        type_of_support=lambda d: d.type_of_support.fillna("Cross-cutting")
+        type_of_support=lambda d: d[support_type_column].fillna(CROSS_CUTTING)
     )
 
 
@@ -79,6 +89,14 @@ def harmonise_type_of_support(df: pd.DataFrame) -> pd.DataFrame:
     """
 
     def _clean_support(string: str) -> str | None:
+        """Function to clean the type_of_support column.
+
+        Args:
+            string (str): The original string.
+
+        Returns:
+            string (str): The cleaned string.
+        """
         if string is None:
             return string
         string = string.lower()
@@ -95,7 +113,9 @@ def harmonise_type_of_support(df: pd.DataFrame) -> pd.DataFrame:
     return df.assign(type_of_support=lambda d: d.type_of_support.apply(_clean_support))
 
 
-def fill_financial_instrument(df: pd.DataFrame) -> pd.DataFrame:
+def fill_financial_instrument_gaps(
+    df: pd.DataFrame, financial_instrument_column: str = "financial_instrument"
+) -> pd.DataFrame:
     """
     Function to fill missing values in the 'financial_instrument' column.
 
@@ -106,11 +126,11 @@ def fill_financial_instrument(df: pd.DataFrame) -> pd.DataFrame:
         df (pd.DataFrame): The dataframe with filled 'financial_instrument' column.
     """
     return df.assign(
-        financial_instrument=lambda d: d.financial_instrument.fillna("other")
+        financial_instrument=lambda d: d[financial_instrument_column].fillna("other")
     )
 
 
-def clean_status(df: pd.DataFrame) -> pd.DataFrame:
+def clean_status(df: pd.DataFrame, status_column: str = "status") -> pd.DataFrame:
     """
     Function to clean the status column.
 
@@ -121,16 +141,11 @@ def clean_status(df: pd.DataFrame) -> pd.DataFrame:
         df (pd.DataFrame): The dataframe with cleaned status column.
 
     """
-    status = {
-        "provided": "disbursed",
-        "disbursed": "disbursed",
-        "pledged": "committed",
-        "committed": "committed",
-    }
 
     return df.assign(
-        status=lambda d: d.status.str.lower()
-        .map(status)
+        status=lambda d: d[status_column]
+        .str.lower()
+        .map(STATUS_MAPPING)
         .fillna(d.status)
         .fillna("unknown")
     )
@@ -141,10 +156,10 @@ def rename_columns(df: pd.DataFrame) -> pd.DataFrame:
     Function to rename dataframe columns based on a predefined mapping.
 
     Args:
-    df (pd.DataFrame): The original dataframe.
+        df (pd.DataFrame): The original dataframe.
 
     Returns:
-    df (pd.DataFrame): The dataframe with renamed columns.
+        df (pd.DataFrame): The dataframe with renamed columns.
     """
 
     return df.rename(columns=COLUMN_MAPPING)

@@ -7,7 +7,7 @@ from climate_finance.unfccc.cleaning_tools.tools import (
     OTHER,
     clean_currency,
     clean_status,
-    fill_financial_instrument,
+    fill_financial_instrument_gaps,
     fill_type_of_support_gaps,
     harmonise_type_of_support,
 )
@@ -139,7 +139,7 @@ def test_fill_financial_instrument():
     )
 
     # Fill the gaps in the 'financial_instrument' column of the DataFrame using the function
-    result = fill_financial_instrument(df)
+    result = fill_financial_instrument_gaps(df)
 
     # Check if the resulting DataFrame matches our expected DataFrame
     pd.testing.assert_frame_equal(result, expected)
