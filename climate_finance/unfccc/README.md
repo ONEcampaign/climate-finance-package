@@ -110,3 +110,77 @@ df = pd.DataFrame()
 # Map the channel names to the OECD CRS channel codes
 df = map_channel_names_to_oecd_codes(df)
 ```
+
+### climate_finance.unfccc.download.get_data
+The get_data module contains functions for reading and cleaning the data downloaded from the UNFCCC data interface.
+It uses the [clean_unfccc](#climatefinanceunfcccdownloadpreprocesscleanunfccc) and 
+[map_channel_names_to_oecd_codes](#climatefinanceunfcccdownloadpreprocessmapchannelnamestooecdcodes) functions from 
+the [pre_process](#climatefinanceunfcccdownloadpreprocess) module for cleaning and pre-processing.
+
+### climate_finance.unfccc.download.get_data.get_unfccc_summary
+`get_unfccc_summary(start_year: int, end_year: int)` reads and cleans the UNFCCC summary data.
+
+The function takes two arguments:
+
+- `start_year`: The start year of the data.
+- `end_year`: The end year of the data.
+
+It returns a pandas DataFrame containing the cleaned UNFCCC summary data for the specified years.
+
+Here is an example of how to use the get_unfccc_summary() function:
+
+```python
+# Import get_unfccc_summary
+from climate_finance.unfccc.download.get_data import get_unfccc_summary
+
+# Define the start and end years
+start_year = 2015
+end_year = 2020
+
+# Get the UNFCCC summary data
+df = get_unfccc_summary(start_year, end_year)
+```
+#### climate_finance.unfccc.download.get_data.get_unfccc_multilateral
+`get_unfccc_multilateral(start_year: int, end_year: int)` Reads, cleans and processes the UNFCCC multilateral data.
+
+The function takes two arguments:
+
+- `start_year`: The start year of the data.
+- `end_year`: The end year of the data.
+
+It returns a pandas DataFrame containing the cleaned and processed UNFCCC multilateral data for the specified years.
+
+Here is an example of how to use the get_unfccc_multilateral() function:
+```python
+# Import get_unfccc_multilateral
+from climate_finance.unfccc.download.get_data import get_unfccc_multilateral
+
+# Define the start and end years
+start_year = 2015
+end_year = 2020
+
+# Get the UNFCCC multilateral data
+df = get_unfccc_multilateral(start_year, end_year)
+```
+#### climate_finance.unfccc.download.get_data.get_unfccc_bilateral
+`get_unfccc_bilateral(start_year: int, end_year: int)` Reads and cleans the UNFCCC bilateral data.
+
+The function takes two arguments:
+
+- `start_year`: The start year of the data.
+- `end_year`: The end year of the data.
+
+It returns a pandas DataFrame containing the cleaned UNFCCC bilateral data for the specified years.
+
+Here is an example of how to use the get_unfccc_bilateral() function:
+```python
+# Import get_unfccc_bilateral
+from climate_finance.unfccc.download.get_data import get_unfccc_bilateral
+
+# Define the start and end years
+- start_year = 2015
+- end_year = 2020
+
+# Get the UNFCCC bilateral data
+df = get_unfccc_bilateral(start_year, end_year)
+```
