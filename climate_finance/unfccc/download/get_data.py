@@ -34,9 +34,13 @@ def _concat_files(directory: pathlib.Path, filename: str) -> pd.DataFrame:
     return df
 
 
-def get_unfccc_summary() -> pd.DataFrame:
+def get_unfccc_summary(start_year: int, end_year: int) -> pd.DataFrame:
     """
     Function to get the UNFCCC summary data.
+
+    Args:
+        start_year: the start year of the data
+        end_year: the end year of the data
 
     Returns:
     df (pd.DataFrame): The UNFCCC summary data.
@@ -48,12 +52,16 @@ def get_unfccc_summary() -> pd.DataFrame:
 
     df = df.pipe(clean_unfccc)
 
-    return df
+    return df.query(f"{start_year} <= year <= {end_year}").reset_index(drop=True)
 
 
-def get_unfccc_multilateral() -> pd.DataFrame:
+def get_unfccc_multilateral(start_year: int, end_year: int) -> pd.DataFrame:
     """
     Function to get the UNFCCC multilateral data.
+
+    Args:
+        start_year: the start year of the data
+        end_year: the end year of the data
 
     Returns:
     df (pd.DataFrame): The UNFCCC multilateral data.
@@ -63,14 +71,26 @@ def get_unfccc_multilateral() -> pd.DataFrame:
         filename="FinancialContributionsMultilateral.xlsx",
     )
 
-    df = df.pipe(clean_unfccc).pipe(
-        map_channel_names_to_oecd_codes, channel_names_column="channel"
+    df = (
+        df.pipe(clean_unfccc)
+        .pipe(map_channel_names_to_oecd_codes, channel_names_column="channel")
+        .query(f"{start_year} <= year <= {end_year}")
     )
 
-    return df
+    return df.reset_index(drop=True)
 
 
 def get_unfccc_bilateral(start_year: int, end_year: int) -> pd.DataFrame:
+    """
+    Function to get the UNFCCC bilateral data.
+    Args:
+        start_year: the start year of the data
+        end_year: the end year of the data
+
+    Returns:
+        df (pd.DataFrame): The UNFCCC bilateral data.
+
+    """
     df = _concat_files(
         directory=ClimateDataPath.raw_data / "unfccc_bilateral",
         filename="FinancialContributionsBilateral.xlsx",
