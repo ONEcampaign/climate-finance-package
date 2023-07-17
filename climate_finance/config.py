@@ -8,6 +8,8 @@ class ClimateDataPath:
     project = Path(__file__).resolve().parent.parent
     scripts = project / "climate_finance"
     raw_data = scripts / ".raw_data"
+    unfccc_cleaning_tools = scripts / "unfccc" / "cleaning_tools"
+    oecd_cleaning_tools = scripts / "oecd" / "cleaning_tools"
 
 
 # Create a root logger
