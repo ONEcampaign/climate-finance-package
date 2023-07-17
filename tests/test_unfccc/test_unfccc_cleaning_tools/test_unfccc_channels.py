@@ -71,7 +71,7 @@ def test_channel_to_code(mock_get_crs_official_mapping):
 
     # Call the function and check results
     result = channel_to_code(map_to)
-    expected_result = {'name1': 1, 'name2': 2, 'name3': 3}
+    expected_result = {"name1": 1, "name2": 2, "name3": 3}
     assert result == expected_result
 
     # Check if the mocked functions were called
