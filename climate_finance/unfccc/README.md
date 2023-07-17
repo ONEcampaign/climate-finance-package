@@ -61,4 +61,52 @@ This will download 2 files: one for France, containing bilateral BR5 data, and o
 containing bilateral BR5 data. They will be saved in the raw_data folder, inside the `unfccc_data_interface` folder.
 
 ### climate_finance.unfccc.download.pre_process
-`pre_process` deals with basic pre-processing of the data. 
+`pre_process` deals with basic pre-processing of the downloaded data. The data from the UNFCCC interface is cleaner
+than the equivalent data directly from the BR files, which has a lot of formatting and other issues. However, it still
+needs some pre-processing before it can be used.
+
+#### climate_finance.unfccc.download.pre_process.clean_unfccc()
+`clean_unfccc(df: pd.DataFrame)` is the main function for pre-processing the data. It takes a dataframe as input and
+returns a cleaned dataframe. It does the following:
+- Renames the columns to more usable and readable names.
+- Clean the currency data (extracting the currency code from the string)
+- Ensure that the year and value columns are numeric.
+- Dropping rows with empty values.
+- Filling gaps in the _type of support_ column (filled with 'Cross-cutting')
+- Harmonising the _type of support_ column (e.g. strings containing 'adaptation' are replaced with 'Adaptation')
+- Cleaning the _status_ column (if applicable) (e.g harmonising to 'disbursed', 'committed', 'unknown', etc.)
+
+Here is an example of how to use the `clean_unfccc()` function:
+
+```python
+# Import clean_unfccc
+from climate_finance.unfccc.download.pre_process import clean_unfccc
+import pandas as pd
+
+# Assuming that the data is already loaded into a dataframe called df
+df = pd.DataFrame()
+# Clean the data
+df = clean_unfccc(df)
+```
+
+#### climate_finance.unfccc.download.pre_process.map_channel_names_to_oecd_codes()
+`map_channel_names_to_oecd_codes(df: pd.DataFrame)` maps the channel names to the OECD CRS channel codes. It takes a
+dataframe as input and returns a dataframe with an additional column containing the channel codes. It also includes
+a column with clean channel names.
+
+This process follows a 3-part strategy to match the 'dirty' channel names as found in the UNFCCC data to the OECD
+CRS channel codes. It is described in more detail in the `generate_channel_mapping_dictionary` TODO: add link.
+
+Here is an example of how to use the `map_channel_names_to_oecd_codes()` function:
+
+```python
+# Import map_channel_names_to_oecd_codes
+from climate_finance.unfccc.download.pre_process import map_channel_names_to_oecd_codes
+import pandas as pd
+
+# Assuming that the data is already loaded into a dataframe called df
+df = pd.DataFrame()
+
+# Map the channel names to the OECD CRS channel codes
+df = map_channel_names_to_oecd_codes(df)
+```

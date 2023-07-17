@@ -136,6 +136,7 @@ def clean_status(df: pd.DataFrame, status_column: str = "status") -> pd.DataFram
 
     Args:
         df (pd.DataFrame): The original dataframe.
+        status_column (str): The name of the column to clean.
 
     Returns:
         df (pd.DataFrame): The dataframe with cleaned status column.
