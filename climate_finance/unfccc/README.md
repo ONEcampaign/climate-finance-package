@@ -42,7 +42,7 @@ Here's an example of how to use the `get_unfccc_export()` function to download d
 
 ```python
 # Import get_data
-from climate_finance.unfccc.download import get_data
+from climate_finance.unfccc.download import download_data
 
 # Define the settings. We'll use bilateral data as an example
 settings = get_data.BILATERAL_SETTINGS

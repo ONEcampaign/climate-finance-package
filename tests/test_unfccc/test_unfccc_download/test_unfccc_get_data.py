@@ -8,7 +8,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
-from climate_finance.unfccc.download.get_data import (
+from climate_finance.unfccc.download.download_data import (
     SAVE_FILES_TO,
     _check_download_and_rename,
     _get_driver,
@@ -52,7 +52,7 @@ def test_check_download_and_rename():
 
         # Patch the SAVE_FILES_TO variable
         with patch(
-            "climate_finance.unfccc.download.get_data.SAVE_FILES_TO", new=temp_dir
+            "climate_finance.unfccc.download.download_data.SAVE_FILES_TO", new=temp_dir
         ):
             # Test when base_name is in the file
             assert _check_download_and_rename("FinancialSupportSummary", "")

@@ -46,31 +46,8 @@ ADDITIONAL_PATTERNS: dict[str, int] = {
 
 
 def get_crs_official_mapping() -> pd.DataFrame:
-    return pd.read_csv(
-        ClimateDataPath.unfccc_cleaning_tools / "crs_channel_mapping.csv"
-    )
-
-
-def raw_data_to_unique_channels(
-    raw_data: pd.DataFrame, channel_names_column: str
-) -> pd.DataFrame:
-    """Get a dataframe of unique channel names from the raw data.
-
-    Args:
-        raw_data (pd.DataFrame): The raw data.
-        channel_names_column (str): The column containing the channel names.
-
-    Returns:
-        pd.DataFrame: A dataframe of unique channel names.
-
-    """
-
-    return (
-        # Get the channel names column, clean the strings, and drop duplicates
-        raw_data.filter([channel_names_column], axis=1)
-        .assign(clean_channel=lambda d: d[channel_names_column].apply(clean_string))
-        .drop_duplicates(subset=["channel"])
-    )
+    """Get the CRS official mapping file."""
+    return pd.read_csv(ClimateDataPath.oecd_cleaning_tools / "crs_channel_mapping.csv")
 
 
 def clean_string(text: str) -> str:
@@ -102,6 +79,28 @@ def clean_string(text: str) -> str:
     text = text.strip()
 
     return text
+
+
+def raw_data_to_unique_channels(
+    raw_data: pd.DataFrame, channel_names_column: str
+) -> pd.DataFrame:
+    """Get a dataframe of unique channel names from the raw data.
+
+    Args:
+        raw_data (pd.DataFrame): The raw data.
+        channel_names_column (str): The column containing the channel names.
+
+    Returns:
+        pd.DataFrame: A dataframe of unique channel names.
+
+    """
+
+    return (
+        # Get the channel names column, clean the strings, and drop duplicates
+        raw_data.filter([channel_names_column], axis=1)
+        .assign(clean_channel=lambda d: d[channel_names_column].apply(clean_string))
+        .drop_duplicates(subset=["channel"])
+    )
 
 
 def channel_to_code(map_to: str = "channel_name") -> dict[str, int]:
@@ -561,7 +560,3 @@ def generate_channel_mapping_dictionary(
         .set_index("channel")["channel_code"]
         .to_dict()
     )
-
-
-if __name__ == "__main__":
-    ...
