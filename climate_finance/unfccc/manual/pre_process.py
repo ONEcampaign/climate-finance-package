@@ -9,6 +9,18 @@ from climate_finance import config
 from climate_finance.unfccc.cleaning_tools.tools import clean_recipient_names
 
 
+TABLE7_COLUMNS: list[str] = [
+    "status",
+    "funding_source",
+    "financial_instrument",
+    "type_of_support",
+    "channel",
+    "sector",
+    "recipient",
+    "additional_information",
+]
+
+
 def clean_column_string(string: str):
     """Make a series of replacements to clean up the strings of column names
 
@@ -70,7 +82,16 @@ def find_last_row(df: pd.DataFrame, row_string: str) -> int:
 def clean_table_7_columns(
     df: pd.DataFrame, first_currency: str, second_currency: str
 ) -> pd.DataFrame:
-    """Clean the column names for table 7."""
+    """Clean the column names for table 7.
+
+    Args:
+        df (pd.DataFrame): The DataFrame to clean.
+        first_currency (str): The first currency.
+        second_currency (str): The second currency.
+
+    Returns:
+        pd.DataFrame: The cleaned DataFrame.
+    """
 
     # Create a new header using the first two rows
     header = df.iloc[:2].apply(lambda x: "_".join(x.fillna("").astype(str)), axis=0)
@@ -93,7 +114,19 @@ def clean_table_7_columns(
 def rename_table_7a_columns(
     df: pd.DataFrame, first_currency: str, second_currency: str
 ) -> pd.DataFrame:
-    """Clean the column names for table 7a."""
+    """Clean the column names for table 7a.
+
+    Args:
+        df (pd.DataFrame): The DataFrame to clean.
+        first_currency (str): The first currency. This is extracted from the data in
+        a previous step
+        second_currency (str): The second currency. This is extracted from the data
+        in a previous step
+
+    Returns:
+        pd.DataFrame: The cleaned DataFrame.
+
+    """
     cols = df.columns
 
     columns = {
@@ -115,7 +148,19 @@ def rename_table_7a_columns(
 def rename_table_7b_columns(
     df: pd.DataFrame, first_currency: str, second_currency: str
 ) -> pd.DataFrame:
-    """Clean the column names for table 7a."""
+    """Clean the column names for table 7b.
+
+    Args:
+        df (pd.DataFrame): The DataFrame to clean.
+        first_currency (str): The first currency. This is extracted from the data in
+        a previous step
+        second_currency (str): The second currency. This is extracted from the data
+        in a previous step
+
+    Returns:
+        pd.DataFrame: The cleaned DataFrame.
+
+    """
     cols = df.columns
     columns = {
         cols[0]: "recipient",
@@ -141,8 +186,14 @@ def reshape_table_7(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         Reshaped DataFrame
     """
+
+    # Melt the dataframe
     df_ = df.melt(id_vars=["channel"], var_name="column", value_name="value")
+
+    # Split the 'column' into currency and indicator
     df_[["currency", "indicator"]] = df_.column.str.split("_", expand=True)
+
+    # Drop the column column
     return df_.drop(columns=["column"]).reset_index(drop=True)
 
 
@@ -156,19 +207,48 @@ def reshape_table_7x(df: pd.DataFrame, excluded_cols: list[str]) -> pd.DataFrame
     Returns:
         Reshaped DataFrame
     """
+
+    # Melt the dataframe
     df_ = df.melt(
         id_vars=[c for c in TABLE7_COLUMNS if c not in excluded_cols],
         var_name="column",
         value_name="value",
     )
+
+    # Split the 'column' into currency and indicator
     df_[["currency", "indicator"]] = df_.column.str.split("_", expand=True)
     return df_.drop(columns=["column"]).reset_index(drop=True)
 
 
+# Partial function for table 7a
 reshape_table_7a = partial(
     reshape_table_7x, excluded_cols=["recipient", "additional_information"]
 )
+
+# Partial function for table 7b
 reshape_table_7b = partial(reshape_table_7x, excluded_cols=["channel"])
+
+
+def table7a_heading_mapping(df: pd.DataFrame) -> pd.DataFrame:
+    """Map rows to the right category"""
+
+    df["channel"] = df.channel.str.replace(f"[\d()+-]+|\.+", "", regex=True).str.strip()
+
+    # read mapping from json
+    with open(
+        config.ClimateDataPath.unfccc_cleaning_tools / "unfccc_channel_mapping.json",
+        "r",
+    ) as f:
+        mapping = json.load(f)
+
+    df["channel_type"] = df.channel.map(mapping)
+
+    # fix channel names
+    df["channel"] = df.channel.str.replace(
+        r"^(?:[a-z]+\s)?([A-Z].*)", r"\1", regex=True
+    ).str.strip()
+
+    return df
 
 
 def clean_table7(df: pd.DataFrame, country: str, year: int) -> pd.DataFrame:
@@ -273,37 +353,3 @@ def clean_table7b(df: pd.DataFrame, country: str, year: int) -> pd.DataFrame:
     df = df.dropna(subset=["value"])
 
     return df.assign(country=country, year=year)
-
-
-TABLE7_COLUMNS: list[str] = [
-    "status",
-    "funding_source",
-    "financial_instrument",
-    "type_of_support",
-    "channel",
-    "sector",
-    "recipient",
-    "additional_information",
-]
-
-
-def table7a_heading_mapping(df: pd.DataFrame) -> pd.DataFrame:
-    """Map rows to the right category"""
-
-    df["channel"] = df.channel.str.replace(f"[\d()+-]+|\.+", "", regex=True).str.strip()
-
-    # read mapping from json
-    with open(
-        config.ClimateDataPath.unfccc_cleaning_tools / "unfccc_channel_mapping.json",
-        "r",
-    ) as f:
-        mapping = json.load(f)
-
-    df["channel_type"] = df.channel.map(mapping)
-
-    # fix channel names
-    df["channel"] = df.channel.str.replace(
-        r"^(?:[a-z]+\s)?([A-Z].*)", r"\1", regex=True
-    ).str.strip()
-
-    return df

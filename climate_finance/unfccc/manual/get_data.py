@@ -2,7 +2,11 @@ import pathlib
 
 import pandas as pd
 
-from climate_finance.unfccc.manual.pre_process import clean_table7, clean_table7a, clean_table7b
+from climate_finance.unfccc.manual.pre_process import (
+    clean_table7,
+    clean_table7a,
+    clean_table7b,
+)
 from climate_finance.unfccc.manual.read_files import load_br_files_tables7
 
 
