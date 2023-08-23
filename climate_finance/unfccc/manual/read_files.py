@@ -8,7 +8,7 @@ import pandas as pd
 def _load_br_files(
     folder_path: str | pathlib.Path, table_pattern: str
 ) -> dict[str, pd.DataFrame]:
-    br_files: dict[str, pd.DataFrame] = {}
+    br_files: dict[str, pd.DataFrame] | dict = {}
 
     # Get all Excel files in the folder path
     files = [file for file in glob.glob(f"{folder_path}/*.xlsx")]

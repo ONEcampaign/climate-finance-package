@@ -230,7 +230,15 @@ reshape_table_7b = partial(reshape_table_7x, excluded_cols=["channel"])
 
 
 def table7a_heading_mapping(df: pd.DataFrame) -> pd.DataFrame:
-    """Map rows to the right category"""
+    """
+    Map rows to the right category based on channels.
+
+    Args:
+        df (pd.DataFrame): DataFrame containing the channel column.
+
+    Returns:
+        pd.DataFrame: DataFrame with mapped channel types.
+    """
 
     df["channel"] = df.channel.str.replace(f"[\d()+-]+|\.+", "", regex=True).str.strip()
 
@@ -252,6 +260,17 @@ def table7a_heading_mapping(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def clean_table7(df: pd.DataFrame, country: str, year: int) -> pd.DataFrame:
+    """
+    Process and clean table 7 data.
+
+    Args:
+        df (pd.DataFrame): The DataFrame to clean.
+        country (str): Country associated with the data.
+        year (int): Year associated with the data.
+
+    Returns:
+        pd.DataFrame: Cleaned DataFrame.
+    """
     # Find the index of the heading row
     heading_row = find_heading_row(df, "allocation channels")
 
@@ -286,6 +305,17 @@ def clean_table7(df: pd.DataFrame, country: str, year: int) -> pd.DataFrame:
 
 
 def clean_table7a(df: pd.DataFrame, country: str, year: int) -> pd.DataFrame:
+    """
+    Process and clean table 7a data.
+
+    Args:
+        df (pd.DataFrame): The DataFrame to clean.
+        country (str): Country associated with the data.
+        year (int): Year associated with the data.
+
+    Returns:
+        pd.DataFrame: Cleaned DataFrame.
+    """
     # Find the index of the heading row
     heading_row = find_heading_row(df, "donor funding")
 
@@ -321,6 +351,17 @@ def clean_table7a(df: pd.DataFrame, country: str, year: int) -> pd.DataFrame:
 
 
 def clean_table7b(df: pd.DataFrame, country: str, year: int) -> pd.DataFrame:
+    """
+    Process and clean table 7b data.
+
+    Args:
+        df (pd.DataFrame): The DataFrame to clean.
+        country (str): Country associated with the data.
+        year (int): Year associated with the data.
+
+    Returns:
+        pd.DataFrame: Cleaned DataFrame.
+    """
     # Find the index of the heading row
     heading_row = find_heading_row(df, "recipient")
 

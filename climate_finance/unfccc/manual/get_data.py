@@ -22,8 +22,9 @@ def _table7x_pipeline(
         for year in years:
             df = table[f"{table_name}_{year}"]
             try:
-                data.append(clean_func(df=df, country=country, year=year))
-            except:
+                clean_df = clean_func(df=df, country=country, year=year)
+                data.append(clean_df)
+            except ValueError:
                 print(f"Error cleaning table 7a for {country} {year}")
 
     return pd.concat(data, ignore_index=True)
@@ -35,10 +36,10 @@ def table7_pipeline(folder_path: str | pathlib.Path):
 
 
 def table7a_pipeline(folder_path: str | pathlib.Path):
-    """Create a single dataframe of table7 data"""
+    """Create a single dataframe of table7a data"""
     return _table7x_pipeline(folder_path, "Table 7(a)", clean_table7a)
 
 
 def table7b_pipeline(folder_path: str | pathlib.Path):
-    """Create a single dataframe of table7 data"""
+    """Create a single dataframe of table7b data"""
     return _table7x_pipeline(folder_path, "Table 7(b)", clean_table7b)
