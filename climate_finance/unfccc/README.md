@@ -18,6 +18,24 @@ There are two key ways to get data from UNFCCC:
         - [get_unfccc_bilateral()](#climatefinanceunfcccdownloadgetdatagetunfcccbilateral)
         - [get_unfccc_multilateral()](#climatefinanceunfcccdownloadgetdatagetunfcccmultilateral)
 
+
+## climate_finance.unfccc.manual
+
+The `manual` module ... 
+
+### climate_finance.unfccc.manual.get_data
+
+The `get_data` sub-module...
+
+### climate_finance.unfccc.manual.pre_process
+
+The `pre_process` sub-module...
+
+### climate_finance.unfccc.manual.read_files
+
+The `read_files` sub-module...
+
+
 ## climate_finance.unfccc.download
 
 The `download` module contains scripts for automatically downloading and pre-processing data from the UNFCCC data
