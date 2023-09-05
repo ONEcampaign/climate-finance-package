@@ -7,7 +7,7 @@ There are two key ways to get data from UNFCCC:
 - [Manually download](#climatefinanceunfcccmanual) the BR data files (one excel per party)
     - [read_data]
     - [pre_process]
-    - [get_data]
+    - [get_files]
 - Use an [automated tool](#climatefinanceunfcccdownload) to download the data from the UNFCCC data interface.
     - [download_data](#climatefinanceunfcccdownloaddownloaddata)
         - [get_unfccc_export()](#climatefinanceunfcccdownloaddownloaddatagetunfcccexport)
