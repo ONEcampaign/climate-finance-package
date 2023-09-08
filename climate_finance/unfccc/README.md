@@ -29,7 +29,55 @@ The `get_data` sub-module...
 
 ### climate_finance.unfccc.manual.pre_process
 
-The `pre_process` sub-module...
+The `pre-process` sub-module deals with the basic pre-processing of the downloaded data. The data available in the BR files requires significant cleaning before it can be used. There are three pipeline functions to do this: `clean_table7`, `clean_table7a`, and `clean_table7b`. 
+
+#### climate_finance.unfccc.manual.pre_process.clean_table7()
+
+`clean_table7(df: pd.DataFrame, country: str, year: int)` processes and cleans Table 7 data. It takes a DataFrame as the input, the specified `country` and `year` as arguments, and returns a cleaned DataFrame. 
+
+It does the following:
+- Identifies the first (domestic) and second (USD) currencies.
+- Cleans the column names using `clean_table_7_columns(df: pd.DataFrame, first_currency: str, second_currency: str)`, using the `first_currency` and `second_currency` identified in the earlier step as arguments. 
+- Cleans channel names (clean_column_string)
+- Reshapes table7 data into long format (reshape_table_7), with columns for `channel`, `currency`, `indicator`, and `value`. 
+- Converts `value` to a float using the `clean_numeric_series(data: pd.Series | pd.DataFrame, series_columns: str | list | None = None, to: Type = float)` function. 
+- Drops all rows with no value. 
+- Adds columns for the specified `country` (party) and `year`.
+
+Here is an example of how to use `clean_table7()`
+
+```
+# import clean_table7
+from climate_finance.unfccc.manual.pre_process import clean_table7
+
+# assuming you have already …[fill in when you understand]…
+df =  clean_table7(df, “France”, 2020)
+```
+
+#### climate_finance.unfccc.manual.pre_process_clean_table7a()
+
+`clean_table7a(df: pd.DataFrame, country: str, year: int)` processes and cleans Table 7a data. It takes a DataFrame as the input, the specified `country` and `year` as arguments, and returns a cleaned DataFrame.
+
+Like does the following:
+- Identifies the first (domestic) and second (USD) currencies.
+- Cleans the column names using `clean_table_7_columns(df: pd.DataFrame, first_currency: str, second_currency: str)`, using the `first_currency` and `second_currency` identified in the earlier step as arguments. 
+- Cleans channel names (clean_column_string) and maps 
+- Reshapes table7 data into long format (reshape_table_7), with columns for `channel`, `currency`, `indicator`, and `value`. 
+- Converts `value` to a float using the `clean_numeric_series(data: pd.Series | pd.DataFrame, series_columns: str | list | None = None, to: Type = float)` function. 
+- Drops all rows with no value. 
+- Adds columns for the specified `country` (party) and `year`.
+
+Here is an example of how to use `clean_table7()`
+
+```
+# import clean_table7
+from climate_finance.unfccc.manual.pre_process import clean_table7
+
+# assuming you have already …[fill in when you understand]…
+df =  clean_table7(df, “France”, 2020)
+```
+
+
 
 ### climate_finance.unfccc.manual.read_files
 
