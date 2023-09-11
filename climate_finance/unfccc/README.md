@@ -238,7 +238,7 @@ The `get_data` sub-module...
 
 ### climate_finance.unfccc.manual.pre_process
 
-The `pre-process` sub-module deals with the basic pre-processing of the downloaded data. The data available in the BR files requires significant cleaning before it can be used. There are three pipeline functions to do this: `clean_table7`, `clean_table7a`, and `clean_table7b`. 
+The `pre-process` sub-module deals with the basic pre-processing of the downloaded data. The data available in the BR files requires significant cleaning before it can be used. There are three pipeline functions to do this: `clean_table7`, `clean_table7a`, and `clean_table7b`. The other relevant functions are outlined below the pipeline functions. 
 
 #### climate_finance.unfccc.manual.pre_process.clean_table7()
 
@@ -270,9 +270,7 @@ df =  clean_table7(df, “France”, 2020)
 The steps followed are very similar to `clean_table7()`, as follows: 
 - Identifies the first (domestic) and second (USD) currencies.
 - Cleans the column names using `rename_table_7a_columns(df: pd.DataFrame, first_currency: str, second_currency: str)`, using the `first_currency` and `second_currency` identified in the earlier step as arguments. 
-- Cleans channel names (`clean_column_string`)
-- Reshapes table7a data into long format using a partial function of `reshape_table_7x(df: pd.DataFrame, excluded_cols: list[str])`. This specificly excludes `recipient    
- and `additional_information` columns, leaving `status`, `funding_source`, `financial_instrument`, `type_of_support`, `channel`, `sector`, `currency`, `indicator`, and `value`. 
+- Reshapes table7a data into long format using a partial function of `reshape_table_7x(df: pd.DataFrame, excluded_cols: list[str])`. This specificly excludes `recipient` and `additional_information` columns, leaving `status`, `funding_source`, `financial_instrument`, `type_of_support`, `channel`, `sector`, `currency`, `indicator`, and `value`. 
 - Converts `value` to a float using the `clean_numeric_series(data: pd.Series | pd.DataFrame, series_columns: str | list | None = None, to: Type = float)` function. 
 - Drops all rows with no value.
 - Standardises channel types such that multilaterals have uniform names/codes across parties (`table7a_heading_mapping`)
@@ -287,6 +285,31 @@ from climate_finance.unfccc.manual.pre_process import clean_table7a
 # assuming you have already …[fill in when you understand]…
 df =  clean_table7a(df, “France”, 2020)
 ```
+
+#### climate_finance.unfccc.manual.pre_process_clean_table7b()
+
+`clean_table7b(df: pd.DataFrame, country: str, year: int)` processes and cleans Table 7b data. It takes a DataFrame as the input, the specified `country` and `year` as arguments, and returns a cleaned DataFrame.
+
+The steps followed are very similar to `clean_table7()`, as follows: 
+- Identifies the first (domestic) and second (USD) currencies.
+- Cleans the column names using `rename_table_7b_columns(df: pd.DataFrame, first_currency: str, second_currency: str)`, using the `first_currency` and `second_currency` identified in the earlier step as arguments.
+- Cleans the recipient names (`clean_recipient_names`)
+- Reshapes table7b data into long format using a partial function of `reshape_table_7x(df: pd.DataFrame, excluded_cols: list[str])`. This specifically excludes the `channel` column, leaving `status`, `funding_source`, `financial_instrument`, `type_of_support`, `channel`, `sector`, `currency`, `recipient`, `additional_information`, `indicator`, and `value`. 
+- Converts `value` to a float using the `clean_numeric_series(data: pd.Series | pd.DataFrame, series_columns: str | list | None = None, to: Type = float)` function. 
+- Drops all rows with no value.
+- Adds columns for the specified `country` (party) and `year`.
+
+Here is an example of how to use `clean_table7b()`
+
+```python
+# import clean_table7b
+from climate_finance.unfccc.manual.pre_process import clean_table7b
+
+# assuming you have already …[fill in when you understand]…
+df =  clean_table7b(df, “France”, 2020)
+```
+
+#### other functions: 
 
 
 
