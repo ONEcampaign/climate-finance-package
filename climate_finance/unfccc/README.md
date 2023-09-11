@@ -246,8 +246,8 @@ The `pre-process` sub-module deals with the basic pre-processing of the download
 
 It does the following:
 - Identifies the first (domestic) and second (USD) currencies.
-- Cleans the column names using `clean_table_7_columns(df: pd.DataFrame, first_currency: str, second_currency: str)`, using the `first_currency` and `second_currency` identified in the earlier step as arguments. 
-- Cleans channel names (`clean_column_string`)
+- Cleans column names (`clean_table_7_columns`).
+- Cleans channel names (`clean_column_string`).
 - Reshapes table7 data into long format (`reshape_table_7`), with columns for `channel`, `currency`, `indicator`, and `value`. 
 - Converts `value` into a float (clean_numeric_series) (TODO: Add link to clean script)
 - Drops all rows with no value. 
@@ -269,11 +269,11 @@ df =  clean_table7(df, “France”, 2020)
 
 The steps followed are very similar to `clean_table7()`, as follows: 
 - Identifies the first (domestic) and second (USD) currencies.
-- Cleans the column names using `rename_table_7a_columns(df: pd.DataFrame, first_currency: str, second_currency: str)`, using the `first_currency` and `second_currency` identified in the earlier step as arguments. 
-- Reshapes table7a data into long format using a partial function of `reshape_table_7x(df: pd.DataFrame, excluded_cols: list[str])`. This specificly excludes `recipient` and `additional_information` columns, leaving `status`, `funding_source`, `financial_instrument`, `type_of_support`, `channel`, `sector`, `currency`, `indicator`, and `value`. 
+- Cleans the column names using `rename_table_7a_columns`, using the `first_currency` and `second_currency` identified in the earlier step as arguments. 
+- Reshapes table7a data into long format using a partial function of `reshape_table_7X(df: pd.DataFrame, excluded_cols: list[str])`. This specificly excludes `recipient` and `additional_information` columns, leaving `status`, `funding_source`, `financial_instrument`, `type_of_support`, `channel`, `sector`, `currency`, `indicator`, and `value`. 
 - Converts `value` to a float (clean_numeric_series) (TODO: Add link to clean script)
 - Drops all rows with no value.
-- Standardises channel types such that multilaterals have uniform names/codes across parties (`table7a_heading_mapping`)
+- Maps multilaterals to correct category (e.g. "Multilateral climate change funds") using `table7a_heading_mapping`
 - Adds columns for the specified `country` (party) and `year`.
 
 Here is an example of how to use `clean_table7a()`
@@ -292,7 +292,7 @@ df =  clean_table7a(df, “France”, 2020)
 
 The steps followed are very similar to `clean_table7()`, as follows: 
 - Identifies the first (domestic) and second (USD) currencies.
-- Cleans the column names using `rename_table_7b_columns(df: pd.DataFrame, first_currency: str, second_currency: str)`, using the `first_currency` and `second_currency` identified in the earlier step as arguments.
+- Cleans the column names using `rename_table_7b_columns`, using the `first_currency` and `second_currency` identified in the earlier step as arguments.
 - Cleans the recipient names (clean_recipient_names) (TODO: Add link to tools script)
 - Reshapes table7b data into long format using a partial function of `reshape_table_7x(df: pd.DataFrame, excluded_cols: list[str])`. This specifically excludes the `channel` column, leaving `status`, `funding_source`, `financial_instrument`, `type_of_support`, `channel`, `sector`, `currency`, `recipient`, `additional_information`, `indicator`, and `value`. 
 - Converts `value` to a float (clean_numeric_series) (TODO: Add link to clean script)
@@ -313,17 +313,18 @@ Below lists the functions within the pipeline functions:
 
 #### climate_finance.unfccc.manual.pre_process.clean_table_7_columns
 
+#### climate_finance.unfccc.manual.pre_process.clean_column_string
+
 #### climate_finance.unfccc.manual.pre_process.reshape_table7
 
 #### climate_finance.unfccc.manual.pre_process.rename_table_7a_columns
-
-#### climate_finance.unfccc.manual.pre_process.reshape_table7a
 
 #### climate_finance.unfccc.manual.pre_process.table7a_heading_mapping
 
 #### climate_finance.unfccc.manual.pre_process.rename_table_7b_columns
 
-#### climate_finance.unfccc.manual.pre_process.reshape_table_7b
+#### climate_finance.unfccc.manual.pre_process.reshape_table7X
+
 
 Question: Do I need to include all of the really simple functions like `find_last_row()`? Would this not be considered a helper function and should have a `_` at the start? What determines whether something is a helper function?
 
