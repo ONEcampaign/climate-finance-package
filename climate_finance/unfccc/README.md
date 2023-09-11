@@ -19,70 +19,6 @@ There are two key ways to get data from UNFCCC:
         - [get_unfccc_multilateral()](#climatefinanceunfcccdownloadgetdatagetunfcccmultilateral)
 
 
-## climate_finance.unfccc.manual
-
-The `manual` module ... 
-
-### climate_finance.unfccc.manual.get_data
-
-The `get_data` sub-module...
-
-### climate_finance.unfccc.manual.pre_process
-
-The `pre-process` sub-module deals with the basic pre-processing of the downloaded data. The data available in the BR files requires significant cleaning before it can be used. There are three pipeline functions to do this: `clean_table7`, `clean_table7a`, and `clean_table7b`. 
-
-#### climate_finance.unfccc.manual.pre_process.clean_table7()
-
-`clean_table7(df: pd.DataFrame, country: str, year: int)` processes and cleans Table 7 data. It takes a DataFrame as the input, the specified `country` and `year` as arguments, and returns a cleaned DataFrame. 
-
-It does the following:
-- Identifies the first (domestic) and second (USD) currencies.
-- Cleans the column names using `clean_table_7_columns(df: pd.DataFrame, first_currency: str, second_currency: str)`, using the `first_currency` and `second_currency` identified in the earlier step as arguments. 
-- Cleans channel names (clean_column_string)
-- Reshapes table7 data into long format (reshape_table_7), with columns for `channel`, `currency`, `indicator`, and `value`. 
-- Converts `value` to a float using the `clean_numeric_series(data: pd.Series | pd.DataFrame, series_columns: str | list | None = None, to: Type = float)` function. 
-- Drops all rows with no value. 
-- Adds columns for the specified `country` (party) and `year`.
-
-Here is an example of how to use `clean_table7()`
-
-```
-# import clean_table7
-from climate_finance.unfccc.manual.pre_process import clean_table7
-
-# assuming you have already …[fill in when you understand]…
-df =  clean_table7(df, “France”, 2020)
-```
-
-#### climate_finance.unfccc.manual.pre_process_clean_table7a()
-
-`clean_table7a(df: pd.DataFrame, country: str, year: int)` processes and cleans Table 7a data. It takes a DataFrame as the input, the specified `country` and `year` as arguments, and returns a cleaned DataFrame.
-
-Like does the following:
-- Identifies the first (domestic) and second (USD) currencies.
-- Cleans the column names using `clean_table_7_columns(df: pd.DataFrame, first_currency: str, second_currency: str)`, using the `first_currency` and `second_currency` identified in the earlier step as arguments. 
-- Cleans channel names (clean_column_string) and maps 
-- Reshapes table7 data into long format (reshape_table_7), with columns for `channel`, `currency`, `indicator`, and `value`. 
-- Converts `value` to a float using the `clean_numeric_series(data: pd.Series | pd.DataFrame, series_columns: str | list | None = None, to: Type = float)` function. 
-- Drops all rows with no value. 
-- Adds columns for the specified `country` (party) and `year`.
-
-Here is an example of how to use `clean_table7()`
-
-```
-# import clean_table7
-from climate_finance.unfccc.manual.pre_process import clean_table7
-
-# assuming you have already …[fill in when you understand]…
-df =  clean_table7(df, “France”, 2020)
-```
-
-
-
-### climate_finance.unfccc.manual.read_files
-
-The `read_files` sub-module...
-
 
 ## climate_finance.unfccc.download
 
@@ -290,12 +226,73 @@ df = get_unfccc_bilateral(start_year, end_year)
 
 ## climate_finance.unfccc.manual
 The `manual` module contains functions to manually clean the UNFCCC data. It is assumed that you have
-downloaded the BR data from the UNFCCC data and saved it as individual Excel files for each party.
+downloaded the BR data (CTF Tables) from the UNFCCC data and saved it as individual Excel files for each party.
 
-The files should be stored in a folder which only contains data from the same BR. In other words,
+The files should be stored in a folder which only contains data from BRs of the same year. In other words,
 the scripts assume one folder per BR.
 
 
+### climate_finance.unfccc.manual.get_data
+
+The `get_data` sub-module...
+
+### climate_finance.unfccc.manual.pre_process
+
+The `pre-process` sub-module deals with the basic pre-processing of the downloaded data. The data available in the BR files requires significant cleaning before it can be used. There are three pipeline functions to do this: `clean_table7`, `clean_table7a`, and `clean_table7b`. 
+
+#### climate_finance.unfccc.manual.pre_process.clean_table7()
+
+`clean_table7(df: pd.DataFrame, country: str, year: int)` processes and cleans Table 7 data. It takes a DataFrame as the input, the specified `country` and `year` as arguments, and returns a cleaned DataFrame. 
+
+It does the following:
+- Identifies the first (domestic) and second (USD) currencies.
+- Cleans the column names using `clean_table_7_columns(df: pd.DataFrame, first_currency: str, second_currency: str)`, using the `first_currency` and `second_currency` identified in the earlier step as arguments. 
+- Cleans channel names (`clean_column_string`)
+- Reshapes table7 data into long format (`reshape_table_7`), with columns for `channel`, `currency`, `indicator`, and `value`. 
+- Converts `value` into a float using the `clean_numeric_series(data: pd.Series | pd.DataFrame, series_columns: str | list | None = None, to: Type = float)` function. 
+- Drops all rows with no value. 
+- Adds columns for the specified `country` (party) and `year`.
+
+Here is an example of how to use `clean_table7()`
+
+```python
+# import clean_table7
+from climate_finance.unfccc.manual.pre_process import clean_table7
+
+# assuming you have already …[fill in when you understand]…
+df =  clean_table7(df, “France”, 2020)
+```
+
+#### climate_finance.unfccc.manual.pre_process_clean_table7a()
+
+`clean_table7a(df: pd.DataFrame, country: str, year: int)` processes and cleans Table 7a data. It takes a DataFrame as the input, the specified `country` and `year` as arguments, and returns a cleaned DataFrame.
+
+The steps followed are very similar to `clean_table7()`, as follows: 
+- Identifies the first (domestic) and second (USD) currencies.
+- Cleans the column names using `rename_table_7a_columns(df: pd.DataFrame, first_currency: str, second_currency: str)`, using the `first_currency` and `second_currency` identified in the earlier step as arguments. 
+- Cleans channel names (`clean_column_string`)
+- Reshapes table7a data into long format using a partial function of `reshape_table_7x(df: pd.DataFrame, excluded_cols: list[str])`. This specificly excludes `recipient    
+ and `additional_information` columns, leaving `status`, `funding_source`, `financial_instrument`, `type_of_support`, `channel`, `sector`, `currency`, `indicator`, and `value`. 
+- Converts `value` to a float using the `clean_numeric_series(data: pd.Series | pd.DataFrame, series_columns: str | list | None = None, to: Type = float)` function. 
+- Drops all rows with no value.
+- Standardises channel types such that multilaterals have uniform names/codes across parties (`table7a_heading_mapping`)
+- Adds columns for the specified `country` (party) and `year`.
+
+Here is an example of how to use `clean_table7a()`
+
+```python
+# import clean_table7a
+from climate_finance.unfccc.manual.pre_process import clean_table7a
+
+# assuming you have already …[fill in when you understand]…
+df =  clean_table7a(df, “France”, 2020)
+```
+
+
+
+### climate_finance.unfccc.manual.read_files
+
+The `read_files` sub-module...
 
 
 
