@@ -313,6 +313,10 @@ Below lists the functions within the pipeline functions:
 
 #### climate_finance.unfccc.manual.pre_process.clean_table_7_columns
 
+`clean_table_7_columns(df: pd.DataFrame, first_currency: str, second_currency: str)` takes a creates columns for both the `first_currency` (domestic) and `second_currency` (US$).
+
+Both `first_currency` and `second_currency` are identified in the different pipeline functions. 
+
 #### climate_finance.unfccc.manual.pre_process.clean_column_string
 
 #### climate_finance.unfccc.manual.pre_process.reshape_table7
@@ -326,7 +330,7 @@ Below lists the functions within the pipeline functions:
 #### climate_finance.unfccc.manual.pre_process.reshape_table7X
 
 
-Question: Do I need to include all of the really simple functions like `find_last_row()`? Would this not be considered a helper function and should have a `_` at the start? What determines whether something is a helper function?
+Question: Do I need to include all of the simple functions like `find_last_row()`? Would this not be considered a helper function and should have a `_` at the start? What determines whether something is a helper function?
 
 ### climate_finance.unfccc.manual.read_files
 
