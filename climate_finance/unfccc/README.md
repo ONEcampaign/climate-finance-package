@@ -197,7 +197,7 @@ df = get_unfccc_multilateral(start_year, end_year)
 
 #### climate_finance.unfccc.download.get_data.get_unfccc_bilateral()
 
-`get_unfccc_bilateral(start_year: int, end_year: int)` Reads and cleans the UNFCCC bilateral data.
+`get_unfccc_bilateral(start_year: int, end_year: int)` reads and cleans the UNFCCC bilateral data.
 
 The function takes two arguments:
 
@@ -242,14 +242,20 @@ The `pre-process` sub-module deals with the basic pre-processing of the download
 
 #### climate_finance.unfccc.manual.pre_process.clean_table7()
 
-`clean_table7(df: pd.DataFrame, country: str, year: int)` processes and cleans Table 7 data. It takes a DataFrame as the input, the specified `country` and `year` as arguments, and returns a cleaned DataFrame. 
+`clean_table7(df: pd.DataFrame, country: str, year: int)` processes and cleans Table 7 data. 
+
+The function takes two arguements:
+- `country`: The country associated with the data.
+- `year`: The year associated with the data.
+
+It returns a cleaned DataFrame with clean table 7 data for the specified years and countries. 
 
 It does the following:
 - Identifies the first (domestic) and second (USD) currencies.
 - Cleans column names (`clean_table_7_columns`).
 - Cleans channel names (`clean_column_string`).
 - Reshapes table7 data into long format (`reshape_table_7`), with columns for `channel`, `currency`, `indicator`, and `value`. 
-- Converts `value` into a float (clean_numeric_series) (TODO: Add link to clean script)
+- Converts `value` into a float (clean_numeric_series) (TODO: Add link to clean script).
 - Drops all rows with no value. 
 - Adds columns for the specified `country` (party) and `year`.
 
@@ -259,13 +265,19 @@ Here is an example of how to use `clean_table7()`
 # import clean_table7
 from climate_finance.unfccc.manual.pre_process import clean_table7
 
-# assuming you have already …[fill in when you understand]…
+# Assuming that the data is already loaded into a dataframe called df
 df =  clean_table7(df, “France”, 2020)
 ```
 
 #### climate_finance.unfccc.manual.pre_process.clean_table7a()
 
-`clean_table7a(df: pd.DataFrame, country: str, year: int)` processes and cleans Table 7a data. It takes a DataFrame as the input, the specified `country` and `year` as arguments, and returns a cleaned DataFrame.
+`clean_table7a(df: pd.DataFrame, country: str, year: int)` processes and cleans Table 7a data.
+
+The function takes two arguements:
+- `country`: The country associated with the data.
+- `year`: The year associated with the data.
+
+It returns a cleaned DataFrame with clean table 7a data for the specified years and countries. 
 
 The steps followed are very similar to `clean_table7()`, as follows: 
 - Identifies the first (domestic) and second (USD) currencies.
@@ -282,13 +294,19 @@ Here is an example of how to use `clean_table7a()`
 # import clean_table7a
 from climate_finance.unfccc.manual.pre_process import clean_table7a
 
-# assuming you have already …[fill in when you understand]…
+# Assuming that the data is already loaded into a dataframe called df
 df =  clean_table7a(df, “France”, 2020)
 ```
 
 #### climate_finance.unfccc.manual.pre_process.clean_table7b()
 
-`clean_table7b(df: pd.DataFrame, country: str, year: int)` processes and cleans Table 7b data. It takes a DataFrame as the input, the specified `country` and `year` as arguments, and returns a cleaned DataFrame.
+`clean_table7b(df: pd.DataFrame, country: str, year: int)` processes and cleans Table 7b data. 
+
+The function takes two arguements:
+- `country`: The country associated with the data.
+- `year`: The year associated with the data.
+
+It returns a cleaned DataFrame with clean table 7b data for the specified years and countries. 
 
 The steps followed are very similar to `clean_table7()`, as follows: 
 - Identifies the first (domestic) and second (USD) currencies.
@@ -305,30 +323,74 @@ Here is an example of how to use `clean_table7b()`
 # import clean_table7b
 from climate_finance.unfccc.manual.pre_process import clean_table7b
 
-# assuming you have already …[fill in when you understand]…
+# Assuming that the data is already loaded into a dataframe called df
 df =  clean_table7b(df, “France”, 2020)
 ```
 
-Below lists the functions within the pipeline functions:
-
-#### climate_finance.unfccc.manual.pre_process.clean_table_7_columns
-
-`clean_table_7_columns(df: pd.DataFrame, first_currency: str, second_currency: str)` takes a creates columns for both the `first_currency` (domestic) and `second_currency` (US$).
-
-Both `first_currency` and `second_currency` are identified in the different pipeline functions. 
+Below lists the functions implemented within the pipeline functions:
 
 #### climate_finance.unfccc.manual.pre_process.clean_column_string
 
+`clean_column_string(string: str):` makes a series of replacements to clean up the strings of column names. It also removes any digits from column names using regex.
+
+#### climate_finance.unfccc.manual.pre_process.clean_table_7_columns
+
+`clean_table_7_columns(df: pd.DataFrame, first_currency: str, second_currency: str)` cleans the column names of Table 7. 
+
+The function takes two arguements:
+- `first_currency`: The first currency. This is extracted from the data in a previous step.
+- `second_currency`: The second currency. This is extracted from the data in a previous step.
+
+It returns a DataFrame with cleaned column names for Table 7. 
+
+Column names are made for both the `first_currency` and `second_currency` for all indicators in the format `currency_indicator`. As such, the final DataFrame consists of column names for `channel`, `'first_currency'_core_contributions`, ..., `usd_core_contributions`, ... ,`usd_mitigation`. The indicator channel names are cleaned through `clean_column_string`. 
+
 #### climate_finance.unfccc.manual.pre_process.reshape_table7
+
+`reshape_table_7(df: pd.DataFrame)` reshapes table 7 DataFrames into a long format. 
+
+It melts the table channel, pivotting on the 'currency_indicator' columns from `clean_table_7_columns`, before splitting into two columns: `currency` and `indicator`. 
+The result is a DataFrame with columns for `channel`, `currency`, `indicator` and `value`.
 
 #### climate_finance.unfccc.manual.pre_process.rename_table_7a_columns
 
+`rename_table_7a_columns(df: pd.DataFrame, first_currency: str, second_currency: str)` cleans the column names for table 7a. 
+
+The function takes two arguements:
+- `first_currency`: The first currency. This is extracted from the data in a previous step.
+- `second_currency`: The second currency. This is extracted from the data in a previous step.
+
+It returns a DataFrame with cleaned column names for Table 7a. 
+
+
+
 #### climate_finance.unfccc.manual.pre_process.table7a_heading_mapping
+
+`table7a_heading_mapping(df: pd.DataFrame)` maps rows in a DataFrame to the correct category. It takes a DataFrame containing a channel column and returns a DataFrame with mapped channel types. 
+
+It firstly cleans the channel names, before mapping them using the unfccc_channel_mapping.json file (TODO: add link to file). 
 
 #### climate_finance.unfccc.manual.pre_process.rename_table_7b_columns
 
-#### climate_finance.unfccc.manual.pre_process.reshape_table7X
+`rename_table_7b_columns(df: pd.DataFrame, first_currency: str, second_currency: str)` cleans the column names for table7b. 
 
+It takes a DataFrame to clean, the `first_currency` and `second_currency` as arguements, and outputs a clean DataFrame. Both `first_currency` and `second_currency` are identified in the pipeline function for table 7.
+
+#### climate_finance.unfccc.manual.pre_process.reshape_table_7x
+
+`reshape_table_7x(df: pd.DataFrame, excluded_cols: list[str]) reshapes the table dataframes into a long format. It takes the DataFrame to reshape, and one arguement `excluded_cols`, which is a list as a string of the columns to exclude from id_cars in the melt operation.
+
+`reshape_table_7x` is used as a partial function for variables `reshape_table_7a` and `reshape_table_7b`, which exclude different id_vars from the melt operation. 
+
+Here is an example of these partial functions:
+
+```python
+# import `reshape_table_7x
+from climate_finance.unfccc.manual.pre_process import reshape_table_7x
+
+# Assuming that the data is already loaded into a dataframe called df
+reshape_table_7a = partial(reshape_table_7x, excluded_cols=["recipient", "additional_information"])
+```
 
 Question: Do I need to include all of the simple functions like `find_last_row()`? Would this not be considered a helper function and should have a `_` at the start? What determines whether something is a helper function?
 
