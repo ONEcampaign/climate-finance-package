@@ -234,7 +234,31 @@ the scripts assume one folder per BR.
 
 ### climate_finance.unfccc.manual.get_data
 
-The `get_data` sub-module...
+The `get_data` sub-module contains the pipeline functions that read, process and output clean Table 7 data from the Biennial Reports. There are three pipeline functions, one for each table 7, all of which follow the same steps, outlined in general below. 
+
+
+
+#### climate_finance.unfccc.manual.get_data._table7x_pipeline
+
+The three pipeline functions - `table7_pipeline`, `table7a_pipeline` and `table7b_pipeline` - all return the helper function `_table7x_pipeline(folder_path: str | pathlib.Path, table_name: str, clean_func: callable). 
+
+`table7x_pipeline(folder_path: str | pathlib.Path)` creates a single DataFrame of table 7 data. 
+
+The function takes three arguements:
+- `folder_path`: the location of the pre-downloaded Biennial Reports. The path can be inputted as either a string (str) or a pathlib.Path object.
+- `table_name`: the name of the required table. This is specified in the three pipeline functions. Options: `Table 7`, `Table 7(a)`, or `Table 7(b)`.
+- `clean_func`: the pipeline function in the `climate_finance.unfccc.manual.pre_process` sub-module for the specific table. This is specified in the three pipeline functions. Options: `clean_table7`, `clean_table7a`, and `clean_table7b`.
+
+It returns a single DataFrame of the specified table7 data, depending on the specified table. 
+
+For example, if Table 7a data is required: 
+
+```python
+# import clean_table7
+from climate_finance.unfccc.manual.get_data import table7a_pipeline
+
+df =  table7a_pipeline(folder_path: str | pathlib.Path)
+```
 
 ### climate_finance.unfccc.manual.pre_process
 
@@ -362,8 +386,6 @@ The function takes two arguements:
 
 It returns a DataFrame with cleaned column names for Table 7a. 
 
-
-
 #### climate_finance.unfccc.manual.pre_process.table7a_heading_mapping
 
 `table7a_heading_mapping(df: pd.DataFrame)` maps rows in a DataFrame to the correct category. It takes a DataFrame containing a channel column and returns a DataFrame with mapped channel types. 
@@ -372,15 +394,20 @@ It firstly cleans the channel names, before mapping them using the unfccc_channe
 
 #### climate_finance.unfccc.manual.pre_process.rename_table_7b_columns
 
-`rename_table_7b_columns(df: pd.DataFrame, first_currency: str, second_currency: str)` cleans the column names for table7b. 
+`rename_table_7b_columns(df: pd.DataFrame, first_currency: str, second_currency: str)` cleans the column names for Table 7b. 
 
-It takes a DataFrame to clean, the `first_currency` and `second_currency` as arguements, and outputs a clean DataFrame. Both `first_currency` and `second_currency` are identified in the pipeline function for table 7.
+The function takes two arguements:
+- `first_currency`: The first currency. This is extracted from the data in a previous step.
+- `second_currency`: The second currency. This is extracted from the data in a previous step.
+
+It returns a DataFrame of Table 7b with clean column names. 
 
 #### climate_finance.unfccc.manual.pre_process.reshape_table_7x
 
-`reshape_table_7x(df: pd.DataFrame, excluded_cols: list[str]) reshapes the table dataframes into a long format. It takes the DataFrame to reshape, and one arguement `excluded_cols`, which is a list as a string of the columns to exclude from id_cars in the melt operation.
+`reshape_table_7x(df: pd.DataFrame, excluded_cols: list[str]) reshapes the dataframes into a long format. 
+The arguement `excluded_cols` is a list of columns to exclude from id_vars in the melt operation.
 
-`reshape_table_7x` is used as a partial function for variables `reshape_table_7a` and `reshape_table_7b`, which exclude different id_vars from the melt operation. 
+`reshape_table_7x` is used as a partial function for variables `reshape_table_7a` and `reshape_table_7b`, which exclude different id_vars from the melt operation (and therefore have different arguements for `excluded_cols`). 
 
 Here is an example of these partial functions:
 
@@ -392,13 +419,15 @@ from climate_finance.unfccc.manual.pre_process import reshape_table_7x
 reshape_table_7a = partial(reshape_table_7x, excluded_cols=["recipient", "additional_information"])
 ```
 
-Question: Do I need to include all of the simple functions like `find_last_row()`? Would this not be considered a helper function and should have a `_` at the start? What determines whether something is a helper function?
-
 ### climate_finance.unfccc.manual.read_files
 
-The `read_files` sub-module...
+The `read_files` sub-module deals with reading in the war data from the UNFCCC biennial reports. 
 
+#### climate_finance.unfccc.manual.read_files.load_br_files_tables7
 
+`load_br_files_tables7(folder_path: str | pathlib.Path)` loads all "Tables 7" from the biennial reports for a given biennial report. This function will look for all Excel files in the folder path and load them into a dictionary of DataFrames. 
+
+The arguement `folder_path` can either be inputted as a string (str) or a pathlib.Path object.
 
 
 ---
