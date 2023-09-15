@@ -37,25 +37,32 @@ def _clean_multi_contributions(df: pd.DataFrame) -> pd.DataFrame:
         "value": "value",
     }
 
+    # Get the CRS channel names (mapped by channel code)
     channel_mapping = (
         get_crs_official_mapping().set_index("channel_code")["channel_name"].to_dict()
     )
 
     return (
-        df.pipe(convert_flows_millions_to_units, flow_columns=["value"])
+        df.pipe(
+            convert_flows_millions_to_units, flow_columns=["value"]
+        )  # convert to millions
         .assign(
-            indicator=lambda d: d.indicator.map(MULTISYSTEM_INDICATORS),
-            channel_name=lambda d: d.channel_code.map(channel_mapping),
+            indicator=lambda d: d.indicator.map(
+                MULTISYSTEM_INDICATORS
+            ),  # rename indicator
+            channel_name=lambda d: d.channel_code.map(
+                channel_mapping
+            ),  # map channel name
         )
-        .rename(columns=columns)
-        .filter(columns.values(), axis=1)
+        .rename(columns=columns)  # rename columns
+        .filter(columns.values(), axis=1)  # keep only relevant columns
         .groupby(
             [c for c in columns.values() if c != "value"],
             as_index=False,
             dropna=False,
             observed=True,
         )
-        .sum()
+        .sum()  # summarise the data
     )
 
 
