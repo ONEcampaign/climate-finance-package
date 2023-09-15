@@ -162,4 +162,6 @@ cython_debug/
 .DS_Store
 
 *.xlsx
-*.xlsx
+*feather
+climate_finance/.raw_data/crs_codes.json
+

@@ -5,7 +5,7 @@ import pandas as pd
 from thefuzz import process
 
 from climate_finance.config import ClimateDataPath
-
+from climate_finance.oecd.cleaning_tools.tools import get_crs_official_mapping
 
 ADDITIONAL_PATTERNS: dict[str, int] = {
     r"\bworld bank\b": 44000,
@@ -43,11 +43,6 @@ ADDITIONAL_PATTERNS: dict[str, int] = {
     r"\bspecial climate change fund\b": 47130,
     r"\devlopment programme\b": 41114,
 }
-
-
-def get_crs_official_mapping() -> pd.DataFrame:
-    """Get the CRS official mapping file."""
-    return pd.read_csv(ClimateDataPath.oecd_cleaning_tools / "crs_channel_mapping.csv")
 
 
 def clean_string(text: str) -> str:

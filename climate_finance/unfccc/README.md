@@ -413,7 +413,7 @@ Usage:
 
 ```python
 # Import get_crs_official_mapping
-from climate_finance.unfccc.cleaning_tools.channels import get_crs_official_mapping
+from climate_finance.oecd.cleaning_tools.tools import get_crs_official_mapping
 
 # Get the CRS official mapping file
 mapping_df = get_crs_official_mapping()
