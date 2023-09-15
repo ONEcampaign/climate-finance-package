@@ -247,7 +247,7 @@ def get_crs_allocable_spending(
     crs = (
         read_crs(years=years)  # Read CRS data
         .pipe(_keep_only_allocable_aid)  # Keep only allocable aid types
-        .pipe(_add_net_disbursement)
+        .pipe(_add_net_disbursement) # Add net disbursement column
         .filter(columns + flow_columns, axis=1)  # Keep only relevant columns
         .pipe(_set_crs_data_types)  # Set data types
         .pipe(_replace_missing_climate_with_zero, column="climate_mitigation")
