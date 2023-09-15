@@ -4,10 +4,6 @@ This module contains scripts for downloading and pre-processing data from UNFCCC
 
 There are two key ways to get data from UNFCCC:
 
-- [Manually download](#climatefinanceunfcccmanual) the BR data files (one excel per party)
-    - [read_data]
-    - [pre_process]
-    - [get_files]
 - Use an [automated tool](#climatefinanceunfcccdownload) to download the data from the UNFCCC data interface.
     - [download_data](#climatefinanceunfcccdownloaddownloaddata)
         - [get_unfccc_export()](#climatefinanceunfcccdownloaddownloaddatagetunfcccexport)
@@ -17,6 +13,10 @@ There are two key ways to get data from UNFCCC:
         - [get_unfccc_summary()](#climatefinanceunfcccdownloadgetdatagetunfcccsummary)
         - [get_unfccc_bilateral()](#climatefinanceunfcccdownloadgetdatagetunfcccbilateral)
         - [get_unfccc_multilateral()](#climatefinanceunfcccdownloadgetdatagetunfcccmultilateral)
+- [Manually download](#climatefinanceunfcccmanual) the BR data files (one excel per party)
+    - [read_data]
+    - [pre_process]
+    - [get_files]
 
 
 
@@ -274,9 +274,9 @@ It returns a cleaned DataFrame with clean table 7 data for the specified years a
 
 It does the following:
 - Identifies the first (domestic) and second (USD) currencies.
-- Cleans column names (`clean_table_7_columns`).
-- Cleans channel names (`clean_column_string`).
-- Reshapes table7 data into long format (`reshape_table_7`), with columns for `channel`, `currency`, `indicator`, and `value`. 
+- Cleans column names [clean_table_7_columns](#climatefinanceunfcccmanualpreprocesscleantable7columns).
+- Cleans channel names [clean_column_string](#climatefinanceunfcccmanualpreprocesscleancolumnstring).
+- Reshapes table7 data into long format [reshape_table_7](#climatefinanceunfcccmanualpreprocessreshapetable7), with columns for `channel`, `currency`, `indicator`, and `value`. 
 - Converts `value` into a float [clean_numeric_series](TODO: Add link to clean script).
 - Drops all rows with no value. 
 - Adds columns for the specified `country` (party) and `year`.
@@ -303,8 +303,8 @@ It returns a cleaned DataFrame with clean table 7a data for the specified years 
 
 The steps followed are very similar to `clean_table7()`, as follows: 
 - Identifies the first (domestic) and second (USD) currencies.
-- Cleans the column names using `rename_table_7a_columns`, using the `first_currency` and `second_currency` identified in the earlier step as arguments. 
-- Reshapes table7a data into long format using a partial function of `reshape_table_7x`. This specificly excludes `recipient` and `additional_information` columns, leaving `status`, `funding_source`, `financial_instrument`, `type_of_support`, `channel`, `sector`, `currency`, `indicator`, and `value`. 
+- Cleans the column names using [rename_table_7a_columns](#climatefinanceunfcccmanualpreprocessrenametable7acolumns), using the `first_currency` and `second_currency` identified in the earlier step as arguments. 
+- Reshapes table7a data into long format using [reshape_table_7a](#climatefinanceunfcccmanualpreprocessreshapetable7a). This specificly excludes `recipient` and `additional_information` columns, leaving `status`, `funding_source`, `financial_instrument`, `type_of_support`, `channel`, `sector`, `currency`, `indicator`, and `value`. 
 - Converts `value` to a float (clean_numeric_series) (TODO: Add link to clean script)
 - Drops all rows with no value.
 - Maps multilaterals to correct category (e.g. "Multilateral climate change funds") using `table7a_heading_mapping`
@@ -332,9 +332,9 @@ It returns a cleaned DataFrame with clean table 7b data for the specified years 
 
 The steps followed are very similar to `clean_table7()`, as follows: 
 - Identifies the first (domestic) and second (USD) currencies.
-- Cleans the column names using `rename_table_7b_columns`, using the `first_currency` and `second_currency` identified in the earlier step as arguments.
+- Cleans the column names using [rename_table_7b_columns](#climatefinanceunfcccmanualpreprocessrenametable7b) using the `first_currency` and `second_currency` identified in the earlier step as arguments.
 - Cleans the recipient names (clean_recipient_names) (TODO: Add link to tools script)
-- Reshapes table7b data into long format using a partial function of `reshape_table_7x`. This specifically excludes the `channel` column, leaving `status`, `funding_source`, `financial_instrument`, `type_of_support`, `channel`, `sector`, `currency`, `recipient`, `additional_information`, `indicator`, and `value`. 
+- Reshapes table7b data into long format using [reshape_table_7b](#climatefinanceunfcccmanualpreprocessreshapetable7a). This specifically excludes the `channel` column, leaving `status`, `funding_source`, `financial_instrument`, `type_of_support`, `channel`, `sector`, `currency`, `recipient`, `additional_information`, `indicator`, and `value`. 
 - Converts `value` to a float (clean_numeric_series) (TODO: Add link to clean script)
 - Drops all rows with no value.
 - Adds columns for the specified `country` (party) and `year`.
@@ -402,10 +402,15 @@ It returns a DataFrame of Table 7b with clean column names.
 
 #### climate_finance.unfccc.manual.pre_process.reshape_table_7x()
 
+#### climate_finance.unfccc.manual.pre_process.reshape_table_7a()
+
+MODIFY FOR RESHAPE_TABLE_7A 
 `reshape_table_7x(df: pd.DataFrame, excluded_cols: list[str])` reshapes the dataframes into a long format. 
 The arguement `excluded_cols` is a list of columns to exclude from id_vars in the melt operation.
 
 `reshape_table_7x` is used as a partial function for variables `reshape_table_7a` and `reshape_table_7b`, which exclude different id_vars from the melt operation (and therefore have different arguements for `excluded_cols`). 
+
+
 
 Here is an example of these partial functions:
 
@@ -416,6 +421,9 @@ from climate_finance.unfccc.manual.pre_process import reshape_table_7x
 # Assuming that the data is already loaded into a dataframe called df
 reshape_table_7a = partial(reshape_table_7x, excluded_cols=["recipient", "additional_information"])
 ```
+
+#### climate_finance.unfccc.manual.pre_process.reshape_table_7b()
+
 
 ### climate_finance.unfccc.manual.read_files
 
