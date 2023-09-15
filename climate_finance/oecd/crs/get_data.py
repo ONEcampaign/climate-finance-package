@@ -1,16 +1,10 @@
 import pandas as pd
-from bblocks import clean_numeric_series
-from oda_data import ODAData, read_crs, set_data_path
+from oda_data import read_crs, set_data_path
 
 from climate_finance.config import ClimateDataPath
-from climate_finance.oecd.cleaning_tools.tools import get_crs_official_mapping
+from climate_finance.oecd.cleaning_tools.tools import convert_flows_millions_to_units
 
 set_data_path(ClimateDataPath.raw_data)
-
-MULTISYSTEM_INDICATORS: dict = {
-    "multisystem_multilateral_contributions_disbursement_gross": "disbursements",
-    "multisystem_multilateral_contributions_commitments_gross": "commitments",
-}
 
 
 def _keep_only_allocable_aid(df: pd.DataFrame) -> pd.DataFrame:
@@ -47,6 +41,28 @@ def _get_relevant_crs_columns() -> list:
         "climate_mitigation",
         "climate_adaptation",
     ]
+
+
+def _rename_crs_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Renames certain columns in the CRS dataframe.
+
+    Args:
+        df: A dataframe containing the CRS data.
+
+    Returns:
+        A dataframe with renamed columns.
+    """
+
+    names = {
+        "donor_code": "oecd_donor_code",
+        "donor_name": "oecd_donor_name",
+        "recipient_code": "oecd_recipient_code",
+        "recipient_name": "oecd_recipient_name",
+        "agency_name": "oecd_agency_name",
+    }
+
+    return df.rename(columns=names)
 
 
 def _get_flow_columns() -> list:
@@ -107,24 +123,6 @@ def _replace_missing_climate_with_zero(df: pd.DataFrame, column: str) -> pd.Data
     return df.assign(**{column: lambda d: d[column].replace("nan", "0")})
 
 
-def _convert_flows_millions_to_units(df: pd.DataFrame, flow_columns) -> pd.DataFrame:
-    """
-    Converts flow values from millions to units.
-    Args:
-        df: A dataframe containing the data and the columns on the flow_columns list.
-        flow_columns: A list of column names containing flow values in millions.
-
-    Returns:
-        A dataframe with flow values converted from millions to units.
-
-    """
-    # Convert flow values from millions to units
-    for column in flow_columns:
-        df[column] = df[column] * 1e6
-
-    return df
-
-
 def _add_net_disbursement(df: pd.DataFrame) -> pd.DataFrame:
     """
     Adds a column with net disbursement values.
@@ -139,84 +137,6 @@ def _add_net_disbursement(df: pd.DataFrame) -> pd.DataFrame:
         usd_net_disbursement=lambda d: d.usd_disbursement.fillna(0)
         - d.usd_received.fillna(0)
     )
-
-
-# ---------------------------------------------------------------------------------
-
-
-def _clean_multi_contributions(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean the multilateral contributions dataframe
-
-    Converts to units, renames and keeps only relevant columns
-
-    Args:
-        df (pd.DataFrame): The dataframe to clean.
-        flow_type (str): The flow type (disbursements or commitments).
-
-    """
-
-    # define the columns to keep and their new names
-    columns = {
-        "year": "year",
-        "indicator": "flow_type",
-        "donor_code": "oecd_donor_code",
-        "donor_name": "oecd_donor_name",
-        "channel_code": "oecd_channel_code",
-        "channel_name": "oecd_channel_name",
-        "value": "value",
-    }
-
-    channel_mapping = (
-        get_crs_official_mapping().set_index("channel_code")["channel_name"].to_dict()
-    )
-
-    return (
-        df.pipe(_convert_flows_millions_to_units, flow_columns=["value"])
-        .assign(
-            indicator=lambda d: d.indicator.map(MULTISYSTEM_INDICATORS),
-            channel_name=lambda d: d.channel_code.map(channel_mapping),
-        )
-        .rename(columns=columns)
-        .filter(columns.values(), axis=1)
-        .groupby(
-            [c for c in columns.values() if c != "value"],
-            as_index=False,
-            dropna=False,
-            observed=True,
-        )
-        .sum()
-    )
-
-
-# ---------------------------------------------------------------------------------
-# ---------------------------------------------------------------------------------
-# ---------------------------------------------------------------------------------
-
-
-def get_multilateral_contributions(
-    start_year: int = 2019,
-    end_year: int = 2021,
-) -> pd.DataFrame:
-    """Get the multilateral contributions data from the OECD.
-
-    This script also handles cleaning and reshaping the data.
-
-    Args:
-        start_year (int, optional): The start year. Defaults to 2019.
-        end_year (int, optional): The end year. Defaults to 2021.
-
-    """
-
-    # Create an ODAData object, for the years selected
-    oda = ODAData(years=range(start_year, end_year + 1), include_names=True)
-
-    # Load the right indicator for commitments or disbursements
-    oda.load_indicator(indicators=list(MULTISYSTEM_INDICATORS))
-
-    # Get all the data that has been loaded. Clean the dataframe.
-    data = oda.get_data().pipe(_clean_multi_contributions)
-
-    return data
 
 
 def get_crs_allocable_spending(
@@ -247,14 +167,14 @@ def get_crs_allocable_spending(
     crs = (
         read_crs(years=years)  # Read CRS data
         .pipe(_keep_only_allocable_aid)  # Keep only allocable aid types
-        .pipe(_add_net_disbursement) # Add net disbursement column
+        .pipe(_add_net_disbursement)  # Add net disbursement column
         .filter(columns + flow_columns, axis=1)  # Keep only relevant columns
         .pipe(_set_crs_data_types)  # Set data types
         .pipe(_replace_missing_climate_with_zero, column="climate_mitigation")
         .pipe(_replace_missing_climate_with_zero, column="climate_adaptation")
         .groupby(columns, as_index=False, dropna=False)[flow_columns]
         .sum()
-        .pipe(_convert_flows_millions_to_units, flow_columns=flow_columns)
+        .pipe(convert_flows_millions_to_units, flow_columns=flow_columns)
         .melt(
             id_vars=columns,
             value_vars=flow_columns,
@@ -262,6 +182,7 @@ def get_crs_allocable_spending(
             value_name="value",
         )
         .loc[lambda d: d.value != 0]
+        .pipe(_rename_crs_columns)
         .reset_index(drop=True)
     )
 

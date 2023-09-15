@@ -266,3 +266,21 @@ def add_dac_donor_names(
 def get_crs_official_mapping() -> pd.DataFrame:
     """Get the CRS official mapping file."""
     return pd.read_csv(ClimateDataPath.oecd_cleaning_tools / "crs_channel_mapping.csv")
+
+
+def convert_flows_millions_to_units(df: pd.DataFrame, flow_columns) -> pd.DataFrame:
+    """
+    Converts flow values from millions to units.
+    Args:
+        df: A dataframe containing the data and the columns on the flow_columns list.
+        flow_columns: A list of column names containing flow values in millions.
+
+    Returns:
+        A dataframe with flow values converted from millions to units.
+
+    """
+    # Convert flow values from millions to units
+    for column in flow_columns:
+        df[column] = df[column] * 1e6
+
+    return df
