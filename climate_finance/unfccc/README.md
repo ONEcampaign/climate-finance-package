@@ -4,8 +4,19 @@ This module contains scripts for downloading and pre-processing data from UNFCCC
 
 There are two key ways to get data from UNFCCC:
 
-- Manually download the BR data files (one excel per party)
-- Use an automated tool to download the data from the UNFCCC data interface.
+- [Manually download](#climatefinanceunfcccmanual) the BR data files (one excel per party)
+    - [read_data]
+    - [pre_process]
+    - [get_data]
+- Use an [automated tool](#climatefinanceunfcccdownload) to download the data from the UNFCCC data interface.
+    - [download_data](#climatefinanceunfcccdownloaddownloaddata)
+        - [get_unfccc_export()](#climatefinanceunfcccdownloaddownloaddatagetunfcccexport)
+    - [pre_process](#climatefinanceunfcccdownloadpreprocess)
+        - [clean_unfccc()](#climatefinanceunfcccdownloadpreprocesscleanunfccc)
+    - [get_data](#climatefinanceunfcccdownloadgetdata)
+        - [get_unfccc_summary()](#climatefinanceunfcccdownloadgetdatagetunfcccsummary)
+        - [get_unfccc_bilateral()](#climatefinanceunfcccdownloadgetdatagetunfcccbilateral)
+        - [get_unfccc_multilateral()](#climatefinanceunfcccdownloadgetdatagetunfcccmultilateral)
 
 ## climate_finance.unfccc.download
 
@@ -14,7 +25,8 @@ interface.
 
 ### climate_finance.unfccc.download.download_data
 
-`get_data` deals with getting the data from the Data Interface website. It uses the `selenium` package to interact with
+`download_data` deals with getting the data from the Data Interface website. It uses the `selenium` package to interact
+with
 the website and download the data. The downloaded data is saved as Excel files.
 
 **Settings**
@@ -206,6 +218,31 @@ from climate_finance.unfccc.download.get_data import get_unfccc_bilateral
 df = get_unfccc_bilateral(start_year, end_year)
 ```
 
+
+---
+
+
+## climate_finance.unfccc.manual
+The `manual` module contains functions to manually clean the UNFCCC data. It is assumed that you have
+downloaded the BR data from the UNFCCC data and saved it as individual Excel files for each party.
+
+The files should be stored in a folder which only contains data from the same BR. In other words,
+the scripts assume one folder per BR.
+
+
+
+
+
+
+---
+
+
+
+## climate_finance.unfccc.cleaning_tools
+The cleaning_tools module contains functions to clean the UNFCCC data.
+
+TODO: TOC and additional info
+
 ### climate_finance.unfccc.cleaning_tools.tools
 
 The tools module in `cleaning_tools` provides functions to process and clean the downloaded UNFCCC data.
@@ -346,19 +383,19 @@ Cleaning the UNFCCC channel names isn't that straightforward because the channel
 The functions in this module try to automate the process as much as possible by following a 3-part strategy.
 
 1. The first part of the strategy is to use the official CRS mapping to match channel names to channel codes.
-In order to do that, we clean the UNFCCC channel names and the official CRS channel names, removing punctuation,
-lowercasing, etc. Then we try to match the cleaned UNFCCC channel names to the cleaned CRS channel names directly.
+   In order to do that, we clean the UNFCCC channel names and the official CRS channel names, removing punctuation,
+   lowercasing, etc. Then we try to match the cleaned UNFCCC channel names to the cleaned CRS channel names directly.
 2. The second part of the strategy is to do a fuzzy match between the clean UNFCCC channel names and the clean CRS
-channel names. This allows for some flexibility for minor differences in spelling or for smaller words to be missing.
+   channel names. This allows for some flexibility for minor differences in spelling or for smaller words to be missing.
 3. The third part of the strategy is to use regular expressions to match the UNFCCC channel names to the CRS channel
-codes. This is the most flexible part of the strategy. Generating the regular expressions is potentially a very
-time-consuming process, so we generate most of them automatically.
-
+   codes. This is the most flexible part of the strategy. Generating the regular expressions is potentially a very
+   time-consuming process, so we generate most of them automatically.
 
 _Generating the regular expressions_:
 We create the regular expressions by taking the individual words in a channel name (other
-than very common words) and generating regular expressions that look for all (or a majority) the words in the UNFCCC channel 
-name, in any order. 
+than very common words) and generating regular expressions that look for all (or a majority) the words in the UNFCCC
+channel
+name, in any order.
 
 We also have a manual list of additional regular expressions for channel codes which have a UNFCCC
 name that does not match its CRS name.
@@ -376,7 +413,7 @@ Usage:
 
 ```python
 # Import get_crs_official_mapping
-from climate_finance.unfccc.cleaning_tools.channels import get_crs_official_mapping
+from climate_finance.oecd.cleaning_tools.tools import get_crs_official_mapping
 
 # Get the CRS official mapping file
 mapping_df = get_crs_official_mapping()
@@ -433,6 +470,7 @@ The function will clean the channel names and drop any duplicates. It will only 
 names column (as a dataframe).
 
 #### climate_finance.unfccc.cleaning_tools.channels.channel_to_code()
+
 /
 `channel_to_code(map_to: str)` is a function that generates a dictionary mapping channel names or
 acronyms to their corresponding channel codes. The argument `map_to` specifies whether to map to
@@ -534,5 +572,7 @@ from climate_finance.unfccc.cleaning_tools.channels import generate_channel_mapp
 channel_mapping_dict = generate_channel_mapping_dictionary(
     raw_data=df, channel_names_column='channel',
     export_missing_path='missing_channels.csv'
-    )
+)
 ```
+
+---

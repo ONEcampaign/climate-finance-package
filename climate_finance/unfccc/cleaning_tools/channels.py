@@ -4,8 +4,7 @@ import string
 import pandas as pd
 from thefuzz import process
 
-from climate_finance.config import ClimateDataPath
-
+from climate_finance.oecd.cleaning_tools.tools import get_crs_official_mapping
 
 ADDITIONAL_PATTERNS: dict[str, int] = {
     r"\bworld bank\b": 44000,
@@ -42,12 +41,8 @@ ADDITIONAL_PATTERNS: dict[str, int] = {
     r"\bmontreal fund\b": 47078,
     r"\bspecial climate change fund\b": 47130,
     r"\devlopment programme\b": 41114,
+    r"\bfund for special operations (fso)\b": 46013,
 }
-
-
-def get_crs_official_mapping() -> pd.DataFrame:
-    """Get the CRS official mapping file."""
-    return pd.read_csv(ClimateDataPath.oecd_cleaning_tools / "crs_channel_mapping.csv")
 
 
 def clean_string(text: str) -> str:
@@ -95,8 +90,7 @@ def raw_data_to_unique_channels(
 
     """
 
-    return (
-        # Get the channel names column, clean the strings, and drop duplicates
+    return (  # Get the channel names column, clean the strings, and drop duplicates
         raw_data.filter([channel_names_column], axis=1)
         .assign(clean_channel=lambda d: d[channel_names_column].apply(clean_string))
         .drop_duplicates(subset=["channel"])
