@@ -22,42 +22,35 @@ UNFCCC_URL: str = "https://www4.unfccc.int/sites/br-di/Pages/FinancialSupport"
 # Settings for the "summary" view of the data
 SUMMARY_SETTINGS = {
     # The full URL to this section
-    "url": f"{UNFCCC_URL}Summary.aspx",
-    # The ID of the dropdown menu
+    "url": f"{UNFCCC_URL}Summary.aspx",  # The ID of the dropdown menu
     "br_dropdown": (
         "ctl00_PlaceHolderMain_cContentTableFinancialSupportSummaryControl"
         "_comboDataSource_Input"
-    ),
-    # The XPath to the dropdown menu options, by BR
+    ),  # The XPath to the dropdown menu options, by BR
     "br_select": lambda d: (
         "//*["
         '@id="ctl00_PlaceHolderMain_cContentTableFinancialSupportSummaryControl'
         '_comboDataSource_DropDown"]/div/ul/'
         f"li[{d}]/label"
-    ),
-    # The ID of the search button
+    ),  # The ID of the search button
     "search_button": (
         "ctl00_PlaceHolderMain_cContentTableFinancialSupport"
         "SummaryControl_rbApplyFilter_input"
-    ),
-    # The ID of the export button
+    ),  # The ID of the export button
     "export_button": (
         "ctl00_PlaceHolderMain_cContentTableFinancialSupport"
         "SummaryControl_rbExport_input"
     ),
     # The name of the folder where the files will be saved
-    "folder_name": "unfccc_summary",
-    # The name of the file that will be saved
-    "file_name": "FinancialSupportSummary",
-    # The time to wait for the page to load
+    "folder_name": "unfccc_summary",  # The name of the file that will be saved
+    "file_name": "FinancialSupportSummary",  # The time to wait for the page to load
     "wait_time": 25,
 }
 
 # Settings for the "multilateral" view of the data
 MULTILATERAL_SETTINGS = {
     # The full URL to this section
-    "url": f"{UNFCCC_URL}.aspx?mode=1",
-    # The ID of the dropdown menu
+    "url": f"{UNFCCC_URL}.aspx?mode=1",  # The ID of the dropdown menu
     "br_dropdown": (
         "ctl00_PlaceHolderMain_cContentTableFinancialSupport"
         "Control_comboDataSource_Input"
@@ -68,8 +61,7 @@ MULTILATERAL_SETTINGS = {
         '@id="ctl00_PlaceHolderMain_cContentTableFinancialSupportControl'
         '_comboDataSource_DropDown"]/div/ul/'
         f"li[{d}]/label"
-    ),
-    # The ID of the search button
+    ),  # The ID of the search button
     "search_button": (
         "ctl00_PlaceHolderMain_cContentTableFinancialSupportControl_rbApplyFilter_input"
     ),
@@ -78,17 +70,14 @@ MULTILATERAL_SETTINGS = {
         "ctl00_PlaceHolderMain_cContentTableFinancialSupportControl_rbExport_input"
     ),
     # The name of the folder where the files will be saved
-    "folder_name": "unfccc_multilateral",
-    # The name of the file that will be saved
-    "file_name": "FinancialContributionsMultilateral",
-    # The time to wait for the page to load
+    "folder_name": "unfccc_multilateral",  # The name of the file that will be saved
+    "file_name": "FinancialContributionsMultilateral",  # The time to wait for the page to load
     "wait_time": 20,
 }
 
 BILATERAL_SETTINGS = {
     # The full URL to this section
-    "url": f"{UNFCCC_URL}.aspx?mode=2",
-    # The ID of the dropdown menu
+    "url": f"{UNFCCC_URL}.aspx?mode=2",  # The ID of the dropdown menu
     "br_dropdown": (
         "ctl00_PlaceHolderMain_cContentTableFinancialSupport"
         "Control_comboDataSource_Input"
@@ -99,8 +88,7 @@ BILATERAL_SETTINGS = {
         '@id="ctl00_PlaceHolderMain_cContentTableFinancialSupportControl'
         '_comboDataSource_DropDown"]/div/ul/'
         f"li[{d}]/label"
-    ),
-    # The ID of the party dropdown menu
+    ),  # The ID of the party dropdown menu
     "party_dropdown": (
         "ctl00_PlaceHolderMain_cContentTableFinancialSupportControl_comboParties_Input"
     ),
@@ -113,8 +101,7 @@ BILATERAL_SETTINGS = {
     "all_parties": (
         '//*[@id="ctl00_PlaceHolderMain_cContentTableFinancialSupport'
         'Control_comboParties_DropDown"]/div/div'
-    ),
-    # The ID of the search button
+    ),  # The ID of the search button
     "search_button": (
         "ctl00_PlaceHolderMain_cContentTableFinancialSupportControl_rbApplyFilter_input"
     ),
@@ -127,10 +114,9 @@ BILATERAL_SETTINGS = {
         "ctl00_PlaceHolderMain_cContentTableFinancialSupportControl_rbExport_input"
     ),
     # The name of the file that will be saved
-    "file_name": "FinancialContributionsBilateral",
+    "file_name": "FinancialContributionsBilateralOther",
     # The name of the folder where the files will be saved
-    "folder_name": "unfccc_bilateral",
-    # The time to wait for the page to load
+    "folder_name": "unfccc_bilateral",  # The time to wait for the page to load
     "wait_time": 25,
 }
 
@@ -189,10 +175,26 @@ def _get_driver(folder: str) -> webdriver.chrome:
 
     # Create options
     options = webdriver.ChromeOptions()
+
+    # check that download folder exists
+    if not os.path.exists(f"{SAVE_FILES_TO}/{folder}"):
+        try:
+            os.makedirs(f"{SAVE_FILES_TO}/{folder}")
+        except OSError:
+            logger.error(
+                f"The download folder must exist. Tried creating it"
+                f"but it wasn't possible ({SAVE_FILES_TO}/{folder})"
+            )
+
+    else:
+        logger.debug(f"Downloading data to {SAVE_FILES_TO}/{folder}")
+
     # Set download folder
     prefs = {"download.default_directory": f"{SAVE_FILES_TO}/{folder}"}
     # Add arguments and options to options
     options.add_argument("--no-sandbox")
+    options.add_argument("--headless")  # Run in headless mode
+
     options.add_experimental_option("prefs", prefs)
 
     # Get driver
@@ -250,6 +252,9 @@ def _check_download_and_rename(
 
     """
     # Check if download successful
+    if os.path.exists(f"{SAVE_FILES_TO}/{folder_name}/{base_name}.xlsx"):
+        return True
+
     try:
         # Look for files that match the first part of the base name
         matching = [
@@ -286,6 +291,7 @@ def _check_download_and_rename(
             f"{SAVE_FILES_TO}/{folder_name}/{old_name}",
             f"{SAVE_FILES_TO}/{folder_name}/{new_name}",
         )
+        logger.debug(f"Successfully downloaded {new_name}")
     except FileExistsError:
         print(f"File {new_name} already exists")
         pass
@@ -321,6 +327,7 @@ def _get_file(
 
     # Check if the download was successful
     if not _check_download_and_rename(base_name, folder_name=folder_name, party=party):
+        logger.debug(f"Download for {party} not successful. Trying again.")
         _click_download(driver, button_id, wait)
 
     if not _check_download_and_rename(base_name, folder_name=folder_name):
@@ -384,6 +391,7 @@ def get_unfccc_export(
 
     # Get page
     driver.get(settings["url"])
+    logger.debug(f"Getting {settings['url']}")
 
     if party is None:
         # Select BRs
@@ -402,6 +410,21 @@ def get_unfccc_export(
         )
     else:
         for d_ in party:
+            # Check if file already exists
+            if _check_download_and_rename(
+                base_name=f'{d_}_{settings["file_name"]}',
+                folder_name=settings["folder_name"],
+            ):
+                # If it does exist, delete it so it can be downloaded again
+                os.remove(
+                    f"{SAVE_FILES_TO}/{settings['folder_name']}/{d_}_{settings['file_name']}.xlsx"
+                )
+                logger.debug(f"A file for {d_} alredy exists.")
+                logger.debug(f"Deleted {d_}_{settings['file_name']}.xlsx")
+
+            # Announce download
+            logger.info(f"Downloading {d_}")
+
             # Select BRs
             _select_brs(driver, settings=settings, br=br)
 
@@ -423,3 +446,57 @@ def get_unfccc_export(
 
             # Refresh page
             driver.refresh()
+
+
+def download_unfccc_summary(br: list = None, party: list[str] = None) -> None:
+    """Download the UNFCCC summary data.
+
+    Args:
+        br (list, optional): The BR version(s) to download. Defaults to None.
+        If None, BRs 4 and 5 will be downloaded.
+
+        party (list[str], optional): The donor(s) to download. Defaults to None.
+        If donors are specified, all will be downloaded.
+
+    """
+    logger.info("Downloading UNFCCC summary data. This may take a while....")
+    get_unfccc_export(settings=SUMMARY_SETTINGS, br=br, party=party)
+    logger.info("Successfully downloaded UNFCCC summary data.")
+
+
+def download_unfccc_bilateral(br: list = None, party: list[str] = None) -> None:
+    """Download the UNFCCC bilateral data.
+
+    Args:
+        br (list, optional): The BR version(s) to download. Defaults to None.
+        If None, BRs 4 and 5 will be downloaded.
+
+        party (list[str], optional): The donor(s) to download. Defaults to None.
+        If donors are specified, all will be downloaded, one at a time.
+
+    """
+    if party is None:
+        party = list(PARTY_ID.keys())
+
+    logger.info("Downloading UNFCCC bilateral data. This may take a while....")
+    get_unfccc_export(settings=BILATERAL_SETTINGS, br=br, party=party)
+    logger.info("Successfully downloaded UNFCCC bilateral data.")
+
+
+def download_unfccc_multilateral(br: list = None, party: list[str] = None) -> None:
+    """Download the UNFCCC multilateral data.
+
+    Args:
+        br (list, optional): The BR version(s) to download. Defaults to None.
+        If None, BRs 4 and 5 will be downloaded.
+
+        party (list[str], optional): The donor(s) to download. Defaults to None.
+        If donors are specified, all will be downloaded, one at a time.
+
+    """
+    if party is None:
+        party = list(PARTY_ID.keys())
+
+    logger.info("Downloading UNFCCC multilateral data. This may take a while....")
+    get_unfccc_export(settings=MULTILATERAL_SETTINGS, br=br, party=party)
+    logger.info("Successfully downloaded UNFCCC multilateral data.")
