@@ -36,7 +36,7 @@ def test_get_driver():
             mock_webdriver.call_args[1]["options"], webdriver.ChromeOptions
         )
         options = mock_webdriver.call_args[1]["options"]
-        assert options.arguments == ["--no-sandbox"]
+        assert options.arguments == ["--no-sandbox", "--headless"]
         assert options.experimental_options["prefs"] == {
             "download.default_directory": f"{SAVE_FILES_TO}/dummy_folder"
         }
@@ -69,6 +69,6 @@ def test_check_download_and_rename():
 
             # Test when party is not in the file
             assert (
-                _check_download_and_rename("FinancialSupportSummary", "", "party3")
+                _check_download_and_rename("T_FinancialSupportSummary", "", "party3")
                 is False
             )
