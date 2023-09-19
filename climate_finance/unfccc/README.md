@@ -226,26 +226,67 @@ df = get_unfccc_bilateral(start_year, end_year)
 
 ## climate_finance.unfccc.manual
 The `manual` module contains functions to manually clean the UNFCCC data. It is assumed that you have
-downloaded the BR data (CTF Tables) from the UNFCCC website and saved as individual Excel files for each party.
+downloaded the BR data (CTF Tables) from the UNFCCC website and saved as individual Excel files for each party in a specified folder path.
 
-The files should be stored in a folder which only contains data from BRs of the same year. In other words,
-the scripts assume one folder per set of BRs.
+Users should save all BR files as the specific party name in the `..raw_data` folder (`../climate_finance/.raw_data`) before using the manual module. Files should be saved as the respective party names, outlined here (TO DO: add link to the file that specifies how to name parties/file names).
 
+### climate_finance.unfccc.manual.read_files
+
+The `read_files` sub-module deals with reading in the raw data from the UNFCCC biennial reports saved to the `folder_path`. 
+
+#### climate_finance.unfccc.manual.read_files.load_br_files_tables7()
+
+`load_br_files_tables7(folder_path: str | pathlib.Path)` loads all Table 7s (7, 7a and 7b) from the biennial reports saved in the folder path into a dictionary of DataFrames. 
+
+The arguement `folder_path` can either be inputted as a string (str) or a pathlib.Path object.
+
+The function passes the `folder_path` and `table_pattern="Table 7"` to the helper function `_load_br_files()`. 
+The helper function:
+- Creates a dictionary of all the parties available in the `folder_path` (using the csv file names. See (ADD SAME LINK AS ABOVE) for standardised party names).
+- Loops through all of the sheets within these BRs, and reads all of the "Table 7" tabs into the dictionary as DataFrames. 
+
+The result is a dictionary with all the parties saved as `str` and their corresponding table 7s saved as pandas DataFrames. 
+
+Here is an example of how to use `load_br_files_tables7()`
+
+```python
+# import load_br_files_tables7()
+from climate_finance.unfccc.manual.read_data import load_br_files_tables7
+
+# create an empty dictionary
+br_files = {}
+
+# populate dictionary with load_br_files_tables7
+br_files = load_br_files_tables7(folder_path)
+```
 
 ### climate_finance.unfccc.manual.get_data
 
-The `get_data` sub-module contains the pipeline functions that read, process and output clean Table 7 data from the Biennial Reports. There are three pipeline functions, one for each table 7. These pipeline functions - `table7_pipeline`, `table7a_pipeline` and `table7b_pipeline` - all return the helper function `_table7x_pipeline`
+The `get_data` sub-module contains the pipeline functions that read, process and output clean Table 7 data from the Biennial Reports. There are three pipeline functions, one for each table 7: `table7_pipeline`, `table7a_pipeline` and `table7b_pipeline`.
 
-#### climate_finance.unfccc.manual.get_data._table7x_pipeline()
+#### climate_finance.unfccc.manual.get_data._table7_pipeline()
 
-`_table7x_pipeline(folder_path: str | pathlib.Path, table_name: str, clean_func: callable)` creates a single DataFrame of table 7 data. 
+`table7_pipeline(folder_path: str | pathlib.Path)` creates a single DataFrame of table 7 data.
 
-The function takes three arguements:
+The arguement `folder_path` can either be inputted as a string (str) or a pathlib.Path object.
+
+The function passes the relevant arguements to the helper function `_load_br_files()` to 'get' Table 7 data.
+
+`_load_br_files(folder_path: str | pathlib.Path, table_name: str, clean_func: callable)` has the following three arguements:
 - `folder_path`: the location of the pre-downloaded Biennial Reports. The path can be inputted as either a string (str) or a pathlib.Path object.
-- `table_name`: the name of the required table. This is specified in the three pipeline functions. Options: `Table 7`, `Table 7(a)`, or `Table 7(b)`.
-- `clean_func`: the cleaning pipeline function in the `climate_finance.unfccc.manual.pre_process` sub-module for the specific table. This is specified in the three pipeline functions. Options: `clean_table7`, `clean_table7a`, and `clean_table7b`.
+- `table_name`: the name of the required table. In this case: `Table 7`.
+- `clean_func`: the cleaning pipeline function in the `climate_finance.unfccc.manual.pre_process` sub-module. In this case: [clean_table7](#climatefinanceunfcccmanualpreprocesscleantable7).
 
-It returns a single DataFrame of the specified table7 data, depending on the specified table. 
+It returns a single DataFrame of table7 data. It does this by:
+- Loading the BR files using [load_br_files_tables7](#climatefinanceunfcccmanualreadfilesloadbrfilestables7)
+
+YOU GOT TO HERE. 
+
+
+
+
+
+
 
 For example, if Table 7a data is required: 
 
@@ -425,15 +466,6 @@ reshape_table_7a = partial(reshape_table_7x, excluded_cols=["recipient", "additi
 #### climate_finance.unfccc.manual.pre_process.reshape_table_7b()
 
 
-### climate_finance.unfccc.manual.read_files
-
-The `read_files` sub-module deals with reading in the war data from the UNFCCC biennial reports. 
-
-#### climate_finance.unfccc.manual.read_files.load_br_files_tables7()
-
-`load_br_files_tables7(folder_path: str | pathlib.Path)` loads all "Tables 7" from the biennial reports for a given biennial report. This function will look for all Excel files in the folder path and load them into a dictionary of DataFrames. 
-
-The arguement `folder_path` can either be inputted as a string (str) or a pathlib.Path object.
 
 
 ---
