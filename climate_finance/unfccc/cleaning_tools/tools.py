@@ -1,5 +1,6 @@
 import re
 
+import numpy as np
 import pandas as pd
 from bblocks import convert_id
 
@@ -9,7 +10,8 @@ MITIGATION = "Mitigation"
 OTHER = "Other"
 
 COLUMN_MAPPING: dict = {
-    "Party": "country",
+    "Party": "party",
+    "country": "party",
     "Status": "status",
     "Funding source": "funding_source",
     "Financial instrument": "financial_instrument",
@@ -23,6 +25,7 @@ COLUMN_MAPPING: dict = {
     "Data source": "br",
     "Recipient country/region": "recipient",
     "Project/programme/activity": "activity",
+    "additional_information": "activity",
 }
 
 STATUS_MAPPING: dict = {
@@ -31,6 +34,22 @@ STATUS_MAPPING: dict = {
     "pledged": "committed",
     "committed": "committed",
 }
+
+BILATERAL_COLUMNS = [
+    "year",
+    "party",
+    "br",
+    "indicator",
+    "status",
+    "funding_source",
+    "financial_instrument",
+    "type_of_support",
+    "sector",
+    "recipient",
+    "activity",
+    "currency",
+    "value",
+]
 
 
 def clean_currency(df: pd.DataFrame, currency_column: str = "currency") -> pd.DataFrame:
@@ -93,31 +112,27 @@ def harmonise_type_of_support(
         df (pd.DataFrame): The dataframe with harmonised 'type_of_support' column.
     """
 
-    def _clean_support(string: str) -> str | None:
-        """Function to clean the type_of_support column.
+    # Handle None values and convert to lowercase
+    series = df[type_of_support_column].fillna("unknown").str.lower()
 
-        Args:
-            string (str): The original string.
+    # Create masks for each condition
+    mask_cross_cutting = series.str.contains("cross-cutting")
+    mask_adaptation = series.str.contains("adaptation")
+    mask_mitigation = series.str.contains("mitigation")
+    mask_other = series.str.contains("other")
 
-        Returns:
-            string (str): The cleaned string.
-        """
-        if string is None:
-            return string
-        string = string.lower()
-        if "cross-cutting" in string:
-            return CROSS_CUTTING
-        if "adaptation" in string:
-            return ADAPTATION
-        if "mitigation" in string:
-            return MITIGATION
-        if "other" in string:
-            return OTHER
-        return string
+    # Use np.select to conditionally assign new values
+    conditions = [mask_cross_cutting, mask_adaptation, mask_mitigation, mask_other]
+    choices = [CROSS_CUTTING, ADAPTATION, MITIGATION, OTHER]
 
-    return df.assign(
-        type_of_support=lambda d: d[type_of_support_column].apply(_clean_support)
+    cleaned_series = pd.Series(np.select(conditions, choices, default=series)).replace(
+        "unknown", pd.NA
     )
+
+    # Update the DataFrame
+    df = df.assign(**{type_of_support_column: cleaned_series})
+
+    return df
 
 
 def fill_financial_instrument_gaps(
@@ -204,3 +219,40 @@ def clean_recipient_names(recipients_col: pd.Series) -> pd.Series:
         to_type="name",
         additional_mapping=additional_mapping,
     )
+
+
+def clean_funding_source(
+    df: pd.DataFrame, funding_source_column: str = "funding_source"
+) -> pd.DataFrame:
+    """Clean the funding source column
+
+    Args:
+        df (pd.DataFrame): The original dataframe
+        funding_source_column (str, optional): The name of the funding source column.
+        Defaults to "funding_source".
+
+    Returns:
+        pd.DataFrame: The dataframe with cleaned funding source column
+    """
+    # Handle missing values and convert to lowercase
+    df[funding_source_column] = df[funding_source_column].fillna("unknown").str.lower()
+
+    # Handle 'other' cases and 'oda/oof'
+    mask_other = df[funding_source_column].str.contains("other")
+    mask_oda = df[funding_source_column].str.contains("oda")
+    mask_oof = df[funding_source_column].str.contains("oof")
+    mask_len3 = df[funding_source_column].str.len() == 3
+
+    df[funding_source_column] = (
+        df[funding_source_column]
+        .mask(mask_len3, df[funding_source_column])
+        .mask(mask_other & mask_oda & mask_oof, "oda/oof")
+        .mask(mask_other & mask_oda & ~mask_oof, "oda")
+        .mask(mask_other & ~mask_oda & mask_oof, "oof")
+        .mask(mask_other & ~mask_oda & ~mask_oof, "other")
+        .mask(mask_oda & mask_oof, "oda/oof")
+        .mask(mask_oda & ~mask_oof, "oda")
+        .mask(~mask_oda & mask_oof, "oof")
+    )
+
+    return df
