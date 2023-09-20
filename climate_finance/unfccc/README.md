@@ -279,14 +279,36 @@ The function passes the relevant arguements to the helper function `_load_br_fil
 
 It returns a single DataFrame of table7 data. It does this by:
 - Loading the BR files using [load_br_files_tables7](#climatefinanceunfcccmanualreadfilesloadbrfilestables7)
+- Cleaning the data using the specified `clean_func` (cleaning each Table 7 by party and year). In this case: [clean_table7](#climatefinanceunfcccmanualpreprocesscleantable7)
+- Merging the cleaned DataFrames together. 
 
-YOU GOT TO HERE. 
+For example, if Table 7 data is required: 
 
+```python
+# import table7_pipeline
+from climate_finance.unfccc.manual.get_data import table7_pipeline
 
+# run table7_pipeline
+df =  table7_pipeline(folder_path: str | pathlib.Path)
+```
 
+#### climate_finance.unfccc.manual.get_data._table7a_pipeline()
 
+`table7a_pipeline(folder_path: str | pathlib.Path)` creates a single DataFrame of table 7a data.
 
+The arguement `folder_path` can either be inputted as a string (str) or a pathlib.Path object.
 
+The function passes the relevant arguements to the helper function `_load_br_files()` to 'get' Table 7a data.
+
+`_load_br_files(folder_path: str | pathlib.Path, table_name: str, clean_func: callable)` has the following three arguements:
+- `folder_path`: the location of the pre-downloaded Biennial Reports. The path can be inputted as either a string (str) or a pathlib.Path object.
+- `table_name`: the name of the required table. In this case: `Table 7a`.
+- `clean_func`: the cleaning pipeline function in the `climate_finance.unfccc.manual.pre_process` sub-module. In this case: [clean_table7a](#climatefinanceunfcccmanualpreprocesscleantable7a).
+
+It returns a single DataFrame of table7a data. It does this by:
+- Loading the BR files using [load_br_files_tables7a](#climatefinanceunfcccmanualreadfilesloadbrfilestables7a)
+- Cleaning the data using the specified `clean_func` (cleaning each Table 7a by party and year). In this case: [clean_table7a](#climatefinanceunfcccmanualpreprocesscleantable7a)
+- Merging the cleaned DataFrames together. 
 
 For example, if Table 7a data is required: 
 
@@ -294,14 +316,41 @@ For example, if Table 7a data is required:
 # import table7a_pipeline
 from climate_finance.unfccc.manual.get_data import table7a_pipeline
 
+# run table7a_pipeline
 df =  table7a_pipeline(folder_path: str | pathlib.Path)
+```
+
+#### climate_finance.unfccc.manual.get_data._table7b_pipeline()
+
+`table7b_pipeline(folder_path: str | pathlib.Path)` creates a single DataFrame of table 7b data.
+
+The arguement `folder_path` can either be inputted as a string (str) or a pathlib.Path object.
+
+The function passes the relevant arguements to the helper function `_load_br_files()` to 'get' Table 7b data.
+
+`_load_br_files(folder_path: str | pathlib.Path, table_name: str, clean_func: callable)` has the following three arguements:
+- `folder_path`: the location of the pre-downloaded Biennial Reports. The path can be inputted as either a string (str) or a pathlib.Path object.
+- `table_name`: the name of the required table. In this case: `Table 7b`.
+- `clean_func`: the cleaning pipeline function in the `climate_finance.unfccc.manual.pre_process` sub-module. In this case: [clean_table7b](#climatefinanceunfcccmanualpreprocesscleantable7b).
+
+It returns a single DataFrame of table7b data. It does this by:
+- Loading the BR files using [load_br_files_tables7b](#climatefinanceunfcccmanualreadfilesloadbrfilestables7b)
+- Cleaning the data using the specified `clean_func` (cleaning each Table 7b by party and year). In this case: [clean_table7b](#climatefinanceunfcccmanualpreprocesscleantable7b)
+- Merging the cleaned DataFrames together. 
+
+For example, if Table 7b data is required: 
+
+```python
+# import table7b_pipeline
+from climate_finance.unfccc.manual.get_data import table7b_pipeline
+
+# run table7b_pipeline
+df =  table7b_pipeline(folder_path: str | pathlib.Path)
 ```
 
 ### climate_finance.unfccc.manual.pre_process
 
 The `pre-process` sub-module deals with the basic pre-processing of the downloaded data. The data available in the BR files requires significant cleaning before it can be used. There are three pipeline functions to do this: `clean_table7`, `clean_table7a`, and `clean_table7b`. 
-
-The functions used within these pipelines are explained below the pipeline functions. 
 
 #### climate_finance.unfccc.manual.pre_process.clean_table7()
 
@@ -318,7 +367,7 @@ It does the following:
 - Cleans column names [clean_table_7_columns](#climatefinanceunfcccmanualpreprocesscleantable7columns).
 - Cleans channel names [clean_column_string](#climatefinanceunfcccmanualpreprocesscleancolumnstring).
 - Reshapes table7 data into long format [reshape_table_7](#climatefinanceunfcccmanualpreprocessreshapetable7), with columns for `channel`, `currency`, `indicator`, and `value`. 
-- Converts `value` into a float [clean_numeric_series](TODO: Add link to clean script).
+- Converts `value` into a float [clean_numeric_series](TODO: Add link to clean script from bblocks).
 - Drops all rows with no value. 
 - Adds columns for the specified `country` (party) and `year`.
 
