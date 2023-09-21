@@ -45,7 +45,10 @@ def _check_years(data: pd.DataFrame, start_year: int, end_year: int) -> None:
     """
 
     # Get the list of years in the data
-    data_years = data["Year"].unique()
+    try:
+        data_years = data["Year"].unique()
+    except KeyError:
+        data_years = data["year"].unique()
 
     # Check that the right years were included
     missing_years = [y for y in range(start_year, end_year + 1) if y not in data_years]
@@ -71,7 +74,7 @@ def _check_parties(data: pd.DataFrame, party: str | list[str]) -> None:
     """
 
     # Get the list of parties in the data
-    data_parties = data["party"].unique()
+    data_parties = data["Party"].unique()
 
     # Check that the right parties were included
     missing_parties = [p for p in party if p not in data_parties]
@@ -82,3 +85,32 @@ def _check_parties(data: pd.DataFrame, party: str | list[str]) -> None:
             f"The available data did not include the following parties {missing_parties}.\n"
             "To make sure they are included, redownload the data"
         )
+
+
+def check_unfccc_data(
+    df: pd.DataFrame,
+    party: str | list[str],
+    br: str | list[int],
+    start_year: int,
+    end_year: int,
+) -> None:
+    """
+    Function to check that the right data was included in the UNFCCC data.
+    Args:
+        df: The data to check
+        party: The party(ies) to check
+        br: The BR(s) to check
+        start_year: The start year to check
+        end_year: The end year to check
+    """
+
+    # Check that the right BRs were included
+    if br is not None:
+        _check_brs(data=df, br=br)
+
+    # Check that the right years were included
+    _check_years(data=df, start_year=start_year, end_year=end_year)
+
+    # Check that the right parties were included (if specific parties requested)
+    if party is not None:
+        _check_parties(data=df, party=party)

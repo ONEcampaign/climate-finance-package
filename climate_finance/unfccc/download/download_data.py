@@ -389,7 +389,7 @@ def get_unfccc_export(
 
     # If no BRs are selected, select 4 and 5
     if br is None:
-        br = [4, 5]
+        br = [3, 4, 5]
 
     # If only one BR is selected, make it a list
     if isinstance(br, int):
@@ -500,7 +500,10 @@ def download_unfccc_bilateral(
     logger.info("Successfully downloaded UNFCCC bilateral data.")
 
 
-def download_unfccc_multilateral(br: list = None, party: list[str] = None) -> None:
+def download_unfccc_multilateral(
+    br: list = None,
+    directory: pathlib.Path = ClimateDataPath.raw_data / "unfccc_data_interface_files",
+) -> None:
     """Download the UNFCCC multilateral data.
 
     Args:
@@ -510,10 +513,12 @@ def download_unfccc_multilateral(br: list = None, party: list[str] = None) -> No
         party (list[str], optional): The donor(s) to download. Defaults to None.
         If donors are specified, all will be downloaded, one at a time.
 
-    """
-    if party is None:
-        party = list(PARTY_ID)
+        directory (pathlib.Path, optional): The directory where the data is stored.
 
+    """
     logger.info("Downloading UNFCCC multilateral data. This may take a while....")
-    get_unfccc_export(settings=MULTILATERAL_SETTINGS, br=br, party=party)
+
+    get_unfccc_export(
+        settings=MULTILATERAL_SETTINGS, br=br, party=None, directory=directory
+    )
     logger.info("Successfully downloaded UNFCCC multilateral data.")
