@@ -102,8 +102,8 @@ def test_harmonise_type_of_support():
                 CROSS_CUTTING,
                 OTHER,
                 MITIGATION,
-                "unknown",
-                None,
+                pd.NA,
+                pd.NA,
             ],
         }
     )
