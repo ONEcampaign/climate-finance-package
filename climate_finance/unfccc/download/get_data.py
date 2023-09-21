@@ -9,14 +9,13 @@ from climate_finance.unfccc.cleaning_tools.tools import (
     MULTILATERAL_COLUMNS,
 )
 from climate_finance.unfccc.cleaning_tools.validation import (
-    _check_brs,
-    _check_years,
     _check_parties,
     check_unfccc_data,
 )
 from climate_finance.unfccc.download.download_data import (
     download_unfccc_bilateral,
     download_unfccc_multilateral,
+    PARTY_ID,
 )
 from climate_finance.unfccc.download.pre_process import (
     clean_unfccc,
@@ -189,7 +188,7 @@ def get_unfccc_bilateral(
 
     # Download the data if no data was found or force_download is True
     if len(df) == 0 or force_download:
-        download_unfccc_bilateral(br=br, party=None, directory=directory)
+        download_unfccc_bilateral(br=br, party=party, directory=directory)
 
     # Check that the right data is included
     check_unfccc_data(
@@ -202,5 +201,7 @@ def get_unfccc_bilateral(
     # Check that the right parties were included (if specific parties requested)
     if party is not None:
         df = df.query(f"party in {party}")
+    else:
+        _check_parties(df, list(PARTY_ID))
 
     return df.reset_index(drop=True).filter(BILATERAL_COLUMNS)

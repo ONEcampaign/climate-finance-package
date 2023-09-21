@@ -74,7 +74,10 @@ def _check_parties(data: pd.DataFrame, party: str | list[str]) -> None:
     """
 
     # Get the list of parties in the data
-    data_parties = data["Party"].unique()
+    try:
+        data_parties = data["Party"].unique()
+    except KeyError:
+        data_parties = data["party"].unique()
 
     # Check that the right parties were included
     missing_parties = [p for p in party if p not in data_parties]
