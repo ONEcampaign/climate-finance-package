@@ -86,11 +86,11 @@ def map_channel_names_to_oecd_codes(
     )
 
     # Create a new column with the mapped channel codes
-    df["channel_code"] = df[channel_names_column].map(mapping)
+    df["oecd_channel_code"] = df[channel_names_column].map(mapping).astype("Int32")
 
     df = df.pipe(
         add_channel_names,
-        codes_column="channel_code",
+        codes_column="oecd_channel_code",
         target_column="clean_channel_name",
     )
 

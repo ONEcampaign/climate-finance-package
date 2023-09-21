@@ -16,6 +16,7 @@ COLUMN_MAPPING: dict = {
     "Funding source": "funding_source",
     "Financial instrument": "financial_instrument",
     "Contribution type": "indicator",
+    "Allocation channel": "channel_type",
     "Allocation category": "channel",
     "Type of support": "type_of_support",
     "Sector": "sector",
@@ -35,7 +36,7 @@ STATUS_MAPPING: dict = {
     "committed": "committed",
 }
 
-BILATERAL_COLUMNS = [
+BILATERAL_COLUMNS: list = [
     "year",
     "party",
     "br",
@@ -47,6 +48,23 @@ BILATERAL_COLUMNS = [
     "sector",
     "recipient",
     "activity",
+    "currency",
+    "value",
+]
+
+MULTILATERAL_COLUMNS: list = [
+    "year",
+    "party",
+    "oecd_channel_code",
+    "channel",
+    "channel_type",
+    "br",
+    "indicator",
+    "status",
+    "funding_source",
+    "financial_instrument",
+    "type_of_support",
+    "sector",
     "currency",
     "value",
 ]
