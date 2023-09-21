@@ -11,6 +11,7 @@ from climate_finance.unfccc.cleaning_tools.tools import (
     fill_type_of_support_gaps,
     harmonise_type_of_support,
     rename_columns,
+    clean_funding_source,
 )
 
 
@@ -43,6 +44,20 @@ def clean_unfccc(df: pd.DataFrame) -> pd.DataFrame:
         df = df.pipe(clean_status)
     except AttributeError:
         # If status not present, pass
+        pass
+
+    # Try to clean funding source
+    try:
+        df = df.pipe(clean_funding_source)
+    except AttributeError:
+        # If funding source not present, pass
+        pass
+
+    # Try to clean financial instrument
+    try:
+        df["financial_instrument"] = df["financial_instrument"].str.lower().str.strip()
+    except AttributeError:
+        # If financial instrument not present, pass
         pass
 
     return df.reset_index(drop=True)

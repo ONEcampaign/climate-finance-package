@@ -3,7 +3,14 @@ import pathlib
 
 import pandas as pd
 
-from climate_finance.config import ClimateDataPath
+from climate_finance.config import ClimateDataPath, logger
+from climate_finance.unfccc.cleaning_tools.tools import BILATERAL_COLUMNS
+from climate_finance.unfccc.cleaning_tools.validation import (
+    _check_brs,
+    _check_years,
+    _check_parties,
+)
+from climate_finance.unfccc.download.download_data import download_unfccc_bilateral
 from climate_finance.unfccc.download.pre_process import (
     clean_unfccc,
     map_channel_names_to_oecd_codes,
@@ -80,22 +87,70 @@ def get_unfccc_multilateral(start_year: int, end_year: int) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def get_unfccc_bilateral(start_year: int, end_year: int) -> pd.DataFrame:
+def get_unfccc_bilateral(
+    start_year: int,
+    end_year: int,
+    br: list[int] = None,
+    party: str | list[str] = None,
+    directory: pathlib.Path
+    | str = ClimateDataPath.raw_data / "unfccc_data_interface_files",
+    force_download: bool = False,
+) -> pd.DataFrame:
     """
     Function to get the UNFCCC bilateral data.
     Args:
+
         start_year: the start year of the data
         end_year: the end year of the data
+        br: the list of Biennial Reports to include in the data
+        party: The party(ies) to include in the data. If non, all available parties
+        that have been downloaded will be included. If none have been downloaded,
+        all available parties will be downloaded.
+        directory: The directory where the data is stored.
+        force_download: If True, the data will be downloaded even if it already exists.
 
     Returns:
         df (pd.DataFrame): The UNFCCC bilateral data.
 
     """
+
+    # Check that the directory is a pathlib.Path, if not convert it
+    if isinstance(directory, str):
+        directory = pathlib.Path(directory)
+
+    # Load any data already in that directory
     df = _concat_files(
-        directory=ClimateDataPath.raw_data / "unfccc_bilateral",
-        filename="FinancialContributionsBilateral.xlsx",
+        directory=directory / "unfccc_bilateral",
+        filename="FinancialContributionsBilateralOther.xlsx",
     )
 
+    # Check that data was returned. If not, log a message.
+    if len(df) == 0:
+        logger.info(f"No data found. Downloading data from UNFCCC website.")
+
+    # If force_download is True, log a message
+    if force_download:
+        logger.info(f"Downloading data from UNFCCC website.")
+
+    # Download the data if no data was found or force_download is True
+    if len(df) == 0 or force_download:
+        download_unfccc_bilateral(br=br, party=None, directory=directory)
+
+    # Check that the right BRs were included
+    if br is not None:
+        _check_brs(data=df, br=br)
+
+    # Check that the right years were included
+    _check_years(data=df, start_year=start_year, end_year=end_year)
+
+    # Filter the data for the requested years
     df = df.pipe(clean_unfccc).query(f"{start_year} <= year <= {end_year}")
 
-    return df.reset_index(drop=True)
+    # Check that the right parties were included (if specific parties requested)
+    if party is not None:
+        if isinstance(party, str):
+            party = [party]
+        _check_parties(data=df, party=party)
+        df = df.query(f"party in {party}")
+
+    return df.reset_index(drop=True).filter(BILATERAL_COLUMNS)

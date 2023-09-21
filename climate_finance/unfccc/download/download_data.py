@@ -1,6 +1,7 @@
 """This script downloads data from the UNFCCC data interface."""
 import fnmatch
 import os
+import pathlib
 from time import sleep
 
 import pandas as pd
@@ -366,7 +367,10 @@ def _click_search(driver, settings: dict) -> None:
 
 
 def get_unfccc_export(
-    settings: dict, br: int | list = None, party: list[str] | None = None
+    settings: dict,
+    br: int | list = None,
+    party: list[str] | None = None,
+    directory: pathlib.Path = None,
 ) -> None:
     """Download the UNFCCC export file.
 
@@ -376,7 +380,12 @@ def get_unfccc_export(
         If None, BRs 4 and 5 will be downloaded.
         party (list[str] | None, optional): The donor(s) to download. Defaults to None.
         If donors are specified, they will be downloaded one at a time.
+        directory (pathlib.Path, optional): The directory where the data is stored.
     """
+    global SAVE_FILES_TO
+
+    if directory != SAVE_FILES_TO:
+        SAVE_FILES_TO = directory
 
     # If no BRs are selected, select 4 and 5
     if br is None:
@@ -464,7 +473,11 @@ def download_unfccc_summary(br: list = None, party: list[str] = None) -> None:
     logger.info("Successfully downloaded UNFCCC summary data.")
 
 
-def download_unfccc_bilateral(br: list = None, party: list[str] = None) -> None:
+def download_unfccc_bilateral(
+    br: list = None,
+    party: list[str] = None,
+    directory: pathlib.Path = ClimateDataPath.raw_data / "unfccc_data_interface_files",
+) -> None:
     """Download the UNFCCC bilateral data.
 
     Args:
@@ -474,12 +487,16 @@ def download_unfccc_bilateral(br: list = None, party: list[str] = None) -> None:
         party (list[str], optional): The donor(s) to download. Defaults to None.
         If donors are specified, all will be downloaded, one at a time.
 
+        directory (pathlib.Path, optional): The directory where the data is stored.
+
     """
     if party is None:
-        party = list(PARTY_ID.keys())
+        party = list(PARTY_ID)
 
     logger.info("Downloading UNFCCC bilateral data. This may take a while....")
-    get_unfccc_export(settings=BILATERAL_SETTINGS, br=br, party=party)
+    get_unfccc_export(
+        settings=BILATERAL_SETTINGS, br=br, party=party, directory=directory
+    )
     logger.info("Successfully downloaded UNFCCC bilateral data.")
 
 
@@ -495,7 +512,7 @@ def download_unfccc_multilateral(br: list = None, party: list[str] = None) -> No
 
     """
     if party is None:
-        party = list(PARTY_ID.keys())
+        party = list(PARTY_ID)
 
     logger.info("Downloading UNFCCC multilateral data. This may take a while....")
     get_unfccc_export(settings=MULTILATERAL_SETTINGS, br=br, party=party)
