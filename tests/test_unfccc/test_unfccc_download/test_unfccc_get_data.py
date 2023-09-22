@@ -125,12 +125,12 @@ def test_concat_files():
 
     # Call the function
     result = (
-        _concat_files(directory, "file").reset_index(drop=True).sort_values(by="col")
+        _concat_files(directory, "file").sort_values(by="col").reset_index(drop=True).
     )
 
     # Expected result
     expected = (
-        pd.DataFrame({"col": [0, 1, 2]}).reset_index(drop=True).sort_values(by="col")
+        pd.DataFrame({"col": [0, 1, 2]}).sort_values(by="col").reset_index(drop=True).
     )
 
     # Check if the resulting DataFrame matches the expected DataFrame
