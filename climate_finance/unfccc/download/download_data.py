@@ -457,19 +457,24 @@ def get_unfccc_export(
             driver.refresh()
 
 
-def download_unfccc_summary(br: list = None, party: list[str] = None) -> None:
+def download_unfccc_summary(
+    br: list = None,
+    directory: pathlib.Path = ClimateDataPath.raw_data / "unfccc_data_interface_files",
+    party=None,
+) -> None:
     """Download the UNFCCC summary data.
 
     Args:
         br (list, optional): The BR version(s) to download. Defaults to None.
+        party: The party(ies) to include in the data. By default all available are downloaded.
         If None, BRs 4 and 5 will be downloaded.
 
-        party (list[str], optional): The donor(s) to download. Defaults to None.
-        If donors are specified, all will be downloaded.
+        directory (pathlib.Path, optional): The directory where the data is stored.
 
     """
+
     logger.info("Downloading UNFCCC summary data. This may take a while....")
-    get_unfccc_export(settings=SUMMARY_SETTINGS, br=br, party=party)
+    get_unfccc_export(settings=SUMMARY_SETTINGS, br=br, party=None, directory=directory)
     logger.info("Successfully downloaded UNFCCC summary data.")
 
 
@@ -503,6 +508,7 @@ def download_unfccc_bilateral(
 def download_unfccc_multilateral(
     br: list = None,
     directory: pathlib.Path = ClimateDataPath.raw_data / "unfccc_data_interface_files",
+    party: None = None,
 ) -> None:
     """Download the UNFCCC multilateral data.
 
@@ -510,8 +516,7 @@ def download_unfccc_multilateral(
         br (list, optional): The BR version(s) to download. Defaults to None.
         If None, BRs 4 and 5 will be downloaded.
 
-        party (list[str], optional): The donor(s) to download. Defaults to None.
-        If donors are specified, all will be downloaded, one at a time.
+        party (list[str], optional): By default, all parties are downloaded.
 
         directory (pathlib.Path, optional): The directory where the data is stored.
 

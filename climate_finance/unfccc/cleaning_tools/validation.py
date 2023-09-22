@@ -17,8 +17,11 @@ def _check_brs(data: pd.DataFrame, br: list[int]) -> None:
     if isinstance(br, int) or isinstance(br, str):
         br = [str(br)]
 
-    # Get the list of BRs in the data
-    data_brs = data["Data source"].unique()
+    try:
+        # Get the list of BRs in the data
+        data_brs = data["Data source"].unique()
+    except KeyError:
+        data_brs = data["Data Source"].unique()
 
     # Check that the right BRs were included
     missing_brs = [b for b in br if f"BR_{b}" not in data_brs]
