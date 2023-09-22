@@ -3,6 +3,7 @@ import pandas as pd
 from climate_finance.unfccc.download.get_data import (
     get_unfccc_bilateral as unfccc_bilateral_from_interface,
     get_unfccc_multilateral as unfccc_multilateral_from_interface,
+    get_unfccc_summary as unfccc_summary_from_interface,
 )
 
 
@@ -113,5 +114,31 @@ def multilateral_unfccc(
     return data
 
 
-def summary_unfccc() -> None:
-    raise NotImplementedError
+def summary_unfccc(
+    start_year: int,
+    end_year: int,
+    party: list[str] | str | None = None,
+    br: list[int] | int | None = None,
+    update_data: bool = False,
+    data_source: str = "data_interface",
+) -> pd.DataFrame:
+    # Check that the data source requested is valid
+    if data_source not in ["data_interface", "br_files"]:
+        raise ValueError("data_source must be either 'data_interface' or 'br_files'")
+
+    # Get the right function to get the data, based on the data source requested
+    if data_source == "data_interface":
+        summary_function = unfccc_summary_from_interface
+    else:
+        raise NotImplementedError("Accessing data from BR files is not yet supported")
+
+    # Get the data
+    data = summary_function(
+        start_year=start_year,
+        end_year=end_year,
+        party=party,
+        br=br,
+        force_download=update_data,
+    )
+
+    return data

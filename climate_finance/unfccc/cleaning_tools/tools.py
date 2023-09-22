@@ -16,7 +16,9 @@ COLUMN_MAPPING: dict = {
     "Funding source": "funding_source",
     "Financial instrument": "financial_instrument",
     "Contribution type": "indicator",
+    "Contribution Type": "indicator",
     "Allocation channel": "channel_type",
+    "Allocation Channel": "channel_type",
     "Allocation category": "channel",
     "Type of support": "type_of_support",
     "Sector": "sector",
@@ -24,6 +26,7 @@ COLUMN_MAPPING: dict = {
     "Currency": "currency",
     "Year": "year",
     "Data source": "br",
+    "Data Source": "br",
     "Recipient country/region": "recipient",
     "Project/programme/activity": "activity",
     "additional_information": "activity",
@@ -69,6 +72,17 @@ MULTILATERAL_COLUMNS: list = [
     "value",
 ]
 
+SUMMARY_COLUMNS: list = [
+    "year",
+    "party",
+    "br",
+    "channel_type",
+    "indicator",
+    "type_of_support",
+    "currency",
+    "value",
+]
+
 
 def clean_currency(df: pd.DataFrame, currency_column: str = "currency") -> pd.DataFrame:
     """
@@ -82,18 +96,14 @@ def clean_currency(df: pd.DataFrame, currency_column: str = "currency") -> pd.Da
         df (pd.DataFrame): The dataframe with cleaned currency column.
     """
 
-    def _extract_currency(x: str) -> str:
-        if x is None:
-            return x
+    # Extract currency codes from strings
+    extracted_currency = df[currency_column].str.extract(r"\((.*?)\)")[0]
 
-        if len(x) == 3:
-            return x
+    # Create a mask for strings with length 3
+    mask_len3 = df[currency_column].str.len() == 3
 
-        match = re.findall("\((.*?)\)", x)
-        if match:
-            return match[0]
-
-    df.currency = df[currency_column].apply(_extract_currency)
+    # Use np.where to combine conditions and update the currency column
+    df[currency_column] = np.where(mask_len3, df[currency_column], extracted_currency)
 
     return df
 
@@ -189,7 +199,6 @@ def clean_status(df: pd.DataFrame, status_column: str = "status") -> pd.DataFram
         df (pd.DataFrame): The dataframe with cleaned status column.
 
     """
-
     return df.assign(
         status=lambda d: d[status_column]
         .str.lower()

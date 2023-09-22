@@ -17,8 +17,11 @@ def _check_brs(data: pd.DataFrame, br: list[int]) -> None:
     if isinstance(br, int) or isinstance(br, str):
         br = [str(br)]
 
-    # Get the list of BRs in the data
-    data_brs = data["Data source"].unique()
+    try:
+        # Get the list of BRs in the data
+        data_brs = data["Data source"].unique()
+    except KeyError:
+        data_brs = data["Data Source"].unique()
 
     # Check that the right BRs were included
     missing_brs = [b for b in br if f"BR_{b}" not in data_brs]
@@ -74,7 +77,10 @@ def _check_parties(data: pd.DataFrame, party: str | list[str]) -> None:
     """
 
     # Get the list of parties in the data
-    data_parties = data["Party"].unique()
+    try:
+        data_parties = data["Party"].unique()
+    except KeyError:
+        data_parties = data["party"].unique()
 
     # Check that the right parties were included
     missing_parties = [p for p in party if p not in data_parties]
