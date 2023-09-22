@@ -10,6 +10,9 @@ from climate_finance.unfccc.cleaning_tools.tools import (
     fill_financial_instrument_gaps,
     fill_type_of_support_gaps,
     harmonise_type_of_support,
+    rename_columns,
+    clean_recipient_names,
+    clean_funding_source,
 )
 
 
@@ -179,3 +182,73 @@ def test_clean_status():
 
     # Check if the resulting DataFrame matches our expected DataFrame
     pd.testing.assert_frame_equal(result, expected)
+
+
+def test_rename_columns():
+    df = pd.DataFrame(
+        {
+            "Party": ["A", "B"],
+            "Status": ["provided", "committed"],
+            "Funding source": ["source1", "source2"],
+            "Contribution Type": ["type1", "type2"],
+            "Data Source": ["source1", "source2"],
+            "Recipient country/region": ["region1", "region2"],
+        }
+    )
+    renamed_df = rename_columns(df)
+    expected_columns = [
+        "party",
+        "status",
+        "funding_source",
+        "indicator",
+        "br",
+        "recipient",
+    ]
+    assert list(renamed_df.columns) == expected_columns
+
+
+def test_clean_recipient_names():
+    recipients = pd.Series(
+        [
+            "Other république Démocratique Du Congo",
+            "France",
+            "United States of America",
+            "México",
+        ]
+    )
+    cleaned_recipients = clean_recipient_names(recipients)
+    assert cleaned_recipients.tolist() == [
+        "DR Congo",
+        "France",
+        "United States",
+        "México",
+    ]
+
+
+def test_clean_funding_source():
+    df = pd.DataFrame(
+        {
+            "funding_source": [
+                "ODA",
+                "OOF",
+                "other",
+                "ODA/OOF",
+                "unknown",
+                "ODA other",
+                "OOF other",
+                "ODA/OOF other",
+            ]
+        }
+    )
+    cleaned_df = clean_funding_source(df)
+    expected_results = [
+        "oda",
+        "oof",
+        "other",
+        "oda/oof",
+        "unknown",
+        "oda",
+        "oof",
+        "oda/oof",
+    ]
+    assert cleaned_df["funding_source"].tolist() == expected_results

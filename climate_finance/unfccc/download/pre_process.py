@@ -42,27 +42,18 @@ def clean_unfccc(df: pd.DataFrame) -> pd.DataFrame:
     # Try to clean status
     try:
         df = df.pipe(clean_status)
-    except AttributeError:
-        # If status not present, pass
-        pass
     except KeyError:
         pass
 
     # Try to clean funding source
     try:
         df = df.pipe(clean_funding_source)
-    except AttributeError:
-        # If funding source not present, pass
-        pass
     except KeyError:
         pass
 
     # Try to clean financial instrument
     try:
         df["financial_instrument"] = df["financial_instrument"].str.lower().str.strip()
-    except AttributeError:
-        # If financial instrument not present, pass
-        pass
     except KeyError:
         pass
 
