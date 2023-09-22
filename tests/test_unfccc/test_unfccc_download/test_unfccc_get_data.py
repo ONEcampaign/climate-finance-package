@@ -124,10 +124,14 @@ def test_concat_files():
         pd.DataFrame({"col": [i]}).to_excel(directory / f"file{i}.xlsx", index=False)
 
     # Call the function
-    result = _concat_files(directory, "file").reset_index(drop=True)
+    result = (
+        _concat_files(directory, "file").reset_index(drop=True).sort_values(by="col")
+    )
 
     # Expected result
-    expected = pd.DataFrame({"col": [0, 1, 2]})
+    expected = (
+        pd.DataFrame({"col": [0, 1, 2]}).reset_index(drop=True).sort_values(by="col")
+    )
 
     # Check if the resulting DataFrame matches the expected DataFrame
     pd.testing.assert_frame_equal(result, expected)
