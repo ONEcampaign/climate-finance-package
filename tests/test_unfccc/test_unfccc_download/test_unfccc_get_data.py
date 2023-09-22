@@ -5,7 +5,6 @@ from unittest import mock
 from unittest.mock import patch
 
 import pandas as pd
-import pytest
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
