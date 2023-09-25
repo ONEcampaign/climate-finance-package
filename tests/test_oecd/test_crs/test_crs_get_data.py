@@ -55,6 +55,11 @@ def test_get_relevant_crs_columns():
         "recipient_name",
         "flow_code",
         "flow_name",
+        "sector_code",
+        "sector_name",
+        "purpose_code",
+        "purpose_name",
+        "project_title",
         "finance_t",
         "climate_mitigation",
         "climate_adaptation",
@@ -97,6 +102,7 @@ def test_set_crs_data_types():
     # Create a DataFrame with incorrect data types
     df = pd.DataFrame(
         {
+            "year": ["2019", "2020", "2021"],
             "donor_code": ["1", "2", "3"],
             "donor_name": [4, 5, 6],
             "recipient_name": [7, 8, 9],
@@ -114,6 +120,7 @@ def test_set_crs_data_types():
 
     # Check if the resulting DataFrame has the correct data types
     expected_dtypes = {
+        "year": "Int32",
         "donor_code": "Int32",
         "donor_name": "object",
         "recipient_name": "object",
@@ -179,11 +186,16 @@ def test_get_crs_allocable_spending(mock_read_crs):
             "recipient_code": [1, 2],
             "recipient_name": ["Recipient1", "Recipient2"],
             "flow_code": [1, 2],
+            "sector_code": [1, 2],
+            "sector_name": ["Sector1", "Sector2"],
+            "purpose_name": ["Purpose1", "Purpose2"],
+            "purpose_code": [1, 2],
+            "project_title": ["Project1", "Project2"],
             "flow_name": ["Flow1", "Flow2"],
             "finance_t": ["Finance1", "Finance2"],
             "aid_t": ["A02", "B01"],
-            "climate_mitigation": ["Mitigation1", "Mitigation2"],
-            "climate_adaptation": ["Adaptation1", "Adaptation2"],
+            "climate_mitigation": [1, 2],
+            "climate_adaptation": [1, 2],
             "usd_commitment": [100, 200],
             "usd_disbursement": [100, 200],
             "usd_received": [50, 100],
@@ -205,9 +217,14 @@ def test_get_crs_allocable_spending(mock_read_crs):
             "oecd_recipient_name": ["Recipient1", "Recipient2"] * 5,
             "flow_code": [1, 2, 1, 2, 1, 2, 1, 2, 1, 2],
             "flow_name": ["Flow1", "Flow2"] * 5,
+            "sector_code": [1, 2] * 5,
+            "sector_name": ["Sector1", "Sector2"] * 5,
+            "purpose_code": [1, 2] * 5,
+            "purpose_name": ["Purpose1", "Purpose2"] * 5,
+            "project_title": ["Project1", "Project2"] * 5,
             "finance_t": ["Finance1", "Finance2"] * 5,
-            "climate_mitigation": ["Mitigation1", "Mitigation2"] * 5,
-            "climate_adaptation": ["Adaptation1", "Adaptation2"] * 5,
+            "climate_mitigation": [1, 2] * 5,
+            "climate_adaptation": [1, 2] * 5,
             "flow_type": [
                 "usd_commitment",
                 "usd_commitment",
@@ -239,6 +256,9 @@ def test_get_crs_allocable_spending(mock_read_crs):
             "oecd_recipient_code": "Int32",
             "flow_code": "Int32",
             "value": "float64",
+            "year": "Int32",
+            "climate_mitigation": "Int16",
+            "climate_adaptation": "Int16",
         }
     )
 

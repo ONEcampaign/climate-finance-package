@@ -1,5 +1,5 @@
 import pandas as pd
-from oda_data import read_crs, set_data_path
+from oda_data import read_crs, set_data_path, download_crs
 
 from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.tools import convert_flows_millions_to_units
@@ -37,6 +37,11 @@ def _get_relevant_crs_columns() -> list:
         "recipient_name",
         "flow_code",  # number
         "flow_name",  # name of flow (like OOF or grant for example)
+        "sector_code",
+        "sector_name",
+        "purpose_code",
+        "purpose_name",
+        "project_title",
         "finance_t",
         "climate_mitigation",
         "climate_adaptation",
@@ -95,6 +100,7 @@ def _set_crs_data_types(df: pd.DataFrame) -> pd.DataFrame:
     return df.astype(
         {
             "donor_code": "Int32",
+            "year": "Int32",
             "donor_name": "str",
             "recipient_name": "str",
             "recipient_code": "Int32",
@@ -140,7 +146,7 @@ def _add_net_disbursement(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def get_crs_allocable_spending(
-    start_year: int = 2019, end_year: int = 2020
+    start_year: int = 2019, end_year: int = 2020, force_update: bool = False
 ) -> pd.DataFrame:
     """
     Fetches bilateral spending data for a given flow type and time period.
@@ -148,20 +154,25 @@ def get_crs_allocable_spending(
     Args:
         start_year (int, optional): The starting year for data extraction. Defaults to 2019.
         end_year (int, optional): The ending year for data extraction. Defaults to 2020.
+        force_update (bool, optional): If True, the data is updated from the source.
+        Defaults to False.
 
     Returns:
         pd.DataFrame: A dataframe containing bilateral spending data for
         the specified flow type and time period.
     """
+    # Study years
+    years = range(start_year, end_year + 1)
+
+    # Check if data should be forced to update
+    if force_update:
+        download_crs(years=years)
 
     # get relevant columns
     columns = _get_relevant_crs_columns()
 
     # get flow columns
     flow_columns = _get_flow_columns()
-
-    # Study years
-    years = range(start_year, end_year + 1)
 
     # Pipeline
     crs = (
@@ -184,6 +195,7 @@ def get_crs_allocable_spending(
         .loc[lambda d: d.value != 0]
         .pipe(_rename_crs_columns)
         .reset_index(drop=True)
+        .astype({"climate_mitigation": "Int16", "climate_adaptation": "Int16"})
     )
 
     return crs
