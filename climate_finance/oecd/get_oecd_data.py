@@ -1,8 +1,8 @@
 import pandas as pd
 
-from climate_finance.config import logger
 from climate_finance.oecd.climate_analysis.tools import (
     base_oecd_transform_markers_into_indicators,
+    check_and_filter_parties,
 )
 from climate_finance.oecd.crs.get_data import get_crs_allocable_spending
 
@@ -49,25 +49,13 @@ def get_oecd_bilateral(
             f"Methodology must be one of {list(BILATERAL_CLIMATE_METHODOLOGY)}"
         )
 
-    # Validate the party argument
-    if isinstance(party, str):
-        party = [party]
-
     # Get the CRS data
     data = get_crs_allocable_spending(
         start_year=start_year, end_year=end_year, force_update=update_data
     )
 
-    if party is not None:
-        # Check that the requested parties are in the CRS data
-        missing_party = set(party) - set(data.oecd_donor_name.unique())
-        # Log a warning if any of the requested parties are not in the CRS data
-        if len(missing_party) > 0:
-            logger.warning(
-                f"The following parties are not found in CRS data:\n{missing_party}"
-            )
-        # Filter the data to only include the requested parties
-        data = data.loc[lambda d: d.oecd_donor_name.isin(party)]
+    # Filter the data to only include the requested parties
+    data = check_and_filter_parties(data, party)
 
     # Transform the markers into indicators
     data = BILATERAL_CLIMATE_METHODOLOGY[methodology](data)

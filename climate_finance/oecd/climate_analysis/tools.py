@@ -1,5 +1,7 @@
 import pandas as pd
 
+from climate_finance.config import logger
+
 OECD_CLIMATE_INDICATORS: dict[str, str] = {
     "climate_adaptation": "Adaptation",
     "climate_mitigation": "Mitigation",
@@ -98,6 +100,42 @@ def _combine_clean_sort(dfs: list[pd.DataFrame], sort_cols: list[str]) -> pd.Dat
         .sort_values(by=sort_cols)
         .reset_index(drop=True)
     )
+
+
+def check_and_filter_parties(
+    df: pd.DataFrame, party: list[str] | str | None
+) -> pd.DataFrame:
+    """
+    Check that the requested parties are in the CRS data and filter the data to only
+    include the requested parties. If party is None, return the original dataframe.
+
+    Args:
+        df: A dataframe containing the CRS data.
+        party: A list of parties to filter the data to.
+
+    Returns:
+        A dataframe with the CRS data filtered to only include the requested parties.
+        If party is None, return the original dataframe.
+
+    """
+
+    # Validate the party argument
+    if isinstance(party, str):
+        party = [party]
+
+    if party is not None:
+        # Check that the requested parties are in the CRS data
+        missing_party = set(party) - set(df.oecd_donor_name.unique())
+        # Log a warning if any of the requested parties are not in the CRS data
+        if len(missing_party) > 0:
+            logger.warning(
+                f"The following parties are not found in CRS data:\n{missing_party}"
+            )
+        # Filter the data to only include the requested parties
+        return df.loc[lambda d: d.oecd_donor_name.isin(party)]
+
+    # if Party is None, return the original dataframe
+    return df
 
 
 def base_oecd_transform_markers_into_indicators(df: pd.DataFrame) -> pd.DataFrame:
