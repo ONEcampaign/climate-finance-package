@@ -200,8 +200,9 @@ def test_get_oecd_multilateral_climate_imputations(
     mock_read_feather, mock_download_file
 ):
     mock_read_feather.return_value = mock1.assign(year=2019)
-    result = get_oecd_multilateral_climate_imputations(start_year=2020, end_year=2022,
-                                                       force_update=True)
+    result = get_oecd_multilateral_climate_imputations(
+        start_year=2020, end_year=2022, force_update=True
+    )
     assert isinstance(result, pd.DataFrame)
 
     assert len(result) == 0
