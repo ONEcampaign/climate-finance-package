@@ -259,7 +259,7 @@ def download_file() -> None:
 def get_oecd_multilateral_climate_imputations(
     start_year: int = 2017,
     end_year: int = 2021,
-    update_data: bool = False,
+    force_update: bool = False,
 ) -> pd.DataFrame:
     """Get a clean, merged DataFrame of the OECD multilateral imputations.
     This dataset contains both imputations and shares of spending.
@@ -267,13 +267,13 @@ def get_oecd_multilateral_climate_imputations(
     Args:
         start_year: starting year for the data
         end_year: ending year for the data. If not available, a warning is raised.
-        update_data: whether to update the data or not. If the
+        force_update: whether to update the data or not. If the
         data is not available locally, it will be downloaded regardless of this
         parameter.
 
     """
 
-    if update_data or not FILE_PATH.exists():
+    if force_update or not FILE_PATH.exists():
         download_file()
 
     return pd.read_feather(FILE_PATH).query(f"year.between({start_year}, {end_year})")

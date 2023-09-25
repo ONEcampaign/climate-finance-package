@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 from climate_finance.config import logger
@@ -7,7 +8,18 @@ OECD_CLIMATE_INDICATORS: dict[str, str] = {
     "climate_mitigation": "Mitigation",
     "climate_cross_cutting": "Cross-cutting",
     "not_climate_relevant": "Not climate relevant",
+    "climate_total": "Climate unspecified",
 }
+
+MULTILATERAL_ID_COLUMNS: list[str] = [
+    "year",
+    "oecd_channel_code",
+    "oecd_channel_name",
+    "flow_type",
+    "type",
+    "reporting_method",
+    "converged_reporting",
+]
 
 
 def _melt_crs_climate_indicators(
@@ -37,6 +49,65 @@ def _melt_crs_climate_indicators(
     return melted_df.loc[lambda d: d.indicator_value > 0].drop(
         columns=["indicator_value"]
     )
+
+
+def _melt_multilateral_climate_indicators(
+    df: pd.DataFrame, climate_indicators: list
+) -> pd.DataFrame:
+    """
+    Melt the dataframe to get the indicators as a column
+    Args:
+        df: A dataframe containing the multilateral climate data.
+        climate_indicators: A list of climate indicators to melt.
+
+    Returns:
+        A dataframe with melted climate indicators.
+    """
+
+    # get all columns except the indicators
+    melted_cols = [c for c in df.columns if c not in climate_indicators]
+
+    # melt the dataframe to get the indicators as a column
+    melted_df = df.melt(
+        id_vars=melted_cols,
+        value_vars=climate_indicators,
+        var_name="indicator",
+        value_name="value",
+    )
+    # keep only where the indicator value is larger than 0
+    return melted_df.dropna(subset=["value"]).reset_index(drop=True)
+
+
+def _filter_multilateral_indicators_total(
+    df: pd.DataFrame, climate_indicators: list
+) -> pd.DataFrame:
+    """
+    Filter the data to include the 'total' indicators
+
+    Args:
+        df: A dataframe containing the multilateral climate data.
+        climate_indicators: A list of climate indicators keep.
+
+    Returns:
+        A dataframe with the multilateral climate data filtered to only include the
+        requested indicators.
+
+    """
+    return df.filter(MULTILATERAL_ID_COLUMNS + climate_indicators)
+
+
+def _remove_climate_unspecified(df: pd.DataFrame) -> pd.DataFrame:
+    return df.loc[lambda d: ~((d.year >= 2021) & (d.indicator == "climate_total"))]
+
+
+def _add_not_climate_relevant(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.assign(
+        not_climate_relevant=lambda d: (
+            d.oecd_climate_total / (1 - d.oecd_climate_total_share)
+        ).replace([np.inf, -np.inf], np.nan),
+        not_climate_relevant_share=lambda d: 1 - d.oecd_climate_total_share,
+    )
+    return df
 
 
 def _get_cross_cutting_data(df: pd.DataFrame) -> pd.DataFrame:
@@ -182,3 +253,104 @@ def base_oecd_transform_markers_into_indicators(df: pd.DataFrame) -> pd.DataFram
     )
 
     return combined_df
+
+
+def _oecd_multilateral_agency_helper(
+    df: pd.DataFrame, climate_indicators: dict
+) -> pd.DataFrame:
+    """
+    Helper function for the OECD multilateral agency data. This function is used to
+    transform the multilateral agency data into climate indicators.
+
+    Args:
+        df: A dataframe containing the multilateral agency data.
+        climate_indicators: A dictionary of climate indicators to keep.
+
+    Returns:
+        A dataframe with the multilateral agency data transformed into climate
+        indicators.
+
+    """
+
+    # calculate not climate relevant
+    df = _add_not_climate_relevant(df)
+
+    # Filter the data to include the 'total' indicators
+    data = _filter_multilateral_indicators_total(
+        df=df, climate_indicators=list(climate_indicators)
+    )
+
+    # Melt the dataframe to get the indicators as a column
+    data = _melt_multilateral_climate_indicators(
+        df=data, climate_indicators=list(climate_indicators)
+    )
+
+    # Map indicator names
+    data = data.assign(indicator=lambda d: d.indicator.map(climate_indicators))
+
+    # Remove unspecified from 2021 (given that there is a detailed breakdown)
+    data = _remove_climate_unspecified(data)
+
+    # Map indicator names
+    return data.assign(indicator=lambda d: d.indicator.map(OECD_CLIMATE_INDICATORS))
+
+
+def base_oecd_multilateral_agency_total(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Transform the multilateral agency data into climate indicators (total
+    flow figures). The multilateral agency data is transformed into the following
+    climate indicators:
+    - Adaptation
+    - Mitigation
+    - Cross-cutting
+    - Not climate relevant
+
+    Args:
+        df: A dataframe containing the multilateral agency data.
+
+    Returns:
+        A dataframe with the multilateral agency data transformed into climate
+        indicators (total flow figures).
+
+    """
+    climate_indicators = {
+        "oecd_climate_total": "climate_total",
+        "oecd_mitigation": "climate_mitigation",
+        "oecd_adaptation": "climate_adaptation",
+        "oecd_cross_cutting": "climate_cross_cutting",
+        "not_climate_relevant": "not_climate_relevant",
+    }
+
+    return _oecd_multilateral_agency_helper(df, climate_indicators)
+
+
+def base_oecd_multilateral_agency_share(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Transform the multilateral agency data into climate indicators (share of total
+    flow figures). The multilateral agency data is transformed into the following
+    climate indicators:
+    - Adaptation
+    - Mitigation
+    - Cross-cutting
+    - Not climate relevant
+
+    Args:
+        df: A dataframe containing the multilateral agency data.
+
+    Returns:
+        A dataframe with the multilateral agency data transformed into climate
+        indicators (share of total flow figures).
+
+    """
+
+    climate_indicators = {
+        "oecd_climate_total_share": "climate_total",
+        "oecd_mitigation_share": "climate_mitigation",
+        "oecd_adaptation_share": "climate_adaptation",
+        "oecd_cross_cutting_share": "climate_cross_cutting",
+        "not_climate_relevant_share": "not_climate_relevant",
+    }
+
+    return _oecd_multilateral_agency_helper(df, climate_indicators).assign(
+        flow_type=lambda d: d.flow_type + "_share"
+    )
