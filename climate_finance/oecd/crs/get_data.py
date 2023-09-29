@@ -183,7 +183,7 @@ def get_crs_allocable_spending(
         .pipe(_set_crs_data_types)  # Set data types
         .pipe(_replace_missing_climate_with_zero, column="climate_mitigation")
         .pipe(_replace_missing_climate_with_zero, column="climate_adaptation")
-        .groupby(columns, as_index=False, dropna=False)[flow_columns]
+        .groupby(columns, as_index=False, dropna=False, observed=True)[flow_columns]
         .sum()
         .pipe(convert_flows_millions_to_units, flow_columns=flow_columns)
         .melt(

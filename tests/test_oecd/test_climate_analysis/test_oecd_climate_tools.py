@@ -2,7 +2,7 @@ import pandas as pd
 
 from climate_finance.oecd.climate_analysis.tools import (
     _melt_crs_climate_indicators,
-    _get_cross_cutting_data,
+    get_cross_cutting_data,
     _get_not_climate_relevant_data,
     _combine_clean_sort,
     check_and_filter_parties,
@@ -42,7 +42,7 @@ def test_get_cross_cutting_data():
             "other_column": ["a", "b", "c"],
         }
     )
-    result = _get_cross_cutting_data(df).reset_index(drop=True)
+    result = get_cross_cutting_data(df).reset_index(drop=True)
     expected = pd.DataFrame(
         {"other_column": ["c"], "indicator": ["climate_cross_cutting"]}
     )

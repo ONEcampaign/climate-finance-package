@@ -110,7 +110,7 @@ def _add_not_climate_relevant(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _get_cross_cutting_data(df: pd.DataFrame) -> pd.DataFrame:
+def get_cross_cutting_data(df: pd.DataFrame) -> pd.DataFrame:
     """
     Get cross cutting data. This is data where both climate mitigation and climate
     adaptation are larger than 0.
@@ -174,7 +174,7 @@ def _combine_clean_sort(dfs: list[pd.DataFrame], sort_cols: list[str]) -> pd.Dat
 
 
 def check_and_filter_parties(
-    df: pd.DataFrame, party: list[str] | str | None
+    df: pd.DataFrame, party: list[str] | str | None, party_col: str = "oecd_donor_name"
 ) -> pd.DataFrame:
     """
     Check that the requested parties are in the CRS data and filter the data to only
@@ -183,6 +183,7 @@ def check_and_filter_parties(
     Args:
         df: A dataframe containing the CRS data.
         party: A list of parties to filter the data to.
+        party_col: The column containing the parties.
 
     Returns:
         A dataframe with the CRS data filtered to only include the requested parties.
@@ -196,14 +197,14 @@ def check_and_filter_parties(
 
     if party is not None:
         # Check that the requested parties are in the CRS data
-        missing_party = set(party) - set(df.oecd_donor_name.unique())
+        missing_party = set(party) - set(df[party_col].unique())
         # Log a warning if any of the requested parties are not in the CRS data
         if len(missing_party) > 0:
             logger.warning(
                 f"The following parties are not found in CRS data:\n{missing_party}"
             )
         # Filter the data to only include the requested parties
-        return df.loc[lambda d: d.oecd_donor_name.isin(party)]
+        return df.loc[lambda d: d[party_col].isin(party)]
 
     # if Party is None, return the original dataframe
     return df
@@ -241,7 +242,7 @@ def base_oecd_transform_markers_into_indicators(df: pd.DataFrame) -> pd.DataFram
     melted_df = _melt_crs_climate_indicators(df, climate_indicators)
 
     # Get cross_cutting data
-    cross_cutting_df = _get_cross_cutting_data(df)
+    cross_cutting_df = get_cross_cutting_data(df)
 
     # Get not climate relevant data
     not_climate_df = _get_not_climate_relevant_data(df)
