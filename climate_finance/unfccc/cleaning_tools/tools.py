@@ -153,12 +153,15 @@ def harmonise_type_of_support(
     conditions = [mask_cross_cutting, mask_adaptation, mask_mitigation, mask_other]
     choices = [CROSS_CUTTING, ADAPTATION, MITIGATION, OTHER]
 
-    cleaned_series = pd.Series(np.select(conditions, choices, default=series)).replace(
-        "unknown", pd.NA
+    cleaned_series = (
+        pd.Series(np.select(conditions, choices, default=series))
+        .replace("unknown", pd.NA)
+        .reset_index(drop=True)
     )
 
     # Update the DataFrame
-    df = df.assign(**{type_of_support_column: cleaned_series})
+    df = df.reset_index(drop=True)
+    df[type_of_support_column] = cleaned_series
 
     return df
 
