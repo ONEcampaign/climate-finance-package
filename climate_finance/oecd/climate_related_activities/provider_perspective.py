@@ -12,7 +12,8 @@ from climate_finance.oecd.climate_related_activities.tools import (
     rename_marker_columns,
     marker_columns_to_numeric,
     get_marker_data,
-    load_or_download, clean_columns,
+    load_or_download,
+    clean_columns,
 )
 
 FILE_PATH: Path = ClimateDataPath.raw_data / "oecd_climate_provider_perspective.feather"
