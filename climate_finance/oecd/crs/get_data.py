@@ -3,6 +3,7 @@ from oda_data import read_crs, set_data_path, download_crs
 
 from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.tools import convert_flows_millions_to_units
+from climate_finance.oecd.climate_analysis.tools import OECD_SCHEMA
 
 set_data_path(ClimateDataPath.raw_data)
 
@@ -18,7 +19,7 @@ def _keep_only_allocable_aid(df: pd.DataFrame) -> pd.DataFrame:
         pd.DataFrame: A dataframe containing only the rows with allocable aid types."""
 
     aid_types = ["A02", "B01", "B03", "B04", "C01", "D01", "D02", "E01"]
-    return df.query(f"aid_t in {aid_types}").reset_index(drop=True)
+    return df.loc[lambda d: d.aid_t.isin(aid_types)].reset_index(drop=True)
 
 
 def _get_relevant_crs_columns() -> list:
@@ -42,6 +43,7 @@ def _get_relevant_crs_columns() -> list:
         "purpose_code",
         "purpose_name",
         "project_title",
+        "crs_id",
         "finance_t",
         "climate_mitigation",
         "climate_adaptation",
@@ -59,15 +61,7 @@ def _rename_crs_columns(df: pd.DataFrame) -> pd.DataFrame:
         A dataframe with renamed columns.
     """
 
-    names = {
-        "donor_code": "oecd_donor_code",
-        "donor_name": "oecd_donor_name",
-        "recipient_code": "oecd_recipient_code",
-        "recipient_name": "oecd_recipient_name",
-        "agency_name": "oecd_agency_name",
-    }
-
-    return df.rename(columns=names)
+    return df.rename(columns=OECD_SCHEMA)
 
 
 def _get_flow_columns() -> list:
@@ -180,6 +174,7 @@ def get_crs_allocable_spending(
         .pipe(_keep_only_allocable_aid)  # Keep only allocable aid types
         .pipe(_add_net_disbursement)  # Add net disbursement column
         .filter(columns + flow_columns, axis=1)  # Keep only relevant columns
+        .assign(year=lambda d: d.year.str.replace("\ufeff", "", regex=True))  # fix year
         .pipe(_set_crs_data_types)  # Set data types
         .pipe(_replace_missing_climate_with_zero, column="climate_mitigation")
         .pipe(_replace_missing_climate_with_zero, column="climate_adaptation")

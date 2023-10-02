@@ -5,7 +5,10 @@ from dateutil.utils import today
 from oda_data.get_data.common import fetch_file_from_url_selenium
 
 from climate_finance.config import logger
-from climate_finance.oecd.climate_analysis.tools import OECD_CLIMATE_INDICATORS
+from climate_finance.oecd.climate_analysis.tools import (
+    OECD_CLIMATE_INDICATORS,
+    OECD_SCHEMA,
+)
 from climate_finance.oecd.imputations.get_data import _log_notes
 
 
@@ -179,6 +182,9 @@ def clean_df(data: pd.DataFrame) -> pd.DataFrame:
     # Convert thousands to units
     data = convert_thousands_to_units(data)
 
+    # fix year column
+    data["year"] = data["year"].str.replace("\ufeff", "", regex=True)
+
     # Convert data types
     data = set_data_types(data)
 
@@ -230,28 +236,6 @@ def rename_marker_columns(df: pd.DataFrame) -> pd.DataFrame:
     }
 
     return df.rename(columns=markers)
-
-
-def rename_index_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Rename the index columns to more standard names.
-
-    Args:
-        df: The dataframe to rename the columns for.
-
-    Returns:
-        The dataframe with the columns renamed.
-
-    """
-    # Define index columns and their new names
-    idx_cols = {
-        "provider": "party",
-        "provider_code": "oecd_party_code",
-        "channel_of_delivery_code": "oecd_channel_code",
-        "channel_of_delivery": "oecd_channel_name",
-    }
-
-    return df.rename(columns=idx_cols)
 
 
 def marker_columns_to_numeric(df: pd.DataFrame) -> pd.DataFrame:
@@ -313,10 +297,10 @@ def get_marker_data(df: pd.DataFrame, marker: str):
 
 def load_or_download(base_url: str, save_to_path: str | pathlib.Path) -> pd.DataFrame:
     try:
-        return pd.read_feather(save_to_path)
+        return pd.read_feather(save_to_path).rename(columns=OECD_SCHEMA)
     except FileNotFoundError:
         download_file(base_url=base_url, save_to_path=save_to_path)
-        return pd.read_feather(save_to_path)
+        return pd.read_feather(save_to_path).rename(columns=OECD_SCHEMA)
 
 
 def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -346,5 +330,4 @@ def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
         df.filter([c for c in df.columns if c not in to_drop])
         .assign(indicator=lambda d: d.indicator.map(OECD_CLIMATE_INDICATORS))
         .assign(flow_type="usd_commitment")
-        .pipe(rename_index_columns)
     )

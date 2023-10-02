@@ -31,15 +31,48 @@ VALUES = [
 
 UNIQUE_INDEX = [
     "year",
-    "provider_code",
-    "agency_code",
-    "crs_identification_n",
-    "donor_project_n",
-    "recipient_code",
+    "oecd_party_code",
+    "oecd_agency_code",
+    "crs_id",
+    "project_id",
+    "oecd_recipient_code",
     "purpose_code",
 ]
 
 TOTAL_COL: str = "climate_related_development_finance_commitment_current"
+
+MULTI_COLUMNS: list = [
+    "year",
+    "party_type",
+    "party",
+    "party_detailed",
+    "oecd_party_code",
+    "oecd_agency_code",
+    "agency",
+    "crs_id",
+    "project_id",
+    "oecd_recipient_code",
+    "recipient",
+    "recipient_region",
+    "oecd_recipient_income",
+    "concessionality",
+    "oecd_channel_code_delivery",
+    "oecd_channel_name_delivery",
+    "purpose_code",
+    "sector_detailed",
+    "sub_sector",
+    "modality",
+    "financial_instrument",
+    "type_of_finance",
+    "project_title",
+    "description",
+    "gender",
+    "indicator",
+    "flow_type",
+    "value",
+    "total_value",
+    "share",
+]
 
 
 def add_imputed_total(df: pd.DataFrame) -> pd.DataFrame:
@@ -157,7 +190,7 @@ def get_recipient_perspective(
     df = df.drop_duplicates(keep="first")
 
     # Fix errors in recipient code
-    df = df.replace({"recipient_code": {"998": "9998"}})
+    df = df.replace({"oecd_recipient_code": {"998": "9998"}})
 
     # Add imputed total
     df = add_imputed_total(df)
@@ -179,4 +212,8 @@ def get_recipient_perspective(
     # Check parties
     data = check_and_filter_parties(data, party=party, party_col="party")
 
-    return data
+    return data.filter(MULTI_COLUMNS)
+
+
+if __name__ == "__main__":
+    df = get_recipient_perspective(2019, 2020)

@@ -5,6 +5,7 @@ from climate_finance.oecd.climate_analysis.tools import (
     check_and_filter_parties,
     base_oecd_multilateral_agency_total,
     base_oecd_multilateral_agency_share,
+    OECD_SCHEMA,
 )
 from climate_finance.oecd.crs.get_data import get_crs_allocable_spending
 from climate_finance.oecd.imputations.get_data import (
@@ -76,7 +77,7 @@ def get_oecd_bilateral(
 def get_oecd_multilateral(
     start_year: int,
     end_year: int,
-    party: list[str] | str | None = None,
+    oecd_channel_name: list[str] | str | None = None,
     update_data: bool = False,
     methodology: str = "oecd_multilateral_agency_total",
 ) -> pd.DataFrame:
@@ -115,10 +116,12 @@ def get_oecd_multilateral(
     # Get the Imputations data
     data = get_oecd_multilateral_climate_imputations(
         start_year=start_year, end_year=end_year, force_update=update_data
-    )
+    ).rename(columns=OECD_SCHEMA)
 
     # Filter the data to only include the requested parties
-    data = check_and_filter_parties(data, party)
+    data = check_and_filter_parties(
+        data, oecd_channel_name, party_col="oecd_channel_name"
+    )
 
     # Transform the markers into indicators
     data = MULTILATERAL_CLIMATE_METHODOLOGY_DONOR[methodology](data)

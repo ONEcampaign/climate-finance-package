@@ -11,6 +11,34 @@ OECD_CLIMATE_INDICATORS: dict[str, str] = {
     "climate_total": "Climate unspecified",
 }
 
+OECD_SCHEMA: dict[str, str] = {
+    "donor_code": "oecd_party_code",
+    "donor_name": "party",
+    "provider": "party",
+    "provider_type": "party_type",
+    "provider_detailed": "party_detailed",
+    "provider_code": "oecd_party_code",
+    "agency_code": "oecd_agency_code",
+    "extending_agency": "agency",
+    "crs_identification_n": "crs_id",
+    "donor_project_n": "project_id",
+    "project_number": "project_id",
+    "recipient_code": "oecd_recipient_code",
+    "recipient_name": "recipient",
+    "region_name": "recipient_region",
+    "incomegoup_name": "oecd_recipient_income",
+    "recipient_income_group_oecd_classification": "oecd_recipient_income",
+    "development_cooperation_modality": "modality",
+    "aid_t": "modality",
+    "financial_instrument": "financial_instrument",
+    "type_of_finance": "type_of_finance",
+    "finance_t": "type_of_finance",
+    "channel_of_delivery": "oecd_channel_name_delivery",
+    "channel_of_delivery_code": "oecd_channel_code_delivery",
+    "channel_code": "oecd_channel_code",
+    "channel_name": "oecd_channel_name",
+}
+
 MULTILATERAL_ID_COLUMNS: list[str] = [
     "year",
     "oecd_channel_code",
@@ -174,7 +202,7 @@ def _combine_clean_sort(dfs: list[pd.DataFrame], sort_cols: list[str]) -> pd.Dat
 
 
 def check_and_filter_parties(
-    df: pd.DataFrame, party: list[str] | str | None, party_col: str = "oecd_donor_name"
+    df: pd.DataFrame, party: list[str] | str | None, party_col: str = "party"
 ) -> pd.DataFrame:
     """
     Check that the requested parties are in the CRS data and filter the data to only
