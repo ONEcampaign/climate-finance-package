@@ -3,6 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 from climate_finance.config import ClimateDataPath
+from climate_finance.oecd.cleaning_tools.schema import CrsSchema
 from climate_finance.oecd.climate_analysis.tools import (
     get_cross_cutting_data,
     check_and_filter_parties,
@@ -34,16 +35,14 @@ def _get_and_remove_multilateral(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
 
     """
     # Create a mask for the multilateral data
-    mask = (df["climate_mitigation"] == 99) | (df["climate_adaptation"] == 99)
+    mask = (df[CrsSchema.MITIGATION] == 99) | (df[CrsSchema.ADAPTATION] == 99)
 
     # Create a dataframe with the multilateral data
     multilateral = (
         df.loc[mask]
         .copy()
-        .assign(indicator="climate_total")
-        .rename(
-            columns={"climate_related_development_finance_commitment_current": "value"}
-        )
+        .assign(**{CrsSchema.INDICATOR: CrsSchema.CLIMATE_UNSPECIFIED})
+        .rename(columns={CrsSchema.CLIMATE_FINANCE_VALUE: "value"})
     )
 
     # Remove the multilateral data from the dataframe
@@ -94,14 +93,14 @@ def get_provider_perspective(
 
     # get cross cutting values
     cross_cutting = get_cross_cutting_data(df).rename(
-        columns={"overlap_commitment_current": "value"}
+        columns={CrsSchema.CROSS_CUTTING_VALUE: CrsSchema.VALUE}
     )
 
     # Get adaptation
-    adaptation = get_marker_data(df, marker="climate_adaptation")
+    adaptation = get_marker_data(df, marker=CrsSchema.ADAPTATION)
 
     # Get mitigation
-    mitigation = get_marker_data(df, marker="climate_mitigation")
+    mitigation = get_marker_data(df, marker=CrsSchema.MITIGATION)
 
     # Clean the different dataframes
     dfs = [
@@ -112,9 +111,13 @@ def get_provider_perspective(
     data = pd.concat(dfs, ignore_index=True)
 
     # filter for years
-    data = data.loc[lambda d: d.year.isin(years)]
+    data = data.loc[lambda d: d[CrsSchema.YEAR].isin(years)]
 
     # Check parties
     data = check_and_filter_parties(data, party=party)
 
     return data
+
+
+if __name__ == "__main__":
+    df = get_provider_perspective(2019, 2020)

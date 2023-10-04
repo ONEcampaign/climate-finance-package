@@ -5,7 +5,11 @@ from dateutil.utils import today
 from oda_data.get_data.common import fetch_file_from_url_selenium
 
 from climate_finance.config import logger
-from climate_finance.oecd.cleaning_tools.schema import CRS_MAPPING, CrsSchema, OECD_CLIMATE_INDICATORS
+from climate_finance.oecd.cleaning_tools.schema import (
+    CRS_MAPPING,
+    CrsSchema,
+    OECD_CLIMATE_INDICATORS,
+)
 from climate_finance.oecd.imputations.get_data import _log_notes
 
 
@@ -180,7 +184,7 @@ def clean_df(data: pd.DataFrame) -> pd.DataFrame:
     data = convert_thousands_to_units(data)
 
     # fix year column
-    data["year"] = data["year"].str.replace("\ufeff", "", regex=True)
+    data["year"] = data["year"].astype("str").str.replace("\ufeff", "", regex=True)
 
     # Convert data types
     data = set_data_types(data)
@@ -226,10 +230,10 @@ def rename_marker_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
     # rename marker columns
     markers = {
-        "adaptation_objective_applies_to_rio_marked_data_only": "climate_adaptation",
-        "mitigation_objective_applies_to_rio_marked_data_only": "climate_mitigation",
-        "adaptation_related_development_finance_commitment_current": "climate_adaptation_value",
-        "mitigation_related_development_finance_commitment_current": "climate_mitigation_value",
+        "adaptation_objective_applies_to_rio_marked_data_only": CrsSchema.ADAPTATION,
+        "mitigation_objective_applies_to_rio_marked_data_only": CrsSchema.MITIGATION,
+        "adaptation_related_development_finance_commitment_current": CrsSchema.ADAPTATION_VALUE,
+        "mitigation_related_development_finance_commitment_current": CrsSchema.MITIGATION_VALUE,
     }
 
     return df.rename(columns=markers)
@@ -262,7 +266,7 @@ def marker_columns_to_numeric(df: pd.DataFrame) -> pd.DataFrame:
     }
 
     # Identify the marker columns
-    marker_columns = ["climate_adaptation", "climate_mitigation"]
+    marker_columns = [CrsSchema.ADAPTATION, CrsSchema.MITIGATION]
 
     # Convert the marker columns to numeric
     df[marker_columns] = df[marker_columns].replace(markers_numeric).astype("Int16")
