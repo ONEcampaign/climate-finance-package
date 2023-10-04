@@ -61,6 +61,7 @@ class CrsSchema:
     REPORTING_METHOD: str = "reporting_method"
     MULTILATERAL_TYPE: str = "multilateral_type"
     CONVERGED_REPORTING: str = "converged_reporting"
+    COAL_FINANCING: str = "coal_related_financing"
 
 
 CRS_MAPPING: dict[str, str] = {
@@ -119,6 +120,7 @@ CRS_MAPPING: dict[str, str] = {
     "reporting_type": CrsSchema.REPORTING_METHOD,
     "type": CrsSchema.MULTILATERAL_TYPE,
     "converged_reporting": CrsSchema.CONVERGED_REPORTING,
+    "coal_related_financing": CrsSchema.COAL_FINANCING,
 }
 
 
