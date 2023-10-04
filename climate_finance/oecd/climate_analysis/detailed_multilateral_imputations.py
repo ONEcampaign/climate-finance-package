@@ -6,109 +6,88 @@ from climate_finance.config import logger
 from climate_finance.oecd.climate_related_activities.recipient_perspective import (
     get_recipient_perspective,
 )
+from climate_finance.oecd.cleaning_tools.schema import CrsSchema, CRS_MAPPING
 from climate_finance.oecd.get_oecd_data import get_oecd_bilateral
 
 UNIQUE_INDEX = [
-    "year",
-    "oecd_party_code",
-    "agency_code",
-    "crs_identification_n",
-    "donor_project_n",
-    "recipient_code",
-    "purpose_code",
+    CrsSchema.YEAR,
+    CrsSchema.PARTY_CODE,
+    CrsSchema.AGENCY_CODE,
+    CrsSchema.CRS_ID,
+    CrsSchema.PROJECT_ID,
+    CrsSchema.RECIPIENT_CODE,
+    CrsSchema.PURPOSE_CODE,
 ]
 
 
 CRS_INFO = [
-    "year",
-    "oecd_party_code",
-    "donor_name",
-    "agency_code",
-    "agency_name",
-    "crs_identification_n",
-    "donor_project_n",
-    "recipient_code",
-    "recipient_name",
-    "region_code",
-    "region_name",
-    "incomegroup_name",
-    "flow_code",
-    "flow_name",
-    "category",
-    "finance_t",
-    "aid_t",
-    "usd_commitment",
-    "usd_disbursement",
-    "usd_received",
-    "project_title",
-    "short_description",
-    "long_description",
-    "sector_code",
-    "purpose_code",
-    "channel_code",
-    "channel_name",
+    CrsSchema.YEAR,
+    CrsSchema.PARTY_CODE,
+    CrsSchema.PARTY_NAME,
+    CrsSchema.AGENCY_CODE,
+    CrsSchema.AGENCY_NAME,
+    CrsSchema.CRS_ID,
+    CrsSchema.PROJECT_ID,
+    CrsSchema.RECIPIENT_CODE,
+    CrsSchema.RECIPIENT_NAME,
+    CrsSchema.RECIPIENT_REGION_CODE,
+    CrsSchema.RECIPIENT_REGION,
+    CrsSchema.RECIPIENT_INCOME,
+    CrsSchema.FLOW_CODE,
+    CrsSchema.FLOW_NAME,
+    CrsSchema.CATEGORY,
+    CrsSchema.FINANCE_TYPE,
+    CrsSchema.FLOW_MODALITY,
+    CrsSchema.USD_COMMITMENT,
+    CrsSchema.USD_DISBURSEMENT,
+    CrsSchema.USD_RECEIVED,
+    CrsSchema.PROJECT_TITLE,
+    CrsSchema.PROJECT_DESCRIPTION_SHORT,
+    CrsSchema.PROJECT_DESCRIPTION,
+    CrsSchema.SECTOR_CODE,
+    CrsSchema.PURPOSE_CODE,
+    CrsSchema.CHANNEL_CODE,
+    CrsSchema.CHANNEL_NAME,
 ]
 
-OUTPUT_COLUMNS: dict = {
-    "year": "year",
-    "oecd_party_code": "oecd_donor_code",
-    "party": "party",
-    "oecd_donor_name": "party",
-    "provider_detailed": "oecd_party_detailed",
-    "provider_type": "oecd_party_type",
-    "agency_code": "oecd_agency_code",
-    "extending_agency": "oecd_agency_name",
-    "crs_identification_n": "crs_identification_n",
-    "donor_project_n": "donor_project_n",
-    "recipient_code": "oecd_recipient_code",
-    "recipient": "recipient_name",
-    "region_code": "oecd_recipient_region_code",
-    "recipient_region": "recipient_region_name",
-    "oecd_channel_code": "oecd_channel_code",
-    "oecd_channel_name": "oecd_channel_name",
-    "sector_code": "sector_code",
-    "purpose_code": "purpose_code",
-    "development_cooperation_modality": "development_cooperation_modality",
-    "financial_instrument": "financial_instrument",
-    "type_of_finance": "oecd_type_of_finance",
-    "category": "oecd_finance_category",
-    "concessionality": "concessionality",
-    "gender": "gender",
-    "project_title": "crs_project_title",
-    "description": "crs_description",
-    "indicator": "indicator",
-    "flow_type": "flow_type",
-    "value": "value",
-    "total_value": "total_value",
-    "share": "share",
-}
+OUTPUT_COLUMNS: list = [
+    CrsSchema.YEAR,
+    CrsSchema.PARTY_CODE,
+    CrsSchema.PARTY_NAME,
+    CrsSchema.PARTY_DETAILED,
+    CrsSchema.PARTY_TYPE,
+    CrsSchema.AGENCY_CODE,
+    CrsSchema.AGENCY_NAME,
+    CrsSchema.CRS_ID,
+    CrsSchema.PROJECT_ID,
+    CrsSchema.RECIPIENT_CODE,
+    CrsSchema.RECIPIENT_NAME,
+    CrsSchema.RECIPIENT_REGION_CODE,
+    CrsSchema.RECIPIENT_REGION,
+    CrsSchema.CHANNEL_CODE,
+    CrsSchema.CHANNEL_NAME,
+    CrsSchema.SECTOR_CODE,
+    CrsSchema.PURPOSE_CODE,
+    CrsSchema.FLOW_MODALITY,
+    CrsSchema.FINANCIAL_INSTRUMENT,
+    CrsSchema.FINANCE_TYPE,
+    CrsSchema.CATEGORY,
+    CrsSchema.CONCESSIONALITY,
+    CrsSchema.GENDER,
+    CrsSchema.PROJECT_TITLE,
+    CrsSchema.PROJECT_DESCRIPTION,
+    CrsSchema.INDICATOR,
+    CrsSchema.FLOW_TYPE,
+    CrsSchema.VALUE,
+    CrsSchema.TOTAL_VALUE,
+    CrsSchema.SHARE,
+]
 
 CRS_VALUES: list = [
-    "usd_commitment",
-    "usd_disbursement",
-    "usd_net_disbursement",
+    CrsSchema.USD_COMMITMENT,
+    CrsSchema.USD_DISBURSEMENT,
+    CrsSchema.USD_NET_DISBURSEMENT,
 ]
-
-
-def _rename_crs_columns_to_multi_names(data: pd.DataFrame) -> pd.DataFrame:
-    """
-    Rename the CRS columns to match the multilateral naming conventions.
-
-    Args:
-        data: The CRS data to rename.
-
-    Returns:
-        The CRS data with the columns renamed.
-
-    """
-
-    return data.rename(
-        columns={
-            "donor_code": "oecd_party_code",
-            "crs_id": "crs_identification_n",
-            "project_number": "donor_project_n",
-        }
-    )
 
 
 def _set_crs_types_to_strings(data: pd.DataFrame) -> pd.DataFrame:
@@ -163,7 +142,7 @@ def _filter_parties(data, party_code: str | list[str] | None) -> pd.DataFrame:
 
     # Filter donor code
     if party_code is not None:
-        return data.loc[lambda d: d.oecd_party_code.isin(party_code)]
+        return data.loc[lambda d: d[CrsSchema.PARTY_CODE].isin(party_code)]
 
     return data
 
@@ -184,7 +163,7 @@ def _convert_to_flowtypes(data: pd.DataFrame) -> pd.DataFrame:
 
     dfs = []
 
-    for column in ["usd_disbursement", "usd_net_disbursement"]:
+    for column in [CrsSchema.USD_DISBURSEMENT, CrsSchema.USD_NET_DISBURSEMENT]:
         dfs.append(
             data.assign(
                 flow_type=column,
@@ -279,7 +258,12 @@ def _match_projects_with_crs(projects: pd.DataFrame, crs: pd.DataFrame) -> pd.Da
     additional_matches = _merge_projects_with_crs(
         projects=not_matched,
         crs=crs,
-        index=["year", "oecd_party_code", "crs_identification_n", "purpose_code"],
+        index=[
+            CrsSchema.YEAR,
+            CrsSchema.PARTY_CODE,
+            CrsSchema.CRS_ID,
+            CrsSchema.PURPOSE_CODE,
+        ],
     )
 
     # Log the number of projects that were matched
@@ -310,7 +294,7 @@ def _keep_multilateral_providers(df: pd.DataFrame) -> pd.DataFrame:
     multi = ["Other multilateral", "Multilateral development bank"]
 
     # filter
-    return df.loc[lambda d: d["provider_type"].isin(multi)].reset_index(drop=True)
+    return df.loc[lambda d: d[CrsSchema.PARTY_TYPE].isin(multi)].reset_index(drop=True)
 
 
 def _add_net_disbursements_column(data: pd.DataFrame) -> pd.DataFrame:
@@ -325,9 +309,9 @@ def _add_net_disbursements_column(data: pd.DataFrame) -> pd.DataFrame:
         The dataframe with the net disbursements column added.
 
     """
-    data["usd_net_disbursement"] = data["usd_disbursement"].fillna(0) - data[
-        "usd_received"
-    ].fillna(0)
+    data[CrsSchema.USD_NET_DISBURSEMENT] = data[CrsSchema.USD_DISBURSEMENT].fillna(
+        0
+    ) - data[CrsSchema.USD_RECEIVED].fillna(0)
 
     return data
 
@@ -346,10 +330,8 @@ def _clean_multi_crs_output(data: pd.DataFrame) -> pd.DataFrame:
     # filter to keep only the columns in the OUTPUT_COLUMNS global variable
     # and the CRS_VALUES global variable. Rename the columns to match the
     # OUTPUT_COLUMNS global variable.
-    data = (
-        data.astype({k: str for k in UNIQUE_INDEX})
-        .filter(list(OUTPUT_COLUMNS) + CRS_VALUES)
-        .rename(columns=OUTPUT_COLUMNS)
+    data = data.astype({k: str for k in UNIQUE_INDEX}).filter(
+        OUTPUT_COLUMNS + CRS_VALUES
     )
 
     for column in CRS_VALUES:
@@ -397,10 +379,7 @@ def _get_crs_to_match(
     """
 
     # Read the CRS data
-    crs_data = read_crs(years=years)
-
-    # Rename the columns
-    crs_data = _rename_crs_columns_to_multi_names(data=crs_data)
+    crs_data = read_crs(years=years).rename(columns=CRS_MAPPING)
 
     # Set the types to strings
     crs_data = _set_crs_types_to_strings(data=crs_data)
@@ -419,57 +398,83 @@ def get_yearly_crs_totals(
         start_year=start_year,
         end_year=end_year,
         methodology="oecd_bilateral",
-    ).rename(columns=OUTPUT_COLUMNS)
+    )
 
     # Make Cross-cutting negative
-    crs_data.loc[lambda d: d.indicator == "Cross-cutting", "value"] *= -1
+    crs_data.loc[lambda d: d[CrsSchema.INDICATOR] == "Cross-cutting", "value"] *= -1
 
     # Create an index if none is provided
     if by_index is None:
         by_index = [
             c
             for c in crs_data.columns
-            if c not in ["value", "indicator", "usd_commitment"]
+            if c not in [CrsSchema.VALUE, CrsSchema.INDICATOR, CrsSchema.USD_COMMITMENT]
         ]
 
     # Get the group totals based on the selected index
-    return crs_data.groupby(by_index, observed=True)["value"].sum().reset_index()
+    return (
+        crs_data.groupby(by_index, observed=True)[CrsSchema.VALUE].sum().reset_index()
+    )
 
 
-def _compute_rolling_sum(group):
-    group["value"] = group["value"].rolling(window=2).sum().fillna(group["value"])
+def _compute_rolling_sum(group, window: int = 2):
+    group[CrsSchema.VALUE] = (
+        group[CrsSchema.VALUE]
+        .rolling(window=window)
+        .sum()
+        .fillna(group[CrsSchema.VALUE])
+    )
     group["yearly_total"] = (
-        group["yearly_total"].rolling(window=2).sum().fillna(group["yearly_total"])
+        group["yearly_total"].rolling(window=window).sum().fillna(group["yearly_total"])
     )
     return group
 
 
-def _calculate_rolling_shares(data: pd.DataFrame) -> pd.DataFrame:
-    idx = ["year", "oecd_donor_code", "flow_type"]
-    data[["year", "oecd_donor_code"]] = data[["year", "oecd_donor_code"]].astype(
-        "Int32"
-    )
-    data.loc[lambda d: d.indicator == "Cross-cutting", "value"] *= -1
+def oecd_rolling_shares(data: pd.DataFrame, window: int = 2) -> pd.DataFrame:
+    # Define the columns for the level of aggregation
+    idx = [CrsSchema.YEAR, CrsSchema.PARTY_CODE, CrsSchema.FLOW_TYPE]
+
+    # Ensure key columns are integers
+    data[[CrsSchema.YEAR, CrsSchema.PARTY_CODE]] = data[
+        [CrsSchema.YEAR, CrsSchema.PARTY_CODE]
+    ].astype("Int32")
+
+    # Make Cross-cutting negative
+    data.loc[lambda d: d[CrsSchema.INDICATOR] == "Cross-cutting", CrsSchema.VALUE] *= -1
+
+    # Summarise the data at the right level
     data = (
-        data.groupby(["party"] + idx + ["indicator"], observed=True)["value"]
+        data.groupby(
+            [CrsSchema.PARTY_NAME] + idx + [CrsSchema.INDICATOR], observed=True
+        )[CrsSchema.VALUE]
         .sum()
         .reset_index()
     )
 
+    # Get the yearly totals for the years present in the data
     yearly_totals = get_yearly_crs_totals(
-        start_year=data.year.min(), end_year=data.year.max(), by_index=idx
-    ).rename(columns={"value": "yearly_total"})
+        start_year=data[CrsSchema.YEAR].min(),
+        end_year=data[CrsSchema.YEAR].max(),
+        by_index=idx,
+    ).rename(columns={CrsSchema.VALUE: "yearly_total"})
 
+    # Merge the yearly totals with the data
     data = data.merge(yearly_totals, on=idx, how="left").replace(0, np.nan)
 
+    # Compute the rolling totals
     rolling = (
-        data.sort_values(["year", "oecd_donor_code"])
+        data.sort_values([CrsSchema.YEAR, CrsSchema.PARTY_CODE])
         .groupby(
-            ["party", "oecd_donor_code", "flow_type", "indicator"],
+            [
+                CrsSchema.PARTY_NAME,
+                CrsSchema.PARTY_CODE,
+                CrsSchema.FLOW_TYPE,
+                CrsSchema.INDICATOR,
+            ],
             observed=True,
             group_keys=False,
         )
-        .apply(_compute_rolling_sum)
+        .apply(_compute_rolling_sum, window=window)
         .reset_index(drop=True)
     )
 
@@ -517,13 +522,13 @@ def add_crs_details(df: pd.DataFrame) -> pd.DataFrame:
     # convert to flow types
     data = _convert_to_flowtypes(data)
 
-    return data.filter(set(OUTPUT_COLUMNS.values()))
+    return data.filter(OUTPUT_COLUMNS)
 
 
 if __name__ == "__main__":
-    data = (
+    test_data = (
         get_recipient_perspective(start_year=2019, end_year=2021)
         .pipe(_keep_multilateral_providers)
         .pipe(add_crs_details)
-        .pipe(_calculate_rolling_shares)
+        .pipe(oecd_rolling_shares, window=2)
     )

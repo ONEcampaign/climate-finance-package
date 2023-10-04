@@ -5,10 +5,7 @@ from dateutil.utils import today
 from oda_data.get_data.common import fetch_file_from_url_selenium
 
 from climate_finance.config import logger
-from climate_finance.oecd.climate_analysis.tools import (
-    OECD_CLIMATE_INDICATORS,
-    OECD_SCHEMA,
-)
+from climate_finance.oecd.cleaning_tools.schema import CRS_MAPPING, CrsSchema, OECD_CLIMATE_INDICATORS
 from climate_finance.oecd.imputations.get_data import _log_notes
 
 
@@ -297,10 +294,10 @@ def get_marker_data(df: pd.DataFrame, marker: str):
 
 def load_or_download(base_url: str, save_to_path: str | pathlib.Path) -> pd.DataFrame:
     try:
-        return pd.read_feather(save_to_path).rename(columns=OECD_SCHEMA)
+        return pd.read_feather(save_to_path).rename(columns=CRS_MAPPING)
     except FileNotFoundError:
         download_file(base_url=base_url, save_to_path=save_to_path)
-        return pd.read_feather(save_to_path).rename(columns=OECD_SCHEMA)
+        return pd.read_feather(save_to_path).rename(columns=CRS_MAPPING)
 
 
 def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -316,14 +313,14 @@ def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     """
     to_drop = [
-        "climate_objective_applies_to_rio_marked_data_only_or_climate_component",
-        "climate_adaptation",
-        "climate_mitigation",
-        "climate_related_development_finance_commitment_current",
-        "climate_adaptation_value",
-        "climate_mitigation_value",
-        "overlap_commitment_current",
-        "share_of_the_underlying_commitment_when_available",
+        CrsSchema.CLIMATE_OBJECTIVE,
+        CrsSchema.ADAPTATION,
+        CrsSchema.ADAPTATION_VALUE,
+        CrsSchema.MITIGATION,
+        CrsSchema.MITIGATION_VALUE,
+        CrsSchema.CLIMATE_FINANCE_VALUE,
+        CrsSchema.CROSS_CUTTING_VALUE,
+        CrsSchema.COMMITMENT_CLIMATE_SHARE,
     ]
 
     return (

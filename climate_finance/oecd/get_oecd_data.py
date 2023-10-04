@@ -5,8 +5,8 @@ from climate_finance.oecd.climate_analysis.tools import (
     check_and_filter_parties,
     base_oecd_multilateral_agency_total,
     base_oecd_multilateral_agency_share,
-    OECD_SCHEMA,
 )
+from climate_finance.oecd.cleaning_tools.schema import CRS_MAPPING
 from climate_finance.oecd.crs.get_data import get_crs_allocable_spending
 from climate_finance.oecd.imputations.get_data import (
     get_oecd_multilateral_climate_imputations,
@@ -116,7 +116,7 @@ def get_oecd_multilateral(
     # Get the Imputations data
     data = get_oecd_multilateral_climate_imputations(
         start_year=start_year, end_year=end_year, force_update=update_data
-    ).rename(columns=OECD_SCHEMA)
+    ).rename(columns=CRS_MAPPING)
 
     # Filter the data to only include the requested parties
     data = check_and_filter_parties(
