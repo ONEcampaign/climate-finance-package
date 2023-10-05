@@ -1,5 +1,6 @@
 import pandas as pd
 
+from climate_finance.oecd.cleaning_tools.schema import CRS_MAPPING
 from climate_finance.oecd.climate_analysis.tools import (
     base_oecd_transform_markers_into_indicators,
     check_and_filter_parties,
@@ -76,7 +77,7 @@ def get_oecd_bilateral(
 def get_oecd_multilateral(
     start_year: int,
     end_year: int,
-    party: list[str] | str | None = None,
+    oecd_channel_name: list[str] | str | None = None,
     update_data: bool = False,
     methodology: str = "oecd_multilateral_agency_total",
 ) -> pd.DataFrame:
@@ -115,10 +116,12 @@ def get_oecd_multilateral(
     # Get the Imputations data
     data = get_oecd_multilateral_climate_imputations(
         start_year=start_year, end_year=end_year, force_update=update_data
-    )
+    ).rename(columns=CRS_MAPPING)
 
     # Filter the data to only include the requested parties
-    data = check_and_filter_parties(data, party)
+    data = check_and_filter_parties(
+        data, oecd_channel_name, party_col="oecd_channel_name"
+    )
 
     # Transform the markers into indicators
     data = MULTILATERAL_CLIMATE_METHODOLOGY_DONOR[methodology](data)

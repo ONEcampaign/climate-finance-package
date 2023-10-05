@@ -8,10 +8,10 @@ from climate_finance.oecd.climate_analysis.tools import check_and_filter_parties
 from climate_finance.oecd.climate_related_activities.tools import (
     download_file,
     load_or_download,
-    rename_marker_columns,
     marker_columns_to_numeric,
     clean_columns,
 )
+from climate_finance.oecd.cleaning_tools.schema import CrsSchema
 
 FILE_PATH: Path = (
     ClimateDataPath.raw_data / "oecd_climate_recipient_perspective.feather"
@@ -21,25 +21,49 @@ set_data_path(ClimateDataPath.raw_data)
 
 BASE_URL: str = "https://webfs.oecd.org/climate/RecipientPerspective/CRDF-RP-2000-"
 
-VALUES = [
-    "climate_adaptation_value",
-    "climate_mitigation_value",
-    "overlap_commitment_current",
-    "climate_related_development_finance_commitment_current",
-    "share_of_the_underlying_commitment_when_available",
-]
-
 UNIQUE_INDEX = [
-    "year",
-    "provider_code",
-    "agency_code",
-    "crs_identification_n",
-    "donor_project_n",
-    "recipient_code",
-    "purpose_code",
+    CrsSchema.YEAR,
+    CrsSchema.PARTY_CODE,
+    CrsSchema.AGENCY_CODE,
+    CrsSchema.CRS_ID,
+    CrsSchema.PROJECT_ID,
+    CrsSchema.RECIPIENT_CODE,
+    CrsSchema.PURPOSE_CODE,
 ]
 
-TOTAL_COL: str = "climate_related_development_finance_commitment_current"
+
+MULTI_COLUMNS: list = [
+    CrsSchema.YEAR,
+    CrsSchema.PARTY_TYPE,
+    CrsSchema.PARTY_NAME,
+    CrsSchema.PARTY_DETAILED,
+    CrsSchema.PARTY_CODE,
+    CrsSchema.AGENCY_CODE,
+    CrsSchema.AGENCY_NAME,
+    CrsSchema.CRS_ID,
+    CrsSchema.PROJECT_ID,
+    CrsSchema.RECIPIENT_CODE,
+    CrsSchema.RECIPIENT_NAME,
+    CrsSchema.RECIPIENT_REGION,
+    CrsSchema.RECIPIENT_INCOME,
+    CrsSchema.CONCESSIONALITY,
+    CrsSchema.CHANNEL_CODE_DELIVERY,
+    CrsSchema.CHANNEL_NAME_DELIVERY,
+    CrsSchema.SECTOR_NAME,
+    CrsSchema.PURPOSE_CODE,
+    CrsSchema.PURPOSE_NAME,
+    CrsSchema.FLOW_MODALITY,
+    CrsSchema.FINANCIAL_INSTRUMENT,
+    CrsSchema.FINANCE_TYPE,
+    CrsSchema.PROJECT_TITLE,
+    CrsSchema.PROJECT_DESCRIPTION,
+    CrsSchema.GENDER,
+    CrsSchema.INDICATOR,
+    CrsSchema.FLOW_TYPE,
+    CrsSchema.VALUE,
+    CrsSchema.TOTAL_VALUE,
+    CrsSchema.SHARE,
+]
 
 
 def add_imputed_total(df: pd.DataFrame) -> pd.DataFrame:
@@ -55,12 +79,11 @@ def add_imputed_total(df: pd.DataFrame) -> pd.DataFrame:
         The dataframe with the imputed total added.
 
     """
-    # Define the columns
-    climate = "climate_related_development_finance_commitment_current"
-    share = "share_of_the_underlying_commitment_when_available"
 
     # Add imputed total
-    df["total_value"] = df[climate] / df[share]
+    df[CrsSchema.TOTAL_VALUE] = (
+        df[CrsSchema.CLIMATE_FINANCE_VALUE] / df[CrsSchema.COMMITMENT_CLIMATE_SHARE]
+    )
 
     return df
 
@@ -82,10 +105,12 @@ def get_marker_data_and_share(df: pd.DataFrame, marker: str):
         df.loc[lambda d: d[marker] > 0]  # Only keep rows where the marker is > 0
         .copy()  # Make a copy of the dataframe
         .assign(indicator=marker)  # Add a column with the marker name
-        .rename(columns={f"{marker}_value": "value"})  # Rename the value column
+        .rename(columns={f"{marker}_value": CrsSchema.VALUE})  # Rename the value column
         .drop(columns=[marker])  # Drop the marker column
-        .assign(share=lambda d: d.value / d["total_value"])  # Add a share column
-        .drop(columns=[TOTAL_COL])  # Drop the total column
+        .assign(
+            share=lambda d: d[CrsSchema.VALUE] / d[CrsSchema.TOTAL_VALUE]
+        )  # Add a share column
+        .drop(columns=[CrsSchema.CLIMATE_FINANCE_VALUE])  # Drop the total column
     )
 
 
@@ -102,13 +127,19 @@ def get_overlap(df: pd.DataFrame) -> pd.DataFrame:
 
     """
     return (
-        df.loc[lambda d: d.overlap_commitment_current > 0]  # Only where overlap is > 0
+        df.loc[
+            lambda d: d[CrsSchema.CROSS_CUTTING_VALUE] > 0
+        ]  # Only where overlap is > 0
         .copy()  # Make a copy of the dataframe
-        .assign(indicator="climate_cross_cutting")  # Add a column with the marker name
-        .rename(columns={"overlap_commitment_current": "value"})  # Rename overlap
+        .assign(indicator=CrsSchema.CROSS_CUTTING)  # Add a column with the marker name
+        .rename(
+            columns={CrsSchema.CROSS_CUTTING_VALUE: CrsSchema.VALUE}
+        )  # Rename overlap
         .drop_duplicates(subset=UNIQUE_INDEX, keep="first")  # Drop duplicates
-        .assign(share=lambda d: d.value / d["total_value"])  # Add a share column
-        .drop(columns=[TOTAL_COL])  # Drop the total column
+        .assign(
+            share=lambda d: d[CrsSchema.VALUE] / d[CrsSchema.TOTAL_VALUE]
+        )  # Add a share column
+        .drop(columns=[CrsSchema.CLIMATE_FINANCE_VALUE])  # Drop the total column
     )
 
 
@@ -147,9 +178,6 @@ def get_recipient_perspective(
     # Filter for years
     df = df.loc[lambda d: d.year.isin(years)]
 
-    # Rename markers
-    df = rename_marker_columns(df)
-
     # Convert markers to multilateral
     df = marker_columns_to_numeric(df)
 
@@ -157,14 +185,14 @@ def get_recipient_perspective(
     df = df.drop_duplicates(keep="first")
 
     # Fix errors in recipient code
-    df = df.replace({"recipient_code": {"998": "9998"}})
+    df = df.replace({CrsSchema.RECIPIENT_CODE: {"998": "9998"}})
 
     # Add imputed total
     df = add_imputed_total(df)
 
     # Get dataframes for each marker
-    adaptation = get_marker_data_and_share(df, marker="climate_adaptation")
-    mitigation = get_marker_data_and_share(df, marker="climate_mitigation")
+    adaptation = get_marker_data_and_share(df, marker=CrsSchema.ADAPTATION)
+    mitigation = get_marker_data_and_share(df, marker=CrsSchema.MITIGATION)
     overlap = get_overlap(df)
 
     # Combine dataframes
@@ -177,6 +205,10 @@ def get_recipient_perspective(
     data = data.loc[lambda d: d.value > 0]
 
     # Check parties
-    data = check_and_filter_parties(data, party=party, party_col="party")
+    data = check_and_filter_parties(data, party=party, party_col=CrsSchema.PARTY_NAME)
 
-    return data
+    return data.filter(MULTI_COLUMNS)
+
+
+if __name__ == "__main__":
+    df = get_recipient_perspective(2019, 2020)

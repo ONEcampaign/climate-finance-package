@@ -5,7 +5,11 @@ from dateutil.utils import today
 from oda_data.get_data.common import fetch_file_from_url_selenium
 
 from climate_finance.config import logger
-from climate_finance.oecd.climate_analysis.tools import OECD_CLIMATE_INDICATORS
+from climate_finance.oecd.cleaning_tools.schema import (
+    CRS_MAPPING,
+    CrsSchema,
+    OECD_CLIMATE_INDICATORS,
+)
 from climate_finance.oecd.imputations.get_data import _log_notes
 
 
@@ -179,6 +183,9 @@ def clean_df(data: pd.DataFrame) -> pd.DataFrame:
     # Convert thousands to units
     data = convert_thousands_to_units(data)
 
+    # fix year column
+    data["year"] = data["year"].astype("str").str.replace("\ufeff", "", regex=True)
+
     # Convert data types
     data = set_data_types(data)
 
@@ -223,35 +230,13 @@ def rename_marker_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
     # rename marker columns
     markers = {
-        "adaptation_objective_applies_to_rio_marked_data_only": "climate_adaptation",
-        "mitigation_objective_applies_to_rio_marked_data_only": "climate_mitigation",
-        "adaptation_related_development_finance_commitment_current": "climate_adaptation_value",
-        "mitigation_related_development_finance_commitment_current": "climate_mitigation_value",
+        "adaptation_objective_applies_to_rio_marked_data_only": CrsSchema.ADAPTATION,
+        "mitigation_objective_applies_to_rio_marked_data_only": CrsSchema.MITIGATION,
+        "adaptation_related_development_finance_commitment_current": CrsSchema.ADAPTATION_VALUE,
+        "mitigation_related_development_finance_commitment_current": CrsSchema.MITIGATION_VALUE,
     }
 
     return df.rename(columns=markers)
-
-
-def rename_index_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Rename the index columns to more standard names.
-
-    Args:
-        df: The dataframe to rename the columns for.
-
-    Returns:
-        The dataframe with the columns renamed.
-
-    """
-    # Define index columns and their new names
-    idx_cols = {
-        "provider": "party",
-        "provider_code": "oecd_party_code",
-        "channel_of_delivery_code": "oecd_channel_code",
-        "channel_of_delivery": "oecd_channel_name",
-    }
-
-    return df.rename(columns=idx_cols)
 
 
 def marker_columns_to_numeric(df: pd.DataFrame) -> pd.DataFrame:
@@ -281,7 +266,7 @@ def marker_columns_to_numeric(df: pd.DataFrame) -> pd.DataFrame:
     }
 
     # Identify the marker columns
-    marker_columns = ["climate_adaptation", "climate_mitigation"]
+    marker_columns = [CrsSchema.ADAPTATION, CrsSchema.MITIGATION]
 
     # Convert the marker columns to numeric
     df[marker_columns] = df[marker_columns].replace(markers_numeric).astype("Int16")
@@ -313,10 +298,10 @@ def get_marker_data(df: pd.DataFrame, marker: str):
 
 def load_or_download(base_url: str, save_to_path: str | pathlib.Path) -> pd.DataFrame:
     try:
-        return pd.read_feather(save_to_path)
+        return pd.read_feather(save_to_path).rename(columns=CRS_MAPPING)
     except FileNotFoundError:
         download_file(base_url=base_url, save_to_path=save_to_path)
-        return pd.read_feather(save_to_path)
+        return pd.read_feather(save_to_path).rename(columns=CRS_MAPPING)
 
 
 def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -332,19 +317,18 @@ def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     """
     to_drop = [
-        "climate_objective_applies_to_rio_marked_data_only_or_climate_component",
-        "climate_adaptation",
-        "climate_mitigation",
-        "climate_related_development_finance_commitment_current",
-        "climate_adaptation_value",
-        "climate_mitigation_value",
-        "overlap_commitment_current",
-        "share_of_the_underlying_commitment_when_available",
+        CrsSchema.CLIMATE_OBJECTIVE,
+        CrsSchema.ADAPTATION,
+        CrsSchema.ADAPTATION_VALUE,
+        CrsSchema.MITIGATION,
+        CrsSchema.MITIGATION_VALUE,
+        CrsSchema.CLIMATE_FINANCE_VALUE,
+        CrsSchema.CROSS_CUTTING_VALUE,
+        CrsSchema.COMMITMENT_CLIMATE_SHARE,
     ]
 
     return (
         df.filter([c for c in df.columns if c not in to_drop])
         .assign(indicator=lambda d: d.indicator.map(OECD_CLIMATE_INDICATORS))
         .assign(flow_type="usd_commitment")
-        .pipe(rename_index_columns)
     )
