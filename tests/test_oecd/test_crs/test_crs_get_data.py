@@ -213,8 +213,6 @@ def test_get_crs_allocable_spending(mock_read_crs):
             "project_id": ["crs1", "crs2"] * 5,
             "description": ["Description1", "Description2"] * 5,
             "type_of_finance": ["Finance1", "Finance2"] * 5,
-
-
             # "finance_type": ["Finance1", "Finance2"] * 5,
             # "modality": ["A02", "B01"] * 5,
             "climate_mitigation": [1, 2] * 5,
