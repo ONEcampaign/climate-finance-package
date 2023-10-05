@@ -430,7 +430,32 @@ def _compute_rolling_sum(group, window: int = 2):
     return group
 
 
-def oecd_rolling_shares(data: pd.DataFrame, window: int = 2) -> pd.DataFrame:
+def _summarise_by_party_idx(
+    data: pd.DataFrame, idx: list[str], by_indicator: bool = False
+) -> pd.DataFrame:
+    grouper = [CrsSchema.PARTY_NAME] + idx
+
+    if by_indicator:
+        grouper += [CrsSchema.INDICATOR]
+
+    return data.groupby(grouper, observed=True)[CrsSchema.VALUE].sum().reset_index()
+
+
+def _merge_total(
+    data: pd.DataFrame, totals: pd.DataFrame, idx: list[str]
+) -> pd.DataFrame:
+    return data.merge(totals, on=idx, how="left").replace(0, np.nan)
+
+
+def _add_share(data: pd.DataFrame) -> pd.DataFrame:
+    return data.assign(share=lambda d: d[CrsSchema.VALUE] / d["yearly_total"]).drop(
+        columns=["yearly_total", CrsSchema.VALUE]
+    )
+
+
+def oecd_rolling_shares_methodology(
+    data: pd.DataFrame, window: int = 2
+) -> pd.DataFrame:
     # Define the columns for the level of aggregation
     idx = [CrsSchema.YEAR, CrsSchema.PARTY_CODE, CrsSchema.FLOW_TYPE]
 
@@ -443,13 +468,12 @@ def oecd_rolling_shares(data: pd.DataFrame, window: int = 2) -> pd.DataFrame:
     data.loc[lambda d: d[CrsSchema.INDICATOR] == "Cross-cutting", CrsSchema.VALUE] *= -1
 
     # Summarise the data at the right level
-    data = (
-        data.groupby(
-            [CrsSchema.PARTY_NAME] + idx + [CrsSchema.INDICATOR], observed=True
-        )[CrsSchema.VALUE]
-        .sum()
-        .reset_index()
-    )
+    data_by_indicator = _summarise_by_party_idx(data=data, idx=idx, by_indicator=True)
+
+    # Summarise data by yearly totals
+    data_yearly = _summarise_by_party_idx(
+        data=data, idx=idx, by_indicator=False
+    ).assign(**{CrsSchema.INDICATOR: CrsSchema.CLIMATE_UNSPECIFIED})
 
     # Get the yearly totals for the years present in the data
     yearly_totals = get_yearly_crs_totals(
@@ -458,8 +482,15 @@ def oecd_rolling_shares(data: pd.DataFrame, window: int = 2) -> pd.DataFrame:
         by_index=idx,
     ).rename(columns={CrsSchema.VALUE: "yearly_total"})
 
-    # Merge the yearly totals with the data
-    data = data.merge(yearly_totals, on=idx, how="left").replace(0, np.nan)
+    # Merge the yearly totals with the data by indicator
+    data_by_indicator = _merge_total(
+        data=data_by_indicator, totals=yearly_totals, idx=idx
+    )
+
+    data_yearly = _merge_total(data=data_yearly, totals=yearly_totals, idx=idx)
+
+    # Concatenate the dataframes
+    data = pd.concat([data_by_indicator, data_yearly], ignore_index=True)
 
     # Compute the rolling totals
     rolling = (
@@ -477,6 +508,9 @@ def oecd_rolling_shares(data: pd.DataFrame, window: int = 2) -> pd.DataFrame:
         .apply(_compute_rolling_sum, window=window)
         .reset_index(drop=True)
     )
+
+    # add shares
+    rolling = _add_share(rolling)
 
     return rolling
 
@@ -525,10 +559,12 @@ def add_crs_details(df: pd.DataFrame) -> pd.DataFrame:
     return data.filter(OUTPUT_COLUMNS)
 
 
-if __name__ == "__main__":
-    test_data = (
-        get_recipient_perspective(start_year=2019, end_year=2021)
+def get_oecd_imputed_shares_calculated(
+    start_year: int, end_year: int, rolling_window: int = 2
+) -> pd.DataFrame:
+    return (
+        get_recipient_perspective(start_year=start_year, end_year=end_year)
         .pipe(_keep_multilateral_providers)
         .pipe(add_crs_details)
-        .pipe(oecd_rolling_shares, window=2)
+        .pipe(oecd_rolling_shares_methodology, window=rolling_window)
     )
