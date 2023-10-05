@@ -2,7 +2,10 @@ import numpy as np
 import pandas as pd
 
 from climate_finance.config import logger
-from climate_finance.oecd.cleaning_tools.schema import OECD_CLIMATE_INDICATORS, CrsSchema
+from climate_finance.oecd.cleaning_tools.schema import (
+    OECD_CLIMATE_INDICATORS,
+    CrsSchema,
+)
 
 MULTILATERAL_ID_COLUMNS: list[str] = [
     CrsSchema.YEAR,

@@ -1,12 +1,12 @@
 import pandas as pd
 
+from climate_finance.oecd.cleaning_tools.schema import CRS_MAPPING
 from climate_finance.oecd.climate_analysis.tools import (
     base_oecd_transform_markers_into_indicators,
     check_and_filter_parties,
     base_oecd_multilateral_agency_total,
     base_oecd_multilateral_agency_share,
 )
-from climate_finance.oecd.cleaning_tools.schema import CRS_MAPPING
 from climate_finance.oecd.crs.get_data import get_crs_allocable_spending
 from climate_finance.oecd.imputations.get_data import (
     get_oecd_multilateral_climate_imputations,
@@ -127,5 +127,3 @@ def get_oecd_multilateral(
     data = MULTILATERAL_CLIMATE_METHODOLOGY_DONOR[methodology](data)
 
     return data
-
-
