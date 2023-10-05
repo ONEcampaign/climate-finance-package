@@ -184,7 +184,9 @@ def get_crs_allocable_spending(
         .pipe(_add_net_disbursement)  # Add net disbursement column
         .filter(columns + flow_columns, axis=1)  # Keep only relevant columns
         .assign(
-            year=lambda d: d[CrsSchema.YEAR].str.replace("\ufeff", "", regex=True)
+            year=lambda d: d[CrsSchema.YEAR]
+            .astype("str")
+            .str.replace("\ufeff", "", regex=True)
         )  # fix year
         .pipe(_set_crs_data_types)  # Set data types
         .pipe(_replace_missing_climate_with_zero, column=CrsSchema.MITIGATION)
