@@ -5,9 +5,9 @@ import pandas as pd
 from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.schema import CrsSchema
 from climate_finance.oecd.climate_analysis.tools import (
-    get_cross_cutting_data,
     check_and_filter_parties,
 )
+from climate_finance.oecd.methodologies.bilateral_methodologies import get_cross_cutting_data_oecd
 from climate_finance.oecd.climate_related_activities.tools import (
     download_file,
     rename_marker_columns,
@@ -92,7 +92,7 @@ def get_provider_perspective(
     df, multilateral = _get_and_remove_multilateral(df)
 
     # get cross cutting values
-    cross_cutting = get_cross_cutting_data(df).rename(
+    cross_cutting = get_cross_cutting_data_oecd(df).rename(
         columns={CrsSchema.CROSS_CUTTING_VALUE: CrsSchema.VALUE}
     )
 

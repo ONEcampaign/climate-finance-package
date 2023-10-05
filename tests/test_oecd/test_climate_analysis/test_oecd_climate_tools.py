@@ -1,13 +1,11 @@
 import pandas as pd
 
 from climate_finance.oecd.climate_analysis.tools import (
-    _melt_crs_climate_indicators,
-    get_cross_cutting_data,
-    _get_not_climate_relevant_data,
-    _combine_clean_sort,
     check_and_filter_parties,
-    base_oecd_transform_markers_into_indicators,
 )
+from climate_finance.oecd.methodologies.bilateral_methodologies import _melt_crs_climate_indicators_oecd, \
+    get_cross_cutting_data_oecd, _get_not_climate_relevant_data, _combine_clean_sort, \
+    base_oecd_transform_markers_into_indicators
 
 
 def test_melt_crs_climate_indicators():
@@ -19,7 +17,7 @@ def test_melt_crs_climate_indicators():
         }
     )
     climate_indicators = ["climate_adaptation", "climate_mitigation"]
-    result = _melt_crs_climate_indicators(df, climate_indicators).reset_index(drop=True)
+    result = _melt_crs_climate_indicators_oecd(df, climate_indicators).reset_index(drop=True)
     expected = pd.DataFrame(
         {
             "other_column": ["b", "c", "a", "c"],
@@ -42,7 +40,7 @@ def test_get_cross_cutting_data():
             "other_column": ["a", "b", "c"],
         }
     )
-    result = get_cross_cutting_data(df).reset_index(drop=True)
+    result = get_cross_cutting_data_oecd(df).reset_index(drop=True)
     expected = pd.DataFrame(
         {"other_column": ["c"], "indicator": ["climate_cross_cutting"]}
     )
