@@ -100,7 +100,7 @@ def test_combine_clean_sort():
 def test_check_and_filter_parties():
     df = pd.DataFrame(
         {
-            "oecd_donor_name": ["party1", "party2", "party3"],
+            "party": ["party1", "party2", "party3"],
             "other_column": ["a", "b", "c"],
         }
     )
@@ -108,14 +108,14 @@ def test_check_and_filter_parties():
     # Test when party is a string
     party = "party1"
     result = check_and_filter_parties(df, party).reset_index(drop=True)
-    expected = pd.DataFrame({"oecd_donor_name": ["party1"], "other_column": ["a"]})
+    expected = pd.DataFrame({"party": ["party1"], "other_column": ["a"]})
     pd.testing.assert_frame_equal(result, expected)
 
     # Test when party is a list
     party = ["party1", "party3"]
     result = check_and_filter_parties(df, party).reset_index(drop=True)
     expected = pd.DataFrame(
-        {"oecd_donor_name": ["party1", "party3"], "other_column": ["a", "c"]}
+        {"party": ["party1", "party3"], "other_column": ["a", "c"]}
     )
     pd.testing.assert_frame_equal(result, expected)
 
@@ -127,8 +127,8 @@ def test_check_and_filter_parties():
     # Test when party is not found in the dataframe
     party = ["party4"]
     result = check_and_filter_parties(df, party).reset_index(drop=True)
-    expected = pd.DataFrame({"oecd_donor_name": [], "other_column": []}).astype(
-        {"oecd_donor_name": "str", "other_column": "str"}
+    expected = pd.DataFrame({"party": [], "other_column": []}).astype(
+        {"party": "str", "other_column": "str"}
     )
     pd.testing.assert_frame_equal(result, expected)
 
