@@ -6,6 +6,7 @@ from climate_finance.oecd.cleaning_tools.schema import (
     OECD_CLIMATE_INDICATORS,
     CrsSchema,
 )
+from climate_finance.oecd.get_oecd_data import get_oecd_bilateral
 
 MULTILATERAL_ID_COLUMNS: list[str] = [
     CrsSchema.YEAR,
@@ -221,3 +222,100 @@ def base_oecd_multilateral_agency_share(df: pd.DataFrame) -> pd.DataFrame:
     return _oecd_multilateral_agency_helper(df, climate_indicators).assign(
         **{CrsSchema.FLOW_TYPE: lambda d: d[CrsSchema.FLOW_TYPE] + "_share"}
     )
+
+
+def summarise_by_party_idx(
+    data: pd.DataFrame, idx: list[str], by_indicator: bool = False
+) -> pd.DataFrame:
+    grouper = [CrsSchema.PARTY_NAME] + idx
+
+    if by_indicator:
+        grouper += [CrsSchema.INDICATOR]
+
+    grouper = list(dict.fromkeys(grouper))
+
+    return data.groupby(grouper, observed=True)[CrsSchema.VALUE].sum().reset_index()
+
+
+def get_yearly_crs_totals(
+    start_year: int,
+    end_year: int,
+    by_index: list[str] | None = None,
+    party: str | list[str] | None = None,
+    methodology: str = "oecd_bilateral",
+) -> pd.DataFrame:
+    # get the crs data
+    crs_data = get_oecd_bilateral(
+        start_year=start_year,
+        end_year=end_year,
+        methodology=methodology,
+        party=party,
+    )
+
+    # Make Cross-cutting negative
+    crs_data.loc[lambda d: d[CrsSchema.INDICATOR] == "Cross-cutting", "value"] *= -1
+
+    # Create an index if none is provided
+    if by_index is None:
+        by_index = [
+            c
+            for c in crs_data.columns
+            if c not in [CrsSchema.VALUE, CrsSchema.INDICATOR, CrsSchema.USD_COMMITMENT]
+        ]
+
+    else:
+        by_index = [c for c in by_index if c in crs_data.columns]
+
+    # Get the group totals based on the selected index
+    return (
+        crs_data.groupby(by_index, observed=True)[CrsSchema.VALUE].sum().reset_index()
+    )
+
+
+def compute_rolling_sum(group, window: int = 2, values: list[str] = None):
+    if values is None:
+        values = [CrsSchema.VALUE]
+    group[values] = group[values].rolling(window=window).sum().fillna(group[values])
+    group["yearly_total"] = (
+        group["yearly_total"].rolling(window=window).sum().fillna(group["yearly_total"])
+    )
+    return group
+
+
+def merge_total(
+    data: pd.DataFrame, totals: pd.DataFrame, idx: list[str]
+) -> pd.DataFrame:
+    # Make sure index is valid
+    idx = [
+        c
+        for c in idx
+        if c in totals.columns
+        and c not in [CrsSchema.PARTY_NAME, CrsSchema.RECIPIENT_NAME]
+    ]
+
+    # get original datatypes for data
+    data_dt = data.dtypes.to_dict()
+
+    # convert index to string
+    data = data.astype({k: "str" for k in idx})
+    totals = totals.astype({k: "str" for k in idx})
+
+    data = (
+        data.merge(totals, on=idx, how="left", suffixes=("", "_crs"))
+        .replace(0, np.nan)
+        .astype(data_dt)
+    )
+    return data.drop(columns=[c for c in data.columns if c.endswith("_crs")])
+
+
+def log_notes(df: pd.DataFrame) -> None:
+    """
+    Log the latest update date from the notes sheet.
+    Args:
+        df: The notes sheet.
+
+    Returns:
+        None
+    """
+
+    logger.info(f"{df.iloc[1].values[0]}")

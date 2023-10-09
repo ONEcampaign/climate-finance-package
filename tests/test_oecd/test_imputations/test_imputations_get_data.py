@@ -2,25 +2,25 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-from climate_finance.oecd.imputations.get_data import (
+from climate_finance.oecd.imputed_multilateral.oecd_multilateral.get_oecd_imputations import (
     _add_channel_codes,
     _add_climate_value_columns,
     _clean_df,
     _download_excel_file,
-    _log_notes,
     _merge_dataframes,
     _read_and_clean_excel_sheets,
     _reorder_imputations_columns,
     download_file,
     get_oecd_multilateral_climate_imputations,
 )
+from climate_finance.oecd.imputed_multilateral.tools import log_notes
 
 
 # Mock logger
 @patch("climate_finance.oecd.imputations.get_data.logger")
 def test_log_notes(mock_logger):
     df = pd.DataFrame({"notes": ["0", "Latest update: 2022-01-01"]})
-    _log_notes(df)
+    log_notes(df)
     mock_logger.info.assert_called_once_with("Latest update: 2022-01-01")
 
 

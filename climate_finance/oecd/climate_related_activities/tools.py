@@ -10,7 +10,7 @@ from climate_finance.oecd.cleaning_tools.schema import (
     CrsSchema,
     OECD_CLIMATE_INDICATORS,
 )
-from climate_finance.oecd.imputations.get_data import _log_notes
+from climate_finance.oecd.imputed_multilateral.tools import log_notes
 
 
 def get_file_url(year: int, url: str) -> str:
@@ -64,7 +64,7 @@ def read_excel_sheets(excel_file: pd.ExcelFile) -> list[pd.DataFrame]:
     dfs = []
     for sheet in excel_file.sheet_names:
         if sheet == "Notes":
-            _log_notes(excel_file.parse(sheet))
+            log_notes(excel_file.parse(sheet))
             continue
         dfs.append(excel_file.parse(sheet))
     return dfs
