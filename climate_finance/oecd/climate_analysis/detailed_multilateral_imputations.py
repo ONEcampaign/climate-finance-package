@@ -391,13 +391,18 @@ def _get_crs_to_match(
 
 
 def get_yearly_crs_totals(
-    start_year: int, end_year: int, by_index: list[str] | None = None
+    start_year: int,
+    end_year: int,
+    by_index: list[str] | None = None,
+    party: str | list[str] | None = None,
+    methodology: str = "oecd_bilateral",
 ) -> pd.DataFrame:
     # get the crs data
     crs_data = get_oecd_bilateral(
         start_year=start_year,
         end_year=end_year,
-        methodology="oecd_bilateral",
+        methodology=methodology,
+        party=party,
     )
 
     # Make Cross-cutting negative
@@ -411,19 +416,19 @@ def get_yearly_crs_totals(
             if c not in [CrsSchema.VALUE, CrsSchema.INDICATOR, CrsSchema.USD_COMMITMENT]
         ]
 
+    else:
+        by_index = [c for c in by_index if c in crs_data.columns]
+
     # Get the group totals based on the selected index
     return (
         crs_data.groupby(by_index, observed=True)[CrsSchema.VALUE].sum().reset_index()
     )
 
 
-def _compute_rolling_sum(group, window: int = 2):
-    group[CrsSchema.VALUE] = (
-        group[CrsSchema.VALUE]
-        .rolling(window=window)
-        .sum()
-        .fillna(group[CrsSchema.VALUE])
-    )
+def _compute_rolling_sum(group, window: int = 2, values: list[str] = None):
+    if values is None:
+        values = [CrsSchema.VALUE]
+    group[values] = group[values].rolling(window=window).sum().fillna(group[values])
     group["yearly_total"] = (
         group["yearly_total"].rolling(window=window).sum().fillna(group["yearly_total"])
     )
@@ -438,19 +443,200 @@ def _summarise_by_party_idx(
     if by_indicator:
         grouper += [CrsSchema.INDICATOR]
 
+    grouper = list(dict.fromkeys(grouper))
+
     return data.groupby(grouper, observed=True)[CrsSchema.VALUE].sum().reset_index()
 
 
 def _merge_total(
     data: pd.DataFrame, totals: pd.DataFrame, idx: list[str]
 ) -> pd.DataFrame:
-    return data.merge(totals, on=idx, how="left").replace(0, np.nan)
+    # Make sure index is valid
+    idx = [
+        c
+        for c in idx
+        if c in totals.columns
+        and c not in [CrsSchema.PARTY_NAME, CrsSchema.RECIPIENT_NAME]
+    ]
+
+    # get original datatypes for data
+    data_dt = data.dtypes.to_dict()
+
+    # convert index to string
+    data = data.astype({k: str for k in idx})
+    totals = totals.astype({k: str for k in idx})
+
+    data = (
+        data.merge(totals, on=idx, how="left", suffixes=("", "_crs"))
+        .replace(0, np.nan)
+        .astype(data_dt)
+    )
+    return data.drop(columns=[c for c in data.columns if c.endswith("_crs")])
 
 
 def _add_share(data: pd.DataFrame) -> pd.DataFrame:
     return data.assign(share=lambda d: d[CrsSchema.VALUE] / d["yearly_total"]).drop(
         columns=["yearly_total", CrsSchema.VALUE]
     )
+
+
+def add_crs_details(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    This function adds columns/details from the CRS to the multilateral data.
+    This includes information on the flow type (commitment, disbursement, net disbursement).
+
+    Args:
+        df (pd.DataFrame): The multilateral data.
+
+    Returns:
+        pd.DataFrame: The multilateral data with the CRS details added.
+
+    """
+
+    # Identify the unique projects contained in the CRS. This is done by keeping only
+    # the columns in the UNIQUE_INDEX global variable, dropping duplicates, and
+    # converting the columns to strings.
+    projects_df = _get_unique_projects(df)
+
+    # Get a version of the CRS data that can be matched with the multilateral data.
+    crs_df = _get_crs_to_match(
+        years=df.year.unique().tolist(),
+        party_code=projects_df.oecd_party_code.unique().tolist(),
+    )
+
+    # match projects with crs
+    matched = _match_projects_with_crs(projects=projects_df, crs=crs_df)
+
+    # add back to original df
+    data = df.astype({k: str for k in UNIQUE_INDEX}).merge(
+        matched, on=UNIQUE_INDEX, how="left", suffixes=("", "_crs")
+    )
+
+    # add net disbursements
+    data = _add_net_disbursements_column(data)
+
+    # clean and standardise output
+    data = _clean_multi_crs_output(data)
+
+    # convert to flow types
+    data = _convert_to_flowtypes(data)
+
+    return data.filter(OUTPUT_COLUMNS)
+
+
+def _highest_marker(df: pd.DataFrame) -> pd.DataFrame:
+    # Create a rounded total to identify duplicates
+    df = df.assign(
+        rounded_total=lambda d: round(d.total_value / 100, 0).astype("Int64")
+    )
+
+    # Do a first pass to drop duplicates
+    df = df.drop_duplicates(subset=[c for c in df.columns if c not in ["total_value"]])
+
+    # Do a second pass to drop duplicates
+    df = df.sort_values(by=["value"]).drop_duplicates(
+        subset=[c for c in df.columns if c not in ["share", "value", "total_value"]],
+        keep="first",
+    )
+
+    # Group by the columns that are not the value, total_value, or share
+    df = (
+        df.groupby(
+            by=[c for c in df.columns if c not in ["value", "share", "total_value"]],
+            observed=True,
+        )
+        .sum(numeric_only=True)
+        .reset_index()
+    )
+
+    # Pivot the dataframe
+    df = df.pivot(
+        index=[c for c in df.columns if c not in ["indicator", "value"]],
+        columns="indicator",
+        values="value",
+    ).reset_index()
+
+    # Summarise by row
+    df = (
+        df.groupby(
+            by=[
+                c
+                for c in df.columns
+                if c
+                not in [
+                    "Adaptation",
+                    "Mitigation",
+                    "Cross-cutting",
+                    "share",
+                    "total_value",
+                    "rounded_total",
+                ]
+            ],
+            observed=True,
+        )
+        .agg(
+            {
+                "Adaptation": "sum",
+                "Mitigation": "sum",
+                "Cross-cutting": "sum",
+                "share": "max",
+                "total_value": "max",
+                "rounded_total": "max",
+            }
+        )
+        .reset_index()
+    )
+
+    # Create a mask to check if rounded values of "Adaptation" and "Mitigation" are equal
+    mask_adaptation_mitigation_equal = df["Adaptation"].round(0) == df[
+        "Mitigation"
+    ].round(0)
+
+    # mas to check if cross-cutting is present
+    mask_cross_cutting_present = df["Cross-cutting"] > 0
+
+    # mask use cross_cutting
+    mask_use_cross_cutting = (
+        mask_cross_cutting_present & mask_adaptation_mitigation_equal
+    )
+
+    # Find the column with the max value between adaptation and mitigation
+    mask_adaptation_higher = df["Adaptation"] > df["Mitigation"]
+
+    # Calculate the new value for each condition
+    cross_cutting_values = df["Cross-cutting"]
+
+    adaptation_higher_values = df["Adaptation"] + df["Mitigation"] - df["Cross-cutting"]
+
+    mitigation_higher_values = df["Mitigation"] + df["Adaptation"] - df["Cross-cutting"]
+
+    # Use numpy's where to efficiently create the new column based on the conditions
+    df["value"] = np.where(
+        mask_use_cross_cutting,
+        cross_cutting_values,
+        np.where(
+            mask_adaptation_higher, adaptation_higher_values, mitigation_higher_values
+        ),
+    )
+
+    # Adding the indicator column to specify the chosen column
+    df["indicator"] = np.where(
+        mask_use_cross_cutting,
+        "Cross-cutting",
+        np.where(mask_adaptation_higher, "Adaptation", "Mitigation"),
+    )
+
+    # drop the columns that are not needed
+    df = df.drop(
+        columns=[
+            "Adaptation",
+            "Mitigation",
+            "Cross-cutting",
+            "rounded_total",
+        ]
+    )
+
+    return df
 
 
 def oecd_rolling_shares_methodology(
@@ -515,48 +701,98 @@ def oecd_rolling_shares_methodology(
     return rolling
 
 
-def add_crs_details(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    This function adds columns/details from the CRS to the multilateral data.
-    This includes information on the flow type (commitment, disbursement, net disbursement).
+def one_rolling_shares_methodology(
+    data: pd.DataFrame, window: int = 2, as_shares: bool = True
+) -> pd.DataFrame:
+    # Drop duplicates
+    data = data.drop_duplicates().copy()
 
-    Args:
-        df (pd.DataFrame): The multilateral data.
+    # Define the columns for the level of aggregation
+    idx = [
+        CrsSchema.YEAR,
+        CrsSchema.PARTY_CODE,
+        CrsSchema.PARTY_NAME,
+        CrsSchema.PARTY_TYPE,
+        CrsSchema.RECIPIENT_NAME,
+        CrsSchema.RECIPIENT_CODE,
+        CrsSchema.SECTOR_CODE,
+        CrsSchema.PURPOSE_CODE,
+        CrsSchema.FINANCE_TYPE,
+        CrsSchema.FLOW_TYPE,
+    ]
 
-    Returns:
-        pd.DataFrame: The multilateral data with the CRS details added.
+    # Ensure key columns are integers
+    data[[CrsSchema.YEAR, CrsSchema.PARTY_CODE]] = data[
+        [CrsSchema.YEAR, CrsSchema.PARTY_CODE]
+    ].astype("Int32")
 
-    """
-
-    # Identify the unique projects contained in the CRS. This is done by keeping only
-    # the columns in the UNIQUE_INDEX global variable, dropping duplicates, and
-    # converting the columns to strings.
-    projects_df = _get_unique_projects(df)
-
-    # Get a version of the CRS data that can be matched with the multilateral data.
-    crs_df = _get_crs_to_match(
-        years=df.year.unique().tolist(),
-        party_code=projects_df.oecd_party_code.unique().tolist(),
+    # Summarise the data at the right level
+    data_by_indicator = (
+        _summarise_by_party_idx(data=data, idx=idx, by_indicator=True)
+        .pivot(index=idx, columns=CrsSchema.INDICATOR, values=CrsSchema.VALUE)
+        .reset_index()
     )
 
-    # match projects with crs
-    matched = _match_projects_with_crs(projects=projects_df, crs=crs_df)
+    # Get the yearly totals for the years present in the data
+    yearly_totals = get_yearly_crs_totals(
+        start_year=data[CrsSchema.YEAR].min(),
+        end_year=data[CrsSchema.YEAR].max(),
+        by_index=idx,
+        party=None,
+    ).rename(columns={CrsSchema.VALUE: "yearly_total"})
 
-    # add back to original df
-    data = df.astype({k: str for k in UNIQUE_INDEX}).merge(
-        matched, on=UNIQUE_INDEX, how="left", suffixes=("", "_crs")
+    # Merge the yearly totals with the data by indicator
+    data_by_indicator = _merge_total(
+        data=data_by_indicator, totals=yearly_totals, idx=idx
     )
 
-    # add net disbursements
-    data = _add_net_disbursements_column(data)
+    # drop rows for which all the totals are missing
+    climate_cols = ["Adaptation", "Mitigation", "Cross-cutting"]
 
-    # clean and standardise output
-    data = _clean_multi_crs_output(data)
+    # check if any of the climate columns are missing
+    missing_climate = [c for c in climate_cols if c not in data_by_indicator.columns]
 
-    # convert to flow types
-    data = _convert_to_flowtypes(data)
+    if len(missing_climate) > 0:
+        for c in missing_climate:
+            data_by_indicator[c] = np.nan
 
-    return data.filter(OUTPUT_COLUMNS)
+    data_by_indicator = data_by_indicator.dropna(
+        subset=climate_cols + ["yearly_total"], how="all"
+    )
+
+    # Add climate total column
+    data_by_indicator[CrsSchema.CLIMATE_UNSPECIFIED] = (
+        data_by_indicator["Adaptation"].fillna(0)
+        + data_by_indicator["Mitigation"].fillna(0)
+        + data_by_indicator["Cross-cutting"].fillna(0)
+    )
+
+    # fill yearly_total gaps with climate total
+    data_by_indicator["yearly_total"] = data_by_indicator["yearly_total"].fillna(
+        data_by_indicator[CrsSchema.CLIMATE_UNSPECIFIED]
+    )
+
+    # Compute the rolling totals
+    rolling = (
+        data_by_indicator.sort_values([CrsSchema.YEAR, CrsSchema.PARTY_CODE])
+        .groupby(
+            idx,
+            observed=True,
+            group_keys=False,
+        )
+        .apply(
+            _compute_rolling_sum,
+            window=window,
+            values=climate_cols + ["climate_total", "yearly_total"],
+        )
+        .reset_index(drop=True)
+    )
+
+    if as_shares:
+        for col in climate_cols + ["climate_total"]:
+            rolling[col] = (rolling[col].fillna(0) / rolling["yearly_total"]).fillna(0)
+
+    return rolling.drop(columns=["yearly_total"])
 
 
 def get_oecd_imputed_shares_calculated(
@@ -568,3 +804,19 @@ def get_oecd_imputed_shares_calculated(
         .pipe(add_crs_details)
         .pipe(oecd_rolling_shares_methodology, window=rolling_window)
     )
+
+
+def get_one_imputed_shares_calculated(
+    start_year: int, end_year: int, rolling_window: int = 2
+) -> pd.DataFrame:
+    return (
+        get_recipient_perspective(start_year=start_year, end_year=end_year)
+        .pipe(_keep_multilateral_providers)
+        .pipe(_highest_marker)
+        .pipe(add_crs_details)
+        .pipe(one_rolling_shares_methodology, window=rolling_window, as_shares=True)
+    )
+
+
+if __name__ == "__main__":
+    df = get_one_imputed_shares_calculated(2018, 2021, rolling_window=1)

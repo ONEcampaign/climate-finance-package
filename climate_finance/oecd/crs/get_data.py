@@ -18,7 +18,19 @@ def _keep_only_allocable_aid(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         pd.DataFrame: A dataframe containing only the rows with allocable aid types."""
 
-    aid_types = ["A02", "B01", "B03", "B04", "C01", "D01", "D02", "E01"]
+    aid_types = [
+        "A02",
+        "B01",
+        "B03",
+        "B031",
+        "B032",
+        "B033",
+        "B04",
+        "C01",
+        "D01",
+        "D02",
+        "E01",
+    ]
     return df.loc[lambda d: d[CrsSchema.FLOW_MODALITY].isin(aid_types)].reset_index(
         drop=True
     )
