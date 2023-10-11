@@ -162,6 +162,11 @@ def calculate_values_based_on_conditions(df: pd.DataFrame) -> pd.DataFrame:
     # Check if adaptation is higher than mitigation
     mask_adaptation_higher = df["Adaptation"] > df["Mitigation"]
 
+    # Identify cross cutting present and adaptation and mitigation are not equal
+    mask_cross_cutting_not_equal = (
+        mask_cross_cutting_present & ~mask_adaptation_mitigation_equal
+    )
+
     # Calculate values based on conditions
     cross_cutting_values = df["Cross-cutting"]
     adaptation_higher_values = df["Adaptation"] + df["Mitigation"] - df["Cross-cutting"]
@@ -207,7 +212,7 @@ def cleanup_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def highest_marker(df: pd.DataFrame) -> pd.DataFrame:
+def clean_marker(df: pd.DataFrame) -> pd.DataFrame:
     """
     Process the given dataframe and return a dataframe that highlights the highest marker.
 

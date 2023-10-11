@@ -1,11 +1,11 @@
 import pandas as pd
 from oda_data import read_crs
 
-from climate_finance.config import logger
 from climate_finance.oecd.climate_related_activities.recipient_perspective import (
     get_recipient_perspective,
 )
 from climate_finance.oecd.cleaning_tools.schema import CrsSchema, CRS_MAPPING
+from climate_finance.oecd.imputed_multilateral.crs_tools import match_projects_with_crs
 
 UNIQUE_INDEX = [
     CrsSchema.YEAR,
@@ -65,7 +65,9 @@ OUTPUT_COLUMNS: list = [
     CrsSchema.CHANNEL_CODE,
     CrsSchema.CHANNEL_NAME,
     CrsSchema.SECTOR_CODE,
+    CrsSchema.SECTOR_NAME,
     CrsSchema.PURPOSE_CODE,
+    CrsSchema.PURPOSE_NAME,
     CrsSchema.FLOW_MODALITY,
     CrsSchema.FINANCIAL_INSTRUMENT,
     CrsSchema.FINANCE_TYPE,
@@ -76,6 +78,8 @@ OUTPUT_COLUMNS: list = [
     CrsSchema.PROJECT_DESCRIPTION,
     CrsSchema.INDICATOR,
     CrsSchema.FLOW_TYPE,
+    CrsSchema.FLOW_CODE,
+    CrsSchema.FLOW_NAME,
     CrsSchema.VALUE,
     CrsSchema.TOTAL_VALUE,
     CrsSchema.SHARE,
@@ -84,7 +88,6 @@ OUTPUT_COLUMNS: list = [
 CRS_VALUES: list = [
     CrsSchema.USD_COMMITMENT,
     CrsSchema.USD_DISBURSEMENT,
-    CrsSchema.USD_NET_DISBURSEMENT,
 ]
 
 
@@ -149,7 +152,7 @@ def _convert_to_flowtypes(data: pd.DataFrame) -> pd.DataFrame:
 
     dfs = []
 
-    for column in [CrsSchema.USD_DISBURSEMENT, CrsSchema.USD_NET_DISBURSEMENT]:
+    for column in [CrsSchema.USD_DISBURSEMENT]:
         dfs.append(
             data.assign(
                 flow_type=column,
@@ -160,113 +163,8 @@ def _convert_to_flowtypes(data: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(dfs + [data], ignore_index=True)
 
 
-def _merge_projects_with_crs(
-    projects: pd.DataFrame, crs: pd.DataFrame, index: list[str]
-) -> pd.DataFrame:
-    return projects.merge(
-        crs, on=index, how="left", indicator=True, suffixes=("", "_crs")
-    )
-
-
-def _log_matches(data: pd.DataFrame) -> None:
-    # Log the number of projects that were matched
-    logger.debug(f"Matched \n{data['_merge'].value_counts()} projects with CRS data")
-
-
-def _keep_not_matched(data: pd.DataFrame) -> pd.DataFrame:
-    """
-    Keep only the projects that were not matched.
-
-    Args:
-        data: The dataframe to filter.
-
-    Returns:
-        The filtered dataframe.
-
-    """
-    return data.loc[lambda d: d["_merge"] == "left_only", UNIQUE_INDEX]
-
-
-def _concat_matched_dfs(
-    data: pd.DataFrame, additional_matches: pd.DataFrame
-) -> pd.DataFrame:
-    """
-    Concatenate the dataframes of matched projects.
-
-    Args:
-        data: The first dataframe of matched projects.
-        additional_matches: The second dataframe of matched projects.
-
-    Returns:
-        The concatenated dataframe.
-
-    """
-    # Concatenate the dataframes
-    return pd.concat(
-        [data.loc[lambda d: d["_merge"] != "left_only"], additional_matches],
-        ignore_index=True,
-    )
-
-
-def _match_projects_with_crs(projects: pd.DataFrame, crs: pd.DataFrame) -> pd.DataFrame:
-    """
-    Match the projects with the CRS data.
-
-    This is done by merging the projects with the CRS data on the columns in the
-    UNIQUE_INDEX global variable. If there are projects that were not matched, a second
-    attempt is made using a subset of the columns in the UNIQUE_INDEX global variable.
-
-    Args:
-        projects: The projects to match. This is a dataframe with the columns in the
-        UNIQUE_INDEX global variable.
-        crs: The CRS data to match. This is a dataframe with the columns in the
-        UNIQUE_INDEX global variable.
-
-    Returns:
-        The projects matched with the CRS data.
-
-    """
-    # Perform an initial merge. It will be done considering all the columns in the
-    # UNIQUE_INDEX global variable. A left join is attempted. The indicator column
-    # is shown to see how many projects were matched.
-    data = _merge_projects_with_crs(projects=projects, crs=crs, index=UNIQUE_INDEX)
-
-    # Log the number of projects that were matched
-    _log_matches(data)
-
-    # If there are projects that were not matched, try to match them using a subset of
-    # the columns in the UNIQUE_INDEX global variable.
-    not_matched = _keep_not_matched(data)
-
-    # Attempt to match the projects that were not matched using a subset of the columns
-    # in the UNIQUE_INDEX global variable. A left join is attempted. The indicator column
-    # is shown to see how many projects were matched.
-    additional_matches = _merge_projects_with_crs(
-        projects=not_matched,
-        crs=crs,
-        index=[
-            CrsSchema.YEAR,
-            CrsSchema.PARTY_CODE,
-            CrsSchema.CRS_ID,
-            CrsSchema.PURPOSE_CODE,
-        ],
-    )
-
-    # Log the number of projects that were matched
-    _log_matches(additional_matches)
-
-    # Concatenate the dataframes
-    data = _concat_matched_dfs(data=data, additional_matches=additional_matches)
-
-    # Keep only the columns in the CRS_INFO global variable and set the UNIQUE_INDEX
-    # columns to strings
-    data = data.filter(CRS_INFO).astype({k: str for k in UNIQUE_INDEX})
-
-    return data
-
-
 def _keep_multilateral_providers(
-    df: pd.DataFrame, parties: list[str] = MULTI_PROVIDERS
+    df: pd.DataFrame, parties: list[str] | None = None
 ) -> pd.DataFrame:
     """
     Filter to keep only multilateral providers.
@@ -278,6 +176,9 @@ def _keep_multilateral_providers(
         The filtered dataframe.
 
     """
+
+    if parties is None:
+        parties = MULTI_PROVIDERS
 
     # filter
     return df.loc[lambda d: d[CrsSchema.PARTY_TYPE].isin(parties)].reset_index(
@@ -384,7 +285,12 @@ def add_crs_details(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     # match projects with crs
-    matched = _match_projects_with_crs(projects=projects_df, crs=crs_df)
+    matched = match_projects_with_crs(
+        projects=projects_df,
+        crs=crs_df,
+        unique_index=UNIQUE_INDEX,
+        output_cols=CRS_INFO,
+    )
 
     # add back to original df
     data = df.astype({k: str for k in UNIQUE_INDEX}).merge(

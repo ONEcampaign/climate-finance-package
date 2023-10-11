@@ -6,7 +6,7 @@ from climate_finance.oecd.cleaning_tools.schema import (
     OECD_CLIMATE_INDICATORS,
     CrsSchema,
 )
-from climate_finance.oecd.get_oecd_data import get_oecd_bilateral
+
 
 MULTILATERAL_ID_COLUMNS: list[str] = [
     CrsSchema.YEAR,
@@ -237,49 +237,30 @@ def summarise_by_party_idx(
     return data.groupby(grouper, observed=True)[CrsSchema.VALUE].sum().reset_index()
 
 
-def get_yearly_crs_totals(
-    start_year: int,
-    end_year: int,
-    by_index: list[str] | None = None,
-    party: str | list[str] | None = None,
-    methodology: str = "oecd_bilateral",
-) -> pd.DataFrame:
-    # get the crs data
-    crs_data = get_oecd_bilateral(
-        start_year=start_year,
-        end_year=end_year,
-        methodology=methodology,
-        party=party,
-    )
+def compute_rolling_sum(
+    group, window: int = 2, values: list[str] = None, agg:str="sum", include_yearly_total: bool = True
 
-    # Make Cross-cutting negative
-    crs_data.loc[lambda d: d[CrsSchema.INDICATOR] == "Cross-cutting", "value"] *= -1
-
-    # Create an index if none is provided
-    if by_index is None:
-        by_index = [
-            c
-            for c in crs_data.columns
-            if c not in [CrsSchema.VALUE, CrsSchema.INDICATOR, CrsSchema.USD_COMMITMENT]
-        ]
-
-    else:
-        by_index = [c for c in by_index if c in crs_data.columns]
-
-    # Get the group totals based on the selected index
-    return (
-        crs_data.groupby(by_index, observed=True)[CrsSchema.VALUE].sum().reset_index()
-    )
-
-
-def compute_rolling_sum(group, window: int = 2, values: list[str] = None):
+):
     if values is None:
         values = [CrsSchema.VALUE]
-    group[values] = group[values].rolling(window=window).sum().fillna(group[values])
-    group["yearly_total"] = (
-        group["yearly_total"].rolling(window=window).sum().fillna(group["yearly_total"])
-    )
-    return group
+
+    # 1. Determine the range of years
+    min_year, max_year = group[CrsSchema.YEAR].min(), group[CrsSchema.YEAR].max()
+    all_years = range(min_year, max_year + 1)
+
+    # 2. Reindex the group using the complete range of years
+    group.set_index(CrsSchema.YEAR, inplace=True)
+    group = group.reindex(all_years)
+
+    group[values] = group[values].rolling(window=window).agg(agg).fillna(group[values])
+    if include_yearly_total:
+        group["yearly_total"] = (
+            group["yearly_total"]
+            .rolling(window=window)
+            .agg(agg)
+            .fillna(group["yearly_total"])
+        )
+    return group.reset_index(drop=False)
 
 
 def merge_total(

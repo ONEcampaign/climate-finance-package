@@ -4,7 +4,7 @@ import pandas as pd
 from oda_data import set_data_path
 
 from climate_finance.config import ClimateDataPath
-from climate_finance.oecd.climate_analysis.tools import check_and_filter_parties
+from climate_finance.oecd.imputed_multilateral.tools import check_and_filter_parties
 from climate_finance.oecd.climate_related_activities.tools import (
     download_file,
     load_or_download,
@@ -175,6 +175,14 @@ def get_recipient_perspective(
     # Try to load file
     df = load_or_download(base_url=BASE_URL, save_to_path=FILE_PATH)
 
+    # Rename columns
+    df = df.rename(
+        columns={
+            CrsSchema.PARTY_NAME: f"{CrsSchema.PARTY_NAME}_short",
+            CrsSchema.PARTY_DETAILED: CrsSchema.PARTY_NAME,
+        }
+    )
+
     # Filter for years
     df = df.loc[lambda d: d.year.isin(years)]
 
@@ -208,7 +216,3 @@ def get_recipient_perspective(
     data = check_and_filter_parties(data, party=party, party_col=CrsSchema.PARTY_NAME)
 
     return data.filter(MULTI_COLUMNS)
-
-
-if __name__ == "__main__":
-    df = get_recipient_perspective(2019, 2020)

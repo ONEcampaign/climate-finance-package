@@ -2,23 +2,26 @@ import numpy as np
 import pandas as pd
 
 from climate_finance.oecd.cleaning_tools.schema import CrsSchema
-from climate_finance.oecd.climate_analysis.multilateral_spending_data import (
+from climate_finance.oecd.imputed_multilateral.multilateral_spending_data import (
     get_multilateral_data,
     add_crs_details,
 )
-from climate_finance.oecd.climate_analysis.one_multilateral.highest_marker import (
-    highest_marker,
+from climate_finance.oecd.imputed_multilateral.one_multilateral.highest_marker import (
+    clean_marker,
 )
-from climate_finance.oecd.climate_analysis.tools import (
+from climate_finance.oecd.imputed_multilateral.tools import (
     summarise_by_party_idx,
-    get_yearly_crs_totals,
     compute_rolling_sum,
     merge_total,
 )
+from climate_finance.oecd.imputed_multilateral.crs_tools import get_yearly_crs_totals
 
 
 def one_rolling_shares_methodology(
-    data: pd.DataFrame, window: int = 2, as_shares: bool = True
+    data: pd.DataFrame,
+    window: int = 2,
+    as_shares: bool = True,
+    use_year_total: bool = True,
 ) -> pd.DataFrame:
     """
     Compute the rolling totals or shares of climate finance for the
@@ -28,12 +31,14 @@ def one_rolling_shares_methodology(
         data: A dataframe containing the multilateral spending data.
         window: The window size for the rolling totals or shares (in years).
         as_shares: Whether to compute the rolling shares or totals.
+        use_year_total: Whether to compute the rolling shares of total spending.
 
     Returns:
         pd.DataFrame: The rolling totals or shares of climate finance for the multilateral
         spending data.
 
     """
+
     # Drop duplicates
     data = data.drop_duplicates().copy()
 
@@ -46,9 +51,13 @@ def one_rolling_shares_methodology(
         CrsSchema.RECIPIENT_NAME,
         CrsSchema.RECIPIENT_CODE,
         CrsSchema.SECTOR_CODE,
+        CrsSchema.SECTOR_NAME,
         CrsSchema.PURPOSE_CODE,
+        CrsSchema.PURPOSE_NAME,
         CrsSchema.FINANCE_TYPE,
         CrsSchema.FLOW_TYPE,
+        CrsSchema.FLOW_CODE,
+        CrsSchema.FLOW_NAME,
     ]
 
     # Ensure key columns are integers
@@ -70,6 +79,21 @@ def one_rolling_shares_methodology(
         by_index=idx,
         party=None,
     ).rename(columns={CrsSchema.VALUE: "yearly_total"})
+
+    # Get yearly totals for each party by flow type
+    yearly_totals_by_flow_type = (
+        yearly_totals.groupby(
+            [
+                CrsSchema.YEAR,
+                CrsSchema.PARTY_CODE,
+                CrsSchema.PARTY_NAME,
+                CrsSchema.FLOW_NAME,
+                CrsSchema.FLOW_TYPE,
+            ]
+        )["yearly_total"]
+        .sum()
+        .reset_index()
+    )
 
     # Merge the yearly totals with the data by indicator
     data_by_indicator = merge_total(
@@ -102,11 +126,25 @@ def one_rolling_shares_methodology(
         data_by_indicator[CrsSchema.CLIMATE_UNSPECIFIED]
     )
 
+    # Add total spending
+    if use_year_total:
+        data_by_indicator = data_by_indicator.drop(columns=["yearly_total"]).merge(
+            yearly_totals_by_flow_type,
+            on=[
+                CrsSchema.YEAR,
+                CrsSchema.PARTY_CODE,
+                CrsSchema.PARTY_NAME,
+                CrsSchema.FLOW_NAME,
+                CrsSchema.FLOW_TYPE,
+            ],
+            how="left",
+        )
+
     # Compute the rolling totals
     rolling = (
         data_by_indicator.sort_values([CrsSchema.YEAR, CrsSchema.PARTY_CODE])
         .groupby(
-            idx,
+            [c for c in idx if c not in ["year"]],
             observed=True,
             group_keys=False,
         )
@@ -122,7 +160,9 @@ def one_rolling_shares_methodology(
         for col in climate_cols + ["climate_total"]:
             rolling[col] = (rolling[col].fillna(0) / rolling["yearly_total"]).fillna(0)
 
-    return rolling.drop(columns=["yearly_total"])
+        rolling = rolling.drop(columns=["yearly_total"])
+
+    return rolling
 
 
 def one_multilateral_spending(
@@ -160,7 +200,7 @@ def one_multilateral_spending(
             party=party,
             force_update=force_update,
         )
-        .pipe(highest_marker)
+        .pipe(clean_marker)
         .pipe(add_crs_details)
         .pipe(
             one_rolling_shares_methodology, window=rolling_window, as_shares=as_shares

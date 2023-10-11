@@ -218,3 +218,169 @@ def get_crs_allocable_spending(
     )
 
     return crs
+
+
+def get_crs_total_spending(
+    start_year: int = 2019, end_year: int = 2020, force_update: bool = False
+) -> pd.DataFrame:
+    """
+    Fetches bilateral spending data for a given flow type and time period.
+
+    Args:
+        start_year (int, optional): The starting year for data extraction. Defaults to 2019.
+        end_year (int, optional): The ending year for data extraction. Defaults to 2020.
+        force_update (bool, optional): If True, the data is updated from the source.
+        Defaults to False.
+
+    Returns:
+        pd.DataFrame: A dataframe containing bilateral spending data for
+        the specified flow type and time period.
+    """
+    # Study years
+    years = range(start_year, end_year + 1)
+
+    # Check if data should be forced to update
+    if force_update:
+        download_crs(years=years)
+
+    # get relevant columns
+    columns = _get_relevant_crs_columns()
+
+    # get flow columns
+    flow_columns = _get_flow_columns()
+
+    # Pipeline
+    crs = (
+        read_crs(years=years)  # Read CRS data
+        .pipe(_rename_crs_columns)  # Rename columns for consistency
+        .pipe(_add_net_disbursement)  # Add net disbursement column
+        .filter(columns + flow_columns, axis=1)  # Keep only relevant columns
+        .assign(
+            year=lambda d: d[CrsSchema.YEAR]
+            .astype("str")
+            .str.replace("\ufeff", "", regex=True)
+        )  # fix year
+        .pipe(_set_crs_data_types)  # Set data types
+        .groupby(columns, as_index=False, dropna=False, observed=True)[flow_columns]
+        .sum()
+        .pipe(convert_flows_millions_to_units, flow_columns=flow_columns)
+        .melt(
+            id_vars=columns,
+            value_vars=flow_columns,
+            var_name=CrsSchema.FLOW_TYPE,
+            value_name=CrsSchema.VALUE,
+        )
+        .loc[lambda d: d[CrsSchema.VALUE] != 0]
+        .reset_index(drop=True)
+    )
+
+    return crs
+
+
+def get_crs_allocable_to_total_ratio(
+    start_year: int = 2019, end_year: int = 2020, force_update: bool = False
+) -> pd.DataFrame:
+    """
+    Fetches bilateral spending data for a given flow type and time period.
+
+    Args:
+        start_year (int, optional): The starting year for data extraction. Defaults to 2019.
+        end_year (int, optional): The ending year for data extraction. Defaults to 2020.
+        force_update (bool, optional): If True, the data is updated from the source.
+        Defaults to False.
+
+    Returns:
+        pd.DataFrame: A dataframe containing bilateral spending data for
+        the specified flow type and time period.
+    """
+    # Study years
+    years = range(start_year, end_year + 1)
+
+    # Check if data should be forced to update
+    if force_update:
+        download_crs(years=years)
+
+    # get relevant columns
+    columns = _get_relevant_crs_columns() + [CrsSchema.FLOW_MODALITY]
+
+    simpler_columns = [
+        CrsSchema.YEAR,
+        CrsSchema.PARTY_CODE,
+        CrsSchema.PARTY_NAME,
+        CrsSchema.FLOW_MODALITY,
+    ]
+
+    # get flow columns
+    flow_columns = _get_flow_columns()
+
+    # Pipeline
+    crs = (
+        read_crs(years=years)  # Read CRS data
+        .pipe(_rename_crs_columns)  # Rename columns for consistency
+        .pipe(_add_net_disbursement)  # Add net disbursement column
+        .filter(columns + flow_columns, axis=1)  # Keep only relevant columns
+        .assign(
+            year=lambda d: d[CrsSchema.YEAR]
+            .astype("str")
+            .str.replace("\ufeff", "", regex=True)
+        )  # fix year
+        .pipe(_set_crs_data_types)  # Set data types
+        .groupby(simpler_columns, as_index=False, dropna=False, observed=True)[
+            flow_columns
+        ]
+        .sum()
+        .pipe(convert_flows_millions_to_units, flow_columns=flow_columns)
+        .melt(
+            id_vars=simpler_columns,
+            value_vars=flow_columns,
+            var_name=CrsSchema.FLOW_TYPE,
+            value_name=CrsSchema.VALUE,
+        )
+        .loc[lambda d: d[CrsSchema.VALUE] != 0]
+        .reset_index(drop=True)
+    )
+
+    total = (
+        crs.copy()
+        .assign(**{CrsSchema.FLOW_MODALITY: "total"})
+        .groupby(
+            simpler_columns + [CrsSchema.FLOW_TYPE],
+            as_index=False,
+            dropna=False,
+            observed=True,
+        )
+        .sum(numeric_only=True)
+    )
+
+    allocable = (
+        crs.pipe(_keep_only_allocable_aid)
+        .assign(**{CrsSchema.FLOW_MODALITY: "bilateral_allocable"})
+        .groupby(
+            simpler_columns + [CrsSchema.FLOW_TYPE],
+            as_index=False,
+            dropna=False,
+            observed=True,
+        )
+        .sum(numeric_only=True)
+    )
+
+    data = pd.concat([allocable, total], ignore_index=True)
+
+    data = (
+        data.pivot(
+            index=[
+                c
+                for c in data.columns
+                if c not in [CrsSchema.VALUE, CrsSchema.FLOW_MODALITY]
+            ],
+            columns=CrsSchema.FLOW_MODALITY,
+            values=CrsSchema.VALUE,
+        )
+        .reset_index()
+        .assign(share=lambda d: d.bilateral_allocable / d.total)
+    )
+
+    return crs
+
+
+# get_crs_allocable_to_total_ratio(2021, 2021)
