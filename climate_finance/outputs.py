@@ -1,6 +1,7 @@
 import pandas as pd
 
 from climate_finance import config
+from climate_finance.oecd.cleaning_tools.schema import CrsSchema
 from climate_finance.oecd.get_oecd_data import get_oecd_bilateral
 from oda_data import set_data_path, donor_groupings
 
@@ -10,7 +11,7 @@ from climate_finance.oecd.imputed_multilateral.one_multilateral.shares import (
 
 set_data_path(config.ClimateDataPath.raw_data)
 
-date = "111023"
+date = "131023"
 
 
 def bilateral():
@@ -41,6 +42,12 @@ def bilateral():
     one_version_multilateral = one_version_multilateral.loc[
         lambda d: ~d.oecd_party_code.isin(rio_multi)
     ].dropna(subset=["oecd_party_code", "party"], how="all")
+
+    one_version_multilateral = one_version_multilateral.rename(columns={
+        CrsSchema.MITIGATION_VALUE: "Mitigation",
+        CrsSchema.ADAPTATION_VALUE: "Adaptation",
+        CrsSchema.CROSS_CUTTING_VALUE: "Cross-cutting",
+    })
 
     one_version_multilateral = one_version_multilateral.melt(
         id_vars=[

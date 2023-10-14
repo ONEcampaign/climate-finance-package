@@ -238,8 +238,11 @@ def summarise_by_party_idx(
 
 
 def compute_rolling_sum(
-    group, window: int = 2, values: list[str] = None, agg:str="sum", include_yearly_total: bool = True
-
+    group,
+    window: int = 2,
+    values: list[str] = None,
+    agg: str = "sum",
+    include_yearly_total: bool = True,
 ):
     if values is None:
         values = [CrsSchema.VALUE]

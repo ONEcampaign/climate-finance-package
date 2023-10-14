@@ -1,6 +1,7 @@
 import pandas as pd
 from bblocks import clean_numeric_series
 
+from climate_finance.oecd.cleaning_tools.schema import CrsSchema
 from climate_finance.unfccc.cleaning_tools.channels import (
     add_channel_names,
     generate_channel_mapping_dictionary,
@@ -83,11 +84,11 @@ def map_channel_names_to_oecd_codes(
     )
 
     # Create a new column with the mapped channel codes
-    df["oecd_channel_code"] = df[channel_names_column].map(mapping).astype("Int32")
+    df[CrsSchema.CHANNEL_CODE] = df[channel_names_column].map(mapping).astype("Int32")
 
     df = df.pipe(
         add_channel_names,
-        codes_column="oecd_channel_code",
+        codes_column=CrsSchema.CHANNEL_CODE,
         target_column="clean_channel_name",
     )
 
