@@ -35,14 +35,14 @@ def download_excel_file(latest_year: int, base_url: str) -> pd.ExcelFile:
 
     """
     # Get the file using Selenium
-    url = get_file_url(latest_year, base_url)
+    url = get_file_url(year=latest_year, url=base_url)
     try:
         logger.info(f"Downloading file from {url}")
         file = fetch_file_from_url_selenium(url)
     except IndexError:
         logger.info(f"File not found for {latest_year}")
         latest_year -= 1
-        url = get_file_url(latest_year)
+        url = get_file_url(year=latest_year, url=base_url)
         file = fetch_file_from_url_selenium(url)
 
     # log success

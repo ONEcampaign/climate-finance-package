@@ -2,6 +2,30 @@ import numpy as np
 import pandas as pd
 
 from climate_finance.oecd.cleaning_tools.schema import CrsSchema
+from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
+
+CRDF_IDX = [
+    CrsSchema.YEAR,
+    CrsSchema.PARTY_CODE,
+    CrsSchema.AGENCY_CODE,
+    CrsSchema.CRS_ID,
+    CrsSchema.PROJECT_ID,
+    CrsSchema.RECIPIENT_CODE,
+    CrsSchema.CONCESSIONALITY,
+    CrsSchema.CLIMATE_OBJECTIVE,
+    CrsSchema.CHANNEL_CODE_DELIVERY,
+    CrsSchema.PURPOSE_CODE,
+    CrsSchema.FLOW_MODALITY,
+    CrsSchema.FINANCIAL_INSTRUMENT,
+    CrsSchema.FINANCE_TYPE,
+    CrsSchema.FLOW_TYPE,
+]
+
+CRDF_VALUES = [
+    CrsSchema.ADAPTATION_VALUE,
+    CrsSchema.MITIGATION_VALUE,
+    CrsSchema.CROSS_CUTTING_VALUE,
+]
 
 
 def group_and_summarize(df: pd.DataFrame) -> pd.DataFrame:
@@ -15,30 +39,19 @@ def group_and_summarize(df: pd.DataFrame) -> pd.DataFrame:
         pd.DataFrame: Grouped and summarized dataframe.
     """
 
-    exclude_cols = [
-        "share",
-        "value",
-        "total_value",
-        CrsSchema.ADAPTATION_VALUE,
-        CrsSchema.MITIGATION_VALUE,
-        CrsSchema.CROSS_CUTTING_VALUE,
-        "overlap_commitment_current",
-        "climate_finance_value",
-        "commitment_climate_share",
-    ]
+    idx = [c for c in df.columns if c not in CRDF_VALUES and c in CRDF_IDX]
 
-    # Store numeric types
-    original_types = {k: v for k, v in df.dtypes.to_dict().items() if v == "Int32"}
-
-    # Convert all columns to string
-    df = df.astype({k: "str" for k in df.columns if k not in exclude_cols})
+    df = idx_to_str(df, idx=idx)
 
     df = (
-        df.groupby(by=[c for c in df.columns if c not in exclude_cols], observed=True)
-        .sum(numeric_only=True)
+        df.groupby(by=idx, observed=True)
+        .agg("sum", numeric_only=True)
         .reset_index()
-        .replace("<NA>", np.nan)
-        .astype(original_types)
+        .filter(items=idx + CRDF_VALUES)
+        .pipe(set_crs_data_types)
+        .groupby(by=idx, observed=True)
+        .agg("sum", numeric_only=True)
+        .reset_index()
     )
 
     return df
@@ -119,8 +132,4 @@ def clean_component(df: pd.DataFrame) -> pd.DataFrame:
         pd.DataFrame: The processed dataframe.
     """
 
-    return (
-        df.pipe(group_and_summarize)
-        .pipe(summarise_by_row)
-        .pipe(subtract_overlaps_by_project)
-    )
+    return df.pipe(group_and_summarize).pipe(subtract_overlaps_by_project)

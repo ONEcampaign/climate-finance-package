@@ -1,7 +1,14 @@
+import numpy as np
 import pandas as pd
-from oda_data import donor_groupings
+from oda_data import donor_groupings, read_crs, set_data_path
 
 from climate_finance.config import ClimateDataPath
+from climate_finance.oecd.cleaning_tools.schema import CRS_MAPPING, CrsSchema, CRS_TYPES
+from climate_finance.oecd.climate_related_activities.recipient_perspective import (
+    get_recipient_perspective,
+)
+
+set_data_path(ClimateDataPath.raw_data)
 
 
 def flag_oda(df: pd.DataFrame) -> pd.DataFrame:
@@ -263,6 +270,39 @@ def add_dac_donor_names(
     )
 
 
+def add_provider_agency_names(data: pd.DataFrame, crs_year: int = 2021) -> pd.DataFrame:
+    idx = ["donor_code", "agency_code", "donor_name", "agency_name"]
+    crs = (
+        read_crs([crs_year])
+        .drop_duplicates(subset=idx)
+        .filter(items=idx)
+        .pipe(rename_crs_columns)
+        .pipe(idx_to_str, idx=[CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE])
+    )
+
+    crdf = (
+        get_recipient_perspective(start_year=crs_year, end_year=crs_year)
+        .drop_duplicates(subset=[CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE])
+        .pipe(idx_to_str, idx=[CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE])
+    )
+
+    crs = pd.concat([crs, crdf], ignore_index=True).drop_duplicates(
+        subset=[CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE]
+    )
+
+    data = data.merge(
+        crs,
+        on=[CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE],
+        how="left",
+        suffixes=("", "_crs_names"),
+    )
+
+    # drop any columns which contain the string "_crs_names"
+    data = data.drop(columns=[c for c in data.columns if "_crs_names" in c])
+
+    return data
+
+
 def get_crs_official_mapping() -> pd.DataFrame:
     """Get the CRS official mapping file."""
     return pd.read_csv(ClimateDataPath.oecd_cleaning_tools / "crs_channel_mapping.csv")
@@ -284,3 +324,49 @@ def convert_flows_millions_to_units(df: pd.DataFrame, flow_columns) -> pd.DataFr
         df[column] = df[column] * 1e6
 
     return df
+
+
+def rename_crs_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Renames certain columns in the CRS dataframe.
+
+    Args:
+        df: A dataframe containing the CRS data.
+
+    Returns:
+        A dataframe with renamed columns.
+    """
+
+    return df.rename(columns=CRS_MAPPING)
+
+
+def set_crs_data_types(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Sets the data types for columns in the CRS dataframe.
+
+    Args:
+        df (pd.DataFrame): The input dataframe with CRS data.
+
+    Returns:
+        pd.DataFrame: The dataframe with specified column data types set."""
+
+    # check columns
+
+    types = {k: v for k, v in CRS_TYPES.items() if k in df.columns}
+
+    return df.replace("<NA>", np.nan).astype(types)
+
+
+def idx_to_str(df: pd.DataFrame, idx: list[str]) -> pd.DataFrame:
+    """
+    Converts the index of a dataframe to a column of strings.
+
+    Args:
+        df (pd.DataFrame): The input dataframe.
+        idx (list[str]): The list of index names to convert to strings.
+
+    Returns:
+        pd.DataFrame: The dataframe with index converted to a column of strings.
+    """
+
+    return df.astype({c: "str" for c in idx if c in df.columns})

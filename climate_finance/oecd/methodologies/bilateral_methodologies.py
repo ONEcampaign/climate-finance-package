@@ -77,13 +77,15 @@ def _get_unique_max_groups(data: pd.DataFrame, melted_cols: list) -> pd.DataFram
 
 
 def melt_crs_climate_indicators_one(
-    df: pd.DataFrame, climate_indicators: list
+    df: pd.DataFrame, climate_indicators: list, percentage_significant: float = 0.4
 ) -> pd.DataFrame:
     """
     Melt the dataframe to get the indicators as a column
     Args:
         df: A dataframe containing the CRS data.
         climate_indicators: A list of climate indicators to melt.
+        percentage_significant: The percentage of the activity that is considered
+        climate relevant when the marker is 1. The default is 0.4.
 
     Returns:
         A dataframe with melted climate indicators.
@@ -104,7 +106,7 @@ def melt_crs_climate_indicators_one(
     melted_df = _filter_positive_indicator_values(data=melted_df)
 
     # if indicator_value is equal to 1, multiply the value for the indicator by 0.4
-    melted_df.loc[melted_df["indicator_value"] == 1, "value"] *= 0.4
+    melted_df.loc[melted_df["indicator_value"] == 1, "value"] *= percentage_significant
 
     # Find the maximum indicator_value for each group
     max_values = _get_max_values_per_group(data=melted_df, melted_cols=melted_cols)

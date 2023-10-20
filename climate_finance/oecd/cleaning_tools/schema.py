@@ -121,6 +121,8 @@ CRS_MAPPING: dict[str, str] = {
     "type": CrsSchema.MULTILATERAL_TYPE,
     "converged_reporting": CrsSchema.CONVERGED_REPORTING,
     "coal_related_financing": CrsSchema.COAL_FINANCING,
+    "flow_type": CrsSchema.FLOW_TYPE,
+    "type_of_flow": CrsSchema.FLOW_TYPE,
 }
 
 
@@ -130,4 +132,44 @@ OECD_CLIMATE_INDICATORS: dict[str, str] = {
     CrsSchema.CROSS_CUTTING: "Cross-cutting",
     CrsSchema.NOT_CLIMATE: "Not climate relevant",
     CrsSchema.CLIMATE_UNSPECIFIED: "Climate unspecified",
+}
+
+MULTISYSTEM_INDICATORS: dict = {
+    "multisystem_multilateral_contributions_disbursement_gross": CrsSchema.USD_DISBURSEMENT,
+    "multisystem_multilateral_contributions_commitments_gross": CrsSchema.USD_COMMITMENT,
+}
+
+VALUE_COLUMNS: list[str] = [
+    CrsSchema.ADAPTATION_VALUE,
+    CrsSchema.MITIGATION_VALUE,
+    CrsSchema.CROSS_CUTTING_VALUE,
+    CrsSchema.CLIMATE_FINANCE_VALUE,
+    CrsSchema.COMMITMENT_CLIMATE_SHARE,
+    CrsSchema.CLIMATE_UNSPECIFIED,
+    CrsSchema.USD_COMMITMENT,
+    CrsSchema.USD_DISBURSEMENT,
+    CrsSchema.USD_RECEIVED,
+    CrsSchema.USD_GRANT_EQUIV,
+    CrsSchema.USD_NET_DISBURSEMENT,
+    CrsSchema.VALUE,
+    CrsSchema.TOTAL_VALUE,
+    CrsSchema.SHARE,
+]
+
+
+CRS_TYPES = {
+    CrsSchema.YEAR: "Int32",
+    CrsSchema.PARTY_CODE: "Int32",
+    CrsSchema.PARTY_NAME: "category",
+    CrsSchema.RECIPIENT_NAME: "category",
+    CrsSchema.RECIPIENT_CODE: "Int32",
+    CrsSchema.AGENCY_NAME: "str",
+    CrsSchema.AGENCY_CODE: "Int32",
+    CrsSchema.FLOW_NAME: "str",
+    CrsSchema.FLOW_CODE: "Int32",
+    CrsSchema.MITIGATION: "str",
+    CrsSchema.ADAPTATION: "str",
+    CrsSchema.PURPOSE_CODE: "Int32",
+    CrsSchema.SECTOR_CODE: "Int32",
+    CrsSchema.FINANCE_TYPE: "Int32",
 }

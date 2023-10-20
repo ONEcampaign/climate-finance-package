@@ -265,14 +265,14 @@ def add_total(df: pd.DataFrame) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    oecd_version = get_oecd_bilateral(2013, 2021, methodology="oecd_bilateral")
-    one_version = get_oecd_bilateral(2013, 2021, methodology="one_bilateral")
-
-    oecd = oecd_version.pipe(summarise).pipe(pivot_summary)
-    one = one_version.pipe(summarise).pipe(pivot_summary)
-
-    combined = merge_oecd_one(oecd, one).pipe(add_total)
-
-    combined.drop(columns=["_merge"]).to_csv(
-        config.ClimateDataPath.raw_data / "oecd_one_comparison_bilat.csv", index=False
-    )
+    # oecd_version = get_oecd_bilateral(2013, 2021, methodology="oecd_bilateral")
+    one_version = get_oecd_bilateral(2021, 2021, methodology="one_bilateral")
+    #
+    # oecd = oecd_version.pipe(summarise).pipe(pivot_summary)
+    # one = one_version.pipe(summarise).pipe(pivot_summary)
+    #
+    # combined = merge_oecd_one(oecd, one).pipe(add_total)
+    #
+    # combined.drop(columns=["_merge"]).to_csv(
+    #     config.ClimateDataPath.raw_data / "oecd_one_comparison_bilat.csv", index=False
+    # )

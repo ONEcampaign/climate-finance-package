@@ -2,10 +2,14 @@ import numpy as np
 import pandas as pd
 
 from climate_finance.oecd.cleaning_tools.schema import CrsSchema
+from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
+from climate_finance.oecd.crs.get_data import get_crs, keep_only_allocable_aid
 from climate_finance.oecd.imputed_multilateral.crs_tools import get_yearly_crs_totals
 from climate_finance.oecd.imputed_multilateral.multilateral_spending_data import (
     get_multilateral_data,
     add_crs_details,
+    convert_to_flowtypes,
+    OUTPUT_COLUMNS,
 )
 from climate_finance.oecd.imputed_multilateral.one_multilateral.climate_components import (
     clean_component,
@@ -19,14 +23,9 @@ from climate_finance.oecd.imputed_multilateral.tools import (
 SHARES_IDX = [
     CrsSchema.YEAR,
     CrsSchema.PARTY_CODE,
-    CrsSchema.PARTY_NAME,
-    CrsSchema.PARTY_TYPE,
-    CrsSchema.RECIPIENT_NAME,
+    CrsSchema.AGENCY_CODE,
     CrsSchema.RECIPIENT_CODE,
-    CrsSchema.SECTOR_CODE,
-    CrsSchema.SECTOR_NAME,
     CrsSchema.PURPOSE_CODE,
-    CrsSchema.PURPOSE_NAME,
     CrsSchema.FINANCE_TYPE,
     CrsSchema.FLOW_TYPE,
     CrsSchema.FLOW_CODE,
@@ -42,8 +41,7 @@ CLIMATE_COLS = [
 SIMPLE_IDX = [
     CrsSchema.YEAR,
     CrsSchema.PARTY_CODE,
-    CrsSchema.PARTY_NAME,
-    CrsSchema.FLOW_NAME,
+    CrsSchema.AGENCY_CODE,
     CrsSchema.FLOW_TYPE,
 ]
 
@@ -54,11 +52,17 @@ def _pivot_indicators_as_columns(data: pd.DataFrame, idx: list[str]) -> pd.DataF
     ).reset_index()
 
 
-def _get_spending_summary_from_crs(
+def _summarise_spending_data(
     data: pd.DataFrame,
 ) -> pd.DataFrame:
     # Get yearly totals for each party by flow type
-    return data.groupby(SIMPLE_IDX)["yearly_total"].sum().reset_index()
+    return (
+        data.pipe(idx_to_str, idx=SIMPLE_IDX)
+        .groupby(SIMPLE_IDX, observed=True)["yearly_total"]
+        .sum()
+        .reset_index()
+        .pipe(set_crs_data_types)
+    )
 
 
 def _validate_missing_climate_cols(data: pd.DataFrame) -> pd.DataFrame:
@@ -96,24 +100,38 @@ def _fill_total_spending_gaps(data: pd.DataFrame) -> pd.DataFrame:
 def _add_total_spending_by_year(
     data: pd.DataFrame, totals_by_flow: pd.DataFrame
 ) -> pd.DataFrame:
-    return data.drop(columns=["yearly_total"]).merge(
-        totals_by_flow, on=SIMPLE_IDX, how="left"
+    return (
+        data.drop(columns=["yearly_total"])
+        .pipe(idx_to_str, idx=SIMPLE_IDX)
+        .merge(
+            totals_by_flow.pipe(idx_to_str, idx=SIMPLE_IDX),
+            on=SIMPLE_IDX,
+            how="left",
+        )
     )
 
 
 def _compute_rolling_total_multi_spending(
-    data: pd.DataFrame, window: int, agg: str = "sum", include_yearly_total: bool = True
+    data: pd.DataFrame,
+    start_year: int,
+    end_year: int,
+    window: int,
+    agg: str = "sum",
+    include_yearly_total: bool = True,
 ) -> pd.DataFrame:
     return (
-        data.sort_values([CrsSchema.YEAR, CrsSchema.PARTY_CODE])
+        data.astype({CrsSchema.YEAR: "Int32"})
+        .sort_values([CrsSchema.YEAR, CrsSchema.PARTY_CODE])
         .groupby(
-            [c for c in SHARES_IDX if c not in [CrsSchema.YEAR]],
+            [c for c in SHARES_IDX if c not in [CrsSchema.YEAR] and c in data.columns],
             observed=True,
             group_keys=False,
         )
         .apply(
             compute_rolling_sum,
             window=window,
+            start_year=start_year,
+            end_year=end_year,
             values=CLIMATE_COLS + ["climate_total", "yearly_total"],
             agg=agg,
             include_yearly_total=include_yearly_total,
@@ -122,9 +140,24 @@ def _compute_rolling_total_multi_spending(
     )
 
 
+def _filter_flow_types(data: pd.DataFrame, flow_types=None) -> pd.DataFrame:
+    if flow_types is None:
+        flow_type = [CrsSchema.USD_COMMITMENT, CrsSchema.USD_DISBURSEMENT]
+
+    return data.loc[lambda d: d[CrsSchema.FLOW_TYPE].isin(flow_type)]
+
+
+def _keep_non_zero_climate_total(data: pd.DataFrame) -> pd.DataFrame:
+    return data.loc[lambda d: d["climate_total"] != 0]
+
+
 def one_rolling_shares_methodology(
     data: pd.DataFrame,
+    start_year: int,
+    end_year: int,
+    output_groupby: list[str] = None,
     window: int = 2,
+    agg: str = "sum",
     as_shares: bool = True,
     use_year_total: bool = True,
 ) -> pd.DataFrame:
@@ -134,7 +167,10 @@ def one_rolling_shares_methodology(
 
     Args:
         data: A dataframe containing the multilateral spending data.
+        start_year: The start year of the data.
+        end_year: The end year of the data.
         window: The window size for the rolling totals or shares (in years).
+        agg: The aggregation method to use for the rolling totals.
         as_shares: Whether to compute the rolling shares or totals.
         use_year_total: Whether to compute the rolling shares of total spending.
 
@@ -143,42 +179,71 @@ def one_rolling_shares_methodology(
         spending data.
 
     """
+    if output_groupby is None:
+        output_groupby = SHARES_IDX
 
     # Drop duplicates
     data = data.drop_duplicates()
 
     # Summarise the data at the right level
     data_by_indicator = data.pipe(
-        summarise_by_party_idx, idx=SHARES_IDX, by_indicator=True
+        summarise_by_party_idx,
+        idx=SHARES_IDX,
+        by_indicator=True,
     ).pipe(_pivot_indicators_as_columns, idx=SHARES_IDX)
 
-    # Get yearly totals for years present in the data
-    yearly_totals = get_yearly_crs_totals(
-        start_year=data[CrsSchema.YEAR].min(),
-        end_year=data[CrsSchema.YEAR].max(),
-        by_index=SHARES_IDX,
-    ).rename(columns={CrsSchema.VALUE: "yearly_total"})
-
-    # Get the yearly totals for the years present in the data
-    yearly_totals_by_flow_type = _get_spending_summary_from_crs(data=yearly_totals)
+    # Get yearly totals for years present in the data, for ALLOCABLE
+    yearly_totals = (
+        get_crs(
+            start_year=start_year,
+            end_year=end_year,
+            groupby=SHARES_IDX + [CrsSchema.FLOW_MODALITY],
+            party_code=data_by_indicator[CrsSchema.PARTY_CODE].unique().tolist(),
+        )
+        .pipe(_filter_flow_types)
+        .pipe(keep_only_allocable_aid)
+        .pipe(summarise_by_party_idx, idx=SHARES_IDX)
+        .rename(columns={CrsSchema.VALUE: "yearly_total"})
+    )
 
     data_by_indicator = (
         data_by_indicator.pipe(merge_total, totals=yearly_totals, idx=SHARES_IDX)
         .pipe(_validate_missing_climate_cols)
         .pipe(_drop_rows_missing_climate)
         .pipe(_add_climate_total_column)
+        .pipe(_keep_non_zero_climate_total)
         .pipe(_fill_total_spending_gaps)
     )
 
     # Add total spending
     if use_year_total:
+        # Get the yearly totals for the years present in the data
+        yearly_totals_by_flow_type = _summarise_spending_data(data=yearly_totals)
+
         data_by_indicator = _add_total_spending_by_year(
             data=data_by_indicator, totals_by_flow=yearly_totals_by_flow_type
         )
 
+    # group by requested level
+    value_cols = [
+        c
+        for c in CLIMATE_COLS + ["climate_total", "yearly_total"]
+        if c in data_by_indicator.columns
+    ]
+
+    data_by_indicator = (
+        data_by_indicator.groupby(output_groupby, observed=True)[value_cols]
+        .sum()
+        .reset_index()
+    )
+
     # Compute the rolling totals
     rolling = _compute_rolling_total_multi_spending(
-        data_by_indicator, window=window, agg="sum"
+        data_by_indicator,
+        window=window,
+        agg=agg,
+        start_year=start_year,
+        end_year=end_year,
     )
 
     if as_shares:
@@ -194,6 +259,7 @@ def one_multilateral_spending(
     start_year: int,
     end_year: int,
     rolling_window: int = 2,
+    agg: str = "sum",
     as_shares: bool = True,
     party: list[str] = None,
     force_update: bool = False,
@@ -209,6 +275,7 @@ def one_multilateral_spending(
         start_year: The start year of the data.
         end_year: The end year of the data.
         rolling_window: The window size for the rolling totals or shares (in years).
+        agg: The aggregation method to use for the rolling totals.
         as_shares: Whether to compute the rolling shares or totals.
         party: The list of parties to filter the data by.
         force_update: Whether to force update the data.
@@ -227,9 +294,14 @@ def one_multilateral_spending(
         )
         .pipe(clean_component)
         .pipe(add_crs_details)
+        .pipe(convert_to_flowtypes)
+        .pipe(set_crs_data_types)
         .pipe(
             one_rolling_shares_methodology,
             window=rolling_window,
+            agg=agg,
             as_shares=as_shares,
+            start_year=start_year,
+            end_year=end_year,
         )
     )

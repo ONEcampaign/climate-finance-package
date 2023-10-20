@@ -6,7 +6,7 @@ from climate_finance.oecd.cleaning_tools.schema import (
     OECD_CLIMATE_INDICATORS,
     CrsSchema,
 )
-
+from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
 
 MULTILATERAL_ID_COLUMNS: list[str] = [
     CrsSchema.YEAR,
@@ -227,18 +227,29 @@ def base_oecd_multilateral_agency_share(df: pd.DataFrame) -> pd.DataFrame:
 def summarise_by_party_idx(
     data: pd.DataFrame, idx: list[str], by_indicator: bool = False
 ) -> pd.DataFrame:
-    grouper = [CrsSchema.PARTY_NAME] + idx
+    grouper = [CrsSchema.PARTY_CODE] + idx
 
     if by_indicator:
         grouper += [CrsSchema.INDICATOR]
 
+    grouper = [c for c in grouper if c in data.columns]
+
     grouper = list(dict.fromkeys(grouper))
 
-    return data.groupby(grouper, observed=True)[CrsSchema.VALUE].sum().reset_index()
+    data = data.pipe(idx_to_str, idx=grouper)
+
+    return (
+        data.groupby(grouper, observed=True)[CrsSchema.VALUE]
+        .sum()
+        .reset_index()
+        .pipe(set_crs_data_types)
+    )
 
 
 def compute_rolling_sum(
     group,
+    start_year: int,
+    end_year: int,
     window: int = 2,
     values: list[str] = None,
     agg: str = "sum",
@@ -247,22 +258,21 @@ def compute_rolling_sum(
     if values is None:
         values = [CrsSchema.VALUE]
 
-    # 1. Determine the range of years
-    min_year, max_year = group[CrsSchema.YEAR].min(), group[CrsSchema.YEAR].max()
-    all_years = range(min_year, max_year + 1)
+    if include_yearly_total:
+        values += ["yearly_total"]
+        values = list(dict.fromkeys(values))
+
+    all_years = range(start_year, end_year + 1)
 
     # 2. Reindex the group using the complete range of years
-    group.set_index(CrsSchema.YEAR, inplace=True)
-    group = group.reindex(all_years)
+    group = group.set_index(CrsSchema.YEAR).reindex(all_years)
+
+    group[values] = group[values].fillna(0)
 
     group[values] = group[values].rolling(window=window).agg(agg).fillna(group[values])
-    if include_yearly_total:
-        group["yearly_total"] = (
-            group["yearly_total"]
-            .rolling(window=window)
-            .agg(agg)
-            .fillna(group["yearly_total"])
-        )
+
+    group = group.dropna(subset=[CrsSchema.PARTY_CODE])
+
     return group.reset_index(drop=False)
 
 
@@ -274,20 +284,23 @@ def merge_total(
         c
         for c in idx
         if c in totals.columns
-        and c not in [CrsSchema.PARTY_NAME, CrsSchema.RECIPIENT_NAME]
+        and c
+        not in [
+            CrsSchema.PARTY_NAME,
+            CrsSchema.RECIPIENT_NAME,
+            CrsSchema.SECTOR_NAME,
+            CrsSchema.SECTOR_CODE,
+            CrsSchema.PURPOSE_NAME,
+            CrsSchema.FLOW_NAME,
+        ]
     ]
 
-    # get original datatypes for data
-    data_dt = data.dtypes.to_dict()
+    # Transform idx columns to string
+    data = data.pipe(idx_to_str, idx=idx)
+    totals = totals.pipe(idx_to_str, idx=idx)
 
-    # convert index to string
-    data = data.astype({k: "str" for k in idx})
-    totals = totals.astype({k: "str" for k in idx})
-
-    data = (
-        data.merge(totals, on=idx, how="left", suffixes=("", "_crs"))
-        .replace(0, np.nan)
-        .astype(data_dt)
+    data = data.merge(totals, on=idx, how="left", suffixes=("", "_crs")).pipe(
+        set_crs_data_types
     )
     return data.drop(columns=[c for c in data.columns if c.endswith("_crs")])
 

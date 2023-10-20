@@ -2,6 +2,10 @@ import pandas as pd
 from bblocks import clean_numeric_series
 
 from climate_finance.oecd.cleaning_tools.schema import CrsSchema
+from climate_finance.oecd.cleaning_tools.tools import (
+    set_crs_data_types,
+    add_provider_agency_names,
+)
 from climate_finance.unfccc.cleaning_tools.channels import (
     add_channel_names,
     generate_channel_mapping_dictionary,
@@ -76,6 +80,9 @@ def map_channel_names_to_oecd_codes(
         df (pd.DataFrame): The dataframe with mapped channel names.
     """
 
+    # add names to the channel names column
+    df = add_provider_agency_names(df, crs_year=df[CrsSchema.YEAR].max())
+
     # Create a dictionary with channel names as keys and OECD DAC codes as values
     mapping = generate_channel_mapping_dictionary(
         raw_data=df,
@@ -92,4 +99,4 @@ def map_channel_names_to_oecd_codes(
         target_column="clean_channel_name",
     )
 
-    return df
+    return df.pipe(set_crs_data_types)

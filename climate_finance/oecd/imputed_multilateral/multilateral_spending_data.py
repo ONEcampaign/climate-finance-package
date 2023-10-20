@@ -1,11 +1,11 @@
-import numpy as np
 import pandas as pd
 from oda_data import read_crs
 
+from climate_finance.oecd.cleaning_tools.schema import CrsSchema, CRS_MAPPING
+from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
 from climate_finance.oecd.climate_related_activities.recipient_perspective import (
     get_recipient_perspective,
 )
-from climate_finance.oecd.cleaning_tools.schema import CrsSchema, CRS_MAPPING
 from climate_finance.oecd.imputed_multilateral.crs_tools import match_projects_with_crs
 
 UNIQUE_INDEX = [
@@ -14,36 +14,26 @@ UNIQUE_INDEX = [
     CrsSchema.AGENCY_CODE,
     CrsSchema.CRS_ID,
     CrsSchema.PROJECT_ID,
+    CrsSchema.FINANCE_TYPE,
+    # CrsSchema.FLOW_CODE,
+    CrsSchema.FLOW_TYPE,
     CrsSchema.RECIPIENT_CODE,
     CrsSchema.PURPOSE_CODE,
 ]
 
-
 CRS_INFO = [
     CrsSchema.YEAR,
     CrsSchema.PARTY_CODE,
-    CrsSchema.PARTY_NAME,
     CrsSchema.AGENCY_CODE,
-    CrsSchema.AGENCY_NAME,
     CrsSchema.CRS_ID,
     CrsSchema.PROJECT_ID,
     CrsSchema.RECIPIENT_CODE,
-    CrsSchema.RECIPIENT_NAME,
-    CrsSchema.RECIPIENT_REGION_CODE,
-    CrsSchema.RECIPIENT_REGION,
-    CrsSchema.RECIPIENT_INCOME,
     CrsSchema.FLOW_CODE,
+    CrsSchema.FLOW_TYPE,
     CrsSchema.FLOW_NAME,
     CrsSchema.CATEGORY,
     CrsSchema.FINANCE_TYPE,
     CrsSchema.FLOW_MODALITY,
-    CrsSchema.USD_COMMITMENT,
-    CrsSchema.USD_DISBURSEMENT,
-    CrsSchema.USD_RECEIVED,
-    CrsSchema.PROJECT_TITLE,
-    CrsSchema.PROJECT_DESCRIPTION_SHORT,
-    CrsSchema.PROJECT_DESCRIPTION,
-    CrsSchema.SECTOR_CODE,
     CrsSchema.PURPOSE_CODE,
     CrsSchema.CHANNEL_CODE,
     CrsSchema.CHANNEL_NAME,
@@ -52,31 +42,17 @@ CRS_INFO = [
 OUTPUT_COLUMNS: list = [
     CrsSchema.YEAR,
     CrsSchema.PARTY_CODE,
-    CrsSchema.PARTY_NAME,
-    CrsSchema.PARTY_DETAILED,
-    CrsSchema.PARTY_TYPE,
     CrsSchema.AGENCY_CODE,
-    CrsSchema.AGENCY_NAME,
     CrsSchema.CRS_ID,
     CrsSchema.PROJECT_ID,
     CrsSchema.RECIPIENT_CODE,
-    CrsSchema.RECIPIENT_NAME,
-    CrsSchema.RECIPIENT_REGION_CODE,
-    CrsSchema.RECIPIENT_REGION,
     CrsSchema.CHANNEL_CODE,
-    CrsSchema.CHANNEL_NAME,
-    CrsSchema.SECTOR_CODE,
-    CrsSchema.SECTOR_NAME,
     CrsSchema.PURPOSE_CODE,
-    CrsSchema.PURPOSE_NAME,
     CrsSchema.FLOW_MODALITY,
     CrsSchema.FINANCIAL_INSTRUMENT,
     CrsSchema.FINANCE_TYPE,
     CrsSchema.CATEGORY,
     CrsSchema.CONCESSIONALITY,
-    CrsSchema.GENDER,
-    CrsSchema.PROJECT_TITLE,
-    CrsSchema.PROJECT_DESCRIPTION,
     CrsSchema.INDICATOR,
     CrsSchema.FLOW_TYPE,
     CrsSchema.FLOW_CODE,
@@ -91,6 +67,11 @@ CRS_VALUES: list = [
     CrsSchema.USD_DISBURSEMENT,
 ]
 
+CRDF_VALUES = [
+    CrsSchema.ADAPTATION_VALUE,
+    CrsSchema.MITIGATION_VALUE,
+    CrsSchema.CROSS_CUTTING_VALUE,
+]
 
 # multilateral providers
 MULTI_PROVIDERS = ["Other multilateral", "Multilateral development bank"]
@@ -138,24 +119,20 @@ def _filter_parties(data, party_code: str | list[str] | None) -> pd.DataFrame:
 
 
 def _convert_to_indicators(full_data: pd.DataFrame) -> pd.DataFrame:
-    climate_values = [
-        CrsSchema.ADAPTATION_VALUE,
-        CrsSchema.MITIGATION_VALUE,
-        CrsSchema.CROSS_CUTTING_VALUE,
-    ]
-
     dfs = []
 
     # calculate shares based on data and commitments
-    for column in climate_values:
+    for column in CRDF_VALUES:
         indicator_flow = (
             full_data.assign(
-                value=lambda d: d[column],
-                share=lambda d: d[column] / d[CrsSchema.USD_COMMITMENT],
-                indicator=column,
+                **{
+                    CrsSchema.VALUE: lambda d: d[column],
+                    CrsSchema.SHARE: lambda d: d[column] / d[CrsSchema.USD_COMMITMENT],
+                    CrsSchema.INDICATOR: column,
+                }
             )
             .assign(**{CrsSchema.FLOW_TYPE: CrsSchema.USD_COMMITMENT})
-            .drop(columns=climate_values + [CrsSchema.USD_COMMITMENT])
+            .drop(columns=CRDF_VALUES + [CrsSchema.USD_COMMITMENT])
         )
         dfs.append(indicator_flow)
 
@@ -163,11 +140,13 @@ def _convert_to_indicators(full_data: pd.DataFrame) -> pd.DataFrame:
 
 
 def _create_disbursements_df(data: pd.DataFrame) -> pd.DataFrame:
-    return (
-        data.assign(**{CrsSchema.FLOW_TYPE: CrsSchema.USD_DISBURSEMENT})
-        .assign(value=lambda d: d[CrsSchema.USD_DISBURSEMENT] * d["share"])
-        .drop(columns=CrsSchema.USD_DISBURSEMENT)
-    )
+    return data.assign(
+        **{
+            CrsSchema.FLOW_TYPE: CrsSchema.USD_DISBURSEMENT,
+            CrsSchema.VALUE: lambda d: d[CrsSchema.USD_DISBURSEMENT]
+            * d[CrsSchema.SHARE],
+        }
+    ).drop(columns=CrsSchema.USD_DISBURSEMENT)
 
 
 def _create_commitments_df(data: pd.DataFrame) -> pd.DataFrame:
@@ -219,7 +198,7 @@ def convert_to_flowtypes(data: pd.DataFrame) -> pd.DataFrame:
     # deal with shares that are > 1
     data = _deal_with_shares_greater_than_1(data)
 
-    return data
+    return data.filter(OUTPUT_COLUMNS)
 
 
 def _keep_multilateral_providers(
@@ -245,7 +224,7 @@ def _keep_multilateral_providers(
     )
 
 
-def _clean_multi_crs_output(data: pd.DataFrame) -> pd.DataFrame:
+def _convert_crs_values_to_million(data: pd.DataFrame) -> pd.DataFrame:
     """
     Clean the output of the multilateral CRS data.
 
@@ -256,18 +235,6 @@ def _clean_multi_crs_output(data: pd.DataFrame) -> pd.DataFrame:
         The cleaned dataframe.
 
     """
-    # filter to keep only the columns in the OUTPUT_COLUMNS global variable
-    # and the CRS_VALUES global variable. Rename the columns to match the
-    # OUTPUT_COLUMNS global variable.
-    data = data.astype({k: str for k in UNIQUE_INDEX}).filter(
-        OUTPUT_COLUMNS
-        + CRS_VALUES
-        + [
-            CrsSchema.ADAPTATION_VALUE,
-            CrsSchema.MITIGATION_VALUE,
-            CrsSchema.CROSS_CUTTING_VALUE,
-        ]
-    )
 
     for column in CRS_VALUES:
         # convert to USD
@@ -289,11 +256,8 @@ def _get_unique_projects(df: pd.DataFrame) -> pd.DataFrame:
         The dataframe with the unique projects.
 
     """
-    return (
-        df.drop_duplicates(subset=UNIQUE_INDEX, keep="first")  # keep first only
-        .filter(UNIQUE_INDEX)  # keep only the columns in UNIQUE_INDEX
-        .astype({k: str for k in UNIQUE_INDEX})  # convert columns to string
-    )
+
+    return df.drop_duplicates(subset=UNIQUE_INDEX, keep="first").filter(UNIQUE_INDEX)
 
 
 def _get_crs_to_match(
@@ -314,76 +278,28 @@ def _get_crs_to_match(
     """
 
     # Read the CRS data
-    crs_data = read_crs(years=years).rename(columns=CRS_MAPPING)
+    crs_data = read_crs(years=years)
 
-    # Set the types to strings
-    crs_data = _set_crs_types_to_strings(data=crs_data)
+    crs_data = crs_data.rename(columns=CRS_MAPPING)
+
+    idx = [c for c in CRS_INFO if c not in [CrsSchema.FLOW_TYPE]]
 
     # Filter parties
     crs_data = _filter_parties(data=crs_data, party_code=party_code)
 
     # group any clear duplicates
-    value_columns = [
-        "usd_commitment",
-        "usd_disbursement",
-        "usd_received",
-        "usd_grant_equiv",
-    ]
 
-    to_drop = [
-        c
-        for c in crs_data.columns
-        if c
-        in [
-            "usd_commitment_defl",
-            "usd_disbursement_defl",
-            "usd_received_defl",
-            "usd_adjustment",
-            "usd_adjustment_defl",
-            "usd_amount_untied",
-            "usd_amount_partial_tied",
-            "usd_amount_tied",
-            "usd_amount_untied_defl",
-            "usd_amount_partial_tied_defl",
-            "usd_amounttied_defl",
-            "usd_irtc_code",
-            "usd_expert_commitment",
-            "usd_expert_extended",
-            "usd_export_credit",
-            "currency_code",
-            "commitment_national",
-            "disbursement_national",
-            "grant_equiv",
-            "interest1",
-            "interest2",
-            "repaydate1",
-            "repaydate2",
-            "usd_interest",
-            "usd_outstanding",
-            "usd_arrears_principal",
-            "usd_arrears_interest",
-            "capital_expend",
-        ]
-    ]
+    crs_data = crs_data.filter(idx + CRS_VALUES)
 
-    crs_data = crs_data.drop(columns=to_drop)
-
-    data_types = {c: t for c, t in crs_data.dtypes.to_dict().items()}
-
-    # change data types
-    crs_data = crs_data.astype({c: "str" for c in data_types if c not in value_columns})
+    crs_data = crs_data.pipe(idx_to_str, idx=idx)
 
     # group by and sum
     crs_data = (
-        crs_data.groupby(
-            [c for c in crs_data.columns if c not in value_columns],
-            observed=True,
-            dropna=False,
-        )[value_columns]
+        crs_data.groupby(idx, observed=True, dropna=False)[CRS_VALUES]
         .sum(numeric_only=True)
         .reset_index()
-        .replace("<NA>", np.nan)
-    ).astype(data_types)
+        .pipe(set_crs_data_types)
+    )
 
     return crs_data
 
@@ -401,37 +317,32 @@ def add_crs_details(df: pd.DataFrame) -> pd.DataFrame:
 
     """
 
-    # Identify the unique projects contained in the CRS. This is done by keeping only
-    # the columns in the UNIQUE_INDEX global variable, dropping duplicates, and
-    # converting the columns to strings.
-    projects_df = _get_unique_projects(df)
-
     # Get a version of the CRS data that can be matched with the multilateral data.
     crs_df = _get_crs_to_match(
         years=df.year.unique().tolist(),
-        party_code=projects_df.oecd_party_code.unique().tolist(),
+        party_code=df.oecd_party_code.unique().tolist(),
     )
 
     # match projects with crs
     matched = match_projects_with_crs(
-        projects=projects_df,
+        projects=df,
         crs=crs_df,
         unique_index=UNIQUE_INDEX,
-        output_cols=CRS_INFO,
+        output_cols=OUTPUT_COLUMNS + CRS_VALUES,
     )
 
     # add back to original df
-    data = df.astype({k: str for k in UNIQUE_INDEX}).merge(
-        matched, on=UNIQUE_INDEX, how="left", suffixes=("", "_crs")
+    df = df.pipe(idx_to_str, idx=UNIQUE_INDEX)
+    matched = matched.pipe(idx_to_str, idx=UNIQUE_INDEX)
+    data = df.merge(matched, on=UNIQUE_INDEX, how="left", suffixes=("", "_crs")).pipe(
+        set_crs_data_types
     )
 
-    # clean and standardise output
-    data = _clean_multi_crs_output(data)
+    # convert figures to millions
+    data = _convert_crs_values_to_million(data)
 
-    # convert to flow types
-    data = convert_to_flowtypes(data)
-
-    return data.filter(OUTPUT_COLUMNS)
+    # Keep only relevant columns
+    return data.filter(items=OUTPUT_COLUMNS + CRS_VALUES + CRDF_VALUES)
 
 
 def get_multilateral_data(

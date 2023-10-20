@@ -7,12 +7,11 @@ from climate_finance.oecd.crs.get_data import (
     _add_net_disbursement,
     _get_flow_columns,
     _get_relevant_crs_columns,
-    _keep_only_allocable_aid,
-    _rename_crs_columns,
+    keep_only_allocable_aid,
     _replace_missing_climate_with_zero,
-    _set_crs_data_types,
     get_crs_allocable_spending,
 )
+from climate_finance.oecd.cleaning_tools.tools import rename_crs_columns, set_crs_data_types
 
 
 def test_keep_only_allocable_aid():
@@ -36,7 +35,7 @@ def test_keep_only_allocable_aid():
     )
 
     # Call the function
-    result = _keep_only_allocable_aid(df)
+    result = keep_only_allocable_aid(df)
 
     # Check if the resulting DataFrame only contains the rows with allocable aid types
     assert len(result) == 8
@@ -64,7 +63,7 @@ def test_rename_crs_columns():
     )
 
     # Call the function
-    result = _rename_crs_columns(df)
+    result = rename_crs_columns(df)
 
     # Check if the resulting DataFrame has the renamed columns
     expected_columns = [
@@ -99,7 +98,7 @@ def test_set_crs_data_types():
     )
 
     # Call the function
-    result = _set_crs_data_types(df)
+    result = set_crs_data_types(df)
 
     # Check if the resulting DataFrame has the correct data types
     expected_dtypes = {

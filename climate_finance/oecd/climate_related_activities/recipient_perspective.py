@@ -193,7 +193,7 @@ def get_recipient_perspective(
     df = marker_columns_to_numeric(df)
 
     # Fix errors in recipient code
-    df = df.replace({CrsSchema.RECIPIENT_CODE: {"998": "9998"}})
+    df = df.replace({CrsSchema.RECIPIENT_CODE: {"9998": "998"}})
 
     # Add flow type
     df = df.assign(flow_type="usd_commitment")

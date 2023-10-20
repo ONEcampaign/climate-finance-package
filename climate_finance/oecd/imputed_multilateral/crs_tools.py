@@ -2,7 +2,20 @@ import pandas as pd
 
 from climate_finance.config import logger
 from climate_finance.oecd.cleaning_tools.schema import CrsSchema
+from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
+from climate_finance.oecd.crs.get_data import get_crs_allocable_spending
 from climate_finance.oecd.get_oecd_data import get_oecd_bilateral
+
+
+def get_crs_totals(
+    start_year: int,
+    end_year: int,
+    by_index: list[str] | None = None,
+    party_code: str | list[str] | None = None,
+) -> pd.DataFrame:
+    get_crs_allocable_spending(
+        start_year=start_year, end_year=end_year, force_update=update_data
+    )
 
 
 def get_yearly_crs_totals(
@@ -43,8 +56,9 @@ def get_yearly_crs_totals(
 def merge_projects_with_crs(
     projects: pd.DataFrame, crs: pd.DataFrame, index: list[str]
 ) -> pd.DataFrame:
+    idx = [c for c in index if c in projects.columns and c in crs.columns]
     return projects.merge(
-        crs, on=index, how="left", indicator=True, suffixes=("", "_crs")
+        crs, on=idx, how="left", indicator=True, suffixes=("", "_crs")
     )
 
 
@@ -68,7 +82,9 @@ def _keep_not_matched(data: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
 
 
 def _concat_matched_dfs(
-    data: pd.DataFrame, additional_matches: pd.DataFrame
+    data: pd.DataFrame,
+    additional_matches1: pd.DataFrame,
+    additional_matches2: pd.DataFrame,
 ) -> pd.DataFrame:
     """
     Concatenate the dataframes of matched projects.
@@ -83,7 +99,11 @@ def _concat_matched_dfs(
     """
     # Concatenate the dataframes
     return pd.concat(
-        [data.loc[lambda d: d["_merge"] != "left_only"], additional_matches],
+        [
+            data.loc[lambda d: d["_merge"] != "left_only"],
+            additional_matches1.loc[lambda d: d["_merge"] != "left_only"],
+            additional_matches2,
+        ],
         ignore_index=True,
     )
 
@@ -114,6 +134,8 @@ def match_projects_with_crs(
     # Perform an initial merge. It will be done considering all the columns in the
     # UNIQUE_INDEX global variable. A left join is attempted. The indicator column
     # is shown to see how many projects were matched.
+    projects = projects.pipe(idx_to_str, idx=unique_index)
+    crs = crs.pipe(idx_to_str, idx=unique_index)
     data = merge_projects_with_crs(projects=projects, crs=crs, index=unique_index)
 
     # Log the number of projects that were matched
@@ -140,11 +162,42 @@ def match_projects_with_crs(
     # Log the number of projects that were matched
     _log_matches(additional_matches)
 
+    # Another pass
+    not_matched = _keep_not_matched(additional_matches, unique_index)
+
+    # Third pass of additional
+    additional_matches_second_pass = merge_projects_with_crs(
+        projects=not_matched,
+        crs=crs,
+        index=[
+            CrsSchema.YEAR,
+            CrsSchema.PARTY_CODE,
+            CrsSchema.PROJECT_ID,
+            CrsSchema.PURPOSE_CODE,
+        ],
+    )
+
+    _log_matches(additional_matches_second_pass)
+
     # Concatenate the dataframes
-    data = _concat_matched_dfs(data=data, additional_matches=additional_matches)
+    data = _concat_matched_dfs(
+        data=data,
+        additional_matches1=additional_matches,
+        additional_matches2=additional_matches_second_pass,
+    )
 
     # Keep only the columns in the CRS_INFO global variable and set the UNIQUE_INDEX
     # columns to strings
-    data = data.filter(output_cols).astype({k: str for k in unique_index})
+    data = data.filter(output_cols).pipe(set_crs_data_types)
 
     return data
+
+
+def mapping_flow_name_to_code() -> dict:
+    return {
+        11: "ODA Grants",
+        13: "ODA Loans",
+        14: "Other Official Flows (non Export Credit)",
+        19: "Equity Investment",
+        30: "Private Development Finance",
+    }
