@@ -1,6 +1,11 @@
 import pandas as pd
 from bblocks import clean_numeric_series
 
+from climate_finance.oecd.cleaning_tools.schema import CrsSchema
+from climate_finance.oecd.cleaning_tools.tools import (
+    set_crs_data_types,
+)
+from climate_finance.oecd.cleaning_tools.names import add_provider_agency_names
 from climate_finance.unfccc.cleaning_tools.channels import (
     add_channel_names,
     generate_channel_mapping_dictionary,
@@ -75,20 +80,38 @@ def map_channel_names_to_oecd_codes(
         df (pd.DataFrame): The dataframe with mapped channel names.
     """
 
+    # add names to the channel names column
+    df = add_provider_agency_names(df, crs_year=df[CrsSchema.YEAR].max())
+
+    # create two sets of data to try to match
+    df = df.assign(
+        party_agency=lambda d: d.apply(
+            lambda r: r[CrsSchema.PARTY_NAME]
+            if str(r[CrsSchema.PARTY_NAME]).lower().strip()
+            == str(r[CrsSchema.AGENCY_NAME]).lower().strip()
+            else r[CrsSchema.PARTY_NAME] + " " + r[CrsSchema.AGENCY_NAME],
+            axis=1,
+        )
+    )
+
     # Create a dictionary with channel names as keys and OECD DAC codes as values
-    mapping = generate_channel_mapping_dictionary(
+    mapping_party_agency = generate_channel_mapping_dictionary(
         raw_data=df,
-        channel_names_column=channel_names_column,
+        channel_names_column="party_agency",
         export_missing_path=export_missing_path,
     )
 
     # Create a new column with the mapped channel codes
-    df["oecd_channel_code"] = df[channel_names_column].map(mapping).astype("Int32")
+    df[CrsSchema.CHANNEL_CODE] = (
+        df["party_agency"].map(mapping_party_agency).astype("Int32")
+    )
 
     df = df.pipe(
         add_channel_names,
-        codes_column="oecd_channel_code",
-        target_column="clean_channel_name",
+        codes_column=CrsSchema.CHANNEL_CODE,
+        target_column=CrsSchema.CHANNEL_NAME,
     )
 
-    return df
+    df = df.drop(columns=["party_agency"])
+
+    return df.pipe(set_crs_data_types)

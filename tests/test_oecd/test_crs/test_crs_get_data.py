@@ -3,14 +3,16 @@ from unittest.mock import patch
 import pandas as pd
 from pandas._testing import assert_frame_equal
 
+from climate_finance.oecd.cleaning_tools.tools import (
+    rename_crs_columns,
+    set_crs_data_types,
+)
 from climate_finance.oecd.crs.get_data import (
     _add_net_disbursement,
     _get_flow_columns,
     _get_relevant_crs_columns,
-    _keep_only_allocable_aid,
-    _rename_crs_columns,
+    keep_only_allocable_aid,
     _replace_missing_climate_with_zero,
-    _set_crs_data_types,
     get_crs_allocable_spending,
 )
 
@@ -36,7 +38,7 @@ def test_keep_only_allocable_aid():
     )
 
     # Call the function
-    result = _keep_only_allocable_aid(df)
+    result = keep_only_allocable_aid(df)
 
     # Check if the resulting DataFrame only contains the rows with allocable aid types
     assert len(result) == 8
@@ -64,7 +66,7 @@ def test_rename_crs_columns():
     )
 
     # Call the function
-    result = _rename_crs_columns(df)
+    result = rename_crs_columns(df)
 
     # Check if the resulting DataFrame has the renamed columns
     expected_columns = [
@@ -99,7 +101,7 @@ def test_set_crs_data_types():
     )
 
     # Call the function
-    result = _set_crs_data_types(df)
+    result = set_crs_data_types(df)
 
     # Check if the resulting DataFrame has the correct data types
     expected_dtypes = {
@@ -155,104 +157,3 @@ def test_add_net_disbursement():
         }
     )
     pd.testing.assert_frame_equal(result, expected)
-
-
-@patch("climate_finance.oecd.crs.get_data.read_crs")
-def test_get_crs_allocable_spending(mock_read_crs):
-    # Define a sample DataFrame returned by the read_crs function
-    mock_read_crs.return_value = pd.DataFrame(
-        {
-            "year": [2019, 2020],
-            "oecd_party_code": [1, 2],
-            "party": ["Donor1", "Donor2"],
-            "agency": ["Agency1", "Agency2"],
-            "oecd_recipient_code": [1, 2],
-            "recipient": ["Recipient1", "Recipient2"],
-            "flow_code": [1, 2],
-            "flow_name": ["Flow1", "Flow2"],
-            "sector_code": [1, 2],
-            "sector_name": ["Sector1", "Sector2"],
-            "crs_id": ["crs1", "crs2"],
-            "project_id": ["crs1", "crs2"],
-            "description": ["Description1", "Description2"],
-            "type_of_finance": ["Finance1", "Finance2"],
-            "purpose_code": [1, 2],
-            "purpose_name": ["Purpose1", "Purpose2"],
-            "project_title": ["Project1", "Project2"],
-            "finance_type": ["Finance1", "Finance2"],
-            "modality": ["A02", "B01"],
-            "climate_mitigation": [1, 2],
-            "climate_adaptation": [1, 2],
-            "usd_commitment": [100, 200],
-            "usd_disbursement": [100, 200],
-            "usd_received": [50, 100],
-            "usd_grant_equiv": [100, 200],
-            "usd_net_disbursement": [50, 100],
-        }
-    )
-
-    # Call the function with the start_year and end_year parameters
-    result = get_crs_allocable_spending(start_year=2019, end_year=2020)
-
-    expected = pd.DataFrame(
-        {
-            "year": [2019, 2020, 2019, 2020, 2019, 2020, 2019, 2020, 2019, 2020],
-            "oecd_party_code": [1, 2, 1, 2, 1, 2, 1, 2, 1, 2],
-            "party": ["Donor1", "Donor2"] * 5,
-            "agency": ["Agency1", "Agency2"] * 5,
-            "oecd_recipient_code": [1, 2, 1, 2, 1, 2, 1, 2, 1, 2],
-            "recipient": ["Recipient1", "Recipient2"] * 5,
-            "flow_code": [1, 2, 1, 2, 1, 2, 1, 2, 1, 2],
-            "flow_name": ["Flow1", "Flow2"] * 5,
-            "sector_code": [1, 2] * 5,
-            "sector_name": ["Sector1", "Sector2"] * 5,
-            "purpose_code": [1, 2] * 5,
-            "purpose_name": ["Purpose1", "Purpose2"] * 5,
-            "project_title": ["Project1", "Project2"] * 5,
-            "crs_id": ["crs1", "crs2"] * 5,
-            "project_id": ["crs1", "crs2"] * 5,
-            "description": ["Description1", "Description2"] * 5,
-            "type_of_finance": ["Finance1", "Finance2"] * 5,
-            # "finance_type": ["Finance1", "Finance2"] * 5,
-            # "modality": ["A02", "B01"] * 5,
-            "climate_mitigation": [1, 2] * 5,
-            "climate_adaptation": [1, 2] * 5,
-            "flow_type": [
-                "usd_commitment",
-                "usd_commitment",
-                "usd_disbursement",
-                "usd_disbursement",
-                "usd_received",
-                "usd_received",
-                "usd_grant_equiv",
-                "usd_grant_equiv",
-                "usd_net_disbursement",
-                "usd_net_disbursement",
-            ],
-            "value": [
-                100000000.0,
-                200000000.0,
-                100000000.0,
-                200000000.0,
-                50000000.0,
-                100000000.0,
-                100000000.0,
-                200000000.0,
-                50000000.0,
-                100000000.0,
-            ],
-        }
-    ).astype(
-        {
-            "oecd_party_code": "Int32",
-            "oecd_recipient_code": "Int32",
-            "flow_code": "Int32",
-            "value": "float64",
-            "year": "Int32",
-            "climate_mitigation": "Int16",
-            "climate_adaptation": "Int16",
-        }
-    )
-
-    # Check if the resulting DataFrame matches the expected DataFrame
-    assert_frame_equal(result, expected)

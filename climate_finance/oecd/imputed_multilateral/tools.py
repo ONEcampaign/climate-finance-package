@@ -6,6 +6,10 @@ from climate_finance.oecd.cleaning_tools.schema import (
     OECD_CLIMATE_INDICATORS,
     CrsSchema,
 )
+from climate_finance.oecd.cleaning_tools.tools import (
+    idx_to_str,
+    set_crs_data_types,
+)
 
 MULTILATERAL_ID_COLUMNS: list[str] = [
     CrsSchema.YEAR,
@@ -16,35 +20,6 @@ MULTILATERAL_ID_COLUMNS: list[str] = [
     CrsSchema.REPORTING_METHOD,
     CrsSchema.CONVERGED_REPORTING,
 ]
-
-
-def _melt_crs_climate_indicators(
-    df: pd.DataFrame, climate_indicators: list
-) -> pd.DataFrame:
-    """
-    Melt the dataframe to get the indicators as a column
-    Args:
-        df: A dataframe containing the CRS data.
-        climate_indicators: A list of climate indicators to melt.
-
-    Returns:
-        A dataframe with melted climate indicators.
-    """
-
-    # get all columns except the indicators
-    melted_cols = [c for c in df.columns if c not in climate_indicators]
-
-    # melt the dataframe to get the indicators as a column
-    melted_df = df.melt(
-        id_vars=melted_cols,
-        value_vars=climate_indicators,
-        var_name=CrsSchema.INDICATOR,
-        value_name="indicator_value",
-    )
-    # keep only where the indicator value is larger than 0
-    return melted_df.loc[lambda d: d.indicator_value > 0].drop(
-        columns=["indicator_value"]
-    )
 
 
 def _melt_multilateral_climate_indicators(
@@ -114,69 +89,6 @@ def _add_not_climate_relevant(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def get_cross_cutting_data(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Get cross cutting data. This is data where both climate mitigation and climate
-    adaptation are larger than 0.
-
-    Args:
-        df: A dataframe containing the CRS data.
-
-    Returns:
-        A dataframe with cross cutting data. The data is assigned the indicator
-        'climate_cross_cutting'.
-
-    """
-    return (
-        df[(df[CrsSchema.MITIGATION] > 0) & (df[CrsSchema.ADAPTATION] > 0)]
-        .copy()
-        .assign(**{CrsSchema.INDICATOR: CrsSchema.CROSS_CUTTING})
-        .drop(columns=[CrsSchema.MITIGATION, CrsSchema.ADAPTATION])
-    )
-
-
-def _get_not_climate_relevant_data(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Get data that is not climate relevant. This is data where both climate mitigation
-    and climate adaptation are 0.
-
-    Args:
-        df: A dataframe containing the CRS data.
-
-    Returns:
-        A dataframe with data that is not climate relevant. The data is assigned the
-        indicator 'not_climate_relevant'.
-
-    """
-    return (
-        df[(df[CrsSchema.MITIGATION] == 0) & (df[CrsSchema.ADAPTATION] == 0)]
-        .copy()
-        .assign(**{CrsSchema.INDICATOR: CrsSchema.NOT_CLIMATE})
-        .drop(columns=[CrsSchema.MITIGATION, CrsSchema.ADAPTATION])
-    )
-
-
-def _combine_clean_sort(dfs: list[pd.DataFrame], sort_cols: list[str]) -> pd.DataFrame:
-    """
-    Combine, clean and sort the dataframes. Climate indicators are mapped to their
-    full names, defined in OECD_CLIMATE_INDICATORS.
-
-    Args:
-        dfs: A list of dataframes to combine.
-        sort_cols: A list of columns to sort the dataframe by.
-
-    Returns:
-        A dataframe with the combined dataframes, cleaned and sorted.
-
-    """
-    return (
-        pd.concat(dfs, ignore_index=True)
-        .assign(indicator=lambda d: d.indicator.map(OECD_CLIMATE_INDICATORS))
-        .sort_values(by=sort_cols)
-        .reset_index(drop=True)
-    )
-
-
 def check_and_filter_parties(
     df: pd.DataFrame, party: list[str] | str | None, party_col: str = "party"
 ) -> pd.DataFrame:
@@ -212,52 +124,6 @@ def check_and_filter_parties(
 
     # if Party is None, return the original dataframe
     return df
-
-
-def base_oecd_transform_markers_into_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Transform the CRS markers into climate indicators. The CRS markers are transformed
-    into the following climate indicators:
-    - Adaptation
-    - Mitigation
-    - Cross-cutting
-    - Not climate relevant
-
-    This transformation is based on the following rules:
-    - Adaptation: any activity where climate_adaptation is larger than 0
-    - Mitigation: any activity where climate_mitigation is larger than 0
-    - Cross-cutting: any activity where both climate_adaptation and climate_mitigation
-    are larger than 0
-    - Not climate relevant: any activity where both climate_adaptation and
-    climate_mitigation are 0
-
-    This method leads to double counting if it is simply aggregated to get a total.
-
-    Args:
-        df: A dataframe containing the CRS data.
-
-    Returns:
-        A dataframe with the CRS data transformed into climate indicators.
-    """
-    # melt the dataframe to get the indicators as a column
-    climate_indicators = [CrsSchema.MITIGATION, CrsSchema.ADAPTATION]
-
-    # Melt the dataframe to get the indicators as a column
-    melted_df = _melt_crs_climate_indicators(df, climate_indicators)
-
-    # Get cross_cutting data
-    cross_cutting_df = get_cross_cutting_data(df)
-
-    # Get not climate relevant data
-    not_climate_df = _get_not_climate_relevant_data(df)
-
-    # combine the two dataframes
-    combined_df = _combine_clean_sort(
-        dfs=[melted_df, cross_cutting_df, not_climate_df],
-        sort_cols=[c for c in df.columns if c not in climate_indicators],
-    )
-
-    return combined_df
 
 
 def _oecd_multilateral_agency_helper(
@@ -359,3 +225,97 @@ def base_oecd_multilateral_agency_share(df: pd.DataFrame) -> pd.DataFrame:
     return _oecd_multilateral_agency_helper(df, climate_indicators).assign(
         **{CrsSchema.FLOW_TYPE: lambda d: d[CrsSchema.FLOW_TYPE] + "_share"}
     )
+
+
+def summarise_by_party_idx(
+    data: pd.DataFrame, idx: list[str], by_indicator: bool = False
+) -> pd.DataFrame:
+    grouper = [CrsSchema.PARTY_CODE] + idx
+
+    if by_indicator:
+        grouper += [CrsSchema.INDICATOR]
+
+    grouper = [c for c in grouper if c in data.columns]
+
+    grouper = list(dict.fromkeys(grouper))
+
+    data = data.pipe(idx_to_str, idx=grouper)
+
+    return (
+        data.groupby(grouper, observed=True)[CrsSchema.VALUE]
+        .sum()
+        .reset_index()
+        .pipe(set_crs_data_types)
+    )
+
+
+def compute_rolling_sum(
+    group,
+    start_year: int,
+    end_year: int,
+    window: int = 2,
+    values: list[str] = None,
+    agg: str = "sum",
+    include_yearly_total: bool = True,
+):
+    if values is None:
+        values = [CrsSchema.VALUE]
+
+    if include_yearly_total:
+        values += ["yearly_total"]
+        values = list(dict.fromkeys(values))
+
+    all_years = range(start_year, end_year + 1)
+
+    # 2. Reindex the group using the complete range of years
+    group = group.set_index(CrsSchema.YEAR).reindex(all_years)
+
+    group[values] = group[values].fillna(0)
+
+    group[values] = group[values].rolling(window=window).agg(agg).fillna(group[values])
+
+    group = group.dropna(subset=[CrsSchema.PARTY_CODE])
+
+    return group.reset_index(drop=False)
+
+
+def merge_total(
+    data: pd.DataFrame, totals: pd.DataFrame, idx: list[str]
+) -> pd.DataFrame:
+    # Make sure index is valid
+    idx = [
+        c
+        for c in idx
+        if c in totals.columns
+        and c
+        not in [
+            CrsSchema.PARTY_NAME,
+            CrsSchema.RECIPIENT_NAME,
+            CrsSchema.SECTOR_NAME,
+            CrsSchema.SECTOR_CODE,
+            CrsSchema.PURPOSE_NAME,
+            CrsSchema.FLOW_NAME,
+        ]
+    ]
+
+    # Transform idx columns to string
+    data = data.pipe(idx_to_str, idx=idx)
+    totals = totals.pipe(idx_to_str, idx=idx)
+
+    data = data.merge(totals, on=idx, how="left", suffixes=("", "_crs")).pipe(
+        set_crs_data_types
+    )
+    return data.drop(columns=[c for c in data.columns if c.endswith("_crs")])
+
+
+def log_notes(df: pd.DataFrame) -> None:
+    """
+    Log the latest update date from the notes sheet.
+    Args:
+        df: The notes sheet.
+
+    Returns:
+        None
+    """
+
+    logger.info(f"{df.iloc[1].values[0]}")

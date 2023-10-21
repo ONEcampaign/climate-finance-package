@@ -1,24 +1,34 @@
 import pandas as pd
 
+from climate_finance import config
 from climate_finance.oecd.cleaning_tools.schema import CRS_MAPPING
-from climate_finance.oecd.climate_analysis.tools import (
-    base_oecd_transform_markers_into_indicators,
-    check_and_filter_parties,
+from climate_finance.oecd.imputed_multilateral.tools import (
     base_oecd_multilateral_agency_total,
     base_oecd_multilateral_agency_share,
+    check_and_filter_parties,
+)
+
+from climate_finance.oecd.methodologies.bilateral_methodologies import (
+    base_oecd_transform_markers_into_indicators,
+    base_one_transform_markers_into_indicators,
 )
 from climate_finance.oecd.crs.get_data import get_crs_allocable_spending
-from climate_finance.oecd.imputations.get_data import (
+from climate_finance.oecd.imputed_multilateral.oecd_multilateral.get_oecd_imputations import (
     get_oecd_multilateral_climate_imputations,
 )
 
 BILATERAL_CLIMATE_METHODOLOGY: dict[str, callable] = {
-    "oecd_bilateral": base_oecd_transform_markers_into_indicators
+    "oecd_bilateral": base_oecd_transform_markers_into_indicators,
+    "one_bilateral": base_one_transform_markers_into_indicators,
 }
 
 MULTILATERAL_CLIMATE_METHODOLOGY_DONOR: dict[str, callable] = {
     "oecd_multilateral_agency_total": base_oecd_multilateral_agency_total,
     "oecd_multilateral_agency_share": base_oecd_multilateral_agency_share,
+}
+
+MULTILATERAL_CLIMATE_IMPUTATIONS: dict[str, callable] = {
+    "one_detailed_imputations": ...,
 }
 
 
@@ -94,9 +104,10 @@ def get_oecd_multilateral(
     it covers.
 
     Args:
+
         start_year: The start year that should be covered in the data
         end_year: The end year that should be covered in the data
-        party: Optionally, specify one or more parties. If not specified, all
+        oecd_channel_name: Optionally, specify one or more parties. If not specified, all
         parties are included. Only multilateral parties are valid in this context.
         update_data: If True, the data is updated from the source. This can potentially
         overwrite any data that has been downloaded to the 'raw_data' folder.
@@ -127,3 +138,141 @@ def get_oecd_multilateral(
     data = MULTILATERAL_CLIMATE_METHODOLOGY_DONOR[methodology](data)
 
     return data
+
+
+def get_one_multilateral(
+    start_year: int,
+    end_year: int,
+    oecd_channel_name: list[str] | str | None = None,
+    update_data: bool = False,
+    methodology: str = "one_detailed_imputations",
+) -> pd.DataFrame:
+    """
+
+    Args:
+
+        start_year: The start year that should be covered in the data
+        end_year: The end year that should be covered in the data
+        oecd_channel_name: Optionally, specify one or more parties. If not specified, all
+        parties are included. Only multilateral parties are valid in this context.
+        update_data: If True, the data is updated from the source. This can potentially
+        overwrite any data that has been downloaded to the 'raw_data' folder.
+        methodology: The methodology to use to transform the data into indicators.
+
+    Returns:
+        df (pd.DataFrame):
+
+    """
+
+    # Check that the methodology requested is valid
+    if methodology not in MULTILATERAL_CLIMATE_IMPUTATIONS:
+        raise ValueError(
+            f"Methodology must be one of {list(MULTILATERAL_CLIMATE_IMPUTATIONS)}"
+        )
+
+    # Get the Imputations data
+    data = get_oecd_multilateral_climate_imputations(
+        start_year=start_year, end_year=end_year, force_update=update_data
+    ).rename(columns=CRS_MAPPING)
+
+    # Filter the data to only include the requested parties
+    data = check_and_filter_parties(
+        data, oecd_channel_name, party_col="oecd_channel_name"
+    )
+
+    # Transform the markers into indicators
+    data = MULTILATERAL_CLIMATE_METHODOLOGY_DONOR[methodology](data)
+
+    return data
+
+
+# ----
+# ----
+# ----
+
+
+def summarise(df: pd.DataFrame) -> pd.DataFrame:
+    return (
+        df.loc[
+            lambda d: ~(
+                d.flow_type.isin(["Private Development Finance", "usd_received"])
+            )
+        ]
+        .loc[lambda d: d.indicator != "Not climate relevant"]
+        .groupby(
+            ["year", "party", "flow_type", "indicator"],
+            observed=True,
+        )["value"]
+        .sum()
+        .reset_index()
+    )
+
+
+def pivot_summary(df: pd.DataFrame) -> pd.DataFrame:
+    return df.pivot(
+        index=[c for c in df.columns if c not in ["value", "indicator"]],
+        columns="indicator",
+        values="value",
+    ).reset_index()
+
+
+def merge_oecd_one(oecd: pd.DataFrame, one: pd.DataFrame) -> pd.DataFrame:
+    return (
+        oecd.merge(
+            one,
+            on=["year", "party", "flow_type"],
+            how="outer",
+            suffixes=("_oecd", "_one"),
+            indicator=True,
+        )
+        .filter(
+            [
+                "year",
+                "party",
+                "flow_type",
+                "Adaptation_oecd",
+                "Adaptation_one",
+                "Mitigation_oecd",
+                "Mitigation_one",
+                "Cross-cutting_oecd",
+                "Cross-cutting_one",
+                "_merge",
+            ]
+        )
+        .dropna(
+            subset=[
+                "Adaptation_oecd",
+                "Adaptation_one",
+                "Mitigation_oecd",
+                "Mitigation_one",
+                "Cross-cutting_oecd",
+                "Cross-cutting_one",
+            ],
+            how="all",
+        )
+        # .loc[lambda d: d._merge == "both"]
+    )
+
+
+def add_total(df: pd.DataFrame) -> pd.DataFrame:
+    return df.assign(
+        **{
+            "Cross-cutting_oecd": lambda d: d["Cross-cutting_oecd"] * -1,
+            "Total_oecd": lambda d: d.filter(regex="_oecd").sum(axis=1),
+            "Total_one": lambda d: d.filter(regex="_one").sum(axis=1),
+        }
+    )
+
+
+if __name__ == "__main__":
+    # oecd_version = get_oecd_bilateral(2013, 2021, methodology="oecd_bilateral")
+    one_version = get_oecd_bilateral(2021, 2021, methodology="one_bilateral")
+    #
+    # oecd = oecd_version.pipe(summarise).pipe(pivot_summary)
+    # one = one_version.pipe(summarise).pipe(pivot_summary)
+    #
+    # combined = merge_oecd_one(oecd, one).pipe(add_total)
+    #
+    # combined.drop(columns=["_merge"]).to_csv(
+    #     config.ClimateDataPath.raw_data / "oecd_one_comparison_bilat.csv", index=False
+    # )

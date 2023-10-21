@@ -2,17 +2,17 @@ import pandas as pd
 from oda_data import ODAData, set_data_path
 
 from climate_finance.config import ClimateDataPath
+from climate_finance.oecd.cleaning_tools.schema import (
+    CrsSchema,
+    MULTISYSTEM_INDICATORS,
+    CRS_MAPPING,
+)
 from climate_finance.oecd.cleaning_tools.tools import (
     convert_flows_millions_to_units,
     get_crs_official_mapping,
 )
 
 set_data_path(ClimateDataPath.raw_data)
-
-MULTISYSTEM_INDICATORS: dict = {
-    "multisystem_multilateral_contributions_disbursement_gross": "usd_disbursement",
-    "multisystem_multilateral_contributions_commitments_gross": "usd_commitment",
-}
 
 
 def _clean_multi_contributions(df: pd.DataFrame) -> pd.DataFrame:
@@ -28,36 +28,40 @@ def _clean_multi_contributions(df: pd.DataFrame) -> pd.DataFrame:
 
     # define the columns to keep and their new names
     columns = {
-        "year": "year",
-        "indicator": "flow_type",
-        "donor_code": "oecd_donor_code",
-        "donor_name": "oecd_donor_name",
-        "channel_code": "oecd_channel_code",
-        "channel_name": "oecd_channel_name",
-        "value": "value",
+        "year": CrsSchema.YEAR,
+        "indicator": CrsSchema.FLOW_TYPE,
+        "donor_code": CrsSchema.PARTY_CODE,
+        "donor_name": CrsSchema.PARTY_NAME,
+        "channel_code": CrsSchema.CHANNEL_CODE,
+        "channel_name": CrsSchema.CHANNEL_NAME,
+        "value": CrsSchema.VALUE,
     }
 
     # Get the CRS channel names (mapped by channel code)
     channel_mapping = (
-        get_crs_official_mapping().set_index("channel_code")["channel_name"].to_dict()
+        get_crs_official_mapping()
+        .rename(columns=CRS_MAPPING)
+        .set_index(CrsSchema.CHANNEL_CODE)[CrsSchema.CHANNEL_NAME]
+        .to_dict()
     )
 
     return (
-        df.pipe(
-            convert_flows_millions_to_units, flow_columns=["value"]
+        df.rename(columns=CRS_MAPPING)
+        .pipe(
+            convert_flows_millions_to_units, flow_columns=[CrsSchema.VALUE]
         )  # convert to millions
         .assign(
             indicator=lambda d: d.indicator.map(
                 MULTISYSTEM_INDICATORS
             ),  # rename indicator
-            channel_name=lambda d: d.channel_code.map(
+            channel_name=lambda d: d[CrsSchema.CHANNEL_CODE].map(
                 channel_mapping
             ),  # map channel name
         )
         .rename(columns=columns)  # rename columns
         .filter(columns.values(), axis=1)  # keep only relevant columns
         .groupby(
-            [c for c in columns.values() if c != "value"],
+            [c for c in columns.values() if c != CrsSchema.VALUE],
             as_index=False,
             dropna=False,
             observed=True,

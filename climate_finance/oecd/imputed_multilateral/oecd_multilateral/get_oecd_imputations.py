@@ -6,6 +6,7 @@ from oda_data.get_data.common import fetch_file_from_url_selenium
 
 from climate_finance.config import logger, ClimateDataPath
 from climate_finance.oecd.cleaning_tools.tools import convert_flows_millions_to_units
+from climate_finance.oecd.imputed_multilateral.tools import log_notes
 from climate_finance.unfccc.cleaning_tools.channels import (
     generate_channel_mapping_dictionary,
 )
@@ -17,19 +18,6 @@ FILE_URL: str = (
 FILE_PATH: Path = (
     ClimateDataPath.raw_data / "oecd_multilateral_climate_imputations.feather"
 )
-
-
-def _log_notes(df: pd.DataFrame) -> None:
-    """
-    Log the latest update date from the notes sheet.
-    Args:
-        df: The notes sheet.
-
-    Returns:
-        None
-    """
-
-    logger.info(f"{df.iloc[1].values[0]}")
 
 
 def _read_and_clean_excel_sheets(excel_file: pd.ExcelFile) -> list[pd.DataFrame]:
@@ -45,7 +33,7 @@ def _read_and_clean_excel_sheets(excel_file: pd.ExcelFile) -> list[pd.DataFrame]
     dfs = []
     for sheet in excel_file.sheet_names:
         if sheet == "Notes":
-            _log_notes(excel_file.parse(sheet))
+            log_notes(excel_file.parse(sheet))
             continue
         dfs.append(_clean_df(excel_file.parse(sheet), int(sheet)))
     return dfs

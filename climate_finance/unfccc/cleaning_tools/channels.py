@@ -93,7 +93,7 @@ def raw_data_to_unique_channels(
     return (  # Get the channel names column, clean the strings, and drop duplicates
         raw_data.filter([channel_names_column], axis=1)
         .assign(clean_channel=lambda d: d[channel_names_column].apply(clean_string))
-        .drop_duplicates(subset=["channel"])
+        .drop_duplicates(subset=[channel_names_column])
     )
 
 
@@ -551,6 +551,6 @@ def generate_channel_mapping_dictionary(
 
     return (
         df_mapped.dropna(subset=["channel_code"])
-        .set_index("channel")["channel_code"]
+        .set_index(channel_names_column)["channel_code"]
         .to_dict()
     )

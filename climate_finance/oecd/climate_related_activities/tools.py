@@ -10,7 +10,7 @@ from climate_finance.oecd.cleaning_tools.schema import (
     CrsSchema,
     OECD_CLIMATE_INDICATORS,
 )
-from climate_finance.oecd.imputations.get_data import _log_notes
+from climate_finance.oecd.imputed_multilateral.tools import log_notes
 
 
 def get_file_url(year: int, url: str) -> str:
@@ -35,14 +35,14 @@ def download_excel_file(latest_year: int, base_url: str) -> pd.ExcelFile:
 
     """
     # Get the file using Selenium
-    url = get_file_url(latest_year, base_url)
+    url = get_file_url(year=latest_year, url=base_url)
     try:
         logger.info(f"Downloading file from {url}")
         file = fetch_file_from_url_selenium(url)
     except IndexError:
         logger.info(f"File not found for {latest_year}")
         latest_year -= 1
-        url = get_file_url(latest_year)
+        url = get_file_url(year=latest_year, url=base_url)
         file = fetch_file_from_url_selenium(url)
 
     # log success
@@ -64,7 +64,7 @@ def read_excel_sheets(excel_file: pd.ExcelFile) -> list[pd.DataFrame]:
     dfs = []
     for sheet in excel_file.sheet_names:
         if sheet == "Notes":
-            _log_notes(excel_file.parse(sheet))
+            log_notes(excel_file.parse(sheet))
             continue
         dfs.append(excel_file.parse(sheet))
     return dfs

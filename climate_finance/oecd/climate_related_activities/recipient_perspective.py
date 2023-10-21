@@ -4,14 +4,14 @@ import pandas as pd
 from oda_data import set_data_path
 
 from climate_finance.config import ClimateDataPath
-from climate_finance.oecd.climate_analysis.tools import check_and_filter_parties
+from climate_finance.oecd.cleaning_tools.schema import CrsSchema
 from climate_finance.oecd.climate_related_activities.tools import (
     download_file,
     load_or_download,
     marker_columns_to_numeric,
     clean_columns,
 )
-from climate_finance.oecd.cleaning_tools.schema import CrsSchema
+from climate_finance.oecd.imputed_multilateral.tools import check_and_filter_parties
 
 FILE_PATH: Path = (
     ClimateDataPath.raw_data / "oecd_climate_recipient_perspective.feather"
@@ -30,7 +30,6 @@ UNIQUE_INDEX = [
     CrsSchema.RECIPIENT_CODE,
     CrsSchema.PURPOSE_CODE,
 ]
-
 
 MULTI_COLUMNS: list = [
     CrsSchema.YEAR,
@@ -146,7 +145,7 @@ def get_overlap(df: pd.DataFrame) -> pd.DataFrame:
 def get_recipient_perspective(
     start_year: int,
     end_year: int,
-    party: str | list[str] | None = None,
+    party: list[str] | None = None,
     force_update: bool = False,
 ) -> pd.DataFrame:
     """
@@ -175,17 +174,45 @@ def get_recipient_perspective(
     # Try to load file
     df = load_or_download(base_url=BASE_URL, save_to_path=FILE_PATH)
 
+    # Rename columns
+    df = df.rename(
+        columns={
+            CrsSchema.PARTY_NAME: f"{CrsSchema.PARTY_NAME}_short",
+            CrsSchema.PARTY_DETAILED: CrsSchema.PARTY_NAME,
+        }
+    )
+
     # Filter for years
     df = df.loc[lambda d: d.year.isin(years)]
+
+    # filter for parties
+    df = check_and_filter_parties(df, party=party, party_col=CrsSchema.PARTY_NAME)
 
     # Convert markers to multilateral
     df = marker_columns_to_numeric(df)
 
-    # Drop duplicates
-    df = df.drop_duplicates(keep="first")
-
     # Fix errors in recipient code
-    df = df.replace({CrsSchema.RECIPIENT_CODE: {"998": "9998"}})
+    df = df.replace({CrsSchema.RECIPIENT_CODE: {"9998": "998"}})
+
+    # Add flow type
+    df = df.assign(flow_type="usd_commitment")
+
+    return df
+
+
+def recipient_perspective_to_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    The data is reshaped to be in a 'longer' format where the different types of climate
+    finance are indicators.
+
+    Args:
+        df: The dataframe to reshape.
+
+    Returns:
+
+    """
+    # Drop duplicates
+    # df = df.drop_duplicates(keep="first")
 
     # Add imputed total
     df = add_imputed_total(df)
@@ -204,11 +231,4 @@ def get_recipient_perspective(
     # Only values > 0
     data = data.loc[lambda d: d.value > 0]
 
-    # Check parties
-    data = check_and_filter_parties(data, party=party, party_col=CrsSchema.PARTY_NAME)
-
     return data.filter(MULTI_COLUMNS)
-
-
-if __name__ == "__main__":
-    df = get_recipient_perspective(2019, 2020)

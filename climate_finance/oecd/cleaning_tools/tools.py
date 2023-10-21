@@ -1,7 +1,11 @@
+import numpy as np
 import pandas as pd
-from oda_data import donor_groupings
+from oda_data import donor_groupings, set_data_path
 
 from climate_finance.config import ClimateDataPath
+from climate_finance.oecd.cleaning_tools.schema import CRS_MAPPING, CRS_TYPES
+
+set_data_path(ClimateDataPath.raw_data)
 
 
 def flag_oda(df: pd.DataFrame) -> pd.DataFrame:
@@ -284,3 +288,49 @@ def convert_flows_millions_to_units(df: pd.DataFrame, flow_columns) -> pd.DataFr
         df[column] = df[column] * 1e6
 
     return df
+
+
+def rename_crs_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Renames certain columns in the CRS dataframe.
+
+    Args:
+        df: A dataframe containing the CRS data.
+
+    Returns:
+        A dataframe with renamed columns.
+    """
+
+    return df.rename(columns=CRS_MAPPING)
+
+
+def set_crs_data_types(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Sets the data types for columns in the CRS dataframe.
+
+    Args:
+        df (pd.DataFrame): The input dataframe with CRS data.
+
+    Returns:
+        pd.DataFrame: The dataframe with specified column data types set."""
+
+    # check columns
+
+    types = {k: v for k, v in CRS_TYPES.items() if k in df.columns}
+
+    return df.replace("<NA>", np.nan).astype(types)
+
+
+def idx_to_str(df: pd.DataFrame, idx: list[str]) -> pd.DataFrame:
+    """
+    Converts the index of a dataframe to a column of strings.
+
+    Args:
+        df (pd.DataFrame): The input dataframe.
+        idx (list[str]): The list of index names to convert to strings.
+
+    Returns:
+        pd.DataFrame: The dataframe with index converted to a column of strings.
+    """
+
+    return df.astype({c: "str" for c in idx if c in df.columns})
