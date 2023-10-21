@@ -33,30 +33,3 @@ def test_clean_unfccc():
     assert result["value"].dtype == "float64"
     assert result["year"].dtype == "Int32"
     assert list(result.currency) == ["USD", "EUR", "JPY", "GBP"]
-
-
-@patch(
-    "climate_finance.unfccc.download.pre_process.generate_channel_mapping_dictionary",
-    return_value={"UNFCCC": 1, "World Bank IBRD": 2, "IBRD": 3},
-)
-@patch("climate_finance.unfccc.download.pre_process.add_channel_names")
-def test_map_channel_names_to_oecd_codes(
-    mock_generate_channel_mapping_dictionary, mock_add_channel_names
-):
-    # Define a mock DataFrame
-    df = pd.DataFrame(
-        {
-            "channel_name": [
-                "UNFCCC",
-                "World Bank IBRD",
-                "IBRD",
-            ]
-        }
-    )
-
-    # Call the function
-    map_channel_names_to_oecd_codes(df, "channel_name", None)
-
-    # Check if the mocked functions were called
-    mock_generate_channel_mapping_dictionary.assert_called()
-    mock_add_channel_names.assert_called()

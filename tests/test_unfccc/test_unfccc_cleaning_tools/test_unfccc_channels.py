@@ -409,7 +409,10 @@ def test_match_names_regex(mock_regex_match, mock_add_channel_names):
 @patch(
     "climate_finance.unfccc.cleaning_tools.channels.match_names_regex",
     return_value=pd.DataFrame(
-        {"channel": ["name1", "name2", "name3"], "channel_code": [1, 2, 3]}
+        {
+            "oecd_channel_name": ["name1", "name2", "name3"],
+            "channel_code": [1, 2, 3],
+        }
     ),
 )
 def test_generate_channel_mapping_dictionary(
@@ -421,9 +424,9 @@ def test_generate_channel_mapping_dictionary(
 ):
     # Define mock data
     raw_data = pd.DataFrame(
-        {"channel_name": ["name1", "name2", "name3"], "channel_code": [1, 2, 3]}
+        {"oecd_channel_name": ["name1", "name2", "name3"], "channel_code": [1, 2, 3]}
     )
-    channel_names_column = "channel_name"
+    channel_names_column = "oecd_channel_name"
     export_missing_path = None
 
     # Call the function
