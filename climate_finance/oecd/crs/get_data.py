@@ -198,9 +198,7 @@ def get_crs(
             var_name=CrsSchema.FLOW_TYPE,
             value_name=CrsSchema.VALUE,
         )
-        .groupby(by=groupby + [CrsSchema.FLOW_TYPE], dropna=False, observed=True)[
-            CrsSchema.VALUE
-        ]
+        .groupby(by=groupby, dropna=False, observed=True)[CrsSchema.VALUE]
         .sum()
         .reset_index()
         .loc[lambda d: d[CrsSchema.VALUE] != 0]
