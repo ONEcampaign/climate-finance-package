@@ -164,6 +164,9 @@ def get_crs(
     if groupby is None:
         groupby = columns
 
+    # check that groupby is unique and includes flow_type
+    groupby = list(dict.fromkeys(groupby + [CrsSchema.FLOW_TYPE]))
+
     # Pipeline
     crs = read_crs(years=years).pipe(rename_crs_columns)  # Read CRS data
 
