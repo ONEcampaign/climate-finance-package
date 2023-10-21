@@ -1,12 +1,9 @@
 import numpy as np
 import pandas as pd
-from oda_data import donor_groupings, read_crs, set_data_path
+from oda_data import donor_groupings, set_data_path
 
 from climate_finance.config import ClimateDataPath
-from climate_finance.oecd.cleaning_tools.schema import CRS_MAPPING, CrsSchema, CRS_TYPES
-from climate_finance.oecd.climate_related_activities.recipient_perspective import (
-    get_recipient_perspective,
-)
+from climate_finance.oecd.cleaning_tools.schema import CRS_MAPPING, CRS_TYPES
 
 set_data_path(ClimateDataPath.raw_data)
 
@@ -268,39 +265,6 @@ def add_dac_donor_names(
     return df.assign(
         **{target_col: lambda d: d[codes_col].map(donor_groupings()["all_official"])}
     )
-
-
-def add_provider_agency_names(data: pd.DataFrame, crs_year: int = 2021) -> pd.DataFrame:
-    idx = ["donor_code", "agency_code", "donor_name", "agency_name"]
-    crs = (
-        read_crs([crs_year])
-        .drop_duplicates(subset=idx)
-        .filter(items=idx)
-        .pipe(rename_crs_columns)
-        .pipe(idx_to_str, idx=[CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE])
-    )
-
-    crdf = (
-        get_recipient_perspective(start_year=crs_year, end_year=crs_year)
-        .drop_duplicates(subset=[CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE])
-        .pipe(idx_to_str, idx=[CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE])
-    )
-
-    crs = pd.concat([crs, crdf], ignore_index=True).drop_duplicates(
-        subset=[CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE]
-    )
-
-    data = data.merge(
-        crs,
-        on=[CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE],
-        how="left",
-        suffixes=("", "_crs_names"),
-    )
-
-    # drop any columns which contain the string "_crs_names"
-    data = data.drop(columns=[c for c in data.columns if "_crs_names" in c])
-
-    return data
 
 
 def get_crs_official_mapping() -> pd.DataFrame:

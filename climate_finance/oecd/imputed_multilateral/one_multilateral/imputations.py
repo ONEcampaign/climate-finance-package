@@ -1,9 +1,7 @@
 import pandas as pd
 
-from climate_finance import config
 from climate_finance.oecd.cleaning_tools.schema import (
     CrsSchema,
-    OECD_CLIMATE_INDICATORS,
     VALUE_COLUMNS,
 )
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
@@ -94,12 +92,18 @@ def _filter_merge_transform_provider_data(
 
 def _correct_for_allocable_share(imputations_data: pd.DataFrame) -> pd.DataFrame:
     # Allocable index
-    allocable_idx = [CrsSchema.YEAR, CrsSchema.PARTY_CODE, CrsSchema.FLOW_TYPE]
+    allocable_idx = [
+        CrsSchema.YEAR,
+        CrsSchema.PARTY_CODE,
+        CrsSchema.AGENCY_CODE,
+        CrsSchema.FLOW_TYPE,
+    ]
 
     # Imputations index
     imputations_idx = [
         CrsSchema.YEAR,
         f"{CrsSchema.PARTY_CODE}_spending",
+        CrsSchema.AGENCY_CODE,
         CrsSchema.FLOW_TYPE,
     ]
 
@@ -277,22 +281,48 @@ def calculate_rolling_contributions(
     )
 
 
-def get_imputations_by_party_channel(
+def get_imputations_by_provider_and_channel(
     start_year: int,
     end_year: int,
     rolling_window_spending: int = 2,
     rolling_agg: str = "mean",
+    groupby: list[str] | None = None,
 ) -> pd.DataFrame:
+    """
+    Pipeline to get overall imputations based on a provider and a
+    multilateral channel.
+
+    A start and end year must be specified.
+    The rolling window is 2 years, to match OECD practise. Setting
+    a window of 1 would be equivalent to doing no smoothing.
+
+    The aggregation operation matters a lot. In the default case, a 'mean'
+    means that years with no flows will be filled with zeros. For example,
+    the flow for Y if Y is 0 and Y-1 is 100 would become 50.
+
+    The groupby parameter allows for convenient aggregations at a different level
+    from the default. The aggregation must at least include the provider and channel
+    codes.
+
+    Args:
+        start_year: The starting year for the data
+        end_year: The end year for the data
+        rolling_window_spending: How many years should be included as the 'window' in
+        rolling calculations.
+        rolling_agg: the aggregation function. It defaults to mean
+        groupby: To use a different aggregation from the default.
+    Returns:
+        A pandas dataframe with the imputations data in USD units.
+
+    """
     # Yearly multilateral spending
     spending = one_multilateral_spending(
         start_year=start_year,
         end_year=end_year,
         rolling_window=rolling_window_spending,
         agg=rolling_agg,
-    ).pipe(
-        map_channel_names_to_oecd_codes,
-        channel_names_column="party",
-    )
+        groupby=groupby,
+    ).pipe(map_channel_names_to_oecd_codes, channel_names_column=CrsSchema.PARTY_NAME)
 
     contributions = get_multilateral_contributions(
         start_year=start_year, end_year=end_year
@@ -303,48 +333,3 @@ def get_imputations_by_party_channel(
     )
 
     return imputed_data.reset_index(drop=True)
-
-
-if __name__ == "__main__":
-    imputed = get_imputations_by_party_channel(
-        start_year=2019, end_year=2021, rolling_window_spending=2
-    )
-
-    #
-    # imputedr = get_imputations_by_party_channel(
-    #     start_year=2013, end_year=2021, rolling_contributions=True
-    # )
-    #
-    # imputed.to_feather(
-    #     config.ClimateDataPath.output
-    #     / "imputed_one_multilateral_single_year_contributions.feather"
-    # )
-    #
-    # imputedr.to_feather(
-    #     config.ClimateDataPath.output
-    #     / "imputed_one_multilateral_rolling_contributions.feather"
-    # )
-    #
-    # imputed_r = get_imputations_by_party_channel(
-    #     start_year=2013, end_year=2021, rolling_contributions=True
-    # )
-    #
-    # imputedR = pd.read_feather(
-    #     config.ClimateDataPath.output
-    #     / "imputed_one_multilateral_rolling_contributions.feather"
-    # ).assign(methodology="rolling")
-    #
-    # imputed = pd.read_feather(
-    #     config.ClimateDataPath.output
-    #     / "imputed_one_multilateral_single_year_contributions.feather"
-    # ).assign(methodology="single_year")
-    #
-    # imputed = pd.concat([imputed, imputedR], ignore_index=True)
-    #
-    # imputed.to_csv(
-    #     config.ClimateDataPath.output
-    #     / "imputed_one_multilateral_rolling_contributions.csv",
-    #     index=False,
-    # )
-
-    banks = imputed.oecd_channel_name.unique().tolist()

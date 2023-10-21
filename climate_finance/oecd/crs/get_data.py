@@ -188,7 +188,9 @@ def get_crs(
         .pipe(convert_flows_millions_to_units, flow_columns=flow_columns)
         .filter(items=groupby + flow_columns)
         .melt(
-            id_vars=[c for c in groupby if c in crs.columns],
+            id_vars=[
+                c for c in groupby if c in crs.columns and c != CrsSchema.FLOW_TYPE
+            ],
             value_vars=flow_columns,
             var_name=CrsSchema.FLOW_TYPE,
             value_name=CrsSchema.VALUE,
@@ -252,7 +254,7 @@ def get_crs_allocable_to_total_ratio(
     simpler_columns = [
         CrsSchema.YEAR,
         CrsSchema.PARTY_CODE,
-        CrsSchema.PARTY_NAME,
+        CrsSchema.AGENCY_CODE,
         CrsSchema.FLOW_MODALITY,
         CrsSchema.FLOW_TYPE,
     ]
@@ -269,19 +271,19 @@ def get_crs_allocable_to_total_ratio(
         crs.copy()
         .assign(**{CrsSchema.FLOW_MODALITY: "total"})
         .groupby(
-            simpler_columns + [CrsSchema.FLOW_TYPE],
-            as_index=False,
+            simpler_columns,
             dropna=False,
             observed=True,
         )
         .sum(numeric_only=True)
+        .reset_index()
     )
 
     allocable = (
         crs.pipe(keep_only_allocable_aid)
         .assign(**{CrsSchema.FLOW_MODALITY: "bilateral_allocable"})
         .groupby(
-            simpler_columns + [CrsSchema.FLOW_TYPE],
+            simpler_columns,
             as_index=False,
             dropna=False,
             observed=True,
@@ -302,7 +304,7 @@ def get_crs_allocable_to_total_ratio(
             values=CrsSchema.VALUE,
         )
         .reset_index()
-        .assign(allocable_share=lambda d: d.bilateral_allocable / d.total)
+        .assign(allocable_share=lambda d: (d.bilateral_allocable / d.total).fillna(0))
     )
 
     return data

@@ -259,7 +259,8 @@ def one_multilateral_spending(
     start_year: int,
     end_year: int,
     rolling_window: int = 2,
-    agg: str = "sum",
+    agg: str = "mean",
+    groupby: list[str] | None = None,
     as_shares: bool = True,
     party: list[str] = None,
     force_update: bool = False,
@@ -276,6 +277,7 @@ def one_multilateral_spending(
         end_year: The end year of the data.
         rolling_window: The window size for the rolling totals or shares (in years).
         agg: The aggregation method to use for the rolling totals.
+        groupby: The level of detail to provide for the output data.
         as_shares: Whether to compute the rolling shares or totals.
         party: The list of parties to filter the data by.
         force_update: Whether to force update the data.
@@ -301,6 +303,7 @@ def one_multilateral_spending(
             window=rolling_window,
             agg=agg,
             as_shares=as_shares,
+            output_groupby=groupby,
             start_year=start_year,
             end_year=end_year,
         )

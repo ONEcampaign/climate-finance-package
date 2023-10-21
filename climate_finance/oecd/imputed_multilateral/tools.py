@@ -6,7 +6,10 @@ from climate_finance.oecd.cleaning_tools.schema import (
     OECD_CLIMATE_INDICATORS,
     CrsSchema,
 )
-from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
+from climate_finance.oecd.cleaning_tools.tools import (
+    idx_to_str,
+    set_crs_data_types,
+)
 
 MULTILATERAL_ID_COLUMNS: list[str] = [
     CrsSchema.YEAR,
