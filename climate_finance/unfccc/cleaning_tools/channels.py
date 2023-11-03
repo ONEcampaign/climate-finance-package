@@ -77,7 +77,7 @@ def clean_string(text_series: pd.Series | str) -> pd.Series:
 
     # if text was string, convert back to string
     if as_string:
-        text_series = text_series.str[0]
+        text_series = text_series[0]
 
     return text_series
 
