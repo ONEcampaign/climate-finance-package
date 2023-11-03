@@ -4,7 +4,7 @@ from climate_finance.oecd.cleaning_tools.schema import CrsSchema
 from climate_finance.oecd.imputed_multilateral.crs_tools import get_yearly_crs_totals
 from climate_finance.oecd.imputed_multilateral.multilateral_spending_data import (
     get_multilateral_data,
-    add_crs_details,
+    add_crs_data,
 )
 from climate_finance.oecd.imputed_multilateral.tools import (
     summarise_by_party_idx,
@@ -79,13 +79,3 @@ def oecd_rolling_shares_methodology(
     rolling = _add_share(rolling)
 
     return rolling
-
-
-def get_oecd_imputed_shares_calculated(
-    start_year: int, end_year: int, rolling_window: int = 2
-) -> pd.DataFrame:
-    return (
-        get_multilateral_data(start_year=start_year, end_year=end_year)
-        .pipe(add_crs_details)
-        .pipe(oecd_rolling_shares_methodology, window=rolling_window)
-    )

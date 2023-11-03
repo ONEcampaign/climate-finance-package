@@ -6,13 +6,16 @@ from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_t
 from climate_finance.oecd.climate_related_activities.recipient_perspective import (
     get_recipient_perspective,
 )
-from climate_finance.oecd.imputed_multilateral.crs_tools import match_projects_with_crs
+from climate_finance.oecd.imputed_multilateral.crs_tools import (
+    add_crs_data_and_transform,
+)
+from climate_finance.unfccc.cleaning_tools.channels import clean_string
 
 UNIQUE_INDEX = [
     CrsSchema.YEAR,
     CrsSchema.PARTY_CODE,
     CrsSchema.AGENCY_CODE,
-    CrsSchema.CRS_ID,
+    # CrsSchema.CRS_ID,
     CrsSchema.PROJECT_ID,
     CrsSchema.FINANCE_TYPE,
     # CrsSchema.FLOW_CODE,
@@ -282,7 +285,14 @@ def _get_crs_to_match(
 
     crs_data = crs_data.rename(columns=CRS_MAPPING)
 
-    idx = [c for c in CRS_INFO if c not in [CrsSchema.FLOW_TYPE]]
+    # Clean project title
+    crs_data[CrsSchema.PROJECT_TITLE] = clean_string(crs_data[CrsSchema.PROJECT_TITLE])
+
+    idx = [
+        c
+        for c in CRS_INFO + [CrsSchema.PROJECT_TITLE]
+        if c not in [CrsSchema.FLOW_TYPE]
+    ]
 
     # Filter parties
     crs_data = _filter_parties(data=crs_data, party_code=party_code)
@@ -304,7 +314,7 @@ def _get_crs_to_match(
     return crs_data
 
 
-def add_crs_details(df: pd.DataFrame) -> pd.DataFrame:
+def add_crs_data(df: pd.DataFrame) -> pd.DataFrame:
     """
     This function adds columns/details from the CRS to the multilateral data.
     This includes information on the flow type (commitment, disbursement, net disbursement).
@@ -324,25 +334,14 @@ def add_crs_details(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     # match projects with crs
-    matched = match_projects_with_crs(
+    data = add_crs_data_and_transform(
         projects=df,
         crs=crs_df,
         unique_index=UNIQUE_INDEX,
-        output_cols=OUTPUT_COLUMNS + CRS_VALUES,
+        output_cols=OUTPUT_COLUMNS + CRDF_VALUES,
     )
 
-    # add back to original df
-    df = df.pipe(idx_to_str, idx=UNIQUE_INDEX)
-    matched = matched.pipe(idx_to_str, idx=UNIQUE_INDEX)
-    data = df.merge(matched, on=UNIQUE_INDEX, how="left", suffixes=("", "_crs")).pipe(
-        set_crs_data_types
-    )
-
-    # convert figures to millions
-    data = _convert_crs_values_to_million(data)
-
-    # Keep only relevant columns
-    return data.filter(items=OUTPUT_COLUMNS + CRS_VALUES + CRDF_VALUES)
+    return data.loc[lambda d: d[CrsSchema.VALUE] > 0]
 
 
 def get_multilateral_data(
