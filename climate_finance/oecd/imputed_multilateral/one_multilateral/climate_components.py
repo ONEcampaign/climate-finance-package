@@ -3,6 +3,7 @@ import pandas as pd
 
 from climate_finance.oecd.cleaning_tools.schema import CrsSchema
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
+from climate_finance.unfccc.cleaning_tools.channels import clean_string
 
 CRDF_IDX = [
     CrsSchema.YEAR,
@@ -10,6 +11,7 @@ CRDF_IDX = [
     CrsSchema.AGENCY_CODE,
     CrsSchema.CRS_ID,
     CrsSchema.PROJECT_ID,
+    CrsSchema.PROJECT_TITLE,
     CrsSchema.RECIPIENT_CODE,
     CrsSchema.CONCESSIONALITY,
     CrsSchema.CLIMATE_OBJECTIVE,
@@ -131,5 +133,8 @@ def clean_component(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         pd.DataFrame: The processed dataframe.
     """
+
+    if CrsSchema.PROJECT_TITLE in df.columns:
+        df[CrsSchema.PROJECT_TITLE] = clean_string(df[CrsSchema.PROJECT_TITLE])
 
     return df.pipe(group_and_summarize).pipe(subtract_overlaps_by_project)

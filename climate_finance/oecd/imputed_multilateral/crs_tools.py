@@ -1,21 +1,9 @@
 import pandas as pd
 
 from climate_finance.config import logger
-from climate_finance.oecd.cleaning_tools.schema import CrsSchema
+from climate_finance.oecd.cleaning_tools.schema import CrsSchema, CLIMATE_VALUES
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
-from climate_finance.oecd.crs.get_data import get_crs_allocable_spending
 from climate_finance.oecd.get_oecd_data import get_oecd_bilateral
-
-
-def get_crs_totals(
-    start_year: int,
-    end_year: int,
-    by_index: list[str] | None = None,
-    party_code: str | list[str] | None = None,
-) -> pd.DataFrame:
-    get_crs_allocable_spending(
-        start_year=start_year, end_year=end_year, force_update=update_data
-    )
 
 
 def get_yearly_crs_totals(
@@ -53,62 +41,202 @@ def get_yearly_crs_totals(
     )
 
 
-def merge_projects_with_crs(
-    projects: pd.DataFrame, crs: pd.DataFrame, index: list[str]
+def _prepare_crs_and_projects(
+    crs: pd.DataFrame, projects: pd.DataFrame, unique_index: list[str]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    # convert new index to string, and set it
+    projects = projects.pipe(idx_to_str, idx=unique_index).set_index(unique_index)
+    crs = crs.pipe(idx_to_str, idx=unique_index).set_index(unique_index)
+
+    # Convert CRS commitments and disbursements to millions of USD
+    crs[[CrsSchema.USD_COMMITMENT, CrsSchema.USD_DISBURSEMENT]] *= 1e6
+
+    return crs, projects
+
+
+def _match_projects_with_crs(
+    crs: pd.DataFrame, projects: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    # Identify all the rows in the CRS that match the unique projects
+    # Use the fact that both dataframes now have the same MultiIndex structure
+    climate_crs = crs.loc[lambda d: d.index.isin(projects.index)]
+
+    # Identify all the rows in the projects that didn't have a CRS match
+    not_matched = projects.loc[lambda d: ~d.index.isin(climate_crs.index)]
+
+    return climate_crs.reset_index(), not_matched.reset_index()
+
+
+def _group_at_unique_index_level_and_sum(
+    data: pd.DataFrame, unique_index: list[str], agg_col: str | list[str]
 ) -> pd.DataFrame:
-    idx = [c for c in index if c in projects.columns and c in crs.columns]
-    return projects.merge(
-        crs, on=idx, how="left", indicator=True, suffixes=("", "_crs")
+    # Group the projects and CRS info at the unique index level and sum the values
+    return (
+        data.groupby(unique_index, observed=True, dropna=False)[agg_col]
+        .sum()
+        .reset_index()
     )
 
 
-def _log_matches(data: pd.DataFrame) -> None:
-    # Log the number of projects that were matched
-    logger.debug(f"Matched \n{data['_merge'].value_counts()} projects with CRS data")
+def _merge_projects_and_crs(
+    unique_projects: pd.DataFrame,
+    unique_climate_crs: pd.DataFrame,
+    idx: list[str],
+) -> pd.DataFrame:
+    # Merge the projects and CRS info
+    return unique_projects.merge(
+        unique_climate_crs,
+        on=idx,
+        how="inner",
+        suffixes=("", "_projects"),
+    ).filter(idx + CLIMATE_VALUES + [CrsSchema.USD_COMMITMENT])
 
 
-def _keep_not_matched(data: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
-    """
-    Keep only the projects that were not matched.
-
-    Args:
-        data: The dataframe to filter.
-
-    Returns:
-        The filtered dataframe.
-
-    """
-    return data.loc[lambda d: d["_merge"] == "left_only", columns]
+def _add_climate_total(data: pd.DataFrame) -> pd.DataFrame:
+    # Add the climate total
+    return data.assign(
+        **{CrsSchema.CLIMATE_UNSPECIFIED: lambda d: d[CLIMATE_VALUES].sum(axis=1)}
+    )
 
 
-def _concat_matched_dfs(
+def _create_climate_share_columns(data: pd.DataFrame) -> pd.DataFrame:
+    # Create the share columns
+    for col in CLIMATE_VALUES + [CrsSchema.CLIMATE_UNSPECIFIED]:
+        data[f"{col}_share"] = data[col] / data[CrsSchema.USD_COMMITMENT]
+
+    return data
+
+
+def _identify_and_remove_implausible_shares(
+    data: pd.DataFrame, projects_data: pd.DataFrame, unique_index: list[str]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    # set the right index
+    data = data.set_index(unique_index)
+    projects_data = projects_data.set_index(unique_index)
+
+    # Large shares keeps the rows with implausible shares
+    large_shares = data.loc[lambda d: d[f"{CrsSchema.CLIMATE_UNSPECIFIED}_share"] > 1.1]
+
+    # clean_data keeps the rows with plausible shares
+    clean_data = data.loc[lambda d: d[f"{CrsSchema.CLIMATE_UNSPECIFIED}_share"] <= 1.1]
+
+    # Filter the projects data to only keep the rows that are in large_shares
+    large_shares_projects = projects_data.loc[
+        lambda d: d.index.isin(large_shares.index)
+    ]
+
+    return large_shares_projects.reset_index(), clean_data.reset_index()
+
+
+def _transform_to_flow_type(
     data: pd.DataFrame,
-    additional_matches1: pd.DataFrame,
-    additional_matches2: pd.DataFrame,
+    flow_type: str,
 ) -> pd.DataFrame:
-    """
-    Concatenate the dataframes of matched projects.
+    data = data.copy(deep=True)
 
-    Args:
-        data: The first dataframe of matched projects.
-        additional_matches: The second dataframe of matched projects.
+    data[CrsSchema.FLOW_TYPE] = flow_type
 
-    Returns:
-        The concatenated dataframe.
+    for column in CLIMATE_VALUES:
+        data[column] = data[f"{column}_share"] * data[flow_type]
 
-    """
+    return data
+
+
+def _clean_climate_crs_output(data: pd.DataFrame) -> pd.DataFrame:
+    # drop all columns with "share" in the name
+    return data.drop(
+        columns=[c for c in data.columns if "share" in c]
+        + [
+            CrsSchema.USD_DISBURSEMENT,
+            CrsSchema.USD_COMMITMENT,
+            CrsSchema.CLIMATE_UNSPECIFIED,
+        ]
+    ).pipe(set_crs_data_types)
+
+
+def _add_crs_info_and_transform_to_indicators(
+    crs: pd.DataFrame, projects: pd.DataFrame, unique_index: list[str]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    # Create a new index. Excludes year and makes sure that all the columns are
+    # in the projects and crs dataframes
+    unique_index = [
+        c
+        for c in unique_index
+        if c != "year" and c in projects.columns and c in crs.columns
+    ]
+
+    # Prepare CRS and Projects by setting the right index (and values scale for CRS)
+    crs, projects = _prepare_crs_and_projects(
+        crs=crs, projects=projects, unique_index=unique_index
+    )
+
+    # filter CRS to match and create not_matched dataframe
+    climate_crs, not_matched = _match_projects_with_crs(crs=crs, projects=projects)
+
+    # Group the unique index level and sum the values
+    unique_climate_crs = _group_at_unique_index_level_and_sum(
+        data=climate_crs, unique_index=unique_index, agg_col=CrsSchema.USD_COMMITMENT
+    )
+
+    # Group the unique index level and sum the values
+    unique_projects = _group_at_unique_index_level_and_sum(
+        data=projects, unique_index=unique_index, agg_col=CLIMATE_VALUES
+    )
+
+    # Merge the projects and CRS info
+    merged_climate_data = _merge_projects_and_crs(
+        unique_projects=unique_projects,
+        unique_climate_crs=unique_climate_crs,
+        idx=unique_index,
+    )
+
+    # Add the climate total
+    merged_climate_data = _add_climate_total(data=merged_climate_data)
+
+    # Create the share columns
+    merged_climate_data = _create_climate_share_columns(data=merged_climate_data)
+
+    # Merge shares back to climate CRS
+    full_climate_crs = climate_crs.merge(
+        merged_climate_data, on=unique_index, how="left", suffixes=("", "_shares")
+    )
+
+    # Identify columns with implausible shares
+    implausible_shares, full_climate_crs = _identify_and_remove_implausible_shares(
+        data=full_climate_crs, projects_data=unique_projects, unique_index=unique_index
+    )
+
+    # Add the implausible shares to the not_matched dataframe
+    not_matched = pd.concat([not_matched, implausible_shares], ignore_index=True)
+
+    # transform into flow types
+
+    commitments = _transform_to_flow_type(
+        data=full_climate_crs, flow_type=CrsSchema.USD_COMMITMENT
+    )
+    disbursements = _transform_to_flow_type(
+        data=full_climate_crs, flow_type=CrsSchema.USD_DISBURSEMENT
+    )
+
     # Concatenate the dataframes
-    return pd.concat(
-        [
-            data.loc[lambda d: d["_merge"] != "left_only"],
-            additional_matches1.loc[lambda d: d["_merge"] != "left_only"],
-            additional_matches2,
-        ],
-        ignore_index=True,
+    full_climate_crs_by_flow_type = pd.concat(
+        [commitments, disbursements], ignore_index=True
+    )
+
+    full_climate_crs_by_flow_type = full_climate_crs_by_flow_type.pipe(
+        _clean_climate_crs_output
+    )
+
+    return full_climate_crs_by_flow_type, not_matched
+
+
+def _calculate_unmatched_totals(unmatched: pd.DataFrame) -> pd.DataFrame:
+    return (
+        unmatched.groupby(["year"])[CLIMATE_VALUES].sum().sum(axis=1).div(1e6).round(0)
     )
 
 
-def match_projects_with_crs(
+def add_crs_data_and_transform(
     projects: pd.DataFrame,
     crs: pd.DataFrame,
     unique_index: list[str],
@@ -131,66 +259,75 @@ def match_projects_with_crs(
         The projects matched with the CRS data.
 
     """
+    # convert index to str
+    projects = projects.pipe(idx_to_str, idx=unique_index + [CrsSchema.PROJECT_TITLE])
+    crs = crs.pipe(idx_to_str, idx=unique_index + [CrsSchema.PROJECT_TITLE])
+
     # Perform an initial merge. It will be done considering all the columns in the
     # UNIQUE_INDEX global variable. A left join is attempted. The indicator column
     # is shown to see how many projects were matched.
-    projects = projects.pipe(idx_to_str, idx=unique_index)
-    crs = crs.pipe(idx_to_str, idx=unique_index)
-    data = merge_projects_with_crs(projects=projects, crs=crs, index=unique_index)
-
-    # Log the number of projects that were matched
-    _log_matches(data)
-
-    # If there are projects that were not matched, try to match them using a subset of
-    # the columns in the UNIQUE_INDEX global variable.
-    not_matched = _keep_not_matched(data, unique_index)
-
-    # Attempt to match the projects that were not matched using a subset of the columns
-    # in the UNIQUE_INDEX global variable. A left join is attempted. The indicator column
-    # is shown to see how many projects were matched.
-    additional_matches = merge_projects_with_crs(
-        projects=not_matched,
-        crs=crs,
-        index=[
-            CrsSchema.YEAR,
-            CrsSchema.PARTY_CODE,
-            CrsSchema.CRS_ID,
-            CrsSchema.PURPOSE_CODE,
-        ],
+    matched, not_matched = _add_crs_info_and_transform_to_indicators(
+        crs=crs, projects=projects, unique_index=unique_index
     )
 
-    # Log the number of projects that were matched
-    _log_matches(additional_matches)
+    logger.debug(
+        f"Didn't match \n{len(not_matched)} projects with CRS data (first pass)"
+    )
 
-    # Another pass
-    not_matched = _keep_not_matched(additional_matches, unique_index)
-
-    # Third pass of additional
-    additional_matches_second_pass = merge_projects_with_crs(
-        projects=not_matched,
-        crs=crs,
-        index=[
-            CrsSchema.YEAR,
+    # Define the different passes that will be performed to try to merge the data
+    # This is done by specifying the merge columns
+    unique_index_configurations = [
+        [
             CrsSchema.PARTY_CODE,
+            CrsSchema.RECIPIENT_CODE,
             CrsSchema.PROJECT_ID,
             CrsSchema.PURPOSE_CODE,
         ],
+        [
+            CrsSchema.PARTY_CODE,
+            CrsSchema.RECIPIENT_CODE,
+            CrsSchema.PROJECT_TITLE,
+            CrsSchema.PURPOSE_CODE,
+        ],
+        [
+            CrsSchema.PARTY_CODE,
+            CrsSchema.RECIPIENT_CODE,
+            CrsSchema.CRS_ID,
+            CrsSchema.PURPOSE_CODE,
+        ],
+        [
+            CrsSchema.PARTY_CODE,
+            CrsSchema.PROJECT_TITLE,
+            CrsSchema.PURPOSE_CODE,
+        ],
+    ]
+
+    # Loop through each config and try to merge the data
+    for pass_number, idx_config in enumerate(unique_index_configurations):
+        matched_, not_matched = _add_crs_info_and_transform_to_indicators(
+            crs=crs, projects=not_matched, unique_index=idx_config
+        )
+        logger.debug(
+            f"Didn't match \n{len(not_matched)} projects with CRS data"
+            f" (attempt {pass_number+2})"
+        )
+        matched = pd.concat([matched, matched_], ignore_index=True)
+
+    # Log the usd millions value for projects that were not matched
+    logger.debug(
+        f"The total unmatched in millions of USD is:"
+        f"\n{_calculate_unmatched_totals(unmatched=not_matched)}\n"
     )
 
-    _log_matches(additional_matches_second_pass)
-
-    # Concatenate the dataframes
-    data = _concat_matched_dfs(
-        data=data,
-        additional_matches1=additional_matches,
-        additional_matches2=additional_matches_second_pass,
+    # melt indicators
+    data = matched.melt(
+        id_vars=[c for c in matched.columns if c not in CLIMATE_VALUES],
+        value_vars=CLIMATE_VALUES,
+        var_name=CrsSchema.INDICATOR,
+        value_name=CrsSchema.VALUE,
     )
 
-    # Keep only the columns in the CRS_INFO global variable and set the UNIQUE_INDEX
-    # columns to strings
-    data = data.filter(output_cols).pipe(set_crs_data_types)
-
-    return data
+    return data.filter(output_cols)
 
 
 def mapping_flow_name_to_code() -> dict:

@@ -4,12 +4,10 @@ import pandas as pd
 from climate_finance.oecd.cleaning_tools.schema import CrsSchema
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
 from climate_finance.oecd.crs.get_data import get_crs, keep_only_allocable_aid
-from climate_finance.oecd.imputed_multilateral.crs_tools import get_yearly_crs_totals
 from climate_finance.oecd.imputed_multilateral.multilateral_spending_data import (
     get_multilateral_data,
-    add_crs_details,
+    add_crs_data,
     convert_to_flowtypes,
-    OUTPUT_COLUMNS,
 )
 from climate_finance.oecd.imputed_multilateral.one_multilateral.climate_components import (
     clean_component,
@@ -295,9 +293,7 @@ def one_multilateral_spending(
             force_update=force_update,
         )
         .pipe(clean_component)
-        .pipe(add_crs_details)
-        .pipe(convert_to_flowtypes)
-        .pipe(set_crs_data_types)
+        .pipe(add_crs_data)
         .pipe(
             one_rolling_shares_methodology,
             window=rolling_window,

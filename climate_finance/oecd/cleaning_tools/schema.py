@@ -173,3 +173,9 @@ CRS_TYPES = {
     CrsSchema.SECTOR_CODE: "Int32",
     CrsSchema.FINANCE_TYPE: "Int32",
 }
+
+CLIMATE_VALUES = [
+    CrsSchema.ADAPTATION_VALUE,
+    CrsSchema.MITIGATION_VALUE,
+    CrsSchema.CROSS_CUTTING_VALUE,
+]
