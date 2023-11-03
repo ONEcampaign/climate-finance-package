@@ -45,35 +45,41 @@ ADDITIONAL_PATTERNS: dict[str, int] = {
 }
 
 
-def clean_string(text: str) -> str:
+def clean_string(text_series: pd.Series | str) -> pd.Series:
     """Clean the text by removing punctuation (converted to spaces),
      converting to lowercase, removing unnecessary spacing.
 
     Args:
-        text (str): The text to be cleaned.
+        text_series (pd.Series): The Series of text to be cleaned.
 
     Returns:
-        str: The cleaned text.
-
+        pd.Series: The cleaned text as a Series.
     """
-    # Ensure that the text is a string
-    text = str(text)
+    # if string, convert to series
+    if isinstance(text_series, str):
+        text_series = pd.Series(text_series)
+        as_string = True
+    else:
+        as_string = False
 
     # Convert to lowercase
-    text = text.lower()
+    text_series = text_series.str.lower()
 
     # Remove punctuation (change to spaces)
-    text = text.translate(
-        str.maketrans(string.punctuation, " " * len(string.punctuation))
-    )
+    punct_translation = str.maketrans(string.punctuation, " " * len(string.punctuation))
+    text_series = text_series.str.translate(punct_translation)
 
     # Replace multiple spaces with a single space
-    text = re.sub("\s+", " ", text)
+    text_series = text_series.str.replace(r"\s+", " ", regex=True)
 
     # Remove leading and trailing spaces
-    text = text.strip()
+    text_series = text_series.str.strip()
 
-    return text
+    # if text was string, convert back to string
+    if as_string:
+        text_series = text_series.str[0]
+
+    return text_series
 
 
 def raw_data_to_unique_channels(
@@ -92,7 +98,7 @@ def raw_data_to_unique_channels(
 
     return (  # Get the channel names column, clean the strings, and drop duplicates
         raw_data.filter([channel_names_column], axis=1)
-        .assign(clean_channel=lambda d: d[channel_names_column].apply(clean_string))
+        .assign(clean_channel=lambda d: clean_string(d[channel_names_column]))
         .drop_duplicates(subset=[channel_names_column])
     )
 
@@ -117,7 +123,7 @@ def channel_to_code(map_to: str = "channel_name") -> dict[str, int]:
     # Get the CRS mapping data, filter the desired column, and drop duplicates
     mapping_data = (
         get_crs_official_mapping()
-        .assign(channel_name=lambda d: d.channel_name.apply(clean_string))
+        .assign(channel_name=lambda d: clean_string(d.channel_name))
         .drop_duplicates(subset=[map_to, "channel_code"])
         .dropna(subset=[map_to])
         .sort_values(by=[map_to])
@@ -392,16 +398,11 @@ def regex_to_code_dictionary(
     """
 
     # Clean the channel names
-    channels = channels.assign(
-        clean_channel=lambda d: d[names_column].apply(clean_string)
-    )
+    channels = channels.assign(clean_channel=lambda d: clean_string(d[names_column]))
 
     # Clean the english acronyms
     channels["en_acronym"] = (
-        channels["en_acronym"]
-        .apply(clean_string)
-        .str.replace(" ", "")
-        .replace("nan", pd.NA)
+        clean_string(channels["en_acronym"]).str.replace(" ", "").replace("nan", pd.NA)
     )
 
     # Generate the regex dictionary for english acronyms.
