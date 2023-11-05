@@ -189,9 +189,13 @@ def add_recipient_names(data: pd.DataFrame) -> pd.DataFrame:
 
     data = data.pipe(_add_names, names=names, idx=[CrsSchema.RECIPIENT_CODE])
 
-    data = data.assign(
+    data = data.astype(
+        {CrsSchema.RECIPIENT_NAME: "str", CrsSchema.RECIPIENT_CODE: "Int32"}
+    ).assign(
         **{
-            CrsSchema.RECIPIENT_NAME: lambda d: d.recipient.combine_first(
+            CrsSchema.RECIPIENT_NAME: lambda d: d[
+                CrsSchema.RECIPIENT_NAME
+            ].combine_first(
                 d[CrsSchema.RECIPIENT_CODE].map(
                     {
                         434: "Chile",
@@ -205,4 +209,4 @@ def add_recipient_names(data: pd.DataFrame) -> pd.DataFrame:
         }
     )
 
-    return data
+    return data.pipe(set_crs_data_types)
