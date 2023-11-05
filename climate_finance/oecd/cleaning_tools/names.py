@@ -179,6 +179,19 @@ def add_provider_names(data: pd.DataFrame) -> pd.DataFrame:
     return data.pipe(_add_names, names=names, idx=[CrsSchema.PARTY_CODE])
 
 
+def additional_recipient_names() -> pd.DataFrame:
+    additional_names = {
+        434: "Chile",
+        460: "Uruguay",
+        831: "Cook Islands",
+        270: "Seychelles",
+        382: "Saint Kitts and Nevis",
+    }
+    return pd.DataFrame(
+        list(additional_names.items()), columns=["oecd_recipient_code", "recipient"]
+    )
+
+
 def add_recipient_names(data: pd.DataFrame) -> pd.DataFrame:
     """
     Add the provider agency names to the data. This function needs Recipient
@@ -193,23 +206,13 @@ def add_recipient_names(data: pd.DataFrame) -> pd.DataFrame:
 
     """
     names = read_recipient_names()
-    additional_names = {
-        434: "Chile",
-        460: "Uruguay",
-        831: "Cook Islands",
-        270: "Seychelles",
-        382: "Saint Kitts and Nevis",
-    }
+    additional_names = additional_recipient_names()
+
+    names = pd.concat([names, additional_names], ignore_index=True)
 
     if CrsSchema.RECIPIENT_NAME in data.columns:
         data = data.drop(columns=CrsSchema.RECIPIENT_NAME)
 
     data = data.pipe(_add_names, names=names, idx=[CrsSchema.RECIPIENT_CODE])
 
-    data = data.astype({CrsSchema.RECIPIENT_NAME: "str"}).replace("nan", np.nan)
-
-    data[CrsSchema.RECIPIENT_NAME]: data[CrsSchema.RECIPIENT_NAME].combine_first(
-        data[CrsSchema.RECIPIENT_CODE].map(additional_names)
-    )
-
-    return data.pipe(set_crs_data_types)
+    return data
