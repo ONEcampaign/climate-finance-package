@@ -304,3 +304,6 @@ def one_multilateral_spending(
             end_year=end_year,
         )
     )
+
+
+one_multilateral_spending(2021, 2021, rolling_window=1)

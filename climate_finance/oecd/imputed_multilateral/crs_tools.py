@@ -236,6 +236,19 @@ def _calculate_unmatched_totals(unmatched: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _remove_matched_from_crs(
+    crs: pd.DataFrame, idx: list[str], matched_data: pd.DataFrame
+) -> pd.DataFrame:
+    idx = [
+        c for c in idx if c != "year" and c in matched_data.columns and c in crs.columns
+    ]
+
+    crs = crs.pipe(idx_to_str, idx=idx).set_index(idx)
+    matched_data = matched_data.pipe(idx_to_str, idx=idx).set_index(idx)
+    crs = crs.loc[lambda d: ~d.index.isin(matched_data.index)]
+    return crs.reset_index().pipe(set_crs_data_types)
+
+
 def add_crs_data_and_transform(
     projects: pd.DataFrame,
     crs: pd.DataFrame,
@@ -269,6 +282,8 @@ def add_crs_data_and_transform(
     matched, not_matched = _add_crs_info_and_transform_to_indicators(
         crs=crs, projects=projects, unique_index=unique_index
     )
+
+    crs = _remove_matched_from_crs(crs, idx=unique_index, matched_data=matched)
 
     logger.debug(
         f"Didn't match \n{len(not_matched)} projects with CRS data (first pass)"
@@ -311,6 +326,7 @@ def add_crs_data_and_transform(
             f"Didn't match \n{len(not_matched)} projects with CRS data"
             f" (attempt {pass_number+2})"
         )
+        crs = _remove_matched_from_crs(crs, idx=idx_config, matched_data=matched_)
         matched = pd.concat([matched, matched_], ignore_index=True)
 
     # Log the usd millions value for projects that were not matched
