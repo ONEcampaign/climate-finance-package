@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 from oda_data import read_crs
 
@@ -192,30 +193,23 @@ def add_recipient_names(data: pd.DataFrame) -> pd.DataFrame:
 
     """
     names = read_recipient_names()
+    additional_names = {
+        434: "Chile",
+        460: "Uruguay",
+        831: "Cook Islands",
+        270: "Seychelles",
+        382: "Saint Kitts and Nevis",
+    }
 
     if CrsSchema.RECIPIENT_NAME in data.columns:
         data = data.drop(columns=CrsSchema.RECIPIENT_NAME)
 
     data = data.pipe(_add_names, names=names, idx=[CrsSchema.RECIPIENT_CODE])
 
-    data = data.astype(
-        {CrsSchema.RECIPIENT_NAME: "str", CrsSchema.RECIPIENT_CODE: "Int32"}
-    ).assign(
-        **{
-            CrsSchema.RECIPIENT_NAME: lambda d: d[
-                CrsSchema.RECIPIENT_NAME
-            ].combine_first(
-                d[CrsSchema.RECIPIENT_CODE].map(
-                    {
-                        434: "Chile",
-                        460: "Uruguay",
-                        831: "Cook Islands",
-                        270: "Seychelles",
-                        382: "Saint Kitts and Nevis",
-                    }
-                )
-            )
-        }
+    data = data.astype({CrsSchema.RECIPIENT_NAME: "str"}).replace("nan", np.nan)
+
+    data[CrsSchema.RECIPIENT_NAME]: data[CrsSchema.RECIPIENT_NAME].combine_first(
+        data[CrsSchema.RECIPIENT_CODE].map(additional_names)
     )
 
     return data.pipe(set_crs_data_types)
