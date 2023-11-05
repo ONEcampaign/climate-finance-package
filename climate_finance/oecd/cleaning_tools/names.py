@@ -147,6 +147,11 @@ def add_provider_agency_names(data: pd.DataFrame) -> pd.DataFrame:
     """
     names = read_provider_agency_names()
 
+    if CrsSchema.PARTY_NAME in data.columns:
+        data = data.drop(columns=CrsSchema.PARTY_NAME)
+    if CrsSchema.AGENCY_NAME in data.columns:
+        data = data.drop(columns=CrsSchema.AGENCY_NAME)
+
     return data.pipe(
         _add_names, names=names, idx=[CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE]
     )
@@ -166,6 +171,9 @@ def add_provider_names(data: pd.DataFrame) -> pd.DataFrame:
 
     """
     names = read_provider_names()
+
+    if CrsSchema.PARTY_NAME in data.columns:
+        data = data.drop(columns=CrsSchema.PARTY_NAME)
 
     return data.pipe(_add_names, names=names, idx=[CrsSchema.PARTY_CODE])
 
