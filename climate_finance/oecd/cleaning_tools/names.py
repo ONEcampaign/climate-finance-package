@@ -116,6 +116,7 @@ def read_recipient_names() -> pd.DataFrame:
 
 def _add_names(data: pd.DataFrame, names: pd.DataFrame, idx: list[str]) -> pd.DataFrame:
     data = data.pipe(idx_to_str, idx=idx)
+    names = names.pipe(idx_to_str, idx=idx)
 
     # Add the names to the data
     data = data.merge(
