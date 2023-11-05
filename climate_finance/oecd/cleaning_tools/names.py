@@ -3,7 +3,11 @@ from oda_data import read_crs
 
 from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.schema import CrsSchema
-from climate_finance.oecd.cleaning_tools.tools import rename_crs_columns, idx_to_str
+from climate_finance.oecd.cleaning_tools.tools import (
+    rename_crs_columns,
+    idx_to_str,
+    set_crs_data_types,
+)
 from climate_finance.oecd.climate_related_activities.recipient_perspective import (
     get_recipient_perspective,
 )
@@ -111,6 +115,8 @@ def read_recipient_names() -> pd.DataFrame:
 
 
 def _add_names(data: pd.DataFrame, names: pd.DataFrame, idx: list[str]) -> pd.DataFrame:
+    data = data.pipe(idx_to_str, idx=idx)
+
     # Add the names to the data
     data = data.merge(
         names,
@@ -122,7 +128,7 @@ def _add_names(data: pd.DataFrame, names: pd.DataFrame, idx: list[str]) -> pd.Da
     # drop any columns which contain the string "_crs_names"
     data = data.drop(columns=[c for c in data.columns if "_names" in c])
 
-    return data
+    return data.pipe(set_crs_data_types)
 
 
 def add_provider_agency_names(data: pd.DataFrame) -> pd.DataFrame:
@@ -178,4 +184,25 @@ def add_recipient_names(data: pd.DataFrame) -> pd.DataFrame:
     """
     names = read_recipient_names()
 
-    return data.pipe(_add_names, names=names, idx=[CrsSchema.RECIPIENT_CODE])
+    if CrsSchema.RECIPIENT_NAME in data.columns:
+        data = data.drop(columns=CrsSchema.RECIPIENT_NAME)
+
+    data = data.pipe(_add_names, names=names, idx=[CrsSchema.RECIPIENT_CODE])
+
+    data = data.assign(
+        **{
+            CrsSchema.RECIPIENT_NAME: lambda d: d.recipient.combine_first(
+                d[CrsSchema.RECIPIENT_CODE].map(
+                    {
+                        434: "Chile",
+                        460: "Uruguay",
+                        831: "Cook Islands",
+                        270: "Seychelles",
+                        382: "Saint Kitts and Nevis",
+                    }
+                )
+            )
+        }
+    )
+
+    return data
