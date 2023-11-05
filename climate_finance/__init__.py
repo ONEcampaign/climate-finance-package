@@ -1,4 +1,4 @@
-__version__ = "0.1.10"
+__version__ = "0.1.11"
 
 # Easy access to importers
 from climate_finance.oecd import get_oecd_data
