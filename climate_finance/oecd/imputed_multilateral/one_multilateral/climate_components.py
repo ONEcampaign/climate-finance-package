@@ -9,6 +9,7 @@ CRDF_IDX = [
     CrsSchema.YEAR,
     CrsSchema.PARTY_CODE,
     CrsSchema.AGENCY_CODE,
+    CrsSchema.PARTY_TYPE,
     CrsSchema.CRS_ID,
     CrsSchema.PROJECT_ID,
     CrsSchema.PROJECT_TITLE,
