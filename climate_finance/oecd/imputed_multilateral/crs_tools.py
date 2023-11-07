@@ -334,6 +334,34 @@ def add_crs_data_and_transform(
         f"The total unmatched in millions of USD is:"
         f"\n{_calculate_unmatched_totals(unmatched=not_matched)}\n"
     )
+    not_matched_text = "Data only reported in the CRDF as commitments"
+    not_matched_values = {
+        CrsSchema.PROJECT_TITLE: not_matched_text,
+        CrsSchema.RECIPIENT_CODE: "998",
+        CrsSchema.PURPOSE_CODE: "99810",
+        CrsSchema.PROJECT_ID: "aggregate",
+        CrsSchema.CRS_ID: "aggregate",
+        CrsSchema.FINANCE_TYPE: not_matched_text,
+        CrsSchema.FLOW_NAME: not_matched_text,
+        CrsSchema.CATEGORY: not_matched_text,
+        CrsSchema.FLOW_MODALITY: not_matched_text,
+        CrsSchema.CHANNEL_CODE: "0",
+        CrsSchema.CHANNEL_CODE_DELIVERY: not_matched_text,
+        CrsSchema.FLOW_TYPE: CrsSchema.USD_COMMITMENT,
+    }
+    not_matched = (
+        not_matched.assign(**not_matched_values)
+        .groupby(
+            [CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE] + list(not_matched_values),
+            observed=True,
+            dropna=False,
+        )
+        .sum(numeric_only=True)
+        .reset_index()
+        .filter(matched.columns)
+    )
+
+    matched = pd.concat([matched, not_matched], ignore_index=True)
 
     # melt indicators
     data = matched.melt(
