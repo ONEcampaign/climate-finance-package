@@ -318,7 +318,13 @@ def set_crs_data_types(df: pd.DataFrame) -> pd.DataFrame:
 
     types = {k: v for k, v in CRS_TYPES.items() if k in df.columns}
 
-    return df.replace("<NA>", np.nan).astype(types)
+    replacements = {
+        "<NA>": np.nan,
+        "nan": np.nan,
+        "Data only reported in the CRDF as commitments": np.nan,
+    }
+
+    return df.replace(to_replace=replacements).astype(types)
 
 
 def idx_to_str(df: pd.DataFrame, idx: list[str]) -> pd.DataFrame:
