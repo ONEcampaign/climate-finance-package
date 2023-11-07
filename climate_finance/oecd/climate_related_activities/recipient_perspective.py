@@ -198,37 +198,3 @@ def get_recipient_perspective(
     df = df.assign(flow_type="usd_commitment")
 
     return df
-
-
-def recipient_perspective_to_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    The data is reshaped to be in a 'longer' format where the different types of climate
-    finance are indicators.
-
-    Args:
-        df: The dataframe to reshape.
-
-    Returns:
-
-    """
-    # Drop duplicates
-    # df = df.drop_duplicates(keep="first")
-
-    # Add imputed total
-    df = add_imputed_total(df)
-
-    # Get dataframes for each marker
-    adaptation = get_marker_data_and_share(df, marker=CrsSchema.ADAPTATION)
-    mitigation = get_marker_data_and_share(df, marker=CrsSchema.MITIGATION)
-    overlap = get_overlap(df)
-
-    # Combine dataframes
-    data = pd.concat([adaptation, mitigation, overlap], ignore_index=True)
-
-    # clean columns
-    data = clean_columns(data)
-
-    # Only values > 0
-    data = data.loc[lambda d: d.value > 0]
-
-    return data.filter(MULTI_COLUMNS)

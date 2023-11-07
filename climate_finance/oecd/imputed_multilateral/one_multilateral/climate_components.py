@@ -46,12 +46,12 @@ def group_and_summarize(df: pd.DataFrame) -> pd.DataFrame:
     df = idx_to_str(df, idx=idx)
 
     df = (
-        df.groupby(by=idx, observed=True)
+        df.groupby(by=idx, observed=True, dropna=False)
         .agg("sum", numeric_only=True)
         .reset_index()
         .filter(items=idx + CRDF_VALUES)
         .pipe(set_crs_data_types)
-        .groupby(by=idx, observed=True)
+        .groupby(by=idx, observed=True, dropna=False)
         .agg("sum", numeric_only=True)
         .reset_index()
     )
