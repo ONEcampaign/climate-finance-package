@@ -227,7 +227,7 @@ def _add_crs_info_and_transform_to_indicators(
         _clean_climate_crs_output
     )
 
-    return full_climate_crs_by_flow_type, not_matched
+    return full_climate_crs_by_flow_type, not_matched.pipe(set_crs_data_types)
 
 
 def _calculate_unmatched_totals(unmatched: pd.DataFrame) -> pd.DataFrame:
@@ -334,6 +334,7 @@ def add_crs_data_and_transform(
         f"The total unmatched in millions of USD is:"
         f"\n{_calculate_unmatched_totals(unmatched=not_matched)}\n"
     )
+
     not_matched_text = "Data only reported in the CRDF as commitments"
     not_matched_values = {
         CrsSchema.PROJECT_TITLE: not_matched_text,
@@ -346,19 +347,22 @@ def add_crs_data_and_transform(
         CrsSchema.CATEGORY: not_matched_text,
         CrsSchema.FLOW_MODALITY: not_matched_text,
         CrsSchema.CHANNEL_CODE: "0",
+        CrsSchema.FLOW_CODE: "0",
         CrsSchema.CHANNEL_CODE_DELIVERY: not_matched_text,
         CrsSchema.FLOW_TYPE: CrsSchema.USD_COMMITMENT,
     }
     not_matched = (
         not_matched.assign(**not_matched_values)
         .groupby(
-            [CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE] + list(not_matched_values),
+            [CrsSchema.YEAR, CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE]
+            + list(not_matched_values),
             observed=True,
             dropna=False,
         )
         .sum(numeric_only=True)
         .reset_index()
         .filter(matched.columns)
+        .dropna(subset=[CrsSchema.YEAR])
     )
 
     matched = pd.concat([matched, not_matched], ignore_index=True)

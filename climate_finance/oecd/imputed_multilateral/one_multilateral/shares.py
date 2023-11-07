@@ -56,7 +56,7 @@ def _summarise_spending_data(
     # Get yearly totals for each party by flow type
     return (
         data.pipe(idx_to_str, idx=SIMPLE_IDX)
-        .groupby(SIMPLE_IDX, observed=True)["yearly_total"]
+        .groupby(SIMPLE_IDX, observed=True, dropna=False)["yearly_total"]
         .sum()
         .reset_index()
         .pipe(set_crs_data_types)
@@ -123,6 +123,7 @@ def _compute_rolling_total_multi_spending(
         .groupby(
             [c for c in SHARES_IDX if c not in [CrsSchema.YEAR] and c in data.columns],
             observed=True,
+            dropna=False,
             group_keys=False,
         )
         .apply(
@@ -230,7 +231,9 @@ def one_rolling_shares_methodology(
     ]
 
     data_by_indicator = (
-        data_by_indicator.groupby(output_groupby, observed=True)[value_cols]
+        data_by_indicator.groupby(output_groupby, observed=True, dropna=False)[
+            value_cols
+        ]
         .sum()
         .reset_index()
     )
