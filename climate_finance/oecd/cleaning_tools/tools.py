@@ -322,6 +322,7 @@ def set_crs_data_types(df: pd.DataFrame) -> pd.DataFrame:
         "<NA>": np.nan,
         "nan": np.nan,
         "Data only reported in the CRDF as commitments": np.nan,
+        "Unspecified": np.nan,
     }
 
     return df.replace(to_replace=replacements).astype(types)

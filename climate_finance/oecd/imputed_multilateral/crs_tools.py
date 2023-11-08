@@ -1,9 +1,33 @@
+import numpy as np
 import pandas as pd
 
 from climate_finance.config import logger
 from climate_finance.oecd.cleaning_tools.schema import CrsSchema, CLIMATE_VALUES
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
 from climate_finance.oecd.get_oecd_data import get_oecd_bilateral
+
+
+def flow_name_mapping() -> dict:
+    return {
+        11: "ODA Grants",
+        13: "ODA Loans",
+        19: "Equity Investment",
+        14: "Other Official Flows (non Export Credits)",
+        30: "Private Development Finance",
+        0: "Unspecified",
+    }
+
+
+def map_flow_name_to_code(data: pd.DataFrame, codes_col: str) -> pd.DataFrame:
+    replacements = {"nan": np.nan, "": np.nan, "<NA>": np.nan, "Unspecified": np.nan}
+    data[codes_col] = (
+        data[codes_col]
+        .replace(replacements)
+        .astype("Int32")
+        .map(flow_name_mapping())
+        .fillna(data[codes_col])
+    )
+    return data
 
 
 def get_yearly_crs_totals(
@@ -57,8 +81,19 @@ def _prepare_crs_and_projects(
 def _match_projects_with_crs(
     crs: pd.DataFrame, projects: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if (
+        CrsSchema.PROJECT_ID in projects.columns
+        and CrsSchema.PROJECT_TITLE in projects.columns
+    ):
+        projects[CrsSchema.PROJECT_ID] = (
+            projects[CrsSchema.PROJECT_ID]
+            .replace("nan", np.nan, regex=False)
+            .fillna(projects[CrsSchema.PROJECT_TITLE])
+        )
+
     # Identify all the rows in the CRS that match the unique projects
     # Use the fact that both dataframes now have the same MultiIndex structure
+
     climate_crs = crs.loc[lambda d: d.index.isin(projects.index)]
 
     # Identify all the rows in the projects that didn't have a CRS match
@@ -280,7 +315,9 @@ def add_crs_data_and_transform(
     # UNIQUE_INDEX global variable. A left join is attempted. The indicator column
     # is shown to see how many projects were matched.
     matched, not_matched = _add_crs_info_and_transform_to_indicators(
-        crs=crs, projects=projects, unique_index=unique_index
+        crs=crs,
+        projects=projects,
+        unique_index=[CrsSchema.PROJECT_TITLE] + unique_index,
     )
 
     crs = _remove_matched_from_crs(crs, idx=unique_index, matched_data=matched)
@@ -301,18 +338,24 @@ def add_crs_data_and_transform(
         [
             CrsSchema.PARTY_CODE,
             CrsSchema.RECIPIENT_CODE,
-            CrsSchema.PROJECT_TITLE,
-            CrsSchema.PURPOSE_CODE,
-        ],
-        [
-            CrsSchema.PARTY_CODE,
-            CrsSchema.RECIPIENT_CODE,
             CrsSchema.CRS_ID,
             CrsSchema.PURPOSE_CODE,
         ],
         [
             CrsSchema.PARTY_CODE,
+            CrsSchema.RECIPIENT_CODE,
             CrsSchema.PROJECT_TITLE,
+            CrsSchema.PURPOSE_CODE,
+        ],
+        [
+            CrsSchema.PARTY_CODE,
+            CrsSchema.PROJECT_TITLE,
+            CrsSchema.PURPOSE_CODE,
+        ],
+        unique_index,
+        [
+            CrsSchema.PARTY_CODE,
+            CrsSchema.PROJECT_ID,
             CrsSchema.PURPOSE_CODE,
         ],
     ]
@@ -336,26 +379,32 @@ def add_crs_data_and_transform(
     )
 
     not_matched_text = "Data only reported in the CRDF as commitments"
+
     not_matched_values = {
         CrsSchema.PROJECT_TITLE: not_matched_text,
         CrsSchema.RECIPIENT_CODE: "998",
         CrsSchema.PURPOSE_CODE: "99810",
         CrsSchema.PROJECT_ID: "aggregate",
         CrsSchema.CRS_ID: "aggregate",
-        CrsSchema.FINANCE_TYPE: not_matched_text,
-        CrsSchema.FLOW_NAME: not_matched_text,
-        CrsSchema.CATEGORY: not_matched_text,
-        CrsSchema.FLOW_MODALITY: not_matched_text,
         CrsSchema.CHANNEL_CODE: "0",
         CrsSchema.FLOW_CODE: "0",
         CrsSchema.CHANNEL_CODE_DELIVERY: not_matched_text,
+        CrsSchema.CATEGORY: not_matched_text,
         CrsSchema.FLOW_TYPE: CrsSchema.USD_COMMITMENT,
     }
+    other = [
+        CrsSchema.FINANCE_TYPE,
+        CrsSchema.FLOW_NAME,
+        CrsSchema.FLOW_MODALITY,
+    ]
     not_matched = (
         not_matched.assign(**not_matched_values)
+        .rename(columns={CrsSchema.FINANCIAL_INSTRUMENT: CrsSchema.FLOW_NAME})
+        .pipe(map_flow_name_to_code, codes_col=CrsSchema.FLOW_CODE)
         .groupby(
             [CrsSchema.YEAR, CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE]
-            + list(not_matched_values),
+            + list(not_matched_values)
+            + other,
             observed=True,
             dropna=False,
         )
