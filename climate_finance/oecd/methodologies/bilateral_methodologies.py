@@ -46,7 +46,9 @@ def _get_max_values_per_group(
     """Compute the maximum indicator value for each group"""
 
     return (
-        data.groupby(melted_cols, observed=True)["indicator_value"].max().reset_index()
+        data.groupby(melted_cols, observed=True, dropna=False)["indicator_value"]
+        .max()
+        .reset_index()
     )
 
 
@@ -67,7 +69,7 @@ def _get_unique_max_groups(data: pd.DataFrame, melted_cols: list) -> pd.DataFram
     """Identify groups where the indicator value is the unique maximum."""
     max_value_counts = (
         data[data["_merge"] == "both"]
-        .groupby(melted_cols + ["indicator_value"], observed=True)
+        .groupby(melted_cols + ["indicator_value"], observed=True, dropna=False)
         .size()
         .reset_index(name="count")
     )
