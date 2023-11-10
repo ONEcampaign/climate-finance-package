@@ -161,14 +161,13 @@ def add_provider_agency_names(data: pd.DataFrame) -> pd.DataFrame:
     idx = [CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE]
     data = data.pipe(_add_names, names=names, idx=idx)
 
-    provider_names = read_provider_names()
-    data = data.pipe(idx_to_str, idx=CrsSchema.PARTY_CODE)
-    provider_names = provider_names.pipe(idx_to_str, idx=CrsSchema.PARTY_CODE)
+    provider_names = read_provider_names().pipe(idx_to_str, idx=[CrsSchema.PARTY_CODE])
+    data = data.pipe(idx_to_str, idx=[CrsSchema.PARTY_CODE])
 
     # Add the names to the data
     data = data.merge(
         provider_names,
-        on=CrsSchema.PARTY_CODE,
+        on=[CrsSchema.PARTY_CODE],
         how="left",
         suffixes=("", "_names"),
     )
