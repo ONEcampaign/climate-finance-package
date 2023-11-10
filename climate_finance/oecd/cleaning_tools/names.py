@@ -153,9 +153,31 @@ def add_provider_agency_names(data: pd.DataFrame) -> pd.DataFrame:
     if CrsSchema.AGENCY_NAME in data.columns:
         data = data.drop(columns=CrsSchema.AGENCY_NAME)
 
-    return data.pipe(
-        _add_names, names=names, idx=[CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE]
+    if not (
+        CrsSchema.PARTY_CODE in data.columns and CrsSchema.AGENCY_CODE in data.columns
+    ):
+        raise ValueError("The data must contain both party and agency codes")
+
+    idx = [CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE]
+    data = data.pipe(_add_names, names=names, idx=idx)
+
+    provider_names = read_provider_names()
+    data = data.pipe(idx_to_str, idx=CrsSchema.PARTY_CODE)
+    provider_names = provider_names.pipe(idx_to_str, idx=CrsSchema.PARTY_CODE)
+
+    # Add the names to the data
+    data = data.merge(
+        provider_names,
+        on=CrsSchema.PARTY_CODE,
+        how="left",
+        suffixes=("", "_names"),
     )
+
+    data[CrsSchema.PARTY_NAME] = data[CrsSchema.PARTY_NAME].fillna(
+        data[f"{CrsSchema.PARTY_NAME}_names"]
+    )
+
+    return data.drop(columns=[f"{CrsSchema.PARTY_NAME}_names"]).pipe(set_crs_data_types)
 
 
 def add_provider_names(data: pd.DataFrame) -> pd.DataFrame:
