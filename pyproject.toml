@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "climate-finance"
-version = "0.1.18"
+version = "0.1.19"
 description = "Climate Finance data"
 authors = ["Jorge Rivera, The ONE Campaign"]
 license = "MIT"
