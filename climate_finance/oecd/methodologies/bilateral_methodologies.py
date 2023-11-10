@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 from climate_finance.oecd.cleaning_tools.schema import (
@@ -93,40 +94,32 @@ def melt_crs_climate_indicators_one(
         A dataframe with melted climate indicators.
     """
 
+    climate_df = df.copy(deep=True).loc[
+        lambda d: (d[CrsSchema.MITIGATION] > 0) | (d[CrsSchema.ADAPTATION] > 0)
+    ]
+
+    # apply coefficient
+    climate_df.loc[
+        lambda d: (d[CrsSchema.MITIGATION] < 2) & (d[CrsSchema.ADAPTATION] < 2),
+        CrsSchema.VALUE,
+    ] *= percentage_significant
+
+    # Drop cross-cutting
+    climate_df = climate_df.loc[
+        lambda d: (d[CrsSchema.MITIGATION] != d[CrsSchema.ADAPTATION])
+    ]
+
+    # Select the highest marker
+    climate_df[CrsSchema.INDICATOR] = np.where(
+        climate_df[CrsSchema.MITIGATION] > climate_df[CrsSchema.ADAPTATION],
+        CrsSchema.MITIGATION,
+        CrsSchema.ADAPTATION,
+    )
+
     # get all columns except the indicators
     melted_cols = [c for c in df.columns if c not in climate_indicators]
 
-    # melt the dataframe to get the indicators as a column
-    melted_df = df.melt(
-        id_vars=melted_cols,
-        value_vars=climate_indicators,
-        var_name=CrsSchema.INDICATOR,
-        value_name="indicator_value",
-    ).astype({"indicator_value": "Int16"})
-
-    # keep only where the indicator value is larger than 0
-    melted_df = _filter_positive_indicator_values(data=melted_df)
-
-    # if indicator_value is equal to 1, multiply the value for the indicator by 0.4
-    melted_df.loc[melted_df["indicator_value"] == 1, "value"] *= percentage_significant
-
-    # Find the maximum indicator_value for each group
-    max_values = _get_max_values_per_group(data=melted_df, melted_cols=melted_cols)
-
-    # Merge to tag the rows with the max value
-    merged = _tag_rows_with_max_values(
-        data=melted_df, max_values=max_values, melted_cols=melted_cols
-    )
-
-    # Filter out groups where there are multiple rows with the same max value
-    unique_max_groups = _get_unique_max_groups(data=merged, melted_cols=melted_cols)
-
-    # Directly filter the merged dataframe based on unique_max_groups
-    final_df = pd.merge(
-        merged, unique_max_groups, on=melted_cols + ["indicator_value"], how="inner"
-    )
-
-    return final_df[melted_cols + [CrsSchema.INDICATOR]]
+    return climate_df[melted_cols + [CrsSchema.INDICATOR]]
 
 
 def get_cross_cutting_data_oecd(
@@ -159,7 +152,9 @@ def get_cross_cutting_data_oecd(
 
 
 def get_cross_cutting_data_one(
-    df: pd.DataFrame, cross_cutting_threshold: int = 0
+    df: pd.DataFrame,
+    cross_cutting_threshold: int = 0,
+    percentage_significant: float = 0.4,
 ) -> pd.DataFrame:
     """
     Get cross cutting data. This is data where both climate mitigation and climate
@@ -176,7 +171,7 @@ def get_cross_cutting_data_one(
         'climate_cross_cutting'.
 
     """
-    return (
+    cross_cutting = (
         df[
             (df[CrsSchema.MITIGATION] > cross_cutting_threshold)
             & (df[CrsSchema.ADAPTATION] > cross_cutting_threshold)
@@ -184,8 +179,18 @@ def get_cross_cutting_data_one(
         ]
         .copy()
         .assign(**{CrsSchema.INDICATOR: CrsSchema.CROSS_CUTTING})
-        .drop(columns=[CrsSchema.MITIGATION, CrsSchema.ADAPTATION])
     )
+
+    # apply coefficient
+    cross_cutting.loc[
+        lambda d: (d[CrsSchema.MITIGATION] < 2) & (d[CrsSchema.ADAPTATION] < 2),
+        CrsSchema.VALUE,
+    ] *= percentage_significant
+
+    cross_cutting = cross_cutting.drop(
+        columns=[CrsSchema.MITIGATION, CrsSchema.ADAPTATION]
+    )
+    return cross_cutting
 
 
 def _get_not_climate_relevant_data(df: pd.DataFrame) -> pd.DataFrame:
