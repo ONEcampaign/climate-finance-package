@@ -10,7 +10,7 @@ from climate_finance.oecd.cleaning_tools.tools import (
     convert_flows_millions_to_units,
     assign_usd_commitments_as_flow_type,
 )
-from climate_finance.methodologies.imputed_multilateral.tools import log_notes
+from climate_finance.methodologies.multilateral.tools import log_notes
 from climate_finance.unfccc.cleaning_tools.channels import (
     generate_channel_mapping_dictionary,
 )
