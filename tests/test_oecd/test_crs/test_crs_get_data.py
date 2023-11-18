@@ -5,13 +5,12 @@ from pandas._testing import assert_frame_equal
 
 from climate_finance.oecd.cleaning_tools.tools import (
     rename_crs_columns,
-    set_crs_data_types,
+    set_crs_data_types, keep_only_allocable_aid,
 )
 from climate_finance.oecd.crs.get_data import (
     _add_net_disbursement,
     _get_flow_columns,
     _get_relevant_crs_columns,
-    keep_only_allocable_aid,
     _replace_missing_climate_with_zero,
     get_crs_allocable_spending,
 )

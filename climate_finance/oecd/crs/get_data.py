@@ -5,39 +5,11 @@ from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.tools import (
     convert_flows_millions_to_units,
     rename_crs_columns,
-    set_crs_data_types,
+    set_crs_data_types, keep_only_allocable_aid,
 )
 from climate_finance.common.schema import ClimateSchema
 
 set_data_path(ClimateDataPath.raw_data)
-
-
-def keep_only_allocable_aid(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Filters the dataframe to retain only specific aid types considered allocable.
-
-    Args:
-        df (pd.DataFrame): The input dataframe with aid data.
-
-    Returns:
-        pd.DataFrame: A dataframe containing only the rows with allocable aid types."""
-
-    aid_types = [
-        "A02",
-        "B01",
-        "B03",
-        "B031",
-        "B032",
-        "B033",
-        "B04",
-        "C01",
-        "D01",
-        "D02",
-        "E01",
-    ]
-    return df.loc[lambda d: d[ClimateSchema.FLOW_MODALITY].isin(aid_types)].reset_index(
-        drop=True
-    )
 
 
 def _get_relevant_crs_columns() -> list:
@@ -119,7 +91,7 @@ def _add_net_disbursement(df: pd.DataFrame) -> pd.DataFrame:
             ClimateSchema.USD_NET_DISBURSEMENT: lambda d: d[
                 ClimateSchema.USD_DISBURSEMENT
             ].fillna(0)
-                                                          - d[ClimateSchema.USD_RECEIVED].fillna(0)
+            - d[ClimateSchema.USD_RECEIVED].fillna(0)
         }
     )
 

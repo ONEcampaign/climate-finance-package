@@ -3,7 +3,7 @@ import pandas as pd
 from oda_data import donor_groupings, set_data_path
 
 from climate_finance.config import ClimateDataPath
-from climate_finance.common.schema import CRS_MAPPING, CRS_TYPES
+from climate_finance.common.schema import CRS_MAPPING, CRS_TYPES, ClimateSchema
 
 set_data_path(ClimateDataPath.raw_data)
 
@@ -341,3 +341,31 @@ def idx_to_str(df: pd.DataFrame, idx: list[str]) -> pd.DataFrame:
     """
 
     return df.astype({c: "str" for c in idx if c in df.columns})
+
+
+def keep_only_allocable_aid(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Filters the dataframe to retain only specific aid types considered allocable.
+
+    Args:
+        df (pd.DataFrame): The input dataframe with aid data.
+
+    Returns:
+        pd.DataFrame: A dataframe containing only the rows with allocable aid types."""
+
+    aid_types = [
+        "A02",
+        "B01",
+        "B03",
+        "B031",
+        "B032",
+        "B033",
+        "B04",
+        "C01",
+        "D01",
+        "D02",
+        "E01",
+    ]
+    return df.loc[lambda d: d[ClimateSchema.FLOW_MODALITY].isin(aid_types)].reset_index(
+        drop=True
+    )
