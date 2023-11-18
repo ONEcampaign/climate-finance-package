@@ -2,31 +2,19 @@ import pandas as pd
 from oda_data import read_crs, set_data_path, download_crs
 
 from climate_finance.config import ClimateDataPath
-from climate_finance.oecd.cleaning_tools.settings import relevant_crs_columns, all_flow_columns
+from climate_finance.oecd.cleaning_tools.settings import (
+    relevant_crs_columns,
+    all_flow_columns,
+)
 from climate_finance.oecd.cleaning_tools.tools import (
     convert_flows_millions_to_units,
     rename_crs_columns,
-    set_crs_data_types, keep_only_allocable_aid,
+    set_crs_data_types,
+    keep_only_allocable_aid, replace_missing_climate_with_zero,
 )
 from climate_finance.common.schema import ClimateSchema
 
 set_data_path(ClimateDataPath.raw_data)
-
-
-def _replace_missing_climate_with_zero(df: pd.DataFrame, column: str) -> pd.DataFrame:
-    """
-    Replaces missing values in a specified column with an empty string.
-
-    Args:
-        df (pd.DataFrame): The input dataframe with CRS data.
-        column (str): The name of the column in which to replace missing values.
-
-    Returns:
-        pd.DataFrame: The dataframe with missing values in the specified column
-        replaced by an empty string.
-    """
-
-    return df.assign(**{column: lambda d: d[column].replace("nan", "0")})
 
 
 def _add_net_disbursement(df: pd.DataFrame) -> pd.DataFrame:
@@ -110,8 +98,8 @@ def get_crs(
             .str.replace("\ufeff", "", regex=True)
         )  # fix year
         .pipe(set_crs_data_types)  # Set data types
-        .pipe(_replace_missing_climate_with_zero, column=ClimateSchema.MITIGATION)
-        .pipe(_replace_missing_climate_with_zero, column=ClimateSchema.ADAPTATION)
+        .pipe(replace_missing_climate_with_zero, column=ClimateSchema.MITIGATION)
+        .pipe(replace_missing_climate_with_zero, column=ClimateSchema.ADAPTATION)
         .astype({ClimateSchema.MITIGATION: "Int16", ClimateSchema.ADAPTATION: "Int16"})
         .pipe(convert_flows_millions_to_units, flow_columns=flow_columns)
         .filter(items=groupby + flow_columns)

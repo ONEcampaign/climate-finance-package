@@ -5,11 +5,10 @@ from pandas._testing import assert_frame_equal
 
 from climate_finance.oecd.cleaning_tools.tools import (
     rename_crs_columns,
-    set_crs_data_types, keep_only_allocable_aid,
+    set_crs_data_types, keep_only_allocable_aid, replace_missing_climate_with_zero,
 )
 from climate_finance.oecd.crs.get_data import (
     _add_net_disbursement,
-    _replace_missing_climate_with_zero,
     get_crs_allocable_spending,
 )
 from climate_finance.oecd.cleaning_tools.settings import relevant_crs_columns, all_flow_columns
@@ -127,7 +126,7 @@ def test_replace_missing_climate_with_zero():
     )
 
     # Call the function
-    result = _replace_missing_climate_with_zero(df, "climate_mitigation")
+    result = replace_missing_climate_with_zero(df, "climate_mitigation")
 
     # Check if the resulting DataFrame has no missing values in the specified column
     assert result["climate_mitigation"].isnull().sum() == 0

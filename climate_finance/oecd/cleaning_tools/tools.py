@@ -369,3 +369,19 @@ def keep_only_allocable_aid(df: pd.DataFrame) -> pd.DataFrame:
     return df.loc[lambda d: d[ClimateSchema.FLOW_MODALITY].isin(aid_types)].reset_index(
         drop=True
     )
+
+
+def replace_missing_climate_with_zero(df: pd.DataFrame, column: str) -> pd.DataFrame:
+    """
+    Replaces missing values in a specified column with an empty string.
+
+    Args:
+        df (pd.DataFrame): The input dataframe with CRS data.
+        column (str): The name of the column in which to replace missing values.
+
+    Returns:
+        pd.DataFrame: The dataframe with missing values in the specified column
+        replaced by an empty string.
+    """
+
+    return df.assign(**{column: lambda d: d[column].replace("nan", "0")})
