@@ -68,36 +68,6 @@ MULTI_COLUMNS: list = [
     ClimateSchema.SHARE,
 ]
 
-def get_overlap(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Get the overlap data. In the recipient view, this is a specific column. It caputres
-    where the same project is marked as both adaptation and mitigation.
-
-    Args:
-        df: The dataframe to get the overlap data from.
-
-    Returns:
-        The overlap data.
-
-    """
-    return (
-        df.loc[
-            lambda d: d[ClimateSchema.CROSS_CUTTING_VALUE] > 0
-        ]  # Only where overlap is > 0
-        .copy()  # Make a copy of the dataframe
-        .assign(
-            indicator=ClimateSchema.CROSS_CUTTING
-        )  # Add a column with the marker name
-        .rename(
-            columns={ClimateSchema.CROSS_CUTTING_VALUE: ClimateSchema.VALUE}
-        )  # Rename overlap
-        .drop_duplicates(subset=UNIQUE_INDEX, keep="first")  # Drop duplicates
-        .assign(
-            share=lambda d: d[ClimateSchema.VALUE] / d[ClimateSchema.TOTAL_VALUE]
-        )  # Add a share column
-        .drop(columns=[ClimateSchema.CLIMATE_FINANCE_VALUE])  # Drop the total column
-    )
-
 
 def get_recipient_perspective(
     start_year: int,
