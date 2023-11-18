@@ -10,10 +10,10 @@ from climate_finance.oecd.cleaning_tools.tools import (
 from climate_finance.oecd.crs.get_data import (
     _add_net_disbursement,
     _get_flow_columns,
-    _get_relevant_crs_columns,
     _replace_missing_climate_with_zero,
     get_crs_allocable_spending,
 )
+from climate_finance.oecd.cleaning_tools.settings import relevant_crs_columns
 
 
 def test_keep_only_allocable_aid():
@@ -49,7 +49,7 @@ def test_keep_only_allocable_aid():
 
 
 def test_get_relevant_crs_columns():
-    assert isinstance(_get_relevant_crs_columns(), list)
+    assert isinstance(relevant_crs_columns(), list)
 
 
 def test_rename_crs_columns():

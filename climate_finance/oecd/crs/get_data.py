@@ -2,6 +2,7 @@ import pandas as pd
 from oda_data import read_crs, set_data_path, download_crs
 
 from climate_finance.config import ClimateDataPath
+from climate_finance.oecd.cleaning_tools.settings import relevant_crs_columns
 from climate_finance.oecd.cleaning_tools.tools import (
     convert_flows_millions_to_units,
     rename_crs_columns,
@@ -10,37 +11,6 @@ from climate_finance.oecd.cleaning_tools.tools import (
 from climate_finance.common.schema import ClimateSchema
 
 set_data_path(ClimateDataPath.raw_data)
-
-
-def _get_relevant_crs_columns() -> list:
-    """
-    Fetches the list of relevant columns from the CRS data for data extraction.
-
-    Returns:
-        list: A list of column names considered relevant for data extraction."""
-
-    return [
-        ClimateSchema.YEAR,
-        ClimateSchema.PROVIDER_CODE,
-        ClimateSchema.PROVIDER_NAME,
-        ClimateSchema.AGENCY_NAME,
-        ClimateSchema.AGENCY_CODE,
-        ClimateSchema.RECIPIENT_CODE,
-        ClimateSchema.RECIPIENT_NAME,
-        ClimateSchema.FLOW_CODE,
-        ClimateSchema.FLOW_NAME,
-        ClimateSchema.SECTOR_CODE,
-        ClimateSchema.SECTOR_NAME,
-        ClimateSchema.PURPOSE_CODE,
-        ClimateSchema.PURPOSE_NAME,
-        ClimateSchema.PROJECT_TITLE,
-        ClimateSchema.CRS_ID,
-        ClimateSchema.PROJECT_ID,
-        ClimateSchema.PROJECT_DESCRIPTION,
-        ClimateSchema.FINANCE_TYPE,
-        ClimateSchema.MITIGATION,
-        ClimateSchema.ADAPTATION,
-    ]
 
 
 def _get_flow_columns() -> list:
@@ -127,7 +97,7 @@ def get_crs(
         download_crs(years=years)
 
     # get relevant columns
-    columns = _get_relevant_crs_columns() + [ClimateSchema.FLOW_MODALITY]
+    columns = relevant_crs_columns() + [ClimateSchema.FLOW_MODALITY]
 
     # get flow columns
     flow_columns = _get_flow_columns()
