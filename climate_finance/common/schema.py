@@ -139,6 +139,11 @@ MULTISYSTEM_INDICATORS: dict = {
     "multisystem_multilateral_contributions_commitments_gross": ClimateSchema.USD_COMMITMENT,
 }
 
+CRS_CLIMATE_COLUMNS: list[str] = [
+    ClimateSchema.ADAPTATION,
+    ClimateSchema.MITIGATION,
+]
+
 VALUE_COLUMNS: list[str] = [
     ClimateSchema.ADAPTATION_VALUE,
     ClimateSchema.MITIGATION_VALUE,

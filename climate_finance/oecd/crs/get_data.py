@@ -1,7 +1,10 @@
 import pandas as pd
 from oda_data import read_crs, set_data_path, download_crs
 
-from climate_finance.common.analysis_tools import add_net_disbursement
+from climate_finance.common.analysis_tools import (
+    add_net_disbursement,
+    check_provider_codes_type,
+)
 from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.settings import (
     relevant_crs_columns,
@@ -13,10 +16,32 @@ from climate_finance.oecd.cleaning_tools.tools import (
     set_crs_data_types,
     keep_only_allocable_aid,
     replace_missing_climate_with_zero,
+    key_crs_columns_to_str,
+    fix_crs_year_encoding,
+    clean_adaptation_and_mitigation_columns,
 )
 from climate_finance.common.schema import ClimateSchema
 
 set_data_path(ClimateDataPath.raw_data)
+
+
+def _read_clean_crs(years: list[int] | range) -> pd.DataFrame:
+    """Helper function to get a copy of the CRS with clean column names
+    and correct data types.
+
+    Args:
+        years (list[int]): The years to read.
+
+    Returns:
+        pd.DataFrame: A dataframe with clean column names and correct data types.
+
+    """
+    return (
+        read_crs(years=years)
+        .pipe(rename_crs_columns)
+        .pipe(key_crs_columns_to_str)
+        .pipe(fix_crs_year_encoding)
+    )
 
 
 def get_crs(
@@ -49,7 +74,7 @@ def get_crs(
     if force_update:
         download_crs(years=years)
 
-    # get relevant columns
+    # get relevant columns plus flow modality
     columns = relevant_crs_columns() + [ClimateSchema.FLOW_MODALITY]
 
     # get flow columns
@@ -62,27 +87,20 @@ def get_crs(
     # check that groupby is unique and includes flow_type
     groupby = list(dict.fromkeys(groupby + [ClimateSchema.FLOW_TYPE]))
 
-    # Pipeline
-    crs = read_crs(years=years).pipe(rename_crs_columns)  # Read CRS data
+    # Read CRS and rename columns
+    crs = _read_clean_crs(years=years)
 
+    # Filter by provider code
     if provider_code is not None:
-        if isinstance(provider_code, str):
-            provider_code = [provider_code]
+        provider_code = check_provider_codes_type(provider_codes=provider_code)
         crs = crs.loc[lambda d: d[ClimateSchema.PROVIDER_CODE].isin(provider_code)]
 
+    # Add net disbursement
     crs = crs.pipe(add_net_disbursement)
 
     crs = (
         crs.filter(columns + flow_columns, axis=1)  # Keep only relevant columns
-        .assign(
-            year=lambda d: d[ClimateSchema.YEAR]
-            .astype("str")
-            .str.replace("\ufeff", "", regex=True)
-        )  # fix year
-        .pipe(set_crs_data_types)  # Set data types
-        .pipe(replace_missing_climate_with_zero, column=ClimateSchema.MITIGATION)
-        .pipe(replace_missing_climate_with_zero, column=ClimateSchema.ADAPTATION)
-        .astype({ClimateSchema.MITIGATION: "Int16", ClimateSchema.ADAPTATION: "Int16"})
+        .pipe(clean_adaptation_and_mitigation_columns)
         .pipe(convert_flows_millions_to_units, flow_columns=flow_columns)
         .filter(items=groupby + flow_columns)
         .melt(
@@ -154,8 +172,12 @@ def get_crs_allocable_to_total_ratio(
     ]
 
     # Pipeline
-    crs = get_crs(start_year=start_year, end_year=end_year, groupby=simpler_columns,
-                  force_update=force_update)
+    crs = get_crs(
+        start_year=start_year,
+        end_year=end_year,
+        groupby=simpler_columns,
+        force_update=force_update,
+    )
 
     total = (
         crs.copy()
@@ -198,3 +220,6 @@ def get_crs_allocable_to_total_ratio(
     )
 
     return data
+
+
+get_crs(2020,2021)

@@ -3,7 +3,13 @@ import pandas as pd
 from oda_data import donor_groupings, set_data_path
 
 from climate_finance.config import ClimateDataPath
-from climate_finance.common.schema import CRS_MAPPING, CRS_TYPES, ClimateSchema
+from climate_finance.common.schema import (
+    CRS_MAPPING,
+    CRS_TYPES,
+    ClimateSchema,
+    CRS_CLIMATE_COLUMNS,
+)
+from climate_finance.oecd.cleaning_tools.settings import relevant_crs_columns
 
 set_data_path(ClimateDataPath.raw_data)
 
@@ -385,3 +391,34 @@ def replace_missing_climate_with_zero(df: pd.DataFrame, column: str) -> pd.DataF
     """
 
     return df.assign(**{column: lambda d: d[column].replace("nan", "0")})
+
+
+def key_crs_columns_to_str(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure right data types are set"""
+
+    key_crs_columns = set(
+        c
+        for c in relevant_crs_columns()
+        + [ClimateSchema.FLOW_TYPE, ClimateSchema.FLOW_MODALITY]
+        if c not in [ClimateSchema.ADAPTATION, ClimateSchema.MITIGATION]
+    )
+
+    return df.astype({c: "str" for c in key_crs_columns if c in df.columns}).astype(
+        {c: "Int16" for c in CRS_CLIMATE_COLUMNS}
+    )
+
+
+def fix_crs_year_encoding(df: pd.DataFrame) -> pd.DataFrame:
+    return df.assign(
+        **{
+            ClimateSchema.YEAR: lambda d: d[ClimateSchema.YEAR]
+            .astype("str")
+            .str.replace("\ufeff", "", regex=True)
+        }
+    )
+
+
+def clean_adaptation_and_mitigation_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df[CRS_CLIMATE_COLUMNS] = df[CRS_CLIMATE_COLUMNS].fillna(0)
+
+    return df
