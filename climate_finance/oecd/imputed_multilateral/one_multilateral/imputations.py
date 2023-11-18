@@ -7,8 +7,8 @@ from climate_finance.common.schema import (
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
 from climate_finance.oecd.crs.get_data import (
     get_crs_allocable_spending,
-    get_crs_allocable_to_total_ratio,
 )
+from climate_finance.common.analysis_tools import get_crs_allocable_to_total_ratio
 from climate_finance.oecd.imputed_multilateral.one_multilateral.shares import (
     one_multilateral_spending,
 )

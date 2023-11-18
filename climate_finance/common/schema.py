@@ -18,6 +18,7 @@ class ClimateSchema:
     RECIPIENT_REGION_CODE: str = "oecd_recipient_region_code"
     RECIPIENT_INCOME: str = "oecd_recipient_income"
     FLOW_MODALITY: str = "modality"
+    ALLOCABLE_SHARE: str = "allocable_share"
     CONCESSIONALITY: str = "concessionality"
     FINANCIAL_INSTRUMENT: str = "financial_instrument"
     FLOW_TYPE: str = "flow_type"

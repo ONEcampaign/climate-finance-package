@@ -5,6 +5,7 @@ from climate_finance.common.analysis_tools import (
     add_net_disbursement,
     check_provider_codes_type,
 )
+from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.settings import (
     relevant_crs_columns,
@@ -13,14 +14,11 @@ from climate_finance.oecd.cleaning_tools.settings import (
 from climate_finance.oecd.cleaning_tools.tools import (
     convert_flows_millions_to_units,
     rename_crs_columns,
-    set_crs_data_types,
     keep_only_allocable_aid,
-    replace_missing_climate_with_zero,
     key_crs_columns_to_str,
     fix_crs_year_encoding,
     clean_adaptation_and_mitigation_columns,
 )
-from climate_finance.common.schema import ClimateSchema
 
 set_data_path(ClimateDataPath.raw_data)
 
@@ -124,6 +122,7 @@ def get_crs(
 def get_crs_allocable_spending(
     start_year: int = 2019,
     end_year: int = 2020,
+    provider_code: list[str] | str | None = None,
     force_update: bool = False,
 ) -> pd.DataFrame:
     """
@@ -132,6 +131,7 @@ def get_crs_allocable_spending(
     Args:
         start_year (int, optional): The starting year for data extraction. Defaults to 2019.
         end_year (int, optional): The ending year for data extraction. Defaults to 2020.
+        provider_code (list[str] | str, optional): The provider code(s) to filter the data by.
         force_update (bool, optional): If True, the data is updated from the source.
         Defaults to False.
 
@@ -139,87 +139,13 @@ def get_crs_allocable_spending(
         pd.DataFrame: A dataframe containing bilateral spending data for
         the specified flow type and time period.
     """
-    crs = get_crs(start_year=start_year, end_year=end_year, force_update=force_update)
+    crs = get_crs(
+        start_year=start_year,
+        end_year=end_year,
+        provider_code=provider_code,
+        force_update=force_update,
+    )
 
     crs = crs.pipe(keep_only_allocable_aid)
 
     return crs.reset_index(drop=True)
-
-
-def get_crs_allocable_to_total_ratio(
-    start_year: int = 2019, end_year: int = 2020, force_update: bool = False
-) -> pd.DataFrame:
-    """
-    Fetches bilateral spending data for a given flow type and time period.
-
-    Args:
-        start_year (int, optional): The starting year for data extraction. Defaults to 2019.
-        end_year (int, optional): The ending year for data extraction. Defaults to 2020.
-        force_update (bool, optional): If True, the data is updated from the source.
-        Defaults to False.
-
-    Returns:
-        pd.DataFrame: A dataframe containing bilateral spending data for
-        the specified flow type and time period.
-    """
-
-    simpler_columns = [
-        ClimateSchema.YEAR,
-        ClimateSchema.PROVIDER_CODE,
-        ClimateSchema.AGENCY_CODE,
-        ClimateSchema.FLOW_MODALITY,
-        ClimateSchema.FLOW_TYPE,
-    ]
-
-    # Pipeline
-    crs = get_crs(
-        start_year=start_year,
-        end_year=end_year,
-        groupby=simpler_columns,
-        force_update=force_update,
-    )
-
-    total = (
-        crs.copy()
-        .assign(**{ClimateSchema.FLOW_MODALITY: "total"})
-        .groupby(
-            simpler_columns,
-            dropna=False,
-            observed=True,
-        )
-        .sum(numeric_only=True)
-        .reset_index()
-    )
-
-    allocable = (
-        crs.pipe(keep_only_allocable_aid)
-        .assign(**{ClimateSchema.FLOW_MODALITY: "bilateral_allocable"})
-        .groupby(
-            simpler_columns,
-            as_index=False,
-            dropna=False,
-            observed=True,
-        )
-        .sum(numeric_only=True)
-    )
-
-    data = pd.concat([allocable, total], ignore_index=True)
-
-    data = (
-        data.pivot(
-            index=[
-                c
-                for c in data.columns
-                if c not in [ClimateSchema.VALUE, ClimateSchema.FLOW_MODALITY]
-            ],
-            columns=ClimateSchema.FLOW_MODALITY,
-            values=ClimateSchema.VALUE,
-        )
-        .reset_index()
-        .assign(allocable_share=lambda d: (d.bilateral_allocable / d.total).fillna(0))
-    )
-
-    return data
-
-
-get_crs(2020,2021)
