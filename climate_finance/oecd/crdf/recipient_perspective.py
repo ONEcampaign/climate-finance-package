@@ -69,29 +69,6 @@ MULTI_COLUMNS: list = [
 ]
 
 
-def add_imputed_total(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Add an imputed total column to the dataframe.
-    This is done by dividing the climate related development finance commitment
-    by the share of the underlying commitment.
-
-    Args:
-        df: The dataframe to add the imputed total to.
-
-    Returns:
-        The dataframe with the imputed total added.
-
-    """
-
-    # Add imputed total
-    df[ClimateSchema.TOTAL_VALUE] = (
-        df[ClimateSchema.CLIMATE_FINANCE_VALUE]
-        / df[ClimateSchema.COMMITMENT_CLIMATE_SHARE]
-    )
-
-    return df
-
-
 def get_marker_data_and_share(df: pd.DataFrame, marker: str):
     """
     Get the marker data for a given marker.
