@@ -2,7 +2,7 @@ import pandas as pd
 from oda_data import read_crs, set_data_path, download_crs
 
 from climate_finance.config import ClimateDataPath
-from climate_finance.oecd.cleaning_tools.settings import relevant_crs_columns
+from climate_finance.oecd.cleaning_tools.settings import relevant_crs_columns, all_flow_columns
 from climate_finance.oecd.cleaning_tools.tools import (
     convert_flows_millions_to_units,
     rename_crs_columns,
@@ -11,23 +11,6 @@ from climate_finance.oecd.cleaning_tools.tools import (
 from climate_finance.common.schema import ClimateSchema
 
 set_data_path(ClimateDataPath.raw_data)
-
-
-def _get_flow_columns() -> list:
-    """
-    Fetches the list of flow columns from the CRS data for data extraction.
-
-    Returns:
-        list: A list of column names considered relevant for data extraction.
-
-    """
-    return [
-        ClimateSchema.USD_COMMITMENT,
-        ClimateSchema.USD_DISBURSEMENT,
-        ClimateSchema.USD_RECEIVED,
-        ClimateSchema.USD_GRANT_EQUIV,
-        ClimateSchema.USD_NET_DISBURSEMENT,
-    ]
 
 
 def _replace_missing_climate_with_zero(df: pd.DataFrame, column: str) -> pd.DataFrame:
@@ -100,7 +83,7 @@ def get_crs(
     columns = relevant_crs_columns() + [ClimateSchema.FLOW_MODALITY]
 
     # get flow columns
-    flow_columns = _get_flow_columns()
+    flow_columns = all_flow_columns()
 
     # set the right grouper
     if groupby is None:

@@ -30,3 +30,20 @@ def relevant_crs_columns() -> list:
         ClimateSchema.MITIGATION,
         ClimateSchema.ADAPTATION,
     ]
+
+
+def all_flow_columns() -> list:
+    """
+    Fetches the list of flow columns from the CRS data for data extraction.
+
+    Returns:
+        list: A list of column names considered relevant for data extraction.
+
+    """
+    return [
+        ClimateSchema.USD_COMMITMENT,
+        ClimateSchema.USD_DISBURSEMENT,
+        ClimateSchema.USD_RECEIVED,
+        ClimateSchema.USD_GRANT_EQUIV,
+        ClimateSchema.USD_NET_DISBURSEMENT,
+    ]
