@@ -1,15 +1,20 @@
 import pandas as pd
 from oda_data import ODAData, set_data_path
 
-from climate_finance.config import ClimateDataPath
+from climate_finance.common.analysis_tools import filter_providers
 from climate_finance.common.schema import (
     ClimateSchema,
     MULTISYSTEM_INDICATORS,
     CRS_MAPPING,
+    MULTISYSTEM_COLUMNS,
 )
+from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.tools import (
     convert_flows_millions_to_units,
-    get_crs_official_mapping,
+    get_crs_channel_code2name_mapping,
+    channel_codes_to_names,
+    clean_multisystem_indicators,
+    key_crs_columns_to_str,
 )
 
 set_data_path(ClimateDataPath.raw_data)
@@ -26,61 +31,47 @@ def _clean_multi_contributions(df: pd.DataFrame) -> pd.DataFrame:
 
     """
 
-    # define the columns to keep and their new names
-    columns = {
-        "year": ClimateSchema.YEAR,
-        "indicator": ClimateSchema.FLOW_TYPE,
-        "donor_code": ClimateSchema.PROVIDER_CODE,
-        "donor_name": ClimateSchema.PROVIDER_NAME,
-        "channel_code": ClimateSchema.CHANNEL_CODE,
-        "channel_name": ClimateSchema.CHANNEL_NAME,
-        "value": ClimateSchema.VALUE,
-    }
+    # rename columns
+    df = df.rename(columns=CRS_MAPPING)
 
-    # Get the CRS channel names (mapped by channel code)
-    channel_mapping = (
-        get_crs_official_mapping()
-        .rename(columns=CRS_MAPPING)
-        .set_index(ClimateSchema.CHANNEL_CODE)[ClimateSchema.CHANNEL_NAME]
-        .to_dict()
-    )
+    # convert to millions
+    df = convert_flows_millions_to_units(df, flow_columns=[ClimateSchema.VALUE])
 
-    return (
-        df.rename(columns=CRS_MAPPING)
-        .pipe(
-            convert_flows_millions_to_units, flow_columns=[ClimateSchema.VALUE]
-        )  # convert to millions
-        .assign(
-            indicator=lambda d: d.indicator.map(
-                MULTISYSTEM_INDICATORS
-            ),  # rename indicator
-            channel_name=lambda d: d[ClimateSchema.CHANNEL_CODE].map(
-                channel_mapping
-            ),  # map channel name
-        )
-        .rename(columns=columns)  # rename columns
-        .filter(columns.values(), axis=1)  # keep only relevant columns
+    # rename indicators
+    df = clean_multisystem_indicators(df)
+
+    # map channel names
+    df = channel_codes_to_names(df)
+
+    # clean output
+    df = (
+        df.filter(MULTISYSTEM_COLUMNS)
+        .pipe(key_crs_columns_to_str)
         .groupby(
-            [c for c in columns.values() if c != ClimateSchema.VALUE],
-            as_index=False,
+            by=[c for c in MULTISYSTEM_COLUMNS if c != ClimateSchema.VALUE],
             dropna=False,
             observed=True,
         )
-        .sum()  # summarise the data
+        .sum(numeric_only=True)
+        .reset_index()
     )
+
+    return df
 
 
 def get_multilateral_contributions(
-    start_year: int = 2019,
-    end_year: int = 2021,
+    start_year: int,
+    end_year: int,
+    provider_code: list[str] | str | int | None = None,
 ) -> pd.DataFrame:
     """Get the multilateral contributions data from the OECD.
 
     This script also handles cleaning and reshaping the data.
 
     Args:
-        start_year (int, optional): The start year. Defaults to 2019.
-        end_year (int, optional): The end year. Defaults to 2021.
+        start_year (int, optional): The start year
+        end_year (int, optional): The end year
+        provider_code (list[str] | str, optional): The provider code(s) to filter the data by.
 
     """
 
@@ -93,4 +84,10 @@ def get_multilateral_contributions(
     # Get all the data that has been loaded. Clean the dataframe.
     data = oda.get_data().pipe(_clean_multi_contributions)
 
-    return data
+    data = filter_providers(data=data, provider_codes=provider_code)
+
+    return data.reset_index(drop=True)
+
+
+if __name__ == "__main__":
+    df = get_multilateral_contributions(start_year=2019, end_year=2021)

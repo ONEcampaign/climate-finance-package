@@ -9,6 +9,7 @@ from climate_finance.common.schema import (
     ClimateSchema,
     CRS_CLIMATE_COLUMNS,
     OECD_CLIMATE_INDICATORS,
+    MULTISYSTEM_INDICATORS,
 )
 from climate_finance.oecd.cleaning_tools.settings import relevant_crs_columns
 
@@ -660,3 +661,32 @@ def clean_raw_crdf(data: pd.DataFrame) -> pd.DataFrame:
     data = set_crdf_data_types(data)
 
     return data
+
+
+def get_crs_channel_code2name_mapping() -> dict:
+    return (
+        get_crs_official_mapping()
+        .rename(columns=CRS_MAPPING)
+        .set_index(ClimateSchema.CHANNEL_CODE)[ClimateSchema.CHANNEL_NAME]
+        .to_dict()
+    )
+
+
+def channel_codes_to_names(df: pd.DataFrame) -> pd.DataFrame:
+    return df.assign(
+        **{
+            ClimateSchema.CHANNEL_NAME: lambda d: d[ClimateSchema.CHANNEL_CODE].map(
+                get_crs_channel_code2name_mapping()
+            )
+        }
+    )
+
+
+def clean_multisystem_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    return df.assign(
+        **{
+            ClimateSchema.FLOW_TYPE: lambda d: d[ClimateSchema.INDICATOR].map(
+                MULTISYSTEM_INDICATORS
+            )
+        }
+    )

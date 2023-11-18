@@ -185,3 +185,14 @@ CLIMATE_VALUES = [
     ClimateSchema.MITIGATION_VALUE,
     ClimateSchema.CROSS_CUTTING_VALUE,
 ]
+
+
+MULTISYSTEM_COLUMNS: list[str] = [
+    ClimateSchema.YEAR,
+    ClimateSchema.PROVIDER_CODE,
+    ClimateSchema.PROVIDER_NAME,
+    ClimateSchema.FLOW_TYPE,
+    ClimateSchema.CHANNEL_CODE,
+    ClimateSchema.CHANNEL_NAME,
+    ClimateSchema.VALUE,
+]
