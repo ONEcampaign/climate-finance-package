@@ -6,7 +6,7 @@ from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_t
 from climate_finance.oecd.crdf.recipient_perspective import (
     get_recipient_perspective,
 )
-from climate_finance.oecd.imputed_multilateral.crs_tools import (
+from climate_finance.methodologies.imputed_multilateral.crs_tools import (
     add_crs_data_and_transform,
 )
 from climate_finance.unfccc.cleaning_tools.channels import clean_string

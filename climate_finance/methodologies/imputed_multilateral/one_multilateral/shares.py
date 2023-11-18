@@ -5,14 +5,14 @@ from climate_finance.common.schema import ClimateSchema
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types, \
     keep_only_allocable_aid
 from climate_finance.oecd.crs.get_data import get_crs
-from climate_finance.oecd.imputed_multilateral.multilateral_spending_data import (
+from climate_finance.methodologies.imputed_multilateral.multilateral_spending_data import (
     get_multilateral_data,
     add_crs_data,
 )
-from climate_finance.oecd.imputed_multilateral.one_multilateral.climate_components import (
+from climate_finance.methodologies.imputed_multilateral.one_multilateral.climate_components import (
     clean_component,
 )
-from climate_finance.oecd.imputed_multilateral.tools import (
+from climate_finance.methodologies.imputed_multilateral.tools import (
     summarise_by_party_idx,
     compute_rolling_sum,
     merge_total,

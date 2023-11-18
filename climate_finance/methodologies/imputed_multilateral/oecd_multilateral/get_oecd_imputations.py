@@ -6,7 +6,7 @@ from oda_data.get_data.common import fetch_file_from_url_selenium
 
 from climate_finance.config import logger, ClimateDataPath
 from climate_finance.oecd.cleaning_tools.tools import convert_flows_millions_to_units
-from climate_finance.oecd.imputed_multilateral.tools import log_notes
+from climate_finance.methodologies.imputed_multilateral.tools import log_notes
 from climate_finance.unfccc.cleaning_tools.channels import (
     generate_channel_mapping_dictionary,
 )

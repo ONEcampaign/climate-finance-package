@@ -9,10 +9,10 @@ from climate_finance.oecd.crs.get_data import (
     get_crs_allocable_spending,
 )
 from climate_finance.common.analysis_tools import get_crs_allocable_to_total_ratio
-from climate_finance.oecd.imputed_multilateral.one_multilateral.shares import (
+from climate_finance.methodologies.imputed_multilateral.one_multilateral.shares import (
     one_multilateral_spending,
 )
-from climate_finance.oecd.imputed_multilateral.tools import compute_rolling_sum
+from climate_finance.methodologies.imputed_multilateral.tools import compute_rolling_sum
 from climate_finance.oecd.multisystem.get_data import get_multilateral_contributions
 from climate_finance.unfccc.download.pre_process import map_channel_names_to_oecd_codes
 

@@ -1,7 +1,7 @@
 import pandas as pd
 
-from climate_finance.oecd.imputed_multilateral.tools import check_and_filter_parties
-from climate_finance.oecd.methodologies.bilateral_methodologies import (
+from climate_finance.methodologies.imputed_multilateral import check_and_filter_parties
+from climate_finance.methodologies.bilateral.bilateral_methodologies import (
     _melt_crs_climate_indicators_oecd,
     get_cross_cutting_data_oecd,
     _get_not_climate_relevant_data,

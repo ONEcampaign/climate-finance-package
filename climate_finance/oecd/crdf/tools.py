@@ -14,7 +14,7 @@ from climate_finance.oecd.cleaning_tools.tools import (
     marker_columns_to_numeric,
     clean_raw_crdf,
 )
-from climate_finance.oecd.imputed_multilateral.tools import log_notes
+from climate_finance.methodologies.imputed_multilateral import log_notes
 
 
 def get_file_url(year: int, url: str) -> str:

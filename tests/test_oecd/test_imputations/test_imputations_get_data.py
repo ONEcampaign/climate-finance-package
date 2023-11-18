@@ -1,19 +1,18 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pandas as pd
 
-from climate_finance.oecd.imputed_multilateral.oecd_multilateral.get_oecd_imputations import (
+from climate_finance.methodologies.imputed_multilateral.oecd_multilateral.get_oecd_imputations import (
     _add_channel_codes,
     _add_climate_value_columns,
     _clean_df,
     _download_excel_file,
     _merge_dataframes,
-    _read_and_clean_excel_sheets,
     _reorder_imputations_columns,
     download_file,
     get_oecd_multilateral_climate_imputations,
 )
-from climate_finance.oecd.imputed_multilateral.tools import log_notes
+from climate_finance.methodologies.imputed_multilateral import log_notes
 
 
 # Mock logger

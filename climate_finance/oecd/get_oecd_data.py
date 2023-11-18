@@ -1,20 +1,19 @@
 import pandas as pd
 
 from climate_finance.common.schema import CRS_MAPPING
-from climate_finance.oecd.imputed_multilateral.tools import (
+from climate_finance.methodologies.bilateral.bilateral_methodologies import (
+    base_oecd_transform_markers_into_indicators,
+    base_one_transform_markers_into_indicators,
+)
+from climate_finance.methodologies.imputed_multilateral.oecd_multilateral.get_oecd_imputations import (
+    get_oecd_multilateral_climate_imputations,
+)
+from climate_finance.methodologies.imputed_multilateral.tools import (
     base_oecd_multilateral_agency_total,
     base_oecd_multilateral_agency_share,
     check_and_filter_parties,
 )
-
-from climate_finance.oecd.methodologies.bilateral_methodologies import (
-    base_oecd_transform_markers_into_indicators,
-    base_one_transform_markers_into_indicators,
-)
 from climate_finance.oecd.crs.get_data import get_crs_allocable_spending
-from climate_finance.oecd.imputed_multilateral.oecd_multilateral.get_oecd_imputations import (
-    get_oecd_multilateral_climate_imputations,
-)
 
 BILATERAL_CLIMATE_METHODOLOGY: dict[str, callable] = {
     "oecd_bilateral": base_oecd_transform_markers_into_indicators,

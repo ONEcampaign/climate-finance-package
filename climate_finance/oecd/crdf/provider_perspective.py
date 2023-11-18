@@ -13,7 +13,7 @@ from climate_finance.oecd.crdf.tools import (
     get_marker_data,
     load_or_download,
 )
-from climate_finance.oecd.methodologies.bilateral_methodologies import (
+from climate_finance.methodologies.bilateral.bilateral_methodologies import (
     get_cross_cutting_data_oecd,
 )
 
