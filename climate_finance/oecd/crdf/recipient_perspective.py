@@ -6,8 +6,12 @@ from oda_data import set_data_path
 from climate_finance.common.analysis_tools import filter_providers
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import ClimateDataPath
-from climate_finance.oecd.cleaning_tools.tools import marker_columns_to_numeric, \
-    fix_crdf_provider_names_columns, fix_crdf_recipient_errors, assign_usd_commitments_as_flow_type
+from climate_finance.oecd.cleaning_tools.tools import (
+    marker_columns_to_numeric,
+    fix_crdf_provider_names_columns,
+    fix_crdf_recipient_errors,
+    assign_usd_commitments_as_flow_type,
+)
 from climate_finance.oecd.crdf.tools import (
     download_file,
     load_or_download,

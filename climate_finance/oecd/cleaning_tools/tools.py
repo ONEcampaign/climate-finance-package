@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 from oda_data import donor_groupings, set_data_path
 
-from climate_finance.config import ClimateDataPath
 from climate_finance.common.schema import (
     CRS_MAPPING,
     CRS_TYPES,
@@ -11,6 +10,7 @@ from climate_finance.common.schema import (
     OECD_CLIMATE_INDICATORS,
     MULTISYSTEM_INDICATORS,
 )
+from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.settings import relevant_crs_columns
 
 set_data_path(ClimateDataPath.raw_data)

@@ -126,7 +126,6 @@ CRS_MAPPING: dict[str, str] = {
     "type_of_flow": ClimateSchema.FLOW_TYPE,
 }
 
-
 OECD_CLIMATE_INDICATORS: dict[str, str] = {
     ClimateSchema.ADAPTATION: "Adaptation",
     ClimateSchema.MITIGATION: "Mitigation",
@@ -162,7 +161,6 @@ VALUE_COLUMNS: list[str] = [
     ClimateSchema.SHARE,
 ]
 
-
 CRS_TYPES = {
     ClimateSchema.YEAR: "Int32",
     ClimateSchema.PROVIDER_CODE: "Int32",
@@ -185,7 +183,6 @@ CLIMATE_VALUES = [
     ClimateSchema.MITIGATION_VALUE,
     ClimateSchema.CROSS_CUTTING_VALUE,
 ]
-
 
 MULTISYSTEM_COLUMNS: list[str] = [
     ClimateSchema.YEAR,
