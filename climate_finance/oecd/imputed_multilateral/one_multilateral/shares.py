@@ -193,12 +193,9 @@ def one_rolling_shares_methodology(
 
     # Get yearly totals for years present in the data, for ALLOCABLE
     yearly_totals = (
-        get_crs(
-            start_year=start_year,
-            end_year=end_year,
-            groupby=SHARES_IDX + [ClimateSchema.FLOW_MODALITY],
-            party_code=data_by_indicator[ClimateSchema.PROVIDER_CODE].unique().tolist(),
-        )
+        get_crs(start_year=start_year, end_year=end_year,
+                groupby=SHARES_IDX + [ClimateSchema.FLOW_MODALITY],
+                provider_code=data_by_indicator[ClimateSchema.PROVIDER_CODE].unique().tolist())
         .pipe(_filter_flow_types)
         .pipe(keep_only_allocable_aid)
         .pipe(summarise_by_party_idx, idx=SHARES_IDX)

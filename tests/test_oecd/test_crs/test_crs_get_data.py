@@ -8,9 +8,9 @@ from climate_finance.oecd.cleaning_tools.tools import (
     set_crs_data_types, keep_only_allocable_aid, replace_missing_climate_with_zero,
 )
 from climate_finance.oecd.crs.get_data import (
-    _add_net_disbursement,
     get_crs_allocable_spending,
 )
+from climate_finance.common.analysis_tools import add_net_disbursement
 from climate_finance.oecd.cleaning_tools.settings import relevant_crs_columns, all_flow_columns
 
 
@@ -143,7 +143,7 @@ def test_add_net_disbursement():
     )
 
     # Call the function
-    result = _add_net_disbursement(df)
+    result = add_net_disbursement(df)
 
     # Check if the resulting DataFrame has a correct net disbursement column
     expected = pd.DataFrame(

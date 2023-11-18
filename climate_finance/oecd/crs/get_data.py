@@ -1,6 +1,7 @@
 import pandas as pd
 from oda_data import read_crs, set_data_path, download_crs
 
+from climate_finance.common.analysis_tools import add_net_disbursement
 from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.settings import (
     relevant_crs_columns,
@@ -10,38 +11,19 @@ from climate_finance.oecd.cleaning_tools.tools import (
     convert_flows_millions_to_units,
     rename_crs_columns,
     set_crs_data_types,
-    keep_only_allocable_aid, replace_missing_climate_with_zero,
+    keep_only_allocable_aid,
+    replace_missing_climate_with_zero,
 )
 from climate_finance.common.schema import ClimateSchema
 
 set_data_path(ClimateDataPath.raw_data)
 
 
-def _add_net_disbursement(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Adds a column with net disbursement values.
-    Args:
-        df: A dataframe with a usd_disbursement and a usd_received column.
-
-    Returns:
-        A dataframe with a usd_net_disbursement column added.
-
-    """
-    return df.assign(
-        **{
-            ClimateSchema.USD_NET_DISBURSEMENT: lambda d: d[
-                ClimateSchema.USD_DISBURSEMENT
-            ].fillna(0)
-            - d[ClimateSchema.USD_RECEIVED].fillna(0)
-        }
-    )
-
-
 def get_crs(
     start_year: int,
     end_year: int,
     groupby: list = None,
-    party_code: list[str] | str | None = None,
+    provider_code: list[str] | str | None = None,
     force_update: bool = False,
 ) -> pd.DataFrame:
     """
@@ -52,7 +34,7 @@ def get_crs(
         start_year (int, optional): The starting year for data extraction. Defaults to 2019.
         end_year (int, optional): The ending year for data extraction. Defaults to 2020.
         groupby: The columns to group by to aggregate/summarize the data.
-        party_code (list[str] | str, optional): The party code(s) to filter the data by.
+        provider_code (list[str] | str, optional): The party code(s) to filter the data by.
         force_update (bool, optional): If True, the data is updated from the source.
         Defaults to False.
 
@@ -83,12 +65,12 @@ def get_crs(
     # Pipeline
     crs = read_crs(years=years).pipe(rename_crs_columns)  # Read CRS data
 
-    if party_code is not None:
-        if isinstance(party_code, str):
-            party_code = [party_code]
-        crs = crs.loc[lambda d: d[ClimateSchema.PROVIDER_CODE].isin(party_code)]
+    if provider_code is not None:
+        if isinstance(provider_code, str):
+            provider_code = [provider_code]
+        crs = crs.loc[lambda d: d[ClimateSchema.PROVIDER_CODE].isin(provider_code)]
 
-    crs = crs.pipe(_add_net_disbursement)
+    crs = crs.pipe(add_net_disbursement)
 
     crs = (
         crs.filter(columns + flow_columns, axis=1)  # Keep only relevant columns
@@ -139,11 +121,7 @@ def get_crs_allocable_spending(
         pd.DataFrame: A dataframe containing bilateral spending data for
         the specified flow type and time period.
     """
-    crs = get_crs(
-        start_year=start_year,
-        end_year=end_year,
-        force_update=force_update,
-    )
+    crs = get_crs(start_year=start_year, end_year=end_year, force_update=force_update)
 
     crs = crs.pipe(keep_only_allocable_aid)
 
@@ -176,12 +154,8 @@ def get_crs_allocable_to_total_ratio(
     ]
 
     # Pipeline
-    crs = get_crs(
-        start_year=start_year,
-        end_year=end_year,
-        force_update=force_update,
-        groupby=simpler_columns,
-    )
+    crs = get_crs(start_year=start_year, end_year=end_year, groupby=simpler_columns,
+                  force_update=force_update)
 
     total = (
         crs.copy()
