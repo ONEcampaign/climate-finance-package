@@ -4,6 +4,7 @@ import pandas as pd
 from climate_finance.common.schema import (
     ClimateSchema,
     OECD_CLIMATE_INDICATORS,
+    CRS_CLIMATE_COLUMNS,
 )
 
 
@@ -93,7 +94,7 @@ def melt_crs_climate_indicators_one(
     Returns:
         A dataframe with melted climate indicators.
     """
-
+    # Climate is where adaptation OR mitigation is larger than 0
     climate_df = df.copy(deep=True).loc[
         lambda d: (d[ClimateSchema.MITIGATION] > 0) | (d[ClimateSchema.ADAPTATION] > 0)
     ]
@@ -119,7 +120,7 @@ def melt_crs_climate_indicators_one(
     # get all columns except the indicators
     melted_cols = [c for c in df.columns if c not in climate_indicators]
 
-    return climate_df[melted_cols + [ClimateSchema.INDICATOR]]
+    return climate_df.filter(melted_cols + [ClimateSchema.INDICATOR])
 
 
 def get_cross_cutting_data_oecd(
@@ -229,7 +230,13 @@ def _combine_clean_sort(dfs: list[pd.DataFrame], sort_cols: list[str]) -> pd.Dat
     """
     return (
         pd.concat(dfs, ignore_index=True)
-        .assign(indicator=lambda d: d.indicator.map(OECD_CLIMATE_INDICATORS))
+        .assign(
+            **{
+                ClimateSchema.INDICATOR: lambda d: d[ClimateSchema.INDICATOR].map(
+                    OECD_CLIMATE_INDICATORS
+                )
+            }
+        )
         .sort_values(by=sort_cols)
         .reset_index(drop=True)
     )
@@ -260,11 +267,11 @@ def base_oecd_transform_markers_into_indicators(df: pd.DataFrame) -> pd.DataFram
     Returns:
         A dataframe with the CRS data transformed into climate indicators.
     """
-    # melt the dataframe to get the indicators as a column
-    climate_indicators = [ClimateSchema.MITIGATION, ClimateSchema.ADAPTATION]
 
     # Melt the dataframe to get the indicators as a column
-    melted_df = _melt_crs_climate_indicators_oecd(df, climate_indicators)
+    melted_df = _melt_crs_climate_indicators_oecd(
+        df, climate_indicators=CRS_CLIMATE_COLUMNS
+    )
 
     # Get cross_cutting data
     cross_cutting_df = get_cross_cutting_data_oecd(df, cross_cutting_threshold=0)
@@ -275,7 +282,7 @@ def base_oecd_transform_markers_into_indicators(df: pd.DataFrame) -> pd.DataFram
     # combine the two dataframes
     combined_df = _combine_clean_sort(
         dfs=[melted_df, cross_cutting_df, not_climate_df],
-        sort_cols=[c for c in df.columns if c not in climate_indicators],
+        sort_cols=[c for c in df.columns if c not in CRS_CLIMATE_COLUMNS],
     )
 
     return combined_df
@@ -310,11 +317,11 @@ def base_one_transform_markers_into_indicators(df: pd.DataFrame) -> pd.DataFrame
     Returns:
         A dataframe with the CRS data transformed into climate indicators.
     """
-    # melt the dataframe to get the indicators as a column
-    climate_indicators = [ClimateSchema.MITIGATION, ClimateSchema.ADAPTATION]
 
     # Melt the dataframe to get the indicators as a column
-    melted_df = melt_crs_climate_indicators_one(df, climate_indicators)
+    melted_df = melt_crs_climate_indicators_one(
+        df=df, climate_indicators=CRS_CLIMATE_COLUMNS, percentage_significant=0.4
+    )
 
     # Get cross_cutting data
     cross_cutting_df = get_cross_cutting_data_one(df, cross_cutting_threshold=0)
@@ -325,7 +332,7 @@ def base_one_transform_markers_into_indicators(df: pd.DataFrame) -> pd.DataFrame
     # combine the two dataframes
     combined_df = _combine_clean_sort(
         dfs=[melted_df, cross_cutting_df, not_climate_df],
-        sort_cols=[c for c in df.columns if c not in climate_indicators],
+        sort_cols=[c for c in df.columns if c not in CRS_CLIMATE_COLUMNS],
     )
 
     return combined_df

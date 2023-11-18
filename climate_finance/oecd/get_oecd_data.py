@@ -33,7 +33,7 @@ MULTILATERAL_CLIMATE_IMPUTATIONS: dict[str, callable] = {
 def get_oecd_bilateral(
     start_year: int,
     end_year: int,
-    party: list[str] | str | None = None,
+    provider_code: list[str] | str | int | None = None,
     update_data: bool = False,
     methodology: str = "oecd_bilateral",
 ) -> pd.DataFrame:
@@ -51,7 +51,7 @@ def get_oecd_bilateral(
     Args:
         start_year: The start year that should be covered in the data
         end_year: The end year that should be covered in the data
-        party: Optionally, specify one or more parties. If not specified, all
+        provider_code: Optionally, specify one or more providers. If not specified, all
         parties are included.
         update_data: If True, the data is updated from the source. This can potentially
         overwrite any data that has been downloaded to the 'raw_data' folder.
@@ -68,13 +68,13 @@ def get_oecd_bilateral(
             f"Methodology must be one of {list(BILATERAL_CLIMATE_METHODOLOGY)}"
         )
 
-    # Get the CRS data
+    # Get allocable spending data from the CRS
     data = get_crs_allocable_spending(
-        start_year=start_year, end_year=end_year, force_update=update_data
+        start_year=start_year,
+        end_year=end_year,
+        provider_code=provider_code,
+        force_update=update_data,
     )
-
-    # Filter the data to only include the requested parties
-    data = check_and_filter_parties(data, party)
 
     # Transform the markers into indicators
     data = BILATERAL_CLIMATE_METHODOLOGY[methodology](data)
@@ -184,93 +184,10 @@ def get_one_multilateral(
     return data
 
 
-# ----
-# ----
-# ----
-
-
-def summarise(df: pd.DataFrame) -> pd.DataFrame:
-    return (
-        df.loc[
-            lambda d: ~(
-                d.flow_type.isin(["Private Development Finance", "usd_received"])
-            )
-        ]
-        .loc[lambda d: d.indicator != "Not climate relevant"]
-        .groupby(
-            ["year", "party", "flow_type", "indicator"],
-            observed=True,
-        )["value"]
-        .sum()
-        .reset_index()
-    )
-
-
-def pivot_summary(df: pd.DataFrame) -> pd.DataFrame:
-    return df.pivot(
-        index=[c for c in df.columns if c not in ["value", "indicator"]],
-        columns="indicator",
-        values="value",
-    ).reset_index()
-
-
-def merge_oecd_one(oecd: pd.DataFrame, one: pd.DataFrame) -> pd.DataFrame:
-    return (
-        oecd.merge(
-            one,
-            on=["year", "party", "flow_type"],
-            how="outer",
-            suffixes=("_oecd", "_one"),
-            indicator=True,
-        )
-        .filter(
-            [
-                "year",
-                "party",
-                "flow_type",
-                "Adaptation_oecd",
-                "Adaptation_one",
-                "Mitigation_oecd",
-                "Mitigation_one",
-                "Cross-cutting_oecd",
-                "Cross-cutting_one",
-                "_merge",
-            ]
-        )
-        .dropna(
-            subset=[
-                "Adaptation_oecd",
-                "Adaptation_one",
-                "Mitigation_oecd",
-                "Mitigation_one",
-                "Cross-cutting_oecd",
-                "Cross-cutting_one",
-            ],
-            how="all",
-        )
-        # .loc[lambda d: d._merge == "both"]
-    )
-
-
-def add_total(df: pd.DataFrame) -> pd.DataFrame:
-    return df.assign(
-        **{
-            "Cross-cutting_oecd": lambda d: d["Cross-cutting_oecd"] * -1,
-            "Total_oecd": lambda d: d.filter(regex="_oecd").sum(axis=1),
-            "Total_one": lambda d: d.filter(regex="_one").sum(axis=1),
-        }
-    )
-
-
 if __name__ == "__main__":
-    # oecd_version = get_oecd_bilateral(2013, 2021, methodology="oecd_bilateral")
-    one_version = get_oecd_bilateral(2021, 2021, methodology="one_bilateral")
-    #
-    # oecd = oecd_version.pipe(summarise).pipe(pivot_summary)
-    # one = one_version.pipe(summarise).pipe(pivot_summary)
-    #
-    # combined = merge_oecd_one(oecd, one).pipe(add_total)
-    #
-    # combined.drop(columns=["_merge"]).to_csv(
-    #     config.ClimateDataPath.raw_data / "oecd_one_comparison_bilat.csv", index=False
-    # )
+    oecd_version = get_oecd_bilateral(
+        start_year=2019, end_year=2021, methodology="oecd_bilateral", provider_code=4
+    )
+    one_version = get_oecd_bilateral(
+        start_year=2019, end_year=2021, methodology="one_bilateral", provider_code=4
+    )

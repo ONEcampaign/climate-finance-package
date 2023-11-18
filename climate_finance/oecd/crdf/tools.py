@@ -8,13 +8,13 @@ from climate_finance.common.schema import (
     CRS_MAPPING,
 )
 from climate_finance.config import logger
+from climate_finance.methodologies.imputed_multilateral.tools import log_notes
 from climate_finance.oecd.cleaning_tools.tools import (
     key_crs_columns_to_str,
     rename_crdf_marker_columns,
     marker_columns_to_numeric,
     clean_raw_crdf,
 )
-from climate_finance.methodologies.imputed_multilateral import log_notes
 
 
 def get_file_url(year: int, url: str) -> str:
@@ -75,9 +75,9 @@ def read_excel_sheets(excel_file: pd.ExcelFile) -> list[pd.DataFrame]:
 
 
 def download_file(
-    base_url: str,
-    save_to_path: pathlib.Path,
-    latest_year: int = today().year - 2,
+        base_url: str,
+        save_to_path: pathlib.Path,
+        latest_year: int = today().year - 2,
 ) -> None:
     """Download the file from the OECD website."""
     # Download the file
