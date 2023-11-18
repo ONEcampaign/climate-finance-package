@@ -1,5 +1,5 @@
 import pandas as pd
-from oda_data import read_crs, set_data_path, download_crs, ODAData
+from oda_data import read_crs, set_data_path, download_crs
 
 from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.tools import (
@@ -7,7 +7,7 @@ from climate_finance.oecd.cleaning_tools.tools import (
     rename_crs_columns,
     set_crs_data_types,
 )
-from climate_finance.oecd.cleaning_tools.schema import ClimateSchema
+from climate_finance.common.schema import ClimateSchema
 
 set_data_path(ClimateDataPath.raw_data)
 

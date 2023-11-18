@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from climate_finance.oecd.cleaning_tools.schema import (
-    CrsSchema,
+from climate_finance.common.schema import (
+    ClimateSchema,
     OECD_CLIMATE_INDICATORS,
 )
 
@@ -27,7 +27,7 @@ def _melt_crs_climate_indicators_oecd(
     melted_df = df.melt(
         id_vars=melted_cols,
         value_vars=climate_indicators,
-        var_name=CrsSchema.INDICATOR,
+        var_name=ClimateSchema.INDICATOR,
         value_name="indicator_value",
     )
     # keep only where the indicator value is larger than 0
@@ -95,31 +95,31 @@ def melt_crs_climate_indicators_one(
     """
 
     climate_df = df.copy(deep=True).loc[
-        lambda d: (d[CrsSchema.MITIGATION] > 0) | (d[CrsSchema.ADAPTATION] > 0)
+        lambda d: (d[ClimateSchema.MITIGATION] > 0) | (d[ClimateSchema.ADAPTATION] > 0)
     ]
 
     # apply coefficient
     climate_df.loc[
-        lambda d: (d[CrsSchema.MITIGATION] < 2) & (d[CrsSchema.ADAPTATION] < 2),
-        CrsSchema.VALUE,
+        lambda d: (d[ClimateSchema.MITIGATION] < 2) & (d[ClimateSchema.ADAPTATION] < 2),
+        ClimateSchema.VALUE,
     ] *= percentage_significant
 
     # Drop cross-cutting
     climate_df = climate_df.loc[
-        lambda d: (d[CrsSchema.MITIGATION] != d[CrsSchema.ADAPTATION])
+        lambda d: (d[ClimateSchema.MITIGATION] != d[ClimateSchema.ADAPTATION])
     ]
 
     # Select the highest marker
-    climate_df[CrsSchema.INDICATOR] = np.where(
-        climate_df[CrsSchema.MITIGATION] > climate_df[CrsSchema.ADAPTATION],
-        CrsSchema.MITIGATION,
-        CrsSchema.ADAPTATION,
+    climate_df[ClimateSchema.INDICATOR] = np.where(
+        climate_df[ClimateSchema.MITIGATION] > climate_df[ClimateSchema.ADAPTATION],
+        ClimateSchema.MITIGATION,
+        ClimateSchema.ADAPTATION,
     )
 
     # get all columns except the indicators
     melted_cols = [c for c in df.columns if c not in climate_indicators]
 
-    return climate_df[melted_cols + [CrsSchema.INDICATOR]]
+    return climate_df[melted_cols + [ClimateSchema.INDICATOR]]
 
 
 def get_cross_cutting_data_oecd(
@@ -142,12 +142,12 @@ def get_cross_cutting_data_oecd(
     """
     return (
         df[
-            (df[CrsSchema.MITIGATION] > cross_cutting_threshold)
-            & (df[CrsSchema.ADAPTATION] > cross_cutting_threshold)
+            (df[ClimateSchema.MITIGATION] > cross_cutting_threshold)
+            & (df[ClimateSchema.ADAPTATION] > cross_cutting_threshold)
         ]
         .copy()
-        .assign(**{CrsSchema.INDICATOR: CrsSchema.CROSS_CUTTING})
-        .drop(columns=[CrsSchema.MITIGATION, CrsSchema.ADAPTATION])
+        .assign(**{ClimateSchema.INDICATOR: ClimateSchema.CROSS_CUTTING})
+        .drop(columns=[ClimateSchema.MITIGATION, ClimateSchema.ADAPTATION])
     )
 
 
@@ -173,22 +173,22 @@ def get_cross_cutting_data_one(
     """
     cross_cutting = (
         df[
-            (df[CrsSchema.MITIGATION] > cross_cutting_threshold)
-            & (df[CrsSchema.ADAPTATION] > cross_cutting_threshold)
-            & (df[CrsSchema.MITIGATION] == df[CrsSchema.ADAPTATION])
+            (df[ClimateSchema.MITIGATION] > cross_cutting_threshold)
+            & (df[ClimateSchema.ADAPTATION] > cross_cutting_threshold)
+            & (df[ClimateSchema.MITIGATION] == df[ClimateSchema.ADAPTATION])
         ]
         .copy()
-        .assign(**{CrsSchema.INDICATOR: CrsSchema.CROSS_CUTTING})
+        .assign(**{ClimateSchema.INDICATOR: ClimateSchema.CROSS_CUTTING})
     )
 
     # apply coefficient
     cross_cutting.loc[
-        lambda d: (d[CrsSchema.MITIGATION] < 2) & (d[CrsSchema.ADAPTATION] < 2),
-        CrsSchema.VALUE,
+        lambda d: (d[ClimateSchema.MITIGATION] < 2) & (d[ClimateSchema.ADAPTATION] < 2),
+        ClimateSchema.VALUE,
     ] *= percentage_significant
 
     cross_cutting = cross_cutting.drop(
-        columns=[CrsSchema.MITIGATION, CrsSchema.ADAPTATION]
+        columns=[ClimateSchema.MITIGATION, ClimateSchema.ADAPTATION]
     )
     return cross_cutting
 
@@ -207,10 +207,10 @@ def _get_not_climate_relevant_data(df: pd.DataFrame) -> pd.DataFrame:
 
     """
     return (
-        df[(df[CrsSchema.MITIGATION] == 0) & (df[CrsSchema.ADAPTATION] == 0)]
+        df[(df[ClimateSchema.MITIGATION] == 0) & (df[ClimateSchema.ADAPTATION] == 0)]
         .copy()
-        .assign(**{CrsSchema.INDICATOR: CrsSchema.NOT_CLIMATE})
-        .drop(columns=[CrsSchema.MITIGATION, CrsSchema.ADAPTATION])
+        .assign(**{ClimateSchema.INDICATOR: ClimateSchema.NOT_CLIMATE})
+        .drop(columns=[ClimateSchema.MITIGATION, ClimateSchema.ADAPTATION])
     )
 
 
@@ -261,7 +261,7 @@ def base_oecd_transform_markers_into_indicators(df: pd.DataFrame) -> pd.DataFram
         A dataframe with the CRS data transformed into climate indicators.
     """
     # melt the dataframe to get the indicators as a column
-    climate_indicators = [CrsSchema.MITIGATION, CrsSchema.ADAPTATION]
+    climate_indicators = [ClimateSchema.MITIGATION, ClimateSchema.ADAPTATION]
 
     # Melt the dataframe to get the indicators as a column
     melted_df = _melt_crs_climate_indicators_oecd(df, climate_indicators)
@@ -311,7 +311,7 @@ def base_one_transform_markers_into_indicators(df: pd.DataFrame) -> pd.DataFrame
         A dataframe with the CRS data transformed into climate indicators.
     """
     # melt the dataframe to get the indicators as a column
-    climate_indicators = [CrsSchema.MITIGATION, CrsSchema.ADAPTATION]
+    climate_indicators = [ClimateSchema.MITIGATION, ClimateSchema.ADAPTATION]
 
     # Melt the dataframe to get the indicators as a column
     melted_df = melt_crs_climate_indicators_one(df, climate_indicators)

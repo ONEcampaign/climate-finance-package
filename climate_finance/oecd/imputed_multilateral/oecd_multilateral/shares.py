@@ -1,6 +1,6 @@
 import pandas as pd
 
-from climate_finance.oecd.cleaning_tools.schema import ClimateSchema
+from climate_finance.common.schema import ClimateSchema
 from climate_finance.oecd.imputed_multilateral.crs_tools import get_yearly_crs_totals
 from climate_finance.oecd.imputed_multilateral.tools import (
     summarise_by_party_idx,

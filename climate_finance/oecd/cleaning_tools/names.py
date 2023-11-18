@@ -1,9 +1,8 @@
-import numpy as np
 import pandas as pd
 from oda_data import read_crs
 
 from climate_finance.config import ClimateDataPath
-from climate_finance.oecd.cleaning_tools.schema import ClimateSchema
+from climate_finance.common.schema import ClimateSchema
 from climate_finance.oecd.cleaning_tools.tools import (
     rename_crs_columns,
     idx_to_str,

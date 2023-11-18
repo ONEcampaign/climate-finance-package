@@ -3,7 +3,7 @@ import pandas as pd
 from oda_data import donor_groupings, set_data_path
 
 from climate_finance.config import ClimateDataPath
-from climate_finance.oecd.cleaning_tools.schema import CRS_MAPPING, CRS_TYPES
+from climate_finance.common.schema import CRS_MAPPING, CRS_TYPES
 
 set_data_path(ClimateDataPath.raw_data)
 

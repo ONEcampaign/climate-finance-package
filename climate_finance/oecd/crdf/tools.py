@@ -5,9 +5,9 @@ from dateutil.utils import today
 from oda_data.get_data.common import fetch_file_from_url_selenium
 
 from climate_finance.config import logger
-from climate_finance.oecd.cleaning_tools.schema import (
+from climate_finance.common.schema import (
     CRS_MAPPING,
-    CrsSchema,
+    ClimateSchema,
     OECD_CLIMATE_INDICATORS,
 )
 from climate_finance.oecd.imputed_multilateral.tools import log_notes
@@ -230,10 +230,10 @@ def rename_marker_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
     # rename marker columns
     markers = {
-        "adaptation_objective_applies_to_rio_marked_data_only": CrsSchema.ADAPTATION,
-        "mitigation_objective_applies_to_rio_marked_data_only": CrsSchema.MITIGATION,
-        "adaptation_related_development_finance_commitment_current": CrsSchema.ADAPTATION_VALUE,
-        "mitigation_related_development_finance_commitment_current": CrsSchema.MITIGATION_VALUE,
+        "adaptation_objective_applies_to_rio_marked_data_only": ClimateSchema.ADAPTATION,
+        "mitigation_objective_applies_to_rio_marked_data_only": ClimateSchema.MITIGATION,
+        "adaptation_related_development_finance_commitment_current": ClimateSchema.ADAPTATION_VALUE,
+        "mitigation_related_development_finance_commitment_current": ClimateSchema.MITIGATION_VALUE,
     }
 
     return df.rename(columns=markers)
@@ -266,7 +266,7 @@ def marker_columns_to_numeric(df: pd.DataFrame) -> pd.DataFrame:
     }
 
     # Identify the marker columns
-    marker_columns = [CrsSchema.ADAPTATION, CrsSchema.MITIGATION]
+    marker_columns = [ClimateSchema.ADAPTATION, ClimateSchema.MITIGATION]
 
     # Convert the marker columns to numeric
     df[marker_columns] = df[marker_columns].replace(markers_numeric).astype("Int16")
@@ -317,14 +317,14 @@ def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     """
     to_drop = [
-        CrsSchema.CLIMATE_OBJECTIVE,
-        CrsSchema.ADAPTATION,
-        CrsSchema.ADAPTATION_VALUE,
-        CrsSchema.MITIGATION,
-        CrsSchema.MITIGATION_VALUE,
-        CrsSchema.CLIMATE_FINANCE_VALUE,
-        CrsSchema.CROSS_CUTTING_VALUE,
-        CrsSchema.COMMITMENT_CLIMATE_SHARE,
+        ClimateSchema.CLIMATE_OBJECTIVE,
+        ClimateSchema.ADAPTATION,
+        ClimateSchema.ADAPTATION_VALUE,
+        ClimateSchema.MITIGATION,
+        ClimateSchema.MITIGATION_VALUE,
+        ClimateSchema.CLIMATE_FINANCE_VALUE,
+        ClimateSchema.CROSS_CUTTING_VALUE,
+        ClimateSchema.COMMITMENT_CLIMATE_SHARE,
     ]
 
     return (

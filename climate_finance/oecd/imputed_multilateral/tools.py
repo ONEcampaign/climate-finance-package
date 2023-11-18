@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from climate_finance.config import logger
-from climate_finance.oecd.cleaning_tools.schema import (
+from climate_finance.common.schema import (
     OECD_CLIMATE_INDICATORS,
     ClimateSchema,
 )

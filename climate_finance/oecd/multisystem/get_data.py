@@ -2,7 +2,7 @@ import pandas as pd
 from oda_data import ODAData, set_data_path
 
 from climate_finance.config import ClimateDataPath
-from climate_finance.oecd.cleaning_tools.schema import (
+from climate_finance.common.schema import (
     ClimateSchema,
     MULTISYSTEM_INDICATORS,
     CRS_MAPPING,

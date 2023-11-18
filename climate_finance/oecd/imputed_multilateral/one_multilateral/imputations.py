@@ -1,6 +1,6 @@
 import pandas as pd
 
-from climate_finance.oecd.cleaning_tools.schema import (
+from climate_finance.common.schema import (
     ClimateSchema,
     VALUE_COLUMNS,
 )

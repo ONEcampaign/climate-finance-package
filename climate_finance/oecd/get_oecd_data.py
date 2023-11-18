@@ -1,7 +1,6 @@
 import pandas as pd
 
-from climate_finance import config
-from climate_finance.oecd.cleaning_tools.schema import CRS_MAPPING
+from climate_finance.common.schema import CRS_MAPPING
 from climate_finance.oecd.imputed_multilateral.tools import (
     base_oecd_multilateral_agency_total,
     base_oecd_multilateral_agency_share,

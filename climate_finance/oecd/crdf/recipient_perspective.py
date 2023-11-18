@@ -4,12 +4,11 @@ import pandas as pd
 from oda_data import set_data_path
 
 from climate_finance.config import ClimateDataPath
-from climate_finance.oecd.cleaning_tools.schema import ClimateSchema
+from climate_finance.common.schema import ClimateSchema
 from climate_finance.oecd.crdf.tools import (
     download_file,
     load_or_download,
     marker_columns_to_numeric,
-    clean_columns,
 )
 from climate_finance.oecd.imputed_multilateral.tools import check_and_filter_parties
 

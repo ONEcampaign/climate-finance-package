@@ -1,7 +1,6 @@
-import numpy as np
 import pandas as pd
 
-from climate_finance.oecd.cleaning_tools.schema import ClimateSchema
+from climate_finance.common.schema import ClimateSchema
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
 from climate_finance.unfccc.cleaning_tools.channels import clean_string
 

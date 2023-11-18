@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 from climate_finance.config import ClimateDataPath
-from climate_finance.oecd.cleaning_tools.schema import ClimateSchema
+from climate_finance.common.schema import ClimateSchema
 from climate_finance.oecd.crdf.tools import (
     download_file,
     rename_marker_columns,

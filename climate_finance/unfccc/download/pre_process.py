@@ -1,7 +1,7 @@
 import pandas as pd
 from bblocks import clean_numeric_series
 
-from climate_finance.oecd.cleaning_tools.schema import ClimateSchema
+from climate_finance.common.schema import ClimateSchema
 from climate_finance.oecd.cleaning_tools.tools import (
     set_crs_data_types,
 )

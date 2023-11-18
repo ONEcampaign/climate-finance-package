@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from climate_finance.config import logger
-from climate_finance.oecd.cleaning_tools.schema import ClimateSchema, CLIMATE_VALUES
+from climate_finance.common.schema import ClimateSchema, CLIMATE_VALUES
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
 from climate_finance.oecd.get_oecd_data import get_oecd_bilateral
 
