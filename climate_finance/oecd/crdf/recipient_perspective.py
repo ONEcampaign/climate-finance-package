@@ -6,13 +6,11 @@ from oda_data import set_data_path
 from climate_finance.common.analysis_tools import filter_providers
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import ClimateDataPath
-from climate_finance.oecd.cleaning_tools.tools import marker_columns_to_numeric
+from climate_finance.oecd.cleaning_tools.tools import marker_columns_to_numeric, \
+    fix_crdf_provider_names_columns, fix_crdf_recipient_errors, assign_usd_commitments_as_flow_type
 from climate_finance.oecd.crdf.tools import (
     download_file,
     load_or_download,
-    fix_recipient_perspective_provider_names_columns,
-    fix_recipient_perspective_recipient_errors,
-    assign_usd_commitments_as_flow_type,
 )
 
 FILE_PATH: Path = (
@@ -188,13 +186,13 @@ def get_recipient_perspective(
     df = filter_providers(data=df, provider_codes=provider_code)
 
     # Rename provider columns
-    df = df.pipe(fix_recipient_perspective_provider_names_columns)
+    df = df.pipe(fix_crdf_provider_names_columns)
 
     # Convert markers to numeric
     df = marker_columns_to_numeric(df)
 
     # Fix errors in recipient code
-    df = df.pipe(fix_recipient_perspective_recipient_errors)
+    df = df.pipe(fix_crdf_recipient_errors)
 
     # Add flow type
     df = df.pipe(assign_usd_commitments_as_flow_type)

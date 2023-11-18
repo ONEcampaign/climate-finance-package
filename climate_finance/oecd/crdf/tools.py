@@ -7,15 +7,12 @@ from oda_data.get_data.common import fetch_file_from_url_selenium
 from climate_finance.config import logger
 from climate_finance.common.schema import (
     CRS_MAPPING,
-    ClimateSchema,
-    OECD_CLIMATE_INDICATORS,
 )
 from climate_finance.oecd.cleaning_tools.tools import (
     key_crs_columns_to_str,
-    set_crs_data_types,
     rename_crdf_marker_columns,
     marker_columns_to_numeric,
-    fix_crs_year_encoding,
+    clean_raw_crdf,
 )
 from climate_finance.oecd.imputed_multilateral.tools import log_notes
 
@@ -77,128 +74,6 @@ def read_excel_sheets(excel_file: pd.ExcelFile) -> list[pd.DataFrame]:
     return dfs
 
 
-def convert_thousands_to_units(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Convert the columns that are in thousands to units.
-
-    Args:
-        df: The dataframe to convert the columns for.
-
-    Returns:
-        The dataframe with the columns converted.
-
-    """
-
-    # Identify the columns that are in thousands
-    usd_thousands_cols = df.columns[df.columns.str.contains("_usd_thousand")]
-
-    # For each column, convert to units
-    for col in usd_thousands_cols:
-        df[col] *= 1e3
-
-    # Rename the columns
-    df = df.rename(
-        columns={col: col.replace("_usd_thousand", "") for col in usd_thousands_cols}
-    )
-
-    return df
-
-
-def set_data_types(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Set the data types for the dataframe.
-    Args:
-        df: The dataframe to set the data types for.
-
-    Returns:
-        The dataframe with the data types set.
-
-    """
-    # Convert int column to "Int32" or similar
-    int_data_types = {
-        "year": "Int32",
-        "provider_code": "Int32",
-        "agency_code": "Int32",
-        "recipient_code": "Int32",
-        "channel_of_delivery_code": "Int32",
-        "purpose_code": "Int32",
-        "type_of_finance": "Int32",
-        "coal_related_financing": "Int16",
-    }
-
-    # Convert float columns to "float64" or similar
-    float_data_types = {
-        "adaptation_related_development_finance_commitment_current": "float64",
-        "mitigation_related_development_finance_commitment_current": "float64",
-        "overlap_commitment_current": "float64",
-        "climate_related_development_finance_commitment_current": "float64",
-        "share_of_the_underlying_commitment_when_available": "float64",
-    }
-
-    # Convert categorical columns to "category"
-    categorical_data_types = {
-        "provider": "category",
-        "provider_type": "category",
-        "provider_detailed": "category",
-        "provider_code": "category",
-        "extending_agency": "category",
-        "recipient": "category",
-        "recipient_region": "category",
-        "recipient_income_group_oecd_classification": "category",
-        "concessionality": "category",
-        "climate_objective_applies_to_rio_marked_data_only_or_climate_component": "category",
-        "adaptation_objective_applies_to_rio_marked_data_only": "category",
-        "mitigation_objective_applies_to_rio_marked_data_only": "category",
-        "channel_of_delivery": "category",
-        "sector_detailed": "category",
-        "sub_sector": "category",
-        "development_cooperation_modality": "category",
-        "financial_instrument": "category",
-        "methodology": "category",
-        "gender": "category",
-    }
-
-    # Set data types by column
-    for col in df.columns:
-        df[col] = df[col].astype(
-            (int_data_types | float_data_types | categorical_data_types).get(col, "str")
-        )
-
-    return df.reset_index(drop=True)
-
-
-def clean_df(data: pd.DataFrame) -> pd.DataFrame:
-    """Cleans an individual dataframe from the imputed multilateral shares file.
-
-    Args:
-        data (pd.DataFrame): Dataframe to clean.
-
-    """
-
-    # convert all column names to lower case and remove spaces and special characters
-    data.columns = (
-        data.columns.str.lower()
-        .str.replace(" ", "_")
-        .str.replace("-", "_")
-        .str.replace(r"[°(),%]", "", regex=True)
-        .str.replace(r"_{2,}", "_", regex=True)
-    )
-
-    # Drop any columns that contain an integer
-    data = data.drop(columns=data.columns[data.columns.str.contains(r"\d")])
-
-    # Convert thousands to units
-    data = convert_thousands_to_units(data)
-
-    # fix year column
-    data = data.pipe(fix_crs_year_encoding)
-
-    # Convert data types
-    data = set_data_types(data)
-
-    return data
-
-
 def download_file(
     base_url: str,
     save_to_path: pathlib.Path,
@@ -218,7 +93,7 @@ def download_file(
     data = pd.concat(dfs, ignore_index=True)
 
     # clean data
-    data = clean_df(data)
+    data = clean_raw_crdf(data)
 
     # Save file
     data.to_feather(save_to_path)
@@ -262,52 +137,3 @@ def load_or_download(base_url: str, save_to_path: str | pathlib.Path) -> pd.Data
     except FileNotFoundError:
         download_file(base_url=base_url, save_to_path=save_to_path)
         return _load(save_to_path)
-
-
-def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Clean the columns of the dataframe. This means removing columns that are not needed
-    and renaming the index columns. The "commitments" flow information is also added.
-
-    Args:
-        df: The dataframe to clean the columns for.
-
-    Returns:
-        The dataframe with the columns cleaned.
-
-    """
-    to_drop = [
-        ClimateSchema.CLIMATE_OBJECTIVE,
-        ClimateSchema.ADAPTATION,
-        ClimateSchema.ADAPTATION_VALUE,
-        ClimateSchema.MITIGATION,
-        ClimateSchema.MITIGATION_VALUE,
-        ClimateSchema.CLIMATE_FINANCE_VALUE,
-        ClimateSchema.CROSS_CUTTING_VALUE,
-        ClimateSchema.COMMITMENT_CLIMATE_SHARE,
-    ]
-
-    return (
-        df.filter([c for c in df.columns if c not in to_drop])
-        .assign(indicator=lambda d: d.indicator.map(OECD_CLIMATE_INDICATORS))
-        .assign(flow_type=ClimateSchema.USD_COMMITMENT)
-    )
-
-
-def fix_recipient_perspective_provider_names_columns(
-    data: pd.DataFrame,
-) -> pd.DataFrame:
-    return data.rename(
-        columns={
-            ClimateSchema.PROVIDER_NAME: f"{ClimateSchema.PROVIDER_NAME}_short",
-            ClimateSchema.PROVIDER_DETAILED: ClimateSchema.PROVIDER_NAME,
-        }
-    ).astype({ClimateSchema.PROVIDER_NAME: "str"})
-
-
-def fix_recipient_perspective_recipient_errors(data: pd.DataFrame) -> pd.DataFrame:
-    return data.replace({ClimateSchema.RECIPIENT_CODE: {"9998": "998"}})
-
-
-def assign_usd_commitments_as_flow_type(data: pd.DataFrame) -> pd.DataFrame:
-    return data.assign(**{ClimateSchema.FLOW_TYPE: ClimateSchema.USD_COMMITMENT})
