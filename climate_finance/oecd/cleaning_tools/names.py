@@ -9,7 +9,7 @@ from climate_finance.oecd.cleaning_tools.tools import (
     idx_to_str,
     set_crs_data_types,
 )
-from climate_finance.oecd.climate_related_activities.recipient_perspective import (
+from climate_finance.oecd.crdf.recipient_perspective import (
     get_recipient_perspective,
 )
 
