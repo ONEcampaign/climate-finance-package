@@ -4,8 +4,12 @@ import pandas as pd
 from bblocks import clean_numeric_series
 from oda_data.get_data.common import fetch_file_from_url_selenium
 
+from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import logger, ClimateDataPath
-from climate_finance.oecd.cleaning_tools.tools import convert_flows_millions_to_units
+from climate_finance.oecd.cleaning_tools.tools import (
+    convert_flows_millions_to_units,
+    assign_usd_commitments_as_flow_type,
+)
 from climate_finance.methodologies.imputed_multilateral.tools import log_notes
 from climate_finance.unfccc.cleaning_tools.channels import (
     generate_channel_mapping_dictionary,
@@ -68,13 +72,13 @@ def _add_channel_codes(data: pd.DataFrame) -> pd.DataFrame:
     # Generate channel mapping dictionary
     mapping = generate_channel_mapping_dictionary(
         raw_data=data,
-        channel_names_column="channel",
+        channel_names_column=ClimateSchema.CHANNEL_NAME,
         export_missing_path=ClimateDataPath.raw_data
         / "oecd_multilateral_climate_imputations_channels_not_mapped.csv",
     )
 
     # Map channel names
-    data["oecd_channel_code"] = data.channel.map(mapping)
+    data[ClimateSchema.CHANNEL_CODE] = data[ClimateSchema.CHANNEL_NAME].map(mapping)
 
     return data
 
@@ -92,11 +96,11 @@ def _reorder_imputations_columns(data: pd.DataFrame) -> pd.DataFrame:
     # reorder
     return data.set_index(
         [
-            "year",
-            "oecd_channel_code",
-            "oecd_channel_name",
+            ClimateSchema.YEAR,
+            ClimateSchema.CHANNEL_CODE,
+            ClimateSchema.CHANNEL_NAME,
             "acronym",
-            "flow_type",
+            ClimateSchema.FLOW_TYPE,
             "type",
             "reporting_method",
             "converged_reporting",
@@ -153,7 +157,7 @@ def _clean_df(data: pd.DataFrame, year: int) -> pd.DataFrame:
     try:
         data.columns = [
             "acronym",
-            "channel",
+            ClimateSchema.CHANNEL_NAME,
             "type",
             "oecd_climate_total",
             "oecd_climate_total_share",
@@ -163,7 +167,7 @@ def _clean_df(data: pd.DataFrame, year: int) -> pd.DataFrame:
     except ValueError:
         data.columns = [
             "acronym",
-            "channel",
+            ClimateSchema.CHANNEL_NAME,
             "type",
             "oecd_climate_total",
             "oecd_climate_total_share",
@@ -197,13 +201,10 @@ def _clean_df(data: pd.DataFrame, year: int) -> pd.DataFrame:
         convert_flows_millions_to_units, flow_columns=["oecd_climate_total"]
     )
 
-    # Add climate value columns
-    data = _add_climate_value_columns(data)
-
-    return data.assign(year=int(year), flow_type="usd_commitment")
+    return data.assign(year=str(int(year))).pipe(assign_usd_commitments_as_flow_type)
 
 
-def _download_excel_file() -> pd.ExcelFile:
+def _download_imputations_excel_file() -> pd.ExcelFile:
     """
     Download the excel file from the OECD website.
     Returns:
@@ -224,7 +225,7 @@ def download_file() -> None:
     """Download the file from the OECD website."""
 
     # Download the file
-    master_file = _download_excel_file()
+    master_file = _download_imputations_excel_file()
 
     # Extract the dataframes
     dfs = _read_and_clean_excel_sheets(master_file)
@@ -234,9 +235,6 @@ def download_file() -> None:
 
     # add channel codes
     data = _add_channel_codes(data)
-
-    # rename columns
-    data = data.rename(columns={"channel": "oecd_channel_name"})
 
     # reorder columns
     data = _reorder_imputations_columns(data)
@@ -264,4 +262,6 @@ def get_oecd_multilateral_climate_imputations(
     if force_update or not FILE_PATH.exists():
         download_file()
 
-    return pd.read_feather(FILE_PATH).query(f"year.between({start_year}, {end_year})")
+    return pd.read_feather(FILE_PATH).loc[
+        lambda d: d[ClimateSchema.YEAR].astype("Int32").between(start_year, end_year)
+    ]

@@ -10,8 +10,6 @@ from climate_finance.methodologies.imputed_multilateral.oecd_multilateral.get_oe
 )
 from climate_finance.methodologies.imputed_multilateral.tools import (
     base_oecd_multilateral_agency_total,
-    base_oecd_multilateral_agency_share,
-    check_and_filter_parties,
 )
 from climate_finance.oecd.crs.get_data import get_crs_allocable_spending
 
@@ -21,8 +19,7 @@ BILATERAL_CLIMATE_METHODOLOGY: dict[str, callable] = {
 }
 
 MULTILATERAL_CLIMATE_METHODOLOGY_DONOR: dict[str, callable] = {
-    "oecd_multilateral_agency_total": base_oecd_multilateral_agency_total,
-    "oecd_multilateral_agency_share": base_oecd_multilateral_agency_share,
+    "oecd_multilateral_agency": base_oecd_multilateral_agency_total,
 }
 
 MULTILATERAL_CLIMATE_IMPUTATIONS: dict[str, callable] = {
@@ -85,7 +82,6 @@ def get_oecd_bilateral(
 def get_oecd_multilateral(
     start_year: int,
     end_year: int,
-    oecd_channel_name: list[str] | str | None = None,
     update_data: bool = False,
     methodology: str = "oecd_multilateral_agency_total",
 ) -> pd.DataFrame:
@@ -127,57 +123,6 @@ def get_oecd_multilateral(
         start_year=start_year, end_year=end_year, force_update=update_data
     ).rename(columns=CRS_MAPPING)
 
-    # Filter the data to only include the requested parties
-    data = check_and_filter_parties(
-        data, oecd_channel_name, party_col="oecd_channel_name"
-    )
-
-    # Transform the markers into indicators
-    data = MULTILATERAL_CLIMATE_METHODOLOGY_DONOR[methodology](data)
-
-    return data
-
-
-def get_one_multilateral(
-    start_year: int,
-    end_year: int,
-    oecd_channel_name: list[str] | str | None = None,
-    update_data: bool = False,
-    methodology: str = "one_detailed_imputations",
-) -> pd.DataFrame:
-    """
-
-    Args:
-
-        start_year: The start year that should be covered in the data
-        end_year: The end year that should be covered in the data
-        oecd_channel_name: Optionally, specify one or more parties. If not specified, all
-        parties are included. Only multilateral parties are valid in this context.
-        update_data: If True, the data is updated from the source. This can potentially
-        overwrite any data that has been downloaded to the 'raw_data' folder.
-        methodology: The methodology to use to transform the data into indicators.
-
-    Returns:
-        df (pd.DataFrame):
-
-    """
-
-    # Check that the methodology requested is valid
-    if methodology not in MULTILATERAL_CLIMATE_IMPUTATIONS:
-        raise ValueError(
-            f"Methodology must be one of {list(MULTILATERAL_CLIMATE_IMPUTATIONS)}"
-        )
-
-    # Get the Imputations data
-    data = get_oecd_multilateral_climate_imputations(
-        start_year=start_year, end_year=end_year, force_update=update_data
-    ).rename(columns=CRS_MAPPING)
-
-    # Filter the data to only include the requested parties
-    data = check_and_filter_parties(
-        data, oecd_channel_name, party_col="oecd_channel_name"
-    )
-
     # Transform the markers into indicators
     data = MULTILATERAL_CLIMATE_METHODOLOGY_DONOR[methodology](data)
 
@@ -190,4 +135,8 @@ if __name__ == "__main__":
     )
     one_version = get_oecd_bilateral(
         start_year=2019, end_year=2021, methodology="one_bilateral", provider_code=4
+    )
+
+    oecd_version_multi = get_oecd_multilateral(
+        start_year=2019, end_year=2021, update_data=False
     )

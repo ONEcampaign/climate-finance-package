@@ -134,6 +134,24 @@ OECD_CLIMATE_INDICATORS: dict[str, str] = {
     ClimateSchema.CLIMATE_UNSPECIFIED: "Climate unspecified",
 }
 
+OECD_IMPUTED_CLIMATE_INDICATORS: dict[str, str] = {
+    "oecd_climate_total": ClimateSchema.CLIMATE_UNSPECIFIED,
+    "oecd_mitigation": ClimateSchema.MITIGATION,
+    "oecd_adaptation": ClimateSchema.ADAPTATION,
+    "oecd_cross_cutting": ClimateSchema.CROSS_CUTTING,
+    "not_climate_relevant": ClimateSchema.NOT_CLIMATE,
+}
+
+MULTILATERAL_IMPUTATIONS_ID_COLUMNS: list[str] = [
+    ClimateSchema.YEAR,
+    ClimateSchema.CHANNEL_CODE,
+    ClimateSchema.CHANNEL_NAME,
+    ClimateSchema.FLOW_TYPE,
+    ClimateSchema.MULTILATERAL_TYPE,
+    ClimateSchema.REPORTING_METHOD,
+    ClimateSchema.CONVERGED_REPORTING,
+]
+
 MULTISYSTEM_INDICATORS: dict = {
     "multisystem_multilateral_contributions_disbursement_gross": ClimateSchema.USD_DISBURSEMENT,
     "multisystem_multilateral_contributions_commitments_gross": ClimateSchema.USD_COMMITMENT,

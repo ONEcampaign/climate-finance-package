@@ -5,21 +5,13 @@ from climate_finance.config import logger
 from climate_finance.common.schema import (
     OECD_CLIMATE_INDICATORS,
     ClimateSchema,
+    OECD_IMPUTED_CLIMATE_INDICATORS,
+    MULTILATERAL_IMPUTATIONS_ID_COLUMNS,
 )
 from climate_finance.oecd.cleaning_tools.tools import (
     idx_to_str,
     set_crs_data_types,
 )
-
-MULTILATERAL_ID_COLUMNS: list[str] = [
-    ClimateSchema.YEAR,
-    ClimateSchema.CHANNEL_CODE,
-    ClimateSchema.CHANNEL_NAME,
-    ClimateSchema.FLOW_TYPE,
-    ClimateSchema.MULTILATERAL_TYPE,
-    ClimateSchema.REPORTING_METHOD,
-    ClimateSchema.CONVERGED_REPORTING,
-]
 
 
 def _melt_multilateral_climate_indicators(
@@ -37,6 +29,8 @@ def _melt_multilateral_climate_indicators(
 
     # get all columns except the indicators
     melted_cols = [c for c in df.columns if c not in climate_indicators]
+
+    climate_indicators = [c for c in climate_indicators if c in df.columns]
 
     # melt the dataframe to get the indicators as a column
     melted_df = df.melt(
@@ -64,13 +58,18 @@ def _filter_multilateral_indicators_total(
         requested indicators.
 
     """
-    return df.filter(MULTILATERAL_ID_COLUMNS + climate_indicators)
+
+    return df.filter(MULTILATERAL_IMPUTATIONS_ID_COLUMNS + climate_indicators)
 
 
 def _remove_climate_unspecified(df: pd.DataFrame) -> pd.DataFrame:
     return df.loc[
         lambda d: ~(
-                (d[ClimateSchema.YEAR] >= 2021) & (d[ClimateSchema.INDICATOR] == "climate_total")
+            (d[ClimateSchema.YEAR].astype("Int16") >= 2021)
+            & (
+                (d[ClimateSchema.INDICATOR] == "climate_total")
+                | (d[ClimateSchema.INDICATOR] == "climate_total_share")
+            )
         )
     ]
 
@@ -83,7 +82,7 @@ def _add_not_climate_relevant(df: pd.DataFrame) -> pd.DataFrame:
                 / (1 - d[ClimateSchema.CLIMATE_UNSPECIFIED_SHARE])
             ).replace([np.inf, -np.inf], np.nan),
             f"{ClimateSchema.NOT_CLIMATE}_share": lambda d: 1
-                                                            - d[ClimateSchema.CLIMATE_UNSPECIFIED_SHARE],
+            - d[ClimateSchema.CLIMATE_UNSPECIFIED_SHARE],
         }
     )
     return df
@@ -143,27 +142,26 @@ def _oecd_multilateral_agency_helper(
 
     """
 
+    df = df.rename(columns=climate_indicators)
+
     # calculate not climate relevant
     df = _add_not_climate_relevant(df)
 
     # Filter the data to include the 'total' indicators
     data = _filter_multilateral_indicators_total(
-        df=df, climate_indicators=list(climate_indicators)
+        df=df, climate_indicators=list(climate_indicators.values())
     )
 
     # Melt the dataframe to get the indicators as a column
     data = _melt_multilateral_climate_indicators(
-        df=data, climate_indicators=list(climate_indicators)
+        df=data, climate_indicators=list(climate_indicators.values())
     )
-
-    # Map indicator names
-    data = data.assign(indicator=lambda d: d.indicator.map(climate_indicators))
 
     # Remove unspecified from 2021 (given that there is a detailed breakdown)
     data = _remove_climate_unspecified(data)
 
     # Map indicator names
-    return data.assign(indicator=lambda d: d.indicator.map(OECD_CLIMATE_INDICATORS))
+    return data
 
 
 def base_oecd_multilateral_agency_total(df: pd.DataFrame) -> pd.DataFrame:
@@ -184,15 +182,16 @@ def base_oecd_multilateral_agency_total(df: pd.DataFrame) -> pd.DataFrame:
         indicators (total flow figures).
 
     """
-    climate_indicators = {
-        "oecd_climate_total": ClimateSchema.CLIMATE_UNSPECIFIED,
-        "oecd_mitigation": ClimateSchema.MITIGATION,
-        "oecd_adaptation": ClimateSchema.ADAPTATION,
-        "oecd_cross_cutting": ClimateSchema.CROSS_CUTTING,
-        "not_climate_relevant": ClimateSchema.NOT_CLIMATE,
+
+    indicators = {
+        "climate_total": ClimateSchema.CLIMATE_UNSPECIFIED,
+        "oecd_climate_total_share": ClimateSchema.CLIMATE_UNSPECIFIED_SHARE,
+        "oecd_mitigation_share": f"{ClimateSchema.MITIGATION}_share",
+        "oecd_adaptation_share": f"{ClimateSchema.ADAPTATION}_share",
+        "oecd_cross_cutting_share": f"{ClimateSchema.CROSS_CUTTING}_share",
     }
 
-    return _oecd_multilateral_agency_helper(df, climate_indicators)
+    return _oecd_multilateral_agency_helper(df, indicators)
 
 
 def base_oecd_multilateral_agency_share(df: pd.DataFrame) -> pd.DataFrame:

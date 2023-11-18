@@ -6,7 +6,7 @@ from climate_finance.methodologies.imputed_multilateral.oecd_multilateral.get_oe
     _add_channel_codes,
     _add_climate_value_columns,
     _clean_df,
-    _download_excel_file,
+    _download_imputations_excel_file,
     _merge_dataframes,
     _reorder_imputations_columns,
     download_file,
@@ -161,7 +161,7 @@ def test__clean_df():
     return_value="file",
 )
 def test__download_excel_file(mock_fetch_file, mock_excel_file):
-    result = _download_excel_file()
+    result = _download_imputations_excel_file()
     assert result == "file"
     # check that the function was called with the correct url
     mock_fetch_file.assert_called_once()
