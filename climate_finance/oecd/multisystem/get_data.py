@@ -11,7 +11,6 @@ from climate_finance.common.schema import (
 from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.tools import (
     convert_flows_millions_to_units,
-    get_crs_channel_code2name_mapping,
     channel_codes_to_names,
     clean_multisystem_indicators,
     key_crs_columns_to_str,
