@@ -10,6 +10,12 @@ from climate_finance.common.schema import (
     ClimateSchema,
     OECD_CLIMATE_INDICATORS,
 )
+from climate_finance.oecd.cleaning_tools.tools import (
+    key_crs_columns_to_str,
+    set_crs_data_types,
+    rename_crdf_marker_columns,
+    marker_columns_to_numeric,
+)
 from climate_finance.oecd.imputed_multilateral.tools import log_notes
 
 
@@ -217,63 +223,6 @@ def download_file(
     data.to_feather(save_to_path)
 
 
-def rename_marker_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Rename the marker columns to more standard names.
-
-    Args:
-        df: The dataframe to rename the columns for.
-
-    Returns:
-        The dataframe with the columns renamed.
-
-    """
-    # rename marker columns
-    markers = {
-        "adaptation_objective_applies_to_rio_marked_data_only": ClimateSchema.ADAPTATION,
-        "mitigation_objective_applies_to_rio_marked_data_only": ClimateSchema.MITIGATION,
-        "adaptation_related_development_finance_commitment_current": ClimateSchema.ADAPTATION_VALUE,
-        "mitigation_related_development_finance_commitment_current": ClimateSchema.MITIGATION_VALUE,
-    }
-
-    return df.rename(columns=markers)
-
-
-def marker_columns_to_numeric(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Convert the marker columns to numeric.
-
-    The markers are converted to numeric values according to the following mapping:
-    - Principal: 2
-    - Significant: 1
-    - Not targeted/Not screened: 0
-    - Imputed multilateral contributions: 99
-
-    Args:
-        df: The dataframe to convert the marker columns for.
-
-    Returns:
-        The dataframe with the marker columns converted to numeric.
-
-    """
-    # markers to numeric
-    markers_numeric = {
-        "Principal": 2,
-        "Significant": 1,
-        "Not targeted/Not screened": 0,
-        "Imputed multilateral contributions": 99,
-        "Climate components": 100,
-    }
-
-    # Identify the marker columns
-    marker_columns = [ClimateSchema.ADAPTATION, ClimateSchema.MITIGATION]
-
-    # Convert the marker columns to numeric
-    df[marker_columns] = df[marker_columns].replace(markers_numeric).astype("Int16")
-
-    return df
-
-
 def get_marker_data(df: pd.DataFrame, marker: str):
     """
     Get the marker data for a given marker.
@@ -298,10 +247,21 @@ def get_marker_data(df: pd.DataFrame, marker: str):
 
 def load_or_download(base_url: str, save_to_path: str | pathlib.Path) -> pd.DataFrame:
     try:
-        return pd.read_feather(save_to_path).rename(columns=CRS_MAPPING)
+        return (
+            pd.read_feather(save_to_path)
+            .rename(columns=CRS_MAPPING)
+            .pipe(rename_crdf_marker_columns)
+            .pipe(marker_columns_to_numeric)
+            .pipe(key_crs_columns_to_str)
+        )
     except FileNotFoundError:
         download_file(base_url=base_url, save_to_path=save_to_path)
-        return pd.read_feather(save_to_path).rename(columns=CRS_MAPPING)
+        return (
+            pd.read_feather(save_to_path)
+            .rename(columns=CRS_MAPPING)
+            .pipe(rename_crdf_marker_columns)
+            .pipe(set_crs_data_types)
+        )
 
 
 def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -330,5 +290,5 @@ def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
     return (
         df.filter([c for c in df.columns if c not in to_drop])
         .assign(indicator=lambda d: d.indicator.map(OECD_CLIMATE_INDICATORS))
-        .assign(flow_type="usd_commitment")
+        .assign(flow_type=ClimateSchema.USD_COMMITMENT)
     )

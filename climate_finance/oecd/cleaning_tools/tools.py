@@ -401,9 +401,10 @@ def key_crs_columns_to_str(df: pd.DataFrame) -> pd.DataFrame:
         for c in relevant_crs_columns()
         + [ClimateSchema.FLOW_TYPE, ClimateSchema.FLOW_MODALITY]
         if c not in [ClimateSchema.ADAPTATION, ClimateSchema.MITIGATION]
+        and c in df.columns
     )
 
-    return df.astype({c: "str" for c in key_crs_columns if c in df.columns}).astype(
+    return df.astype({c: "str" for c in key_crs_columns}).astype(
         {c: "Int16" for c in CRS_CLIMATE_COLUMNS}
     )
 
@@ -420,5 +421,62 @@ def fix_crs_year_encoding(df: pd.DataFrame) -> pd.DataFrame:
 
 def clean_adaptation_and_mitigation_columns(df: pd.DataFrame) -> pd.DataFrame:
     df[CRS_CLIMATE_COLUMNS] = df[CRS_CLIMATE_COLUMNS].fillna(0)
+
+    return df
+
+
+def rename_crdf_marker_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Rename the marker columns to more standard names.
+
+    Args:
+        df: The dataframe to rename the columns for.
+
+    Returns:
+        The dataframe with the columns renamed.
+
+    """
+    # rename marker columns
+    markers = {
+        "adaptation_objective_applies_to_rio_marked_data_only": ClimateSchema.ADAPTATION,
+        "mitigation_objective_applies_to_rio_marked_data_only": ClimateSchema.MITIGATION,
+        "adaptation_related_development_finance_commitment_current": ClimateSchema.ADAPTATION_VALUE,
+        "mitigation_related_development_finance_commitment_current": ClimateSchema.MITIGATION_VALUE,
+    }
+
+    return df.rename(columns=markers)
+
+
+def marker_columns_to_numeric(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Convert the marker columns to numeric.
+
+    The markers are converted to numeric values according to the following mapping:
+    - Principal: 2
+    - Significant: 1
+    - Not targeted/Not screened: 0
+    - Imputed multilateral contributions: 99
+
+    Args:
+        df: The dataframe to convert the marker columns for.
+
+    Returns:
+        The dataframe with the marker columns converted to numeric.
+
+    """
+    # markers to numeric
+    markers_numeric = {
+        "Principal": 2,
+        "Significant": 1,
+        "Not targeted/Not screened": 0,
+        "Imputed multilateral contributions": 99,
+        "Climate components": 100,
+    }
+
+    # Identify the marker columns
+    marker_columns = [ClimateSchema.ADAPTATION, ClimateSchema.MITIGATION]
+
+    # Convert the marker columns to numeric
+    df[marker_columns] = df[marker_columns].replace(markers_numeric).astype("Int16")
 
     return df

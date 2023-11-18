@@ -1,6 +1,7 @@
 import pandas as pd
 
 from climate_finance.common.schema import ClimateSchema
+from climate_finance.config import logger
 from climate_finance.oecd.cleaning_tools.tools import keep_only_allocable_aid
 
 
@@ -72,6 +73,39 @@ def check_provider_codes_type(
         except ValueError:
             raise TypeError(f"Provider codes must all be integers")
     return provider_codes
+
+
+def filter_providers(data: pd.DataFrame, provider_codes: list[str]) -> pd.DataFrame:
+    """
+    Check that the requested providers are in the data and filter the data to only
+    include the requested providers. If party is None, return the original dataframe.
+
+    Args:
+        data: A dataframe containing the CRS data.
+        provider_codes: A list of parties to filter the data to.
+
+    Returns:
+        A dataframe with the CRS data filtered to only include the requested parties.
+        If party is None, return the original dataframe.
+
+    """
+
+    # Validate the provider argument
+    provider_codes = check_provider_codes_type(provider_codes)
+    if provider_codes is None:
+        return data
+
+    # Check that the requested providers are in the CRS data
+    missing_providers = set(provider_codes) - set(
+        data[ClimateSchema.PROVIDER_CODE].unique()
+    )
+    # Log a warning if any of the requested providers are not in the CRS data
+    if len(missing_providers) > 0:
+        logger.warning(
+            f"The following parties are not found in CRS data:\n{missing_providers}"
+        )
+    # Filter the data to only include the requested providers
+    return data.loc[lambda d: d[ClimateSchema.PROVIDER_CODE].isin(provider_codes)]
 
 
 def add_net_disbursement(df: pd.DataFrame) -> pd.DataFrame:

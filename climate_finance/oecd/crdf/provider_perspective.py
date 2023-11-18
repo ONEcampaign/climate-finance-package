@@ -2,15 +2,18 @@ from pathlib import Path
 
 import pandas as pd
 
+from climate_finance.common.analysis_tools import filter_providers
 from climate_finance.config import ClimateDataPath
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.oecd.crdf.tools import (
     download_file,
-    rename_marker_columns,
-    marker_columns_to_numeric,
     get_marker_data,
     load_or_download,
     clean_columns,
+)
+from climate_finance.oecd.cleaning_tools.tools import (
+    rename_crdf_marker_columns,
+    marker_columns_to_numeric,
 )
 from climate_finance.oecd.imputed_multilateral.tools import check_and_filter_parties
 from climate_finance.oecd.methodologies.bilateral_methodologies import (
@@ -54,7 +57,7 @@ def _get_and_remove_multilateral(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
 def get_provider_perspective(
     start_year: int,
     end_year: int,
-    party: str | list[str] | None = None,
+    provider_code: str | list[str] | None = None,
     force_update: bool = False,
 ) -> pd.DataFrame:
     """
@@ -65,8 +68,8 @@ def get_provider_perspective(
     Args:
         start_year: The start year that should be covered in the data
         end_year: The end year that should be covered in the data
-        party: Optionally, specify one or more parties. If not specified, all
-        parties are included.
+        provider_code: Optionally, specify one or more providers. If not specified, all
+        providers are included.
         force_update: If True, the data is updated from the source. This can potentially
         overwrite any data that has been downloaded to the 'raw_data' folder.
 
@@ -74,7 +77,7 @@ def get_provider_perspective(
 
     """
     # Study years
-    years = range(start_year, end_year + 1)
+    years = [str(y) for y in range(start_year, end_year + 1)]
 
     # Check if data should be forced to update
     if force_update:
@@ -83,16 +86,17 @@ def get_provider_perspective(
     # Try to load file
     df = load_or_download(base_url=BASE_URL, save_to_path=FILE_PATH)
 
-    # Rename markers
-    df = rename_marker_columns(df)
-    # Convert markers to multilateral
-    df = marker_columns_to_numeric(df)
+    # Filter for years
+    df = df.loc[lambda d: d[ClimateSchema.YEAR].isin(years)]
+
+    # filter for parties (if needed)
+    df = filter_providers(data=df, provider_codes=provider_code)
 
     # get a multilateral df and remove multilateral from the main df
     df, multilateral = _get_and_remove_multilateral(df)
 
     # get cross cutting values
-    cross_cutting = get_cross_cutting_data_oecd(df).rename(
+    cross_cutting = df.pipe(get_cross_cutting_data_oecd).rename(
         columns={ClimateSchema.CROSS_CUTTING_VALUE: ClimateSchema.VALUE}
     )
 
@@ -110,14 +114,8 @@ def get_provider_perspective(
     # Merge the dataframes
     data = pd.concat(dfs, ignore_index=True)
 
-    # filter for years
-    data = data.loc[lambda d: d[ClimateSchema.YEAR].isin(years)]
-
-    # Check parties
-    data = check_and_filter_parties(data, party=party)
-
     return data
 
 
 if __name__ == "__main__":
-    df = get_provider_perspective(2019, 2020, force_update=True)
+    df = get_provider_perspective(2019, 2020, force_update=False)
