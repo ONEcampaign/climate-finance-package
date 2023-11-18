@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from climate_finance.methodologies.imputed_multilateral.oecd_multilateral.get_oecd_imputations import (
+from climate_finance.methodologies.multilateral.oecd_multilateral.get_oecd_imputations import (
     _add_channel_codes,
     _add_climate_value_columns,
     _clean_df,
@@ -12,11 +12,11 @@ from climate_finance.methodologies.imputed_multilateral.oecd_multilateral.get_oe
     download_file,
     get_oecd_multilateral_climate_imputations,
 )
-from climate_finance.methodologies.imputed_multilateral import log_notes
+from climate_finance.methodologies.multilateral import log_notes
 
 
 # Mock logger
-@patch("climate_finance.oecd.imputed_multilateral.tools.logger")
+@patch("climate_finance.oecd.multilateral.tools.logger")
 def test_log_notes(mock_logger):
     df = pd.DataFrame({"notes": ["0", "Latest update: 2022-01-01"]})
     log_notes(df)
@@ -36,7 +36,7 @@ def test_merge_dataframes():
 
 # Mock generate_channel_mapping_dictionary function
 @patch(
-    "climate_finance.oecd.imputed_multilateral.oecd_multilateral."
+    "climate_finance.oecd.multilateral.oecd_multilateral."
     "get_oecd_imputations.generate_channel_mapping_dictionary",
     return_value={"channel1": "code1"},
 )
@@ -152,11 +152,11 @@ def test__clean_df():
 
 
 @patch(
-    "climate_finance.oecd.imputed_multilateral.oecd_multilateral."
+    "climate_finance.oecd.multilateral.oecd_multilateral."
     "get_oecd_imputations.fetch_file_from_url_selenium"
 )
 @patch(
-    "climate_finance.oecd.imputed_multilateral.oecd_multilateral."
+    "climate_finance.oecd.multilateral.oecd_multilateral."
     "get_oecd_imputations.pd.ExcelFile",
     return_value="file",
 )
@@ -168,23 +168,23 @@ def test__download_excel_file(mock_fetch_file, mock_excel_file):
 
 
 @patch(
-    "climate_finance.oecd.imputed_multilateral.oecd_multilateral."
+    "climate_finance.oecd.multilateral.oecd_multilateral."
     "get_oecd_imputations._download_excel_file"
 )
 @patch(
-    "climate_finance.oecd.imputed_multilateral.oecd_multilateral."
+    "climate_finance.oecd.multilateral.oecd_multilateral."
     "get_oecd_imputations._read_and_clean_excel_sheets"
 )
 @patch(
-    "climate_finance.oecd.imputed_multilateral.oecd_multilateral."
+    "climate_finance.oecd.multilateral.oecd_multilateral."
     "get_oecd_imputations._merge_dataframes"
 )
 @patch(
-    "climate_finance.oecd.imputed_multilateral.oecd_multilateral."
+    "climate_finance.oecd.multilateral.oecd_multilateral."
     "get_oecd_imputations._add_channel_codes"
 )
 @patch(
-    "climate_finance.oecd.imputed_multilateral.oecd_multilateral."
+    "climate_finance.oecd.multilateral.oecd_multilateral."
     "get_oecd_imputations._reorder_imputations_columns"
 )
 @patch("pandas.DataFrame.to_feather")
@@ -208,11 +208,11 @@ def test_download_file(
 
 
 @patch(
-    "climate_finance.oecd.imputed_multilateral.oecd_multilateral."
+    "climate_finance.oecd.multilateral.oecd_multilateral."
     "get_oecd_imputations.download_file"
 )
 @patch(
-    "climate_finance.oecd.imputed_multilateral.oecd_multilateral."
+    "climate_finance.oecd.multilateral.oecd_multilateral."
     "get_oecd_imputations.pd.read_feather"
 )
 def test_get_oecd_multilateral_climate_imputations(
