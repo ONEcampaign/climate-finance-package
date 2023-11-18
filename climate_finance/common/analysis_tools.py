@@ -171,3 +171,17 @@ def get_crs_allocable_to_total_ratio(full_crs: pd.DataFrame) -> pd.DataFrame:
     data = data.pipe(pivot_by_modality).pipe(add_allocable_share)
 
     return data
+
+
+def keep_commitments_and_disbursements_only(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Keep only commitments and disbursements from the CRS data.
+    Args:
+        data: A dataframe with a flow_type column.
+
+    Returns:
+        A dataframe with only commitments and disbursements.
+
+    """
+    keep = [ClimateSchema.USD_COMMITMENT, ClimateSchema.USD_DISBURSEMENT]
+    return data.loc[lambda d: d[ClimateSchema.FLOW_TYPE].isin(keep)]

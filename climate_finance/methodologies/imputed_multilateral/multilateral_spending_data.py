@@ -2,12 +2,12 @@ import pandas as pd
 from oda_data import read_crs
 
 from climate_finance.common.schema import ClimateSchema, CRS_MAPPING
+from climate_finance.methodologies.imputed_multilateral.crs_tools import (
+    add_crs_data_and_transform,
+)
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
 from climate_finance.oecd.crdf.recipient_perspective import (
     get_recipient_perspective,
-)
-from climate_finance.methodologies.imputed_multilateral.crs_tools import (
-    add_crs_data_and_transform,
 )
 from climate_finance.unfccc.cleaning_tools.channels import clean_string
 
@@ -130,7 +130,8 @@ def _convert_to_indicators(full_data: pd.DataFrame) -> pd.DataFrame:
             full_data.assign(
                 **{
                     ClimateSchema.VALUE: lambda d: d[column],
-                    ClimateSchema.SHARE: lambda d: d[column] / d[ClimateSchema.USD_COMMITMENT],
+                    ClimateSchema.SHARE: lambda d: d[column]
+                    / d[ClimateSchema.USD_COMMITMENT],
                     ClimateSchema.INDICATOR: column,
                 }
             )
@@ -147,7 +148,7 @@ def _create_disbursements_df(data: pd.DataFrame) -> pd.DataFrame:
         **{
             ClimateSchema.FLOW_TYPE: ClimateSchema.USD_DISBURSEMENT,
             ClimateSchema.VALUE: lambda d: d[ClimateSchema.USD_DISBURSEMENT]
-                                           * d[ClimateSchema.SHARE],
+            * d[ClimateSchema.SHARE],
         }
     ).drop(columns=ClimateSchema.USD_DISBURSEMENT)
 
@@ -286,7 +287,9 @@ def _get_crs_to_match(
     crs_data = crs_data.rename(columns=CRS_MAPPING)
 
     # Clean project title
-    crs_data[ClimateSchema.PROJECT_TITLE] = clean_string(crs_data[ClimateSchema.PROJECT_TITLE])
+    crs_data[ClimateSchema.PROJECT_TITLE] = clean_string(
+        crs_data[ClimateSchema.PROJECT_TITLE]
+    )
 
     idx = [
         c
@@ -365,5 +368,9 @@ def get_multilateral_data(
         The multilateral providers data.
 
     """
-    return get_recipient_perspective(start_year=start_year, end_year=end_year, provider_code=party,
-                                     force_update=force_update).pipe(_keep_multilateral_providers)
+    return get_recipient_perspective(
+        start_year=start_year,
+        end_year=end_year,
+        provider_code=party,
+        force_update=force_update,
+    ).pipe(_keep_multilateral_providers)
