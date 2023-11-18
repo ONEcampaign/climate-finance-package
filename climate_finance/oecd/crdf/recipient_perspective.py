@@ -68,35 +68,6 @@ MULTI_COLUMNS: list = [
     ClimateSchema.SHARE,
 ]
 
-
-def get_marker_data_and_share(df: pd.DataFrame, marker: str):
-    """
-    Get the marker data for a given marker.
-
-    Args:
-        df: The dataframe to get the marker data from.
-        marker: The marker to get the data for.
-
-    Returns:
-        The marker data.
-
-    """
-
-    return (
-        df.loc[lambda d: d[marker] > 0]  # Only keep rows where the marker is > 0
-        .copy()  # Make a copy of the dataframe
-        .assign(indicator=marker)  # Add a column with the marker name
-        .rename(
-            columns={f"{marker}_value": ClimateSchema.VALUE}
-        )  # Rename the value column
-        .drop(columns=[marker])  # Drop the marker column
-        .assign(
-            share=lambda d: d[ClimateSchema.VALUE] / d[ClimateSchema.TOTAL_VALUE]
-        )  # Add a share column
-        .drop(columns=[ClimateSchema.CLIMATE_FINANCE_VALUE])  # Drop the total column
-    )
-
-
 def get_overlap(df: pd.DataFrame) -> pd.DataFrame:
     """
     Get the overlap data. In the recipient view, this is a specific column. It caputres
