@@ -83,7 +83,7 @@ def get_oecd_multilateral(
     start_year: int,
     end_year: int,
     update_data: bool = False,
-    methodology: str = "oecd_multilateral_agency_total",
+    methodology: str = "oecd_multilateral_agency",
 ) -> pd.DataFrame:
     """
     Get multilateral climate finance data from the OECD multilateral files published by
