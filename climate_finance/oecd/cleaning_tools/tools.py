@@ -396,16 +396,24 @@ def replace_missing_climate_with_zero(df: pd.DataFrame, column: str) -> pd.DataF
 def key_crs_columns_to_str(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure right data types are set"""
 
+    columns = relevant_crs_columns() + [
+        ClimateSchema.FLOW_TYPE,
+        ClimateSchema.FLOW_MODALITY,
+        ClimateSchema.PROVIDER_TYPE,
+        f"{ClimateSchema.PROVIDER_NAME}_short",
+    ]
+
     key_crs_columns = set(
         c
-        for c in relevant_crs_columns()
-        + [ClimateSchema.FLOW_TYPE, ClimateSchema.FLOW_MODALITY]
+        for c in columns
         if c not in [ClimateSchema.ADAPTATION, ClimateSchema.MITIGATION]
         and c in df.columns
     )
 
+    climate_columns = [c for c in CRS_CLIMATE_COLUMNS if c in df.columns]
+
     return df.astype({c: "str" for c in key_crs_columns}).astype(
-        {c: "Int16" for c in CRS_CLIMATE_COLUMNS}
+        {c: "Int16" for c in climate_columns}
     )
 
 

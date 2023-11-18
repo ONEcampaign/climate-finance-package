@@ -15,6 +15,7 @@ from climate_finance.oecd.cleaning_tools.tools import (
     set_crs_data_types,
     rename_crdf_marker_columns,
     marker_columns_to_numeric,
+    fix_crs_year_encoding,
 )
 from climate_finance.oecd.imputed_multilateral.tools import log_notes
 
@@ -190,7 +191,7 @@ def clean_df(data: pd.DataFrame) -> pd.DataFrame:
     data = convert_thousands_to_units(data)
 
     # fix year column
-    data["year"] = data["year"].astype("str").str.replace("\ufeff", "", regex=True)
+    data = data.pipe(fix_crs_year_encoding)
 
     # Convert data types
     data = set_data_types(data)
@@ -245,23 +246,22 @@ def get_marker_data(df: pd.DataFrame, marker: str):
     )
 
 
+def _load(save_to_path: str | pathlib.Path) -> pd.DataFrame:
+    return (
+        pd.read_feather(save_to_path)
+        .rename(columns=CRS_MAPPING)
+        .pipe(rename_crdf_marker_columns)
+        .pipe(marker_columns_to_numeric)
+        .pipe(key_crs_columns_to_str)
+    )
+
+
 def load_or_download(base_url: str, save_to_path: str | pathlib.Path) -> pd.DataFrame:
     try:
-        return (
-            pd.read_feather(save_to_path)
-            .rename(columns=CRS_MAPPING)
-            .pipe(rename_crdf_marker_columns)
-            .pipe(marker_columns_to_numeric)
-            .pipe(key_crs_columns_to_str)
-        )
+        return _load(save_to_path)
     except FileNotFoundError:
         download_file(base_url=base_url, save_to_path=save_to_path)
-        return (
-            pd.read_feather(save_to_path)
-            .rename(columns=CRS_MAPPING)
-            .pipe(rename_crdf_marker_columns)
-            .pipe(set_crs_data_types)
-        )
+        return _load(save_to_path)
 
 
 def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -292,3 +292,22 @@ def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
         .assign(indicator=lambda d: d.indicator.map(OECD_CLIMATE_INDICATORS))
         .assign(flow_type=ClimateSchema.USD_COMMITMENT)
     )
+
+
+def fix_recipient_perspective_provider_names_columns(
+    data: pd.DataFrame,
+) -> pd.DataFrame:
+    return data.rename(
+        columns={
+            ClimateSchema.PROVIDER_NAME: f"{ClimateSchema.PROVIDER_NAME}_short",
+            ClimateSchema.PROVIDER_DETAILED: ClimateSchema.PROVIDER_NAME,
+        }
+    ).astype({ClimateSchema.PROVIDER_NAME: "str"})
+
+
+def fix_recipient_perspective_recipient_errors(data: pd.DataFrame) -> pd.DataFrame:
+    return data.replace({ClimateSchema.RECIPIENT_CODE: {"9998": "998"}})
+
+
+def assign_usd_commitments_as_flow_type(data: pd.DataFrame) -> pd.DataFrame:
+    return data.assign(**{ClimateSchema.FLOW_TYPE: ClimateSchema.USD_COMMITMENT})

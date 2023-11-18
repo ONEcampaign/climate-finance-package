@@ -365,9 +365,5 @@ def get_multilateral_data(
         The multilateral providers data.
 
     """
-    return get_recipient_perspective(
-        start_year=start_year,
-        end_year=end_year,
-        party=party,
-        force_update=force_update,
-    ).pipe(_keep_multilateral_providers)
+    return get_recipient_perspective(start_year=start_year, end_year=end_year, provider_code=party,
+                                     force_update=force_update).pipe(_keep_multilateral_providers)

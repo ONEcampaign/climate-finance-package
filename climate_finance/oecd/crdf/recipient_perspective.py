@@ -3,14 +3,17 @@ from pathlib import Path
 import pandas as pd
 from oda_data import set_data_path
 
-from climate_finance.config import ClimateDataPath
+from climate_finance.common.analysis_tools import filter_providers
 from climate_finance.common.schema import ClimateSchema
+from climate_finance.config import ClimateDataPath
+from climate_finance.oecd.cleaning_tools.tools import marker_columns_to_numeric
 from climate_finance.oecd.crdf.tools import (
     download_file,
     load_or_download,
+    fix_recipient_perspective_provider_names_columns,
+    fix_recipient_perspective_recipient_errors,
+    assign_usd_commitments_as_flow_type,
 )
-from climate_finance.oecd.cleaning_tools.tools import marker_columns_to_numeric
-from climate_finance.oecd.imputed_multilateral.tools import check_and_filter_parties
 
 FILE_PATH: Path = (
     ClimateDataPath.raw_data / "oecd_climate_recipient_perspective.feather"
@@ -80,7 +83,8 @@ def add_imputed_total(df: pd.DataFrame) -> pd.DataFrame:
 
     # Add imputed total
     df[ClimateSchema.TOTAL_VALUE] = (
-            df[ClimateSchema.CLIMATE_FINANCE_VALUE] / df[ClimateSchema.COMMITMENT_CLIMATE_SHARE]
+        df[ClimateSchema.CLIMATE_FINANCE_VALUE]
+        / df[ClimateSchema.COMMITMENT_CLIMATE_SHARE]
     )
 
     return df
@@ -103,7 +107,9 @@ def get_marker_data_and_share(df: pd.DataFrame, marker: str):
         df.loc[lambda d: d[marker] > 0]  # Only keep rows where the marker is > 0
         .copy()  # Make a copy of the dataframe
         .assign(indicator=marker)  # Add a column with the marker name
-        .rename(columns={f"{marker}_value": ClimateSchema.VALUE})  # Rename the value column
+        .rename(
+            columns={f"{marker}_value": ClimateSchema.VALUE}
+        )  # Rename the value column
         .drop(columns=[marker])  # Drop the marker column
         .assign(
             share=lambda d: d[ClimateSchema.VALUE] / d[ClimateSchema.TOTAL_VALUE]
@@ -129,7 +135,9 @@ def get_overlap(df: pd.DataFrame) -> pd.DataFrame:
             lambda d: d[ClimateSchema.CROSS_CUTTING_VALUE] > 0
         ]  # Only where overlap is > 0
         .copy()  # Make a copy of the dataframe
-        .assign(indicator=ClimateSchema.CROSS_CUTTING)  # Add a column with the marker name
+        .assign(
+            indicator=ClimateSchema.CROSS_CUTTING
+        )  # Add a column with the marker name
         .rename(
             columns={ClimateSchema.CROSS_CUTTING_VALUE: ClimateSchema.VALUE}
         )  # Rename overlap
@@ -144,7 +152,7 @@ def get_overlap(df: pd.DataFrame) -> pd.DataFrame:
 def get_recipient_perspective(
     start_year: int,
     end_year: int,
-    party: list[str] | None = None,
+    provider_code: str | list[str] | int | None = None,
     force_update: bool = False,
 ) -> pd.DataFrame:
     """
@@ -155,8 +163,8 @@ def get_recipient_perspective(
     Args:
         start_year: The start year that should be covered in the data
         end_year: The end year that should be covered in the data
-        party: Optionally, specify one or more parties. If not specified, all
-        parties are included.
+        provider_code: Optionally, specify one or more provider. If not specified, all
+        providers are included.
         force_update: If True, the data is updated from the source. This can potentially
         overwrite any data that has been downloaded to the 'raw_data' folder.
 
@@ -164,7 +172,7 @@ def get_recipient_perspective(
 
     """
     # Study years
-    years = range(start_year, end_year + 1)
+    years = [str(y) for y in range(start_year, end_year + 1)]
 
     # Check if data should be forced to update
     if force_update:
@@ -173,27 +181,26 @@ def get_recipient_perspective(
     # Try to load file
     df = load_or_download(base_url=BASE_URL, save_to_path=FILE_PATH)
 
-    # Rename columns
-    df = df.rename(
-        columns={
-            ClimateSchema.PROVIDER_NAME: f"{ClimateSchema.PROVIDER_NAME}_short",
-            ClimateSchema.PROVIDER_DETAILED: ClimateSchema.PROVIDER_NAME,
-        }
-    )
-
     # Filter for years
-    df = df.loc[lambda d: d.year.isin(years)]
+    df = df.loc[lambda d: d[ClimateSchema.YEAR].isin(years)]
 
-    # filter for parties
-    df = check_and_filter_parties(df, party=party, party_col=ClimateSchema.PROVIDER_NAME)
+    # filter for parties (if needed)
+    df = filter_providers(data=df, provider_codes=provider_code)
 
-    # Convert markers to multilateral
+    # Rename provider columns
+    df = df.pipe(fix_recipient_perspective_provider_names_columns)
+
+    # Convert markers to numeric
     df = marker_columns_to_numeric(df)
 
     # Fix errors in recipient code
-    df = df.replace({ClimateSchema.RECIPIENT_CODE: {"9998": "998"}})
+    df = df.pipe(fix_recipient_perspective_recipient_errors)
 
     # Add flow type
-    df = df.assign(flow_type="usd_commitment")
+    df = df.pipe(assign_usd_commitments_as_flow_type)
 
     return df
+
+
+if __name__ == "__main__":
+    df = get_recipient_perspective(2019, 2021)
