@@ -1,7 +1,7 @@
 import pandas as pd
 from oda_data import read_crs
 
-from climate_finance.oecd.cleaning_tools.schema import CrsSchema, CRS_MAPPING
+from climate_finance.oecd.cleaning_tools.schema import ClimateSchema, CRS_MAPPING
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
 from climate_finance.oecd.crdf.recipient_perspective import (
     get_recipient_perspective,
@@ -12,68 +12,68 @@ from climate_finance.oecd.imputed_multilateral.crs_tools import (
 from climate_finance.unfccc.cleaning_tools.channels import clean_string
 
 UNIQUE_INDEX = [
-    CrsSchema.YEAR,
-    CrsSchema.PARTY_CODE,
-    CrsSchema.AGENCY_CODE,
-    # CrsSchema.CRS_ID,
-    CrsSchema.PROJECT_ID,
-    CrsSchema.FINANCE_TYPE,
-    # CrsSchema.FLOW_CODE,
-    CrsSchema.FLOW_TYPE,
-    CrsSchema.RECIPIENT_CODE,
-    CrsSchema.PURPOSE_CODE,
+    ClimateSchema.YEAR,
+    ClimateSchema.PROVIDER_CODE,
+    ClimateSchema.AGENCY_CODE,
+    # ClimateSchema.CRS_ID,
+    ClimateSchema.PROJECT_ID,
+    ClimateSchema.FINANCE_TYPE,
+    # ClimateSchema.FLOW_CODE,
+    ClimateSchema.FLOW_TYPE,
+    ClimateSchema.RECIPIENT_CODE,
+    ClimateSchema.PURPOSE_CODE,
 ]
 
 CRS_INFO = [
-    CrsSchema.YEAR,
-    CrsSchema.PARTY_CODE,
-    CrsSchema.AGENCY_CODE,
-    CrsSchema.CRS_ID,
-    CrsSchema.PROJECT_ID,
-    CrsSchema.RECIPIENT_CODE,
-    CrsSchema.FLOW_CODE,
-    CrsSchema.FLOW_TYPE,
-    CrsSchema.FLOW_NAME,
-    CrsSchema.CATEGORY,
-    CrsSchema.FINANCE_TYPE,
-    CrsSchema.FLOW_MODALITY,
-    CrsSchema.PURPOSE_CODE,
-    CrsSchema.CHANNEL_CODE,
-    CrsSchema.CHANNEL_NAME,
+    ClimateSchema.YEAR,
+    ClimateSchema.PROVIDER_CODE,
+    ClimateSchema.AGENCY_CODE,
+    ClimateSchema.CRS_ID,
+    ClimateSchema.PROJECT_ID,
+    ClimateSchema.RECIPIENT_CODE,
+    ClimateSchema.FLOW_CODE,
+    ClimateSchema.FLOW_TYPE,
+    ClimateSchema.FLOW_NAME,
+    ClimateSchema.CATEGORY,
+    ClimateSchema.FINANCE_TYPE,
+    ClimateSchema.FLOW_MODALITY,
+    ClimateSchema.PURPOSE_CODE,
+    ClimateSchema.CHANNEL_CODE,
+    ClimateSchema.CHANNEL_NAME,
 ]
 
 OUTPUT_COLUMNS: list = [
-    CrsSchema.YEAR,
-    CrsSchema.PARTY_CODE,
-    CrsSchema.AGENCY_CODE,
-    CrsSchema.CRS_ID,
-    CrsSchema.PROJECT_ID,
-    CrsSchema.RECIPIENT_CODE,
-    CrsSchema.CHANNEL_CODE,
-    CrsSchema.PURPOSE_CODE,
-    CrsSchema.FLOW_MODALITY,
-    CrsSchema.FINANCIAL_INSTRUMENT,
-    CrsSchema.FINANCE_TYPE,
-    CrsSchema.CATEGORY,
-    CrsSchema.CONCESSIONALITY,
-    CrsSchema.INDICATOR,
-    CrsSchema.FLOW_TYPE,
-    CrsSchema.FLOW_CODE,
-    CrsSchema.FLOW_NAME,
-    CrsSchema.VALUE,
-    CrsSchema.TOTAL_VALUE,
-    CrsSchema.SHARE,
+    ClimateSchema.YEAR,
+    ClimateSchema.PROVIDER_CODE,
+    ClimateSchema.AGENCY_CODE,
+    ClimateSchema.CRS_ID,
+    ClimateSchema.PROJECT_ID,
+    ClimateSchema.RECIPIENT_CODE,
+    ClimateSchema.CHANNEL_CODE,
+    ClimateSchema.PURPOSE_CODE,
+    ClimateSchema.FLOW_MODALITY,
+    ClimateSchema.FINANCIAL_INSTRUMENT,
+    ClimateSchema.FINANCE_TYPE,
+    ClimateSchema.CATEGORY,
+    ClimateSchema.CONCESSIONALITY,
+    ClimateSchema.INDICATOR,
+    ClimateSchema.FLOW_TYPE,
+    ClimateSchema.FLOW_CODE,
+    ClimateSchema.FLOW_NAME,
+    ClimateSchema.VALUE,
+    ClimateSchema.TOTAL_VALUE,
+    ClimateSchema.SHARE,
 ]
 
 CRS_VALUES: list = [
-    CrsSchema.USD_COMMITMENT,
-    CrsSchema.USD_DISBURSEMENT,
+    ClimateSchema.USD_COMMITMENT,
+    ClimateSchema.USD_DISBURSEMENT,
 ]
 
 CRDF_VALUES = [
-    CrsSchema.ADAPTATION_VALUE,
-    CrsSchema.MITIGATION_VALUE,
-    CrsSchema.CROSS_CUTTING_VALUE,
+    ClimateSchema.ADAPTATION_VALUE,
+    ClimateSchema.MITIGATION_VALUE,
+    ClimateSchema.CROSS_CUTTING_VALUE,
 ]
 
 # multilateral providers
@@ -116,7 +116,7 @@ def _filter_parties(data, party_code: str | list[str] | None) -> pd.DataFrame:
 
     # Filter donor code
     if party_code is not None:
-        return data.loc[lambda d: d[CrsSchema.PARTY_CODE].isin(party_code)]
+        return data.loc[lambda d: d[ClimateSchema.PROVIDER_CODE].isin(party_code)]
 
     return data
 
@@ -129,13 +129,13 @@ def _convert_to_indicators(full_data: pd.DataFrame) -> pd.DataFrame:
         indicator_flow = (
             full_data.assign(
                 **{
-                    CrsSchema.VALUE: lambda d: d[column],
-                    CrsSchema.SHARE: lambda d: d[column] / d[CrsSchema.USD_COMMITMENT],
-                    CrsSchema.INDICATOR: column,
+                    ClimateSchema.VALUE: lambda d: d[column],
+                    ClimateSchema.SHARE: lambda d: d[column] / d[ClimateSchema.USD_COMMITMENT],
+                    ClimateSchema.INDICATOR: column,
                 }
             )
-            .assign(**{CrsSchema.FLOW_TYPE: CrsSchema.USD_COMMITMENT})
-            .drop(columns=CRDF_VALUES + [CrsSchema.USD_COMMITMENT])
+            .assign(**{ClimateSchema.FLOW_TYPE: ClimateSchema.USD_COMMITMENT})
+            .drop(columns=CRDF_VALUES + [ClimateSchema.USD_COMMITMENT])
         )
         dfs.append(indicator_flow)
 
@@ -145,15 +145,15 @@ def _convert_to_indicators(full_data: pd.DataFrame) -> pd.DataFrame:
 def _create_disbursements_df(data: pd.DataFrame) -> pd.DataFrame:
     return data.assign(
         **{
-            CrsSchema.FLOW_TYPE: CrsSchema.USD_DISBURSEMENT,
-            CrsSchema.VALUE: lambda d: d[CrsSchema.USD_DISBURSEMENT]
-            * d[CrsSchema.SHARE],
+            ClimateSchema.FLOW_TYPE: ClimateSchema.USD_DISBURSEMENT,
+            ClimateSchema.VALUE: lambda d: d[ClimateSchema.USD_DISBURSEMENT]
+                                           * d[ClimateSchema.SHARE],
         }
-    ).drop(columns=CrsSchema.USD_DISBURSEMENT)
+    ).drop(columns=ClimateSchema.USD_DISBURSEMENT)
 
 
 def _create_commitments_df(data: pd.DataFrame) -> pd.DataFrame:
-    return data.drop(columns=[CrsSchema.USD_DISBURSEMENT])
+    return data.drop(columns=[ClimateSchema.USD_DISBURSEMENT])
 
 
 def _manual_duplicate_correction(data: pd.DataFrame) -> pd.DataFrame:
@@ -222,7 +222,7 @@ def _keep_multilateral_providers(
         parties = MULTI_PROVIDERS
 
     # filter
-    return df.loc[lambda d: d[CrsSchema.PARTY_TYPE].isin(parties)].reset_index(
+    return df.loc[lambda d: d[ClimateSchema.PROVIDER_TYPE].isin(parties)].reset_index(
         drop=True
     )
 
@@ -286,12 +286,12 @@ def _get_crs_to_match(
     crs_data = crs_data.rename(columns=CRS_MAPPING)
 
     # Clean project title
-    crs_data[CrsSchema.PROJECT_TITLE] = clean_string(crs_data[CrsSchema.PROJECT_TITLE])
+    crs_data[ClimateSchema.PROJECT_TITLE] = clean_string(crs_data[ClimateSchema.PROJECT_TITLE])
 
     idx = [
         c
-        for c in CRS_INFO + [CrsSchema.PROJECT_TITLE]
-        if c not in [CrsSchema.FLOW_TYPE]
+        for c in CRS_INFO + [ClimateSchema.PROJECT_TITLE]
+        if c not in [ClimateSchema.FLOW_TYPE]
     ]
 
     # Filter parties
@@ -341,7 +341,7 @@ def add_crs_data(df: pd.DataFrame) -> pd.DataFrame:
         output_cols=OUTPUT_COLUMNS + CRDF_VALUES,
     )
 
-    return data.loc[lambda d: d[CrsSchema.VALUE] > 0]
+    return data.loc[lambda d: d[ClimateSchema.VALUE] > 0]
 
 
 def get_multilateral_data(

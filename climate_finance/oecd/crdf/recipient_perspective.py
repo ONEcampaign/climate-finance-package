@@ -4,7 +4,7 @@ import pandas as pd
 from oda_data import set_data_path
 
 from climate_finance.config import ClimateDataPath
-from climate_finance.oecd.cleaning_tools.schema import CrsSchema
+from climate_finance.oecd.cleaning_tools.schema import ClimateSchema
 from climate_finance.oecd.crdf.tools import (
     download_file,
     load_or_download,
@@ -22,46 +22,46 @@ set_data_path(ClimateDataPath.raw_data)
 BASE_URL: str = "https://webfs.oecd.org/climate/RecipientPerspective/CRDF-RP-2000-"
 
 UNIQUE_INDEX = [
-    CrsSchema.YEAR,
-    CrsSchema.PARTY_CODE,
-    CrsSchema.AGENCY_CODE,
-    CrsSchema.CRS_ID,
-    CrsSchema.PROJECT_ID,
-    CrsSchema.RECIPIENT_CODE,
-    CrsSchema.PURPOSE_CODE,
+    ClimateSchema.YEAR,
+    ClimateSchema.PROVIDER_CODE,
+    ClimateSchema.AGENCY_CODE,
+    ClimateSchema.CRS_ID,
+    ClimateSchema.PROJECT_ID,
+    ClimateSchema.RECIPIENT_CODE,
+    ClimateSchema.PURPOSE_CODE,
 ]
 
 MULTI_COLUMNS: list = [
-    CrsSchema.YEAR,
-    CrsSchema.PARTY_TYPE,
-    CrsSchema.PARTY_NAME,
-    CrsSchema.PARTY_DETAILED,
-    CrsSchema.PARTY_CODE,
-    CrsSchema.AGENCY_CODE,
-    CrsSchema.AGENCY_NAME,
-    CrsSchema.CRS_ID,
-    CrsSchema.PROJECT_ID,
-    CrsSchema.RECIPIENT_CODE,
-    CrsSchema.RECIPIENT_NAME,
-    CrsSchema.RECIPIENT_REGION,
-    CrsSchema.RECIPIENT_INCOME,
-    CrsSchema.CONCESSIONALITY,
-    CrsSchema.CHANNEL_CODE_DELIVERY,
-    CrsSchema.CHANNEL_NAME_DELIVERY,
-    CrsSchema.SECTOR_NAME,
-    CrsSchema.PURPOSE_CODE,
-    CrsSchema.PURPOSE_NAME,
-    CrsSchema.FLOW_MODALITY,
-    CrsSchema.FINANCIAL_INSTRUMENT,
-    CrsSchema.FINANCE_TYPE,
-    CrsSchema.PROJECT_TITLE,
-    CrsSchema.PROJECT_DESCRIPTION,
-    CrsSchema.GENDER,
-    CrsSchema.INDICATOR,
-    CrsSchema.FLOW_TYPE,
-    CrsSchema.VALUE,
-    CrsSchema.TOTAL_VALUE,
-    CrsSchema.SHARE,
+    ClimateSchema.YEAR,
+    ClimateSchema.PROVIDER_TYPE,
+    ClimateSchema.PROVIDER_NAME,
+    ClimateSchema.PROVIDER_DETAILED,
+    ClimateSchema.PROVIDER_CODE,
+    ClimateSchema.AGENCY_CODE,
+    ClimateSchema.AGENCY_NAME,
+    ClimateSchema.CRS_ID,
+    ClimateSchema.PROJECT_ID,
+    ClimateSchema.RECIPIENT_CODE,
+    ClimateSchema.RECIPIENT_NAME,
+    ClimateSchema.RECIPIENT_REGION,
+    ClimateSchema.RECIPIENT_INCOME,
+    ClimateSchema.CONCESSIONALITY,
+    ClimateSchema.CHANNEL_CODE_DELIVERY,
+    ClimateSchema.CHANNEL_NAME_DELIVERY,
+    ClimateSchema.SECTOR_NAME,
+    ClimateSchema.PURPOSE_CODE,
+    ClimateSchema.PURPOSE_NAME,
+    ClimateSchema.FLOW_MODALITY,
+    ClimateSchema.FINANCIAL_INSTRUMENT,
+    ClimateSchema.FINANCE_TYPE,
+    ClimateSchema.PROJECT_TITLE,
+    ClimateSchema.PROJECT_DESCRIPTION,
+    ClimateSchema.GENDER,
+    ClimateSchema.INDICATOR,
+    ClimateSchema.FLOW_TYPE,
+    ClimateSchema.VALUE,
+    ClimateSchema.TOTAL_VALUE,
+    ClimateSchema.SHARE,
 ]
 
 
@@ -80,8 +80,8 @@ def add_imputed_total(df: pd.DataFrame) -> pd.DataFrame:
     """
 
     # Add imputed total
-    df[CrsSchema.TOTAL_VALUE] = (
-        df[CrsSchema.CLIMATE_FINANCE_VALUE] / df[CrsSchema.COMMITMENT_CLIMATE_SHARE]
+    df[ClimateSchema.TOTAL_VALUE] = (
+            df[ClimateSchema.CLIMATE_FINANCE_VALUE] / df[ClimateSchema.COMMITMENT_CLIMATE_SHARE]
     )
 
     return df
@@ -104,12 +104,12 @@ def get_marker_data_and_share(df: pd.DataFrame, marker: str):
         df.loc[lambda d: d[marker] > 0]  # Only keep rows where the marker is > 0
         .copy()  # Make a copy of the dataframe
         .assign(indicator=marker)  # Add a column with the marker name
-        .rename(columns={f"{marker}_value": CrsSchema.VALUE})  # Rename the value column
+        .rename(columns={f"{marker}_value": ClimateSchema.VALUE})  # Rename the value column
         .drop(columns=[marker])  # Drop the marker column
         .assign(
-            share=lambda d: d[CrsSchema.VALUE] / d[CrsSchema.TOTAL_VALUE]
+            share=lambda d: d[ClimateSchema.VALUE] / d[ClimateSchema.TOTAL_VALUE]
         )  # Add a share column
-        .drop(columns=[CrsSchema.CLIMATE_FINANCE_VALUE])  # Drop the total column
+        .drop(columns=[ClimateSchema.CLIMATE_FINANCE_VALUE])  # Drop the total column
     )
 
 
@@ -127,18 +127,18 @@ def get_overlap(df: pd.DataFrame) -> pd.DataFrame:
     """
     return (
         df.loc[
-            lambda d: d[CrsSchema.CROSS_CUTTING_VALUE] > 0
+            lambda d: d[ClimateSchema.CROSS_CUTTING_VALUE] > 0
         ]  # Only where overlap is > 0
         .copy()  # Make a copy of the dataframe
-        .assign(indicator=CrsSchema.CROSS_CUTTING)  # Add a column with the marker name
+        .assign(indicator=ClimateSchema.CROSS_CUTTING)  # Add a column with the marker name
         .rename(
-            columns={CrsSchema.CROSS_CUTTING_VALUE: CrsSchema.VALUE}
+            columns={ClimateSchema.CROSS_CUTTING_VALUE: ClimateSchema.VALUE}
         )  # Rename overlap
         .drop_duplicates(subset=UNIQUE_INDEX, keep="first")  # Drop duplicates
         .assign(
-            share=lambda d: d[CrsSchema.VALUE] / d[CrsSchema.TOTAL_VALUE]
+            share=lambda d: d[ClimateSchema.VALUE] / d[ClimateSchema.TOTAL_VALUE]
         )  # Add a share column
-        .drop(columns=[CrsSchema.CLIMATE_FINANCE_VALUE])  # Drop the total column
+        .drop(columns=[ClimateSchema.CLIMATE_FINANCE_VALUE])  # Drop the total column
     )
 
 
@@ -177,8 +177,8 @@ def get_recipient_perspective(
     # Rename columns
     df = df.rename(
         columns={
-            CrsSchema.PARTY_NAME: f"{CrsSchema.PARTY_NAME}_short",
-            CrsSchema.PARTY_DETAILED: CrsSchema.PARTY_NAME,
+            ClimateSchema.PROVIDER_NAME: f"{ClimateSchema.PROVIDER_NAME}_short",
+            ClimateSchema.PROVIDER_DETAILED: ClimateSchema.PROVIDER_NAME,
         }
     )
 
@@ -186,13 +186,13 @@ def get_recipient_perspective(
     df = df.loc[lambda d: d.year.isin(years)]
 
     # filter for parties
-    df = check_and_filter_parties(df, party=party, party_col=CrsSchema.PARTY_NAME)
+    df = check_and_filter_parties(df, party=party, party_col=ClimateSchema.PROVIDER_NAME)
 
     # Convert markers to multilateral
     df = marker_columns_to_numeric(df)
 
     # Fix errors in recipient code
-    df = df.replace({CrsSchema.RECIPIENT_CODE: {"9998": "998"}})
+    df = df.replace({ClimateSchema.RECIPIENT_CODE: {"9998": "998"}})
 
     # Add flow type
     df = df.assign(flow_type="usd_commitment")

@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 from climate_finance.config import ClimateDataPath
-from climate_finance.oecd.cleaning_tools.schema import CrsSchema
+from climate_finance.oecd.cleaning_tools.schema import ClimateSchema
 from climate_finance.oecd.crdf.tools import (
     download_file,
     rename_marker_columns,
@@ -35,14 +35,14 @@ def _get_and_remove_multilateral(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
 
     """
     # Create a mask for the multilateral data
-    mask = (df[CrsSchema.MITIGATION] == 99) | (df[CrsSchema.ADAPTATION] == 99)
+    mask = (df[ClimateSchema.MITIGATION] == 99) | (df[ClimateSchema.ADAPTATION] == 99)
 
     # Create a dataframe with the multilateral data
     multilateral = (
         df.loc[mask]
         .copy()
-        .assign(**{CrsSchema.INDICATOR: CrsSchema.CLIMATE_UNSPECIFIED})
-        .rename(columns={CrsSchema.CLIMATE_FINANCE_VALUE: "value"})
+        .assign(**{ClimateSchema.INDICATOR: ClimateSchema.CLIMATE_UNSPECIFIED})
+        .rename(columns={ClimateSchema.CLIMATE_FINANCE_VALUE: "value"})
     )
 
     # Remove the multilateral data from the dataframe
@@ -93,14 +93,14 @@ def get_provider_perspective(
 
     # get cross cutting values
     cross_cutting = get_cross_cutting_data_oecd(df).rename(
-        columns={CrsSchema.CROSS_CUTTING_VALUE: CrsSchema.VALUE}
+        columns={ClimateSchema.CROSS_CUTTING_VALUE: ClimateSchema.VALUE}
     )
 
     # Get adaptation
-    adaptation = get_marker_data(df, marker=CrsSchema.ADAPTATION)
+    adaptation = get_marker_data(df, marker=ClimateSchema.ADAPTATION)
 
     # Get mitigation
-    mitigation = get_marker_data(df, marker=CrsSchema.MITIGATION)
+    mitigation = get_marker_data(df, marker=ClimateSchema.MITIGATION)
 
     # Clean the different dataframes
     dfs = [
@@ -111,7 +111,7 @@ def get_provider_perspective(
     data = pd.concat(dfs, ignore_index=True)
 
     # filter for years
-    data = data.loc[lambda d: d[CrsSchema.YEAR].isin(years)]
+    data = data.loc[lambda d: d[ClimateSchema.YEAR].isin(years)]
 
     # Check parties
     data = check_and_filter_parties(data, party=party)

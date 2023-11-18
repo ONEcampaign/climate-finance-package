@@ -4,7 +4,7 @@ import pandas as pd
 from climate_finance.config import logger
 from climate_finance.oecd.cleaning_tools.schema import (
     OECD_CLIMATE_INDICATORS,
-    CrsSchema,
+    ClimateSchema,
 )
 from climate_finance.oecd.cleaning_tools.tools import (
     idx_to_str,
@@ -12,13 +12,13 @@ from climate_finance.oecd.cleaning_tools.tools import (
 )
 
 MULTILATERAL_ID_COLUMNS: list[str] = [
-    CrsSchema.YEAR,
-    CrsSchema.CHANNEL_CODE,
-    CrsSchema.CHANNEL_NAME,
-    CrsSchema.FLOW_TYPE,
-    CrsSchema.MULTILATERAL_TYPE,
-    CrsSchema.REPORTING_METHOD,
-    CrsSchema.CONVERGED_REPORTING,
+    ClimateSchema.YEAR,
+    ClimateSchema.CHANNEL_CODE,
+    ClimateSchema.CHANNEL_NAME,
+    ClimateSchema.FLOW_TYPE,
+    ClimateSchema.MULTILATERAL_TYPE,
+    ClimateSchema.REPORTING_METHOD,
+    ClimateSchema.CONVERGED_REPORTING,
 ]
 
 
@@ -42,11 +42,11 @@ def _melt_multilateral_climate_indicators(
     melted_df = df.melt(
         id_vars=melted_cols,
         value_vars=climate_indicators,
-        var_name=CrsSchema.INDICATOR,
-        value_name=CrsSchema.VALUE,
+        var_name=ClimateSchema.INDICATOR,
+        value_name=ClimateSchema.VALUE,
     )
     # keep only where the indicator value is larger than 0
-    return melted_df.dropna(subset=[CrsSchema.VALUE]).reset_index(drop=True)
+    return melted_df.dropna(subset=[ClimateSchema.VALUE]).reset_index(drop=True)
 
 
 def _filter_multilateral_indicators_total(
@@ -70,7 +70,7 @@ def _filter_multilateral_indicators_total(
 def _remove_climate_unspecified(df: pd.DataFrame) -> pd.DataFrame:
     return df.loc[
         lambda d: ~(
-            (d[CrsSchema.YEAR] >= 2021) & (d[CrsSchema.INDICATOR] == "climate_total")
+                (d[ClimateSchema.YEAR] >= 2021) & (d[ClimateSchema.INDICATOR] == "climate_total")
         )
     ]
 
@@ -78,12 +78,12 @@ def _remove_climate_unspecified(df: pd.DataFrame) -> pd.DataFrame:
 def _add_not_climate_relevant(df: pd.DataFrame) -> pd.DataFrame:
     df = df.assign(
         **{
-            CrsSchema.NOT_CLIMATE: lambda d: (
-                d[CrsSchema.CLIMATE_UNSPECIFIED]
-                / (1 - d[CrsSchema.CLIMATE_UNSPECIFIED_SHARE])
+            ClimateSchema.NOT_CLIMATE: lambda d: (
+                d[ClimateSchema.CLIMATE_UNSPECIFIED]
+                / (1 - d[ClimateSchema.CLIMATE_UNSPECIFIED_SHARE])
             ).replace([np.inf, -np.inf], np.nan),
-            f"{CrsSchema.NOT_CLIMATE}_share": lambda d: 1
-            - d[CrsSchema.CLIMATE_UNSPECIFIED_SHARE],
+            f"{ClimateSchema.NOT_CLIMATE}_share": lambda d: 1
+                                                            - d[ClimateSchema.CLIMATE_UNSPECIFIED_SHARE],
         }
     )
     return df
@@ -185,11 +185,11 @@ def base_oecd_multilateral_agency_total(df: pd.DataFrame) -> pd.DataFrame:
 
     """
     climate_indicators = {
-        "oecd_climate_total": CrsSchema.CLIMATE_UNSPECIFIED,
-        "oecd_mitigation": CrsSchema.MITIGATION,
-        "oecd_adaptation": CrsSchema.ADAPTATION,
-        "oecd_cross_cutting": CrsSchema.CROSS_CUTTING,
-        "not_climate_relevant": CrsSchema.NOT_CLIMATE,
+        "oecd_climate_total": ClimateSchema.CLIMATE_UNSPECIFIED,
+        "oecd_mitigation": ClimateSchema.MITIGATION,
+        "oecd_adaptation": ClimateSchema.ADAPTATION,
+        "oecd_cross_cutting": ClimateSchema.CROSS_CUTTING,
+        "not_climate_relevant": ClimateSchema.NOT_CLIMATE,
     }
 
     return _oecd_multilateral_agency_helper(df, climate_indicators)
@@ -215,25 +215,25 @@ def base_oecd_multilateral_agency_share(df: pd.DataFrame) -> pd.DataFrame:
     """
 
     climate_indicators = {
-        "oecd_climate_total_share": CrsSchema.CLIMATE_UNSPECIFIED,
-        "oecd_mitigation_share": CrsSchema.MITIGATION,
-        "oecd_adaptation_share": CrsSchema.ADAPTATION,
-        "oecd_cross_cutting_share": CrsSchema.CROSS_CUTTING,
-        "not_climate_relevant_share": CrsSchema.NOT_CLIMATE,
+        "oecd_climate_total_share": ClimateSchema.CLIMATE_UNSPECIFIED,
+        "oecd_mitigation_share": ClimateSchema.MITIGATION,
+        "oecd_adaptation_share": ClimateSchema.ADAPTATION,
+        "oecd_cross_cutting_share": ClimateSchema.CROSS_CUTTING,
+        "not_climate_relevant_share": ClimateSchema.NOT_CLIMATE,
     }
 
     return _oecd_multilateral_agency_helper(df, climate_indicators).assign(
-        **{CrsSchema.FLOW_TYPE: lambda d: d[CrsSchema.FLOW_TYPE] + "_share"}
+        **{ClimateSchema.FLOW_TYPE: lambda d: d[ClimateSchema.FLOW_TYPE] + "_share"}
     )
 
 
 def summarise_by_party_idx(
     data: pd.DataFrame, idx: list[str], by_indicator: bool = False
 ) -> pd.DataFrame:
-    grouper = [CrsSchema.PARTY_CODE] + idx
+    grouper = [ClimateSchema.PROVIDER_CODE] + idx
 
     if by_indicator:
-        grouper += [CrsSchema.INDICATOR]
+        grouper += [ClimateSchema.INDICATOR]
 
     grouper = [c for c in grouper if c in data.columns]
 
@@ -242,7 +242,7 @@ def summarise_by_party_idx(
     data = data.pipe(idx_to_str, idx=grouper)
 
     return (
-        data.groupby(grouper, observed=True)[CrsSchema.VALUE]
+        data.groupby(grouper, observed=True)[ClimateSchema.VALUE]
         .sum()
         .reset_index()
         .pipe(set_crs_data_types)
@@ -259,7 +259,7 @@ def compute_rolling_sum(
     include_yearly_total: bool = True,
 ):
     if values is None:
-        values = [CrsSchema.VALUE]
+        values = [ClimateSchema.VALUE]
 
     if include_yearly_total:
         values += ["yearly_total"]
@@ -268,13 +268,13 @@ def compute_rolling_sum(
     all_years = range(start_year, end_year + 1)
 
     # 2. Reindex the group using the complete range of years
-    group = group.set_index(CrsSchema.YEAR).reindex(all_years)
+    group = group.set_index(ClimateSchema.YEAR).reindex(all_years)
 
     group[values] = group[values].fillna(0)
 
     group[values] = group[values].rolling(window=window).agg(agg).fillna(group[values])
 
-    group = group.dropna(subset=[CrsSchema.PARTY_CODE])
+    group = group.dropna(subset=[ClimateSchema.PROVIDER_CODE])
 
     return group.reset_index(drop=False)
 
@@ -289,12 +289,12 @@ def merge_total(
         if c in totals.columns
         and c
         not in [
-            CrsSchema.PARTY_NAME,
-            CrsSchema.RECIPIENT_NAME,
-            CrsSchema.SECTOR_NAME,
-            CrsSchema.SECTOR_CODE,
-            CrsSchema.PURPOSE_NAME,
-            CrsSchema.FLOW_NAME,
+            ClimateSchema.PROVIDER_NAME,
+            ClimateSchema.RECIPIENT_NAME,
+            ClimateSchema.SECTOR_NAME,
+            ClimateSchema.SECTOR_CODE,
+            ClimateSchema.PURPOSE_NAME,
+            ClimateSchema.FLOW_NAME,
         ]
     ]
 

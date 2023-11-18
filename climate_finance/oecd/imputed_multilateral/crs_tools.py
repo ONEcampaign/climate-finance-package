@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from climate_finance.config import logger
-from climate_finance.oecd.cleaning_tools.schema import CrsSchema, CLIMATE_VALUES
+from climate_finance.oecd.cleaning_tools.schema import ClimateSchema, CLIMATE_VALUES
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
 from climate_finance.oecd.get_oecd_data import get_oecd_bilateral
 
@@ -46,14 +46,14 @@ def get_yearly_crs_totals(
     )
 
     # Make Cross-cutting negative
-    crs_data.loc[lambda d: d[CrsSchema.INDICATOR] == "Cross-cutting", "value"] *= -1
+    crs_data.loc[lambda d: d[ClimateSchema.INDICATOR] == "Cross-cutting", "value"] *= -1
 
     # Create an index if none is provided
     if by_index is None:
         by_index = [
             c
             for c in crs_data.columns
-            if c not in [CrsSchema.VALUE, CrsSchema.INDICATOR, CrsSchema.USD_COMMITMENT]
+            if c not in [ClimateSchema.VALUE, ClimateSchema.INDICATOR, ClimateSchema.USD_COMMITMENT]
         ]
 
     else:
@@ -61,7 +61,7 @@ def get_yearly_crs_totals(
 
     # Get the group totals based on the selected index
     return (
-        crs_data.groupby(by_index, observed=True)[CrsSchema.VALUE].sum().reset_index()
+        crs_data.groupby(by_index, observed=True)[ClimateSchema.VALUE].sum().reset_index()
     )
 
 
@@ -73,7 +73,7 @@ def _prepare_crs_and_projects(
     crs = crs.pipe(idx_to_str, idx=unique_index).set_index(unique_index)
 
     # Convert CRS commitments and disbursements to millions of USD
-    crs[[CrsSchema.USD_COMMITMENT, CrsSchema.USD_DISBURSEMENT]] *= 1e6
+    crs[[ClimateSchema.USD_COMMITMENT, ClimateSchema.USD_DISBURSEMENT]] *= 1e6
 
     return crs, projects
 
@@ -82,13 +82,13 @@ def _match_projects_with_crs(
     crs: pd.DataFrame, projects: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     if (
-        CrsSchema.PROJECT_ID in projects.columns
-        and CrsSchema.PROJECT_TITLE in projects.columns
+        ClimateSchema.PROJECT_ID in projects.columns
+        and ClimateSchema.PROJECT_TITLE in projects.columns
     ):
-        projects[CrsSchema.PROJECT_ID] = (
-            projects[CrsSchema.PROJECT_ID]
+        projects[ClimateSchema.PROJECT_ID] = (
+            projects[ClimateSchema.PROJECT_ID]
             .replace("nan", np.nan, regex=False)
-            .fillna(projects[CrsSchema.PROJECT_TITLE])
+            .fillna(projects[ClimateSchema.PROJECT_TITLE])
         )
 
     # Identify all the rows in the CRS that match the unique projects
@@ -124,20 +124,20 @@ def _merge_projects_and_crs(
         on=idx,
         how="inner",
         suffixes=("", "_projects"),
-    ).filter(idx + CLIMATE_VALUES + [CrsSchema.USD_COMMITMENT])
+    ).filter(idx + CLIMATE_VALUES + [ClimateSchema.USD_COMMITMENT])
 
 
 def _add_climate_total(data: pd.DataFrame) -> pd.DataFrame:
     # Add the climate total
     return data.assign(
-        **{CrsSchema.CLIMATE_UNSPECIFIED: lambda d: d[CLIMATE_VALUES].sum(axis=1)}
+        **{ClimateSchema.CLIMATE_UNSPECIFIED: lambda d: d[CLIMATE_VALUES].sum(axis=1)}
     )
 
 
 def _create_climate_share_columns(data: pd.DataFrame) -> pd.DataFrame:
     # Create the share columns
-    for col in CLIMATE_VALUES + [CrsSchema.CLIMATE_UNSPECIFIED]:
-        data[f"{col}_share"] = data[col] / data[CrsSchema.USD_COMMITMENT]
+    for col in CLIMATE_VALUES + [ClimateSchema.CLIMATE_UNSPECIFIED]:
+        data[f"{col}_share"] = data[col] / data[ClimateSchema.USD_COMMITMENT]
 
     return data
 
@@ -150,10 +150,10 @@ def _identify_and_remove_implausible_shares(
     projects_data = projects_data.set_index(unique_index)
 
     # Large shares keeps the rows with implausible shares
-    large_shares = data.loc[lambda d: d[f"{CrsSchema.CLIMATE_UNSPECIFIED}_share"] > 1.1]
+    large_shares = data.loc[lambda d: d[f"{ClimateSchema.CLIMATE_UNSPECIFIED}_share"] > 1.1]
 
     # clean_data keeps the rows with plausible shares
-    clean_data = data.loc[lambda d: d[f"{CrsSchema.CLIMATE_UNSPECIFIED}_share"] <= 1.1]
+    clean_data = data.loc[lambda d: d[f"{ClimateSchema.CLIMATE_UNSPECIFIED}_share"] <= 1.1]
 
     # Filter the projects data to only keep the rows that are in large_shares
     large_shares_projects = projects_data.loc[
@@ -169,7 +169,7 @@ def _transform_to_flow_type(
 ) -> pd.DataFrame:
     data = data.copy(deep=True)
 
-    data[CrsSchema.FLOW_TYPE] = flow_type
+    data[ClimateSchema.FLOW_TYPE] = flow_type
 
     for column in CLIMATE_VALUES:
         data[column] = data[f"{column}_share"] * data[flow_type]
@@ -182,9 +182,9 @@ def _clean_climate_crs_output(data: pd.DataFrame) -> pd.DataFrame:
     return data.drop(
         columns=[c for c in data.columns if "share" in c]
         + [
-            CrsSchema.USD_DISBURSEMENT,
-            CrsSchema.USD_COMMITMENT,
-            CrsSchema.CLIMATE_UNSPECIFIED,
+            ClimateSchema.USD_DISBURSEMENT,
+            ClimateSchema.USD_COMMITMENT,
+            ClimateSchema.CLIMATE_UNSPECIFIED,
         ]
     ).pipe(set_crs_data_types)
 
@@ -210,7 +210,7 @@ def _add_crs_info_and_transform_to_indicators(
 
     # Group the unique index level and sum the values
     unique_climate_crs = _group_at_unique_index_level_and_sum(
-        data=climate_crs, unique_index=unique_index, agg_col=CrsSchema.USD_COMMITMENT
+        data=climate_crs, unique_index=unique_index, agg_col=ClimateSchema.USD_COMMITMENT
     )
 
     # Group the unique index level and sum the values
@@ -247,10 +247,10 @@ def _add_crs_info_and_transform_to_indicators(
     # transform into flow types
 
     commitments = _transform_to_flow_type(
-        data=full_climate_crs, flow_type=CrsSchema.USD_COMMITMENT
+        data=full_climate_crs, flow_type=ClimateSchema.USD_COMMITMENT
     )
     disbursements = _transform_to_flow_type(
-        data=full_climate_crs, flow_type=CrsSchema.USD_DISBURSEMENT
+        data=full_climate_crs, flow_type=ClimateSchema.USD_DISBURSEMENT
     )
 
     # Concatenate the dataframes
@@ -308,8 +308,8 @@ def add_crs_data_and_transform(
 
     """
     # convert index to str
-    projects = projects.pipe(idx_to_str, idx=unique_index + [CrsSchema.PROJECT_TITLE])
-    crs = crs.pipe(idx_to_str, idx=unique_index + [CrsSchema.PROJECT_TITLE])
+    projects = projects.pipe(idx_to_str, idx=unique_index + [ClimateSchema.PROJECT_TITLE])
+    crs = crs.pipe(idx_to_str, idx=unique_index + [ClimateSchema.PROJECT_TITLE])
 
     # Perform an initial merge. It will be done considering all the columns in the
     # UNIQUE_INDEX global variable. A left join is attempted. The indicator column
@@ -317,7 +317,7 @@ def add_crs_data_and_transform(
     matched, not_matched = _add_crs_info_and_transform_to_indicators(
         crs=crs,
         projects=projects,
-        unique_index=[CrsSchema.PROJECT_TITLE] + unique_index,
+        unique_index=[ClimateSchema.PROJECT_TITLE] + unique_index,
     )
 
     crs = _remove_matched_from_crs(crs, idx=unique_index, matched_data=matched)
@@ -330,33 +330,33 @@ def add_crs_data_and_transform(
     # This is done by specifying the merge columns
     unique_index_configurations = [
         [
-            CrsSchema.PARTY_CODE,
-            CrsSchema.RECIPIENT_CODE,
-            CrsSchema.PROJECT_ID,
-            CrsSchema.PURPOSE_CODE,
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.RECIPIENT_CODE,
+            ClimateSchema.PROJECT_ID,
+            ClimateSchema.PURPOSE_CODE,
         ],
         [
-            CrsSchema.PARTY_CODE,
-            CrsSchema.RECIPIENT_CODE,
-            CrsSchema.CRS_ID,
-            CrsSchema.PURPOSE_CODE,
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.RECIPIENT_CODE,
+            ClimateSchema.CRS_ID,
+            ClimateSchema.PURPOSE_CODE,
         ],
         [
-            CrsSchema.PARTY_CODE,
-            CrsSchema.RECIPIENT_CODE,
-            CrsSchema.PROJECT_TITLE,
-            CrsSchema.PURPOSE_CODE,
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.RECIPIENT_CODE,
+            ClimateSchema.PROJECT_TITLE,
+            ClimateSchema.PURPOSE_CODE,
         ],
         [
-            CrsSchema.PARTY_CODE,
-            CrsSchema.PROJECT_TITLE,
-            CrsSchema.PURPOSE_CODE,
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.PROJECT_TITLE,
+            ClimateSchema.PURPOSE_CODE,
         ],
         unique_index,
         [
-            CrsSchema.PARTY_CODE,
-            CrsSchema.PROJECT_ID,
-            CrsSchema.PURPOSE_CODE,
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.PROJECT_ID,
+            ClimateSchema.PURPOSE_CODE,
         ],
     ]
 
@@ -381,28 +381,28 @@ def add_crs_data_and_transform(
     not_matched_text = "Data only reported in the CRDF as commitments"
 
     not_matched_values = {
-        CrsSchema.PROJECT_TITLE: not_matched_text,
-        CrsSchema.RECIPIENT_CODE: "998",
-        CrsSchema.PURPOSE_CODE: "99810",
-        CrsSchema.PROJECT_ID: "aggregate",
-        CrsSchema.CRS_ID: "aggregate",
-        CrsSchema.CHANNEL_CODE: "0",
-        CrsSchema.FLOW_CODE: "0",
-        CrsSchema.CHANNEL_CODE_DELIVERY: not_matched_text,
-        CrsSchema.CATEGORY: not_matched_text,
-        CrsSchema.FLOW_TYPE: CrsSchema.USD_COMMITMENT,
+        ClimateSchema.PROJECT_TITLE: not_matched_text,
+        ClimateSchema.RECIPIENT_CODE: "998",
+        ClimateSchema.PURPOSE_CODE: "99810",
+        ClimateSchema.PROJECT_ID: "aggregate",
+        ClimateSchema.CRS_ID: "aggregate",
+        ClimateSchema.CHANNEL_CODE: "0",
+        ClimateSchema.FLOW_CODE: "0",
+        ClimateSchema.CHANNEL_CODE_DELIVERY: not_matched_text,
+        ClimateSchema.CATEGORY: not_matched_text,
+        ClimateSchema.FLOW_TYPE: ClimateSchema.USD_COMMITMENT,
     }
     other = [
-        CrsSchema.FINANCE_TYPE,
-        CrsSchema.FLOW_NAME,
-        CrsSchema.FLOW_MODALITY,
+        ClimateSchema.FINANCE_TYPE,
+        ClimateSchema.FLOW_NAME,
+        ClimateSchema.FLOW_MODALITY,
     ]
     not_matched = (
         not_matched.assign(**not_matched_values)
-        .rename(columns={CrsSchema.FINANCIAL_INSTRUMENT: CrsSchema.FLOW_NAME})
-        .pipe(map_flow_name_to_code, codes_col=CrsSchema.FLOW_CODE)
+        .rename(columns={ClimateSchema.FINANCIAL_INSTRUMENT: ClimateSchema.FLOW_NAME})
+        .pipe(map_flow_name_to_code, codes_col=ClimateSchema.FLOW_CODE)
         .groupby(
-            [CrsSchema.YEAR, CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE]
+            [ClimateSchema.YEAR, ClimateSchema.PROVIDER_CODE, ClimateSchema.AGENCY_CODE]
             + list(not_matched_values)
             + other,
             observed=True,
@@ -411,7 +411,7 @@ def add_crs_data_and_transform(
         .sum(numeric_only=True)
         .reset_index()
         .filter(matched.columns)
-        .dropna(subset=[CrsSchema.YEAR])
+        .dropna(subset=[ClimateSchema.YEAR])
     )
 
     matched = pd.concat([matched, not_matched], ignore_index=True)
@@ -420,8 +420,8 @@ def add_crs_data_and_transform(
     data = matched.melt(
         id_vars=[c for c in matched.columns if c not in CLIMATE_VALUES],
         value_vars=CLIMATE_VALUES,
-        var_name=CrsSchema.INDICATOR,
-        value_name=CrsSchema.VALUE,
+        var_name=ClimateSchema.INDICATOR,
+        value_name=ClimateSchema.VALUE,
     )
 
     return data.filter(output_cols)

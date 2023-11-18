@@ -1,6 +1,6 @@
 import pandas as pd
 
-from climate_finance.oecd.cleaning_tools.schema import CrsSchema
+from climate_finance.oecd.cleaning_tools.schema import ClimateSchema
 from climate_finance.oecd.imputed_multilateral.crs_tools import get_yearly_crs_totals
 from climate_finance.oecd.imputed_multilateral.tools import (
     summarise_by_party_idx,
@@ -10,8 +10,8 @@ from climate_finance.oecd.imputed_multilateral.tools import (
 
 
 def _add_share(data: pd.DataFrame) -> pd.DataFrame:
-    return data.assign(share=lambda d: d[CrsSchema.VALUE] / d["yearly_total"]).drop(
-        columns=["yearly_total", CrsSchema.VALUE]
+    return data.assign(share=lambda d: d[ClimateSchema.VALUE] / d["yearly_total"]).drop(
+        columns=["yearly_total", ClimateSchema.VALUE]
     )
 
 
@@ -19,30 +19,30 @@ def oecd_rolling_shares_methodology(
     data: pd.DataFrame, window: int = 2
 ) -> pd.DataFrame:
     # Define the columns for the level of aggregation
-    idx = [CrsSchema.YEAR, CrsSchema.PARTY_CODE, CrsSchema.FLOW_TYPE]
+    idx = [ClimateSchema.YEAR, ClimateSchema.PROVIDER_CODE, ClimateSchema.FLOW_TYPE]
 
     # Ensure key columns are integers
-    data[[CrsSchema.YEAR, CrsSchema.PARTY_CODE]] = data[
-        [CrsSchema.YEAR, CrsSchema.PARTY_CODE]
+    data[[ClimateSchema.YEAR, ClimateSchema.PROVIDER_CODE]] = data[
+        [ClimateSchema.YEAR, ClimateSchema.PROVIDER_CODE]
     ].astype("Int32")
 
     # Make Cross-cutting negative
-    data.loc[lambda d: d[CrsSchema.INDICATOR] == "Cross-cutting", CrsSchema.VALUE] *= -1
+    data.loc[lambda d: d[ClimateSchema.INDICATOR] == "Cross-cutting", ClimateSchema.VALUE] *= -1
 
     # Summarise the data at the right level
     data_by_indicator = summarise_by_party_idx(data=data, idx=idx, by_indicator=True)
 
     # Summarise data by yearly totals
     data_yearly = summarise_by_party_idx(data=data, idx=idx, by_indicator=False).assign(
-        **{CrsSchema.INDICATOR: CrsSchema.CLIMATE_UNSPECIFIED}
+        **{ClimateSchema.INDICATOR: ClimateSchema.CLIMATE_UNSPECIFIED}
     )
 
     # Get the yearly totals for the years present in the data
     yearly_totals = get_yearly_crs_totals(
-        start_year=data[CrsSchema.YEAR].min(),
-        end_year=data[CrsSchema.YEAR].max(),
+        start_year=data[ClimateSchema.YEAR].min(),
+        end_year=data[ClimateSchema.YEAR].max(),
         by_index=idx,
-    ).rename(columns={CrsSchema.VALUE: "yearly_total"})
+    ).rename(columns={ClimateSchema.VALUE: "yearly_total"})
 
     # Merge the yearly totals with the data by indicator
     data_by_indicator = merge_total(
@@ -56,13 +56,13 @@ def oecd_rolling_shares_methodology(
 
     # Compute the rolling totals
     rolling = (
-        data.sort_values([CrsSchema.YEAR, CrsSchema.PARTY_CODE])
+        data.sort_values([ClimateSchema.YEAR, ClimateSchema.PROVIDER_CODE])
         .groupby(
             [
-                CrsSchema.PARTY_NAME,
-                CrsSchema.PARTY_CODE,
-                CrsSchema.FLOW_TYPE,
-                CrsSchema.INDICATOR,
+                ClimateSchema.PROVIDER_NAME,
+                ClimateSchema.PROVIDER_CODE,
+                ClimateSchema.FLOW_TYPE,
+                ClimateSchema.INDICATOR,
             ],
             observed=True,
             group_keys=False,

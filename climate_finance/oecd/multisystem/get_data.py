@@ -3,7 +3,7 @@ from oda_data import ODAData, set_data_path
 
 from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.schema import (
-    CrsSchema,
+    ClimateSchema,
     MULTISYSTEM_INDICATORS,
     CRS_MAPPING,
 )
@@ -28,40 +28,40 @@ def _clean_multi_contributions(df: pd.DataFrame) -> pd.DataFrame:
 
     # define the columns to keep and their new names
     columns = {
-        "year": CrsSchema.YEAR,
-        "indicator": CrsSchema.FLOW_TYPE,
-        "donor_code": CrsSchema.PARTY_CODE,
-        "donor_name": CrsSchema.PARTY_NAME,
-        "channel_code": CrsSchema.CHANNEL_CODE,
-        "channel_name": CrsSchema.CHANNEL_NAME,
-        "value": CrsSchema.VALUE,
+        "year": ClimateSchema.YEAR,
+        "indicator": ClimateSchema.FLOW_TYPE,
+        "donor_code": ClimateSchema.PROVIDER_CODE,
+        "donor_name": ClimateSchema.PROVIDER_NAME,
+        "channel_code": ClimateSchema.CHANNEL_CODE,
+        "channel_name": ClimateSchema.CHANNEL_NAME,
+        "value": ClimateSchema.VALUE,
     }
 
     # Get the CRS channel names (mapped by channel code)
     channel_mapping = (
         get_crs_official_mapping()
         .rename(columns=CRS_MAPPING)
-        .set_index(CrsSchema.CHANNEL_CODE)[CrsSchema.CHANNEL_NAME]
+        .set_index(ClimateSchema.CHANNEL_CODE)[ClimateSchema.CHANNEL_NAME]
         .to_dict()
     )
 
     return (
         df.rename(columns=CRS_MAPPING)
         .pipe(
-            convert_flows_millions_to_units, flow_columns=[CrsSchema.VALUE]
+            convert_flows_millions_to_units, flow_columns=[ClimateSchema.VALUE]
         )  # convert to millions
         .assign(
             indicator=lambda d: d.indicator.map(
                 MULTISYSTEM_INDICATORS
             ),  # rename indicator
-            channel_name=lambda d: d[CrsSchema.CHANNEL_CODE].map(
+            channel_name=lambda d: d[ClimateSchema.CHANNEL_CODE].map(
                 channel_mapping
             ),  # map channel name
         )
         .rename(columns=columns)  # rename columns
         .filter(columns.values(), axis=1)  # keep only relevant columns
         .groupby(
-            [c for c in columns.values() if c != CrsSchema.VALUE],
+            [c for c in columns.values() if c != ClimateSchema.VALUE],
             as_index=False,
             dropna=False,
             observed=True,

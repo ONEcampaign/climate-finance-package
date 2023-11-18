@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from climate_finance.oecd.cleaning_tools.schema import CrsSchema
+from climate_finance.oecd.cleaning_tools.schema import ClimateSchema
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
 from climate_finance.oecd.crs.get_data import get_crs, keep_only_allocable_aid
 from climate_finance.oecd.imputed_multilateral.multilateral_spending_data import (
@@ -19,34 +19,34 @@ from climate_finance.oecd.imputed_multilateral.tools import (
 )
 
 SHARES_IDX = [
-    CrsSchema.YEAR,
-    CrsSchema.PARTY_CODE,
-    CrsSchema.AGENCY_CODE,
-    CrsSchema.RECIPIENT_CODE,
-    CrsSchema.PURPOSE_CODE,
-    CrsSchema.FINANCE_TYPE,
-    CrsSchema.FLOW_TYPE,
-    CrsSchema.FLOW_CODE,
-    CrsSchema.FLOW_NAME,
+    ClimateSchema.YEAR,
+    ClimateSchema.PROVIDER_CODE,
+    ClimateSchema.AGENCY_CODE,
+    ClimateSchema.RECIPIENT_CODE,
+    ClimateSchema.PURPOSE_CODE,
+    ClimateSchema.FINANCE_TYPE,
+    ClimateSchema.FLOW_TYPE,
+    ClimateSchema.FLOW_CODE,
+    ClimateSchema.FLOW_NAME,
 ]
 
 CLIMATE_COLS = [
-    CrsSchema.MITIGATION_VALUE,
-    CrsSchema.ADAPTATION_VALUE,
-    CrsSchema.CROSS_CUTTING_VALUE,
+    ClimateSchema.MITIGATION_VALUE,
+    ClimateSchema.ADAPTATION_VALUE,
+    ClimateSchema.CROSS_CUTTING_VALUE,
 ]
 
 SIMPLE_IDX = [
-    CrsSchema.YEAR,
-    CrsSchema.PARTY_CODE,
-    CrsSchema.AGENCY_CODE,
-    CrsSchema.FLOW_TYPE,
+    ClimateSchema.YEAR,
+    ClimateSchema.PROVIDER_CODE,
+    ClimateSchema.AGENCY_CODE,
+    ClimateSchema.FLOW_TYPE,
 ]
 
 
 def _pivot_indicators_as_columns(data: pd.DataFrame, idx: list[str]) -> pd.DataFrame:
     return data.pivot(
-        index=idx, columns=CrsSchema.INDICATOR, values=CrsSchema.VALUE
+        index=idx, columns=ClimateSchema.INDICATOR, values=ClimateSchema.VALUE
     ).reset_index()
 
 
@@ -78,10 +78,10 @@ def _drop_rows_missing_climate(data: pd.DataFrame) -> pd.DataFrame:
 
 
 def _add_climate_total_column(data: pd.DataFrame) -> pd.DataFrame:
-    data[CrsSchema.CLIMATE_UNSPECIFIED] = (
-        data[CrsSchema.ADAPTATION_VALUE].fillna(0)
-        + data[CrsSchema.MITIGATION_VALUE].fillna(0)
-        + data[CrsSchema.CROSS_CUTTING_VALUE].fillna(0)
+    data[ClimateSchema.CLIMATE_UNSPECIFIED] = (
+        data[ClimateSchema.ADAPTATION_VALUE].fillna(0)
+        + data[ClimateSchema.MITIGATION_VALUE].fillna(0)
+        + data[ClimateSchema.CROSS_CUTTING_VALUE].fillna(0)
     )
 
     return data
@@ -89,7 +89,7 @@ def _add_climate_total_column(data: pd.DataFrame) -> pd.DataFrame:
 
 def _fill_total_spending_gaps(data: pd.DataFrame) -> pd.DataFrame:
     data["yearly_total"] = data["yearly_total"].fillna(
-        data[CrsSchema.CLIMATE_UNSPECIFIED]
+        data[ClimateSchema.CLIMATE_UNSPECIFIED]
     )
 
     return data
@@ -118,10 +118,10 @@ def _compute_rolling_total_multi_spending(
     include_yearly_total: bool = True,
 ) -> pd.DataFrame:
     return (
-        data.astype({CrsSchema.YEAR: "Int32"})
-        .sort_values([CrsSchema.YEAR, CrsSchema.PARTY_CODE])
+        data.astype({ClimateSchema.YEAR: "Int32"})
+        .sort_values([ClimateSchema.YEAR, ClimateSchema.PROVIDER_CODE])
         .groupby(
-            [c for c in SHARES_IDX if c not in [CrsSchema.YEAR] and c in data.columns],
+            [c for c in SHARES_IDX if c not in [ClimateSchema.YEAR] and c in data.columns],
             observed=True,
             dropna=False,
             group_keys=False,
@@ -141,9 +141,9 @@ def _compute_rolling_total_multi_spending(
 
 def _filter_flow_types(data: pd.DataFrame, flow_types=None) -> pd.DataFrame:
     if flow_types is None:
-        flow_type = [CrsSchema.USD_COMMITMENT, CrsSchema.USD_DISBURSEMENT]
+        flow_type = [ClimateSchema.USD_COMMITMENT, ClimateSchema.USD_DISBURSEMENT]
 
-    return data.loc[lambda d: d[CrsSchema.FLOW_TYPE].isin(flow_type)]
+    return data.loc[lambda d: d[ClimateSchema.FLOW_TYPE].isin(flow_type)]
 
 
 def _keep_non_zero_climate_total(data: pd.DataFrame) -> pd.DataFrame:
@@ -196,13 +196,13 @@ def one_rolling_shares_methodology(
         get_crs(
             start_year=start_year,
             end_year=end_year,
-            groupby=SHARES_IDX + [CrsSchema.FLOW_MODALITY],
-            party_code=data_by_indicator[CrsSchema.PARTY_CODE].unique().tolist(),
+            groupby=SHARES_IDX + [ClimateSchema.FLOW_MODALITY],
+            party_code=data_by_indicator[ClimateSchema.PROVIDER_CODE].unique().tolist(),
         )
         .pipe(_filter_flow_types)
         .pipe(keep_only_allocable_aid)
         .pipe(summarise_by_party_idx, idx=SHARES_IDX)
-        .rename(columns={CrsSchema.VALUE: "yearly_total"})
+        .rename(columns={ClimateSchema.VALUE: "yearly_total"})
     )
 
     data_by_indicator = (

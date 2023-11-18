@@ -1,7 +1,7 @@
 import pandas as pd
 from bblocks import clean_numeric_series
 
-from climate_finance.oecd.cleaning_tools.schema import CrsSchema
+from climate_finance.oecd.cleaning_tools.schema import ClimateSchema
 from climate_finance.oecd.cleaning_tools.tools import (
     set_crs_data_types,
 )
@@ -81,15 +81,15 @@ def map_channel_names_to_oecd_codes(
     """
 
     # add names to the channel names column
-    df = add_provider_agency_names(df, crs_year=df[CrsSchema.YEAR].max())
+    df = add_provider_agency_names(df, crs_year=df[ClimateSchema.YEAR].max())
 
     # create two sets of data to try to match
     df = df.assign(
         party_agency=lambda d: d.apply(
-            lambda r: r[CrsSchema.PARTY_NAME]
-            if str(r[CrsSchema.PARTY_NAME]).lower().strip()
-            == str(r[CrsSchema.AGENCY_NAME]).lower().strip()
-            else r[CrsSchema.PARTY_NAME] + " " + r[CrsSchema.AGENCY_NAME],
+            lambda r: r[ClimateSchema.PROVIDER_NAME]
+            if str(r[ClimateSchema.PROVIDER_NAME]).lower().strip()
+            == str(r[ClimateSchema.AGENCY_NAME]).lower().strip()
+            else r[ClimateSchema.PROVIDER_NAME] + " " + r[ClimateSchema.AGENCY_NAME],
             axis=1,
         )
     )
@@ -102,14 +102,14 @@ def map_channel_names_to_oecd_codes(
     )
 
     # Create a new column with the mapped channel codes
-    df[CrsSchema.CHANNEL_CODE] = (
+    df[ClimateSchema.CHANNEL_CODE] = (
         df["party_agency"].map(mapping_party_agency).astype("Int32")
     )
 
     df = df.pipe(
         add_channel_names,
-        codes_column=CrsSchema.CHANNEL_CODE,
-        target_column=CrsSchema.CHANNEL_NAME,
+        codes_column=ClimateSchema.CHANNEL_CODE,
+        target_column=ClimateSchema.CHANNEL_NAME,
     )
 
     df = df.drop(columns=["party_agency"])

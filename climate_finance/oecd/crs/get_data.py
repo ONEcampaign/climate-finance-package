@@ -7,7 +7,7 @@ from climate_finance.oecd.cleaning_tools.tools import (
     rename_crs_columns,
     set_crs_data_types,
 )
-from climate_finance.oecd.cleaning_tools.schema import CrsSchema
+from climate_finance.oecd.cleaning_tools.schema import ClimateSchema
 
 set_data_path(ClimateDataPath.raw_data)
 
@@ -35,7 +35,7 @@ def keep_only_allocable_aid(df: pd.DataFrame) -> pd.DataFrame:
         "D02",
         "E01",
     ]
-    return df.loc[lambda d: d[CrsSchema.FLOW_MODALITY].isin(aid_types)].reset_index(
+    return df.loc[lambda d: d[ClimateSchema.FLOW_MODALITY].isin(aid_types)].reset_index(
         drop=True
     )
 
@@ -48,26 +48,26 @@ def _get_relevant_crs_columns() -> list:
         list: A list of column names considered relevant for data extraction."""
 
     return [
-        CrsSchema.YEAR,
-        CrsSchema.PARTY_CODE,
-        CrsSchema.PARTY_NAME,
-        CrsSchema.AGENCY_NAME,
-        CrsSchema.AGENCY_CODE,
-        CrsSchema.RECIPIENT_CODE,
-        CrsSchema.RECIPIENT_NAME,
-        CrsSchema.FLOW_CODE,
-        CrsSchema.FLOW_NAME,
-        CrsSchema.SECTOR_CODE,
-        CrsSchema.SECTOR_NAME,
-        CrsSchema.PURPOSE_CODE,
-        CrsSchema.PURPOSE_NAME,
-        CrsSchema.PROJECT_TITLE,
-        CrsSchema.CRS_ID,
-        CrsSchema.PROJECT_ID,
-        CrsSchema.PROJECT_DESCRIPTION,
-        CrsSchema.FINANCE_TYPE,
-        CrsSchema.MITIGATION,
-        CrsSchema.ADAPTATION,
+        ClimateSchema.YEAR,
+        ClimateSchema.PROVIDER_CODE,
+        ClimateSchema.PROVIDER_NAME,
+        ClimateSchema.AGENCY_NAME,
+        ClimateSchema.AGENCY_CODE,
+        ClimateSchema.RECIPIENT_CODE,
+        ClimateSchema.RECIPIENT_NAME,
+        ClimateSchema.FLOW_CODE,
+        ClimateSchema.FLOW_NAME,
+        ClimateSchema.SECTOR_CODE,
+        ClimateSchema.SECTOR_NAME,
+        ClimateSchema.PURPOSE_CODE,
+        ClimateSchema.PURPOSE_NAME,
+        ClimateSchema.PROJECT_TITLE,
+        ClimateSchema.CRS_ID,
+        ClimateSchema.PROJECT_ID,
+        ClimateSchema.PROJECT_DESCRIPTION,
+        ClimateSchema.FINANCE_TYPE,
+        ClimateSchema.MITIGATION,
+        ClimateSchema.ADAPTATION,
     ]
 
 
@@ -80,11 +80,11 @@ def _get_flow_columns() -> list:
 
     """
     return [
-        CrsSchema.USD_COMMITMENT,
-        CrsSchema.USD_DISBURSEMENT,
-        CrsSchema.USD_RECEIVED,
-        CrsSchema.USD_GRANT_EQUIV,
-        CrsSchema.USD_NET_DISBURSEMENT,
+        ClimateSchema.USD_COMMITMENT,
+        ClimateSchema.USD_DISBURSEMENT,
+        ClimateSchema.USD_RECEIVED,
+        ClimateSchema.USD_GRANT_EQUIV,
+        ClimateSchema.USD_NET_DISBURSEMENT,
     ]
 
 
@@ -116,10 +116,10 @@ def _add_net_disbursement(df: pd.DataFrame) -> pd.DataFrame:
     """
     return df.assign(
         **{
-            CrsSchema.USD_NET_DISBURSEMENT: lambda d: d[
-                CrsSchema.USD_DISBURSEMENT
+            ClimateSchema.USD_NET_DISBURSEMENT: lambda d: d[
+                ClimateSchema.USD_DISBURSEMENT
             ].fillna(0)
-            - d[CrsSchema.USD_RECEIVED].fillna(0)
+                                                          - d[ClimateSchema.USD_RECEIVED].fillna(0)
         }
     )
 
@@ -155,7 +155,7 @@ def get_crs(
         download_crs(years=years)
 
     # get relevant columns
-    columns = _get_relevant_crs_columns() + [CrsSchema.FLOW_MODALITY]
+    columns = _get_relevant_crs_columns() + [ClimateSchema.FLOW_MODALITY]
 
     # get flow columns
     flow_columns = _get_flow_columns()
@@ -165,7 +165,7 @@ def get_crs(
         groupby = columns
 
     # check that groupby is unique and includes flow_type
-    groupby = list(dict.fromkeys(groupby + [CrsSchema.FLOW_TYPE]))
+    groupby = list(dict.fromkeys(groupby + [ClimateSchema.FLOW_TYPE]))
 
     # Pipeline
     crs = read_crs(years=years).pipe(rename_crs_columns)  # Read CRS data
@@ -173,35 +173,35 @@ def get_crs(
     if party_code is not None:
         if isinstance(party_code, str):
             party_code = [party_code]
-        crs = crs.loc[lambda d: d[CrsSchema.PARTY_CODE].isin(party_code)]
+        crs = crs.loc[lambda d: d[ClimateSchema.PROVIDER_CODE].isin(party_code)]
 
     crs = crs.pipe(_add_net_disbursement)
 
     crs = (
         crs.filter(columns + flow_columns, axis=1)  # Keep only relevant columns
         .assign(
-            year=lambda d: d[CrsSchema.YEAR]
+            year=lambda d: d[ClimateSchema.YEAR]
             .astype("str")
             .str.replace("\ufeff", "", regex=True)
         )  # fix year
         .pipe(set_crs_data_types)  # Set data types
-        .pipe(_replace_missing_climate_with_zero, column=CrsSchema.MITIGATION)
-        .pipe(_replace_missing_climate_with_zero, column=CrsSchema.ADAPTATION)
-        .astype({CrsSchema.MITIGATION: "Int16", CrsSchema.ADAPTATION: "Int16"})
+        .pipe(_replace_missing_climate_with_zero, column=ClimateSchema.MITIGATION)
+        .pipe(_replace_missing_climate_with_zero, column=ClimateSchema.ADAPTATION)
+        .astype({ClimateSchema.MITIGATION: "Int16", ClimateSchema.ADAPTATION: "Int16"})
         .pipe(convert_flows_millions_to_units, flow_columns=flow_columns)
         .filter(items=groupby + flow_columns)
         .melt(
             id_vars=[
-                c for c in groupby if c in crs.columns and c != CrsSchema.FLOW_TYPE
+                c for c in groupby if c in crs.columns and c != ClimateSchema.FLOW_TYPE
             ],
             value_vars=flow_columns,
-            var_name=CrsSchema.FLOW_TYPE,
-            value_name=CrsSchema.VALUE,
+            var_name=ClimateSchema.FLOW_TYPE,
+            value_name=ClimateSchema.VALUE,
         )
-        .groupby(by=groupby, dropna=False, observed=True)[CrsSchema.VALUE]
+        .groupby(by=groupby, dropna=False, observed=True)[ClimateSchema.VALUE]
         .sum()
         .reset_index()
-        .loc[lambda d: d[CrsSchema.VALUE] != 0]
+        .loc[lambda d: d[ClimateSchema.VALUE] != 0]
         .reset_index(drop=True)
     )
 
@@ -255,11 +255,11 @@ def get_crs_allocable_to_total_ratio(
     """
 
     simpler_columns = [
-        CrsSchema.YEAR,
-        CrsSchema.PARTY_CODE,
-        CrsSchema.AGENCY_CODE,
-        CrsSchema.FLOW_MODALITY,
-        CrsSchema.FLOW_TYPE,
+        ClimateSchema.YEAR,
+        ClimateSchema.PROVIDER_CODE,
+        ClimateSchema.AGENCY_CODE,
+        ClimateSchema.FLOW_MODALITY,
+        ClimateSchema.FLOW_TYPE,
     ]
 
     # Pipeline
@@ -272,7 +272,7 @@ def get_crs_allocable_to_total_ratio(
 
     total = (
         crs.copy()
-        .assign(**{CrsSchema.FLOW_MODALITY: "total"})
+        .assign(**{ClimateSchema.FLOW_MODALITY: "total"})
         .groupby(
             simpler_columns,
             dropna=False,
@@ -284,7 +284,7 @@ def get_crs_allocable_to_total_ratio(
 
     allocable = (
         crs.pipe(keep_only_allocable_aid)
-        .assign(**{CrsSchema.FLOW_MODALITY: "bilateral_allocable"})
+        .assign(**{ClimateSchema.FLOW_MODALITY: "bilateral_allocable"})
         .groupby(
             simpler_columns,
             as_index=False,
@@ -301,10 +301,10 @@ def get_crs_allocable_to_total_ratio(
             index=[
                 c
                 for c in data.columns
-                if c not in [CrsSchema.VALUE, CrsSchema.FLOW_MODALITY]
+                if c not in [ClimateSchema.VALUE, ClimateSchema.FLOW_MODALITY]
             ],
-            columns=CrsSchema.FLOW_MODALITY,
-            values=CrsSchema.VALUE,
+            columns=ClimateSchema.FLOW_MODALITY,
+            values=ClimateSchema.VALUE,
         )
         .reset_index()
         .assign(allocable_share=lambda d: (d.bilateral_allocable / d.total).fillna(0))
