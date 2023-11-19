@@ -164,8 +164,64 @@ def crdf_rio_providers() -> list[str]:
     ]
 
 
+def crdf_rio_providers_official() -> list[str]:
+    return [
+        "801",
+        "1",
+        "2",
+        "301",
+        "3",
+        "18",
+        "4",
+        "5",
+        "21",
+        "7",
+        "8",
+        "9",
+        "50",
+        "10",
+        "11",
+        "12",
+        "701",
+        "40",
+        "820",
+        "918",
+        "302",
+        "6",
+        "742",
+        "576",
+        "1012",
+        "22",
+        "104",
+        "61",
+        "68",
+        "1011",
+        "20",
+        "811",
+        "988",
+        "76",
+        "69",
+        "77",
+        "1016",
+        "84",
+        "1313",
+        "83",
+        "906",
+        "1013",
+        "932",
+        "75",
+        "611",
+        "82",
+        "613",
+        "70",
+    ]
+
+
 if __name__ == "__main__":
     rmm = rio_markers_multi_codes()
     rmb = rio_markers_bilat_codes()
     rma = rio_markers_all_codes()
     nrm = non_rio_markers()
+
+    crdfr = crdf_rio_providers()
+    crdfr_official = crdf_rio_providers_official()
