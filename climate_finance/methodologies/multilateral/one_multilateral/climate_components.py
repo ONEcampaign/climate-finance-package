@@ -1,7 +1,7 @@
 import pandas as pd
 
 from climate_finance.common.schema import ClimateSchema
-from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
+from climate_finance.oecd.cleaning_tools.tools import idx_to_str
 from climate_finance.unfccc.cleaning_tools.channels import clean_string
 
 CRDF_IDX = [
@@ -110,10 +110,10 @@ def subtract_overlaps_by_project(df: pd.DataFrame) -> pd.DataFrame:
 
     # subtract cross-cutting from adaptation and mitigation
     df[ClimateSchema.ADAPTATION_VALUE] = (
-            df[ClimateSchema.ADAPTATION_VALUE] - df[ClimateSchema.CROSS_CUTTING_VALUE]
+        df[ClimateSchema.ADAPTATION_VALUE] - df[ClimateSchema.CROSS_CUTTING_VALUE]
     )
     df[ClimateSchema.MITIGATION_VALUE] = (
-            df[ClimateSchema.MITIGATION_VALUE] - df[ClimateSchema.CROSS_CUTTING_VALUE]
+        df[ClimateSchema.MITIGATION_VALUE] - df[ClimateSchema.CROSS_CUTTING_VALUE]
     )
 
     return df

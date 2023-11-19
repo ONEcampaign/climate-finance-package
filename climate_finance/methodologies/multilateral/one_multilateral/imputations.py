@@ -4,7 +4,7 @@ from climate_finance.common.schema import (
     ClimateSchema,
     VALUE_COLUMNS,
 )
-from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
+from climate_finance.oecd.cleaning_tools.tools import idx_to_str
 from climate_finance.oecd.crs.get_data import (
     get_crs_allocable_spending,
 )
@@ -172,23 +172,27 @@ def convert_to_imputations(
     )
 
     # Clean
-    imputations_data = (
-        imputations_data.rename(
-            columns={
-                ClimateSchema.PROVIDER_TYPE: "channel_type",
-                ClimateSchema.VALUE: "total_contribution",
-            }
-        )
-        .pipe(set_crs_data_types)
-        .filter(ONE_IMPUTATIONS_OUTPUT_COLUMNS)
-    )
+    imputations_data = imputations_data.rename(
+        columns={
+            ClimateSchema.PROVIDER_TYPE: "channel_type",
+            ClimateSchema.VALUE: "total_contribution",
+        }
+    ).filter(ONE_IMPUTATIONS_OUTPUT_COLUMNS)
 
     return imputations_data
 
 
 def _get_unique_agencies_df(data: pd.DataFrame) -> pd.DataFrame:
-    idx = [ClimateSchema.PROVIDER_CODE, ClimateSchema.PROVIDER_NAME, ClimateSchema.AGENCY_NAME]
-    return data.drop_duplicates(idx).filter(idx).dropna(subset=[ClimateSchema.PROVIDER_CODE])
+    idx = [
+        ClimateSchema.PROVIDER_CODE,
+        ClimateSchema.PROVIDER_NAME,
+        ClimateSchema.AGENCY_NAME,
+    ]
+    return (
+        data.drop_duplicates(idx)
+        .filter(idx)
+        .dropna(subset=[ClimateSchema.PROVIDER_CODE])
+    )
 
 
 def _map_agency_then_party_to_channel_code(spending_data: pd.DataFrame) -> pd.DataFrame:
@@ -198,11 +202,14 @@ def _map_agency_then_party_to_channel_code(spending_data: pd.DataFrame) -> pd.Da
     # Try a first map through agencies
     first_pass = unique_agencies.pipe(
         map_channel_names_to_oecd_codes, channel_names_column=ClimateSchema.AGENCY_NAME
-    ).rename(columns={ClimateSchema.CHANNEL_CODE: f"{ClimateSchema.CHANNEL_CODE}_agency"})
+    ).rename(
+        columns={ClimateSchema.CHANNEL_CODE: f"{ClimateSchema.CHANNEL_CODE}_agency"}
+    )
 
     # Try a second map through parties
     second_pass = first_pass.pipe(
-        map_channel_names_to_oecd_codes, channel_names_column=ClimateSchema.PROVIDER_NAME
+        map_channel_names_to_oecd_codes,
+        channel_names_column=ClimateSchema.PROVIDER_NAME,
     )
 
     # Assign the channel code to the original dataframe, filling gaps
@@ -212,7 +219,13 @@ def _map_agency_then_party_to_channel_code(spending_data: pd.DataFrame) -> pd.Da
                 f"{ClimateSchema.CHANNEL_CODE}_agency"
             ].fillna(d[ClimateSchema.CHANNEL_CODE])
         }
-    ).filter([ClimateSchema.PROVIDER_CODE, ClimateSchema.AGENCY_NAME, ClimateSchema.CHANNEL_CODE])
+    ).filter(
+        [
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.AGENCY_NAME,
+            ClimateSchema.CHANNEL_CODE,
+        ]
+    )
 
 
 def _summarise_spending_by_idx(data: pd.DataFrame, idx: list[str]) -> pd.DataFrame:
@@ -226,7 +239,6 @@ def _summarise_spending_by_idx(data: pd.DataFrame, idx: list[str]) -> pd.DataFra
                 [ClimateSchema.USD_DISBURSEMENT, ClimateSchema.USD_COMMITMENT]
             )
         ]
-        .pipe(set_crs_data_types)
     )
 
 
@@ -257,7 +269,7 @@ def get_multilateral_spending_totals(
     # Merge spending and agencies data
     total_spend = total_spend.merge(codes, on=idx, how="left")
 
-    return total_spend.pipe(set_crs_data_types)
+    return total_spend
 
 
 def calculate_rolling_contributions(
@@ -322,7 +334,10 @@ def get_imputations_by_provider_and_channel(
         rolling_window=rolling_window_spending,
         agg=rolling_agg,
         groupby=groupby,
-    ).pipe(map_channel_names_to_oecd_codes, channel_names_column=ClimateSchema.PROVIDER_NAME)
+    ).pipe(
+        map_channel_names_to_oecd_codes,
+        channel_names_column=ClimateSchema.PROVIDER_NAME,
+    )
 
     contributions = get_multilateral_contributions(
         start_year=start_year, end_year=end_year

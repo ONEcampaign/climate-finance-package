@@ -6,10 +6,7 @@ from climate_finance.common.schema import (
     MULTILATERAL_IMPUTATIONS_ID_COLUMNS,
 )
 from climate_finance.config import logger
-from climate_finance.oecd.cleaning_tools.tools import (
-    idx_to_str,
-    set_crs_data_types,
-)
+from climate_finance.oecd.cleaning_tools.tools import idx_to_str
 
 
 def _melt_multilateral_climate_indicators(
@@ -298,9 +295,8 @@ def merge_total(
     data = data.pipe(idx_to_str, idx=idx)
     totals = totals.pipe(idx_to_str, idx=idx)
 
-    data = data.merge(totals, on=idx, how="left", suffixes=("", "_crs")).pipe(
-        set_crs_data_types
-    )
+    data = data.merge(totals, on=idx, how="left", suffixes=("", "_crs"))
+
     return data.drop(columns=[c for c in data.columns if c.endswith("_crs")])
 
 

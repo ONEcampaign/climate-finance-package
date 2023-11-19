@@ -1,12 +1,11 @@
 import pandas as pd
-from oda_data import read_crs
 
 from climate_finance.common.analysis_tools import check_provider_codes_type
-from climate_finance.common.schema import ClimateSchema, CRS_MAPPING
+from climate_finance.common.schema import ClimateSchema
 from climate_finance.methodologies.multilateral.crs_tools import (
     add_crs_data_and_transform,
 )
-from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
+from climate_finance.oecd.cleaning_tools.tools import idx_to_str
 from climate_finance.oecd.crdf.recipient_perspective import (
     get_recipient_perspective,
 )

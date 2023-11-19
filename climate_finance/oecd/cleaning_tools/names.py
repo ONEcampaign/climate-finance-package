@@ -6,7 +6,6 @@ from climate_finance.common.schema import ClimateSchema
 from climate_finance.oecd.cleaning_tools.tools import (
     rename_crs_columns,
     idx_to_str,
-    set_crs_data_types,
 )
 from climate_finance.oecd.crdf.recipient_perspective import (
     get_recipient_perspective,
