@@ -285,9 +285,13 @@ def add_crs_info(
     climate_crs = _keep_only_matched_projects(data=matched_crs)
 
     # remove duplicates
-    climate_crs = climate_crs.sort_values(
-        by=MAIN_FLOWS + CLIMATE_VALUES, ascending=(False, False, False, False, False)
-    ).drop_duplicates(subset=unique_index + [ClimateSchema.YEAR], keep="first")
+    climate_crs = (
+        climate_crs.groupby(
+            unique_index + [ClimateSchema.YEAR], observed=True, dropna=False
+        )
+        .agg({c: "max" for c in CLIMATE_VALUES} | {c: "sum" for c in MAIN_FLOWS})
+        .reset_index()
+    )
 
     # Identify not matched projects
     not_matched = _keep_only_unmatched_projects(data=matched_crs)
