@@ -38,6 +38,14 @@ def rio_markers_all_codes() -> list[str]:
     return list(set(rio_markers_bilat_codes() + rio_markers_multi_codes()))
 
 
+def non_rio_markers() -> list[str]:
+    return [
+        str(c)
+        for c in donor_groupings()["all_official"]
+        if str(c) not in rio_markers_all_codes()
+    ]
+
+
 def remove_private_development_finance(data: pd.DataFrame) -> pd.DataFrame:
     """Remove private development finance from the CRS data"""
     return data.loc[
@@ -70,3 +78,4 @@ if __name__ == "__main__":
     rmm = rio_markers_multi_codes()
     rmb = rio_markers_bilat_codes()
     rma = rio_markers_all_codes()
+    nrm = non_rio_markers()

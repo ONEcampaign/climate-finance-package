@@ -23,7 +23,7 @@ from climate_finance.oecd.cleaning_tools.tools import (
 set_data_path(ClimateDataPath.raw_data)
 
 
-def _read_clean_crs(years: list[int] | range) -> pd.DataFrame:
+def read_clean_crs(years: list[int] | range) -> pd.DataFrame:
     """Helper function to get a copy of the CRS with clean column names
     and correct data types.
 
@@ -86,7 +86,7 @@ def get_crs(
     groupby = list(dict.fromkeys(groupby + [ClimateSchema.FLOW_TYPE]))
 
     # Read CRS and rename columns
-    crs = _read_clean_crs(years=years)
+    crs = read_clean_crs(years=years)
 
     # Filter by provider code
     if provider_code is not None:

@@ -1,13 +1,11 @@
 import numpy as np
 import pandas as pd
 
-from climate_finance.config import logger
 from climate_finance.common.schema import (
-    OECD_CLIMATE_INDICATORS,
     ClimateSchema,
-    OECD_IMPUTED_CLIMATE_INDICATORS,
     MULTILATERAL_IMPUTATIONS_ID_COLUMNS,
 )
+from climate_finance.config import logger
 from climate_finance.oecd.cleaning_tools.tools import (
     idx_to_str,
     set_crs_data_types,
@@ -241,10 +239,9 @@ def summarise_by_party_idx(
     data = data.pipe(idx_to_str, idx=grouper)
 
     return (
-        data.groupby(grouper, observed=True)[ClimateSchema.VALUE]
+        data.groupby(grouper, observed=True, dropna=False)[ClimateSchema.VALUE]
         .sum()
         .reset_index()
-        .pipe(set_crs_data_types)
     )
 
 

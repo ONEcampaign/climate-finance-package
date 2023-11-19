@@ -1,6 +1,7 @@
 import pandas as pd
 from oda_data import read_crs
 
+from climate_finance.common.analysis_tools import check_provider_codes_type
 from climate_finance.common.schema import ClimateSchema, CRS_MAPPING
 from climate_finance.methodologies.multilateral.crs_tools import (
     add_crs_data_and_transform,
@@ -9,6 +10,7 @@ from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_t
 from climate_finance.oecd.crdf.recipient_perspective import (
     get_recipient_perspective,
 )
+from climate_finance.oecd.crs.get_data import read_clean_crs
 from climate_finance.unfccc.cleaning_tools.channels import clean_string
 
 UNIQUE_INDEX = [
@@ -75,9 +77,6 @@ CRDF_VALUES = [
     ClimateSchema.MITIGATION_VALUE,
     ClimateSchema.CROSS_CUTTING_VALUE,
 ]
-
-# multilateral providers
-MULTI_PROVIDERS = ["Other multilateral", "Multilateral development bank"]
 
 
 def _set_crs_types_to_strings(data: pd.DataFrame) -> pd.DataFrame:
@@ -205,29 +204,6 @@ def convert_to_flowtypes(data: pd.DataFrame) -> pd.DataFrame:
     return data.filter(OUTPUT_COLUMNS)
 
 
-def _keep_multilateral_providers(
-    df: pd.DataFrame, parties: list[str] | None = None
-) -> pd.DataFrame:
-    """
-    Filter to keep only multilateral providers.
-
-    Args:
-        df: The dataframe to filter.
-
-    Returns:
-        The filtered dataframe.
-
-    """
-
-    if parties is None:
-        parties = MULTI_PROVIDERS
-
-    # filter
-    return df.loc[lambda d: d[ClimateSchema.PROVIDER_TYPE].isin(parties)].reset_index(
-        drop=True
-    )
-
-
 def _convert_crs_values_to_million(data: pd.DataFrame) -> pd.DataFrame:
     """
     Clean the output of the multilateral CRS data.
@@ -265,7 +241,7 @@ def _get_unique_projects(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _get_crs_to_match(
-    years: list[int], party_code: str | list[str] | None = None
+    years: list[int], provider_code: str | list[str] | None = None
 ) -> pd.DataFrame:
     """
     Get the CRS data in order to match it to the multilateral data.
@@ -282,9 +258,7 @@ def _get_crs_to_match(
     """
 
     # Read the CRS data
-    crs_data = read_crs(years=years)
-
-    crs_data = crs_data.rename(columns=CRS_MAPPING)
+    crs_data = read_clean_crs(years=years)
 
     # Clean project title
     crs_data[ClimateSchema.PROJECT_TITLE] = clean_string(
@@ -297,8 +271,11 @@ def _get_crs_to_match(
         if c not in [ClimateSchema.FLOW_TYPE]
     ]
 
-    # Filter parties
-    crs_data = _filter_parties(data=crs_data, party_code=party_code)
+    if provider_code is not None:
+        provider_code = check_provider_codes_type(provider_codes=provider_code)
+        crs_data = crs_data.loc[
+            lambda d: d[ClimateSchema.PROVIDER_CODE].isin(provider_code)
+        ]
 
     # group any clear duplicates
 
@@ -311,8 +288,9 @@ def _get_crs_to_match(
         crs_data.groupby(idx, observed=True, dropna=False)[CRS_VALUES]
         .sum(numeric_only=True)
         .reset_index()
-        .pipe(set_crs_data_types)
     )
+
+    crs_data = _convert_crs_values_to_million(crs_data)
 
     return crs_data
 
@@ -332,8 +310,8 @@ def add_crs_data(df: pd.DataFrame) -> pd.DataFrame:
 
     # Get a version of the CRS data that can be matched with the multilateral data.
     crs_df = _get_crs_to_match(
-        years=df.year.unique().tolist(),
-        party_code=df.oecd_party_code.unique().tolist(),
+        years=df[ClimateSchema.YEAR].unique().tolist(),
+        provider_code=df[ClimateSchema.PROVIDER_CODE].unique().tolist(),
     )
 
     # match projects with crs
@@ -347,10 +325,27 @@ def add_crs_data(df: pd.DataFrame) -> pd.DataFrame:
     return data.loc[lambda d: d[ClimateSchema.VALUE] > 0]
 
 
-def get_multilateral_data(
+def get_multilateral_crdf_providers() -> list[str]:
+    # load all data
+    all_data = get_recipient_perspective(start_year=2013, end_year=2021)
+
+    # multilateral providers
+    multi_providers = ["Other multilateral", "Multilateral development bank"]
+
+    return (
+        all_data.loc[
+            lambda d: d[ClimateSchema.PROVIDER_TYPE].isin(multi_providers),
+            ClimateSchema.PROVIDER_CODE,
+        ]
+        .unique()
+        .tolist()
+    )
+
+
+def get_multilateral_spending_data(
     start_year: int,
     end_year: int,
-    party: list[str] | None = None,
+    provider_code: list[str] | int | None = None,
     force_update: bool = False,
 ) -> pd.DataFrame:
     """
@@ -359,7 +354,7 @@ def get_multilateral_data(
     Args:
         start_year: The start year that should be covered in the data
         end_year: The end year that should be covered in the data
-        party: Optionally, specify one or more parties. If not specified, all
+        provider_code: Optionally, specify one or more parties. If not specified, all
         parties are included.
         force_update: If True, the data is updated from the source. This can potentially
         overwrite any data that has been downloaded to the 'raw_data' folder.
@@ -368,9 +363,13 @@ def get_multilateral_data(
         The multilateral providers data.
 
     """
+
+    if provider_code is None:
+        provider_code = get_multilateral_crdf_providers()
+
     return get_recipient_perspective(
         start_year=start_year,
         end_year=end_year,
-        provider_code=party,
+        provider_code=provider_code,
         force_update=force_update,
-    ).pipe(_keep_multilateral_providers)
+    )

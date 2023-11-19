@@ -99,12 +99,22 @@ def read_provider_agency_names() -> pd.DataFrame:
         / "oecd"
         / "cleaning_tools"
         / f"provider_agency_names.feather"
+    ).rename(
+        columns={
+            "oecd_party_code": ClimateSchema.PROVIDER_CODE,
+            "party": ClimateSchema.PROVIDER_NAME,
+        }
     )
 
 
 def read_provider_names() -> pd.DataFrame:
     return pd.read_feather(
         ClimateDataPath.scripts / "oecd" / "cleaning_tools" / f"provider_names.feather"
+    ).rename(
+        columns={
+            "oecd_party_code": ClimateSchema.PROVIDER_CODE,
+            "party": ClimateSchema.PROVIDER_NAME,
+        }
     )
 
 
@@ -129,7 +139,7 @@ def _add_names(data: pd.DataFrame, names: pd.DataFrame, idx: list[str]) -> pd.Da
     # drop any columns which contain the string "_crs_names"
     data = data.drop(columns=[c for c in data.columns if "_names" in c])
 
-    return data.pipe(set_crs_data_types)
+    return data
 
 
 def add_provider_agency_names(data: pd.DataFrame) -> pd.DataFrame:
@@ -153,14 +163,17 @@ def add_provider_agency_names(data: pd.DataFrame) -> pd.DataFrame:
         data = data.drop(columns=ClimateSchema.AGENCY_NAME)
 
     if not (
-            ClimateSchema.PROVIDER_CODE in data.columns and ClimateSchema.AGENCY_CODE in data.columns
+        ClimateSchema.PROVIDER_CODE in data.columns
+        and ClimateSchema.AGENCY_CODE in data.columns
     ):
         raise ValueError("The data must contain both party and agency codes")
 
     idx = [ClimateSchema.PROVIDER_CODE, ClimateSchema.AGENCY_CODE]
     data = data.pipe(_add_names, names=names, idx=idx)
 
-    provider_names = read_provider_names().pipe(idx_to_str, idx=[ClimateSchema.PROVIDER_CODE])
+    provider_names = read_provider_names().pipe(
+        idx_to_str, idx=[ClimateSchema.PROVIDER_CODE]
+    )
     data = data.pipe(idx_to_str, idx=[ClimateSchema.PROVIDER_CODE])
 
     # Add the names to the data
@@ -175,7 +188,7 @@ def add_provider_agency_names(data: pd.DataFrame) -> pd.DataFrame:
         data[f"{ClimateSchema.PROVIDER_NAME}_names"]
     )
 
-    return data.drop(columns=[f"{ClimateSchema.PROVIDER_NAME}_names"]).pipe(set_crs_data_types)
+    return data.drop(columns=[f"{ClimateSchema.PROVIDER_NAME}_names"])
 
 
 def add_provider_names(data: pd.DataFrame) -> pd.DataFrame:

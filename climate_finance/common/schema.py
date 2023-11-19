@@ -211,3 +211,8 @@ MULTISYSTEM_COLUMNS: list[str] = [
     ClimateSchema.CHANNEL_NAME,
     ClimateSchema.VALUE,
 ]
+
+MAIN_FLOWS: list[str] = [
+    ClimateSchema.USD_COMMITMENT,
+    ClimateSchema.USD_DISBURSEMENT,
+]

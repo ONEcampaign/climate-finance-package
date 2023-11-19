@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
 
-from climate_finance.config import logger
 from climate_finance.common.schema import ClimateSchema, CLIMATE_VALUES
-from climate_finance.oecd.cleaning_tools.tools import idx_to_str, set_crs_data_types
+from climate_finance.config import logger
+from climate_finance.oecd.crs.add_crs_data import add_crs_data_pipeline
 from climate_finance.oecd.get_oecd_data import get_oecd_bilateral
 
 
@@ -53,7 +53,12 @@ def get_yearly_crs_totals(
         by_index = [
             c
             for c in crs_data.columns
-            if c not in [ClimateSchema.VALUE, ClimateSchema.INDICATOR, ClimateSchema.USD_COMMITMENT]
+            if c
+            not in [
+                ClimateSchema.VALUE,
+                ClimateSchema.INDICATOR,
+                ClimateSchema.USD_COMMITMENT,
+            ]
         ]
 
     else:
@@ -61,21 +66,10 @@ def get_yearly_crs_totals(
 
     # Get the group totals based on the selected index
     return (
-        crs_data.groupby(by_index, observed=True)[ClimateSchema.VALUE].sum().reset_index()
+        crs_data.groupby(by_index, observed=True)[ClimateSchema.VALUE]
+        .sum()
+        .reset_index()
     )
-
-
-def _prepare_crs_and_projects(
-    crs: pd.DataFrame, projects: pd.DataFrame, unique_index: list[str]
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    # convert new index to string, and set it
-    projects = projects.pipe(idx_to_str, idx=unique_index).set_index(unique_index)
-    crs = crs.pipe(idx_to_str, idx=unique_index).set_index(unique_index)
-
-    # Convert CRS commitments and disbursements to millions of USD
-    crs[[ClimateSchema.USD_COMMITMENT, ClimateSchema.USD_DISBURSEMENT]] *= 1e6
-
-    return crs, projects
 
 
 def _match_projects_with_crs(
@@ -143,21 +137,26 @@ def _create_climate_share_columns(data: pd.DataFrame) -> pd.DataFrame:
 
 
 def _identify_and_remove_implausible_shares(
-    data: pd.DataFrame, projects_data: pd.DataFrame, unique_index: list[str]
+    data: pd.DataFrame,
+    projects_data: pd.DataFrame,
+    unique_index: list[str],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     # set the right index
     data = data.set_index(unique_index)
-    projects_data = projects_data.set_index(unique_index)
 
     # Large shares keeps the rows with implausible shares
-    large_shares = data.loc[lambda d: d[f"{ClimateSchema.CLIMATE_UNSPECIFIED}_share"] > 1.1]
+    large_shares = data.loc[
+        lambda d: d[f"{ClimateSchema.CLIMATE_UNSPECIFIED}_share"] > 1.1
+    ]
 
     # clean_data keeps the rows with plausible shares
-    clean_data = data.loc[lambda d: d[f"{ClimateSchema.CLIMATE_UNSPECIFIED}_share"] <= 1.1]
+    clean_data = data.loc[
+        lambda d: d[f"{ClimateSchema.CLIMATE_UNSPECIFIED}_share"] <= 1.1
+    ]
 
     # Filter the projects data to only keep the rows that are in large_shares
     large_shares_projects = projects_data.loc[
-        lambda d: d.index.isin(large_shares.index)
+        lambda d: (d.index.isin(large_shares.index))
     ]
 
     return large_shares_projects.reset_index(), clean_data.reset_index()
@@ -186,7 +185,7 @@ def _clean_climate_crs_output(data: pd.DataFrame) -> pd.DataFrame:
             ClimateSchema.USD_COMMITMENT,
             ClimateSchema.CLIMATE_UNSPECIFIED,
         ]
-    ).pipe(set_crs_data_types)
+    )
 
 
 def _add_crs_info_and_transform_to_indicators(
@@ -200,17 +199,17 @@ def _add_crs_info_and_transform_to_indicators(
         if c != "year" and c in projects.columns and c in crs.columns
     ]
 
-    # Prepare CRS and Projects by setting the right index (and values scale for CRS)
-    crs, projects = _prepare_crs_and_projects(
-        crs=crs, projects=projects, unique_index=unique_index
-    )
+    crs = crs.set_index(unique_index)
+    projects = projects.set_index(unique_index)
 
     # filter CRS to match and create not_matched dataframe
     climate_crs, not_matched = _match_projects_with_crs(crs=crs, projects=projects)
 
     # Group the unique index level and sum the values
     unique_climate_crs = _group_at_unique_index_level_and_sum(
-        data=climate_crs, unique_index=unique_index, agg_col=ClimateSchema.USD_COMMITMENT
+        data=climate_crs,
+        unique_index=unique_index,
+        agg_col=ClimateSchema.USD_COMMITMENT,
     )
 
     # Group the unique index level and sum the values
@@ -238,14 +237,15 @@ def _add_crs_info_and_transform_to_indicators(
 
     # Identify columns with implausible shares
     implausible_shares, full_climate_crs = _identify_and_remove_implausible_shares(
-        data=full_climate_crs, projects_data=unique_projects, unique_index=unique_index
+        data=full_climate_crs, projects_data=projects, unique_index=unique_index
     )
 
-    # Add the implausible shares to the not_matched dataframe
-    not_matched = pd.concat([not_matched, implausible_shares], ignore_index=True)
+    # Add implausible shares to not_matched
+    not_matched = pd.concat(
+        [not_matched, implausible_shares], ignore_index=True
+    ).drop_duplicates()
 
     # transform into flow types
-
     commitments = _transform_to_flow_type(
         data=full_climate_crs, flow_type=ClimateSchema.USD_COMMITMENT
     )
@@ -262,7 +262,7 @@ def _add_crs_info_and_transform_to_indicators(
         _clean_climate_crs_output
     )
 
-    return full_climate_crs_by_flow_type, not_matched.pipe(set_crs_data_types)
+    return full_climate_crs_by_flow_type, not_matched
 
 
 def _calculate_unmatched_totals(unmatched: pd.DataFrame) -> pd.DataFrame:
@@ -278,10 +278,118 @@ def _remove_matched_from_crs(
         c for c in idx if c != "year" and c in matched_data.columns and c in crs.columns
     ]
 
-    crs = crs.pipe(idx_to_str, idx=idx).set_index(idx)
-    matched_data = matched_data.pipe(idx_to_str, idx=idx).set_index(idx)
+    crs = crs.set_index(idx)
+    matched_data = matched_data.set_index(idx)
     crs = crs.loc[lambda d: ~d.index.isin(matched_data.index)]
-    return crs.reset_index().pipe(set_crs_data_types)
+    return crs.reset_index()
+
+
+def _clean_not_matched(
+    not_matched: pd.DataFrame, output_idx: list[str]
+) -> pd.DataFrame:
+    # Define text to use for not matched values
+    not_matched_text = "Data only reported in the CRDF as commitments"
+
+    # Define mapping of values for not matched data
+    not_matched_values = {
+        ClimateSchema.PROJECT_TITLE: not_matched_text,
+        ClimateSchema.PROJECT_ID: "aggregate",
+        ClimateSchema.CRS_ID: "aggregate",
+        ClimateSchema.CHANNEL_CODE: "0",
+        ClimateSchema.CHANNEL_CODE_DELIVERY: not_matched_text,
+        ClimateSchema.FLOW_TYPE: ClimateSchema.USD_COMMITMENT,
+    }
+
+    # Fill missing recipient and purpose codes
+    not_matched = not_matched.fillna(
+        {ClimateSchema.RECIPIENT_CODE: "998", ClimateSchema.PURPOSE_CODE: "99810"}
+    )
+
+    # Replace "Debt instrument" with ODA Loans when concessional
+    not_matched.loc[
+        lambda d: (
+            (d[ClimateSchema.FINANCIAL_INSTRUMENT] == "Debt instrument")
+            & (d["concessionality"] == "Concessional and developmental")
+        ),
+        ClimateSchema.FINANCIAL_INSTRUMENT,
+    ] = "ODA Loans"
+
+    # Replace "Debt instrument" with OOFs when not concessional
+    not_matched.loc[
+        lambda d: (
+            (d[ClimateSchema.FINANCIAL_INSTRUMENT] == "Debt instrument")
+            & (
+                d["concessionality"]
+                == "Not concessional or not primarily developmental"
+            )
+        ),
+        ClimateSchema.FINANCIAL_INSTRUMENT,
+    ] = "Other Official Flows (non Export Credits)"
+
+    # Replace "Grant" with ODA Grants
+    not_matched.loc[
+        lambda d: (d[ClimateSchema.FINANCIAL_INSTRUMENT] == "Grant"),
+        ClimateSchema.FINANCIAL_INSTRUMENT,
+    ] = "ODA Grants"
+
+    # Replace "Equity and shares in collective investment vehicles" with Equity Investment
+    not_matched.loc[
+        lambda d: (
+            d[ClimateSchema.FINANCIAL_INSTRUMENT]
+            == "Equity and shares in collective investment vehicles"
+        ),
+        ClimateSchema.FINANCIAL_INSTRUMENT,
+    ] = "Equity Investment"
+
+    # Add categories
+    not_matched[ClimateSchema.CATEGORY] = not_matched[
+        ClimateSchema.FINANCIAL_INSTRUMENT
+    ].map(
+        {
+            "ODA Grants": "10",
+            "ODA Loans": "10",
+            "Other Official Flows (non Export Credit)": "21",
+            "Equity Investment": "10",
+        }
+    )
+
+    # Fill missing financial instruments
+    not_matched[ClimateSchema.FINANCIAL_INSTRUMENT] = (
+        not_matched[ClimateSchema.FINANCIAL_INSTRUMENT]
+        .replace("nan", np.nan, regex=False)
+        .fillna("Unspecified")
+    )
+
+    # Assign remaining values and rename
+    not_matched = not_matched.assign(**not_matched_values)
+
+    not_matched = (
+        not_matched.groupby(
+            by=[c for c in output_idx if c not in CLIMATE_VALUES],
+            observed=True,
+            dropna=False,
+        )
+        .sum(numeric_only=True)
+        .reset_index()
+        .rename(columns={ClimateSchema.FINANCIAL_INSTRUMENT: ClimateSchema.FLOW_NAME})
+    )
+
+    not_matched = not_matched.dropna(subset=[ClimateSchema.YEAR])
+
+    return not_matched
+
+
+def _compute_total_to_match(projects_df: pd.DataFrame) -> float:
+    return round(
+        projects_df.groupby([ClimateSchema.YEAR], observed=True, dropna=False)[
+            CLIMATE_VALUES
+        ]
+        .sum()
+        .sum()
+        .sum()
+        / 1e9,
+        1,
+    )
 
 
 def add_crs_data_and_transform(
@@ -307,20 +415,18 @@ def add_crs_data_and_transform(
         The projects matched with the CRS data.
 
     """
-    # convert index to str
-    projects = projects.pipe(idx_to_str, idx=unique_index + [ClimateSchema.PROJECT_TITLE])
-    crs = crs.pipe(idx_to_str, idx=unique_index + [ClimateSchema.PROJECT_TITLE])
+
+    to_match = _compute_total_to_match(projects_df=projects)
+    logger.info(f"Total to match:{to_match}b")
 
     # Perform an initial merge. It will be done considering all the columns in the
     # UNIQUE_INDEX global variable. A left join is attempted. The indicator column
     # is shown to see how many projects were matched.
-    matched, not_matched = _add_crs_info_and_transform_to_indicators(
-        crs=crs,
-        projects=projects,
-        unique_index=[ClimateSchema.PROJECT_TITLE] + unique_index,
+    matched, not_matched, crs = add_crs_data_pipeline(
+        crs_data=crs,
+        projects_to_match=projects,
+        idx=[ClimateSchema.PROJECT_TITLE] + unique_index,
     )
-
-    crs = _remove_matched_from_crs(crs, idx=unique_index, matched_data=matched)
 
     logger.debug(
         f"Didn't match \n{len(not_matched)} projects with CRS data (first pass)"
@@ -362,56 +468,29 @@ def add_crs_data_and_transform(
 
     # Loop through each config and try to merge the data
     for pass_number, idx_config in enumerate(unique_index_configurations):
-        matched_, not_matched = _add_crs_info_and_transform_to_indicators(
-            crs=crs, projects=not_matched, unique_index=idx_config
+        matched_, not_matched, crs = add_crs_data_pipeline(
+            crs_data=crs,
+            projects_to_match=not_matched,
+            idx=idx_config,
         )
         logger.debug(
             f"Didn't match \n{len(not_matched)} projects with CRS data"
-            f" (attempt {pass_number+2})"
+            f" (attempt {pass_number + 2})"
         )
-        crs = _remove_matched_from_crs(crs, idx=idx_config, matched_data=matched_)
         matched = pd.concat([matched, matched_], ignore_index=True)
 
-    # Log the usd millions value for projects that were not matched
-    logger.debug(
-        f"The total unmatched in millions of USD is:"
-        f"\n{_calculate_unmatched_totals(unmatched=not_matched)}\n"
+    total_matched = _compute_total_to_match(
+        projects_df=matched.loc[
+            lambda d: d[ClimateSchema.FLOW_TYPE] == ClimateSchema.USD_COMMITMENT
+        ]
     )
+    logger.info(f"Total matched:{total_matched}b")
+    logger.info(f"Matched percentage: {100*total_matched / to_match:.2f}%")
 
-    not_matched_text = "Data only reported in the CRDF as commitments"
+    not_matched_idx = [c for c in not_matched.columns if c in matched.columns]
 
-    not_matched_values = {
-        ClimateSchema.PROJECT_TITLE: not_matched_text,
-        ClimateSchema.RECIPIENT_CODE: "998",
-        ClimateSchema.PURPOSE_CODE: "99810",
-        ClimateSchema.PROJECT_ID: "aggregate",
-        ClimateSchema.CRS_ID: "aggregate",
-        ClimateSchema.CHANNEL_CODE: "0",
-        ClimateSchema.FLOW_CODE: "0",
-        ClimateSchema.CHANNEL_CODE_DELIVERY: not_matched_text,
-        ClimateSchema.CATEGORY: not_matched_text,
-        ClimateSchema.FLOW_TYPE: ClimateSchema.USD_COMMITMENT,
-    }
-    other = [
-        ClimateSchema.FINANCE_TYPE,
-        ClimateSchema.FLOW_NAME,
-        ClimateSchema.FLOW_MODALITY,
-    ]
-    not_matched = (
-        not_matched.assign(**not_matched_values)
-        .rename(columns={ClimateSchema.FINANCIAL_INSTRUMENT: ClimateSchema.FLOW_NAME})
-        .pipe(map_flow_name_to_code, codes_col=ClimateSchema.FLOW_CODE)
-        .groupby(
-            [ClimateSchema.YEAR, ClimateSchema.PROVIDER_CODE, ClimateSchema.AGENCY_CODE]
-            + list(not_matched_values)
-            + other,
-            observed=True,
-            dropna=False,
-        )
-        .sum(numeric_only=True)
-        .reset_index()
-        .filter(matched.columns)
-        .dropna(subset=[ClimateSchema.YEAR])
+    not_matched = _clean_not_matched(
+        not_matched=not_matched, output_idx=not_matched_idx
     )
 
     matched = pd.concat([matched, not_matched], ignore_index=True)
