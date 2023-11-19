@@ -1,15 +1,14 @@
-import numpy as np
 import pandas as pd
 from oda_data import read_crs
 
 from climate_finance.config import ClimateDataPath
-from climate_finance.oecd.cleaning_tools.schema import CrsSchema
+from climate_finance.common.schema import ClimateSchema
 from climate_finance.oecd.cleaning_tools.tools import (
     rename_crs_columns,
     idx_to_str,
     set_crs_data_types,
 )
-from climate_finance.oecd.climate_related_activities.recipient_perspective import (
+from climate_finance.oecd.crdf.recipient_perspective import (
     get_recipient_perspective,
 )
 
@@ -50,13 +49,13 @@ def _create_names(
 def create_provider_agency_names(crs_year: int = 2021) -> None:
     # Define the index that will be used to identify unique names
     idx = [
-        CrsSchema.PARTY_CODE,
-        CrsSchema.AGENCY_CODE,
-        CrsSchema.PARTY_NAME,
-        CrsSchema.AGENCY_NAME,
+        ClimateSchema.PROVIDER_CODE,
+        ClimateSchema.AGENCY_CODE,
+        ClimateSchema.PROVIDER_NAME,
+        ClimateSchema.AGENCY_NAME,
     ]
 
-    merge_idx = [CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE]
+    merge_idx = [ClimateSchema.PROVIDER_CODE, ClimateSchema.AGENCY_CODE]
 
     _create_names(
         crs_year=crs_year,
@@ -68,9 +67,9 @@ def create_provider_agency_names(crs_year: int = 2021) -> None:
 
 def create_provider_names(crs_year: int = 2021) -> None:
     # Define the index that will be used to identify unique names
-    idx = [CrsSchema.PARTY_CODE, CrsSchema.PARTY_NAME]
+    idx = [ClimateSchema.PROVIDER_CODE, ClimateSchema.PROVIDER_NAME]
 
-    merge_idx = [CrsSchema.PARTY_CODE]
+    merge_idx = [ClimateSchema.PROVIDER_CODE]
 
     _create_names(
         crs_year=crs_year,
@@ -82,9 +81,9 @@ def create_provider_names(crs_year: int = 2021) -> None:
 
 def create_recipient_names(crs_year: int = 2021) -> None:
     # Define the index that will be used to identify unique names
-    idx = [CrsSchema.RECIPIENT_CODE, CrsSchema.RECIPIENT_NAME]
+    idx = [ClimateSchema.RECIPIENT_CODE, ClimateSchema.RECIPIENT_NAME]
 
-    merge_idx = [CrsSchema.RECIPIENT_CODE]
+    merge_idx = [ClimateSchema.RECIPIENT_CODE]
 
     _create_names(
         crs_year=crs_year,
@@ -100,12 +99,22 @@ def read_provider_agency_names() -> pd.DataFrame:
         / "oecd"
         / "cleaning_tools"
         / f"provider_agency_names.feather"
+    ).rename(
+        columns={
+            "oecd_party_code": ClimateSchema.PROVIDER_CODE,
+            "party": ClimateSchema.PROVIDER_NAME,
+        }
     )
 
 
 def read_provider_names() -> pd.DataFrame:
     return pd.read_feather(
         ClimateDataPath.scripts / "oecd" / "cleaning_tools" / f"provider_names.feather"
+    ).rename(
+        columns={
+            "oecd_party_code": ClimateSchema.PROVIDER_CODE,
+            "party": ClimateSchema.PROVIDER_NAME,
+        }
     )
 
 
@@ -130,7 +139,7 @@ def _add_names(data: pd.DataFrame, names: pd.DataFrame, idx: list[str]) -> pd.Da
     # drop any columns which contain the string "_crs_names"
     data = data.drop(columns=[c for c in data.columns if "_names" in c])
 
-    return data.pipe(set_crs_data_types)
+    return data
 
 
 def add_provider_agency_names(data: pd.DataFrame) -> pd.DataFrame:
@@ -148,35 +157,38 @@ def add_provider_agency_names(data: pd.DataFrame) -> pd.DataFrame:
     """
     names = read_provider_agency_names()
 
-    if CrsSchema.PARTY_NAME in data.columns:
-        data = data.drop(columns=CrsSchema.PARTY_NAME)
-    if CrsSchema.AGENCY_NAME in data.columns:
-        data = data.drop(columns=CrsSchema.AGENCY_NAME)
+    if ClimateSchema.PROVIDER_NAME in data.columns:
+        data = data.drop(columns=ClimateSchema.PROVIDER_NAME)
+    if ClimateSchema.AGENCY_NAME in data.columns:
+        data = data.drop(columns=ClimateSchema.AGENCY_NAME)
 
     if not (
-        CrsSchema.PARTY_CODE in data.columns and CrsSchema.AGENCY_CODE in data.columns
+        ClimateSchema.PROVIDER_CODE in data.columns
+        and ClimateSchema.AGENCY_CODE in data.columns
     ):
         raise ValueError("The data must contain both party and agency codes")
 
-    idx = [CrsSchema.PARTY_CODE, CrsSchema.AGENCY_CODE]
+    idx = [ClimateSchema.PROVIDER_CODE, ClimateSchema.AGENCY_CODE]
     data = data.pipe(_add_names, names=names, idx=idx)
 
-    provider_names = read_provider_names().pipe(idx_to_str, idx=[CrsSchema.PARTY_CODE])
-    data = data.pipe(idx_to_str, idx=[CrsSchema.PARTY_CODE])
+    provider_names = read_provider_names().pipe(
+        idx_to_str, idx=[ClimateSchema.PROVIDER_CODE]
+    )
+    data = data.pipe(idx_to_str, idx=[ClimateSchema.PROVIDER_CODE])
 
     # Add the names to the data
     data = data.merge(
         provider_names,
-        on=[CrsSchema.PARTY_CODE],
+        on=[ClimateSchema.PROVIDER_CODE],
         how="left",
         suffixes=("", "_names"),
     )
 
-    data[CrsSchema.PARTY_NAME] = data[CrsSchema.PARTY_NAME].fillna(
-        data[f"{CrsSchema.PARTY_NAME}_names"]
+    data[ClimateSchema.PROVIDER_NAME] = data[ClimateSchema.PROVIDER_NAME].fillna(
+        data[f"{ClimateSchema.PROVIDER_NAME}_names"]
     )
 
-    return data.drop(columns=[f"{CrsSchema.PARTY_NAME}_names"]).pipe(set_crs_data_types)
+    return data.drop(columns=[f"{ClimateSchema.PROVIDER_NAME}_names"])
 
 
 def add_provider_names(data: pd.DataFrame) -> pd.DataFrame:
@@ -194,10 +206,10 @@ def add_provider_names(data: pd.DataFrame) -> pd.DataFrame:
     """
     names = read_provider_names()
 
-    if CrsSchema.PARTY_NAME in data.columns:
-        data = data.drop(columns=CrsSchema.PARTY_NAME)
+    if ClimateSchema.PROVIDER_NAME in data.columns:
+        data = data.drop(columns=ClimateSchema.PROVIDER_NAME)
 
-    return data.pipe(_add_names, names=names, idx=[CrsSchema.PARTY_CODE])
+    return data.pipe(_add_names, names=names, idx=[ClimateSchema.PROVIDER_CODE])
 
 
 def additional_recipient_names() -> pd.DataFrame:
@@ -231,9 +243,9 @@ def add_recipient_names(data: pd.DataFrame) -> pd.DataFrame:
 
     names = pd.concat([names, additional_names], ignore_index=True)
 
-    if CrsSchema.RECIPIENT_NAME in data.columns:
-        data = data.drop(columns=CrsSchema.RECIPIENT_NAME)
+    if ClimateSchema.RECIPIENT_NAME in data.columns:
+        data = data.drop(columns=ClimateSchema.RECIPIENT_NAME)
 
-    data = data.pipe(_add_names, names=names, idx=[CrsSchema.RECIPIENT_CODE])
+    data = data.pipe(_add_names, names=names, idx=[ClimateSchema.RECIPIENT_CODE])
 
     return data
