@@ -4,7 +4,6 @@ import pandas as pd
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.oecd.cleaning_tools.tools import (
     idx_to_str,
-    set_crs_data_types,
     keep_only_allocable_aid,
 )
 from climate_finance.oecd.crs.get_data import get_crs
@@ -62,7 +61,6 @@ def _summarise_spending_data(
         .groupby(SIMPLE_IDX, observed=True, dropna=False)["yearly_total"]
         .sum()
         .reset_index()
-        .pipe(set_crs_data_types)
     )
 
 
