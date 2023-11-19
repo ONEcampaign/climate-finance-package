@@ -78,7 +78,7 @@ def _drop_rows_missing_climate(data: pd.DataFrame) -> pd.DataFrame:
     return data.dropna(subset=CLIMATE_COLS + ["yearly_total"], how="all")
 
 
-def _add_climate_total_column(data: pd.DataFrame) -> pd.DataFrame:
+def add_climate_total_column(data: pd.DataFrame) -> pd.DataFrame:
     data[ClimateSchema.CLIMATE_UNSPECIFIED] = (
         data[ClimateSchema.ADAPTATION_VALUE].fillna(0)
         + data[ClimateSchema.MITIGATION_VALUE].fillna(0)
@@ -183,40 +183,43 @@ def one_rolling_shares_methodology(
         spending data.
 
     """
-    if output_groupby is None:
-        output_groupby = SHARES_IDX
+    shares_idx = [c for c in SHARES_IDX if c in data.columns]
 
+    if output_groupby is None:
+        output_groupby = shares_idx
+
+    # check if all columns are present
     # Drop duplicates
     data = data.drop_duplicates()
 
     # Summarise the data at the right level
     data_by_indicator = data.pipe(
         summarise_by_party_idx,
-        idx=SHARES_IDX,
+        idx=shares_idx,
         by_indicator=True,
-    ).pipe(_pivot_indicators_as_columns, idx=SHARES_IDX)
+    ).pipe(_pivot_indicators_as_columns, idx=shares_idx)
 
     # Get yearly totals for years present in the data, for ALLOCABLE
     yearly_totals = (
         get_crs(
             start_year=start_year,
             end_year=end_year,
-            groupby=SHARES_IDX + [ClimateSchema.FLOW_MODALITY],
+            groupby=shares_idx + [ClimateSchema.FLOW_MODALITY],
             provider_code=data_by_indicator[ClimateSchema.PROVIDER_CODE]
             .unique()
             .tolist(),
         )
         .pipe(_filter_flow_types)
         .pipe(keep_only_allocable_aid)
-        .pipe(summarise_by_party_idx, idx=SHARES_IDX)
+        .pipe(summarise_by_party_idx, idx=shares_idx)
         .rename(columns={ClimateSchema.VALUE: "yearly_total"})
     )
 
     data_by_indicator = (
-        data_by_indicator.pipe(merge_total, totals=yearly_totals, idx=SHARES_IDX)
+        data_by_indicator.pipe(merge_total, totals=yearly_totals, idx=shares_idx)
         .pipe(_validate_missing_climate_cols)
         .pipe(_drop_rows_missing_climate)
-        .pipe(_add_climate_total_column)
+        .pipe(add_climate_total_column)
         .pipe(_keep_non_zero_climate_total)
         .pipe(_fill_total_spending_gaps)
     )
@@ -295,7 +298,7 @@ def one_multilateral_spending(
         spending data.
 
     """
-    return (
+    data = (
         get_multilateral_spending_data(
             start_year=start_year,
             end_year=end_year,
@@ -305,7 +308,10 @@ def one_multilateral_spending(
         .loc[lambda d: d[ClimateSchema.PROVIDER_TYPE] != "DAC member"]
         .pipe(clean_component)
         .pipe(add_crs_data)
-        .pipe(
+    )
+
+    if rolling_window > 1:
+        data = data.pipe(
             one_rolling_shares_methodology,
             window=rolling_window,
             agg=agg,
@@ -314,4 +320,20 @@ def one_multilateral_spending(
             start_year=start_year,
             end_year=end_year,
         )
-    )
+    else:
+        data = (
+            data.pivot(
+                index=[
+                    c
+                    for c in data.columns
+                    if c not in [ClimateSchema.INDICATOR, ClimateSchema.VALUE]
+                ],
+                columns=ClimateSchema.INDICATOR,
+                values=ClimateSchema.VALUE,
+            )
+            .reset_index()
+            .pipe(_validate_missing_climate_cols)
+            .pipe(add_climate_total_column)
+        )
+
+    return data

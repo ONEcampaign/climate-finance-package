@@ -437,6 +437,7 @@ def add_crs_data_and_transform(
     unique_index_configurations = [
         [
             ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.AGENCY_CODE,
             ClimateSchema.RECIPIENT_CODE,
             ClimateSchema.PROJECT_ID,
             ClimateSchema.PURPOSE_CODE,
@@ -444,7 +445,27 @@ def add_crs_data_and_transform(
         [
             ClimateSchema.PROVIDER_CODE,
             ClimateSchema.RECIPIENT_CODE,
+            ClimateSchema.PROJECT_ID,
+            ClimateSchema.PURPOSE_CODE,
+        ],
+        [
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.AGENCY_CODE,
+            ClimateSchema.RECIPIENT_CODE,
             ClimateSchema.CRS_ID,
+            ClimateSchema.PURPOSE_CODE,
+        ],
+        [
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.RECIPIENT_CODE,
+            ClimateSchema.CRS_ID,
+            ClimateSchema.PURPOSE_CODE,
+        ],
+        [
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.AGENCY_CODE,
+            ClimateSchema.RECIPIENT_CODE,
+            ClimateSchema.PROJECT_TITLE,
             ClimateSchema.PURPOSE_CODE,
         ],
         [
@@ -459,6 +480,12 @@ def add_crs_data_and_transform(
             ClimateSchema.PURPOSE_CODE,
         ],
         unique_index,
+        [
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.AGENCY_CODE,
+            ClimateSchema.PROJECT_ID,
+            ClimateSchema.PURPOSE_CODE,
+        ],
         [
             ClimateSchema.PROVIDER_CODE,
             ClimateSchema.PROJECT_ID,
