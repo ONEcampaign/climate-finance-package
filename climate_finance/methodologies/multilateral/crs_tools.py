@@ -515,10 +515,19 @@ def add_crs_data_and_transform(
             ClimateSchema.PURPOSE_CODE,
             ClimateSchema.RECIPIENT_CODE,
         ],
-        [  # 11. No CRS ID. No project title. No Modality. No finance type.
+        [  # 12. No agency. No CRS ID. No project ID. No Modality. No finance type.
+            ClimateSchema.YEAR,
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.CRS_ID,
+            ClimateSchema.FLOW_MODALITY,
+            ClimateSchema.PURPOSE_CODE,
+            ClimateSchema.RECIPIENT_CODE,
+        ],
+        [  # 13. No CRS ID. No project title. No Modality. No finance type.
             ClimateSchema.YEAR,
             ClimateSchema.PROVIDER_CODE,
             ClimateSchema.FLOW_MODALITY,
+            ClimateSchema.PROJECT_DESCRIPTION,
             ClimateSchema.PURPOSE_CODE,
             ClimateSchema.RECIPIENT_CODE,
         ],

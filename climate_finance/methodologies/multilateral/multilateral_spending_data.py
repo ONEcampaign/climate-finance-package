@@ -8,6 +8,7 @@ from climate_finance.methodologies.multilateral.crs_tools import (
 from climate_finance.oecd.cleaning_tools.tools import (
     idx_to_str,
     keep_only_allocable_aid,
+    fix_crdf_recipient_errors,
 )
 from climate_finance.oecd.crdf.recipient_perspective import (
     get_recipient_perspective,
@@ -260,9 +261,15 @@ def _get_crs_to_match(
         crs_data[ClimateSchema.PROJECT_TITLE]
     )
 
+    # Clean long description
+    crs_data[ClimateSchema.PROJECT_DESCRIPTION] = clean_string(
+        crs_data[ClimateSchema.PROJECT_DESCRIPTION]
+    )
+
     idx = [
         c
-        for c in CRS_INFO + [ClimateSchema.PROJECT_TITLE]
+        for c in CRS_INFO
+        + [ClimateSchema.PROJECT_TITLE, ClimateSchema.PROJECT_DESCRIPTION]
         if c not in [ClimateSchema.FLOW_TYPE]
     ]
 
@@ -286,6 +293,9 @@ def _get_crs_to_match(
     )
 
     crs_data = _convert_crs_values_to_million(crs_data)
+
+    # Fix recipient code
+    crs_data = fix_crdf_recipient_errors(crs_data)
 
     return crs_data
 

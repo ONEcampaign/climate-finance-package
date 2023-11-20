@@ -16,6 +16,7 @@ from climate_finance.oecd.crdf.tools import (
     download_file,
     load_or_download,
 )
+from climate_finance.unfccc.cleaning_tools.channels import clean_string
 
 FILE_PATH: Path = (
     ClimateDataPath.raw_data / "oecd_climate_recipient_perspective.feather"
@@ -115,6 +116,11 @@ def get_recipient_perspective(
 
     # Fix errors in recipient code
     df = df.pipe(fix_crdf_recipient_errors)
+
+    # Clean long description
+    df[ClimateSchema.PROJECT_DESCRIPTION] = clean_string(
+        df[ClimateSchema.PROJECT_DESCRIPTION]
+    )
 
     # Add flow type
     df = df.pipe(assign_usd_commitments_as_flow_type)
