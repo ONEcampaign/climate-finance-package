@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from climate_finance.common.schema import ClimateSchema, CLIMATE_VALUES
-from climate_finance.config import logger
+from climate_finance.config import logger, ClimateDataPath
 from climate_finance.oecd.crs.add_crs_data import add_crs_data_pipeline
 from climate_finance.oecd.get_oecd_data import get_oecd_bilateral
 
@@ -416,9 +416,9 @@ def add_crs_data_and_transform(
         The projects matched with the CRS data.
 
     """
-
+    providers = ", ".join(projects[ClimateSchema.PROVIDER_CODE].unique())
     to_match = _compute_total_to_match(projects_df=projects)
-    logger.info(f"Total to match:{to_match}b")
+    logger.info(f"Total to match{providers}:{to_match}b")
 
     # Perform an initial merge. It will be done considering all the columns in the
     # UNIQUE_INDEX global variable. A left join is attempted. The indicator column
@@ -429,9 +429,9 @@ def add_crs_data_and_transform(
         idx=[ClimateSchema.PROJECT_TITLE] + unique_index,
     )
 
-    logger.debug(
-        f"Didn't match \n{len(not_matched)} projects with CRS data (first pass)"
-    )
+    # logger.debug(
+    #     f"Didn't match \n{len(not_matched)} projects with CRS data (first pass)"
+    # )
 
     # Define the different passes that will be performed to try to merge the data
     # This is done by specifying the merge columns
@@ -537,10 +537,10 @@ def add_crs_data_and_transform(
             projects_to_match=not_matched,
             idx=idx_config,
         )
-        logger.debug(
-            f"Didn't match \n{len(not_matched)} projects with CRS data"
-            f" (attempt {pass_number + 2})"
-        )
+        # logger.debug(
+        #     f"Didn't match \n{len(not_matched)} projects with CRS data"
+        #     f" (attempt {pass_number + 2})"
+        # )
         matched = pd.concat([matched, matched_], ignore_index=True)
 
     total_matched = _compute_total_to_match(
@@ -548,8 +548,13 @@ def add_crs_data_and_transform(
             lambda d: d[ClimateSchema.FLOW_TYPE] == ClimateSchema.USD_COMMITMENT
         ]
     )
-    logger.info(f"Total matched:{total_matched}b")
+    logger.info(f"Total matched for {providers}:{total_matched}b")
     logger.info(f"Matched percentage: {100*total_matched / to_match:.2f}%")
+
+    # not_matched.to_csv(
+    #     ClimateDataPath.raw_data / f"crs_not_matched{providers}.csv",
+    #     index=False,
+    # )
 
     not_matched_idx = [c for c in not_matched.columns if c in matched.columns]
 
@@ -560,7 +565,7 @@ def add_crs_data_and_transform(
     matched = pd.concat(
         [
             matched,
-            # not_matched,
+            not_matched,
         ],
         ignore_index=True,
     )
