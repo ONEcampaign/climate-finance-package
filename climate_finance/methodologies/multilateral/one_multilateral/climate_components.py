@@ -17,6 +17,7 @@ CRDF_IDX = [
     ClimateSchema.CLIMATE_OBJECTIVE,
     ClimateSchema.CHANNEL_CODE_DELIVERY,
     ClimateSchema.PURPOSE_CODE,
+    ClimateSchema.FLOW_NAME,
     ClimateSchema.FLOW_MODALITY,
     ClimateSchema.FINANCIAL_INSTRUMENT,
     ClimateSchema.FINANCE_TYPE,

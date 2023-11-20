@@ -5,7 +5,10 @@ from climate_finance.common.schema import ClimateSchema
 from climate_finance.methodologies.multilateral.crs_tools import (
     add_crs_data_and_transform,
 )
-from climate_finance.oecd.cleaning_tools.tools import idx_to_str
+from climate_finance.oecd.cleaning_tools.tools import (
+    idx_to_str,
+    keep_only_allocable_aid,
+)
 from climate_finance.oecd.crdf.recipient_perspective import (
     get_recipient_perspective,
 )
@@ -19,10 +22,25 @@ UNIQUE_INDEX = [
     # ClimateSchema.CRS_ID,
     ClimateSchema.PROJECT_ID,
     ClimateSchema.FINANCE_TYPE,
-    # ClimateSchema.FLOW_CODE,
+    ClimateSchema.FLOW_CODE,
     ClimateSchema.FLOW_TYPE,
+    ClimateSchema.FINANCIAL_INSTRUMENT,
+    ClimateSchema.PROJECT_TITLE,
     ClimateSchema.RECIPIENT_CODE,
+    ClimateSchema.FLOW_MODALITY,
     ClimateSchema.PURPOSE_CODE,
+]
+
+OUTPUT_COLUMNS: list = UNIQUE_INDEX + [
+    ClimateSchema.FLOW_TYPE,
+    ClimateSchema.FLOW_CODE,
+    ClimateSchema.CATEGORY,
+    ClimateSchema.CONCESSIONALITY,
+    ClimateSchema.INDICATOR,
+    ClimateSchema.FLOW_NAME,
+    ClimateSchema.VALUE,
+    ClimateSchema.TOTAL_VALUE,
+    ClimateSchema.SHARE,
 ]
 
 CRS_INFO = [
@@ -39,32 +57,10 @@ CRS_INFO = [
     ClimateSchema.FINANCE_TYPE,
     ClimateSchema.FLOW_MODALITY,
     ClimateSchema.PURPOSE_CODE,
-    ClimateSchema.CHANNEL_CODE,
-    ClimateSchema.CHANNEL_NAME,
+    # ClimateSchema.CHANNEL_CODE,
+    # ClimateSchema.CHANNEL_NAME,
 ]
 
-OUTPUT_COLUMNS: list = [
-    ClimateSchema.YEAR,
-    ClimateSchema.PROVIDER_CODE,
-    ClimateSchema.AGENCY_CODE,
-    ClimateSchema.CRS_ID,
-    ClimateSchema.PROJECT_ID,
-    ClimateSchema.RECIPIENT_CODE,
-    ClimateSchema.CHANNEL_CODE,
-    ClimateSchema.PURPOSE_CODE,
-    ClimateSchema.FLOW_MODALITY,
-    ClimateSchema.FINANCIAL_INSTRUMENT,
-    ClimateSchema.FINANCE_TYPE,
-    ClimateSchema.CATEGORY,
-    ClimateSchema.CONCESSIONALITY,
-    ClimateSchema.INDICATOR,
-    ClimateSchema.FLOW_TYPE,
-    ClimateSchema.FLOW_CODE,
-    ClimateSchema.FLOW_NAME,
-    ClimateSchema.VALUE,
-    ClimateSchema.TOTAL_VALUE,
-    ClimateSchema.SHARE,
-]
 
 CRS_VALUES: list = [
     ClimateSchema.USD_COMMITMENT,
@@ -257,7 +253,7 @@ def _get_crs_to_match(
     """
 
     # Read the CRS data
-    crs_data = read_clean_crs(years=years)
+    crs_data = read_clean_crs(years=years).pipe(keep_only_allocable_aid)
 
     # Clean project title
     crs_data[ClimateSchema.PROJECT_TITLE] = clean_string(
@@ -294,7 +290,7 @@ def _get_crs_to_match(
     return crs_data
 
 
-def add_crs_data(df: pd.DataFrame) -> pd.DataFrame:
+def add_crs_data(df: pd.DataFrame, melt: bool = True) -> pd.DataFrame:
     """
     This function adds columns/details from the CRS to the multilateral data.
     This includes information on the flow type (commitment, disbursement, net disbursement).
@@ -319,9 +315,10 @@ def add_crs_data(df: pd.DataFrame) -> pd.DataFrame:
         crs=crs_df,
         unique_index=UNIQUE_INDEX,
         output_cols=OUTPUT_COLUMNS + CRDF_VALUES,
+        melt=melt,
     )
 
-    return data.loc[lambda d: d[ClimateSchema.VALUE] > 0]
+    return data
 
 
 def get_multilateral_crdf_providers() -> list[str]:

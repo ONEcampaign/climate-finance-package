@@ -307,11 +307,10 @@ def one_multilateral_spending(
         )
         .loc[lambda d: d[ClimateSchema.PROVIDER_TYPE] != "DAC member"]
         .pipe(clean_component)
-        .pipe(add_crs_data)
     )
 
     if rolling_window > 1:
-        data = data.pipe(
+        data = data.pipe(add_crs_data, melt=True).pipe(
             one_rolling_shares_methodology,
             window=rolling_window,
             agg=agg,
@@ -322,16 +321,7 @@ def one_multilateral_spending(
         )
     else:
         data = (
-            data.pivot(
-                index=[
-                    c
-                    for c in data.columns
-                    if c not in [ClimateSchema.INDICATOR, ClimateSchema.VALUE]
-                ],
-                columns=ClimateSchema.INDICATOR,
-                values=ClimateSchema.VALUE,
-            )
-            .reset_index()
+            data.pipe(add_crs_data, melt=False)
             .pipe(_validate_missing_climate_cols)
             .pipe(add_climate_total_column)
         )

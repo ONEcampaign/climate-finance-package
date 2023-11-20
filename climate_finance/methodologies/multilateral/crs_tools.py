@@ -397,6 +397,7 @@ def add_crs_data_and_transform(
     crs: pd.DataFrame,
     unique_index: list[str],
     output_cols: list[str],
+    melt: bool = True,
 ) -> pd.DataFrame:
     """
     Match the projects with the CRS data.
@@ -422,7 +423,7 @@ def add_crs_data_and_transform(
     # Perform an initial merge. It will be done considering all the columns in the
     # UNIQUE_INDEX global variable. A left join is attempted. The indicator column
     # is shown to see how many projects were matched.
-    matched, not_matched, crs = add_crs_data_pipeline(
+    matched, not_matched, crs2 = add_crs_data_pipeline(
         crs_data=crs,
         projects_to_match=projects,
         idx=[ClimateSchema.PROJECT_TITLE] + unique_index,
@@ -435,67 +436,103 @@ def add_crs_data_and_transform(
     # Define the different passes that will be performed to try to merge the data
     # This is done by specifying the merge columns
     unique_index_configurations = [
-        [
+        [  # 2. No CRS ID
+            ClimateSchema.YEAR,
             ClimateSchema.PROVIDER_CODE,
             ClimateSchema.AGENCY_CODE,
-            ClimateSchema.RECIPIENT_CODE,
             ClimateSchema.PROJECT_ID,
+            ClimateSchema.PROJECT_TITLE,
+            ClimateSchema.FINANCE_TYPE,
+            ClimateSchema.FLOW_MODALITY,
             ClimateSchema.PURPOSE_CODE,
-        ],
-        [
-            ClimateSchema.PROVIDER_CODE,
             ClimateSchema.RECIPIENT_CODE,
-            ClimateSchema.PROJECT_ID,
-            ClimateSchema.PURPOSE_CODE,
         ],
-        [
+        [  # 3.No CRS ID,  No title
+            ClimateSchema.YEAR,
             ClimateSchema.PROVIDER_CODE,
             ClimateSchema.AGENCY_CODE,
+            ClimateSchema.PROJECT_ID,
+            ClimateSchema.FINANCE_TYPE,
+            ClimateSchema.FLOW_MODALITY,
+            ClimateSchema.PURPOSE_CODE,
             ClimateSchema.RECIPIENT_CODE,
+        ],
+        [  # 4. No CRS ID. No project ID
+            ClimateSchema.YEAR,
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.AGENCY_CODE,
+            ClimateSchema.PROJECT_TITLE,
+            ClimateSchema.FINANCE_TYPE,
+            ClimateSchema.FLOW_MODALITY,
+            ClimateSchema.PURPOSE_CODE,
+            ClimateSchema.RECIPIENT_CODE,
+        ],
+        [  # 5. No CRS ID. No project ID. No Finance type
+            ClimateSchema.YEAR,
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.AGENCY_CODE,
+            ClimateSchema.PROJECT_TITLE,
+            ClimateSchema.FLOW_MODALITY,
+            ClimateSchema.PURPOSE_CODE,
+            ClimateSchema.RECIPIENT_CODE,
+        ],
+        [  # 6. No Agency. No CRS ID. No project ID. No Finance type
+            ClimateSchema.YEAR,
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.PROJECT_TITLE,
+            ClimateSchema.FLOW_MODALITY,
+            ClimateSchema.PURPOSE_CODE,
+            ClimateSchema.RECIPIENT_CODE,
+        ],
+        [  # 7. No Agency. No CRS ID. No project title. No Finance type
+            ClimateSchema.YEAR,
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.PROJECT_ID,
+            ClimateSchema.FLOW_MODALITY,
+            ClimateSchema.PURPOSE_CODE,
+            ClimateSchema.RECIPIENT_CODE,
+        ],
+        [  # 8. No agency. No CRS ID. No Modality. No finance type.
+            ClimateSchema.YEAR,
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.PROJECT_ID,
+            ClimateSchema.PROJECT_TITLE,
+            ClimateSchema.PURPOSE_CODE,
+            ClimateSchema.RECIPIENT_CODE,
+        ],
+        [  # 9. No agency. No CRS ID. No project ID. No Modality. No finance type.
+            ClimateSchema.YEAR,
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.PROJECT_TITLE,
+            ClimateSchema.PURPOSE_CODE,
+            ClimateSchema.RECIPIENT_CODE,
+        ],
+        [  # 10. No agency. No CRS ID. No project ID. No Modality. No finance type.
+            ClimateSchema.YEAR,
+            ClimateSchema.PROVIDER_CODE,
             ClimateSchema.CRS_ID,
+            ClimateSchema.FLOW_MODALITY,
             ClimateSchema.PURPOSE_CODE,
-        ],
-        [
-            ClimateSchema.PROVIDER_CODE,
             ClimateSchema.RECIPIENT_CODE,
-            ClimateSchema.CRS_ID,
-            ClimateSchema.PURPOSE_CODE,
         ],
-        [
+        [  # 11. No CRS ID. No project title. No Modality. No finance type.
+            ClimateSchema.YEAR,
             ClimateSchema.PROVIDER_CODE,
-            ClimateSchema.AGENCY_CODE,
+            ClimateSchema.FLOW_MODALITY,
+            ClimateSchema.PURPOSE_CODE,
             ClimateSchema.RECIPIENT_CODE,
-            ClimateSchema.PROJECT_TITLE,
-            ClimateSchema.PURPOSE_CODE,
         ],
-        [
-            ClimateSchema.PROVIDER_CODE,
-            ClimateSchema.RECIPIENT_CODE,
-            ClimateSchema.PROJECT_TITLE,
-            ClimateSchema.PURPOSE_CODE,
-        ],
-        [
-            ClimateSchema.PROVIDER_CODE,
-            ClimateSchema.PROJECT_TITLE,
-            ClimateSchema.PURPOSE_CODE,
-        ],
-        unique_index,
-        [
-            ClimateSchema.PROVIDER_CODE,
-            ClimateSchema.AGENCY_CODE,
-            ClimateSchema.PROJECT_ID,
-            ClimateSchema.PURPOSE_CODE,
-        ],
-        [
-            ClimateSchema.PROVIDER_CODE,
-            ClimateSchema.PROJECT_ID,
-            ClimateSchema.PURPOSE_CODE,
-        ],
+        # [  # No agency. No CRS ID. No project ID. No Modality. No finance type.
+        #     ClimateSchema.YEAR,
+        #     ClimateSchema.PROVIDER_CODE,
+        #     ClimateSchema.PURPOSE_CODE,
+        #     ClimateSchema.RECIPIENT_CODE,
+        # ],
     ]
 
     # Loop through each config and try to merge the data
     for pass_number, idx_config in enumerate(unique_index_configurations):
-        matched_, not_matched, crs = add_crs_data_pipeline(
+        matched_, not_matched, crs2 = add_crs_data_pipeline(
             crs_data=crs,
             projects_to_match=not_matched,
             idx=idx_config,
@@ -520,17 +557,25 @@ def add_crs_data_and_transform(
         not_matched=not_matched, output_idx=not_matched_idx
     )
 
-    matched = pd.concat([matched, not_matched], ignore_index=True)
-
-    # melt indicators
-    data = matched.melt(
-        id_vars=[c for c in matched.columns if c not in CLIMATE_VALUES],
-        value_vars=CLIMATE_VALUES,
-        var_name=ClimateSchema.INDICATOR,
-        value_name=ClimateSchema.VALUE,
+    matched = pd.concat(
+        [
+            matched,
+            # not_matched,
+        ],
+        ignore_index=True,
     )
 
-    return data.filter(output_cols)
+    if melt:
+        data = matched.melt(
+            id_vars=[c for c in matched.columns if c not in CLIMATE_VALUES],
+            value_vars=CLIMATE_VALUES,
+            var_name=ClimateSchema.INDICATOR,
+            value_name=ClimateSchema.VALUE,
+        ).filter(output_cols)
+
+        return data
+
+    return matched
 
 
 def mapping_flow_name_to_code() -> dict:

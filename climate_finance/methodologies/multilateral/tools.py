@@ -313,7 +313,7 @@ def log_notes(df: pd.DataFrame) -> None:
     logger.info(f"{df.iloc[1].values[0]}")
 
 
-def crdf_provider_codes() -> list[str]:
+def crdf_multilateral_provider_codes() -> list[str]:
     return [
         "990",
         "909",

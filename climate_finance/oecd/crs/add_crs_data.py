@@ -107,9 +107,7 @@ def _create_valid_unique_idx(
     unique_idx: list, projects_df: pd.DataFrame, crs_df: pd.DataFrame
 ) -> list:
     return [
-        c
-        for c in unique_idx
-        if c != ClimateSchema.YEAR and c in projects_df.columns and c in crs_df.columns
+        c for c in set(unique_idx) if c in projects_df.columns and c in crs_df.columns
     ]
 
 
@@ -159,12 +157,14 @@ def _group_at_unique_index_level_and_sum(
     )
 
 
-def _keep_only_matched_projects(data: pd.DataFrame) -> pd.DataFrame:
+def _keep_only_matched_projects(
+    data: pd.DataFrame, suffix: str = "_crs"
+) -> pd.DataFrame:
     """Assumes indicator column is present"""
     return (
         data.loc[lambda d: d["_merge"] == "both"]
         .drop(columns=["_merge"])
-        .drop(columns=[c for c in data.columns if c.endswith("_crs")])
+        .drop(columns=[c for c in data.columns if c.endswith(suffix)])
         .rename(
             columns={c: c.replace("_p", "") for c in data.columns if c.endswith("_p")}
         )
@@ -284,15 +284,6 @@ def add_crs_info(
     # Identify matched projects
     climate_crs = _keep_only_matched_projects(data=matched_crs)
 
-    # remove duplicates
-    climate_crs = (
-        climate_crs.groupby(
-            unique_index + [ClimateSchema.YEAR], observed=True, dropna=False
-        )
-        .agg({c: "max" for c in CLIMATE_VALUES} | {c: "sum" for c in MAIN_FLOWS})
-        .reset_index()
-    )
-
     # Identify not matched projects
     not_matched = _keep_only_unmatched_projects(data=matched_crs)
 
@@ -302,35 +293,19 @@ def add_crs_info(
     return climate_crs, not_matched, unmatched_crs
 
 
-def add_matched_data_back_to_projects(
-    original_projects: pd.DataFrame, matched_df: pd.DataFrame, unique_index: list[str]
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+def summarise_matched_data_without_year(
+    matched_df: pd.DataFrame, unique_index: list[str]
+) -> pd.DataFrame:
+    # remove year from unique index
+    unique_index = [c for c in unique_index if c != ClimateSchema.YEAR]
+
     # Group climate CRS at the unique index level and sum the values
-    unique_climate_crs = _group_at_unique_index_level_and_sum(
+    matched_no_year = _group_at_unique_index_level_and_sum(
         data=matched_df,
         unique_index=unique_index,
-        agg_col=ClimateSchema.USD_COMMITMENT,
+        agg_col=[ClimateSchema.USD_COMMITMENT] + CLIMATE_VALUES,
     )
-
-    # Group projects at the uni index level and sum the values
-    unique_projects = _group_at_unique_index_level_and_sum(
-        data=original_projects, unique_index=unique_index, agg_col=CLIMATE_VALUES
-    )
-
-    # Merge the projects and CRS info
-    merged_climate_data = _merge_unique_projects_with_matched_crs_data(
-        unique_projects=unique_projects,
-        unique_climate_crs=unique_climate_crs,
-        idx=unique_index,
-    )
-
-    # Identify matched projects
-    matched_climate_data = _keep_only_matched_projects(data=merged_climate_data)
-
-    # Identify not matched projects
-    not_matched = _keep_only_unmatched_projects(data=merged_climate_data)
-
-    return matched_climate_data, not_matched
+    return matched_no_year
 
 
 def add_climate_totals(merged_climate_data: pd.DataFrame) -> pd.DataFrame:
@@ -345,13 +320,16 @@ def add_climate_totals(merged_climate_data: pd.DataFrame) -> pd.DataFrame:
     return merged_climate_data
 
 
-def merge_climate_crs_and_climate_totals(
-    climate_crs: pd.DataFrame,
+def merge_crs_and_climate_totals(
+    starting_crs: pd.DataFrame,
     merged_climate_data: pd.DataFrame,
     unique_index: list[str],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    # remove year from unique index
+    unique_index = [c for c in unique_index if c != ClimateSchema.YEAR]
+
     # Merge shares back to climate CRS
-    full_climate_crs = climate_crs.merge(
+    full_climate_crs = starting_crs.merge(
         merged_climate_data,
         on=unique_index,
         how="outer",
@@ -360,7 +338,9 @@ def merge_climate_crs_and_climate_totals(
     )
 
     # Identify matched projects
-    matched_data = _keep_only_matched_projects(data=full_climate_crs)
+    matched_data = _keep_only_matched_projects(data=full_climate_crs, suffix="_shares")
+
+    # The full unmatched CRS
     not_matched = _keep_only_unmatched_projects(data=full_climate_crs)
 
     return matched_data, not_matched
@@ -398,8 +378,7 @@ def add_crs_data_pipeline(
     )
 
     # Add matched data back to projects
-    matched_unique_projects, not_matched_unique = add_matched_data_back_to_projects(
-        original_projects=projects_to_match,
+    matched_unique_projects = summarise_matched_data_without_year(
         matched_df=matched_projects,
         unique_index=unique_index,
     )
@@ -410,8 +389,8 @@ def add_crs_data_pipeline(
     )
 
     # Merge the matched projects with the unique projects with climate totals
-    full_climate_crs, not_matched_climate_totals = merge_climate_crs_and_climate_totals(
-        climate_crs=matched_projects,
+    full_climate_crs, not_matched_climate_totals = merge_crs_and_climate_totals(
+        starting_crs=crs_data,
         merged_climate_data=matched_unique_projects_with_climate_totals,
         unique_index=unique_index,
     )
@@ -423,10 +402,11 @@ def add_crs_data_pipeline(
     clean_data = _clean_climate_crs_output(data=full_climate_crs_by_flow_type)
 
     # combine not matched data
-    not_matched_combined = _combine_not_matched_data(
-        df1=not_matched,
-        df2=not_matched_climate_totals,
-        output_cols=projects_to_match.columns,
-    )
+    # not_matched_combined = _combine_not_matched_data(
+    #     df1=not_matched,
+    #     df2=not_matched_climate_totals,
+    #     output_cols=projects_to_match.columns,
+    # )
+    not_matched_combined = not_matched.copy().filter(projects_to_match.columns)
 
     return clean_data, not_matched_combined, unmatched_crs
