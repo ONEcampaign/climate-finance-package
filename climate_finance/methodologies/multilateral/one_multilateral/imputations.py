@@ -3,12 +3,18 @@ import pandas as pd
 from climate_finance.common.schema import (
     ClimateSchema,
     VALUE_COLUMNS,
+    CLIMATE_VALUES,
 )
+from climate_finance.config import ClimateDataPath, logger
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str
 from climate_finance.oecd.crs.get_data import (
     get_crs_allocable_spending,
+    get_crs,
 )
-from climate_finance.common.analysis_tools import get_crs_allocable_to_total_ratio
+from climate_finance.common.analysis_tools import (
+    get_crs_allocable_to_total_ratio,
+    keep_commitments_and_disbursements_only,
+)
 from climate_finance.methodologies.multilateral.one_multilateral.shares import (
     one_multilateral_spending,
 )
@@ -167,9 +173,7 @@ def convert_to_imputations(
             )
         )
 
-    imputations_data = pd.concat(dfs, ignore_index=True).pipe(
-        _correct_for_allocable_share
-    )
+    imputations_data = pd.concat(dfs, ignore_index=True)
 
     # Clean
     imputations_data = imputations_data.rename(
@@ -348,3 +352,239 @@ def get_imputations_by_provider_and_channel(
     )
 
     return imputed_data.reset_index(drop=True)
+
+
+def get_crs_spending_totals(
+    start_year: int,
+    end_year: int,
+    allocable_only=True,
+    provider_code: list[str] | str | None = None,
+    groupby: list[str] | None = None,
+) -> pd.DataFrame:
+    if allocable_only:
+        data = get_crs_allocable_spending(
+            start_year=start_year, end_year=end_year, provider_code=provider_code
+        )
+    else:
+        data = get_crs(
+            start_year=start_year, end_year=end_year, provider_code=provider_code
+        )
+
+    if groupby is not None:
+        idx = [c for c in groupby if c in data.columns]
+
+        data = (
+            data.groupby(idx, observed=True, dropna=False)[ClimateSchema.VALUE]
+            .sum()
+            .reset_index()
+        )
+
+    return data
+
+
+def rolling_values(
+    group,
+    start_year: int,
+    end_year: int,
+    window: int = 2,
+    values: list[str] = None,
+    agg: str = "mean",
+):
+    if values is None:
+        values = [ClimateSchema.VALUE]
+
+    all_years = [str(c) for c in range(start_year, end_year + 1)]
+
+    # 2. Reindex the group using the complete range of years
+    group = group.set_index(ClimateSchema.YEAR).reindex(all_years)
+
+    group[values] = group[values].fillna(0)
+
+    group[[f"{c}_rolling" for c in values]] = (
+        group[values].rolling(window=window).agg(agg).fillna(group[values])
+    )
+
+    group = group.dropna(subset=[ClimateSchema.PROVIDER_CODE])
+
+    return group.reset_index(drop=False)
+
+
+def map_imputations_channels(data: pd.DataFrame) -> pd.DataFrame:
+    # read mapping data
+    mapping = pd.read_csv(
+        ClimateDataPath.crs_channel_mapping,
+        dtype={
+            ClimateSchema.AGENCY_CODE: "Int32",
+            ClimateSchema.PROVIDER_CODE: "Int32",
+            ClimateSchema.CHANNEL_CODE: "Int32",
+        },
+    )
+
+    # fill gaps in agencies
+    data[ClimateSchema.AGENCY_NAME] = data[ClimateSchema.AGENCY_NAME].fillna("0")
+
+    # Drop existing channel codes and names, if present
+    data = data.filter(
+        [
+            c
+            for c in data.columns
+            if c not in [ClimateSchema.CHANNEL_CODE, ClimateSchema.CHANNEL_NAME]
+        ]
+    )
+
+    # idx
+    idx = [ClimateSchema.PROVIDER_CODE, ClimateSchema.AGENCY_CODE]
+
+    mapping = mapping.pipe(idx_to_str, idx=idx)
+    data = data.pipe(idx_to_str, idx=idx)
+
+    # map
+    data = data.merge(mapping, on=idx, how="outer", indicator=True)
+
+    # log missing
+    only_data = data[lambda d: d._merge == "left_only"].drop_duplicates(subset=idx)
+    only_mapping = data[lambda d: d._merge == "right_only"][
+        ClimateSchema.CHANNEL_CODE
+    ].unique()
+
+    logger.debug(
+        f"{len(only_data)} providers in spending data but not in channel mapping"
+    )
+    logger.debug(
+        f"{len(only_mapping)} providers in channel mapping but not in spending data"
+    )
+
+    data = data.drop(columns=["_merge"])
+
+    return data
+
+
+def summarise_by_imputation_channels(data: pd.DataFrame) -> pd.DataFrame:
+    return (
+        data.groupby(
+            [
+                c
+                for c in data.columns
+                if c
+                not in [
+                    ClimateSchema.VALUE,
+                    ClimateSchema.AGENCY_CODE,
+                    ClimateSchema.AGENCY_NAME,
+                    ClimateSchema.PROVIDER_CODE,
+                    ClimateSchema.PROVIDER_NAME,
+                ]
+            ],
+            observed=True,
+            dropna=False,
+        )
+        .sum(numeric_only=True)
+        .reset_index()
+    )
+
+
+def read_summarise_multilateral_climate_spending(
+    groupby: list[str] = None,
+) -> pd.DataFrame:
+    spending = pd.read_feather(
+        ClimateDataPath.raw_data / "one_multilateral_spending.feather"
+    )
+
+    if groupby is None:
+        groupby = [
+            ClimateSchema.YEAR,
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.PROVIDER_NAME,
+            ClimateSchema.AGENCY_NAME,
+            ClimateSchema.AGENCY_CODE,
+            ClimateSchema.FLOW_TYPE,
+            ClimateSchema.CHANNEL_CODE,
+            ClimateSchema.CHANNEL_NAME,
+        ]
+
+    spending = (
+        spending.groupby(
+            groupby,
+            observed=True,
+            dropna=False,
+        )[CLIMATE_VALUES + ["climate_total"]]
+        .sum()
+        .reset_index()
+    )
+
+    return spending
+
+
+def read_overall_spending_by(
+    start_year: int,
+    end_year: int,
+    groupby: list[str] = None,
+    provider_code: list[str] | str | None = None,
+) -> pd.DataFrame:
+    if groupby is None:
+        groupby = [
+            ClimateSchema.YEAR,
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.AGENCY_CODE,
+            ClimateSchema.PROVIDER_NAME,
+            ClimateSchema.AGENCY_NAME,
+            ClimateSchema.FLOW_TYPE,
+        ]
+
+    spending = get_crs_spending_totals(
+        start_year=start_year,
+        end_year=end_year,
+        allocable_only=False,
+        provider_code=provider_code,
+        groupby=groupby,
+    ).pipe(keep_commitments_and_disbursements_only)
+
+    return spending
+
+
+if __name__ == "__main__":
+    climate_spending = (
+        read_summarise_multilateral_climate_spending()
+        .pipe(map_imputations_channels)
+        .pipe(summarise_by_imputation_channels)
+    )
+    #
+    # overall_spending = read_overall_spending_by(
+    #     start_year=2013,
+    #     end_year=2021,
+    #     provider_code=climate_spending.oecd_provider_code.unique(),
+    # )
+    #
+    # overall = overall_spending.pipe(map_imputations_channels).pipe(
+    #     summarise_by_imputation_channels
+    # )
+    #
+    # idx = ["year", "oecd_channel_code", "flow_type"]
+    #
+    # combined = overall.pipe(idx_to_str, idx=idx).merge(
+    #     climate_spending.pipe(idx_to_str, idx=idx),
+    #     on=idx,
+    #     how="inner",
+    #     suffixes=("", "_climate"),
+    #     # indicator=True,
+    # )
+    #
+    # combined_climate_r = (
+    #     combined.sort_values([ClimateSchema.YEAR, ClimateSchema.PROVIDER_CODE])
+    #     .groupby(
+    #         [
+    #             ClimateSchema.PROVIDER_CODE,
+    #             ClimateSchema.PROVIDER_NAME,
+    #             ClimateSchema.FLOW_TYPE,
+    #         ],
+    #         observed=True,
+    #         group_keys=False,
+    #     )
+    #     .apply(
+    #         rolling_values,
+    #         window=2,
+    #         start_year=2013,
+    #         end_year=2021,
+    #         values=CLIMATE_VALUES + ["climate_total", "value"],
+    #         agg="mean",
+    #     )
+    # )

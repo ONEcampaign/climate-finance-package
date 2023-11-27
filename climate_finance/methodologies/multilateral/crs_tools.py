@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from climate_finance.common.schema import ClimateSchema, CLIMATE_VALUES
-from climate_finance.config import logger, ClimateDataPath
+from climate_finance.config import logger
 from climate_finance.oecd.crs.add_crs_data import add_crs_data_pipeline
 from climate_finance.oecd.get_oecd_data import get_oecd_bilateral
 
@@ -396,8 +396,6 @@ def add_crs_data_and_transform(
     projects: pd.DataFrame,
     crs: pd.DataFrame,
     unique_index: list[str],
-    output_cols: list[str],
-    melt: bool = True,
 ) -> pd.DataFrame:
     """
     Match the projects with the CRS data.
@@ -418,7 +416,7 @@ def add_crs_data_and_transform(
     """
     providers = ", ".join(projects[ClimateSchema.PROVIDER_CODE].unique())
     to_match = _compute_total_to_match(projects_df=projects)
-    logger.info(f"Total to match{providers}:{to_match}b")
+    logger.info(f"Total to match {providers}\n:{to_match}b")
 
     # Perform an initial merge. It will be done considering all the columns in the
     # UNIQUE_INDEX global variable. A left join is attempted. The indicator column
@@ -557,8 +555,8 @@ def add_crs_data_and_transform(
             lambda d: d[ClimateSchema.FLOW_TYPE] == ClimateSchema.USD_COMMITMENT
         ]
     )
-    logger.info(f"Total matched for {providers}:{total_matched}b")
-    logger.info(f"Matched percentage: {100*total_matched / to_match:.2f}%")
+    logger.info(f"Total matched for {providers}:\n{total_matched}b")
+    logger.info(f"Matched percentage: {100 * total_matched / to_match:.2f}%")
 
     # not_matched.to_csv(
     #     ClimateDataPath.raw_data / f"crs_not_matched{providers}.csv",
@@ -578,16 +576,6 @@ def add_crs_data_and_transform(
         ],
         ignore_index=True,
     )
-
-    if melt:
-        data = matched.melt(
-            id_vars=[c for c in matched.columns if c not in CLIMATE_VALUES],
-            value_vars=CLIMATE_VALUES,
-            var_name=ClimateSchema.INDICATOR,
-            value_name=ClimateSchema.VALUE,
-        ).filter(output_cols)
-
-        return data
 
     return matched
 

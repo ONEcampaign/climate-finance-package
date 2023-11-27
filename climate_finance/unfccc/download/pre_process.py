@@ -81,7 +81,7 @@ def map_channel_names_to_oecd_codes(
     """
 
     # add names to the channel names column
-    df = add_provider_agency_names(df, crs_year=df[ClimateSchema.YEAR].max())
+    df = add_provider_agency_names(df)
 
     # create two sets of data to try to match
     df = df.assign(
@@ -89,7 +89,9 @@ def map_channel_names_to_oecd_codes(
             lambda r: r[ClimateSchema.PROVIDER_NAME]
             if str(r[ClimateSchema.PROVIDER_NAME]).lower().strip()
             == str(r[ClimateSchema.AGENCY_NAME]).lower().strip()
-            else r[ClimateSchema.PROVIDER_NAME] + " " + r[ClimateSchema.AGENCY_NAME],
+            else str(r[ClimateSchema.PROVIDER_NAME])
+            + " "
+            + str(r[ClimateSchema.AGENCY_NAME]),
             axis=1,
         )
     )
@@ -114,4 +116,4 @@ def map_channel_names_to_oecd_codes(
 
     df = df.drop(columns=["party_agency"])
 
-    return df.pipe(set_crs_data_types)
+    return df

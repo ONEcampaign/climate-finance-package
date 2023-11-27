@@ -10,6 +10,7 @@ class ClimateDataPath:
     raw_data = scripts / ".raw_data"
     unfccc_cleaning_tools = scripts / "unfccc" / "cleaning_tools"
     oecd_cleaning_tools = scripts / "oecd" / "cleaning_tools"
+    crs_channel_mapping = scripts / "oecd" / "multisystem" / "crs_channel_mapping.csv"
 
 
 # Create a root logger

@@ -19,6 +19,44 @@ from climate_finance.oecd.cleaning_tools.tools import (
 set_data_path(ClimateDataPath.raw_data)
 
 
+def remap_select_channels_at_spending_level(df: pd.DataFrame) -> pd.DataFrame:
+    corrected_mapping = {
+        44003: 44002,
+        46016: 46015,
+        46017: 46015,
+        46018: 46015,
+        46019: 46015,
+    }
+
+    df[ClimateSchema.CHANNEL_CODE] = (
+        df[ClimateSchema.CHANNEL_CODE]
+        .map(corrected_mapping)
+        .fillna(df[ClimateSchema.CHANNEL_CODE])
+    )
+
+    names = (
+        df.filter([ClimateSchema.CHANNEL_CODE, ClimateSchema.CHANNEL_NAME])
+        .drop_duplicates()
+        .set_index(ClimateSchema.CHANNEL_CODE)[ClimateSchema.CHANNEL_NAME]
+        .to_dict()
+    )
+
+    df[ClimateSchema.CHANNEL_NAME] = df[ClimateSchema.CHANNEL_CODE].map(names)
+
+    df = (
+        df.groupby(
+            [c for c in df.columns if c != ClimateSchema.VALUE],
+            dropna=False,
+            observed=True,
+        )
+        .sum(numeric_only=True)
+        .reset_index()
+        .astype({ClimateSchema.CHANNEL_CODE: "Int64"})
+    )
+
+    return df
+
+
 def _clean_multi_contributions(df: pd.DataFrame) -> pd.DataFrame:
     """Clean the multilateral contributions dataframe
 
@@ -89,4 +127,6 @@ def get_multilateral_contributions(
 
 
 if __name__ == "__main__":
-    df = get_multilateral_contributions(start_year=2019, end_year=2021)
+    df = get_multilateral_contributions(start_year=2018, end_year=2021).pipe(
+        remap_select_channels_at_spending_level
+    )

@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from climate_finance.common.schema import ClimateSchema
+from climate_finance.common.schema import ClimateSchema, CLIMATE_VALUES
+from climate_finance.config import logger
 from climate_finance.oecd.cleaning_tools.tools import (
     idx_to_str,
     keep_only_allocable_aid,
@@ -164,6 +165,7 @@ def one_rolling_shares_methodology(
     agg: str = "sum",
     as_shares: bool = True,
     use_year_total: bool = True,
+    only_allocable_totals: bool = False,
 ) -> pd.DataFrame:
     """
     Compute the rolling totals or shares of climate finance for the
@@ -190,29 +192,31 @@ def one_rolling_shares_methodology(
 
     # check if all columns are present
     # Drop duplicates
-    data = data.drop_duplicates()
+    duplicated = data.loc[lambda d: d[CLIMATE_VALUES].sum(axis=1) > 1].loc[
+        lambda d: d.duplicated()
+    ]
+    logger.debug(f"{len(duplicated)} duplicated rows found in the data to smooth.")
 
     # Summarise the data at the right level
-    data_by_indicator = data.pipe(
-        summarise_by_party_idx,
-        idx=shares_idx,
-        by_indicator=True,
-    ).pipe(_pivot_indicators_as_columns, idx=shares_idx)
+    data_by_indicator = (
+        data.groupby(shares_idx, observed=True, dropna=False)[CLIMATE_VALUES]
+        .sum()
+        .reset_index()
+    )
 
     # Get yearly totals for years present in the data, for ALLOCABLE
-    yearly_totals = (
-        get_crs(
-            start_year=start_year,
-            end_year=end_year,
-            groupby=shares_idx + [ClimateSchema.FLOW_MODALITY],
-            provider_code=data_by_indicator[ClimateSchema.PROVIDER_CODE]
-            .unique()
-            .tolist(),
-        )
-        .pipe(_filter_flow_types)
-        .pipe(keep_only_allocable_aid)
-        .pipe(summarise_by_party_idx, idx=shares_idx)
-        .rename(columns={ClimateSchema.VALUE: "yearly_total"})
+    yearly_totals = get_crs(
+        start_year=start_year,
+        end_year=end_year,
+        groupby=shares_idx + [ClimateSchema.FLOW_MODALITY],
+        provider_code=data_by_indicator[ClimateSchema.PROVIDER_CODE].unique().tolist(),
+    ).pipe(_filter_flow_types)
+
+    if only_allocable_totals:
+        yearly_totals = yearly_totals.pipe(keep_only_allocable_aid)
+
+    yearly_totals = yearly_totals.pipe(summarise_by_party_idx, idx=shares_idx).rename(
+        columns={ClimateSchema.VALUE: "yearly_total"}
     )
 
     data_by_indicator = (
@@ -309,21 +313,11 @@ def one_multilateral_spending(
         .pipe(clean_component)
     )
 
+    data = data.pipe(add_crs_data)
+
     if rolling_window > 1:
-        data = data.pipe(add_crs_data, melt=True).pipe(
-            one_rolling_shares_methodology,
-            window=rolling_window,
-            agg=agg,
-            as_shares=as_shares,
-            output_groupby=groupby,
-            start_year=start_year,
-            end_year=end_year,
-        )
-    else:
-        data = (
-            data.pipe(add_crs_data, melt=False)
-            .pipe(_validate_missing_climate_cols)
-            .pipe(add_climate_total_column)
-        )
+        logger.warning("Rolling window is not supported for this methodology.")
+
+    data = data.pipe(_validate_missing_climate_cols).pipe(add_climate_total_column)
 
     return data
