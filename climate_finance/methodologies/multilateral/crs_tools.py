@@ -418,6 +418,16 @@ def add_crs_data_and_transform(
     to_match = _compute_total_to_match(projects_df=projects)
     logger.info(f"Total to match {providers}\n:{to_match}b")
 
+    # Check if provider is 918(3)
+    if "918" in crs[ClimateSchema.PROVIDER_CODE].unique():
+        # drop agencies 1 and 2 for provider 918
+        crs = crs.loc[
+            lambda d: ~(
+                d[ClimateSchema.AGENCY_CODE].isin(["1", "2"])
+                & (d[ClimateSchema.PROVIDER_CODE] == "918")
+            )
+        ]
+
     # Perform an initial merge. It will be done considering all the columns in the
     # UNIQUE_INDEX global variable. A left join is attempted. The indicator column
     # is shown to see how many projects were matched.
