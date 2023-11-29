@@ -300,7 +300,7 @@ def _get_crs_to_match(
     return crs_data
 
 
-def add_crs_data(df: pd.DataFrame, melt: bool = True) -> pd.DataFrame:
+def add_crs_data(df: pd.DataFrame) -> pd.DataFrame:
     """
     This function adds columns/details from the CRS to the multilateral data.
     This includes information on the flow type (commitment, disbursement, net disbursement).
@@ -324,8 +324,6 @@ def add_crs_data(df: pd.DataFrame, melt: bool = True) -> pd.DataFrame:
         projects=df,
         crs=crs_df,
         unique_index=UNIQUE_INDEX,
-        output_cols=OUTPUT_COLUMNS + CRDF_VALUES,
-        melt=melt,
     )
 
     return data
