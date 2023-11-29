@@ -5,8 +5,41 @@ from climate_finance.common.analysis_tools import (
 )
 from climate_finance.common.schema import ClimateSchema, CLIMATE_VALUES
 from climate_finance.config import logger, ClimateDataPath
+from climate_finance.methodologies.bilateral.tools import (
+    crdf_rio_providers,
+    rio_markers_multi_codes,
+    remove_private_and_not_climate_relevant,
+)
+from climate_finance.methodologies.multilateral.one_multilateral.climate_components import (
+    one_multilateral_spending,
+)
+from climate_finance.methodologies.multilateral.tools import (
+    crdf_multilateral_provider_codes,
+)
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str
 from climate_finance.oecd.crs.get_data import get_crs_allocable_spending, get_crs
+from climate_finance.oecd.get_oecd_data import get_oecd_bilateral
+
+
+def high_confidence_multilateral_crdf_providers() -> list:
+    return [
+        "990",
+        "909",
+        "915",
+        "976",
+        "901",
+        "905",
+        "1024",
+        "1015",
+        "1011",
+        "1016",
+        "1313",
+        "988",
+        "981",
+        "910",
+        "906",
+    ]
+
 
 SHARES_IDX = [
     ClimateSchema.YEAR,
@@ -60,6 +93,39 @@ def get_crs_spending_totals(
         )
 
     return data
+
+
+def get_mutlilateral_climate_spending_for_imputations(
+    start_year: int,
+    end_year: int,
+) -> pd.DataFrame:
+    # Define Rio multilaterals
+    multi_rio = rio_markers_multi_codes()
+
+    # Define CRDF multilaterals
+    valid_crdf_multi = high_confidence_multilateral_crdf_providers()
+
+    # Get CRS data for rio.
+    rio_data = (
+        get_oecd_bilateral(
+            start_year=start_year,
+            end_year=end_year,
+            provider_code=multi_rio,
+            methodology="one_bilateral",
+        )
+        .pipe(remove_private_and_not_climate_relevant)
+        .pipe(keep_commitments_and_disbursements_only)
+    )
+
+    crdf_data = one_multilateral_spending(
+        start_year=start_year, end_year=end_year, provider_code=valid_crdf_multi
+    ).pipe(prep_multilateral_spending_data)
+
+    # one_version_multilateral = (
+    #     one_version_multilateral.pipe(_rename_climate_columns)
+    #     .pipe(_melt_multilateral_rio_data)
+    #     .pipe(_clean_output_one_multilateral_rio_data)  # Only keep climate data
+    # )
 
 
 def rolling_values(
@@ -285,7 +351,7 @@ def smooth_values(
 
 
 if __name__ == "__main__":
-    climate_spending = ....pipe(prep_multilateral_spending_data)
+    # climate_spending = ....pipe(prep_multilateral_spending_data)
 
     overall_spending = read_overall_spending_by(
         start_year=2013,
@@ -295,6 +361,6 @@ if __name__ == "__main__":
 
     idx = ["year", "oecd_channel_code", "flow_type"]
 
-    combined = merge_climate_and_spending_data(
-        climate_data=climate_spending, overall_spending_data=overall_spending, idx=idx
-    )
+    # combined = merge_climate_and_spending_data(
+    #     climate_data=climate_spending, overall_spending_data=overall_spending, idx=idx
+    # )
