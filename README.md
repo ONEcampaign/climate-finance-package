@@ -1,7 +1,9 @@
 # The climate finance package
 
 
-_**climate-finance** is the python package behind our Climate Finance Files(link to climate story to be added). You can use this package to get, rebuild, remix, and create using our tools and methodologies — all with only a few lines of code._
+_**climate-finance** is the python package to get, clean, and work with international public climate finance. 
+
+You can use this package to get, rebuild, remix, and create using our tools and methodologies — all with only a few lines of code._
 
 Climate finance data is notoriously difficult to work with. It's messy - really messy - and comes in all sorts of shapes and sizes, scattered across multiple websites.
 
