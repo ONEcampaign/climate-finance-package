@@ -14,15 +14,10 @@ And for too long, global leaders have capitalised on bad data to dictate the nar
 
 We hope these tools equip everyone with the data to hold global leaders accountable in the fight against climate change. As currently, they are not doing enough. 
 
-**climate-finance** is organised around the following main features:
+## Come back soon
+The content on this repository is an alpha version we have used in our research. We're creating friendlier ways to use the package, which don't involve looking through all the code.
+We are planning a first release in December 2023.
 
-
-## methodologies
-
-
-
-## oecd
-
-
-## unfccc
+## Questions? Would like to collaborate?
+We want this package to help others analyse climate finance data. If you want to collaborate, or have any questions, please reach out.
 
