@@ -51,6 +51,8 @@ class ClimateSchema:
     VALUE: str = "value"
     TOTAL_VALUE: str = "total_value"
     SHARE: str = "share"
+    CLIMATE_SHARE: str = "climate_share"
+    CLIMATE_SHARE_ROLLING: str = "climate_share_rolling"
     FLOW_CODE: str = "flow_code"
     FLOW_NAME: str = "flow_name"
     CATEGORY: str = "category"
@@ -201,6 +203,12 @@ CLIMATE_VALUES = [
     ClimateSchema.MITIGATION_VALUE,
     ClimateSchema.CROSS_CUTTING_VALUE,
 ]
+
+CLIMATE_VALUES_TO_NAMES: dict[str, str] = {
+    ClimateSchema.ADAPTATION_VALUE: ClimateSchema.ADAPTATION,
+    ClimateSchema.MITIGATION_VALUE: ClimateSchema.MITIGATION,
+    ClimateSchema.CROSS_CUTTING_VALUE: ClimateSchema.CROSS_CUTTING,
+}
 
 MULTISYSTEM_COLUMNS: list[str] = [
     ClimateSchema.YEAR,

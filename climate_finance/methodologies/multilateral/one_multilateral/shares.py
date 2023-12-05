@@ -3,18 +3,18 @@ import pandas as pd
 from climate_finance.common.analysis_tools import (
     keep_commitments_and_disbursements_only,
 )
-from climate_finance.common.schema import ClimateSchema, CLIMATE_VALUES
+from climate_finance.common.schema import (
+    ClimateSchema,
+    CLIMATE_VALUES,
+    CLIMATE_VALUES_TO_NAMES,
+)
 from climate_finance.config import logger, ClimateDataPath
 from climate_finance.methodologies.bilateral.tools import (
-    crdf_rio_providers,
     rio_markers_multi_codes,
     remove_private_and_not_climate_relevant,
 )
 from climate_finance.methodologies.multilateral.one_multilateral.climate_components import (
     one_multilateral_spending,
-)
-from climate_finance.methodologies.multilateral.tools import (
-    crdf_multilateral_provider_codes,
 )
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str
 from climate_finance.oecd.crs.get_data import get_crs_allocable_spending, get_crs
@@ -39,26 +39,6 @@ def high_confidence_multilateral_crdf_providers() -> list:
         "910",
         "906",
     ]
-
-
-SHARES_IDX = [
-    ClimateSchema.YEAR,
-    ClimateSchema.PROVIDER_CODE,
-    ClimateSchema.AGENCY_CODE,
-    ClimateSchema.RECIPIENT_CODE,
-    ClimateSchema.PURPOSE_CODE,
-    ClimateSchema.FINANCE_TYPE,
-    ClimateSchema.FLOW_TYPE,
-    ClimateSchema.FLOW_CODE,
-    ClimateSchema.FLOW_NAME,
-]
-
-SIMPLE_IDX = [
-    ClimateSchema.YEAR,
-    ClimateSchema.PROVIDER_CODE,
-    ClimateSchema.AGENCY_CODE,
-    ClimateSchema.FLOW_TYPE,
-]
 
 
 def _pivot_indicators_as_columns(data: pd.DataFrame, idx: list[str]) -> pd.DataFrame:
@@ -119,13 +99,30 @@ def get_mutlilateral_climate_spending_for_imputations(
 
     crdf_data = one_multilateral_spending(
         start_year=start_year, end_year=end_year, provider_code=valid_crdf_multi
-    ).pipe(prep_multilateral_spending_data)
+    )
 
-    # one_version_multilateral = (
-    #     one_version_multilateral.pipe(_rename_climate_columns)
-    #     .pipe(_melt_multilateral_rio_data)
-    #     .pipe(_clean_output_one_multilateral_rio_data)  # Only keep climate data
-    # )
+    crdf_data = crdf_data.melt(
+        id_vars=[
+            c
+            for c in crdf_data
+            if c not in CLIMATE_VALUES + [ClimateSchema.CLIMATE_UNSPECIFIED]
+        ],
+        var_name=ClimateSchema.INDICATOR,
+    ).assign(
+        **{
+            ClimateSchema.INDICATOR: lambda d: d[ClimateSchema.INDICATOR]
+            .map(CLIMATE_VALUES_TO_NAMES)
+            .fillna(d[ClimateSchema.INDICATOR])
+        }
+    )
+
+    data = (
+        pd.concat([rio_data, crdf_data], ignore_index=True)
+        .filter([c for c in rio_data if c in crdf_data])
+        .loc[lambda d: d[ClimateSchema.INDICATOR] != ClimateSchema.CLIMATE_UNSPECIFIED]
+    )
+
+    return data
 
 
 def rolling_values(
@@ -167,7 +164,7 @@ def map_imputations_channels(data: pd.DataFrame) -> pd.DataFrame:
     )
 
     # fill gaps in agencies
-    data[ClimateSchema.AGENCY_NAME] = data[ClimateSchema.AGENCY_NAME].fillna("0")
+    data[ClimateSchema.AGENCY_CODE] = data[ClimateSchema.AGENCY_CODE].fillna("0")
 
     # Drop existing channel codes and names, if present
     data = data.filter(
@@ -232,31 +229,9 @@ def prep_multilateral_spending_data(
     data: pd.DataFrame, groupby: list[str] | None = None
 ) -> pd.DataFrame:
     """Prepare data for multilateral agencies."""
-    if groupby is None:
-        groupby = [
-            ClimateSchema.YEAR,
-            ClimateSchema.PROVIDER_CODE,
-            ClimateSchema.PROVIDER_NAME,
-            ClimateSchema.AGENCY_NAME,
-            ClimateSchema.AGENCY_CODE,
-            ClimateSchema.FLOW_TYPE,
-            ClimateSchema.CHANNEL_CODE,
-            ClimateSchema.CHANNEL_NAME,
-        ]
 
-    # check that groupy is valid
-    groupby = list(dict.fromkeys(groupby))
-
-    spending = (
-        data.groupby(
-            groupby,
-            observed=True,
-            dropna=False,
-        )[CLIMATE_VALUES + ["climate_total"]]
-        .sum()
-        .reset_index()
-        .pipe(map_imputations_channels)
-        .pipe(summarise_by_imputation_channels)
+    spending = data.pipe(map_imputations_channels).pipe(
+        summarise_by_imputation_channels
     )
 
     # create a new groupby
@@ -276,6 +251,7 @@ def prep_multilateral_spending_data(
         spending.groupby(groupby, observed=True, dropna=False)
         .sum(numeric_only=True)
         .reset_index()
+        .dropna(subset=[ClimateSchema.YEAR])
     )
 
     return spending
@@ -315,11 +291,25 @@ def prep_overall_spending_data(data: pd.DataFrame) -> pd.DataFrame:
 def merge_climate_and_spending_data(
     climate_data: pd.DataFrame, overall_spending_data: pd.DataFrame, idx: list[str]
 ) -> pd.DataFrame:
-    overall_spending_data = overall_spending_data.pipe(idx_to_str, idx=idx)
-    climate_data = climate_data.pipe(idx_to_str, idx=idx)
+    shared_idx = [c for c in idx if c in climate_data and c in overall_spending_data]
+    overall_idx = [c for c in idx if c in overall_spending_data]
+    climate_idx = [c for c in idx if c in climate_data]
+
+    overall_spending_data = (
+        overall_spending_data.pipe(idx_to_str, idx=overall_idx)
+        .groupby(overall_idx, observed=True, dropna=False)
+        .sum(numeric_only=True)
+        .reset_index()
+    )
+    climate_data = (
+        climate_data.pipe(idx_to_str, idx=climate_idx)
+        .groupby(climate_idx, observed=True, dropna=False)
+        .sum(numeric_only=True)
+        .reset_index()
+    )
 
     merged_data = overall_spending_data.merge(
-        climate_data, on=idx, how="inner", suffixes=("", "_climate")
+        climate_data, on=shared_idx, how="inner", suffixes=("", "_climate")
     )
 
     return merged_data
@@ -338,7 +328,11 @@ def smooth_values(
     start_year = int(data[ClimateSchema.YEAR].min())
     end_year = int(data[ClimateSchema.YEAR].max())
 
-    data = data.groupby([idx], observed=True, group_keys=False).apply(
+    data = data.groupby(
+        [c for c in idx if c != ClimateSchema.YEAR],
+        observed=True,
+        group_keys=False,
+    ).apply(
         rolling_values,
         window=window,
         start_year=start_year,
@@ -350,17 +344,63 @@ def smooth_values(
     return data
 
 
-if __name__ == "__main__":
-    # climate_spending = ....pipe(prep_multilateral_spending_data)
+def multilateral_shares_pipeline(
+    start_year: int, end_year: int, groupby: list[str], window=2
+) -> pd.DataFrame:
+    if ClimateSchema.CHANNEL_CODE not in groupby:
+        groupby.append(ClimateSchema.CHANNEL_CODE)
+
+    climate_spending = get_mutlilateral_climate_spending_for_imputations(
+        start_year=start_year, end_year=end_year
+    )
+
+    climate_providers = climate_spending[ClimateSchema.PROVIDER_CODE].unique().tolist()
+
+    climate_spending = climate_spending.pipe(
+        prep_multilateral_spending_data, groupby=groupby
+    )
 
     overall_spending = read_overall_spending_by(
-        start_year=2013,
-        end_year=2021,
-        provider_code=None,
+        start_year=start_year, end_year=end_year, provider_code=climate_providers
     ).pipe(prep_overall_spending_data)
 
-    idx = ["year", "oecd_channel_code", "flow_type"]
+    combined = merge_climate_and_spending_data(
+        climate_data=climate_spending,
+        overall_spending_data=overall_spending,
+        idx=groupby,
+    )
 
-    # combined = merge_climate_and_spending_data(
-    #     climate_data=climate_spending, overall_spending_data=overall_spending, idx=idx
-    # )
+    combined_smooth = combined.pipe(
+        smooth_values,
+        idx=groupby,
+        values=[c for c in combined if c not in groupby],
+        window=window,
+    )
+
+    # add shares
+    combined_smooth[ClimateSchema.CLIMATE_SHARE] = (
+        combined_smooth[f"{ClimateSchema.VALUE}_climate"]
+        / combined_smooth[ClimateSchema.VALUE]
+    )
+
+    combined_smooth[ClimateSchema.CLIMATE_SHARE_ROLLING] = (
+        combined_smooth[f"{ClimateSchema.VALUE}_climate_rolling"]
+        / combined_smooth[f"{ClimateSchema.VALUE}_rolling"]
+    )
+
+    return combined_smooth
+
+
+if __name__ == "__main__":
+    climate_shares = multilateral_shares_pipeline(
+        start_year=2013,
+        end_year=2021,
+        groupby=[
+            "year",
+            "oecd_channel_code",
+            "flow_type",
+            "indicator",
+            "oecd_recipient_code",
+            "purpose_code",
+        ],
+    )
