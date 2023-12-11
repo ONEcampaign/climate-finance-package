@@ -20,19 +20,19 @@ set_data_path(ClimateDataPath.raw_data)
 
 
 def remap_select_channels_at_spending_level(df: pd.DataFrame) -> pd.DataFrame:
-    corrected_mapping = {
-        44003: 44002,
-        46016: 46015,
-        46017: 46015,
-        46018: 46015,
-        46019: 46015,
-    }
-
-    df[ClimateSchema.CHANNEL_CODE] = (
-        df[ClimateSchema.CHANNEL_CODE]
-        .map(corrected_mapping)
-        .fillna(df[ClimateSchema.CHANNEL_CODE])
-    )
+    # corrected_mapping = {
+    #     44003: 44002,
+    #     46016: 46015,
+    #     46017: 46015,
+    #     46018: 46015,
+    #     46019: 46015,
+    # }
+    #
+    # df[ClimateSchema.CHANNEL_CODE] = (
+    #     df[ClimateSchema.CHANNEL_CODE]
+    #     .map(corrected_mapping)
+    #     .fillna(df[ClimateSchema.CHANNEL_CODE])
+    # )
 
     names = (
         df.filter([ClimateSchema.CHANNEL_CODE, ClimateSchema.CHANNEL_NAME])
