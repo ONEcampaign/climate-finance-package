@@ -1,8 +1,12 @@
+from climate_finance.config import logger
 from climate_finance.data.enums import (
     ValidPrices,
     ValidCurrencies,
     ValidPerspective,
     SpendingMethodologies,
+    ValidFlows,
+    ValidSources,
+    Coefficients,
 )
 
 
@@ -29,7 +33,7 @@ class ClimateData:
             all available recipients are included.
 
             currency: Optional. A string specifying the currency to use. Defaults to
-            USD. Only USD, EUR, CAN, and GBP are supported.
+            USD.
 
             prices: Optional. A string specifying the price type to use. Defaults to
             current. Only current and constant are supported.
@@ -57,8 +61,12 @@ class ClimateData:
         # Other data attributes
         self.spending_args: dict = {
             "methodology": SpendingMethodologies("ONE"),
+            "flows": ValidFlows("gross_disbursements"),
             "oda_only": False,
         }
+
+        # By default, the custom methodology is not set
+        self._custom_methodology_set: bool = False
 
     @property
     def _years_str(self):
@@ -75,24 +83,110 @@ class ClimateData:
         return message
 
     def _update_spending_args(self, **kwargs):
-        if "methodology" in kwargs:
-            kwargs["methodology"] = ValidCurrencies(kwargs["methodology"])
+        """Update the spending_args dictionary with the provided kwargs
 
+        This method also handles validation of the provided arguments.
+        """
+
+        # Check if methodology is provided and validate
+        if "methodology" in kwargs:
+            kwargs["methodology"] = SpendingMethodologies(kwargs["methodology"])
+            if kwargs["methodology"] == "OECD":
+                if self._custom_methodology_set:
+                    logger.warning(
+                        "You had set a custom methodology. This will be overwritten "
+                        "by the OECD methodology"
+                    )
+                self.set_oecd_spending_methodology()
+            elif kwargs["methodology"] == "ONE":
+                if self._custom_methodology_set:
+                    logger.warning(
+                        "You had set a custom methodology. This will be overwritten "
+                        "by the ONE methodology"
+                    )
+                self.set_one_spending_methodology()
+            elif kwargs["methodology"] == "custom" and not self._custom_methodology_set:
+                raise ValueError(
+                    "You must set the custom methodology using the "
+                    "set_custom_spending_methodology method"
+                )
+
+        # Check if flows is provided and validate
         if "perspective" in kwargs:
             kwargs["perspective"] = ValidPerspective(kwargs["perspective"])
 
+        # Check if flows is provided and validate. This includes converting a string
+        # to a list of validated enums.
+        if "flows" in kwargs:
+            if isinstance(kwargs["flows"], str):
+                kwargs["flows"] = [ValidFlows(kwargs["flows"])]
+            if isinstance(kwargs["flows"], list):
+                kwargs["flows"] = [ValidFlows(f) for f in kwargs["flows"]]
+
+        # Check if source is provided and validate. This includes converting a string
+        # to a list of validated enums.
+        if "source" in kwargs:
+            if isinstance(kwargs["source"], str):
+                kwargs["source"] = [ValidSources(kwargs["source"])]
+            if isinstance(kwargs["source"], list):
+                kwargs["source"] = [ValidSources(f) for f in kwargs["source"]]
+
+        # Update the spending_args dictionary
         self.spending_args.update(kwargs)
+
+    def set_only_oda(self):
+        self._update_spending_args(oda_only=True)
+
+    def set_oecd_spending_methodology(self):
+        """Set the required parameters when choosing the OECD spending methodology."""
+
+        self._update_spending_args(coefficients=(1, 1), highest_marker=False)
+
+    def set_one_spending_methodology(self):
+        """Set the required parameters when choosing the ONE spending methodology."""
+
+        self._update_spending_args(coefficients=(0.4, 1), highest_marker=True)
+
+    def set_custom_spending_methodology(
+        self,
+        coefficients: Coefficients | tuple[int | float, int | float],
+        highest_marker: bool = True,
+    ):
+        """Set the required parameters when choosing a custom spending methodology.
+
+        Args:
+            coefficients: A tuple of coefficients (significant, principal).
+            highest_marker: Optional. A boolean specifying whether to use the highest
+            marker when calculating the custom methodology. Defaults to True.
+
+        """
+        # Flag that the custom methodology has been set
+        self._custom_methodology_set = True
+
+        # Update the spending_args dictionary
+        self._update_spending_args(
+            coefficients=coefficients,
+            highest_marker=highest_marker,
+        )
 
     def get_spending(
         self,
         perspective: ValidPerspective | str = "provider",
         methodology: SpendingMethodologies | str = "ONE",
-        oda_only: bool = False,
+        flows: ValidFlows | str | list[ValidFlows | str] = "gross_disbursements",
+        source: ValidSources | str | list[ValidSources | str] = "OECD_CRDF",
     ):
+        # update the configuration to load the right data into the object.
+        # This process also handles validation.
         self._update_spending_args(
-            perspective=perspective, methodology=methodology, oda_only=oda_only
+            perspective=perspective,
+            methodology=methodology,
+            flows=flows,
+            source=source,
         )
 
 
 if __name__ == "__main__":
     climate = ClimateData(years=range(2015, 2020))
+    climate.set_custom_spending_methodology(coefficients=(0.4, 1))
+    climate.get_spending(flows=["grant_equivalent"], methodology="ONE")

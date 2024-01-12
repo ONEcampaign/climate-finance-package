@@ -1,4 +1,6 @@
+from dataclasses import dataclass
 from enum import Enum
+from typing import NamedTuple
 
 
 class ValidatedEnum(Enum):
@@ -56,3 +58,43 @@ class SpendingMethodologies(ValidatedEnum):
     ONE = "ONE"
     OECD = "OECD"
     CUSTOM = "custom"
+
+
+class ValidFlows(ValidatedEnum):
+    GROSS_DISBURSEMENTS = "gross_disbursements"
+    COMMITMENTS = "commitments"
+    GRANT_EQUIVALENT = "grant_equivalent"
+
+
+class ValidSources(ValidatedEnum):
+    OECD_CRS = "OECD_CRS"
+    OECD_CRDF_RP = "OECD_CRDF"
+    OECD_CRDF_DP = "OECD_CRDF_DONOR"
+    UNFCCC = "UNFCCC"
+
+
+CoefficientTuple = NamedTuple(
+    "CoefficientTuple", [("significant", float), ("principal", float)]
+)
+
+
+class Coefficients:
+    """Takes in a tuple of coefficients and validates them.
+    The order should be (significant, principal).
+    """
+
+    def __init__(self, coefficients: CoefficientTuple):
+        if isinstance(coefficients, tuple):
+            coefficients = CoefficientTuple(*coefficients)
+        if not (0 <= coefficients.principal <= 1):
+            raise ValueError("Principal coefficient must be between 0 and 1.")
+        if not (0 <= coefficients.significant <= 1):
+            raise ValueError("Significant coefficient must be between 0 and 1.")
+
+        self.coefficients = coefficients
+
+    def __repr__(self):
+        return (
+            f"Principal: {self.coefficients.principal},"
+            f" Significant: {self.coefficients.significant}"
+        )
