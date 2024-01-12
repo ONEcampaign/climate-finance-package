@@ -123,6 +123,8 @@ def get_cross_cutting_data_one(
         cross_cutting_threshold: The threshold for the cross cutting indicator. The
         default is 0, which means that both climate mitigation and climate adaptation
         must be larger than 0.
+        percentage_significant: The percentage of the activity that is considered
+        climate relevant when the marker is 1. The default is 0.4.
 
     Returns:
         A dataframe with cross cutting data. The data is assigned the indicator
