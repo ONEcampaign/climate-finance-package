@@ -37,49 +37,6 @@ def _melt_crs_climate_indicators_oecd(
     )
 
 
-def _filter_positive_indicator_values(data: pd.DataFrame) -> pd.DataFrame:
-    """Filter rows where the indicator value is greater than 0"""
-    return data.loc[lambda d: d.indicator_value > 0]
-
-
-def _get_max_values_per_group(
-    data: pd.DataFrame, melted_cols: list[str]
-) -> pd.DataFrame:
-    """Compute the maximum indicator value for each group"""
-
-    return (
-        data.groupby(melted_cols, observed=True, dropna=False)["indicator_value"]
-        .max()
-        .reset_index()
-    )
-
-
-def _tag_rows_with_max_values(
-    data: pd.DataFrame, max_values: pd.DataFrame, melted_cols: list[str]
-) -> pd.DataFrame:
-    """Tag rows in melted_df that have the maximum value for their respective group."""
-    return pd.merge(
-        data,
-        max_values,
-        on=melted_cols + ["indicator_value"],
-        how="left",
-        indicator=True,
-    )
-
-
-def _get_unique_max_groups(data: pd.DataFrame, melted_cols: list) -> pd.DataFrame:
-    """Identify groups where the indicator value is the unique maximum."""
-    max_value_counts = (
-        data[data["_merge"] == "both"]
-        .groupby(melted_cols + ["indicator_value"], observed=True, dropna=False)
-        .size()
-        .reset_index(name="count")
-    )
-    return max_value_counts[max_value_counts["count"] == 1][
-        melted_cols + ["indicator_value"]
-    ]
-
-
 def melt_crs_climate_indicators_one(
     df: pd.DataFrame, climate_indicators: list, percentage_significant: float = 0.4
 ) -> pd.DataFrame:
