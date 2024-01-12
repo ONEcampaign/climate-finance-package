@@ -7,13 +7,12 @@ from climate_finance.oecd.cleaning_tools.tools import keep_only_allocable_aid
 
 def pivot_by_modality(data: pd.DataFrame) -> pd.DataFrame:
     """
-    Pivots the data by flow modality.
-
     Args:
-        data: A dataframe with a modality column.
+        data (pd.DataFrame): The input dataframe to pivot.
 
     Returns:
-        A dataframe with the data pivoted by modality.
+        pd.DataFrame: The pivoted dataframe, with modality values as
+         columns and the corresponding values as the cell values.
 
     """
     return data.pivot(
@@ -46,27 +45,42 @@ def add_allocable_share(data: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def to_list_of_str(value):
+    """
+    Convert the given value to a list of strings.
+
+    Args:
+        value: The value to be converted.
+
+    Returns:
+        A list of strings where each item is converted to its string representation.
+
+    """
+    if isinstance(value, (str, int)):
+        return [str(value)]
+    elif isinstance(value, list):
+        return [str(item) if isinstance(item, int) else item for item in value]
+    else:
+        return value
+
+
 def check_provider_codes_type(
     provider_codes: list[str | int] | str | int | None,
 ) -> list[str] | None:
     """
     Checks that the provider codes are of the right type.
-
     Args:
         provider_codes (list[str] | str | None): The provider codes to check.
-
     Returns:
         list[str] | None: The provider codes if they are of the right type.
-
     """
     if provider_codes is None:
         return None
     if isinstance(provider_codes, float):
         raise TypeError(f"Provider codes must be integers")
-    if isinstance(provider_codes, str):
-        provider_codes = [str(int(provider_codes))]
-    if isinstance(provider_codes, int):
-        provider_codes = [str(provider_codes)]
+
+    provider_codes = to_list_of_str(provider_codes)
+
     if not all(isinstance(code, str) for code in provider_codes):
         try:
             provider_codes = [str(int(code)) for code in provider_codes]
