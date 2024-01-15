@@ -35,6 +35,18 @@ class ValidatedEnum(Enum):
     def __int__(self):
         return int(self.value)
 
+    def __contains__(self, item):
+        """
+        Check if a string is in the value of the enum instance.
+
+        Args:
+            item (str): A string to check against the enum's value.
+
+        Returns:
+            bool: True if the string is in the enum's value, False otherwise.
+        """
+        return item in self.value
+
 
 class ValidCurrencies(ValidatedEnum):
     USD = "USD"
