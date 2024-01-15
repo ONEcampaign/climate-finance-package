@@ -16,6 +16,11 @@ from climate_finance.core.validation import (
     validate_list_of_str,
     validate_source,
 )
+from climate_finance.methodologies.bilateral.bilateral_methodologies import (
+    transform_markers_into_indicators,
+    base_oecd_transform_markers_into_indicators,
+    process_crs_climate_indicators,
+)
 
 
 class ClimateData:
@@ -61,7 +66,7 @@ class ClimateData:
         validate_prices_and_base_year(prices=self.prices, base_year=self.base_year)
 
         # By default, the data is not loaded
-        self.data = None
+        self.data: dict[str, pd.DataFrame] = {}
 
         # By default, raw data sources are not loaded
         self._data: dict[str, pd.DataFrame] = {}
@@ -152,6 +157,50 @@ class ClimateData:
                     },
                 )
 
+    def _validate_transformation_conditions(self, source: str) -> None:
+        """
+        Validates the conditions required for data transformation.
+        Raises AttributeError if conditions are not met.
+        """
+        # Get the spending_args
+        methodology = self.spending_args["methodology"]
+
+        # Raise an error when custom methodologies are not valid
+        if methodology in ["ONE", "custom"] and "CRDF" in source:
+            raise AttributeError("Custom methodologies cannot be applied on CRDF data")
+
+    def _get_transform_function(self, source: str) -> callable:
+        """
+        Determines the appropriate transformation function based on spending_args.
+        Returns a callable function or None if no transformation is applicable.
+        """
+
+        # Get the spending_args
+        methodology = self.spending_args["methodology"]
+
+        if source == "OECD_CRS":
+            return transform_markers_into_indicators
+
+    def _transform_to_climate(self, source: str) -> None:
+        """
+        Transforms climate data based on the methodology and data source specified in spending_args.
+        Updates self.data with the transformed data.
+        """
+        # Apply guard conditions to validate the transformation
+        self._validate_transformation_conditions(source=source)
+
+        # Get the transformation function
+        transform_function = self._get_transform_function(source=source)
+
+        # Transform the data, if a transformation function is available
+        if transform_function:
+            self.data[source] = transform_function(
+                df=self._data[source],
+                percentage_significant=self.spending_args["coefficients"][0],
+                percentage_principal=self.spending_args["coefficients"][1],
+                highest_marker=self.spending_args["highest_marker"],
+            )
+
     def set_only_oda(self) -> "ClimateData":
         """
         Sets the spending arguments to only consider ODA
@@ -224,12 +273,16 @@ class ClimateData:
         # Load the data
         self._load_sources()
 
+        # Transform to climate
+        for source in self._data:
+            self._transform_to_climate(source=source)
+
         return self
 
 
 if __name__ == "__main__":
     climate = ClimateData(
-        years=[2021],
-        prices="constant",
-        base_year=2021,
-    ).load_spending_data(perspective="recipient", source="OECD_CRDF")
+        years=[2021], prices="constant", base_year=2021, providers=[4], recipients=[248]
+    ).load_spending_data(perspective="recipient", source="OECD_CRS", methodology="ONE")
+
+    df = climate.data["OECD_CRS"].loc[lambda d: d.indicator != "Not climate relevant"]
