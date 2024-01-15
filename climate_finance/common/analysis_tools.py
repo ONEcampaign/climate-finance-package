@@ -64,29 +64,29 @@ def to_list_of_str(value):
         return value
 
 
-def check_provider_codes_type(
-    provider_codes: list[str | int] | str | int | None,
+def check_codes_type(
+    codes: list[str | int] | str | int | None,
 ) -> list[str] | None:
     """
     Checks that the provider codes are of the right type.
     Args:
-        provider_codes (list[str] | str | None): The provider codes to check.
+        codes (list[str] | str | None): The provider codes to check.
     Returns:
         list[str] | None: The provider codes if they are of the right type.
     """
-    if provider_codes is None:
+    if codes is None:
         return None
-    if isinstance(provider_codes, float):
-        raise TypeError(f"Provider codes must be integers")
+    if isinstance(codes, float):
+        raise TypeError(f"Codes must be integers")
 
-    provider_codes = to_list_of_str(provider_codes)
+    codes = to_list_of_str(codes)
 
-    if not all(isinstance(code, str) for code in provider_codes):
+    if not all(isinstance(code, str) for code in codes):
         try:
-            provider_codes = [str(int(code)) for code in provider_codes]
+            codes = [str(int(code)) for code in codes]
         except ValueError:
-            raise TypeError(f"Provider codes must all be integers")
-    return provider_codes
+            raise TypeError(f"Codes must all be integers")
+    return codes
 
 
 def filter_providers(data: pd.DataFrame, provider_codes: list[str]) -> pd.DataFrame:
@@ -105,7 +105,7 @@ def filter_providers(data: pd.DataFrame, provider_codes: list[str]) -> pd.DataFr
     """
 
     # Validate the provider argument
-    provider_codes = check_provider_codes_type(provider_codes)
+    provider_codes = check_codes_type(provider_codes)
     if provider_codes is None:
         return data
 

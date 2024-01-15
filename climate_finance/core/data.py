@@ -1,3 +1,6 @@
+import pandas as pd
+
+from climate_finance.core import loaders
 from climate_finance.core.enums import (
     ValidPrices,
     ValidCurrencies,
@@ -30,11 +33,11 @@ class ClimateData:
             years: A list of integers or a range. Not all years may be available
 
             providers: Optional. A list of integers or strings, an integer, or None.
-            The core is filtered to include only the providers specified. If None,
+            The data is filtered to include only the providers specified. If None,
             all available providers are included.
 
             recipients: Optional. A list of integers or strings, an integer, or None.
-            The core is filtered to include only the recipients specified. If None,
+            The data is filtered to include only the recipients specified. If None,
             all available recipients are included.
 
             currency: Optional. A string specifying the currency to use. Defaults to
@@ -57,12 +60,14 @@ class ClimateData:
         # Validate the prices and base year
         validate_prices_and_base_year(prices=self.prices, base_year=self.base_year)
 
-        # By default, the core is not loaded
+        # By default, the data is not loaded
         self.data = None
 
-        # Other core attributes
+        # By default, raw data sources are not loaded
+        self._data: dict[str, pd.DataFrame] = {}
+
+        # Other data attributes
         self.spending_args: dict = {
-            "methodology": SpendingMethodologies("ONE"),
             "flows": ValidFlows("gross_disbursements"),
             "oda_only": False,
         }
@@ -80,7 +85,7 @@ class ClimateData:
         message: str = f"ClimateData object for {self._years_str}. "
 
         if self.data is None:
-            message += "No core has been loaded yet. "
+            message += "No data has been loaded yet. "
 
         return message
 
@@ -128,7 +133,26 @@ class ClimateData:
         # Update the spending_args dictionary
         self.spending_args.update(kwargs)
 
+    def _load_sources(self) -> None:
+        """
+        Load sources into the _data object.
+        """
+        for source in self.spending_args["source"]:
+            if source not in self._data:
+                self._data[source] = loaders.get_data(
+                    source_name=source,
+                    settings={
+                        "years": self.years,
+                        "providers": self.providers,
+                        "recipients": self.recipients,
+                    },
+                )
+
     def set_only_oda(self):
+        """
+        Sets the spending arguments to only consider ODA
+        (Official Development Assistance) data.
+        """
         self._update_spending_args(oda_only=True)
 
     def set_oecd_spending_methodology(self):
@@ -168,9 +192,9 @@ class ClimateData:
         perspective: ValidPerspective | str = "provider",
         methodology: SpendingMethodologies | str = "ONE",
         flows: ValidFlows | str | list[ValidFlows | str] = "gross_disbursements",
-        source: ValidSources | str | list[ValidSources | str] = "OECD_CRDF",
+        source: ValidSources | str | list[ValidSources | str] = "OECD_CRS",
     ):
-        # update the configuration to load the right core into the object.
+        # update the configuration to load the right data into the object.
         # This process also handles validation.
         self._update_spending_args(
             perspective=perspective,
@@ -179,8 +203,11 @@ class ClimateData:
             source=source,
         )
 
+        # Load the data
+        self._load_sources()
+
 
 if __name__ == "__main__":
-    climate = ClimateData(years=range(2015, 2020))
-    climate.set_custom_spending_methodology(coefficients=(0.4, 1))
-    climate.load_spending(flows=["grant_equivalent"], methodology="ONE")
+    climate = ClimateData(years=[2021])
+    climate.load_spending(flows=["grant_equivalent"], source="OECD_CRS")
+

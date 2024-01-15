@@ -3,7 +3,7 @@ from oda_data import read_crs, set_data_path, download_crs
 
 from climate_finance.common.analysis_tools import (
     add_net_disbursement,
-    check_provider_codes_type,
+    check_codes_type,
 )
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import ClimateDataPath
@@ -47,6 +47,7 @@ def get_crs(
     end_year: int,
     groupby: list = None,
     provider_code: list[str] | str | None = None,
+    recipient_code: list[str] | str | None = None,
     force_update: bool = False,
 ) -> pd.DataFrame:
     """
@@ -58,6 +59,7 @@ def get_crs(
         end_year (int, optional): The ending year for data extraction. Defaults to 2020.
         groupby: The columns to group by to aggregate/summarize the data.
         provider_code (list[str] | str, optional): The party code(s) to filter the data by.
+        recipient_code (list[str] | str, optional): The recipient code(s) to filter the data by.
         force_update (bool, optional): If True, the data is updated from the source.
         Defaults to False.
 
@@ -90,8 +92,13 @@ def get_crs(
 
     # Filter by provider code
     if provider_code is not None:
-        provider_code = check_provider_codes_type(provider_codes=provider_code)
+        provider_code = check_codes_type(codes=provider_code)
         crs = crs.loc[lambda d: d[ClimateSchema.PROVIDER_CODE].isin(provider_code)]
+
+    # Filter by recipient code
+    if recipient_code is not None:
+        recipient_code = check_codes_type(codes=recipient_code)
+        crs = crs.loc[lambda d: d[ClimateSchema.RECIPIENT_CODE].isin(recipient_code)]
 
     # Add net disbursement
     crs = crs.pipe(add_net_disbursement)

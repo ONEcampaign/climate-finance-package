@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from climate_finance.common.analysis_tools import check_provider_codes_type
+from climate_finance.common.analysis_tools import check_codes_type
 from climate_finance.common.schema import ClimateSchema, MAIN_FLOWS, CLIMATE_VALUES
 from climate_finance.config import logger
 
@@ -82,7 +82,7 @@ def get_matching_crs(
 
     # Filter for the required providers
     if provider_code is not None:
-        provider_code = check_provider_codes_type(provider_codes=provider_code)
+        provider_code = check_codes_type(codes=provider_code)
         crs_data = crs_data.loc[
             lambda d: d[ClimateSchema.PROVIDER_CODE].isin(provider_code)
         ]

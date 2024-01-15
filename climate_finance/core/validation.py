@@ -56,8 +56,8 @@ def validate_source(source: list[str | ValidSources]) -> None:
     Args:
         source (str): The source to validate.
     """
-    if "OECD_CRDF" in source:
-        logger.info(f"Methodology settings are ignored when using OECD CRDF data")
+    if "OECD_CRDF" in source or "OECD_CRDF_DONOR" in source:
+        logger.info(f"Methodology settings are ignored for OECD CRDF data")
 
 
 def validate_list_of_str(values: str | list, valid_enum) -> list:
