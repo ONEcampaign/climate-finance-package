@@ -122,6 +122,39 @@ def filter_providers(data: pd.DataFrame, provider_codes: list[str]) -> pd.DataFr
     return data.loc[lambda d: d[ClimateSchema.PROVIDER_CODE].isin(provider_codes)]
 
 
+def filter_recipients(data: pd.DataFrame, recipient_codes: list[str]) -> pd.DataFrame:
+    """
+    Check that the requested providers are in the data and filter the data to only
+    include the requested providers. If party is None, return the original dataframe.
+
+    Args:
+        data: A dataframe containing the CRS data.
+        recipient_codes: A list of recipients to filter the data.
+
+    Returns:
+        A dataframe with the CRS data filtered to only include the requested parties.
+        If party is None, return the original dataframe.
+
+    """
+
+    # Validate the provider argument
+    recipient_codes = check_codes_type(recipient_codes)
+    if recipient_codes is None:
+        return data
+
+    # Check that the requested recipients are in the CRS data
+    missing_recipients = set(recipient_codes) - set(
+        data[ClimateSchema.RECIPIENT_CODE].unique()
+    )
+    # Log a warning if any of the requested recipients are not in the data
+    if len(missing_recipients) > 0:
+        logger.warning(
+            f"The following recipients are not found in the data:\n{recipient_codes}"
+        )
+    # Filter the data to only include the requested providers
+    return data.loc[lambda d: d[ClimateSchema.RECIPIENT_CODE].isin(recipient_codes)]
+
+
 def add_net_disbursement(df: pd.DataFrame) -> pd.DataFrame:
     """
     Adds a column with net disbursement values.

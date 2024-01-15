@@ -1,51 +1,69 @@
-from typing import Protocol, Any
+from abc import ABC, abstractmethod
+from typing import Any
 
 import pandas as pd
 
 from climate_finance.config import logger
+from climate_finance.oecd.crdf.provider_perspective import get_provider_perspective
+from climate_finance.oecd.crdf.recipient_perspective import get_recipient_perspective
 from climate_finance.oecd.crs.get_data import get_crs
 
 
-class SourceLoader(Protocol):
-    """A protocol for loading data from a source."""
+class SourceLoader(ABC):
+    """A base class for loading data from a source."""
 
-    def get_data(self, settings: dict[str, Any]) -> pd.DataFrame:
-        ...
+    def __init__(self, settings):
+        self.settings = settings
 
+    @property
+    @abstractmethod
+    def get_data_retrieval_function(self, **kwargs) -> callable:
+        """Abstract method to return the specific data retrieval function."""
 
-class CrsLoader:
-    def get_data(self, settings: dict[str, Any]) -> pd.DataFrame:
-        # define the years to load (from start to end). Additional filtering for years
-        # is done after loading the data
-        year_start = min(settings["years"])
-        year_end = max(settings["years"])
+    def _years_from_setting(self) -> tuple[int, int, list[str]]:
+        """Define the years to load from settings."""
+        years = self.settings.get("years", [])
+        year_start, year_end = min(years), max(years)
+        years_str = [str(year) for year in years]
+        return year_start, year_end, years_str
 
-        years = [str(year) for year in settings["years"]]
+    def get_data(self) -> pd.DataFrame:
+        """Common logic for getting data."""
+        year_start, year_end, years_str = self._years_from_setting()
+        data_retrieval_func = self.get_data_retrieval_function
 
-        # load the data. Apply other filters like provider_code and recipient_code
-        data = get_crs(
+        data = data_retrieval_func(
             start_year=year_start,
             end_year=year_end,
-            provider_code=settings.get("providers"),
-            recipient_code=settings.get("recipients"),
+            provider_code=self.settings.get("providers"),
+            recipient_code=self.settings.get("recipients"),
+            force_update=self.settings.get("update"),
         )
 
-        # filter the data to only include the years specified in the settings
-        return data.loc[lambda d: d.year.isin(years)].reset_index(drop=True)
+        return data[data["year"].isin(years_str)].reset_index(drop=True)
 
 
-class CrdfRecipientLoader:
-    def get_data(self, settings: dict[str, Any]) -> pd.DataFrame:
-        ...
+class CrsLoader(SourceLoader):
+    @property
+    def get_data_retrieval_function(self):
+        return get_crs
 
 
-class CrdfProviderLoader:
-    def get_data(self, settings: dict[str, Any]) -> pd.DataFrame:
-        ...
+class CrdfRecipientLoader(SourceLoader):
+    @property
+    def get_data_retrieval_function(self):
+        return get_recipient_perspective
 
 
-class UnfcccLoader:
-    def get_data(self, settings: dict[str, Any]) -> pd.DataFrame:
+class CrdfProviderLoader(SourceLoader):
+    @property
+    def get_data_retrieval_function(self):
+        return get_provider_perspective
+
+
+class UnfcccLoader(SourceLoader):
+    @property
+    def get_data_retrieval_function(self):
         raise NotImplementedError
 
 
@@ -64,7 +82,7 @@ def get_data(source_name: str, settings: dict[str, Any]) -> pd.DataFrame:
         raise ValueError(f"Invalid source: {source_name}")
 
     try:
-        data = loader().get_data(settings)
+        data = loader(settings=settings).get_data()
         logger.info(f"Loaded raw {source_name} data")
         return data
     except NotImplementedError:

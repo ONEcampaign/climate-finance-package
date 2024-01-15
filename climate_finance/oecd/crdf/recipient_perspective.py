@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 from oda_data import set_data_path
 
-from climate_finance.common.analysis_tools import filter_providers
+from climate_finance.common.analysis_tools import filter_providers, filter_recipients
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.tools import (
@@ -74,6 +74,7 @@ def get_recipient_perspective(
     start_year: int,
     end_year: int,
     provider_code: str | list[str] | int | None = None,
+    recipient_code: str | list[str] | int | None = None,
     force_update: bool = False,
 ) -> pd.DataFrame:
     """
@@ -86,6 +87,8 @@ def get_recipient_perspective(
         end_year: The end year that should be covered in the data
         provider_code: Optionally, specify one or more provider. If not specified, all
         providers are included.
+        recipient_code: Optionally, specify one or more recipient. If not specified, all
+        recipients are included.
         force_update: If True, the data is updated from the source. This can potentially
         overwrite any data that has been downloaded to the 'raw_data' folder.
 
@@ -105,8 +108,11 @@ def get_recipient_perspective(
     # Filter for years
     df = df.loc[lambda d: d[ClimateSchema.YEAR].isin(years)]
 
-    # filter for parties (if needed)
+    # filter for providers (if needed)
     df = filter_providers(data=df, provider_codes=provider_code)
+
+    # filter for recipients (if needed)
+    df = filter_recipients(data=df, recipient_codes=recipient_code)
 
     # Rename provider columns
     df = df.pipe(fix_crdf_provider_names_columns)

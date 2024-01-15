@@ -75,6 +75,9 @@ class ClimateData:
         # By default, the custom methodology is not set
         self._custom_methodology_set: bool = False
 
+        # By default, the data is not updated
+        self._update_data: bool = False
+
     @property
     def _years_str(self):
         years_min = min(self.years)
@@ -145,31 +148,44 @@ class ClimateData:
                         "years": self.years,
                         "providers": self.providers,
                         "recipients": self.recipients,
+                        "update": self._update_data,
                     },
                 )
 
-    def set_only_oda(self):
+    def set_only_oda(self) -> "ClimateData":
         """
         Sets the spending arguments to only consider ODA
         (Official Development Assistance) data.
         """
         self._update_spending_args(oda_only=True)
 
-    def set_oecd_spending_methodology(self):
+        return self
+
+    def set_update_data(self) -> "ClimateData":
+        """Force the loaded data to be updated from the source."""
+        self._update_data = True
+
+        return self
+
+    def set_oecd_spending_methodology(self) -> "ClimateData":
         """Set the required parameters when choosing the OECD spending methodology."""
 
         self._update_spending_args(coefficients=(1, 1), highest_marker=False)
 
-    def set_one_spending_methodology(self):
+        return self
+
+    def set_one_spending_methodology(self) -> "ClimateData":
         """Set the required parameters when choosing the ONE spending methodology."""
 
         self._update_spending_args(coefficients=(0.4, 1), highest_marker=True)
+
+        return self
 
     def set_custom_spending_methodology(
         self,
         coefficients: Coefficients | tuple[int | float, int | float],
         highest_marker: bool = True,
-    ):
+    ) -> "ClimateData":
         """Set the required parameters when choosing a custom spending methodology.
 
         Args:
@@ -187,13 +203,15 @@ class ClimateData:
             highest_marker=highest_marker,
         )
 
-    def load_spending(
+        return self
+
+    def load_spending_data(
         self,
-        perspective: ValidPerspective | str = "provider",
+        perspective: ValidPerspective | str = "recipient",
         methodology: SpendingMethodologies | str = "ONE",
         flows: ValidFlows | str | list[ValidFlows | str] = "gross_disbursements",
         source: ValidSources | str | list[ValidSources | str] = "OECD_CRS",
-    ):
+    ) -> "ClimateData":
         # update the configuration to load the right data into the object.
         # This process also handles validation.
         self._update_spending_args(
@@ -206,8 +224,12 @@ class ClimateData:
         # Load the data
         self._load_sources()
 
+        return self
+
 
 if __name__ == "__main__":
-    climate = ClimateData(years=[2021])
-    climate.load_spending(flows=["grant_equivalent"], source="OECD_CRS")
-
+    climate = ClimateData(
+        years=[2021],
+        prices="constant",
+        base_year=2021,
+    ).load_spending_data(perspective="recipient", source="OECD_CRDF")
