@@ -1,5 +1,4 @@
-from climate_finance.config import logger
-from climate_finance.data.enums import (
+from climate_finance.core.enums import (
     ValidPrices,
     ValidCurrencies,
     ValidPerspective,
@@ -7,6 +6,12 @@ from climate_finance.data.enums import (
     ValidFlows,
     ValidSources,
     Coefficients,
+)
+from climate_finance.core.validation import (
+    validate_prices_and_base_year,
+    validate_methodology,
+    validate_list_of_str,
+    validate_source,
 )
 
 
@@ -25,11 +30,11 @@ class ClimateData:
             years: A list of integers or a range. Not all years may be available
 
             providers: Optional. A list of integers or strings, an integer, or None.
-            The data is filtered to include only the providers specified. If None,
+            The core is filtered to include only the providers specified. If None,
             all available providers are included.
 
             recipients: Optional. A list of integers or strings, an integer, or None.
-            The data is filtered to include only the recipients specified. If None,
+            The core is filtered to include only the recipients specified. If None,
             all available recipients are included.
 
             currency: Optional. A string specifying the currency to use. Defaults to
@@ -49,16 +54,13 @@ class ClimateData:
         self.prices: ValidPrices | str = ValidPrices(prices)
         self.base_year = base_year
 
-        if self.prices == "constant" and self.base_year is None:
-            raise ValueError("You must provide a base year when using constant prices")
+        # Validate the prices and base year
+        validate_prices_and_base_year(prices=self.prices, base_year=self.base_year)
 
-        if self.prices == "current" and self.base_year is not None:
-            raise ValueError("You cannot provide a base year when using current prices")
-
-        # By default, the data is not loaded
+        # By default, the core is not loaded
         self.data = None
 
-        # Other data attributes
+        # Other core attributes
         self.spending_args: dict = {
             "methodology": SpendingMethodologies("ONE"),
             "flows": ValidFlows("gross_disbursements"),
@@ -78,7 +80,7 @@ class ClimateData:
         message: str = f"ClimateData object for {self._years_str}. "
 
         if self.data is None:
-            message += "No data has been loaded yet. "
+            message += "No core has been loaded yet. "
 
         return message
 
@@ -90,26 +92,19 @@ class ClimateData:
 
         # Check if methodology is provided and validate
         if "methodology" in kwargs:
+            # Convert the methodology to a SpendingMethodologies enum
             kwargs["methodology"] = SpendingMethodologies(kwargs["methodology"])
+
+            # Validate the settings
+            validate_methodology(
+                methodology=kwargs["methodology"],
+                custom_methodology=self._custom_methodology_set,
+            )
+            # Set the spending methodology if needed
             if kwargs["methodology"] == "OECD":
-                if self._custom_methodology_set:
-                    logger.warning(
-                        "You had set a custom methodology. This will be overwritten "
-                        "by the OECD methodology"
-                    )
                 self.set_oecd_spending_methodology()
             elif kwargs["methodology"] == "ONE":
-                if self._custom_methodology_set:
-                    logger.warning(
-                        "You had set a custom methodology. This will be overwritten "
-                        "by the ONE methodology"
-                    )
                 self.set_one_spending_methodology()
-            elif kwargs["methodology"] == "custom" and not self._custom_methodology_set:
-                raise ValueError(
-                    "You must set the custom methodology using the "
-                    "set_custom_spending_methodology method"
-                )
 
         # Check if flows is provided and validate
         if "perspective" in kwargs:
@@ -118,18 +113,17 @@ class ClimateData:
         # Check if flows is provided and validate. This includes converting a string
         # to a list of validated enums.
         if "flows" in kwargs:
-            if isinstance(kwargs["flows"], str):
-                kwargs["flows"] = [ValidFlows(kwargs["flows"])]
-            if isinstance(kwargs["flows"], list):
-                kwargs["flows"] = [ValidFlows(f) for f in kwargs["flows"]]
+            kwargs["flows"] = validate_list_of_str(
+                values=kwargs["flows"], valid_enum=ValidFlows
+            )
 
         # Check if source is provided and validate. This includes converting a string
         # to a list of validated enums.
         if "source" in kwargs:
-            if isinstance(kwargs["source"], str):
-                kwargs["source"] = [ValidSources(kwargs["source"])]
-            if isinstance(kwargs["source"], list):
-                kwargs["source"] = [ValidSources(f) for f in kwargs["source"]]
+            kwargs["source"] = validate_list_of_str(
+                values=kwargs["source"], valid_enum=ValidSources
+            )
+            validate_source(source=kwargs["source"])
 
         # Update the spending_args dictionary
         self.spending_args.update(kwargs)
@@ -169,14 +163,14 @@ class ClimateData:
             highest_marker=highest_marker,
         )
 
-    def get_spending(
+    def load_spending(
         self,
         perspective: ValidPerspective | str = "provider",
         methodology: SpendingMethodologies | str = "ONE",
         flows: ValidFlows | str | list[ValidFlows | str] = "gross_disbursements",
         source: ValidSources | str | list[ValidSources | str] = "OECD_CRDF",
     ):
-        # update the configuration to load the right data into the object.
+        # update the configuration to load the right core into the object.
         # This process also handles validation.
         self._update_spending_args(
             perspective=perspective,
@@ -189,4 +183,4 @@ class ClimateData:
 if __name__ == "__main__":
     climate = ClimateData(years=range(2015, 2020))
     climate.set_custom_spending_methodology(coefficients=(0.4, 1))
-    climate.get_spending(flows=["grant_equivalent"], methodology="ONE")
+    climate.load_spending(flows=["grant_equivalent"], methodology="ONE")
