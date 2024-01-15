@@ -65,6 +65,7 @@ class ClimateSchema:
     MULTILATERAL_TYPE: str = "multilateral_type"
     CONVERGED_REPORTING: str = "converged_reporting"
     COAL_FINANCING: str = "coal_related_financing"
+    LEVEL: str = "level"
 
 
 CRS_MAPPING: dict[str, str] = {
