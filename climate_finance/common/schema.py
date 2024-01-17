@@ -225,3 +225,9 @@ MAIN_FLOWS: list[str] = [
     ClimateSchema.USD_COMMITMENT,
     ClimateSchema.USD_DISBURSEMENT,
 ]
+
+CRDF_VALUES = [
+    ClimateSchema.ADAPTATION_VALUE,
+    ClimateSchema.MITIGATION_VALUE,
+    ClimateSchema.CROSS_CUTTING_VALUE,
+]

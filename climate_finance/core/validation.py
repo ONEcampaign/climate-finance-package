@@ -56,7 +56,7 @@ def validate_source(source: list[str | ValidSources]) -> None:
     Args:
         source (str): The source to validate.
     """
-    if "OECD_CRDF" in source or "OECD_CRDF_DONOR" in source:
+    if "OECD_CRDF_DONOR" in source:
         logger.info(f"Methodology settings are ignored for OECD CRDF data")
 
 

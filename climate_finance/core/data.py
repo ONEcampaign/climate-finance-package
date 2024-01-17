@@ -1,5 +1,6 @@
 import pandas as pd
 
+from climate_finance.config import logger
 from climate_finance.core import loaders
 from climate_finance.core.enums import (
     ValidPrices,
@@ -16,10 +17,11 @@ from climate_finance.core.validation import (
     validate_list_of_str,
     validate_source,
 )
-from climate_finance.methodologies.bilateral.bilateral_methodologies import (
+from climate_finance.methodologies.spending.crdf import (
+    transform_crdf_into_indicators,
+)
+from climate_finance.methodologies.spending.crs import (
     transform_markers_into_indicators,
-    base_oecd_transform_markers_into_indicators,
-    process_crs_climate_indicators,
 )
 
 
@@ -165,9 +167,13 @@ class ClimateData:
         # Get the spending_args
         methodology = self.spending_args["methodology"]
 
-        # Raise an error when custom methodologies are not valid
+        # Inform custom methodologies cannot always be applied
         if methodology in ["ONE", "custom"] and "CRDF" in source:
-            raise AttributeError("Custom methodologies cannot be applied on CRDF data")
+            logger.info(
+                "Custom methodologies cannot be applied to"
+                "climate components data, which may be included in the CRDF dataset"
+                " for multilateral organisations."
+            )
 
     def _get_transform_function(self, source: str) -> callable:
         """
@@ -175,11 +181,10 @@ class ClimateData:
         Returns a callable function or None if no transformation is applicable.
         """
 
-        # Get the spending_args
-        methodology = self.spending_args["methodology"]
-
         if source == "OECD_CRS":
             return transform_markers_into_indicators
+        elif source == "OECD_CRDF":
+            return transform_crdf_into_indicators
 
     def _transform_to_climate(self, source: str) -> None:
         """
@@ -282,7 +287,9 @@ class ClimateData:
 
 if __name__ == "__main__":
     climate = ClimateData(
-        years=[2021], prices="constant", base_year=2021, providers=[4], recipients=[248]
-    ).load_spending_data(perspective="recipient", source="OECD_CRS", methodology="ONE")
+        years=range(2021, 2022),
+        prices="constant",
+        base_year=2021,
+    ).load_spending_data(perspective="recipient", source="OECD_CRS", methodology="OECD")
 
-    df = climate.data["OECD_CRS"].loc[lambda d: d.indicator != "Not climate relevant"]
+    df = climate.data["OECD_CRS"]

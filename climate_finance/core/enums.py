@@ -75,12 +75,14 @@ class ValidFlows(ValidatedEnum):
     GROSS_DISBURSEMENTS = "gross_disbursements"
     COMMITMENTS = "commitments"
     GRANT_EQUIVALENT = "grant_equivalent"
+    NET_DISBURSEMENTS = "net_disbursements"
 
 
 class ValidSources(ValidatedEnum):
     OECD_CRS = "OECD_CRS"
     OECD_CRDF_RP = "OECD_CRDF"
     OECD_CRDF_DP = "OECD_CRDF_DONOR"
+    OECD_CRDF_CRS = "OECD_CRDF_CRS"
     UNFCCC = "UNFCCC"
 
 

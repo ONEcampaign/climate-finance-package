@@ -7,7 +7,6 @@ from climate_finance.common.analysis_tools import filter_providers, filter_recip
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.tools import (
-    marker_columns_to_numeric,
     fix_crdf_provider_names_columns,
     fix_crdf_recipient_errors,
     assign_usd_commitments_as_flow_type,
@@ -116,9 +115,6 @@ def get_recipient_perspective(
 
     # Rename provider columns
     df = df.pipe(fix_crdf_provider_names_columns)
-
-    # Convert markers to numeric
-    df = marker_columns_to_numeric(df)
 
     # Fix errors in recipient code
     df = df.pipe(fix_crdf_recipient_errors)
