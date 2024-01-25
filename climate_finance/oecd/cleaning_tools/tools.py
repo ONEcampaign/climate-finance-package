@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from oda_data import donor_groupings, set_data_path
+from pandas._typing import MergeHow, Suffixes
 
 from climate_finance.common.schema import (
     CRS_MAPPING,
@@ -271,15 +272,17 @@ def fix_crdf_provider_names_columns(
             ClimateSchema.PROVIDER_NAME: f"{ClimateSchema.PROVIDER_NAME}_short",
             ClimateSchema.PROVIDER_DETAILED: ClimateSchema.PROVIDER_NAME,
         }
-    ).astype({ClimateSchema.PROVIDER_NAME: "str"})
+    ).astype({ClimateSchema.PROVIDER_NAME: "string[pyarrow]"})
 
 
 def fix_crdf_recipient_errors(data: pd.DataFrame) -> pd.DataFrame:
-    return data.replace({ClimateSchema.RECIPIENT_CODE: {"9998": "998"}})
+    return data.replace({ClimateSchema.RECIPIENT_CODE: {9998: 998}})
 
 
 def assign_usd_commitments_as_flow_type(data: pd.DataFrame) -> pd.DataFrame:
-    return data.assign(**{ClimateSchema.FLOW_TYPE: ClimateSchema.USD_COMMITMENT})
+    return data.assign(
+        **{ClimateSchema.FLOW_TYPE: ClimateSchema.USD_COMMITMENT}
+    ).astype({ClimateSchema.FLOW_TYPE: "string[pyarrow]"})
 
 
 def convert_thousands_to_units(df: pd.DataFrame) -> pd.DataFrame:
@@ -431,3 +434,58 @@ def clean_multisystem_indicators(df: pd.DataFrame) -> pd.DataFrame:
             )
         }
     )
+
+
+def _fill_missing_by_type(series: pd.Series) -> pd.Series:
+    if pd.api.types.is_numeric_dtype(series):
+        return series.fillna(-100)
+    if pd.api.types.is_string_dtype(series):
+        return series.fillna("MISSING_DATA")
+
+
+def _filled_to_missing_by_type(series: pd.Series) -> pd.Series:
+    if pd.api.types.is_numeric_dtype(series):
+        return series.replace(-100, np.nan)
+    if pd.api.types.is_string_dtype(series):
+        return series.replace("MISSING_DATA", np.nan, regex=False)
+
+
+def merge_with_missing(
+    left: pd.DataFrame,
+    right: pd.DataFrame,
+    on: list[str] | None = None,
+    how: MergeHow = "inner",
+    left_on: list[str] = None,
+    right_on: list[str] = None,
+    suffixes: Suffixes = ("_left", "_right"),
+    indicator: str | bool = False,
+    validate: str | None = None,
+) -> pd.DataFrame:
+    if on is not None:
+        left_on = on
+        right_on = on
+
+    for column in left_on:
+        left[column] = _fill_missing_by_type(left[column])
+
+    for column in right_on:
+        right[column] = _fill_missing_by_type(right[column])
+
+    data = pd.merge(
+        left,
+        right,
+        how=how,
+        left_on=left_on,
+        right_on=right_on,
+        suffixes=suffixes,
+        indicator=indicator,
+        validate=validate,
+    )
+
+    for column in left_on:
+        data[column] = _filled_to_missing_by_type(data[column])
+
+    for column in right_on:
+        data[column] = _filled_to_missing_by_type(data[column])
+
+    return data

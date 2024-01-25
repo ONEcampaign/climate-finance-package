@@ -59,28 +59,7 @@ def _merge_dataframes(dfs: list[pd.DataFrame]) -> pd.DataFrame:
     )
 
 
-def _add_channel_codes(data: pd.DataFrame) -> pd.DataFrame:
-    """
-    Add channel codes to the dataframe.
-    Args:
-        data: The dataframe to add channel codes to.
-
-    Returns:
-        The dataframe with channel codes added.
-
-    """
-    # Generate channel mapping dictionary
-    mapping = generate_channel_mapping_dictionary(
-        raw_data=data,
-        channel_names_column=ClimateSchema.CHANNEL_NAME,
-        export_missing_path=ClimateDataPath.raw_data
-        / "oecd_multilateral_climate_imputations_channels_not_mapped.csv",
-    )
-
-    # Map channel names
-    data[ClimateSchema.CHANNEL_CODE] = data[ClimateSchema.CHANNEL_NAME].map(mapping)
-
-    return data
+3
 
 
 def _reorder_imputations_columns(data: pd.DataFrame) -> pd.DataFrame:

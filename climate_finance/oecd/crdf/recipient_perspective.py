@@ -72,8 +72,8 @@ MULTI_COLUMNS: list = [
 def get_recipient_perspective(
     start_year: int,
     end_year: int,
-    provider_code: str | list[str] | int | None = None,
-    recipient_code: str | list[str] | int | None = None,
+    provider_code: int | list[int] | str | None = None,
+    recipient_code: int | list[int] | str | None = None,
     force_update: bool = False,
 ) -> pd.DataFrame:
     """
@@ -95,7 +95,7 @@ def get_recipient_perspective(
 
     """
     # Study years
-    years = [str(y) for y in range(start_year, end_year + 1)]
+    years = [y for y in range(start_year, end_year + 1)]
 
     # Check if data should be forced to update
     if force_update:

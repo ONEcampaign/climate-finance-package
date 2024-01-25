@@ -20,9 +20,13 @@ from climate_finance.core.validation import (
 from climate_finance.methodologies.spending.crdf import (
     transform_crdf_into_indicators,
 )
+from climate_finance.methodologies.spending.crdf_crs import (
+    transform_crs_crdf_into_indicators,
+)
 from climate_finance.methodologies.spending.crs import (
     transform_markers_into_indicators,
 )
+from climate_finance.oecd.cleaning_tools.tools import keep_only_allocable_aid
 
 
 class ClimateData:
@@ -147,6 +151,10 @@ class ClimateData:
         """
         Load sources into the _data object.
         """
+        if "OECD_CRDF_CRS" in self.spending_args["source"]:
+            self.spending_args["source"].remove("OECD_CRDF_CRS")
+            self.spending_args["source"].extend(["OECD_CRS_RAW_ALLOCABLE", "OECD_CRDF"])
+
         for source in self.spending_args["source"]:
             if source not in self._data:
                 self._data[source] = loaders.get_data(
@@ -181,7 +189,7 @@ class ClimateData:
         Returns a callable function or None if no transformation is applicable.
         """
 
-        if source == "OECD_CRS":
+        if source == "OECD_CRS" or source == "OECD_CRS_ALLOCABLE":
             return transform_markers_into_indicators
         elif source == "OECD_CRDF":
             return transform_crdf_into_indicators
@@ -279,17 +287,31 @@ class ClimateData:
         self._load_sources()
 
         # Transform to climate
-        for source in self._data:
-            self._transform_to_climate(source=source)
+        if source == "OECD_CRDF_CRS":
+            logger.info(f"Creating {source} data...")
+            self._data["OECD_CRDF_CRS"] = transform_crs_crdf_into_indicators(
+                crdf=self._data["OECD_CRDF"], crs=self._data["OECD_CRS_RAW_ALLOCABLE"]
+            )
+        else:
+            for loaded_source in self._data:
+                logger.info(f"Processing {loaded_source} data...")
+                self._transform_to_climate(source=loaded_source)
+
+        # If source is OECD_CRDF_CRS, combine the data
 
         return self
 
 
 if __name__ == "__main__":
     climate = ClimateData(
-        years=range(2021, 2022),
+        years=[2020, 2021],
+        providers=[901],
         prices="constant",
         base_year=2021,
-    ).load_spending_data(perspective="recipient", source="OECD_CRS", methodology="OECD")
+    ).load_spending_data(
+        perspective="recipient", source="OECD_CRDF_CRS", methodology="OECD"
+    )
 
-    df = climate.data["OECD_CRS"]
+    df = climate._data["OECD_CRDF_CRS"]
+
+    from bblocks import WorldEconomicOutlook

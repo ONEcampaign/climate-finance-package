@@ -80,6 +80,7 @@ class ValidFlows(ValidatedEnum):
 
 class ValidSources(ValidatedEnum):
     OECD_CRS = "OECD_CRS"
+    OECD_CRS_ALLOCABLE = "OECD_CRS_ALLOCABLE"
     OECD_CRDF_RP = "OECD_CRDF"
     OECD_CRDF_DP = "OECD_CRDF_DONOR"
     OECD_CRDF_CRS = "OECD_CRDF_CRS"

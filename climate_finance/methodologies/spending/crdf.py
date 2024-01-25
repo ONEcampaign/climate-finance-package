@@ -73,7 +73,14 @@ def clean_crdf_markers(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     # Drop the columns that are no longer needed
-    df = df.drop(columns=CRDF_VALUES + [ClimateSchema.CLIMATE_FINANCE_VALUE])
+
+    df = df.filter(
+        [
+            c
+            for c in df.columns
+            if c not in CRDF_VALUES + [ClimateSchema.CLIMATE_FINANCE_VALUE]
+        ]
+    )
 
     return df
 
@@ -98,7 +105,9 @@ def process_climate_components(
         df = subtract_overlaps_by_project(df)
 
     # Drop the total value column
-    df = df.drop(columns=[ClimateSchema.CLIMATE_FINANCE_VALUE])
+    df = df.filter(
+        [c for c in df.columns if c not in [ClimateSchema.CLIMATE_FINANCE_VALUE]]
+    )
 
     # Melt the data to have climate values as 'value' and an indicator column
     df = melt_crdf_values(df, values=CRDF_VALUES)
@@ -133,7 +142,7 @@ def drop_names(df: pd.DataFrame) -> pd.DataFrame:
         ClimateSchema.CHANNEL_NAME_DELIVERY,
     ]
 
-    return df.drop(columns=names)
+    return df.filter([c for c in df.columns if c not in names])
 
 
 def clean_string_cols(df: pd.DataFrame, cols: list[str] | None) -> pd.DataFrame:
@@ -174,8 +183,11 @@ def group_and_summarize(df: pd.DataFrame) -> pd.DataFrame:
     # Identify all non 'value' columns
     idx = [c for c in df.columns if c not in VALUES]
 
+    # Valid values
+    values = [c for c in df.columns if c in VALUES]
+
     # Group so that each project has only one row
-    df = df.groupby(by=idx, observed=True, dropna=False)[VALUES].sum().reset_index()
+    df = df.groupby(by=idx, observed=True, dropna=False)[values].sum().reset_index()
 
     return df
 
