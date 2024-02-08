@@ -5,6 +5,7 @@ from bblocks import clean_numeric_series
 
 from climate_finance.common.schema import ClimateSchema, CLIMATE_VALUES
 from climate_finance.config import logger
+from climate_finance.core.dtypes import set_default_types
 from climate_finance.methodologies.spending.crdf import (
     drop_names,
     clean_string_cols,
@@ -174,7 +175,7 @@ def _clean_not_matched(not_matched: pd.DataFrame) -> pd.DataFrame:
         ClimateSchema.CHANNEL_NAME_DELIVERY,
     ]
 
-    not_matched[to_str] = not_matched[to_str].astype(str)
+    not_matched[to_str] = not_matched[to_str].astype("string[pyarrow]")
 
     # Make replacements
     not_matched = (
@@ -189,7 +190,7 @@ def _clean_not_matched(not_matched: pd.DataFrame) -> pd.DataFrame:
 
 
 def _get_list_of_providers(df: pd.DataFrame) -> str:
-    return ", ".join(df[ClimateSchema.PROVIDER_CODE].unique().astype("string"))
+    return ", ".join(df[ClimateSchema.PROVIDER_CODE].astype("string[pyarrow]").unique())
 
 
 def log_matching_stats(projects_df: pd.DataFrame) -> None:
@@ -393,14 +394,7 @@ def transform_crs_crdf_into_indicators(
     data.loc[
         lambda d: d[ClimateSchema.PROVIDER_CODE].isin(providers),
         [ClimateSchema.ADAPTATION, ClimateSchema.MITIGATION],
-    ] = "100"
-
-    # clean marker types
-    data = data.pipe(
-        clean_numeric_series,
-        series_columns=[ClimateSchema.ADAPTATION, ClimateSchema.MITIGATION],
-        to=int,
-    )
+    ] = 100
 
     data = data.pipe(drop_names).pipe(group_and_summarize)
 
@@ -421,5 +415,8 @@ def transform_crs_crdf_into_indicators(
 
     # Combine the data
     data = pd.concat([markers, components], ignore_index=True)
+
+    # set the right data types
+    data = set_default_types(data)
 
     return data
