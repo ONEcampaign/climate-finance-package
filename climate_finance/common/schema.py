@@ -5,6 +5,7 @@ from dataclasses import dataclass
 class ClimateSchema:
     YEAR: str = "year"
     PROVIDER_CODE: str = "oecd_provider_code"
+    PROVIDER_ISO_CODE: str = "iso3_provider_code"
     PROVIDER_NAME: str = "provider"
     PROVIDER_TYPE: str = "provider_type"
     PROVIDER_DETAILED: str = "provider_detailed"

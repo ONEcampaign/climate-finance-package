@@ -56,10 +56,10 @@ class ValidatedEnum(Enum):
 
 
 class ValidCurrencies(ValidatedEnum):
-    USD = "USD"
-    EUR = "EUR"
+    USA = "USD"
+    EUI = "EUR"
     CAN = "CAN"
-    GBP = "GBP"
+    GBR = "GBP"
 
 
 class ValidPrices(ValidatedEnum):

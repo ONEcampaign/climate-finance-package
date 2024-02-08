@@ -2,6 +2,7 @@ import pandas as pd
 
 from climate_finance.config import logger
 from climate_finance.core import loaders
+from climate_finance.core.deflators import oecd_deflator
 from climate_finance.core.enums import (
     ValidPrices,
     ValidCurrencies,
@@ -25,6 +26,9 @@ from climate_finance.methodologies.spending.crdf_crs import (
 from climate_finance.methodologies.spending.crs import (
     transform_markers_into_indicators,
 )
+
+
+DEFLATOR: callable = oecd_deflator
 
 
 class ClimateData:
@@ -114,6 +118,11 @@ class ClimateData:
     def available_prices():
         """Print all the valid, available flows"""
         ValidPrices.print_available(name="prices")
+
+    @staticmethod
+    def available_currencies():
+        """Print all the valid, available flows"""
+        ValidCurrencies.print_available(name="currencies")
 
     def __repr__(self):
         message: str = f"ClimateData object for {self._years_str}. "
