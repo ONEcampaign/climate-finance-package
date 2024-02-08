@@ -5,7 +5,6 @@ from climate_finance.core import loaders
 from climate_finance.core.enums import (
     ValidPrices,
     ValidCurrencies,
-    ValidPerspective,
     SpendingMethodologies,
     ValidFlows,
     ValidSources,
@@ -26,7 +25,6 @@ from climate_finance.methodologies.spending.crdf_crs import (
 from climate_finance.methodologies.spending.crs import (
     transform_markers_into_indicators,
 )
-from climate_finance.oecd.cleaning_tools.tools import keep_only_allocable_aid
 
 
 class ClimateData:
@@ -40,6 +38,8 @@ class ClimateData:
         base_year: int | None = None,
     ):
         """
+        Access Climate Finance data using data from the OECD or UNFCCC.
+
         Args:
             years: A list of integers or a range. Not all years may be available
 
@@ -95,6 +95,26 @@ class ClimateData:
         years_max = max(self.years)
         return f"{years_min}-{years_max}" if years_min != years_max else f"{years_min}"
 
+    @staticmethod
+    def available_methodologies():
+        """Print all the valid, available methodologies"""
+        SpendingMethodologies.print_available(name="methodologies")
+
+    @staticmethod
+    def available_flows():
+        """Print all the valid, available flows"""
+        ValidFlows.print_available(name="flows")
+
+    @staticmethod
+    def available_sources():
+        """Print all the valid, available flows"""
+        ValidSources.print_available(name="sources")
+
+    @staticmethod
+    def available_prices():
+        """Print all the valid, available flows"""
+        ValidPrices.print_available(name="prices")
+
     def __repr__(self):
         message: str = f"ClimateData object for {self._years_str}. "
 
@@ -124,10 +144,6 @@ class ClimateData:
                 self.set_oecd_spending_methodology()
             elif kwargs["methodology"] == "ONE":
                 self.set_one_spending_methodology()
-
-        # Check if flows is provided and validate
-        if "perspective" in kwargs:
-            kwargs["perspective"] = ValidPerspective(kwargs["perspective"])
 
         # Check if flows is provided and validate. This includes converting a string
         # to a list of validated enums.
@@ -199,20 +215,33 @@ class ClimateData:
         Transforms climate data based on the methodology and data source specified in spending_args.
         Updates self.data with the transformed data.
         """
-        # Apply guard conditions to validate the transformation
-        self._validate_transformation_conditions(source=source)
-
-        # Get the transformation function
-        transform_function = self._get_transform_function(source=source)
-
-        # Transform the data, if a transformation function is available
-        if transform_function:
-            self.data[source] = transform_function(
-                df=self._data[source],
-                percentage_significant=self.spending_args["coefficients"][0],
-                percentage_principal=self.spending_args["coefficients"][1],
-                highest_marker=self.spending_args["highest_marker"],
+        # Check if the source is OECD_CRDF_CRS as that requires a separate methodology
+        if source == "OECD_CRDF_CRS":
+            logger.info(f"Creating {source} data...")
+            self.data["OECD_CRDF_CRS"] = transform_crs_crdf_into_indicators(
+                crdf=self._data["OECD_CRDF"], crs=self._data["OECD_CRS_RAW_ALLOCABLE"]
             )
+            # Return to end this step
+            return
+
+        # Otherwise convert all the loaded sources to climate
+        for loaded_source in self._data:
+            logger.info(f"Processing {loaded_source} data...")
+
+            # Apply guard conditions to validate the transformation
+            self._validate_transformation_conditions(source=source)
+
+            # Get the transformation function
+            transform_function = self._get_transform_function(source=source)
+
+            # Transform the data, if a transformation function is available
+            if transform_function:
+                self.data[source] = transform_function(
+                    df=self._data[source],
+                    percentage_significant=self.spending_args["coefficients"][0],
+                    percentage_principal=self.spending_args["coefficients"][1],
+                    highest_marker=self.spending_args["highest_marker"],
+                )
 
     def set_only_oda(self) -> "ClimateData":
         """
@@ -269,15 +298,29 @@ class ClimateData:
 
     def load_spending_data(
         self,
-        perspective: ValidPerspective | str = "recipient",
         methodology: SpendingMethodologies | str = "ONE",
         flows: ValidFlows | str | list[ValidFlows | str] = "gross_disbursements",
         source: ValidSources | str | list[ValidSources | str] = "OECD_CRS",
     ) -> "ClimateData":
+        """
+        Loads spending data based on the methodology specified, from the specified
+        source. Gross disbursements are loaded by default, but one or more different
+        ones can be loaded.
+
+        Args:
+            methodology: one of the methodologies supported: ONE, OECD, or "custom". In
+            the future, support for UNFCCC will be added. Call `.available_methodologies()`
+            for a full list of available methodologies.
+            flows: one or a list of supported flows: gross_disbursements, commitments,
+            grant_equivalent, net_disbursements. Call `.available_flows()` for a full list
+            of available flows.
+            source: the dataset used for climate data (e.g OECD_CRS_ALLOCABLE, OECD_CRDF,
+            OECD_CRDF_DONOR, OECD_CRDF_CRS, UNFCCC, etc). Call `.available_sources()` for
+            a full list of available sources.
+        """
         # update the configuration to load the right data into the object.
         # This process also handles validation.
         self._update_spending_args(
-            perspective=perspective,
             methodology=methodology,
             flows=flows,
             source=source,
@@ -286,18 +329,8 @@ class ClimateData:
         # Load the data
         self._load_sources()
 
-        # Transform to climate
-        if source == "OECD_CRDF_CRS":
-            logger.info(f"Creating {source} data...")
-            self._data["OECD_CRDF_CRS"] = transform_crs_crdf_into_indicators(
-                crdf=self._data["OECD_CRDF"], crs=self._data["OECD_CRS_RAW_ALLOCABLE"]
-            )
-        else:
-            for loaded_source in self._data:
-                logger.info(f"Processing {loaded_source} data...")
-                self._transform_to_climate(source=loaded_source)
-
-        # If source is OECD_CRDF_CRS, combine the data
+        # transform to climate
+        self._transform_to_climate(source=source)
 
         return self
 
@@ -308,10 +341,4 @@ if __name__ == "__main__":
         providers=[901],
         prices="constant",
         base_year=2021,
-    ).load_spending_data(
-        perspective="recipient", source="OECD_CRDF_CRS", methodology="OECD"
     )
-
-    df = climate._data["OECD_CRDF_CRS"]
-
-    from bblocks import WorldEconomicOutlook
