@@ -5,10 +5,17 @@ from typing import NamedTuple
 class ValidatedEnum(Enum):
     @classmethod
     def _missing_(cls, value):
-        valid_values = ", ".join([repr(v.value) for v in cls])
         raise ValueError(
-            f"'{value}' is not a valid {cls.__name__}.\nPlease choose from: {valid_values}"
+            f"'{value}' is not a valid {cls.__name__}.\nPlease choose from: {cls.valid()}"
         )
+
+    @classmethod
+    def valid(cls) -> str:
+        return ", ".join([repr(v.value) for v in cls])
+
+    @classmethod
+    def print_available(cls, name: str):
+        print(f"The following {name} are available:\n{cls.valid()}")
 
     def __repr__(self):
         return f"{self.value}"
@@ -58,11 +65,6 @@ class ValidCurrencies(ValidatedEnum):
 class ValidPrices(ValidatedEnum):
     CURRENT = "current"
     CONSTANT = "constant"
-
-
-class ValidPerspective(ValidatedEnum):
-    PROVIDER = "provider"
-    RECIPIENT = "recipient"
 
 
 class SpendingMethodologies(ValidatedEnum):
