@@ -90,7 +90,7 @@ def idx_to_str(df: pd.DataFrame, idx: list[str]) -> pd.DataFrame:
         pd.DataFrame: The dataframe with index converted to a column of strings.
     """
 
-    return df.astype({c: "str" for c in idx if c in df.columns})
+    return df.astype({c: "string[pyarrow]" for c in idx if c in df.columns})
 
 
 def keep_only_allocable_aid(df: pd.DataFrame) -> pd.DataFrame:
