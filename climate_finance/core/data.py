@@ -45,7 +45,7 @@ class ClimateData:
         Access Climate Finance data using data from the OECD or UNFCCC.
 
         Args:
-            years: A list of integers or a range. Not all years may be available
+            years: A list of integers or a range. Not all years may be available.
 
             providers: Optional. A list of integers or strings, an integer, or None.
             The data is filtered to include only the providers specified. If None,
@@ -208,7 +208,8 @@ class ClimateData:
                 " for multilateral organisations."
             )
 
-    def _get_transform_function(self, source: str) -> callable:
+    @staticmethod
+    def _get_transform_function(source: str) -> callable:
         """
         Determines the appropriate transformation function based on spending_args.
         Returns a callable function or None if no transformation is applicable.
@@ -224,7 +225,7 @@ class ClimateData:
         Transforms climate data based on the methodology and data source specified in spending_args.
         Updates self.data with the transformed data.
         """
-        # Check if the source is OECD_CRDF_CRS as that requires a separate methodology
+        # Check if the source is OECD_CRDF_CRS as that requires a separate methodology.
         if source == "OECD_CRDF_CRS":
             logger.info(f"Creating {source} data...")
             self.data["OECD_CRDF_CRS"] = transform_crs_crdf_into_indicators(
@@ -317,13 +318,13 @@ class ClimateData:
         ones can be loaded.
 
         Args:
-            methodology: one of the methodologies supported: ONE, OECD, or "custom". In
+            methodology: one of the methodologies supported: ONE, OECD, or “custom”. In
             the future, support for UNFCCC will be added. Call `.available_methodologies()`
             for a full list of available methodologies.
-            flows: one or a list of supported flows: gross_disbursements, commitments,
+            flows: one, or a list of supported flows: gross_disbursements, commitments,
             grant_equivalent, net_disbursements. Call `.available_flows()` for a full list
             of available flows.
-            source: the dataset used for climate data (e.g OECD_CRS_ALLOCABLE, OECD_CRDF,
+            source: the dataset used for climate data (e.g. OECD_CRS_ALLOCABLE, OECD_CRDF,
             OECD_CRDF_DONOR, OECD_CRDF_CRS, UNFCCC, etc). Call `.available_sources()` for
             a full list of available sources.
         """
@@ -343,11 +344,37 @@ class ClimateData:
 
         return self
 
+    def get_data(self) -> pd.DataFrame:
+        """Return the loaded data. If more than one data source has been loaded,
+        the data is concatenated into a single dataframe.
 
-if __name__ == "__main__":
-    climate = ClimateData(
-        years=[2020, 2021],
-        providers=[901],
-        prices="constant",
-        base_year=2021,
-    )
+        Returns:
+            pd.DataFrame: The loaded data.
+
+        """
+
+        # If no data has been loaded, raise an error
+        if len(self.data) < 1:
+            raise AttributeError("No data has been loaded.")
+
+        # Add the source to the data and put all dataframes into a list
+        loaded_dataframes = [d.assign(source=source) for source, d in self.data.items()]
+
+        # Concatenate the dataframes
+        loaded_data = pd.concat(loaded_dataframes, ignore_index=True)
+
+        # Convert to the right currency and prices, if needed
+        if self.prices != "current" and self.currency != "USD":
+            loaded_data = DEFLATOR(
+                data=loaded_data,
+                target_currency=self.currency,
+                prices=self.prices,
+                base_year=self.base_year,
+            )
+        else:
+            loaded_data = loaded_data.assign(
+                currency=self.currency,
+                prices=self.prices,
+            )
+
+        return loaded_data

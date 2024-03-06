@@ -1,14 +1,11 @@
 import numpy as np
 import pandas as pd
+from oda_data.clean_data.channels import clean_string
 
 from climate_finance.common.analysis_tools import check_codes_type
 from climate_finance.common.schema import ClimateSchema, MAIN_FLOWS, CLIMATE_VALUES
-from climate_finance.config import logger
-
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str
 from climate_finance.oecd.crs.get_data import read_clean_crs
-from climate_finance.unfccc.cleaning_tools.channels import clean_string
-
 
 CRS_INFO = [
     ClimateSchema.YEAR,

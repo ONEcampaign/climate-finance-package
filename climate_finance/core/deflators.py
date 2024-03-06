@@ -30,7 +30,7 @@ def oecd_deflator(
             date_column=ClimateSchema.YEAR,
             source_column=ClimateSchema.VALUE,
             target_column=ClimateSchema.VALUE,
-        )
+        ).assign(currency=target_currency.name, prices="constant")
 
     return exchange(
         df=data,
@@ -42,7 +42,7 @@ def oecd_deflator(
         date_column=ClimateSchema.YEAR,
         value_column=ClimateSchema.VALUE,
         target_column=ClimateSchema.VALUE,
-    )
+    ).assign(currency=target_currency.name, prices="current")
 
 
 def imf_deflator(
@@ -67,7 +67,7 @@ def imf_deflator(
             date_column=ClimateSchema.YEAR,
             source_column=ClimateSchema.VALUE,
             target_column=ClimateSchema.VALUE,
-        )
+        ).assign(currency=target_currency.name, prices="constant")
 
     return exchange(
         df=data,
@@ -79,7 +79,7 @@ def imf_deflator(
         date_column=ClimateSchema.YEAR,
         value_column=ClimateSchema.VALUE,
         target_column=ClimateSchema.VALUE,
-    )
+    ).assign(currency=target_currency.name, prices="current")
 
 
 def world_bank_deflator(
@@ -104,7 +104,7 @@ def world_bank_deflator(
             date_column=ClimateSchema.YEAR,
             source_column=ClimateSchema.VALUE,
             target_column=ClimateSchema.VALUE,
-        )
+        ).assign(currency=target_currency.name, prices="constant")
 
     return exchange(
         df=data,
@@ -116,4 +116,4 @@ def world_bank_deflator(
         date_column=ClimateSchema.YEAR,
         value_column=ClimateSchema.VALUE,
         target_column=ClimateSchema.VALUE,
-    )
+    ).assign(currency=target_currency.name, prices="current")

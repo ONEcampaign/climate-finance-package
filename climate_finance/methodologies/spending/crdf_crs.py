@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pandas as pd
-from bblocks import clean_numeric_series
 
 from climate_finance.common.schema import ClimateSchema, CLIMATE_VALUES
 from climate_finance.config import logger
@@ -17,7 +16,6 @@ from climate_finance.methodologies.spending.crdf import (
 from climate_finance.methodologies.spending.crs import transform_markers_into_indicators
 from climate_finance.oecd.cleaning_tools.settings import all_flow_columns
 from climate_finance.oecd.crs.add_crs_data import add_crs_data_pipeline
-from climate_finance.unfccc.cleaning_tools.channels import clean_string
 
 
 def _compute_total_to_match(projects_df: pd.DataFrame) -> float:

@@ -2,18 +2,19 @@ from pathlib import Path
 
 import pandas as pd
 from bblocks import clean_numeric_series
+from oda_data import set_data_path
+from oda_data.clean_data.channels import add_channel_codes
 from oda_data.get_data.common import fetch_file_from_url_selenium
 
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import logger, ClimateDataPath
+from climate_finance.methodologies.multilateral.tools import log_notes
 from climate_finance.oecd.cleaning_tools.tools import (
     convert_flows_millions_to_units,
     assign_usd_commitments_as_flow_type,
 )
-from climate_finance.methodologies.multilateral.tools import log_notes
-from climate_finance.unfccc.cleaning_tools.channels import (
-    generate_channel_mapping_dictionary,
-)
+
+set_data_path(ClimateDataPath.raw_data)
 
 FILE_URL: str = (
     "https://webfs.oecd.org/climate/Imputed_multilateral_shares_climate.xlsx"
@@ -213,7 +214,7 @@ def download_file() -> None:
     data = _merge_dataframes(dfs)
 
     # add channel codes
-    data = _add_channel_codes(data)
+    data = add_channel_codes(data)
 
     # reorder columns
     data = _reorder_imputations_columns(data)

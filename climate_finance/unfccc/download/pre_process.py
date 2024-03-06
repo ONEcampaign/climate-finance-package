@@ -1,15 +1,12 @@
 import pandas as pd
 from bblocks import clean_numeric_series
-
-from climate_finance.common.schema import ClimateSchema
-from climate_finance.oecd.cleaning_tools.tools import (
-    set_crs_data_types,
-)
-from climate_finance.oecd.cleaning_tools.names import add_provider_agency_names
-from climate_finance.unfccc.cleaning_tools.channels import (
+from oda_data.clean_data.channels import (
     add_channel_names,
     generate_channel_mapping_dictionary,
 )
+
+from climate_finance.common.schema import ClimateSchema
+from climate_finance.oecd.cleaning_tools.names import add_provider_agency_names
 from climate_finance.unfccc.cleaning_tools.tools import (
     clean_currency,
     clean_status,
@@ -86,12 +83,14 @@ def map_channel_names_to_oecd_codes(
     # create two sets of data to try to match
     df = df.assign(
         party_agency=lambda d: d.apply(
-            lambda r: r[ClimateSchema.PROVIDER_NAME]
-            if str(r[ClimateSchema.PROVIDER_NAME]).lower().strip()
-            == str(r[ClimateSchema.AGENCY_NAME]).lower().strip()
-            else str(r[ClimateSchema.PROVIDER_NAME])
-            + " "
-            + str(r[ClimateSchema.AGENCY_NAME]),
+            lambda r: (
+                r[ClimateSchema.PROVIDER_NAME]
+                if str(r[ClimateSchema.PROVIDER_NAME]).lower().strip()
+                == str(r[ClimateSchema.AGENCY_NAME]).lower().strip()
+                else str(r[ClimateSchema.PROVIDER_NAME])
+                + " "
+                + str(r[ClimateSchema.AGENCY_NAME])
+            ),
             axis=1,
         )
     )

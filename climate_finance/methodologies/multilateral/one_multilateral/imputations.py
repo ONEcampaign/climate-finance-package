@@ -2,7 +2,6 @@ import pandas as pd
 
 from climate_finance.common.schema import (
     ClimateSchema,
-    VALUE_COLUMNS,
 )
 from climate_finance.methodologies.multilateral.one_multilateral.shares import (
     multilateral_shares_pipeline,

@@ -8,7 +8,7 @@ from climate_finance.common.schema import (
 from climate_finance.methodologies.spending.crs import (
     transform_markers_into_indicators,
 )
-from climate_finance.unfccc.cleaning_tools.channels import clean_string
+from oda_data.clean_data.channels import clean_string
 
 VALUES = CRDF_VALUES + [ClimateSchema.CLIMATE_FINANCE_VALUE]
 

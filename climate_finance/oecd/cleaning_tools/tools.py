@@ -218,18 +218,20 @@ def marker_columns_to_numeric(df: pd.DataFrame) -> pd.DataFrame:
     """
     # markers to numeric
     markers_numeric = {
-        "Principal": 2,
-        "Significant": 1,
-        "Not targeted/Not screened": 0,
-        "Imputed multilateral contributions": 99,
-        "Climate components": 100,
+        "Principal": '2',
+        "Significant": '1',
+        "Not targeted/Not screened": '0',
+        "Imputed multilateral contributions": '99',
+        "Climate components": '100',
     }
 
     # Identify the marker columns
     marker_columns = [ClimateSchema.ADAPTATION, ClimateSchema.MITIGATION]
 
     # Convert the marker columns to numeric
-    df[marker_columns] = df[marker_columns].replace(markers_numeric).astype("Int16")
+    df[marker_columns] = (
+        df[marker_columns].replace(markers_numeric).astype("int16[pyarrow]")
+    )
 
     return df
 
@@ -324,52 +326,29 @@ def set_crdf_data_types(df: pd.DataFrame) -> pd.DataFrame:
     """
     # Convert int column to "Int32" or similar
     int_data_types = {
-        "year": "Int32",
-        "provider_code": "Int32",
-        "agency_code": "Int32",
-        "recipient_code": "Int32",
-        "channel_of_delivery_code": "Int32",
-        "purpose_code": "Int32",
-        "type_of_finance": "Int32",
-        "coal_related_financing": "Int16",
+        "year": "int16[pyarrow]",
+        "provider_code": "int16[pyarrow]",
+        "agency_code": "int16[pyarrow]",
+        "recipient_code": "int32[pyarrow]",
+        "channel_of_delivery_code": "int32[pyarrow]",
+        "purpose_code": "int32[pyarrow]",
+        "type_of_finance": "int32[pyarrow]",
+        "coal_related_financing": "int32[pyarrow]",
     }
 
     # Convert float columns to "float64" or similar
     float_data_types = {
-        "adaptation_related_development_finance_commitment_current": "float64",
-        "mitigation_related_development_finance_commitment_current": "float64",
-        "overlap_commitment_current": "float64",
-        "climate_related_development_finance_commitment_current": "float64",
-        "share_of_the_underlying_commitment_when_available": "float64",
-    }
-
-    # Convert categorical columns to "category"
-    categorical_data_types = {
-        "provider": "category",
-        "provider_type": "category",
-        "provider_detailed": "category",
-        "provider_code": "category",
-        "extending_agency": "category",
-        "recipient": "category",
-        "recipient_region": "category",
-        "recipient_income_group_oecd_classification": "category",
-        "concessionality": "category",
-        "climate_objective_applies_to_rio_marked_data_only_or_climate_component": "category",
-        "adaptation_objective_applies_to_rio_marked_data_only": "category",
-        "mitigation_objective_applies_to_rio_marked_data_only": "category",
-        "channel_of_delivery": "category",
-        "sector_detailed": "category",
-        "sub_sector": "category",
-        "development_cooperation_modality": "category",
-        "financial_instrument": "category",
-        "methodology": "category",
-        "gender": "category",
+        "adaptation_related_development_finance_commitment_current": "float[pyarrow]",
+        "mitigation_related_development_finance_commitment_current": "float[pyarrow]",
+        "overlap_commitment_current": "float[pyarrow]",
+        "climate_related_development_finance_commitment_current": "float[pyarrow]",
+        "share_of_the_underlying_commitment_when_available": "float[pyarrow]",
     }
 
     # Set data types by column
     for col in df.columns:
         df[col] = df[col].astype(
-            (int_data_types | float_data_types | categorical_data_types).get(col, "str")
+            (int_data_types | float_data_types).get(col, "string[pyarrow]")
         )
 
     return df.reset_index(drop=True)

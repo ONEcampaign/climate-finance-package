@@ -5,7 +5,7 @@ from oda_data import set_data_path
 
 from climate_finance.common.analysis_tools import filter_providers, filter_recipients
 from climate_finance.common.schema import ClimateSchema
-from climate_finance.config import ClimateDataPath
+from climate_finance.config import ClimateDataPath, logger
 from climate_finance.oecd.cleaning_tools.tools import (
     fix_crdf_provider_names_columns,
     fix_crdf_recipient_errors,
@@ -15,7 +15,7 @@ from climate_finance.oecd.crdf.tools import (
     download_file,
     load_or_download,
 )
-from climate_finance.unfccc.cleaning_tools.channels import clean_string
+from oda_data.clean_data.channels import clean_string
 
 FILE_PATH: Path = (
     ClimateDataPath.raw_data / "oecd_climate_recipient_perspective.feather"

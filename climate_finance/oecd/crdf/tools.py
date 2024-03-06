@@ -11,7 +11,6 @@ from climate_finance.config import logger
 from climate_finance.core.dtypes import set_default_types
 from climate_finance.methodologies.multilateral.tools import log_notes
 from climate_finance.oecd.cleaning_tools.tools import (
-    key_crs_columns_to_str,
     rename_crdf_marker_columns,
     marker_columns_to_numeric,
     clean_raw_crdf,
