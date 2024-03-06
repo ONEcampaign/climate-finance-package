@@ -37,7 +37,6 @@ where the data will be stored. This can be done importing using the
 `set_climate_finance_data_path` function:
 
 ```python
-
 from climate_finance import set_climate_finance_data_path
 
 set_climate_finance_data_path('path/to/your/data')
@@ -51,7 +50,6 @@ The easiest way to interact with the data is through the `ClimateData` class.
 To use the `ClimateData` class, you will need to import it:
 
 ```python
-
 from climate_finance import ClimateData, set_climate_finance_data_path
 
 # As always, start by setting the data path
@@ -80,7 +78,6 @@ You can define a number of parameters when creating the instance:
   prices are set to 'constant'. Otherwise, it must remain `None` (its default value).
 
 ```python
-
 from climate_finance import ClimateData, set_climate_finance_data_path
 
 # As always, start by setting the data path
@@ -260,7 +257,6 @@ climate_data.load_spending_data(
 )
 
 # Get the data as a DataFrame
-
 df = climate_data.get_data()
 ```
 
@@ -301,7 +297,6 @@ climate_data = ClimateData(
 # Set a custom methodology. 
 # In this example, principal activities are counted at 30% of their value, significant
 # at 80%, and the highest marker rule is applied.
-
 climate_data.set_custom_spending_methodology(
   coefficients=(0.3, 0.8),
   highest_marker=True
