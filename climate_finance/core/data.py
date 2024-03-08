@@ -1,6 +1,8 @@
 import pandas as pd
+from oda_data import set_data_path, ODAData
+from oda_data.clean_data.channels import add_multi_channel_codes
 
-from climate_finance.config import logger
+from climate_finance.config import logger, ClimateDataPath
 from climate_finance.core import loaders
 from climate_finance.core.deflators import oecd_deflator
 from climate_finance.core.enums import (
@@ -10,6 +12,19 @@ from climate_finance.core.enums import (
     ValidFlows,
     ValidSources,
     Coefficients,
+    MultilateralMethodologies,
+)
+from climate_finance.core.tools import (
+    standard_shareby,
+    groupby_none,
+    data_to_share,
+    filter_flows,
+    clean_multi_contributions,
+    align_oda_data_names,
+    validate_multi_shares_groupers,
+    validate_multi_groupby,
+    merge_spending_and_contributions,
+    calculate_imputations,
 )
 from climate_finance.core.validation import (
     validate_prices_and_base_year,
@@ -27,6 +42,8 @@ from climate_finance.methodologies.spending.crs import (
     transform_markers_into_indicators,
 )
 
+# set oda_data path
+set_data_path(ClimateDataPath.raw_data)
 
 DEFLATOR: callable = oecd_deflator
 
@@ -93,6 +110,9 @@ class ClimateData:
         # By default, the data is not updated
         self._update_data: bool = False
 
+        # By default, respect prices and currency request
+        self._ignore_prices_and_currency: bool = False
+
     @property
     def _years_str(self):
         years_min = min(self.years)
@@ -131,6 +151,11 @@ class ClimateData:
             message += "No data has been loaded yet. "
 
         return message
+
+    def _validate_loaded_data(self, message: str) -> None:
+        """Validate the loaded data and raise an error if it is not valid."""
+        if len(self.data) < 1:
+            raise AttributeError(message)
 
     def _update_spending_args(self, **kwargs):
         """Update the spending_args dictionary with the provided kwargs
@@ -178,6 +203,10 @@ class ClimateData:
         """
         if "OECD_CRDF_CRS" in self.spending_args["source"]:
             self.spending_args["source"].remove("OECD_CRDF_CRS")
+            self.spending_args["source"].extend(["OECD_CRS_RAW", "OECD_CRDF"])
+
+        if "OECD_CRDF_CRS_ALLOCABLE" in self.spending_args["source"]:
+            self.spending_args["source"].remove("OECD_CRDF_CRS_ALLOCABLE")
             self.spending_args["source"].extend(["OECD_CRS_RAW_ALLOCABLE", "OECD_CRDF"])
 
         for source in self.spending_args["source"]:
@@ -229,8 +258,17 @@ class ClimateData:
         if source == "OECD_CRDF_CRS":
             logger.info(f"Creating {source} data...")
             self.data["OECD_CRDF_CRS"] = transform_crs_crdf_into_indicators(
+                crdf=self._data["OECD_CRDF"], crs=self._data["OECD_CRS_RAW"]
+            ).pipe(filter_flows, flows=self.spending_args["flows"])
+            # Return to end this step
+            return
+
+        # Check if the source is OECD_CRDF_CRS_ALLOCABLE as that requires a separate methodology.
+        if source == "OECD_CRDF_CRS_ALLOCABLE":
+            logger.info(f"Creating {source} data...")
+            self.data["OECD_CRDF_CRS_ALLOCABLE"] = transform_crs_crdf_into_indicators(
                 crdf=self._data["OECD_CRDF"], crs=self._data["OECD_CRS_RAW_ALLOCABLE"]
-            )
+            ).pipe(filter_flows, flows=self.spending_args["flows"])
             # Return to end this step
             return
 
@@ -251,7 +289,7 @@ class ClimateData:
                     percentage_significant=self.spending_args["coefficients"][0],
                     percentage_principal=self.spending_args["coefficients"][1],
                     highest_marker=self.spending_args["highest_marker"],
-                )
+                ).pipe(filter_flows, flows=self.spending_args["flows"])
 
     def set_only_oda(self) -> "ClimateData":
         """
@@ -344,6 +382,234 @@ class ClimateData:
 
         return self
 
+    def _get_multilateral_contributions_data(
+        self,
+        flows: ValidFlows | str | list[ValidFlows | str] = "gross_disbursements",
+    ) -> pd.DataFrame:
+        """
+        Get the multilateral imputations data based on the flows specified.
+        Args:
+            flows: one, or a list of supported flows: gross_disbursements, commitments.
+
+        Returns:
+            pd.DataFrame: The loaded data.
+
+        """
+
+        if isinstance(flows, str):
+            flows = [flows]
+
+        indicators = []
+
+        for flow in flows:
+            # Verify flow type
+            if flow == "gross_disbursements":
+                indicators.append("_disbursements_gross")
+            elif flow == "commitments":
+                indicators.append("_commitments_gross")
+            else:
+                raise ValueError(
+                    "Only gross disbursements and commitments are accepted"
+                )
+
+        # Clean indicator
+        indicators = [
+            f"multisystem_multilateral_contributions{indicator}"
+            for indicator in indicators
+        ]
+
+        # create an instance of ODAData with the relevant settings
+        contributions = ODAData(
+            donors=self.providers,
+            recipients=self.recipients,
+            years=self.years,
+            currency=self.currency,
+            prices=self.prices,
+            base_year=self.base_year,
+        )
+
+        # Load the indicators and get the data
+        contributions_data = contributions.load_indicator(
+            indicators=indicators
+        ).get_data()
+
+        # clean data
+        contributions_data = contributions_data.pipe(clean_multi_contributions)
+
+        return contributions_data
+
+    def _get_multilateral_spending_shares(
+        self, methodology, flows, source, rolling_years_spending, groupby, shareby
+    ):
+        """Private pipeline method to load spending data and convert it to shares.
+           Args:
+            methodology (str): The methodology to use for loading spending data.
+            flows (str or list[str]): The flows to consider when loading spending data.
+            source (str or list[str]): The source(s) to load spending data from.
+            rolling_years_spending (int): The number of years to use for the rolling total share.
+            groupby (str or list[str] or None): The columns to group by when converting to shares.
+            shareby (str or list[str] or None): The columns to calculate the shares by
+            when converting to shares.
+
+        Returns:
+            pd.DataFrame: The loaded data converted to shares.
+
+        """
+        from oda_data import donor_groupings
+
+        # Temporarily store requested providers
+        providers = self.providers
+        self.providers = donor_groupings()["multilateral"].keys()
+
+        # Load the spending data
+        self.load_spending_data(methodology=methodology, flows=flows, source=source)
+
+        # For each source, add channel names
+        for source in self.data:
+            self.data[source] = (
+                self.data[source]
+                .pipe(align_oda_data_names)
+                .pipe(add_multi_channel_codes)
+                .pipe(align_oda_data_names, to_climate_names=True)
+            )
+
+        # remove providers and agencies from groupers, in favor for name and code
+        groupby = validate_multi_shares_groupers(groupby)
+        shareby = validate_multi_shares_groupers(shareby)
+
+        # convert them to spending shares
+        self.convert_to_shares(
+            rolling_years=rolling_years_spending, groupby=groupby, shareby=shareby
+        )
+
+        # Revert providers
+        self.providers = providers
+
+        return self.get_data()
+
+    def load_multilateral_imputations_data(
+        self,
+        methodology: MultilateralMethodologies | str = "OECD",
+        rolling_years_spending: int = 1,
+        flows: ValidFlows | str | list[ValidFlows | str] = "gross_disbursements",
+        source: ValidSources | str | list[ValidSources | str] = "OECD_CRDF_CRS",
+        groupby: list[str] | str | None = None,
+        shareby: list[str] | str | None = None,
+    ) -> "ClimateData":
+        """
+        Loads multilateral imputations data based on the methodology specified, from the specified
+        source. Gross disbursements are loaded by default, but one or more different
+        ones can be loaded.
+
+        Args:
+            methodology: one of the methodologies supported: ONE, OECD, or “custom”. In
+            the future, support for UNFCCC will be added. Call `.available_methodologies()`
+            for a full list of available methodologies.
+            rolling_years_spending: Optional. An integer specifying the number of years to use
+            for the rolling total share. Defaults to 1.
+            flows: one, or a list of supported flows: gross_disbursements, commitments,
+            grant_equivalent, net_disbursements. Call `.available_flows()` for a full list
+            of available flows.
+            source: the dataset used for climate data (e.g. OECD_CRS_ALLOCABLE, OECD_CRDF,
+            OECD_CRDF_DONOR, OECD_CRDF_CRS, UNFCCC, etc). Call `.available_sources()` for
+            a full list of available sources.
+            groupby: Optional. A list of strings or a string specifying the columns to
+            group by. Defaults to None which means the data is kept at the highest level
+            of detail.
+            shareby: Optional. A list of strings or a string specifying the columns to
+            calculate the shares by. Defaults to `None` which means the shares are
+            calculated for a year/provider/agency/flow_type level.
+
+        """
+
+        # Load the indicators and get the data
+        contributions = self._get_multilateral_contributions_data(flows=flows)
+
+        # Validate groupby
+        groupby = validate_multi_groupby(groupby)
+
+        # Get spending shares
+        spending_shares = self._get_multilateral_spending_shares(
+            methodology=methodology,
+            flows=flows,
+            source=source,
+            rolling_years_spending=rolling_years_spending,
+            groupby=groupby,
+            shareby=shareby,
+        )
+
+        # Merge the contributions and spending shares data
+        data = merge_spending_and_contributions(
+            spending_data=spending_shares, contributions_data=contributions
+        )
+
+        # Calculate imputations as the 'value' column
+        data = calculate_imputations(data)
+
+        self.data = {"Multilateral Imputations": data}
+
+    def convert_to_shares(
+        self,
+        rolling_years: int = 1,
+        groupby: list[str] | str | None = None,
+        shareby: list[str] | str | None = None,
+    ) -> "ClimateData":
+        """
+        Convert the loaded data to shares of total spending.
+
+        Args:
+            rolling_years: Optional. An integer specifying the number of years to use
+            for the rolling total share. Defaults to 1.
+            groupby: Optional. A list of strings or a string specifying the columns to
+            group by. Defaults to None which means the data is kept at the highest level
+            of detail.
+            shareby: Optional. A list of strings or a string specifying the columns to
+            calculate the shares by. Defaults to `None` which means the shares are
+            calculated for a year/provider/agency/flow_type level.
+
+        """
+
+        # If no data has been loaded, raise an error
+        self._validate_loaded_data(
+            "No data has been loaded. In order to convert to shares,"
+            " spending data must be loaded first."
+        )
+
+        # Indicate what is happening
+        logger.info(
+            f"Converting to shares using a rolling window of {rolling_years} years."
+        )
+
+        # If groupby columns is a string, convert to a list
+        if isinstance(groupby, str):
+            groupby = [groupby]
+
+        # If shareby columns is a string, convert to a list
+        if isinstance(shareby, str):
+            shareby = [shareby]
+
+        # for each source, convert the data to shares
+        for source in self.data:
+            # Get the right grouper for the data
+            if groupby is None:
+                groupby = groupby_none(data=self.data[source])
+
+            if shareby is None:
+                shareby = standard_shareby(data=self.data[source])
+
+            # Convert the data to shares
+            self.data[source] = data_to_share(
+                data=self.data[source],
+                groupby=groupby,
+                shareby=shareby,
+                rolling_years=rolling_years,
+            )
+
+        # Force ignoring prices and currency
+        self._ignore_prices_and_currency = True
+
+        return self
+
     def get_data(self) -> pd.DataFrame:
         """Return the loaded data. If more than one data source has been loaded,
         the data is concatenated into a single dataframe.
@@ -354,14 +620,16 @@ class ClimateData:
         """
 
         # If no data has been loaded, raise an error
-        if len(self.data) < 1:
-            raise AttributeError("No data has been loaded.")
+        self._validate_loaded_data("No data has been loaded.")
 
         # Add the source to the data and put all dataframes into a list
         loaded_dataframes = [d.assign(source=source) for source, d in self.data.items()]
 
         # Concatenate the dataframes
         loaded_data = pd.concat(loaded_dataframes, ignore_index=True)
+
+        if self._ignore_prices_and_currency:
+            return loaded_data
 
         # Convert to the right currency and prices, if needed
         if self.prices != "current" and self.currency != "USD":
@@ -378,3 +646,44 @@ class ClimateData:
             )
 
         return loaded_data
+
+
+if __name__ == "__main__":
+    climate = ClimateData(
+        years=range(2014, 2022),
+        providers=[4, 12],
+        currency="EUR",
+        prices="constant",
+        base_year=2021,
+    )
+
+    climate.load_spending_data(
+        methodology="OECD",
+        flows=["gross_disbursements"],
+        source="OECD_CRS",
+    )
+
+    climate.convert_to_shares(
+        rolling_years=1,
+        groupby=["year", "provider", "recipient", "indicator", "flow_type"],
+        shareby=["year", "provider", "flow_type"],
+    )
+
+    # climate.load_multilateral_imputations_data(
+    #     methodology="OECD",
+    #     rolling_years_spending=2,
+    #     flows=["commitments"],
+    #     source="OECD_CRS_ALLOCABLE",
+    #     groupby=[
+    #         "year",
+    #         "oecd_provider_code",
+    #         "provider",
+    #         # "oecd_recipient_code",
+    #         # "recipient",
+    #         "indicator",
+    #         "flow_type",
+    #     ],
+    #     shareby=["year", "oecd_provider_code", "provider", "flow_type"],
+    # )
+
+    climate_df = climate.get_data()

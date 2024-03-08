@@ -89,7 +89,9 @@ def check_codes_type(
     return codes
 
 
-def filter_providers(data: pd.DataFrame, provider_codes: list[int]) -> pd.DataFrame:
+def filter_providers(
+    data: pd.DataFrame, provider_codes: list[int] | int
+) -> pd.DataFrame:
     """
     Check that the requested providers are in the data and filter the data to only
     include the requested providers. If party is None, return the original dataframe.

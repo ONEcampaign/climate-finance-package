@@ -73,6 +73,12 @@ class SpendingMethodologies(ValidatedEnum):
     CUSTOM = "custom"
 
 
+class MultilateralMethodologies(ValidatedEnum):
+    ONE = "ONE"
+    OECD = "OECD"
+    CUSTOM = "custom"
+
+
 class ValidFlows(ValidatedEnum):
     GROSS_DISBURSEMENTS = "gross_disbursements"
     COMMITMENTS = "commitments"
@@ -86,6 +92,7 @@ class ValidSources(ValidatedEnum):
     OECD_CRDF_RP = "OECD_CRDF"
     OECD_CRDF_DP = "OECD_CRDF_DONOR"
     OECD_CRDF_CRS = "OECD_CRDF_CRS"
+    OECD_CRDF_CRS_ALLOCABLE = "OECD_CRS_CRDF_ALLOCABLE"
     UNFCCC = "UNFCCC"
 
 

@@ -30,7 +30,7 @@ pip install git+https://github.com/ONEcampaign/climate-finance-package.git
 
 ```
 
-## Usage
+## Basic Usage
 
 The first step when using the Climate Finance package should be to set a working directory
 where the data will be stored. This can be done importing using the
@@ -314,6 +314,36 @@ climate_data.load_spending_data(
 df = climate_data.get_data()
 
 ```
+
+## Multilateral imputations
+
+A significant portion of climate finance is provided through the multilateral system.
+The sums provided by multilateral institutions can be accessed through the approach
+outlined above, using data released by the OECD through the CRDF.
+
+Bilateral providers support the core operating budgets of multilateral institutions.
+A portion of that funding is spent on climate finance. So fully accounting for climate
+finance from bilateral providers requires imputing the climate finance that is provided
+through the multilateral system.
+
+Through the "Provider Perspective" of the CRDF, providers report imputed climate finance
+that is provided through the multilateral system. The quality and coverage of this data
+is imperfect, as we note in our methodology note.
+
+The OECD also releases data on the "shares" of multilateral spending that is considered
+climate finance. These shares can be used, together with data on multilateral contributions
+from bilateral providers, to impute the climate finance that is provided through the
+multilateral system. This data is reported at a very aggregate level, it is based on 
+commitments, and is presented as 2-year averages.
+
+The `ClimateData` class provides tools to calculate spending shares following
+whichever methodology the user prefers. It also provides tools to calculate imputations
+based on these shares.
+
+The easiest way to get imputed amounts for bilateral providers is through the
+`load_multilateral_imputations_data` method
+
+### Using the `load_multilateral_imputations_data` method
 
 
 

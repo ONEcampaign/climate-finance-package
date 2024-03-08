@@ -1,11 +1,13 @@
 import pandas as pd
 from bblocks import clean_numeric_series
+from oda_data import set_data_path
 from oda_data.clean_data.channels import (
     add_channel_names,
     generate_channel_mapping_dictionary,
 )
 
 from climate_finance.common.schema import ClimateSchema
+from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.names import add_provider_agency_names
 from climate_finance.unfccc.cleaning_tools.tools import (
     clean_currency,
@@ -15,6 +17,8 @@ from climate_finance.unfccc.cleaning_tools.tools import (
     rename_columns,
     clean_funding_source,
 )
+
+set_data_path(ClimateDataPath.raw_data)
 
 
 def clean_unfccc(df: pd.DataFrame) -> pd.DataFrame:

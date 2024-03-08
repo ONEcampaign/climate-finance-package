@@ -10,7 +10,7 @@ class ClimateSchema:
     PROVIDER_TYPE: str = "provider_type"
     PROVIDER_DETAILED: str = "provider_detailed"
     AGENCY_CODE: str = "oecd_agency_code"
-    AGENCY_NAME: str = "agency"
+    AGENCY_NAME: str = "agency_name"
     CRS_ID: str = "crs_id"
     PROJECT_ID: str = "project_id"
     RECIPIENT_CODE: str = "oecd_recipient_code"
@@ -67,6 +67,8 @@ class ClimateSchema:
     CONVERGED_REPORTING: str = "converged_reporting"
     COAL_FINANCING: str = "coal_related_financing"
     LEVEL: str = "level"
+    PRICES: str = "prices"
+    CURRENCY: str = "currency"
 
 
 CRS_MAPPING: dict[str, str] = {

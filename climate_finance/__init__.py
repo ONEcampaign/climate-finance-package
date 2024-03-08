@@ -1,7 +1,7 @@
 __version__ = "0.1.29"
 
 # Easy access to importers
-from climate_finance.oecd import get_oecd_data
+
 from climate_finance.unfccc import get_unfccc_data
 from climate_finance.core.data import ClimateData
 
@@ -18,7 +18,6 @@ def set_climate_finance_data_path(path):
 
 __all__ = [
     "set_climate_finance_data_path",
-    "get_oecd_data",
     "get_unfccc_data",
     "ClimateData",
 ]

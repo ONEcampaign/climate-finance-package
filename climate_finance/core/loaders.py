@@ -11,6 +11,7 @@ from climate_finance.oecd.crs.get_data import (
     get_crs,
     get_crs_allocable_spending,
     get_raw_allocable_crs,
+    get_raw_crs,
 )
 
 
@@ -67,6 +68,12 @@ class CrsRawAllocableLoader(SourceLoader):
         return get_raw_allocable_crs
 
 
+class CrsRawLoader(SourceLoader):
+    @property
+    def get_data_retrieval_function(self):
+        return get_raw_crs
+
+
 class CrdfRecipientLoader(SourceLoader):
     @property
     def get_data_retrieval_function(self):
@@ -89,6 +96,7 @@ AVAILABLE_LOADERS = {
     "OECD_CRS": CrsLoader,
     "OECD_CRS_ALLOCABLE": CrsAllocableLoader,
     "OECD_CRS_RAW_ALLOCABLE": CrsRawAllocableLoader,
+    "OECD_CRS_RAW": CrsRawLoader,
     "OECD_CRDF": CrdfRecipientLoader,
     "OECD_CRDF_DONOR": CrdfProviderLoader,
     "UNFCCC": UnfcccLoader,

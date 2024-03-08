@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from oda_data import donor_groupings, set_data_path
+from oda_data import set_data_path
 from pandas._typing import MergeHow, Suffixes
 
 from climate_finance.common.schema import (
@@ -218,11 +218,11 @@ def marker_columns_to_numeric(df: pd.DataFrame) -> pd.DataFrame:
     """
     # markers to numeric
     markers_numeric = {
-        "Principal": '2',
-        "Significant": '1',
-        "Not targeted/Not screened": '0',
-        "Imputed multilateral contributions": '99',
-        "Climate components": '100',
+        "Principal": "2",
+        "Significant": "1",
+        "Not targeted/Not screened": "0",
+        "Imputed multilateral contributions": "99",
+        "Climate components": "100",
     }
 
     # Identify the marker columns
