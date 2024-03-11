@@ -43,12 +43,12 @@ def read_clean_crs(years: list[int] | range) -> pd.DataFrame:
 
 
 def get_crs(
-        start_year: int,
-        end_year: int,
-        groupby: list = None,
-        provider_code: list[str] | str | None = None,
-        recipient_code: list[str] | str | None = None,
-        force_update: bool = False,
+    start_year: int,
+    end_year: int,
+    groupby: list = None,
+    provider_code: list[str] | str | None = None,
+    recipient_code: list[str] | str | None = None,
+    force_update: bool = False,
 ) -> pd.DataFrame:
     """
     Fetches bilateral spending data for a given flow type and time period.
@@ -127,11 +127,11 @@ def get_crs(
 
 
 def get_crs_allocable_spending(
-        start_year: int = 2019,
-        end_year: int = 2020,
-        provider_code: list[str] | str | None = None,
-        recipient_code: list[str] | str | None = None,
-        force_update: bool = False,
+    start_year: int = 2019,
+    end_year: int = 2020,
+    provider_code: list[str] | str | None = None,
+    recipient_code: list[str] | str | None = None,
+    force_update: bool = False,
 ) -> pd.DataFrame:
     """
     Fetches bilateral spending data for a given flow type and time period.
@@ -162,11 +162,11 @@ def get_crs_allocable_spending(
 
 
 def get_raw_allocable_crs(
-        start_year: int = 2019,
-        end_year: int = 2020,
-        provider_code: list[str] | str | None = None,
-        recipient_code: list[str] | str | None = None,
-        force_update: bool = False,
+    start_year: int = 2019,
+    end_year: int = 2020,
+    provider_code: list[str] | str | None = None,
+    recipient_code: list[str] | str | None = None,
+    force_update: bool = False,
 ) -> pd.DataFrame:
     """
     Get the CRS data in order to match it to the multilateral data.

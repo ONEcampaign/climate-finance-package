@@ -1,4 +1,5 @@
 """This script downloads data from the UNFCCC data interface."""
+
 import fnmatch
 import os
 import pathlib
