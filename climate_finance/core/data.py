@@ -2,6 +2,7 @@ import pandas as pd
 from oda_data import set_data_path, ODAData
 from oda_data.clean_data.channels import add_multi_channel_codes
 
+from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import logger, ClimateDataPath
 from climate_finance.core import loaders
 from climate_finance.core.deflators import oecd_deflator
@@ -25,6 +26,8 @@ from climate_finance.core.tools import (
     validate_multi_groupby,
     merge_spending_and_contributions,
     calculate_imputations,
+    remove_channel_name_from_spending_data,
+    groupby_sum,
 )
 from climate_finance.core.validation import (
     validate_prices_and_base_year,
@@ -40,6 +43,10 @@ from climate_finance.methodologies.spending.crdf_crs import (
 )
 from climate_finance.methodologies.spending.crs import (
     transform_markers_into_indicators,
+)
+from climate_finance.oecd.cleaning_tools.tools import (
+    multi_flows_to_indicators,
+    get_contributions_data,
 )
 
 # set oda_data path
@@ -395,43 +402,19 @@ class ClimateData:
             pd.DataFrame: The loaded data.
 
         """
+        # Validate flows as oda-data indicators
+        indicators = multi_flows_to_indicators(flows=flows)
 
-        if isinstance(flows, str):
-            flows = [flows]
-
-        indicators = []
-
-        for flow in flows:
-            # Verify flow type
-            if flow == "gross_disbursements":
-                indicators.append("_disbursements_gross")
-            elif flow == "commitments":
-                indicators.append("_commitments_gross")
-            else:
-                raise ValueError(
-                    "Only gross disbursements and commitments are accepted"
-                )
-
-        # Clean indicator
-        indicators = [
-            f"multisystem_multilateral_contributions{indicator}"
-            for indicator in indicators
-        ]
-
-        # create an instance of ODAData with the relevant settings
-        contributions = ODAData(
-            donors=self.providers,
+        # get contributions data and clean it
+        contributions_data = get_contributions_data(
+            providers=self.providers,
             recipients=self.recipients,
             years=self.years,
             currency=self.currency,
             prices=self.prices,
             base_year=self.base_year,
+            indicators=indicators,
         )
-
-        # Load the indicators and get the data
-        contributions_data = contributions.load_indicator(
-            indicators=indicators
-        ).get_data()
 
         # clean data
         contributions_data = contributions_data.pipe(clean_multi_contributions)
@@ -461,6 +444,15 @@ class ClimateData:
         providers = self.providers
         self.providers = donor_groupings()["multilateral"].keys()
 
+        # Temporarily shift the years to account for rolling
+        years = self.years
+        self.years = [
+            y
+            for y in range(
+                min(self.years) - rolling_years_spending + 1, max(self.years) + 1
+            )
+        ]
+
         # Load the spending data
         self.load_spending_data(methodology=methodology, flows=flows, source=source)
 
@@ -471,6 +463,7 @@ class ClimateData:
                 .pipe(align_oda_data_names)
                 .pipe(add_multi_channel_codes)
                 .pipe(align_oda_data_names, to_climate_names=True)
+                .pipe(remove_channel_name_from_spending_data)
             )
 
         # remove providers and agencies from groupers, in favor for name and code
@@ -484,6 +477,9 @@ class ClimateData:
 
         # Revert providers
         self.providers = providers
+
+        # Revert years
+        self.years = years
 
         return self.get_data()
 
@@ -545,6 +541,9 @@ class ClimateData:
 
         # Calculate imputations as the 'value' column
         data = calculate_imputations(data)
+
+        # Group to the desired level
+        data = groupby_sum(data=data, groupby=groupby)
 
         self.data = {"Multilateral Imputations": data}
 
@@ -646,44 +645,3 @@ class ClimateData:
             )
 
         return loaded_data
-
-
-if __name__ == "__main__":
-    climate = ClimateData(
-        years=range(2014, 2022),
-        providers=[4, 12],
-        currency="EUR",
-        prices="constant",
-        base_year=2021,
-    )
-
-    climate.load_spending_data(
-        methodology="OECD",
-        flows=["gross_disbursements"],
-        source="OECD_CRS",
-    )
-
-    climate.convert_to_shares(
-        rolling_years=1,
-        groupby=["year", "provider", "recipient", "indicator", "flow_type"],
-        shareby=["year", "provider", "flow_type"],
-    )
-
-    # climate.load_multilateral_imputations_data(
-    #     methodology="OECD",
-    #     rolling_years_spending=2,
-    #     flows=["commitments"],
-    #     source="OECD_CRS_ALLOCABLE",
-    #     groupby=[
-    #         "year",
-    #         "oecd_provider_code",
-    #         "provider",
-    #         # "oecd_recipient_code",
-    #         # "recipient",
-    #         "indicator",
-    #         "flow_type",
-    #     ],
-    #     shareby=["year", "oecd_provider_code", "provider", "flow_type"],
-    # )
-
-    climate_df = climate.get_data()

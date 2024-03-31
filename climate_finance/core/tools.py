@@ -82,6 +82,8 @@ def groupby_sum(data: pd.DataFrame, groupby: list[str]) -> pd.DataFrame:
         pd.DataFrame: The summed data.
     """
 
+    groupby = [c for c in groupby if c in data.columns]
+
     return data.groupby(groupby, observed=True, dropna=False, as_index=False)[
         ClimateSchema.VALUE
     ].sum()
@@ -112,9 +114,16 @@ def rolling_value_sum(
             group_keys=False,
             as_index=False,
         )[ClimateSchema.VALUE]
-        .rolling(rolling_years, min_periods=rolling_years)
+        .rolling(
+            rolling_years, min_periods=1
+        )  # min periods are 1 to avoid Nans in sparse data (when very granular)
         .sum()[ClimateSchema.VALUE]
     )
+
+    data = data.loc[
+        lambda d: d[ClimateSchema.YEAR]
+        >= d[ClimateSchema.YEAR].min() - 1 + rolling_years
+    ]
 
     return data
 
@@ -315,8 +324,35 @@ def validate_multi_shares_groupers(grouper: list[str]) -> list[str]:
             ClimateSchema.PROVIDER_CODE,
             ClimateSchema.AGENCY_NAME,
             ClimateSchema.AGENCY_CODE,
+            ClimateSchema.PRICES,
+            ClimateSchema.CURRENCY,
         ]
-    ] + [ClimateSchema.CHANNEL_NAME, ClimateSchema.CHANNEL_CODE]
+    ] + [ClimateSchema.CHANNEL_CODE]
+
+
+def remove_channel_name_from_spending_data(spending_data: pd.DataFrame) -> pd.DataFrame:
+    """Remove the channel name column and group the data by remaining columns
+    in order to have 1 line per matched provider
+
+    Args:
+        spending_data: The Pandas DataFrame with the spending data.
+
+    """
+
+    # Remove channel name from spending data
+    spending_data = spending_data.drop(columns=[ClimateSchema.CHANNEL_NAME])
+
+    spending_data = (
+        spending_data.groupby(
+            [c for c in spending_data.columns if c not in [ClimateSchema.VALUE]],
+            observed=True,
+            dropna=False,
+        )[ClimateSchema.VALUE]
+        .sum()
+        .reset_index()
+    )
+
+    return spending_data
 
 
 def merge_spending_and_contributions(
@@ -333,9 +369,6 @@ def merge_spending_and_contributions(
 
 
     """
-
-    # Remove channel name from spending data
-    spending_data = spending_data.drop(columns=[ClimateSchema.CHANNEL_NAME])
 
     # Define an index
     idx = [

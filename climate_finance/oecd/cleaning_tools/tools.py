@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from oda_data import set_data_path
+from oda_data import set_data_path, ODAData
 from pandas._typing import MergeHow, Suffixes
 
 from climate_finance.common.schema import (
@@ -468,3 +468,56 @@ def merge_with_missing(
         data[column] = _filled_to_missing_by_type(data[column])
 
     return data
+
+
+def multi_flows_to_indicators(flows: list[str] | str) -> list[str]:
+    """Transform a list of requested flows into a list of indicators."""
+
+    # If string make list
+    if isinstance(flows, str):
+        flows = [flows]
+
+    indicators = []
+
+    for flow in flows:
+        # Verify flow type
+        if flow == "gross_disbursements":
+            indicators.append("_disbursements_gross")
+        elif flow == "commitments":
+            indicators.append("_commitments_gross")
+        else:
+            raise ValueError("Only gross disbursements and commitments are accepted")
+
+    # Clean indicator
+    indicators = [
+        f"multisystem_multilateral_contributions{indicator}" for indicator in indicators
+    ]
+
+    return indicators
+
+
+def get_contributions_data(
+    providers: list[str] | str,
+    recipients: list[str] | str,
+    years: list[int] | int,
+    currency: str,
+    prices: str,
+    base_year: int | None,
+    indicators: list[str],
+) -> pd.DataFrame:
+    """Use ODA data to get contributions data"""
+
+    # create an instance of ODAData with the relevant settings
+    contributions = ODAData(
+        donors=providers,
+        recipients=recipients,
+        years=years,
+        currency=currency,
+        prices=prices,
+        base_year=base_year,
+    )
+
+    # Load the indicators and get the data
+    contributions_data = contributions.load_indicator(indicators=indicators).get_data()
+
+    return contributions_data
