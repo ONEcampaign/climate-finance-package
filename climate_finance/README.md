@@ -100,7 +100,7 @@ No data is downloaded or processed at this stage. These options just define the 
 of the object when a specific indicator is requested.
 
 #### Loading data
-For now the `ClimateData` supports loading 'spending' data from the OECD CRS and CRDF databases.
+For now the `ClimateData` class supports loading 'spending' data from the OECD CRS and CRDF databases.
 
 To load the data, you can use the `load_spending_data` method. A few parameters should
 be defined:
@@ -108,11 +108,12 @@ be defined:
 and 'custom' are also available. The 'custom' methodology allows you to define a specific
 methodology to discount 'principal' and 'significant' climate activities. You can call
 `.available_methodologies` for a full list of available methodologies.
-- _flows_': a single string or a list of strings defining the flows to get data for.
-The default is 'grant_equivalents' or 'net_disbursements'. You can call
-`.available_flows` for a full list of available flows.
+- _flows_': one, or a list of supported flows: gross_disbursements, commitments,
+  grant_equivalent, net_disbursements. Call `.available_flows()` for a full list
+  of available flows.
 - _source_: a string defining the source of the data. The default is 'OECD_CRS'. Other
-options include 'OECD_CRS_ALLOCABLE', 'OECD_CRDF', 'OECD_CRDF_DONOR', 'OECD_CRDF_CRS'.
+options include 'OECD_CRS_ALLOCABLE', 'OECD_CRDF', 'OECD_CRDF_DONOR', 'OECD_CRDF_CRS',
+'OECD_CRDF_CRS_ALLOCABLE', etc.
 You can call `.available_sources` for a full list of available sources.
 
 
@@ -194,7 +195,7 @@ flows = 'gross_disbursements'
 To get disbursements data using ONE's methodology for all providers, you would use:
 ```python
 methodology = 'ONE'
-source = 'OECD_CRDF_CRS'
+source = 'OECD_CRDF_CRS_ALLOCABLE'
 flows = 'gross_disbursements'
 ```
 
@@ -221,7 +222,7 @@ climate_data = ClimateData(
 # Load disbursements spending data using the 'ONE' methodology
 climate_data.load_spending_data(
   methodology='ONE', 
-  source='OECD_CRDF_CRS', 
+  source='OECD_CRDF_CRS_ALLOCABLE', 
   flows='gross_disbursements'
 )
 
@@ -252,7 +253,7 @@ climate_data = ClimateData(
 # Load disbursements spending data using the 'ONE' methodology
 climate_data.load_spending_data(
   methodology='ONE',
-  source='OECD_CRDF_CRS',
+  source='OECD_CRDF_CRS_ALLOCABLE',
   flows='gross_disbursements'
 )
 
@@ -345,6 +346,88 @@ The easiest way to get imputed amounts for bilateral providers is through the
 
 ### Using the `load_multilateral_imputations_data` method
 
+To load the multilateral imputations data a few parameters should
+be defined:
+- _spending_methodology_: a string defining the 'spending' methodology to use. This is applied 
+  to the spending data of multilateral agencies. The default is 'ONE' but 'OECD'
+  and 'custom' are also available. The 'custom' methodology allows you to define a specific
+  methodology to discount 'principal' and 'significant' climate activities. You can call
+  `.available_methodologies` for a full list of available methodologies.
+- _rolling_years_spending_: if needed, the spending data can be smoothed over a certain
+  number of years. The default, 1, means no smoothing.
+- _flows_': one, or a list of supported flows: gross_disbursements, commitments,
+  grant_equivalent, net_disbursements. Call `.available_flows()` for a full list
+  of available flows.
+- _source_: a string defining the source of the data. The default is 'OECD_CRS'. Other
+  options include 'OECD_CRS_ALLOCABLE', 'OECD_CRDF', 'OECD_CRDF_DONOR', 'OECD_CRDF_CRS'.
+  You can call `.available_sources` for a full list of available sources.
+- _groupby_: a list of columns by which to group the data. Defaults to None which means the
+  data is kept at the highest level of detail.
+- _shareby_: A list of strings or a string specifying the columns to
+  calculate the shares by. Defaults to `None` which means the shares are
+  calculated for a year/provider/agency/flow_type level.
+
+
+As in the case of spending data, the combination of spending methodology and source are key
+in determining the data that is returned.
+
+A few things happen when you load the multilateral imputations data:
+- Spending data is loaded for multilateral agencies. This data is transformed into 
+  climate finance shares using the methodology specified (including smoothing if requested.)
+- Core contributions from bilateral providers to multilateral agencies are loaded and matched
+  to the multilateral spending shares data.
+- The imputed climate finance is calculated by multiplying the shares by the core contributions.
+
+This all happens based on the parameters you provide. For example:
+
+```python
+from climate_finance import ClimateData, set_climate_finance_data_path
+
+# As always, start by setting the data path
+set_climate_finance_data_path('path/to/your/data')
+
+# Create an instance of the ClimateData class
+# In this example, it will be set for the years 2018, 2019, 2020 and 2021, for
+# providers 4 and 12 (France and the UK), for all recipients, in constant 2022 Euros.
+climate_data = ClimateData(
+        years=range(2018, 2022),                  
+        providers=[4, 12],
+        recipients=None, # which means getting all available
+        currency='EUR',
+        prices='constant',
+        base_year=2022
+    )
+
+# Load the multilateral imputations data using the 'ONE' methodology
+climate_data.load_multilateral_imputations_data(
+  spending_methodology="ONE",
+  source="OECD_CRDF_CRS_ALLOCABLE",
+  rolling_years_spending=2,
+  flows=["gross_disbursements"],
+  groupby=[
+    "year",
+    "oecd_provider_code",
+    "provider",
+    "indicator",
+    "flow_type",
+    "currency",
+    "prices",
+  ],
+  shareby=[
+    "year",
+    "oecd_provider_code",
+    "provider",
+    "flow_type",
+    "currency",
+    "prices",
+  ],
+)
+
+
+# Get the data as a DataFrame
+df = climate_data.get_data()
+
+```
 
 
 

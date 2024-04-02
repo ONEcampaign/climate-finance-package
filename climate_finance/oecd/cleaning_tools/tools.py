@@ -507,6 +507,11 @@ def get_contributions_data(
 ) -> pd.DataFrame:
     """Use ODA data to get contributions data"""
 
+    # if "disbursements" in the indicators, the 's' is removed
+    indicators = [
+        indicator.replace("disbursements", "disbursement") for indicator in indicators
+    ]
+
     # create an instance of ODAData with the relevant settings
     contributions = ODAData(
         donors=providers,

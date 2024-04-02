@@ -414,3 +414,22 @@ def calculate_imputations(data: pd.DataFrame) -> pd.DataFrame:
     )
 
     return data
+
+
+def string_to_missing(data: pd.DataFrame, missing: str) -> pd.DataFrame:
+    """Convert the missing string to NaN in the data.
+
+    Args:
+        data: A pandas DataFrame.
+        missing: A string specifying the missing value.
+
+    Returns:
+        pd.DataFrame: The data with the missing values converted to NaN.
+
+    """
+
+    # Convert all non-numeric columns
+    for col in data.select_dtypes(exclude=[float, int, bool]):
+        data[col] = data[col].astype(str).replace(missing, pd.NA, regex=True)
+
+    return data

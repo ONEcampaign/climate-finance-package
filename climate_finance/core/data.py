@@ -13,7 +13,6 @@ from climate_finance.core.enums import (
     ValidFlows,
     ValidSources,
     Coefficients,
-    MultilateralMethodologies,
 )
 from climate_finance.core.tools import (
     standard_shareby,
@@ -485,7 +484,7 @@ class ClimateData:
 
     def load_multilateral_imputations_data(
         self,
-        methodology: MultilateralMethodologies | str = "OECD",
+        spending_methodology: SpendingMethodologies | str = "OECD",
         rolling_years_spending: int = 1,
         flows: ValidFlows | str | list[ValidFlows | str] = "gross_disbursements",
         source: ValidSources | str | list[ValidSources | str] = "OECD_CRDF_CRS",
@@ -498,7 +497,7 @@ class ClimateData:
         ones can be loaded.
 
         Args:
-            methodology: one of the methodologies supported: ONE, OECD, or “custom”. In
+            spending_methodology: one of the methodologies supported: ONE, OECD, or “custom”. In
             the future, support for UNFCCC will be added. Call `.available_methodologies()`
             for a full list of available methodologies.
             rolling_years_spending: Optional. An integer specifying the number of years to use
@@ -526,7 +525,7 @@ class ClimateData:
 
         # Get spending shares
         spending_shares = self._get_multilateral_spending_shares(
-            methodology=methodology,
+            methodology=spending_methodology,
             flows=flows,
             source=source,
             rolling_years_spending=rolling_years_spending,
@@ -645,3 +644,51 @@ class ClimateData:
             )
 
         return loaded_data
+
+
+if __name__ == "__main__":
+    climate = ClimateData(
+        years=range(2016, 2022),
+        providers=[4, 12],
+        currency="EUR",
+        prices="constant",
+        base_year=2021,
+    )
+    #
+    # climate.load_spending_data(
+    #     methodology="OECD",
+    #     flows=["gross_disbursements"],
+    #     source="OECD_CRS",
+    # )
+    #
+    # climate.convert_to_shares(
+    #     rolling_years=1,
+    #     groupby=["year", "provider", "recipient", "indicator", "flow_type"],
+    #     shareby=["year", "provider", "flow_type"],
+    # )
+
+    climate.load_multilateral_imputations_data(
+        spending_methodology="ONE",
+        source="OECD_CRDF_CRS_ALLOCABLE",
+        rolling_years_spending=2,
+        flows=["gross_disbursements"],
+        groupby=[
+            "year",
+            "oecd_provider_code",
+            "provider",
+            "indicator",
+            "flow_type",
+            "currency",
+            "prices",
+        ],
+        shareby=[
+            "year",
+            "oecd_provider_code",
+            "provider",
+            "flow_type",
+            "currency",
+            "prices",
+        ],
+    )
+
+    climate_df = climate.get_data()

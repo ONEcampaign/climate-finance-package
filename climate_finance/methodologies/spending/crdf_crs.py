@@ -5,6 +5,7 @@ import pandas as pd
 from climate_finance.common.schema import ClimateSchema, CLIMATE_VALUES
 from climate_finance.config import logger
 from climate_finance.core.dtypes import set_default_types
+from climate_finance.core.tools import string_to_missing
 from climate_finance.methodologies.spending.crdf import (
     drop_names,
     clean_string_cols,
@@ -320,6 +321,12 @@ def add_crs_data_and_transform(
 
     # Combine the matched and not matched data
     data = combine_matched_and_unmatched_data(matched=matched, not_matched=not_matched)
+
+    # 'missing' to <NA>
+    data = string_to_missing(data, missing="missing")
+
+    # Set right data types
+    data = set_default_types(data)
 
     return data
 

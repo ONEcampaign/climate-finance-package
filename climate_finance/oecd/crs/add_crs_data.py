@@ -127,10 +127,13 @@ def _fill_missing_project_id_with_title(projects_df: pd.DataFrame) -> pd.DataFra
 
 def clean_idx_to_str(data: pd.DataFrame, idx: list[str]) -> pd.DataFrame:
     """Convert idx to string for consistent merge"""
+    
+    data = data.copy()
 
     for col in idx:
         data[col] = (
             data[col]
+            .astype("string[pyarrow]")
             .replace("nan", np.nan, regex=False)
             .replace("<NA>", np.nan, regex=False)
         ).fillna("missing")
