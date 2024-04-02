@@ -5,11 +5,12 @@ from dataclasses import dataclass
 class ClimateSchema:
     YEAR: str = "year"
     PROVIDER_CODE: str = "oecd_provider_code"
+    PROVIDER_ISO_CODE: str = "iso3_provider_code"
     PROVIDER_NAME: str = "provider"
     PROVIDER_TYPE: str = "provider_type"
     PROVIDER_DETAILED: str = "provider_detailed"
     AGENCY_CODE: str = "oecd_agency_code"
-    AGENCY_NAME: str = "agency"
+    AGENCY_NAME: str = "agency_name"
     CRS_ID: str = "crs_id"
     PROJECT_ID: str = "project_id"
     RECIPIENT_CODE: str = "oecd_recipient_code"
@@ -65,6 +66,9 @@ class ClimateSchema:
     MULTILATERAL_TYPE: str = "multilateral_type"
     CONVERGED_REPORTING: str = "converged_reporting"
     COAL_FINANCING: str = "coal_related_financing"
+    LEVEL: str = "level"
+    PRICES: str = "prices"
+    CURRENCY: str = "currency"
 
 
 CRS_MAPPING: dict[str, str] = {
@@ -223,4 +227,10 @@ MULTISYSTEM_COLUMNS: list[str] = [
 MAIN_FLOWS: list[str] = [
     ClimateSchema.USD_COMMITMENT,
     ClimateSchema.USD_DISBURSEMENT,
+]
+
+CRDF_VALUES = [
+    ClimateSchema.ADAPTATION_VALUE,
+    ClimateSchema.MITIGATION_VALUE,
+    ClimateSchema.CROSS_CUTTING_VALUE,
 ]

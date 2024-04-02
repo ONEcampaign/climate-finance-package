@@ -1,14 +1,11 @@
 import numpy as np
 import pandas as pd
+from oda_data.clean_data.channels import clean_string
 
-from climate_finance.common.analysis_tools import check_provider_codes_type
+from climate_finance.common.analysis_tools import check_codes_type
 from climate_finance.common.schema import ClimateSchema, MAIN_FLOWS, CLIMATE_VALUES
-from climate_finance.config import logger
-
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str
 from climate_finance.oecd.crs.get_data import read_clean_crs
-from climate_finance.unfccc.cleaning_tools.channels import clean_string
-
 
 CRS_INFO = [
     ClimateSchema.YEAR,
@@ -82,7 +79,7 @@ def get_matching_crs(
 
     # Filter for the required providers
     if provider_code is not None:
-        provider_code = check_provider_codes_type(provider_codes=provider_code)
+        provider_code = check_codes_type(codes=provider_code)
         crs_data = crs_data.loc[
             lambda d: d[ClimateSchema.PROVIDER_CODE].isin(provider_code)
         ]
@@ -106,9 +103,7 @@ def get_matching_crs(
 def _create_valid_unique_idx(
     unique_idx: list, projects_df: pd.DataFrame, crs_df: pd.DataFrame
 ) -> list:
-    return [
-        c for c in set(unique_idx) if c in projects_df.columns and c in crs_df.columns
-    ]
+    return [c for c in unique_idx if c in projects_df.columns and c in crs_df.columns]
 
 
 def _fill_missing_project_id_with_title(projects_df: pd.DataFrame) -> pd.DataFrame:
@@ -128,6 +123,22 @@ def _fill_missing_project_id_with_title(projects_df: pd.DataFrame) -> pd.DataFra
         .fillna(projects_df[ClimateSchema.PROJECT_TITLE])
     )
     return projects_df
+
+
+def clean_idx_to_str(data: pd.DataFrame, idx: list[str]) -> pd.DataFrame:
+    """Convert idx to string for consistent merge"""
+    
+    data = data.copy()
+
+    for col in idx:
+        data[col] = (
+            data[col]
+            .astype("string[pyarrow]")
+            .replace("nan", np.nan, regex=False)
+            .replace("<NA>", np.nan, regex=False)
+        ).fillna("missing")
+
+    return data.pipe(idx_to_str, idx=idx)
 
 
 def _match_projects_with_crs(
@@ -254,6 +265,9 @@ def _clean_climate_crs_output(data: pd.DataFrame) -> pd.DataFrame:
         + [
             ClimateSchema.USD_DISBURSEMENT,
             ClimateSchema.USD_COMMITMENT,
+            ClimateSchema.USD_NET_DISBURSEMENT,
+            ClimateSchema.USD_RECEIVED,
+            ClimateSchema.USD_GRANT_EQUIV,
             ClimateSchema.CLIMATE_UNSPECIFIED,
         ]
     )
@@ -355,9 +369,18 @@ def transform_to_flow_types(data: pd.DataFrame):
         data=data, flow_type=ClimateSchema.USD_DISBURSEMENT
     )
 
+    net_disbursements = _transform_to_flow_type(
+        data=data, flow_type=ClimateSchema.USD_NET_DISBURSEMENT
+    )
+
+    grant_equivalent = _transform_to_flow_type(
+        data=data, flow_type=ClimateSchema.USD_GRANT_EQUIV
+    )
+
     # Concatenate the dataframes
     full_climate_crs_by_flow_type = pd.concat(
-        [commitments, disbursements], ignore_index=True
+        [commitments, disbursements, net_disbursements, grant_equivalent],
+        ignore_index=True,
     )
 
     return full_climate_crs_by_flow_type
@@ -371,6 +394,9 @@ def add_crs_data_pipeline(
     unique_index = _create_valid_unique_idx(
         unique_idx=idx, projects_df=projects_to_match, crs_df=crs_data
     )
+
+    projects_to_match = clean_idx_to_str(data=projects_to_match, idx=unique_index)
+    crs_data = clean_idx_to_str(data=crs_data, idx=unique_index)
 
     # Add CRS info
     matched_projects, not_matched, unmatched_crs = add_crs_info(
@@ -409,4 +435,4 @@ def add_crs_data_pipeline(
     # )
     not_matched_combined = not_matched.copy().filter(projects_to_match.columns)
 
-    return clean_data, not_matched_combined, unmatched_crs
+    return clean_data, not_matched_combined

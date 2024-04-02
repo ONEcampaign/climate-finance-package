@@ -51,46 +51,7 @@ def remap_select_channels_at_spending_level(df: pd.DataFrame) -> pd.DataFrame:
         )
         .sum(numeric_only=True)
         .reset_index()
-        .astype({ClimateSchema.CHANNEL_CODE: "Int64"})
-    )
-
-    return df
-
-
-def _clean_multi_contributions(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean the multilateral contributions dataframe
-
-    Converts to units, renames and keeps only relevant columns
-
-    Args:
-        df (pd.DataFrame): The dataframe to clean.
-        flow_type (str): The flow type (disbursements or commitments).
-
-    """
-
-    # rename columns
-    df = df.rename(columns=CRS_MAPPING)
-
-    # convert to millions
-    df = convert_flows_millions_to_units(df, flow_columns=[ClimateSchema.VALUE])
-
-    # rename indicators
-    df = clean_multisystem_indicators(df)
-
-    # map channel names
-    df = channel_codes_to_names(df)
-
-    # clean output
-    df = (
-        df.filter(MULTISYSTEM_COLUMNS)
-        .pipe(key_crs_columns_to_str)
-        .groupby(
-            by=[c for c in MULTISYSTEM_COLUMNS if c != ClimateSchema.VALUE],
-            dropna=False,
-            observed=True,
-        )
-        .sum(numeric_only=True)
-        .reset_index()
+        .astype({ClimateSchema.CHANNEL_CODE: "int64[pyarrow]"})
     )
 
     return df

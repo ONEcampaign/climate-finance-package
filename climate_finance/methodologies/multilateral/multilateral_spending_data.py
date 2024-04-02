@@ -1,6 +1,6 @@
 import pandas as pd
 
-from climate_finance.common.analysis_tools import check_provider_codes_type
+from climate_finance.common.analysis_tools import check_codes_type
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.methodologies.multilateral.crs_tools import (
     add_crs_data_and_transform,
@@ -274,7 +274,7 @@ def _get_crs_to_match(
     ]
 
     if provider_code is not None:
-        provider_code = check_provider_codes_type(provider_codes=provider_code)
+        provider_code = check_codes_type(codes=provider_code)
         crs_data = crs_data.loc[
             lambda d: d[ClimateSchema.PROVIDER_CODE].isin(provider_code)
         ]
@@ -292,6 +292,7 @@ def _get_crs_to_match(
         .reset_index()
     )
 
+    # to
     crs_data = _convert_crs_values_to_million(crs_data)
 
     # Fix recipient code

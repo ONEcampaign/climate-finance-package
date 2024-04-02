@@ -8,9 +8,9 @@ from climate_finance.common.schema import (
     CRS_MAPPING,
 )
 from climate_finance.config import logger
+from climate_finance.core.dtypes import set_default_types
 from climate_finance.methodologies.multilateral.tools import log_notes
 from climate_finance.oecd.cleaning_tools.tools import (
-    key_crs_columns_to_str,
     rename_crdf_marker_columns,
     marker_columns_to_numeric,
     clean_raw_crdf,
@@ -75,9 +75,9 @@ def read_excel_sheets(excel_file: pd.ExcelFile) -> list[pd.DataFrame]:
 
 
 def download_file(
-        base_url: str,
-        save_to_path: pathlib.Path,
-        latest_year: int = today().year - 2,
+    base_url: str,
+    save_to_path: pathlib.Path,
+    latest_year: int = today().year - 2,
 ) -> None:
     """Download the file from the OECD website."""
     # Download the file
@@ -122,12 +122,13 @@ def get_marker_data(df: pd.DataFrame, marker: str):
 
 
 def _load(save_to_path: str | pathlib.Path) -> pd.DataFrame:
+    logger.info(f"Loadings CRDF data. This may take a while.")
     return (
         pd.read_feather(save_to_path)
         .rename(columns=CRS_MAPPING)
         .pipe(rename_crdf_marker_columns)
         .pipe(marker_columns_to_numeric)
-        .pipe(key_crs_columns_to_str)
+        .pipe(set_default_types)
     )
 
 
