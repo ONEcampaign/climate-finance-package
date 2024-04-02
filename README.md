@@ -1,5 +1,8 @@
-# The climate finance package
+[![pypi](https://img.shields.io/pypi/v/climate_finance.svg)](https://pypi.org/project/climate_finance/)
+[![python](https://img.shields.io/pypi/pyversions/climate_finance.svg)](https://pypi.org/project/climate_finance/)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
+# The climate finance package
 
 _**climate-finance** is the python package to get, clean, and work with international public climate finance._ 
 
@@ -16,9 +19,53 @@ And for too long, global leaders have capitalised on bad data to dictate the nar
 
 We hope these tools equip everyone with the data to hold global leaders accountable in the fight against climate change. As currently, they are not doing enough. 
 
-## Come back soon
-The content on this repository is an alpha version we have used in our research. We're creating friendlier ways to use the package, which don't involve looking through all the code.
-We are planning a first release in December 2023.
+## Getting started 
+This package provides a set of tools to help you work with climate finance data.
+It can be used to:
+
+- download data from the OECD databases (The Creditor Reporting System (CRS)
+  and the Climate-related Development Finance database (CRDF))
+- download data from the UNFCCC data portal
+- clean and harmonise data from the different sources
+- convert climate finance data to different currencies and prices
+
+### Set up
+
+The Climate Finance package is composed of many different tools to download, process
+and analyse data.
+
+To get started, you will need to install the package. You can do this from pipy using pip:
+
+```bash
+
+pip install climate_finance --upgrade
+
+```
+
+or directly from the source code:
+
+```bash
+
+pip install git+https://github.com/ONEcampaign/climate-finance-package.git
+
+```
+
+### Basic Usage
+
+The first step when using the Climate Finance package should be to set a working directory
+where the data will be stored. This can be done importing using the
+`set_climate_finance_data_path` function:
+
+```python
+from climate_finance import set_climate_finance_data_path
+
+set_climate_finance_data_path('path/to/your/data')
+
+```
+
+The easiest way to interact with the data is through the `ClimateData` class.
+
+**For a detailed overview of how to use the ClimateData class,[ please see its documentation.](./climate_finance/README.md)**
 
 ## Questions? Would like to collaborate?
 We want this package to help others analyse climate finance data. If you want to collaborate, or have any questions, please reach out.
