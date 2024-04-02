@@ -1,4 +1,4 @@
-__version__ = "0.1.29"
+__version__ = "1.0.0"
 
 # Easy access to importers
 
