@@ -630,7 +630,7 @@ class ClimateData:
             return loaded_data
 
         # Convert to the right currency and prices, if needed
-        if self.prices != "current" and self.currency != "USD":
+        if self.prices != "current" or self.currency != "USD":
             loaded_data = DEFLATOR(
                 data=loaded_data,
                 target_currency=self.currency,
