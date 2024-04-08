@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
-from oda_data import donor_groupings, set_data_path
+from oda_data import set_data_path, ODAData
+from pandas._typing import MergeHow, Suffixes
 
 from climate_finance.common.schema import (
     CRS_MAPPING,
@@ -89,7 +90,7 @@ def idx_to_str(df: pd.DataFrame, idx: list[str]) -> pd.DataFrame:
         pd.DataFrame: The dataframe with index converted to a column of strings.
     """
 
-    return df.astype({c: "str" for c in idx if c in df.columns})
+    return df.astype({c: "string[pyarrow]" for c in idx if c in df.columns})
 
 
 def keep_only_allocable_aid(df: pd.DataFrame) -> pd.DataFrame:
@@ -217,18 +218,20 @@ def marker_columns_to_numeric(df: pd.DataFrame) -> pd.DataFrame:
     """
     # markers to numeric
     markers_numeric = {
-        "Principal": 2,
-        "Significant": 1,
-        "Not targeted/Not screened": 0,
-        "Imputed multilateral contributions": 99,
-        "Climate components": 100,
+        "Principal": "2",
+        "Significant": "1",
+        "Not targeted/Not screened": "0",
+        "Imputed multilateral contributions": "99",
+        "Climate components": "100",
     }
 
     # Identify the marker columns
     marker_columns = [ClimateSchema.ADAPTATION, ClimateSchema.MITIGATION]
 
     # Convert the marker columns to numeric
-    df[marker_columns] = df[marker_columns].replace(markers_numeric).astype("Int16")
+    df[marker_columns] = (
+        df[marker_columns].replace(markers_numeric).astype("int16[pyarrow]")
+    )
 
     return df
 
@@ -271,15 +274,17 @@ def fix_crdf_provider_names_columns(
             ClimateSchema.PROVIDER_NAME: f"{ClimateSchema.PROVIDER_NAME}_short",
             ClimateSchema.PROVIDER_DETAILED: ClimateSchema.PROVIDER_NAME,
         }
-    ).astype({ClimateSchema.PROVIDER_NAME: "str"})
+    ).astype({ClimateSchema.PROVIDER_NAME: "string[pyarrow]"})
 
 
 def fix_crdf_recipient_errors(data: pd.DataFrame) -> pd.DataFrame:
-    return data.replace({ClimateSchema.RECIPIENT_CODE: {"9998": "998"}})
+    return data.replace({ClimateSchema.RECIPIENT_CODE: {9998: 998}})
 
 
 def assign_usd_commitments_as_flow_type(data: pd.DataFrame) -> pd.DataFrame:
-    return data.assign(**{ClimateSchema.FLOW_TYPE: ClimateSchema.USD_COMMITMENT})
+    return data.assign(
+        **{ClimateSchema.FLOW_TYPE: ClimateSchema.USD_COMMITMENT}
+    ).astype({ClimateSchema.FLOW_TYPE: "string[pyarrow]"})
 
 
 def convert_thousands_to_units(df: pd.DataFrame) -> pd.DataFrame:
@@ -321,52 +326,29 @@ def set_crdf_data_types(df: pd.DataFrame) -> pd.DataFrame:
     """
     # Convert int column to "Int32" or similar
     int_data_types = {
-        "year": "Int32",
-        "provider_code": "Int32",
-        "agency_code": "Int32",
-        "recipient_code": "Int32",
-        "channel_of_delivery_code": "Int32",
-        "purpose_code": "Int32",
-        "type_of_finance": "Int32",
-        "coal_related_financing": "Int16",
+        "year": "int16[pyarrow]",
+        "provider_code": "int16[pyarrow]",
+        "agency_code": "int16[pyarrow]",
+        "recipient_code": "int32[pyarrow]",
+        "channel_of_delivery_code": "int32[pyarrow]",
+        "purpose_code": "int32[pyarrow]",
+        "type_of_finance": "int32[pyarrow]",
+        "coal_related_financing": "int32[pyarrow]",
     }
 
     # Convert float columns to "float64" or similar
     float_data_types = {
-        "adaptation_related_development_finance_commitment_current": "float64",
-        "mitigation_related_development_finance_commitment_current": "float64",
-        "overlap_commitment_current": "float64",
-        "climate_related_development_finance_commitment_current": "float64",
-        "share_of_the_underlying_commitment_when_available": "float64",
-    }
-
-    # Convert categorical columns to "category"
-    categorical_data_types = {
-        "provider": "category",
-        "provider_type": "category",
-        "provider_detailed": "category",
-        "provider_code": "category",
-        "extending_agency": "category",
-        "recipient": "category",
-        "recipient_region": "category",
-        "recipient_income_group_oecd_classification": "category",
-        "concessionality": "category",
-        "climate_objective_applies_to_rio_marked_data_only_or_climate_component": "category",
-        "adaptation_objective_applies_to_rio_marked_data_only": "category",
-        "mitigation_objective_applies_to_rio_marked_data_only": "category",
-        "channel_of_delivery": "category",
-        "sector_detailed": "category",
-        "sub_sector": "category",
-        "development_cooperation_modality": "category",
-        "financial_instrument": "category",
-        "methodology": "category",
-        "gender": "category",
+        "adaptation_related_development_finance_commitment_current": "float[pyarrow]",
+        "mitigation_related_development_finance_commitment_current": "float[pyarrow]",
+        "overlap_commitment_current": "float[pyarrow]",
+        "climate_related_development_finance_commitment_current": "float[pyarrow]",
+        "share_of_the_underlying_commitment_when_available": "float[pyarrow]",
     }
 
     # Set data types by column
     for col in df.columns:
         df[col] = df[col].astype(
-            (int_data_types | float_data_types | categorical_data_types).get(col, "str")
+            (int_data_types | float_data_types).get(col, "string[pyarrow]")
         )
 
     return df.reset_index(drop=True)
@@ -431,3 +413,116 @@ def clean_multisystem_indicators(df: pd.DataFrame) -> pd.DataFrame:
             )
         }
     )
+
+
+def _fill_missing_by_type(series: pd.Series) -> pd.Series:
+    if pd.api.types.is_numeric_dtype(series):
+        return series.fillna(-100)
+    if pd.api.types.is_string_dtype(series):
+        return series.fillna("MISSING_DATA")
+
+
+def _filled_to_missing_by_type(series: pd.Series) -> pd.Series:
+    if pd.api.types.is_numeric_dtype(series):
+        return series.replace(-100, np.nan)
+    if pd.api.types.is_string_dtype(series):
+        return series.replace("MISSING_DATA", np.nan, regex=False)
+
+
+def merge_with_missing(
+    left: pd.DataFrame,
+    right: pd.DataFrame,
+    on: list[str] | None = None,
+    how: MergeHow = "inner",
+    left_on: list[str] = None,
+    right_on: list[str] = None,
+    suffixes: Suffixes = ("_left", "_right"),
+    indicator: str | bool = False,
+    validate: str | None = None,
+) -> pd.DataFrame:
+    if on is not None:
+        left_on = on
+        right_on = on
+
+    for column in left_on:
+        left[column] = _fill_missing_by_type(left[column])
+
+    for column in right_on:
+        right[column] = _fill_missing_by_type(right[column])
+
+    data = pd.merge(
+        left,
+        right,
+        how=how,
+        left_on=left_on,
+        right_on=right_on,
+        suffixes=suffixes,
+        indicator=indicator,
+        validate=validate,
+    )
+
+    for column in left_on:
+        data[column] = _filled_to_missing_by_type(data[column])
+
+    for column in right_on:
+        data[column] = _filled_to_missing_by_type(data[column])
+
+    return data
+
+
+def multi_flows_to_indicators(flows: list[str] | str) -> list[str]:
+    """Transform a list of requested flows into a list of indicators."""
+
+    # If string make list
+    if isinstance(flows, str):
+        flows = [flows]
+
+    indicators = []
+
+    for flow in flows:
+        # Verify flow type
+        if flow == "gross_disbursements":
+            indicators.append("_disbursements_gross")
+        elif flow == "commitments":
+            indicators.append("_commitments_gross")
+        else:
+            raise ValueError("Only gross disbursements and commitments are accepted")
+
+    # Clean indicator
+    indicators = [
+        f"multisystem_multilateral_contributions{indicator}" for indicator in indicators
+    ]
+
+    return indicators
+
+
+def get_contributions_data(
+    providers: list[str] | str,
+    recipients: list[str] | str,
+    years: list[int] | int,
+    currency: str,
+    prices: str,
+    base_year: int | None,
+    indicators: list[str],
+) -> pd.DataFrame:
+    """Use ODA data to get contributions data"""
+
+    # if "disbursements" in the indicators, the 's' is removed
+    indicators = [
+        indicator.replace("disbursements", "disbursement") for indicator in indicators
+    ]
+
+    # create an instance of ODAData with the relevant settings
+    contributions = ODAData(
+        donors=providers,
+        recipients=recipients,
+        years=years,
+        currency=currency,
+        prices=prices,
+        base_year=base_year,
+    )
+
+    # Load the indicators and get the data
+    contributions_data = contributions.load_indicator(indicators=indicators).get_data()
+
+    return contributions_data

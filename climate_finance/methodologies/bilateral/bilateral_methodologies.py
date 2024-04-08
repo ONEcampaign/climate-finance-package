@@ -3,9 +3,9 @@ import pandas as pd
 
 from climate_finance.common.schema import (
     ClimateSchema,
-    OECD_CLIMATE_INDICATORS,
     CRS_CLIMATE_COLUMNS,
 )
+from climate_finance.methodologies.spending.crs import _combine_clean_sort
 
 
 def _melt_crs_climate_indicators_oecd(
@@ -37,8 +37,11 @@ def _melt_crs_climate_indicators_oecd(
     )
 
 
-def melt_crs_climate_indicators_one(
-    df: pd.DataFrame, climate_indicators: list, percentage_significant: float = 0.4
+def melt_crs_climate_indicators_highest_marker(
+    df: pd.DataFrame,
+    climate_indicators: list,
+    percentage_significant: float = 0.4,
+    percentage_principal: float = 1.0,
 ) -> pd.DataFrame:
     """
     Melt the dataframe to get the indicators as a column
@@ -47,6 +50,9 @@ def melt_crs_climate_indicators_one(
         climate_indicators: A list of climate indicators to melt.
         percentage_significant: The percentage of the activity that is considered
         climate relevant when the marker is 1. The default is 0.4.
+        percentage_principal: The percentage of the activity that is considered
+        climate relevant when the marker is 2. The default is 1.0.
+        calculating values. Defaults to True.
 
     Returns:
         A dataframe with melted climate indicators.
@@ -61,6 +67,12 @@ def melt_crs_climate_indicators_one(
         lambda d: (d[ClimateSchema.MITIGATION] < 2) & (d[ClimateSchema.ADAPTATION] < 2),
         ClimateSchema.VALUE,
     ] *= percentage_significant
+
+    climate_df.loc[
+        lambda d: (d[ClimateSchema.MITIGATION] == 2)
+        | (d[ClimateSchema.ADAPTATION] == 2),
+        ClimateSchema.VALUE,
+    ] *= percentage_principal
 
     # Drop cross-cutting
     climate_df = climate_df.loc[
@@ -174,34 +186,9 @@ def _get_not_climate_relevant_data(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _combine_clean_sort(dfs: list[pd.DataFrame], sort_cols: list[str]) -> pd.DataFrame:
-    """
-    Combine, clean and sort the dataframes. Climate indicators are mapped to their
-    full names, defined in OECD_CLIMATE_INDICATORS.
-
-    Args:
-        dfs: A list of dataframes to combine.
-        sort_cols: A list of columns to sort the dataframe by.
-
-    Returns:
-        A dataframe with the combined dataframes, cleaned and sorted.
-
-    """
-    return (
-        pd.concat(dfs, ignore_index=True)
-        .assign(
-            **{
-                ClimateSchema.INDICATOR: lambda d: d[ClimateSchema.INDICATOR].map(
-                    OECD_CLIMATE_INDICATORS
-                )
-            }
-        )
-        .sort_values(by=sort_cols)
-        .reset_index(drop=True)
-    )
-
-
-def base_oecd_transform_markers_into_indicators(df: pd.DataFrame) -> pd.DataFrame:
+def base_oecd_transform_markers_into_indicators(
+    df: pd.DataFrame, **kwargs
+) -> pd.DataFrame:
     """
     Transform the CRS markers into climate indicators. The CRS markers are transformed
     into the following climate indicators:
@@ -247,7 +234,11 @@ def base_oecd_transform_markers_into_indicators(df: pd.DataFrame) -> pd.DataFram
     return combined_df
 
 
-def base_one_transform_markers_into_indicators(df: pd.DataFrame) -> pd.DataFrame:
+def highest_marker_transform_markers_into_indicators(
+    df: pd.DataFrame,
+    percentage_significant: float = 0.4,
+    percentage_principal: float = 1.0,
+) -> pd.DataFrame:
     """
     Transform the CRS markers into climate indicators. The CRS markers are transformed
     into the following climate indicators:
@@ -272,14 +263,21 @@ def base_one_transform_markers_into_indicators(df: pd.DataFrame) -> pd.DataFrame
 
     Args:
         df: A dataframe containing the CRS data.
+        percentage_significant: The percentage of the activity that is considered
+        climate relevant when the marker is 1. The default is 0.4.
+        percentage_principal: The percentage of the activity that is considered
+        climate relevant when the marker is 2. The default is 1.0.
 
     Returns:
         A dataframe with the CRS data transformed into climate indicators.
     """
 
     # Melt the dataframe to get the indicators as a column
-    melted_df = melt_crs_climate_indicators_one(
-        df=df, climate_indicators=CRS_CLIMATE_COLUMNS, percentage_significant=0.4
+    melted_df = melt_crs_climate_indicators_highest_marker(
+        df=df,
+        climate_indicators=CRS_CLIMATE_COLUMNS,
+        percentage_significant=percentage_significant,
+        percentage_principal=percentage_principal,
     )
 
     # Get cross_cutting data

@@ -1,14 +1,13 @@
 import numpy as np
 import pandas as pd
+from oda_data.clean_data.channels import clean_string
 
 from climate_finance.common.schema import ClimateSchema
-from climate_finance.config import logger
 from climate_finance.methodologies.multilateral.multilateral_spending_data import (
     get_multilateral_spending_data,
     add_crs_data,
 )
 from climate_finance.oecd.cleaning_tools.tools import idx_to_str
-from climate_finance.unfccc.cleaning_tools.channels import clean_string
 
 CRDF_IDX = [
     ClimateSchema.YEAR,

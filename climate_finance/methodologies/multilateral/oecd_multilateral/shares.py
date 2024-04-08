@@ -27,7 +27,9 @@ def oecd_rolling_shares_methodology(
     ].astype("Int32")
 
     # Make Cross-cutting negative
-    data.loc[lambda d: d[ClimateSchema.INDICATOR] == "Cross-cutting", ClimateSchema.VALUE] *= -1
+    data.loc[
+        lambda d: d[ClimateSchema.INDICATOR] == "Cross-cutting", ClimateSchema.VALUE
+    ] *= -1
 
     # Summarise the data at the right level
     data_by_indicator = summarise_by_party_idx(data=data, idx=idx, by_indicator=True)

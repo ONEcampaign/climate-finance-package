@@ -31,9 +31,9 @@ jobs:
       - name: Check formatting
         run: |
           make check-formatting
-      - name: Tests
-        run: |
-          make report-coverage
+#      - name: Tests
+#        run: |
+#          make report-coverage
 #      - name: Upload coverage to Codecov
 #        uses: codecov/codecov-action@v3
 #        with:

@@ -102,8 +102,8 @@ def get_unfccc_summary(
     end_year: int,
     br: list[int] = None,
     party: str | list[str] = None,
-    directory: pathlib.Path
-    | str = ClimateDataPath.raw_data / "unfccc_data_interface_files",
+    directory: pathlib.Path | str = ClimateDataPath.raw_data
+    / "unfccc_data_interface_files",
     force_download: bool = False,
 ) -> pd.DataFrame:
     """
@@ -172,8 +172,8 @@ def get_unfccc_multilateral(
     end_year: int,
     br: list[int] = None,
     party: str | list[str] = None,
-    directory: pathlib.Path
-    | str = ClimateDataPath.raw_data / "unfccc_data_interface_files",
+    directory: pathlib.Path | str = ClimateDataPath.raw_data
+    / "unfccc_data_interface_files",
     force_download: bool = False,
 ) -> pd.DataFrame:
     """
@@ -241,8 +241,8 @@ def get_unfccc_bilateral(
     end_year: int,
     br: list[int] = None,
     party: str | list[str] = None,
-    directory: pathlib.Path
-    | str = ClimateDataPath.raw_data / "unfccc_data_interface_files",
+    directory: pathlib.Path | str = ClimateDataPath.raw_data
+    / "unfccc_data_interface_files",
     force_download: bool = False,
 ) -> pd.DataFrame:
     """

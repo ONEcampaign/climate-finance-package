@@ -45,7 +45,7 @@ def add_allocable_share(data: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def to_list_of_str(value):
+def to_list_of_ints(value):
     """
     Convert the given value to a list of strings.
 
@@ -57,39 +57,41 @@ def to_list_of_str(value):
 
     """
     if isinstance(value, (str, int)):
-        return [str(value)]
+        return [int(value)]
     elif isinstance(value, list):
-        return [str(item) if isinstance(item, int) else item for item in value]
+        return [int(item) if isinstance(item, float) else int(item) for item in value]
     else:
         return value
 
 
-def check_provider_codes_type(
-    provider_codes: list[str | int] | str | int | None,
+def check_codes_type(
+    codes: list[str | int] | str | int | None,
 ) -> list[str] | None:
     """
     Checks that the provider codes are of the right type.
     Args:
-        provider_codes (list[str] | str | None): The provider codes to check.
+        codes (list[str] | str | None): The provider codes to check.
     Returns:
         list[str] | None: The provider codes if they are of the right type.
     """
-    if provider_codes is None:
+    if codes is None:
         return None
-    if isinstance(provider_codes, float):
-        raise TypeError(f"Provider codes must be integers")
+    if isinstance(codes, float):
+        raise TypeError(f"Codes must be integers")
 
-    provider_codes = to_list_of_str(provider_codes)
+    codes = to_list_of_ints(codes)
 
-    if not all(isinstance(code, str) for code in provider_codes):
+    if not all(isinstance(code, int) for code in codes):
         try:
-            provider_codes = [str(int(code)) for code in provider_codes]
+            codes = [int(code) for code in codes]
         except ValueError:
-            raise TypeError(f"Provider codes must all be integers")
-    return provider_codes
+            raise TypeError(f"Codes must all be integers")
+    return codes
 
 
-def filter_providers(data: pd.DataFrame, provider_codes: list[str]) -> pd.DataFrame:
+def filter_providers(
+    data: pd.DataFrame, provider_codes: list[int] | int
+) -> pd.DataFrame:
     """
     Check that the requested providers are in the data and filter the data to only
     include the requested providers. If party is None, return the original dataframe.
@@ -105,7 +107,7 @@ def filter_providers(data: pd.DataFrame, provider_codes: list[str]) -> pd.DataFr
     """
 
     # Validate the provider argument
-    provider_codes = check_provider_codes_type(provider_codes)
+    provider_codes = check_codes_type(provider_codes)
     if provider_codes is None:
         return data
 
@@ -120,6 +122,39 @@ def filter_providers(data: pd.DataFrame, provider_codes: list[str]) -> pd.DataFr
         )
     # Filter the data to only include the requested providers
     return data.loc[lambda d: d[ClimateSchema.PROVIDER_CODE].isin(provider_codes)]
+
+
+def filter_recipients(data: pd.DataFrame, recipient_codes: list[int]) -> pd.DataFrame:
+    """
+    Check that the requested providers are in the data and filter the data to only
+    include the requested providers. If party is None, return the original dataframe.
+
+    Args:
+        data: A dataframe containing the CRS data.
+        recipient_codes: A list of recipients to filter the data.
+
+    Returns:
+        A dataframe with the CRS data filtered to only include the requested parties.
+        If party is None, return the original dataframe.
+
+    """
+
+    # Validate the provider argument
+    recipient_codes = check_codes_type(recipient_codes)
+    if recipient_codes is None:
+        return data
+
+    # Check that the requested recipients are in the CRS data
+    missing_recipients = set(recipient_codes) - set(
+        data[ClimateSchema.RECIPIENT_CODE].unique()
+    )
+    # Log a warning if any of the requested recipients are not in the data
+    if len(missing_recipients) > 0:
+        logger.warning(
+            f"The following recipients are not found in the data:\n{recipient_codes}"
+        )
+    # Filter the data to only include the requested providers
+    return data.loc[lambda d: d[ClimateSchema.RECIPIENT_CODE].isin(recipient_codes)]
 
 
 def add_net_disbursement(df: pd.DataFrame) -> pd.DataFrame:
