@@ -387,10 +387,10 @@ from climate_finance import ClimateData, set_climate_finance_data_path
 set_climate_finance_data_path('path/to/your/data')
 
 # Create an instance of the ClimateData class
-# In this example, it will be set for the years 2018, 2019, 2020 and 2021, for
+# In this example, it will be set for the years 2018, 2019, 2020, 2021 and 2022, for
 # providers 4 and 12 (France and the UK), for all recipients, in constant 2022 Euros.
 climate_data = ClimateData(
-        years=range(2018, 2022),                  
+        years=range(2018, 2023),                  
         providers=[4, 12],
         recipients=None, # which means getting all available
         currency='EUR',
@@ -400,23 +400,23 @@ climate_data = ClimateData(
 
 # Load the multilateral imputations data using the 'ONE' methodology
 climate_data.load_multilateral_imputations_data(
-  spending_methodology="ONE",
+  spending_methodology="OECD",
   source="OECD_CRDF_CRS_ALLOCABLE",
   rolling_years_spending=2,
   flows=["gross_disbursements"],
+  shareby=[
+    "year",
+    "oecd_provider_code",
+    "provider",
+    "flow_type",
+    "currency",
+    "prices",
+  ],
   groupby=[
     "year",
     "oecd_provider_code",
     "provider",
     "indicator",
-    "flow_type",
-    "currency",
-    "prices",
-  ],
-  shareby=[
-    "year",
-    "oecd_provider_code",
-    "provider",
     "flow_type",
     "currency",
     "prices",
@@ -428,6 +428,19 @@ climate_data.load_multilateral_imputations_data(
 df = climate_data.get_data()
 
 ```
+
+In this example, multilateral imputations will be returned for providers 4 and 12, for all
+recipients, for the years 2018, 2019, 2020, 2021 and 2022, in constant 2022 Euros.
+
+The multilateral spending shares used to create the imputations are calculated for a 2-year
+rolling average. 
+
+The imputed data is grouped by year, provider, indicator, flow type, currency
+and prices. 
+
+The `shareby` setting is quite important, as it determines the level of aggregation used
+to calculate the spending shares, and therefore the level of detail at which the imputed
+data is returned.
 
 
 
