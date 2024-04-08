@@ -63,9 +63,9 @@ The first step when using the `ClimateData` class is to create an instance of it
 You can define a number of parameters when creating the instance:
 
 - _years_: a list of years (or a range) to get data for.
-- _providers_: a list of provider codes (or a single one) for whom to get data.
-  For now, only 'OECD' codes are supported. If `None` are provided, all available providers
-  are included.
+- _providers_: a list of provider codes, names, or ISO3 codes (or a single one) for whom to get data.
+  If `None` are provided, all available providers are included. To get a list of available
+    providers, you can call `ClimateData.available_providers()`.
 - _recipients_: a list of recipient codes (or a single one) for whom to get data.
   For now, only 'OECD' codes are supported. If `None` are provided, all available recipients
   are included.
@@ -265,9 +265,135 @@ In this example, the data will be returned for providers 4 and 12, for all recip
 for the years 2018, 2019, 2020 and 2021, in constant 2022 Euros.
 
 
-#### Other functionality
+## Multilateral imputations
 
-##### Specifying a custom methodology
+A significant portion of climate finance is provided through the multilateral system.
+The sums provided by multilateral institutions can be accessed through the approach
+outlined above, using data released by the OECD through the CRDF.
+
+Bilateral providers support the core operating budgets of multilateral institutions.
+A portion of that funding is spent on climate finance. So fully accounting for climate
+finance from bilateral providers requires imputing the climate finance that is provided
+through the multilateral system.
+
+Through the "Provider Perspective" of the CRDF, providers report imputed climate finance
+that is provided through the multilateral system. The quality and coverage of this data
+is imperfect, as we note in our methodology note.
+
+The OECD also releases data on the "shares" of multilateral spending that is considered
+climate finance. These shares can be used, together with data on multilateral contributions
+from bilateral providers, to impute the climate finance that is provided through the
+multilateral system. This data is reported at a very aggregate level, it is based on
+commitments, and is presented as 2-year averages.
+
+The `ClimateData` class provides tools to calculate spending shares following
+whichever methodology the user prefers. It also provides tools to calculate imputations
+based on these shares.
+
+The easiest way to get imputed amounts for bilateral providers is through the
+`load_multilateral_imputations_data` method
+
+### Using the `load_multilateral_imputations_data` method
+
+To load the multilateral imputations data a few parameters should
+be defined:
+- _spending_methodology_: a string defining the 'spending' methodology to use. This is applied
+  to the spending data of multilateral agencies. The default is 'ONE' but 'OECD'
+  and 'custom' are also available. The 'custom' methodology allows you to define a specific
+  methodology to discount 'principal' and 'significant' climate activities. You can call
+  `.available_methodologies` for a full list of available methodologies.
+- _rolling_years_spending_: if needed, the spending data can be smoothed over a certain
+  number of years. The default, 1, means no smoothing.
+- _flows_': one, or a list of supported flows: gross_disbursements, commitments,
+  grant_equivalent, net_disbursements. Call `.available_flows()` for a full list
+  of available flows.
+- _source_: a string defining the source of the data. The default is 'OECD_CRS'. Other
+  options include 'OECD_CRS_ALLOCABLE', 'OECD_CRDF', 'OECD_CRDF_DONOR', 'OECD_CRDF_CRS'.
+  You can call `.available_sources` for a full list of available sources.
+- _groupby_: a list of columns by which to group the data. Defaults to None which means the
+  data is kept at the highest level of detail.
+- _shareby_: A list of strings or a string specifying the columns to
+  calculate the shares by. Defaults to `None` which means the shares are
+  calculated for a year/provider/agency/flow_type level.
+
+
+As in the case of spending data, the combination of spending methodology and source are key
+in determining the data that is returned.
+
+A few things happen when you load the multilateral imputations data:
+- Spending data is loaded for multilateral agencies. This data is transformed into
+  climate finance shares using the methodology specified (including smoothing if requested.)
+- Core contributions from bilateral providers to multilateral agencies are loaded and matched
+  to the multilateral spending shares data.
+- The imputed climate finance is calculated by multiplying the shares by the core contributions.
+
+This all happens based on the parameters you provide. For example:
+
+```python
+from climate_finance import ClimateData, set_climate_finance_data_path
+
+# As always, start by setting the data path
+set_climate_finance_data_path('path/to/your/data')
+
+# Create an instance of the ClimateData class
+# In this example, it will be set for the years 2018, 2019, 2020, 2021 and 2022, for
+# providers 4 and 12 (France and the UK), for all recipients, in constant 2022 Euros.
+climate_data = ClimateData(
+        years=range(2018, 2023),                  
+        providers=[4, 12],
+        recipients=None, # which means getting all available
+        currency='EUR',
+        prices='constant',
+        base_year=2022
+    )
+
+# Load the multilateral imputations data using the 'ONE' methodology
+climate_data.load_multilateral_imputations_data(
+  spending_methodology="OECD",
+  source="OECD_CRDF_CRS_ALLOCABLE",
+  rolling_years_spending=2,
+  flows=["gross_disbursements"],
+  shareby=[
+    "year",
+    "oecd_provider_code",
+    "provider",
+    "flow_type",
+    "currency",
+    "prices",
+  ],
+  groupby=[
+    "year",
+    "oecd_provider_code",
+    "provider",
+    "indicator",
+    "flow_type",
+    "currency",
+    "prices",
+  ],
+)
+
+
+# Get the data as a DataFrame
+df = climate_data.get_data()
+
+```
+
+In this example, multilateral imputations will be returned for providers 4 and 12, for all
+recipients, for the years 2018, 2019, 2020, 2021 and 2022, in constant 2022 Euros.
+
+The multilateral spending shares used to create the imputations are calculated for a 2-year
+rolling average.
+
+The imputed data is grouped by year, provider, indicator, flow type, currency
+and prices.
+
+The `shareby` setting is quite important, as it determines the level of aggregation used
+to calculate the spending shares, and therefore the level of detail at which the imputed
+data is returned.
+
+# Other functionality
+
+## Specifying a custom methodology
 The `ClimateData` class also allows the user to specify a custom methodology.
 
 This can be done using the `set_custom_spending_methodology` method. 
@@ -316,118 +442,34 @@ df = climate_data.get_data()
 
 ```
 
-## Multilateral imputations
+## Getting available providers
 
-A significant portion of climate finance is provided through the multilateral system.
-The sums provided by multilateral institutions can be accessed through the approach
-outlined above, using data released by the OECD through the CRDF.
-
-Bilateral providers support the core operating budgets of multilateral institutions.
-A portion of that funding is spent on climate finance. So fully accounting for climate
-finance from bilateral providers requires imputing the climate finance that is provided
-through the multilateral system.
-
-Through the "Provider Perspective" of the CRDF, providers report imputed climate finance
-that is provided through the multilateral system. The quality and coverage of this data
-is imperfect, as we note in our methodology note.
-
-The OECD also releases data on the "shares" of multilateral spending that is considered
-climate finance. These shares can be used, together with data on multilateral contributions
-from bilateral providers, to impute the climate finance that is provided through the
-multilateral system. This data is reported at a very aggregate level, it is based on 
-commitments, and is presented as 2-year averages.
-
-The `ClimateData` class provides tools to calculate spending shares following
-whichever methodology the user prefers. It also provides tools to calculate imputations
-based on these shares.
-
-The easiest way to get imputed amounts for bilateral providers is through the
-`load_multilateral_imputations_data` method
-
-### Using the `load_multilateral_imputations_data` method
-
-To load the multilateral imputations data a few parameters should
-be defined:
-- _spending_methodology_: a string defining the 'spending' methodology to use. This is applied 
-  to the spending data of multilateral agencies. The default is 'ONE' but 'OECD'
-  and 'custom' are also available. The 'custom' methodology allows you to define a specific
-  methodology to discount 'principal' and 'significant' climate activities. You can call
-  `.available_methodologies` for a full list of available methodologies.
-- _rolling_years_spending_: if needed, the spending data can be smoothed over a certain
-  number of years. The default, 1, means no smoothing.
-- _flows_': one, or a list of supported flows: gross_disbursements, commitments,
-  grant_equivalent, net_disbursements. Call `.available_flows()` for a full list
-  of available flows.
-- _source_: a string defining the source of the data. The default is 'OECD_CRS'. Other
-  options include 'OECD_CRS_ALLOCABLE', 'OECD_CRDF', 'OECD_CRDF_DONOR', 'OECD_CRDF_CRS'.
-  You can call `.available_sources` for a full list of available sources.
-- _groupby_: a list of columns by which to group the data. Defaults to None which means the
-  data is kept at the highest level of detail.
-- _shareby_: A list of strings or a string specifying the columns to
-  calculate the shares by. Defaults to `None` which means the shares are
-  calculated for a year/provider/agency/flow_type level.
-
-
-As in the case of spending data, the combination of spending methodology and source are key
-in determining the data that is returned.
-
-A few things happen when you load the multilateral imputations data:
-- Spending data is loaded for multilateral agencies. This data is transformed into 
-  climate finance shares using the methodology specified (including smoothing if requested.)
-- Core contributions from bilateral providers to multilateral agencies are loaded and matched
-  to the multilateral spending shares data.
-- The imputed climate finance is calculated by multiplying the shares by the core contributions.
-
-This all happens based on the parameters you provide. For example:
+The `ClimateData` class also provides a method to get a list of available providers.
 
 ```python
-from climate_finance import ClimateData, set_climate_finance_data_path
+from climate_finance import ClimateData
 
-# As always, start by setting the data path
-set_climate_finance_data_path('path/to/your/data')
-
-# Create an instance of the ClimateData class
-# In this example, it will be set for the years 2018, 2019, 2020 and 2021, for
-# providers 4 and 12 (France and the UK), for all recipients, in constant 2022 Euros.
-climate_data = ClimateData(
-        years=range(2018, 2022),                  
-        providers=[4, 12],
-        recipients=None, # which means getting all available
-        currency='EUR',
-        prices='constant',
-        base_year=2022
-    )
-
-# Load the multilateral imputations data using the 'ONE' methodology
-climate_data.load_multilateral_imputations_data(
-  spending_methodology="ONE",
-  source="OECD_CRDF_CRS_ALLOCABLE",
-  rolling_years_spending=2,
-  flows=["gross_disbursements"],
-  groupby=[
-    "year",
-    "oecd_provider_code",
-    "provider",
-    "indicator",
-    "flow_type",
-    "currency",
-    "prices",
-  ],
-  shareby=[
-    "year",
-    "oecd_provider_code",
-    "provider",
-    "flow_type",
-    "currency",
-    "prices",
-  ],
-)
-
-
-# Get the data as a DataFrame
-df = climate_data.get_data()
+# Get a dictionary of available providers (code: name)
+# By default, private providers are excluded
+providers = ClimateData.available_providers(include_private=False)
 
 ```
 
+You can also get lists of groups of providers, such as DAC members, Non-DAC members, Multilateral providers, and Private providers.
 
+```python
+from climate_finance import ClimateData
 
+# Get a list of DAC providers, excluding EU institutions
+dac_members = ClimateData.get_dac_providers(include_eui=False)
+
+# Get a list of Non-DAC providers
+non_dac_members = ClimateData.get_non_dac_providers()
+
+# Get a list of Multilateral providers, including EU institutions
+multilateral_providers = ClimateData.get_multilateral_providers(include_eui=True)
+
+# Get a list of Private providers
+private_providers = ClimateData.get_private_providers()
+
+```

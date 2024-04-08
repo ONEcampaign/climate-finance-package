@@ -1,8 +1,7 @@
 import pandas as pd
-from oda_data import set_data_path, ODAData
+from oda_data import set_data_path
 from oda_data.clean_data.channels import add_multi_channel_codes
 
-from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import logger, ClimateDataPath
 from climate_finance.core import loaders
 from climate_finance.core.deflators import oecd_deflator
@@ -27,6 +26,9 @@ from climate_finance.core.tools import (
     calculate_imputations,
     remove_channel_name_from_spending_data,
     groupby_sum,
+    get_oecd_classification,
+    get_available_providers,
+    match_providers,
 )
 from climate_finance.core.validation import (
     validate_prices_and_base_year,
@@ -98,6 +100,10 @@ class ClimateData:
         # Validate the prices and base year
         validate_prices_and_base_year(prices=self.prices, base_year=self.base_year)
 
+        # Validate providers
+        if not all(isinstance(provider, int) for provider in self.providers):
+            self.providers = match_providers(self.providers)
+
         # By default, the data is not loaded
         self.data: dict[str, pd.DataFrame] = {}
 
@@ -149,6 +155,48 @@ class ClimateData:
     def available_currencies():
         """Print all the valid, available flows"""
         ValidCurrencies.print_available(name="currencies")
+
+    @staticmethod
+    def available_providers(include_private: bool = False):
+        """return a list of available providers"""
+
+        return get_available_providers(include_private=include_private)
+
+    @staticmethod
+    def get_dac_providers(include_eui: bool = False) -> dict:
+        """return a list of DAC providers
+
+        Args:
+            include_eui: Optional. A boolean specifying whether to include the EU institutions.
+            Defaults to False.
+
+        """
+        dac = get_oecd_classification()["DAC member"]
+
+        if not include_eui:
+            dac = {k: v for k, v in dac.items() if k != 918}
+
+        return dac
+
+    @staticmethod
+    def get_non_dac_providers() -> dict:
+        """return a list of non DAC providers"""
+        return get_oecd_classification()["Non-DAC member"]
+
+    @staticmethod
+    def get_multilateral_providers(include_eui: bool = True) -> dict:
+        """return a list of multilateral providers"""
+        multi = get_oecd_classification()["Multilateral donor"]
+
+        if include_eui:
+            return multi | {918: "EU Institutions"}
+
+        return multi
+
+    @staticmethod
+    def get_private_providers() -> dict:
+        """return a list of private providers"""
+        return get_oecd_classification()["Private donor"]
 
     def __repr__(self):
         message: str = f"ClimateData object for {self._years_str}. "
@@ -546,6 +594,8 @@ class ClimateData:
 
         self.data = {"Multilateral Imputations": data}
 
+        return self
+
     def convert_to_shares(
         self,
         rolling_years: int = 1,
@@ -644,51 +694,3 @@ class ClimateData:
             )
 
         return loaded_data
-
-
-if __name__ == "__main__":
-    climate = ClimateData(
-        years=range(2016, 2022),
-        providers=[4, 12],
-        currency="EUR",
-        prices="constant",
-        base_year=2021,
-    )
-    #
-    # climate.load_spending_data(
-    #     methodology="OECD",
-    #     flows=["gross_disbursements"],
-    #     source="OECD_CRS",
-    # )
-    #
-    # climate.convert_to_shares(
-    #     rolling_years=1,
-    #     groupby=["year", "provider", "recipient", "indicator", "flow_type"],
-    #     shareby=["year", "provider", "flow_type"],
-    # )
-
-    climate.load_multilateral_imputations_data(
-        spending_methodology="ONE",
-        source="OECD_CRDF_CRS_ALLOCABLE",
-        rolling_years_spending=2,
-        flows=["gross_disbursements"],
-        groupby=[
-            "year",
-            "oecd_provider_code",
-            "provider",
-            "indicator",
-            "flow_type",
-            "currency",
-            "prices",
-        ],
-        shareby=[
-            "year",
-            "oecd_provider_code",
-            "provider",
-            "flow_type",
-            "currency",
-            "prices",
-        ],
-    )
-
-    climate_df = climate.get_data()
