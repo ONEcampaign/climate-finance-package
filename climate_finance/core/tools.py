@@ -1,7 +1,10 @@
 import pandas as pd
+from bblocks import convert_id
 from oda_data.clean_data.schema import OdaSchema
+from thefuzz import process
 
 from climate_finance.common.schema import ClimateSchema, CRS_MAPPING
+from climate_finance.config import ClimateDataPath, logger
 from climate_finance.oecd.cleaning_tools.tools import (
     convert_flows_millions_to_units,
     clean_multisystem_indicators,
@@ -433,3 +436,90 @@ def string_to_missing(data: pd.DataFrame, missing: str) -> pd.DataFrame:
         data[col] = data[col].astype(str).replace(missing, pd.NA, regex=True)
 
     return data
+
+
+def get_oecd_classification() -> dict:
+    """Read the OECD CRS classification and return it as a dictionary."""
+
+    df = pd.read_csv(ClimateDataPath.scripts / "core" / "oecd_classification.csv")
+
+    types = {}
+
+    for dt in df["type"].unique():
+        types[dt] = df.loc[df["type"] == dt].set_index("code")["name"].to_dict()
+
+    return types
+
+
+def get_available_providers(include_private: bool = False) -> dict:
+    """return a list of available providers"""
+
+    providers = get_oecd_classification()
+
+    available = (
+        providers["DAC member"]
+        | providers["Non-DAC member"]
+        | providers["Multilateral donor"]
+    )
+
+    if include_private:
+        available |= providers["Private donor"]
+
+    return available
+
+
+def fuzzy_match_provider(providers: list[str], options: dict) -> list:
+    results = []
+    providers_list = list(options)
+
+    for user_input in providers:
+        # Finding the best match for the user_input in the list of countries
+        best_match = process.extractOne(user_input, providers_list)
+        # best_match is a tuple like ('Country Name', score)
+        if best_match:
+            if best_match[1] < 89:
+                logger.info(f"No match found for {user_input}")
+                continue
+            # Find the key in the dictionary corresponding to the matched country
+            match_key = options[best_match[0]]
+            results.append(match_key)
+
+    return results
+
+
+def match_providers(providers: str | list[str]) -> list[int]:
+    """"""
+    # Silence the country_converter logger
+    import logging
+
+    cc_loger = logging.getLogger("country_converter")
+    cc_loger.setLevel(logging.CRITICAL)
+
+    # Ensure user_inputs is always a list to simplify processing
+    if not isinstance(providers, list):
+        providers = [providers]
+
+    # Get the available providers
+    options = {v: k for k, v in get_available_providers(include_private=True).items()}
+
+    # Attempt to match the providers to the DAC codes
+    match = convert_id(
+        series=pd.Series(providers, index=providers),
+        from_type="ISO3" if all(len(item) == 3 for item in providers) else "regex",
+        to_type="DACcode",
+        not_found=pd.NA,
+    ).astype("int32[pyarrow]")
+
+    # if missing, try fuzzy matching
+    if match.isna().any():
+        # Get the missing providers
+        missing = match[match.isna()].index.tolist()
+        # Fuzzy match the missing providers
+        results = fuzzy_match_provider(providers=missing, options=options)
+    else:
+        results = []
+
+    # Combine the matches
+    all_matches = match[match.notna()].tolist() + results
+
+    return all_matches

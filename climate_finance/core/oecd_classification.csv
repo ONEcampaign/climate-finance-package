@@ -1,0 +1,207 @@
+﻿code,name,name_fr,type
+1,Austria,Autriche,DAC member
+2,Belgium,Belgique,DAC member
+3,Denmark,Danemark,DAC member
+4,France,France,DAC member
+5,Germany,Allemagne,DAC member
+6,Italy,Italie,DAC member
+7,Netherlands,Pays-Bas,DAC member
+8,Norway,Norvège,DAC member
+9,Portugal,Portugal,DAC member
+10,Sweden,Suède,DAC member
+11,Switzerland,Suisse,DAC member
+12,United Kingdom,Royaume-Uni,DAC member
+18,Finland,Finlande,DAC member
+20,Iceland,Islande,DAC member
+21,Ireland,Irlande,DAC member
+22,Luxembourg,Luxembourg,DAC member
+26,Monaco,Monaco,Non-DAC member
+30,Cyprus,Chypre,Non-DAC member
+40,Greece,Grèce,DAC member
+45,Malta,Malte,Non-DAC member
+50,Spain,Espagne,DAC member
+55,Türkiye,Türkiye,Non-DAC member
+61,Slovenia,Slovénie,DAC member
+62,Croatia,Croatie,Non-DAC member
+68,Czechia,Tchéquie,DAC member
+69,Slovak Republic,République slovaque,DAC member
+70,Liechtenstein,Liechtenstein,Non-DAC member
+72,Bulgaria,Bulgarie,Non-DAC member
+75,Hungary,Hongrie,DAC member
+76,Poland,Pologne,DAC member
+77,Romania,Roumanie,Non-DAC member
+82,Estonia,Estonie,DAC member
+83,Latvia,Lettonie,Non-DAC member
+84,Lithuania,Lituanie,DAC member
+87,Russia,Russie,Non-DAC member
+104,Nordic Development Fund,Fonds du dév. nordique,Multilateral donor
+130,Algeria,Algérie,Non-DAC member
+133,Libya,Libye,Non-DAC member
+261,Nigeria,Nigéria,Country
+301,Canada,Canada,DAC member
+302,United States,Etats-Unis,DAC member
+336,Costa Rica,Costa Rica,Country
+340,Dominican Republic,République dominicaine,Country
+358,Mexico,Mexique,Non-DAC member
+431,Brazil,Brésil,Country
+434,Chile,Chili,Country
+437,Colombia,Colombie,Country
+440,Ecuador,Equateur,Country
+454,Peru,Pérou,Country
+460,Uruguay,Uruguay,Country
+543,Iraq,Irak,Non-DAC member
+546,Israel,Israël,Non-DAC member
+551,Palestinian Authority,Palestinian Authority,Country
+552,Kuwait,Koweit,Non-DAC member
+561,Qatar,Qatar,Non-DAC member
+566,Saudi Arabia,Arabie saoudite,Non-DAC member
+576,United Arab Emirates,Emirats arabes unis,Non-DAC member
+611,Azerbaijan,Azerbaïdjan,Non-DAC member
+613,Kazakhstan,Kazakhstan,Non-DAC member
+701,Japan,Japon,DAC member
+732,Chinese Taipei,Taipei chinois,Non-DAC member
+738,Indonesia,Indonésie,Country
+742,Korea,Corée,DAC member
+764,Thailand,Thaïlande,Non-DAC member
+765,Timor-Leste,Timor oriental,Non-DAC member
+801,Australia,Australie,DAC member
+807,UNEP,PNUE,Multilateral donor
+811,Global Environment Facility,Fonds pour l'environnement mondial,Multilateral donor
+812,Montreal Protocol,Protocole de Montréal,Multilateral donor
+820,New Zealand,Nouvelle-Zélande,DAC member
+901,International Bank for Reconstruction and Development,Banque internationale pour la reconstruction et le développement,Multilateral donor
+902,Multilateral Investment Guarantee Agency,Agence multilatérale de garantie des investissements,Multilateral donor
+903,International Finance Corporation,Société financière international,Multilateral donor
+905,International Development Association,Association internationale de développement,Multilateral donor
+906,Caribbean Development Bank,Banque de développement des Caraïbes,Multilateral donor
+907,International Monetary Fund,Fond monétaire international,Multilateral donor
+909,Inter-American Development Bank,Banque Interaméricaine de développement,Multilateral donor
+910,Central American Bank for Economic Integration,Banque centraméricaine d'intégration économique,Multilateral donor
+913,African Development Bank,Banque Africaine de développement,Multilateral donor
+914,African Development Fund,Fonds Africaine de développement,Multilateral donor
+915,Asian Development Bank,Banque Asiatique de développement,Multilateral donor
+918,EU Institutions,Institutions de l'UE,DAC member
+921,Arab Fund (AFESD),Fonds arabe (FADES),Multilateral donor
+923,UN Peacebuilding Fund,Fonds de consolidation de la paix-ONU,Multilateral donor
+926,Council of Europe,Conseil de l'Europe,Multilateral donor
+928,World Health Organisation,Organisation mondiale de la santé,Multilateral donor
+932,Food and Agriculture Organisation,Organisation pour l'alimentation et l'agriculture,Multilateral donor
+940,International Labour Organisation,Organisation internationale du Travail,Multilateral donor
+944,International Atomic Energy Agency,Agence internationale de l'énergie atomique,Multilateral donor
+948,UNECE,CEE-ONU,Multilateral donor
+951,OPEC Fund for International Development,Fonds OPEP pour le développement international,Multilateral donor
+952,OAPEC,OAPEC,Multilateral donor
+953,Arab Bank for Economic Development in Africa,Banque arabe pour le développement économique en Afrique,Multilateral donor
+954,Special Arab Aid Fund for Africa,Fonds spécial arabe d'aide à l'Afrique,Multilateral donor
+956,IMF Trust Fund,IMF Trust Fund,Multilateral donor
+958,IMF (Concessional Trust Funds),FMI (Fonds fiduciaires concessionnels),Multilateral donor
+959,UNDP,PNUD,Multilateral donor
+960,UNTA,ATNU,Multilateral donor
+962,United Nations Conference on Trade and Development,Conférence des Nations Unies sur le commerce et le développement,Multilateral donor
+963,UNICEF,UNICEF,Multilateral donor
+964,UNRWA,UNRWA,Multilateral donor
+966,WFP,PAM,Multilateral donor
+967,UNHCR,HCR,Multilateral donor
+971,UNAIDS,UNAIDS,Multilateral donor
+974,UNFPA,FNUAP,Multilateral donor
+976,Islamic Development Bank,Banque de développement islamique,Multilateral donor
+978,OSCE,OSCE,Multilateral donor
+979,Islamic Monetary Fund,Fond monétaire islamique,Multilateral donor
+980,Arab Fund for Technical Assistance to African and Arab Countries,Fonds arabe pour l'assistance technique aux pays africains et arabes,Multilateral donor
+981,Black Sea Trade & Development Bank,Banque de développement de la mer Noire,Multilateral donor
+982,GODE,GODE,Multilateral donor
+983,Other Arab Agencies,Autres Agences Arabes,Multilateral donor
+988,IFAD,FIDA,Multilateral donor
+990,European Bank for Reconstruction and Development,Banque européenne pour la reconstruction et le développement,Multilateral donor
+992,UN AGENCIES,AGENCES DE L'ONU,Multilateral donor
+997,Global Partnership for Education,Partenariat mondial pour l'Éducation,Multilateral donor
+1011,Climate Investment Funds,Fonds d'investissement climatique,Multilateral donor
+1012,Adaptation Fund,Fonds d'adaptation,Multilateral donor
+1013,Council of Europe Development Bank,Banque de développement du Conseil de l'Europe,Multilateral donor
+1014,Private Infrastructure Development Group,Groupe du développement des infrastructures privées,Multilateral donor
+1015,Development Bank of Latin America,Banque de développement de l'Amérique latine,Multilateral donor
+1016,Green Climate Fund,Fonds vert pour le climat,Multilateral donor
+1017,Credit Guarantee and Investment Facility,Credit Guarantee and Investment Facility,Multilateral donor
+1018,Global Energy Efficiency and Renewable Energy Fund,Fonds mondial de l'efficacité énergétique et des énergies renouvelables,Multilateral donor
+1019,IDB Invest,BID Invest,Multilateral donor
+1020,Central Emergency Response Fund,Fonds central d'intervention pour les urgences humanitaires,Multilateral donor
+1022,UN inter-agency pooled funds,Fonds communs inter-institutions des Nations Unies,Multilateral donor
+1023,World Tourism Organisation,Organisation mondiale du tourisme,Multilateral donor
+1024,Asian Infrastructure Investment Bank,Banque asiatique d'investissement dans les infrastructures,Multilateral donor
+1025,Center of Excellence in Finance,Centre d'excellence en finance,Multilateral donor
+1026,SESRIC,SESRIC,Multilateral donor
+1036,UN Secretariat,Secretariat des Nations Unies,Multilateral donor
+1037,International Investment Bank,Banque internationale d'investissement,Multilateral donor
+1038,UN Institute for Disarmament Research,Institut des Nations unies pour la recherche sur le désarmement,Multilateral donor
+1039,UN Capital Development Fund,UN Capital Development Fund,Multilateral donor
+1040,UN Office on Drugs and Crime,Office des Nations Unies contre la drogue et le crime,Multilateral donor
+1041,Eurasian Fund for Stabilization and Development,Eurasian Fund for Stabilization and Development,Multilateral donor
+1042,UN Office of Counter-Terrorism,Bureau de l'ONU de lutte contre le terrorisme,Multilateral donor
+1043,Interpol,Interpol,Multilateral donor
+1044,New Development Bank,New Development Bank,Multilateral donor
+1045,North American Development Bank,North American Development Bank,Multilateral donor
+1046,UN Women,ONU Femmes,Multilateral donor
+1047,COVID-19 Response and Recovery Multi-Partner Trust Fund,COVID-19 Response and Recovery Multi-Partner Trust Fund,Multilateral donor
+1048,Joint Sustainable Development Goals Fund,Fonds conjoint des objectifs de développement durable,Multilateral donor
+1049,International Commission on Missing Persons,Commission internationale pour les personnes disparues,Multilateral donor
+1050,WHO-Strategic Preparedness and Response Plan,OMS-Plan stratégique de préparation et de réponse,Multilateral donor
+1051,United Nations Office for Disarmament Affairs,Bureau des Affaires de Désarmement des Nations Unies,Multilateral donor
+1052,International Centre for Genetic Engineering and Biotechnology,Centre international de génie génétique et de biotechnologie,Multilateral donor
+1053,Asian Forest Cooperation Organisation,Organisation asiatique de coopération forestière,Multilateral donor
+1054,World Organisation for Animal Health,Organisation mondiale de la santé animale,Multilateral donor
+1055,CGIAR,CGIAR,Multilateral donor
+1056,Organisation of American States,Organisation des États américains,Multilateral donor
+1311,Global Alliance for Vaccines and Immunization,Alliance mondiale pour les vaccins et la vaccination,Multilateral donor
+1312,Global Fund,Fonds mondial,Multilateral donor
+1313,Global Green Growth Institute,Institut mondial de la croissance verte,Multilateral donor
+1401,WTO - International Trade Centre,Centre du commerce international de l'OMC,Multilateral donor
+1403,Economic and Social Commission for Western Asia,Commission économique et sociale pour l'Asie occidentale,Multilateral donor
+1404,World Trade Organisation,Organisation mondiale du commerce,Multilateral donor
+1406,United Nations Industrial Development Organization,ONUDI,Multilateral donor
+1601,Bill & Melinda Gates Foundation,Fondation Bill et Melinda Gates,Private donor
+1602,Dutch Postcode Lottery,Dutch Postcode Lottery,Private donor
+1603,Swedish Postcode Lottery,Swedish Postcode Lottery,Private donor
+1604,People's Postcode Lottery,People's Postcode Lottery,Private donor
+1605,MetLife Foundation,Fondation MetLife,Private donor
+1606,Mastercard Foundation,Fondation Mastercard,Private donor
+1608,IKEA Foundation,Fondation IKEA,Private donor
+1609,Bernard van Leer Foundation,Fondation Bernard van Leer,Private donor
+1610,MAVA Foundation,"MAVA, Fondation pour la nature",Private donor
+1611,Oak Foundation,Fondation Oak,Private donor
+1612,H&M Foundation,Fondation H&M,Private donor
+1613,Laudes Foundation,Fondation Laudes,Private donor
+1614,Charity Projects Ltd (Comic Relief),Charity Projects Ltd (Comic Relief),Private donor
+1615,Children's Investment Fund Foundation,Children's Investment Fund Foundation,Private donor
+1616,Gatsby Charitable Foundation,Gatsby Charitable Foundation,Private donor
+1617,Conrad N. Hilton Foundation,Fondation Conrad N. Hilton,Private donor
+1618,David and Lucile Packard Foundation,Fondation David et Lucile Packard,Private donor
+1619,John D. and Catherine T. MacArthur Foundation,Fondation John D. et Catherine T. MacArthur,Private donor
+1620,Carnegie Corporation of New York,Carnegie Corporation of New York,Private donor
+1621,Michael & Susan Dell Foundation,Fondation Michael et Susan Dell,Private donor
+1622,"Omidyar Network Fund, Inc.","Omidyar Network Fund, Inc.",Private donor
+1623,Rockefeller Foundation,Fondation Rockefeller,Private donor
+1624,William and Flora Hewlett Foundation,Fondation William et Flora Hewlett,Private donor
+1625,Arcus Foundation,Fondation Arcus,Private donor
+1626,Gordon and Betty Moore Foundation,Fondation Gordon et Betty Moore,Private donor
+1627,Ford Foundation,Fondation Ford,Private donor
+1628,Wellcome Trust,Wellcome Trust,Private donor
+1629,UBS Optimus Foundation,Fondation UBS Optimus,Private donor
+1630,World Diabetes Foundation,World Diabetes Foundation,Private donor
+1631,McKnight Foundation,Fondation McKnight,Private donor
+1632,Citi Foundation,Fondation Citi,Private donor
+1633,LEGO Foundation,Fondation LEGO,Private donor
+1634,Norwegian Postcode Lottery,Norwegian Postcode Lottery,Private donor
+1636,Jacobs Foundation,Fondation Jacobs,Private donor
+1637,Arcadia Fund,Fonds Arcadia,Private donor
+1638,Margaret A. Cargill Foundation,Fondation Margaret A. Cargill,Private donor
+1639,La Caixa Banking Foundation,Fondation la Caixa,Private donor
+1640,Bloomberg Family Foundation,Bloomberg Family Foundation,Private donor
+1641,Susan T. Buffett Foundation,Fondation Susan T. Buffett,Private donor
+1642,Howard G. Buffett Foundation,Fondation Howard G. Buffett,Private donor
+1643,Open Society Foundations,Open Society Foundations,Private donor
+1644,Fondation Botnar,Fondation Botnar,Private donor
+1645,CHANEL Foundation,Fondation CHANEL,Private donor
+1646,Bezos Earth Fund,Bezos Earth Fund,Private donor
+1647,German Postcode Lottery,German Postcode Lottery,Private donor
+1648,Leona M. and Harry B. Helmsley Charitable Trust,Leona M. and Harry B. Helmsley Charitable Trust,Private donor
+1649,Novo Nordisk Foundation,Novo Nordisk Foundation,Private donor
