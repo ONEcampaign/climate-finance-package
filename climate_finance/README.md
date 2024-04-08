@@ -63,9 +63,9 @@ The first step when using the `ClimateData` class is to create an instance of it
 You can define a number of parameters when creating the instance:
 
 - _years_: a list of years (or a range) to get data for.
-- _providers_: a list of provider codes (or a single one) for whom to get data.
-  For now, only 'OECD' codes are supported. If `None` are provided, all available providers
-  are included.
+- _providers_: a list of provider codes, names, or ISO3 codes (or a single one) for whom to get data.
+  If `None` are provided, all available providers are included. To get a list of available
+    providers, you can call `ClimateData.available_providers()`.
 - _recipients_: a list of recipient codes (or a single one) for whom to get data.
   For now, only 'OECD' codes are supported. If `None` are provided, all available recipients
   are included.
@@ -265,57 +265,6 @@ In this example, the data will be returned for providers 4 and 12, for all recip
 for the years 2018, 2019, 2020 and 2021, in constant 2022 Euros.
 
 
-#### Other functionality
-
-##### Specifying a custom methodology
-The `ClimateData` class also allows the user to specify a custom methodology.
-
-This can be done using the `set_custom_spending_methodology` method. 
-
-This method takes a
-tuple of two coefficients (as integers or floats) as the 'coefficient' parameter. They
-are for (significant, principal) activities. For reference, the OECD uses (1, 1) and 
-ONE uses (0.4, 1).
-
-This method also takes a `highest_marker` parameter, which is a boolean set to `True` if
-the highest marker rule should be applied, and `False` otherwise.
-
-```python
-
-from climate_finance import ClimateData, set_climate_finance_data_path
-
-# As always, start by setting the data path
-set_climate_finance_data_path('path/to/your/data')
-
-# Create an instance of the ClimateData class
-# In this example, it will be set for the years 2018, 2019, 2020 and 2022, for 
-# all providers in current USD
-climate_data = ClimateData(
-  years=range(2018, 2022),
-  providers=[4, 12]
-)
-
-# Set a custom methodology. 
-# In this example, principal activities are counted at 30% of their value, significant
-# at 80%, and the highest marker rule is applied.
-climate_data.set_custom_spending_methodology(
-  coefficients=(0.3, 0.8),
-  highest_marker=True
-)
-
-# Load disbursements spending data using the custom methodology and
-# focusing on CRS allocable data
-climate_data.load_spending_data(
-  methodology='custom',
-  source='OECD_CRS_ALLOCABLE',
-  flows='commitments'
-)
-
-# Get the data as a DataFrame
-df = climate_data.get_data()
-
-```
-
 ## Multilateral imputations
 
 A significant portion of climate finance is provided through the multilateral system.
@@ -334,7 +283,7 @@ is imperfect, as we note in our methodology note.
 The OECD also releases data on the "shares" of multilateral spending that is considered
 climate finance. These shares can be used, together with data on multilateral contributions
 from bilateral providers, to impute the climate finance that is provided through the
-multilateral system. This data is reported at a very aggregate level, it is based on 
+multilateral system. This data is reported at a very aggregate level, it is based on
 commitments, and is presented as 2-year averages.
 
 The `ClimateData` class provides tools to calculate spending shares following
@@ -348,7 +297,7 @@ The easiest way to get imputed amounts for bilateral providers is through the
 
 To load the multilateral imputations data a few parameters should
 be defined:
-- _spending_methodology_: a string defining the 'spending' methodology to use. This is applied 
+- _spending_methodology_: a string defining the 'spending' methodology to use. This is applied
   to the spending data of multilateral agencies. The default is 'ONE' but 'OECD'
   and 'custom' are also available. The 'custom' methodology allows you to define a specific
   methodology to discount 'principal' and 'significant' climate activities. You can call
@@ -372,7 +321,7 @@ As in the case of spending data, the combination of spending methodology and sou
 in determining the data that is returned.
 
 A few things happen when you load the multilateral imputations data:
-- Spending data is loaded for multilateral agencies. This data is transformed into 
+- Spending data is loaded for multilateral agencies. This data is transformed into
   climate finance shares using the methodology specified (including smoothing if requested.)
 - Core contributions from bilateral providers to multilateral agencies are loaded and matched
   to the multilateral spending shares data.
@@ -433,14 +382,94 @@ In this example, multilateral imputations will be returned for providers 4 and 1
 recipients, for the years 2018, 2019, 2020, 2021 and 2022, in constant 2022 Euros.
 
 The multilateral spending shares used to create the imputations are calculated for a 2-year
-rolling average. 
+rolling average.
 
 The imputed data is grouped by year, provider, indicator, flow type, currency
-and prices. 
+and prices.
 
 The `shareby` setting is quite important, as it determines the level of aggregation used
 to calculate the spending shares, and therefore the level of detail at which the imputed
 data is returned.
 
+# Other functionality
 
+## Specifying a custom methodology
+The `ClimateData` class also allows the user to specify a custom methodology.
 
+This can be done using the `set_custom_spending_methodology` method. 
+
+This method takes a
+tuple of two coefficients (as integers or floats) as the 'coefficient' parameter. They
+are for (significant, principal) activities. For reference, the OECD uses (1, 1) and 
+ONE uses (0.4, 1).
+
+This method also takes a `highest_marker` parameter, which is a boolean set to `True` if
+the highest marker rule should be applied, and `False` otherwise.
+
+```python
+
+from climate_finance import ClimateData, set_climate_finance_data_path
+
+# As always, start by setting the data path
+set_climate_finance_data_path('path/to/your/data')
+
+# Create an instance of the ClimateData class
+# In this example, it will be set for the years 2018, 2019, 2020 and 2022, for 
+# all providers in current USD
+climate_data = ClimateData(
+  years=range(2018, 2022),
+  providers=[4, 12]
+)
+
+# Set a custom methodology. 
+# In this example, principal activities are counted at 30% of their value, significant
+# at 80%, and the highest marker rule is applied.
+climate_data.set_custom_spending_methodology(
+  coefficients=(0.3, 0.8),
+  highest_marker=True
+)
+
+# Load disbursements spending data using the custom methodology and
+# focusing on CRS allocable data
+climate_data.load_spending_data(
+  methodology='custom',
+  source='OECD_CRS_ALLOCABLE',
+  flows='commitments'
+)
+
+# Get the data as a DataFrame
+df = climate_data.get_data()
+
+```
+
+## Getting available providers
+
+The `ClimateData` class also provides a method to get a list of available providers.
+
+```python
+from climate_finance import ClimateData
+
+# Get a dictionary of available providers (code: name)
+# By default, private providers are excluded
+providers = ClimateData.available_providers(include_private=False)
+
+```
+
+You can also get lists of groups of providers, such as DAC members, Non-DAC members, Multilateral providers, and Private providers.
+
+```python
+from climate_finance import ClimateData
+
+# Get a list of DAC providers, excluding EU institutions
+dac_members = ClimateData.get_dac_providers(include_eui=False)
+
+# Get a list of Non-DAC providers
+non_dac_members = ClimateData.get_non_dac_providers()
+
+# Get a list of Multilateral providers, including EU institutions
+multilateral_providers = ClimateData.get_multilateral_providers(include_eui=True)
+
+# Get a list of Private providers
+private_providers = ClimateData.get_private_providers()
+
+```
