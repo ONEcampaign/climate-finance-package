@@ -101,8 +101,9 @@ class ClimateData:
         validate_prices_and_base_year(prices=self.prices, base_year=self.base_year)
 
         # Validate providers
-        if not all(isinstance(provider, int) for provider in self.providers):
-            self.providers = match_providers(self.providers)
+        if self.providers is not None:
+            if not all(isinstance(provider, int) for provider in self.providers):
+                self.providers = match_providers(self.providers)
 
         # By default, the data is not loaded
         self.data: dict[str, pd.DataFrame] = {}
