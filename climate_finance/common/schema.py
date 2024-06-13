@@ -69,6 +69,10 @@ class ClimateSchema:
     LEVEL: str = "level"
     PRICES: str = "prices"
     CURRENCY: str = "currency"
+    EXPECTED_START: str = "expected_start_date"
+    EXPECTED_END: str = "completion_date"
+    SDG_FOCUS: str = "sdgfocus"
+    COMMITMENT_DATE: str = "commitment_date"
 
 
 CRS_MAPPING: dict[str, str] = {
@@ -130,6 +134,10 @@ CRS_MAPPING: dict[str, str] = {
     "coal_related_financing": ClimateSchema.COAL_FINANCING,
     "flow_type": ClimateSchema.FLOW_TYPE,
     "type_of_flow": ClimateSchema.FLOW_TYPE,
+    "expected_start_date": ClimateSchema.EXPECTED_START,
+    "completion_date": ClimateSchema.EXPECTED_END,
+    "sdg_focus": ClimateSchema.SDG_FOCUS,
+    "commitment_date": ClimateSchema.COMMITMENT_DATE,
 }
 
 OECD_CLIMATE_INDICATORS: dict[str, str] = {
