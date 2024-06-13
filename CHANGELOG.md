@@ -1,5 +1,10 @@
 # Changes to the climate_finance package
 
+## 1.1.1 (2024-06-13)
+- Fixes a bug which prevented users from getting all providers by not specifying them (leaving `providers` as None).
+- Fixes a bug where the data wouldn't necessarily be stored in the desired user-defined folder.
+- Adds additional columns to the CRS used for analysis.
+
 ## 1.1.0 (2024-04-08)
 - Adds functionality to accept "providers" as OECD codes, ISO3 codes, or provider names.
 - Adds functionality to get the list of available providers (`ClimateData.available_providers()`).
