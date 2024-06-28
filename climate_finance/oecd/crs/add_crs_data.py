@@ -26,80 +26,6 @@ CRS_INFO = [
 ]
 
 
-def _convert_crs_values_to_million(data: pd.DataFrame) -> pd.DataFrame:
-    """
-    Clean the output of the multilateral CRS data.
-
-    Args:
-        data: The dataframe to clean.
-
-    Returns:
-        The cleaned dataframe.
-
-    """
-
-    for column in MAIN_FLOWS:
-        # convert to USD
-        data[column] = data[column] * 1e6
-
-    return data
-
-
-def get_matching_crs(
-    years: list[int], provider_code: str | list[str] | None = None
-) -> pd.DataFrame:
-    """
-    Get the CRS data in order to match it to the multilateral data.
-    This means reading the right years, renaming columns to match the multilateral
-    naming conventions, and setting the types to strings.
-
-    Args:
-        years: The years to read.
-        party_code: The donor code to read.
-
-    Returns:
-        The CRS data to match.
-
-    """
-
-    # Read the CRS data
-    crs_data = read_clean_crs(years=years)
-
-    # Clean project title
-    crs_data[ClimateSchema.PROJECT_TITLE] = clean_string(
-        crs_data[ClimateSchema.PROJECT_TITLE]
-    )
-
-    # Create new index to summarise the data
-    idx = [
-        c
-        for c in CRS_INFO + [ClimateSchema.PROJECT_TITLE]
-        if c not in [ClimateSchema.FLOW_TYPE]
-    ]
-
-    # Filter for the required providers
-    if provider_code is not None:
-        provider_code = check_codes_type(codes=provider_code)
-        crs_data = crs_data.loc[
-            lambda d: d[ClimateSchema.PROVIDER_CODE].isin(provider_code)
-        ]
-
-    # Convert the index to strings
-    crs_data = crs_data.pipe(idx_to_str, idx=idx)
-
-    # group by and sum
-    crs_data = (
-        crs_data.groupby(idx, observed=True, dropna=False)[MAIN_FLOWS]
-        .sum(numeric_only=True)
-        .reset_index()
-    )
-
-    # Convert values to millions
-    crs_data = _convert_crs_values_to_million(crs_data)
-
-    return crs_data
-
-
 def _create_valid_unique_idx(
     unique_idx: list, projects_df: pd.DataFrame, crs_df: pd.DataFrame
 ) -> list:
@@ -204,21 +130,6 @@ def _keep_only_unmatched_crs(data: pd.DataFrame) -> pd.DataFrame:
             }
         )
     )
-
-
-def _merge_unique_projects_with_matched_crs_data(
-    unique_projects: pd.DataFrame,
-    unique_climate_crs: pd.DataFrame,
-    idx: list[str],
-) -> pd.DataFrame:
-    # Merge the projects and CRS info
-    return unique_projects.merge(
-        unique_climate_crs,
-        on=idx,
-        how="outer",
-        suffixes=("", "_projects"),
-        indicator=True,
-    ).drop(columns=[c for c in unique_projects.columns if c.endswith("_projects")])
 
 
 def _add_climate_total(data: pd.DataFrame) -> pd.DataFrame:
