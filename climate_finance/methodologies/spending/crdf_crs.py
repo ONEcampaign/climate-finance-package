@@ -331,19 +331,6 @@ def add_crs_data_and_transform(
     return data
 
 
-def prepare_crs(crs: pd.DataFrame) -> pd.DataFrame:
-    # Pivot flow_type
-    crs = crs.pivot(
-        index=[
-            c
-            for c in crs.columns
-            if c not in [ClimateSchema.VALUE, ClimateSchema.FLOW_TYPE]
-        ],
-        columns=ClimateSchema.FLOW_TYPE,
-        values=ClimateSchema.VALUE,
-    ).reset_index()
-
-
 def climate_components_providers(crdf: pd.DataFrame) -> list[str]:
     return (
         crdf.loc[
