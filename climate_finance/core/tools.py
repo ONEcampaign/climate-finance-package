@@ -523,3 +523,32 @@ def match_providers(providers: str | list[str]) -> list[int]:
     all_matches = match[match.notna()].tolist() + results
 
     return all_matches
+
+
+def get_cross_cutting_data_oecd(
+    df: pd.DataFrame, cross_cutting_threshold: int = 0
+) -> pd.DataFrame:
+    """
+    Get cross cutting data. This is data where both climate mitigation and climate
+    adaptation are larger than 0.
+
+    Args:
+        df: A dataframe containing the CRS data.
+        cross_cutting_threshold: The threshold for the cross cutting indicator. The
+        default is 0, which means that both climate mitigation and climate adaptation
+        must be larger than 0.
+
+    Returns:
+        A dataframe with cross cutting data. The data is assigned the indicator
+        'climate_cross_cutting'.
+
+    """
+    return (
+        df[
+            (df[ClimateSchema.MITIGATION] > cross_cutting_threshold)
+            & (df[ClimateSchema.ADAPTATION] > cross_cutting_threshold)
+        ]
+        .copy()
+        .assign(**{ClimateSchema.INDICATOR: ClimateSchema.CROSS_CUTTING})
+        .drop(columns=[ClimateSchema.MITIGATION, ClimateSchema.ADAPTATION])
+    )
