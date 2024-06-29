@@ -497,7 +497,7 @@ def multi_flows_to_indicators(flows: list[str] | str) -> list[str]:
 
 
 def get_contributions_data(
-    providers: list[str] | str,
+    providers: list[int] | int,
     recipients: list[str] | str,
     years: list[int] | int,
     currency: str,
