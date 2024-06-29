@@ -11,7 +11,7 @@ from climate_finance.methodologies.spending.crdf import (
     clean_string_cols,
     group_and_summarize,
     split_into_markers_and_components,
-    clean_crdf_markers,
+    transform_marker_columns_to_value_column,
     process_climate_components,
 )
 from climate_finance.methodologies.spending.crs import transform_markers_into_indicators
@@ -393,7 +393,7 @@ def transform_crs_crdf_into_indicators(
     markers, components = split_into_markers_and_components(data)
 
     # Process the markers data
-    markers = markers.pipe(clean_crdf_markers).pipe(
+    markers = markers.pipe(transform_marker_columns_to_value_column).pipe(
         transform_markers_into_indicators,
         percentage_significant=percentage_significant,
         percentage_principal=percentage_principal,
