@@ -5,6 +5,7 @@ import pandas as pd
 from climate_finance.common.analysis_tools import filter_providers, filter_recipients
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import ClimateDataPath
+from climate_finance.core.tools import get_cross_cutting_data_oecd
 from climate_finance.oecd.cleaning_tools.tools import (
     clean_crdf_columns,
 )
@@ -13,9 +14,7 @@ from climate_finance.oecd.crdf.tools import (
     get_marker_data,
     load_or_download,
 )
-from climate_finance.methodologies.bilateral.bilateral_methodologies import (
-    get_cross_cutting_data_oecd,
-)
+
 
 FILE_PATH: Path = ClimateDataPath.raw_data / "oecd_climate_provider_perspective.feather"
 BASE_URL: str = "https://webfs.oecd.org/climate/DonorPerspective/CRDF-DP-2012-"

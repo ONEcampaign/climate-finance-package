@@ -131,4 +131,4 @@ def get_recipient_perspective(
 
 
 if __name__ == "__main__":
-    df = get_recipient_perspective(2019, 2021)
+    df = get_recipient_perspective(2019, 2022)
