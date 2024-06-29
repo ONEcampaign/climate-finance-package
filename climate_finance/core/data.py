@@ -557,7 +557,10 @@ class ClimateData:
         # convert them to spending shares
         if source == "OECD_CRDF":
             self.as_share_of_total(
-                rolling_years=rolling_years_spending, groupby=groupby, shareby=shareby
+                rolling_years=rolling_years_spending,
+                groupby=groupby,
+                shareby=shareby,
+                remove_overlaps=not self.spending_args["highest_marker"],
             )
         else:
             self.convert_to_shares(
