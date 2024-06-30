@@ -1,3 +1,4 @@
+from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import logger
 from climate_finance.core.enums import ValidSources
 
@@ -74,3 +75,55 @@ def validate_list_of_str(values: str | list, valid_enum) -> list:
         return [valid_enum(values)]
     if isinstance(values, list):
         return [valid_enum(f) for f in values]
+
+
+def validate_multi_groupby(groupby: list[str] | None) -> list[str]:
+    """
+    Validate the groupby columns for multilateral imputations data.
+    This is done by adding the agency and provider codes and names to the groupby columns.
+
+    Args:
+        groupby: A list of strings or a string specifying the columns to group by.
+
+    Returns:
+        list[str]: The validated groupby columns.
+
+    """
+    # If string, convert to list
+    if isinstance(groupby, str):
+        groupby = [groupby]
+
+    # Check that groupby contains agencies for proper merging
+    if groupby is not None:
+        for attr in [ClimateSchema.AGENCY_CODE, ClimateSchema.AGENCY_NAME]:
+            if attr not in groupby:
+                groupby = groupby + [attr]
+    return groupby
+
+
+def validate_multi_shares_groupers(grouper: list[str]) -> list[str]:
+    """
+    Validate the groupby columns for multilateral shares data.
+    This is done by removing provider and agency codes and names from the groupers, and
+    adding the channel name and code.
+
+    Args:
+        grouper: A list of strings specifying the columns to group by.
+
+    Returns:
+        list[str]: The validated groupby columns.
+    """
+    return [
+        c
+        for c in grouper
+        if c
+        not in [
+            ClimateSchema.PROVIDER_NAME,
+            ClimateSchema.PROVIDER_CODE,
+            ClimateSchema.AGENCY_NAME,
+            ClimateSchema.AGENCY_CODE,
+            ClimateSchema.PRICES,
+            ClimateSchema.CURRENCY,
+            ClimateSchema.CHANNEL_CODE,
+        ]
+    ] + [ClimateSchema.CHANNEL_CODE]

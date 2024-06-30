@@ -19,8 +19,6 @@ from climate_finance.core.tools import (
     data_to_share,
     filter_flows,
     clean_multi_contributions,
-    validate_multi_shares_groupers,
-    validate_multi_groupby,
     merge_spending_and_contributions,
     calculate_imputations,
     groupby_sum,
@@ -36,6 +34,8 @@ from climate_finance.core.validation import (
     validate_methodology,
     validate_list_of_str,
     validate_source,
+    validate_multi_groupby,
+    validate_multi_shares_groupers,
 )
 from climate_finance.methodologies.spending.crdf import (
     transform_crdf_into_indicators,
