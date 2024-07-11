@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pandas as pd
 
+from climate_finance.common.match_projects_to_crs import get_climate_data_from_crs
 from climate_finance.common.schema import ClimateSchema, CLIMATE_VALUES
 from climate_finance.config import logger
 from climate_finance.core.dtypes import set_default_types
-from climate_finance.core.tools import string_to_missing
 from climate_finance.methodologies.spending.crdf import (
     drop_names,
     clean_string_cols,
@@ -21,86 +21,9 @@ from climate_finance.oecd.crs.add_crs_data import add_crs_data_pipeline
 
 def _compute_total_to_match(projects_df: pd.DataFrame) -> float:
     return round(
-        projects_df.groupby([ClimateSchema.YEAR], observed=True, dropna=False)[
-            CLIMATE_VALUES
-        ]
-        .sum()
-        .sum()
-        .sum()
-        / 1e9,
+        projects_df[CLIMATE_VALUES].astype(float).sum().sum() / 1e9,
         1,
     )
-
-
-def config_indices() -> list[list[str]]:
-    common = [
-        ClimateSchema.YEAR,
-        ClimateSchema.PROVIDER_CODE,
-        ClimateSchema.PURPOSE_CODE,
-        ClimateSchema.RECIPIENT_CODE,
-    ]
-    unique_index_configurations = [
-        common
-        + [  # 2. No CRS ID
-            ClimateSchema.AGENCY_CODE,
-            ClimateSchema.PROJECT_ID,
-            ClimateSchema.FINANCE_TYPE,
-            ClimateSchema.FLOW_MODALITY,
-            ClimateSchema.PROJECT_TITLE,
-        ],
-        common
-        + [  # 3.No CRS ID,  No title
-            ClimateSchema.AGENCY_CODE,
-            ClimateSchema.PROJECT_ID,
-            ClimateSchema.FINANCE_TYPE,
-            ClimateSchema.FLOW_MODALITY,
-        ],
-        common
-        + [  # 4. No CRS ID. No project ID
-            ClimateSchema.AGENCY_CODE,
-            ClimateSchema.FINANCE_TYPE,
-            ClimateSchema.FLOW_MODALITY,
-            ClimateSchema.PROJECT_TITLE,
-        ],
-        common
-        + [  # 5. No CRS ID. No project ID. No Finance type
-            ClimateSchema.AGENCY_CODE,
-            ClimateSchema.FLOW_MODALITY,
-            ClimateSchema.PROJECT_TITLE,
-        ],
-        common
-        + [  # 6. No Agency. No CRS ID. No project ID. No Finance type
-            ClimateSchema.FLOW_MODALITY,
-            ClimateSchema.PROJECT_TITLE,
-        ],
-        common
-        + [  # 7. No Agency. No CRS ID. No project title. No Finance type
-            ClimateSchema.FLOW_MODALITY,
-            ClimateSchema.PROJECT_ID,
-        ],
-        common
-        + [  # 8. No agency. No CRS ID. No Modality. No finance type.
-            ClimateSchema.PROJECT_TITLE,
-            ClimateSchema.PROJECT_ID,
-        ],
-        common
-        + [  # 9. No agency. No CRS ID. No project ID. No Modality. No finance type.
-            ClimateSchema.PROJECT_TITLE,
-        ],
-        common
-        + [  # 12. No agency. No CRS ID. No project ID. No Modality. No finance type.
-            ClimateSchema.CRS_ID,
-            ClimateSchema.FLOW_MODALITY,
-        ],
-        common
-        + [  # 13. No CRS ID. No project title. No Modality. No finance type.
-            ClimateSchema.FLOW_MODALITY,
-            ClimateSchema.PROJECT_DESCRIPTION,
-        ],
-        common,
-    ]
-
-    return unique_index_configurations
 
 
 def _replace_concessional_instruments(data: pd.DataFrame) -> pd.DataFrame:
@@ -227,28 +150,6 @@ def restrict_918_3_data(crs: pd.DataFrame) -> pd.DataFrame:
     return crs
 
 
-def loop_through_matching_strategies(
-    crs: pd.DataFrame, matched: pd.DataFrame, not_matched: pd.DataFrame
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    # Define the different passes that will be performed to try to merge the data
-    # This is done by specifying the merge columns
-    configurations = config_indices()
-
-    # Loop through each config and try to merge the data
-    for pass_number, idx_config in enumerate(configurations):
-        matched_, not_matched = add_crs_data_pipeline(
-            crs_data=crs,
-            projects_to_match=not_matched,
-            idx=idx_config,
-        )
-        matched = pd.concat(
-            [c.dropna(axis=1, how="all") for c in [matched, matched_]],
-            ignore_index=True,
-        )
-
-    return matched, not_matched
-
-
 def combine_matched_and_unmatched_data(
     matched: pd.DataFrame, not_matched: pd.DataFrame
 ) -> pd.DataFrame:
@@ -270,7 +171,6 @@ def combine_matched_and_unmatched_data(
 def add_crs_data_and_transform(
     crdf: pd.DataFrame,
     crs: pd.DataFrame,
-    unique_index: list[str],
     save_not_matched: Path | None = None,
 ) -> pd.DataFrame:
     """
@@ -297,20 +197,20 @@ def add_crs_data_and_transform(
     # Restrict 918(3) data if needed
     crs = restrict_918_3_data(crs=crs)
 
-    # Perform an initial merge. It will be done considering all the columns in the
-    # UNIQUE_INDEX global variable. A left join is attempted. The indicator column
-    # is shown to see how many projects were matched.
-    matched, not_matched = add_crs_data_pipeline(
-        crs_data=crs,
-        projects_to_match=crdf,
-        idx=unique_index,
-    )
+    matched_dfs, unmatched_dfs = [], []
 
-    # Try to match the remaining projects using a series of subsets of the columns in the
-    # dataframe
-    matched, not_matched = loop_through_matching_strategies(
-        crs=crs, matched=matched, not_matched=not_matched
-    )
+    # Match the data, provider by provider
+    for provider in crdf[ClimateSchema.PROVIDER_CODE].unique():
+        m_, un_ = get_climate_data_from_crs(
+            projects_df=crdf.query(f"{ClimateSchema.PROVIDER_CODE}=={provider}").copy(),
+            crs_df=crs.query(f"{ClimateSchema.PROVIDER_CODE}=={provider}").copy(),
+        )
+        matched_dfs.append(m_)
+        unmatched_dfs.append(un_)
+
+    # Combine the matched and unmatched data
+    matched = pd.concat(matched_dfs, ignore_index=True)
+    not_matched = pd.concat(unmatched_dfs, ignore_index=True)
 
     # Log final matching stats
     log_final_matching_stats(matched=matched)
@@ -321,9 +221,6 @@ def add_crs_data_and_transform(
 
     # Combine the matched and not matched data
     data = combine_matched_and_unmatched_data(matched=matched, not_matched=not_matched)
-
-    # 'missing' to <NA>
-    data = string_to_missing(data, missing="missing")
 
     # Set right data types
     data = set_default_types(data)
@@ -369,18 +266,16 @@ def transform_crs_crdf_into_indicators(
     # get climate components providers
     providers = climate_components_providers(crdf=crdf)
 
+    # Clean all string columns
     crdf = crdf.pipe(
         clean_string_cols,
         cols=[ClimateSchema.PROJECT_TITLE, ClimateSchema.PROJECT_DESCRIPTION],
     )
 
-    flow_cols = all_flow_columns()
 
-    data = add_crs_data_and_transform(
-        crs=crs,
-        crdf=crdf,
-        unique_index=[c for c in crs.columns if c not in flow_cols],
-    )
+
+
+    data = add_crs_data_and_transform(crs=crs, crdf=crdf)
 
     # Flag climate components
     data.loc[
