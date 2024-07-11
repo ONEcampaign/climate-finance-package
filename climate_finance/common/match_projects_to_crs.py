@@ -51,6 +51,7 @@ def _create_and_validate_idx_col(idx: list[str], df: pd.DataFrame) -> pd.DataFra
 
     df["idx"] = (
         df[matched]
+        .astype("string[pyarrow]")
         .fillna("")
         .astype(str)
         .replace(["<NA>", "nan", "<NAN>"], "", regex=False)
@@ -520,4 +521,5 @@ def get_climate_data_from_crs(projects_df: pd.DataFrame, crs_df: pd.DataFrame):
         f"({matched/to_match:.1%}) for provider {provider}"
     )
 
-    return matched
+    return matched_data, projects_df
+
