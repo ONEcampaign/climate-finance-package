@@ -1,3 +1,7 @@
+from collections import OrderedDict
+
+import numpy as np
+
 from climate_finance.common.schema import ClimateSchema, CLIMATE_VALUES, ALL_FLOWS
 import pandas as pd
 from climate_finance.config import logger
@@ -29,6 +33,12 @@ MATCHING_STRATEGIES = {
         for c in BASE_IDX
         if c not in [ClimateSchema.AGENCY_CODE, ClimateSchema.PROJECT_ID]
     ],
+}
+
+
+IDX_REPLACEMENTS = {
+    ClimateSchema.PROJECT_ID: ClimateSchema.CRS_ID,
+    ClimateSchema.PROJECT_TITLE: ClimateSchema.PROJECT_ID,
 }
 
 
@@ -78,11 +88,13 @@ def _groupby_idx(df: pd.DataFrame, idx: list[str]) -> pd.DataFrame:
 
     id_columns = [c for c in idx if c in df.columns] + ["idx"]
 
-    return (
-        df.groupby(id_columns, observed=True, dropna=False)[CLIMATE_VALUES]
-        .sum()
-        .reset_index()
+    df["original_commitment"] = (
+        df[CLIMATE_VALUES].max(axis=1) / df[f"commitment_{ClimateSchema.CLIMATE_SHARE}"]
     )
+
+    cols = CLIMATE_VALUES + ["original_commitment"]
+
+    return df.groupby(id_columns, observed=True, dropna=False)[cols].sum().reset_index()
 
 
 def _add_idx_col(
@@ -157,6 +169,12 @@ def _extract_matched_data(
         .drop(columns=merged_data.filter(like="_crdf").columns)
     )
 
+    if data.duplicated(subset=["idx", ClimateSchema.CRS_ID]).sum() > 0:
+        logger.warning(
+            f"Matched data for {data[ClimateSchema.PROVIDER_CODE].unique().tolist()[0]}"
+            f" contains duplicates"
+        )
+
     return data
 
 
@@ -199,12 +217,8 @@ def _extract_matched_climate_shares(
     Returns:
         pd.DataFrame: The DataFrame containing the climate shares for the specified 'idx' values.
     """
-    return (
-        matched_data.assign(
-            idx=lambda d: d["idx"].str.replace(r"^\d{4}_", "", regex=True)
-        )
-        .loc[lambda d: d["idx"].isin(idx)]
-        .filter(["idx"] + CLIMATE_VALUES)
+    return matched_data.loc[lambda d: d["idx"].isin(idx)].filter(
+        ["idx"] + CLIMATE_VALUES
     )
 
 
@@ -261,6 +275,102 @@ def _get_projects_to_match(
     return original_projects.loc[lambda d: d["idx"].isin(unmatched_projects_idx)]
 
 
+def _replace_problematic_column(
+    df: pd.DataFrame, column: str, dataset: str
+) -> str | None:
+    """
+    Issues a warning if many values are missing in a column.
+
+    Args:
+        df (pd.DataFrame): The DataFrame to check for missing values.
+        column (str): The column to check for missing values.
+    """
+
+    missing_ratio = df[column].isna().mean()
+
+    if missing_ratio > 0.25:
+        logger.debug(
+            f"More than 25% of values are missing in column '{column}' in {dataset} data"
+        )
+        return IDX_REPLACEMENTS.get(column)
+
+    return None
+
+
+def _validate_idx(
+    idx: list[str], projects_df: pd.DataFrame, crs_df: pd.DataFrame
+) -> list[str]:
+
+    changes = [
+        (
+            column,
+            _replace_problematic_column(projects_df, column, "CRDF")
+            or _replace_problematic_column(crs_df, column, "CRS"),
+        )
+        for column in idx
+    ]
+
+    ordered_dict = OrderedDict()
+
+    for column in idx:
+        rep = next(
+            (rep for col, rep in changes if col == column and rep is not None), None
+        )
+        if rep is not None:
+            ordered_dict[rep] = None
+        else:
+            ordered_dict[column] = None
+
+    idx = list(ordered_dict.keys())
+
+    return idx
+
+
+def _dedup_on_commitments(
+    matched: pd.DataFrame, original_data: pd.DataFrame
+) -> pd.DataFrame:
+
+    # Identified duplicated rows
+    duplicated = matched.loc[
+        lambda d: d.duplicated(subset=["idx"], keep=False)
+    ].sort_values(["idx"])
+
+    no_duplicates = matched.loc[lambda d: ~d.duplicated(subset=["idx"], keep=False)]
+
+    tolerance = 0.01
+
+    duplicated["commitment_match"] = (
+        np.abs(
+            duplicated[ClimateSchema.USD_COMMITMENT] - duplicated["original_commitment"]
+        )
+        / duplicated[ClimateSchema.USD_COMMITMENT]
+        <= tolerance
+    )
+
+    deduplicated = duplicated[duplicated["commitment_match"]]
+
+    if len(deduplicated) > 0:
+        duplicated = deduplicated.loc[
+            lambda d: d.duplicated(subset=["idx"], keep=False)
+        ]
+        deduplicated = deduplicated.loc[
+            lambda d: ~d.duplicated(subset=["idx"], keep=False)
+        ]
+
+    # check if duplicates remain
+    if len(duplicated) > 0:
+        duplicated["commitment_match"] = duplicated[ClimateSchema.CRS_ID].isin(
+            original_data[ClimateSchema.CRS_ID].unique()
+        )
+        deduplicated_crs = duplicated[duplicated["commitment_match"]]
+        deduplicated = pd.concat([deduplicated, deduplicated_crs], ignore_index=True)
+
+    if len(deduplicated) > 0:
+        return pd.concat([no_duplicates, deduplicated], ignore_index=True)
+
+    return matched
+
+
 def _matching_pipeline(
     idx: list[str], projects_df: pd.DataFrame, crs_df: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -284,6 +394,10 @@ def _matching_pipeline(
         has not been matched yet, and the DataFrame with the CRS data
         that has not been matched yet.
     """
+
+    # Valiate for columns where a lot of data is missing
+    idx = _validate_idx(idx=idx, projects_df=projects_df, crs_df=crs_df)
+
     # Add index column to the projects and CRS dataframes
     projects, crs = _add_idx_col(idx, projects_df, crs_df)
 
@@ -295,6 +409,16 @@ def _matching_pipeline(
 
     # Extract matched data from merged data
     matched_data = _extract_matched_data(merged_data=merged_data, side="both")
+
+    if matched_data.duplicated(subset="idx").sum() > 0:
+        matched_data = _dedup_on_commitments(
+            matched=matched_data, original_data=projects_df
+        )
+        logger.debug(
+            f"{projects_df[ClimateSchema.PROVIDER_CODE].unique().tolist()[0]}"
+            f": One-to-many match possible with {idx}"
+        )
+
     # Convert climate values to shares
     matched_data = _convert_climate_values_to_shares(matched_data)
 
@@ -336,6 +460,21 @@ def _add_matches_without_year(
         tuple[pd.DataFrame, pd.DataFrame]: A tuple containing the DataFrame with the
         added matches without the year and the DataFrame with the new CRS data to match.
     """
+    # check if commitment year can be used
+    if crs_df[ClimateSchema.COMMITMENT_DATE].isna().sum() / len(crs_df) < 0.01:
+        crs_df["commitment_year"] = (
+            crs_df[ClimateSchema.COMMITMENT_DATE].astype("datetime64[ns]").dt.year
+        ).astype("int16[pyarrow]")
+        projects_df["commitment_year"] = projects_df[ClimateSchema.YEAR].astype(
+            "int16[pyarrow]"
+        )
+        matched_data["commitment_year"] = (
+            matched_data[ClimateSchema.COMMITMENT_DATE]
+            .astype("datetime64[ns]")
+            .dt.year.astype("int16[pyarrow]")
+        )
+        idx.append("commitment_year")
+
     # Prepare new index by removing the year from the 'idx' list
     new_idx = [c for c in idx if c != ClimateSchema.YEAR]
 
@@ -343,11 +482,18 @@ def _add_matches_without_year(
     if "idx" in crs_df.columns:
         crs_df = crs_df.drop(columns="idx")
 
+    matched_data = _create_and_validate_idx_col(new_idx, matched_data)
+
     # Run matching pipeline to get the matched data without considering the
     # year and the new CRS data to match
     matched_no_year, _, crs_to_match = _matching_pipeline(
         idx=new_idx, projects_df=projects_df, crs_df=crs_df
     )
+
+    if len(matched_no_year) > 0:
+        logger.info(
+            f"matched disbursement: {matched_no_year[ClimateSchema.USD_DISBURSEMENT].sum()/1e6}m"
+        )
 
     # Extract the climate shares from the matched data
     matched_shares = _extract_matched_climate_shares(
@@ -395,9 +541,9 @@ def _match_projects_to_crs(
     if len(matched_data) > 0:
         matched_data, crs_to_match = _add_matches_without_year(
             idx=idx,
-            matched_data=matched_data,
-            projects_df=projects_df,
-            crs_df=crs_to_match,
+            matched_data=matched_data.copy(),
+            projects_df=projects_df.copy(),
+            crs_df=crs_to_match.copy(),
         )
 
     return (
@@ -490,7 +636,8 @@ def get_climate_data_from_crs(projects_df: pd.DataFrame, crs_df: pd.DataFrame):
         float: The total matched amount.
     """
     # Identify the unique provider from the projects data
-    provider = projects_df.provider.unique().tolist()[0]
+    provider = projects_df[ClimateSchema.PROVIDER_NAME].unique().tolist()[0]
+    provider_code = projects_df[ClimateSchema.PROVIDER_CODE].unique().tolist()[0]
 
     # Calculate the total climate finance value to match
     to_match = projects_df["climate_finance_value"].sum()
@@ -518,8 +665,7 @@ def get_climate_data_from_crs(projects_df: pd.DataFrame, crs_df: pd.DataFrame):
     # Log the matched amount
     logger.info(
         f"Matched {matched/1e6:,.0f}m out of {to_match/1e6:,.0f}m "
-        f"({matched/to_match:.1%}) for provider {provider}"
+        f"({matched/to_match:.1%}) for provider {provider_code} - {provider}"
     )
 
     return matched_data, projects_df
-

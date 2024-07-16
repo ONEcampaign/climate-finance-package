@@ -15,8 +15,6 @@ from climate_finance.methodologies.spending.crdf import (
     process_climate_components,
 )
 from climate_finance.methodologies.spending.crs import transform_markers_into_indicators
-from climate_finance.oecd.cleaning_tools.settings import all_flow_columns
-from climate_finance.oecd.crs.add_crs_data import add_crs_data_pipeline
 
 
 def _compute_total_to_match(projects_df: pd.DataFrame) -> float:
@@ -271,9 +269,6 @@ def transform_crs_crdf_into_indicators(
         clean_string_cols,
         cols=[ClimateSchema.PROJECT_TITLE, ClimateSchema.PROJECT_DESCRIPTION],
     )
-
-
-
 
     data = add_crs_data_and_transform(crs=crs, crdf=crdf)
 
