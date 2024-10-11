@@ -87,12 +87,16 @@ def _groupby_idx(df: pd.DataFrame, idx: list[str]) -> pd.DataFrame:
     """
 
     id_columns = [c for c in idx if c in df.columns] + ["idx"]
+    cols = CLIMATE_VALUES.copy()
 
-    df["original_commitment"] = (
-        df[CLIMATE_VALUES].max(axis=1) / df[f"commitment_{ClimateSchema.CLIMATE_SHARE}"]
-    )
+    if f"commitment_{ClimateSchema.CLIMATE_SHARE}" in df.columns:
 
-    cols = CLIMATE_VALUES + ["original_commitment"]
+        df["original_commitment"] = (
+            df[CLIMATE_VALUES].max(axis=1)
+            / df[f"commitment_{ClimateSchema.CLIMATE_SHARE}"]
+        )
+
+        cols = cols + ["original_commitment"]
 
     return df.groupby(id_columns, observed=True, dropna=False)[cols].sum().reset_index()
 
@@ -246,7 +250,7 @@ def _get_crs_to_match(
 
 
 def _get_projects_to_match(
-    original_projects: pd.DataFrame, merged_data: pd.DataFrame
+    original_projects: pd.DataFrame, matched_data: pd.DataFrame
 ) -> pd.DataFrame:
     """
     Extracts the project data that has not been matched yet from the projects dataframe.
@@ -258,21 +262,15 @@ def _get_projects_to_match(
 
     Args:
         original_projects (pd.DataFrame): The original DataFrame representing the project data.
-        merged_data (pd.DataFrame): The DataFrame resulting from the merge operation.
+        matched_data (pd.DataFrame): The DataFrame resulting from the matching operation.
 
     Returns:
         pd.DataFrame: The DataFrame containing the project data that has not been matched yet.
     """
-    # Get unmatched project idx list
-    unmatched_projects_idx = (
-        _extract_matched_data(merged_data=merged_data, side="right_only")["idx"]
-        .unique()
-        .tolist()
-    )
+    # Get idx for matches
+    idx_match = matched_data["idx"].unique().tolist()
 
-    # Return the rows in the original project data where the 'idx' value is in
-    # the list of unmatched 'idx' values
-    return original_projects.loc[lambda d: d["idx"].isin(unmatched_projects_idx)]
+    return original_projects.loc[lambda d: ~d["idx"].isin(idx_match)]
 
 
 def _replace_problematic_column(
@@ -424,10 +422,8 @@ def _matching_pipeline(
 
     # Extract CRS data that has not been matched yet
     crs_to_match = _get_crs_to_match(original_crs=crs, matched_data=matched_data)
-
-    # Extract projects data that has not been matched yet
     projects_to_match = _get_projects_to_match(
-        original_projects=projects, merged_data=merged_data
+        original_projects=projects, matched_data=merged_data
     )
 
     return matched_data, projects_to_match, crs_to_match
@@ -487,7 +483,7 @@ def _add_matches_without_year(
     # Run matching pipeline to get the matched data without considering the
     # year and the new CRS data to match
     matched_no_year, _, crs_to_match = _matching_pipeline(
-        idx=new_idx, projects_df=projects_df, crs_df=crs_df
+        idx=new_idx, projects_df=matched_data, crs_df=crs_df
     )
 
     if len(matched_no_year) > 0:

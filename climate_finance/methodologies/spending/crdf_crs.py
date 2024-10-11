@@ -189,8 +189,6 @@ def add_crs_data_and_transform(
         The projects matched with the CRS data.
 
     """
-    # Log matching stats
-    log_matching_stats(projects_df=crdf)
 
     # Restrict 918(3) data if needed
     crs = restrict_918_3_data(crs=crs)
@@ -210,9 +208,6 @@ def add_crs_data_and_transform(
     matched = pd.concat(matched_dfs, ignore_index=True)
     not_matched = pd.concat(unmatched_dfs, ignore_index=True)
 
-    # Log final matching stats
-    log_final_matching_stats(matched=matched)
-
     # if a path is passed to save the not matched data, save it
     if save_not_matched is not None:
         not_matched.to_csv(save_not_matched, index=False)
@@ -222,6 +217,9 @@ def add_crs_data_and_transform(
 
     # Set right data types
     data = set_default_types(data)
+
+    if "commitment_match" in data.columns:
+        data = data.drop(columns=["commitment_match"])
 
     return data
 
