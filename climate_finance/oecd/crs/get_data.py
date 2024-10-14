@@ -55,8 +55,8 @@ def get_crs(
     start_year: int,
     end_year: int,
     groupby: list = None,
-    provider_code: list[str | int] | str | None = None,
-    recipient_code: list[str | int] | str | None = None,
+    provider_code: list[str | int] | str | int | None = None,
+    recipient_code: list[str | int] | str | int | None = None,
     force_update: bool = False,
 ) -> pd.DataFrame:
     """
