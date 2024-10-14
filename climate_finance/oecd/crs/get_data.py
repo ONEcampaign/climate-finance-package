@@ -4,7 +4,8 @@ from oda_data.clean_data.channels import clean_string
 
 from climate_finance.common.analysis_tools import (
     add_net_disbursement,
-    check_codes_type,
+    get_providers_filter,
+    get_recipients_filter,
 )
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import ClimateDataPath, logger
@@ -24,12 +25,16 @@ from climate_finance.oecd.cleaning_tools.tools import (
 set_data_path(ClimateDataPath.raw_data)
 
 
-def read_clean_crs(years: list[int] | range) -> pd.DataFrame:
+def read_clean_crs(
+    years: list[int] | range, filters: list[tuple] | None = None
+) -> pd.DataFrame:
     """Helper function to get a copy of the CRS with clean column names
     and correct data types.
 
     Args:
         years (list[int]): The years to read.
+        filters (list[tuple], optional): A list of tuples with the column name, operation,
+        and the value to filter by. Defaults to None.
 
     Returns:
         pd.DataFrame: A dataframe with clean column names and correct data types.
@@ -39,15 +44,19 @@ def read_clean_crs(years: list[int] | range) -> pd.DataFrame:
         f"Reading CRS data for {', '.join([str(y) for y in years])}. "
         f"This may take a while."
     )
-    return read_crs(years=years).pipe(rename_crs_columns).pipe(set_default_types)
+    return (
+        read_crs(years=years, filters=filters)
+        .pipe(rename_crs_columns)
+        .pipe(set_default_types)
+    )
 
 
 def get_crs(
     start_year: int,
     end_year: int,
     groupby: list = None,
-    provider_code: list[str] | str | None = None,
-    recipient_code: list[str] | str | None = None,
+    provider_code: list[str | int] | str | None = None,
+    recipient_code: list[str | int] | str | None = None,
     force_update: bool = False,
 ) -> pd.DataFrame:
     """
@@ -67,12 +76,20 @@ def get_crs(
         pd.DataFrame: A dataframe containing bilateral spending data for
         the specified flow type and time period.
     """
+
     # Study years
     years = range(start_year, end_year + 1)
 
+    filters = []
+    # Provider and recipient filters
+    if provider_code is not None:
+        filters.append(get_providers_filter(provider_code))
+    if recipient_code is not None:
+        filters.append(get_recipients_filter(recipient_code))
+
     # Check if data should be forced to update
     if force_update:
-        download_crs(years=years)
+        download_crs()
 
     # get relevant columns plus flow modality
     columns = relevant_crs_columns() + [ClimateSchema.FLOW_MODALITY]
@@ -88,17 +105,7 @@ def get_crs(
     groupby = list(dict.fromkeys(groupby + [ClimateSchema.FLOW_TYPE]))
 
     # Read CRS and rename columns
-    crs = read_clean_crs(years=years)
-
-    # Filter by provider code
-    if provider_code is not None:
-        provider_code = check_codes_type(codes=provider_code)
-        crs = crs.loc[lambda d: d[ClimateSchema.PROVIDER_CODE].isin(provider_code)]
-
-    # Filter by recipient code
-    if recipient_code is not None:
-        recipient_code = check_codes_type(codes=recipient_code)
-        crs = crs.loc[lambda d: d[ClimateSchema.RECIPIENT_CODE].isin(recipient_code)]
+    crs = read_clean_crs(years=years, filters=filters)
 
     # Add net disbursement
     crs = crs.pipe(add_net_disbursement)
@@ -165,8 +172,8 @@ def get_raw_crs(
     allocable: bool = False,
     start_year: int = 2019,
     end_year: int = 2020,
-    provider_code: list[str] | str | None = None,
-    recipient_code: list[str] | str | None = None,
+    provider_code: list[str | int] | str | None = None,
+    recipient_code: list[str | int] | str | None = None,
     force_update: bool = False,
 ) -> pd.DataFrame:
     """
@@ -191,27 +198,20 @@ def get_raw_crs(
 
     # Check if data should be forced to update
     if force_update:
-        download_crs(years=years)
+        download_crs()
+
+    filters = []
+    # Provider and recipient filters
+    if provider_code is not None:
+        filters.append(get_providers_filter(provider_code))
+    if recipient_code is not None:
+        filters.append(get_recipients_filter(recipient_code))
 
     # Read the CRS data
-    crs_data = read_clean_crs(years=years)
+    crs_data = read_clean_crs(years=years, filters=filters)
 
     if allocable:
         crs_data = crs_data.pipe(keep_only_allocable_aid)
-
-    # Filter by provider code
-    if provider_code is not None:
-        provider_code = check_codes_type(codes=provider_code)
-        crs_data = crs_data.loc[
-            lambda d: d[ClimateSchema.PROVIDER_CODE].isin(provider_code)
-        ]
-
-    # Filter by recipient code
-    if recipient_code is not None:
-        recipient_code = check_codes_type(codes=recipient_code)
-        crs_data = crs_data.loc[
-            lambda d: d[ClimateSchema.RECIPIENT_CODE].isin(recipient_code)
-        ]
 
     # Clean project title
     crs_data[ClimateSchema.PROJECT_TITLE] = clean_string(

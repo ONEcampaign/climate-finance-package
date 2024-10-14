@@ -1,8 +1,15 @@
 from pathlib import Path
+from tabnanny import check
 
 import pandas as pd
 
-from climate_finance.common.analysis_tools import filter_providers, filter_recipients
+from climate_finance.common.analysis_tools import (
+    filter_providers,
+    filter_recipients,
+    get_providers_filter,
+    get_recipients_filter,
+    check_missing,
+)
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import ClimateDataPath
 from climate_finance.core.tools import get_cross_cutting_data_oecd
@@ -16,7 +23,7 @@ from climate_finance.oecd.crdf.tools import (
 )
 
 
-FILE_PATH: Path = ClimateDataPath.raw_data / "oecd_climate_provider_perspective.feather"
+FILE_PATH: Path = ClimateDataPath.raw_data / "oecd_climate_provider_perspective.parquet"
 BASE_URL: str = "https://webfs.oecd.org/climate/DonorPerspective/CRDF-DP-2012-"
 
 
@@ -53,8 +60,8 @@ def _get_and_remove_multilateral(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
 def get_provider_perspective(
     start_year: int,
     end_year: int,
-    provider_code: str | list[str] | None = None,
-    recipient_code: str | list[str] | None = None,
+    provider_code: str | int | list[str | int] | None = None,
+    recipient_code: str | int | list[str | int] | None = None,
     force_update: bool = False,
 ) -> pd.DataFrame:
     """
@@ -78,21 +85,31 @@ def get_provider_perspective(
     # Study years
     years = [str(y) for y in range(start_year, end_year + 1)]
 
+    filters = []
+    # Provider and recipient filters
+    if provider_code is not None:
+        filters.append(
+            get_providers_filter(provider_code, provider_column="provider_code")
+        )
+    if recipient_code is not None:
+        filters.append(
+            get_recipients_filter(recipient_code, recipient_column="recipient_code")
+        )
+
+    # Provider and recipient filters
+    filters.append(["year", "in", years])
+
     # Check if data should be forced to update
     if force_update:
         download_file(base_url=BASE_URL, save_to_path=FILE_PATH)
 
     # Try to load file
-    df = load_or_download(base_url=BASE_URL, save_to_path=FILE_PATH)
+    df = load_or_download(base_url=BASE_URL, save_to_path=FILE_PATH, filters=filters)
 
-    # Filter for years
-    df = df.loc[lambda d: d[ClimateSchema.YEAR].isin(years)]
-
-    # filter for parties (if needed)
-    df = filter_providers(data=df, provider_codes=provider_code)
-
-    # filter for recipients (if needed)
-    df = filter_recipients(data=df, recipient_codes=recipient_code)
+    # Check if there are missing values from filter
+    check_missing(df, ClimateSchema.PROVIDER_CODE, provider_code)
+    check_missing(df, ClimateSchema.RECIPIENT_CODE, recipient_code)
+    check_missing(df, ClimateSchema.YEAR, years)
 
     # get a multilateral df and remove multilateral from the main df
     df, multilateral = _get_and_remove_multilateral(df)
@@ -121,4 +138,9 @@ def get_provider_perspective(
 
 
 if __name__ == "__main__":
-    df = get_provider_perspective(2019, 2020, force_update=False)
+    df = get_provider_perspective(
+        2019,
+        2022,
+        force_update=False,
+        provider_code=[4],
+    )
