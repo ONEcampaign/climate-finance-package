@@ -89,6 +89,34 @@ def check_codes_type(
     return codes
 
 
+def get_providers_filter(
+    provider_codes: list[int], provider_column: str = "donor_code"
+) -> tuple:
+    provider_code = check_codes_type(codes=provider_codes)
+    return provider_column, "in", provider_code
+
+
+def get_recipients_filter(
+    recipient_codes: list[int], recipient_column: str = "recipient_code"
+) -> tuple:
+
+    recipient_code = check_codes_type(codes=recipient_codes)
+    return recipient_column, "in", recipient_code
+
+
+def check_missing(data: pd.DataFrame, column: str, codes: list) -> None:
+    if codes is None:
+        return
+
+    codes = check_codes_type(codes=codes)
+
+    missing_codes = set(codes) - set(data[column].unique())
+    if len(missing_codes) > 0:
+        logger.warning(
+            f"The following {column}s are not found in the data:\n{missing_codes}"
+        )
+
+
 def filter_providers(
     data: pd.DataFrame, provider_codes: list[int] | int
 ) -> pd.DataFrame:

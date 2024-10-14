@@ -13,5 +13,6 @@ class ClimateDataPath:
     crs_channel_mapping = scripts / "oecd" / "multisystem" / "crs_channel_mapping.csv"
 
 
-logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
-logger = logging.getLogger("climate_finance")
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+logger = logging.getLogger("pydeflate")

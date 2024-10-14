@@ -1,20 +1,86 @@
+import io
+import os
 import pathlib
+import tempfile
+import time
 
 import pandas as pd
 from dateutil.utils import today
-from oda_data.get_data.common import fetch_file_from_url_selenium
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 
 from climate_finance.common.schema import (
     CRS_MAPPING,
 )
 from climate_finance.config import logger
-from climate_finance.core.dtypes import set_default_types
 from climate_finance.methodologies.multilateral.tools import log_notes
 from climate_finance.oecd.cleaning_tools.tools import (
     rename_crdf_marker_columns,
     marker_columns_to_numeric,
     clean_raw_crdf,
 )
+
+
+def fetch_file_from_url_selenium(url: str) -> io.BytesIO:
+    """
+    Downloads a file from a specified URL using Selenium in headless mode
+    and reads it into memory.
+
+    Args:
+        url: The URL to fetch the file from.
+
+    Returns:
+        A bytes object containing the file data.
+    """
+    # Create a temporary directory for downloads
+    download_dir = tempfile.mkdtemp()
+
+    # Set up Chrome options
+    options = webdriver.ChromeOptions()
+    options.add_argument("headless")
+    options.add_experimental_option(
+        name="prefs",
+        value={
+            "download.default_directory": download_dir,
+            "download.prompt_for_download": False,
+            "download.directory_upgrade": True,
+            "plugins.always_open_pdf_externally": True,
+        },
+    )
+
+    # Get driver
+    chrome = ChromeDriverManager().install()
+
+    # Return driver with the options
+    driver = webdriver.Chrome(service=Service(chrome), options=options)
+
+    # define downloaded file
+    downloaded_file = None
+    try:
+        driver.get(url)
+        time.sleep(4)
+
+        # Check for the completion of the download by monitoring the absence
+        # of .crdownload files
+        while any(
+            file_name.endswith(".crdownload") for file_name in os.listdir(download_dir)
+        ):
+            time.sleep(1)  # Check every second
+
+        # Once downloaded, read the file into memory
+        downloaded_file = os.path.join(download_dir, os.listdir(download_dir)[0])
+
+        with open(downloaded_file, "rb") as file:
+            file_data = io.BytesIO(file.read())
+
+    finally:
+        driver.quit()
+        if downloaded_file is not None:
+            os.remove(downloaded_file)
+        os.rmdir(download_dir)
+
+    return file_data
 
 
 def get_file_url(year: int, url: str) -> str:
@@ -74,6 +140,11 @@ def read_excel_sheets(excel_file: pd.ExcelFile) -> list[pd.DataFrame]:
     return dfs
 
 
+def enforce_pyarrow_types(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensures that a DataFrame uses pyarrow dtypes."""
+    return df.convert_dtypes(dtype_backend="pyarrow")
+
+
 def download_file(
     base_url: str,
     save_to_path: pathlib.Path,
@@ -93,10 +164,10 @@ def download_file(
     data = pd.concat(dfs, ignore_index=True)
 
     # clean data
-    data = clean_raw_crdf(data)
+    data = clean_raw_crdf(data).pipe(enforce_pyarrow_types)
 
     # Save file
-    data.to_feather(save_to_path)
+    data.to_parquet(save_to_path)
 
 
 def get_marker_data(df: pd.DataFrame, marker: str):
@@ -121,20 +192,24 @@ def get_marker_data(df: pd.DataFrame, marker: str):
     )
 
 
-def _load(save_to_path: str | pathlib.Path) -> pd.DataFrame:
+def _load(
+    save_to_path: str | pathlib.Path, filters: list[tuple] | None = None
+) -> pd.DataFrame:
     logger.info(f"Loadings CRDF data. This may take a while.")
     return (
-        pd.read_feather(save_to_path)
+        pd.read_parquet(save_to_path, filters=filters)
         .rename(columns=CRS_MAPPING)
         .pipe(rename_crdf_marker_columns)
         .pipe(marker_columns_to_numeric)
-        .pipe(set_default_types)
+        .pipe(enforce_pyarrow_types)
     )
 
 
-def load_or_download(base_url: str, save_to_path: str | pathlib.Path) -> pd.DataFrame:
+def load_or_download(
+    base_url: str, save_to_path: str | pathlib.Path, filters: list[tuple] | None = None
+) -> pd.DataFrame:
     try:
-        return _load(save_to_path)
+        return _load(save_to_path, filters=filters)
     except FileNotFoundError:
         download_file(base_url=base_url, save_to_path=save_to_path)
-        return _load(save_to_path)
+        return _load(save_to_path, filters=filters)
