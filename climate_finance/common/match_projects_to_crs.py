@@ -96,7 +96,10 @@ def _groupby_idx(df: pd.DataFrame, idx: list[str]) -> pd.DataFrame:
             / df[f"commitment_{ClimateSchema.CLIMATE_SHARE}"]
         )
 
+    if "original_commitment" in df.columns:
         cols = cols + ["original_commitment"]
+
+    df[cols] = df[cols].fillna(0)
 
     return df.groupby(id_columns, observed=True, dropna=False)[cols].sum().reset_index()
 
@@ -407,6 +410,9 @@ def _matching_pipeline(
 
     # Extract matched data from merged data
     matched_data = _extract_matched_data(merged_data=merged_data, side="both")
+    unmatched_crdf_idx = _extract_matched_data(
+        merged_data=merged_data, side="right_only"
+    )["idx"].unique()
 
     if matched_data.duplicated(subset="idx").sum() > 0:
         matched_data = _dedup_on_commitments(
@@ -422,9 +428,7 @@ def _matching_pipeline(
 
     # Extract CRS data that has not been matched yet
     crs_to_match = _get_crs_to_match(original_crs=crs, matched_data=matched_data)
-    projects_to_match = _get_projects_to_match(
-        original_projects=projects, matched_data=merged_data
-    )
+    projects_to_match = projects_df.loc[lambda d: d["idx"].isin(unmatched_crdf_idx)]
 
     return matched_data, projects_to_match, crs_to_match
 
@@ -487,8 +491,8 @@ def _add_matches_without_year(
     )
 
     if len(matched_no_year) > 0:
-        logger.info(
-            f"matched disbursement: {matched_no_year[ClimateSchema.USD_DISBURSEMENT].sum()/1e6}m"
+        logger.debug(
+            f"matched additional disbursement: {matched_no_year[ClimateSchema.USD_DISBURSEMENT].sum()/1e6}m"
         )
 
     # Extract the climate shares from the matched data
@@ -663,5 +667,4 @@ def get_climate_data_from_crs(projects_df: pd.DataFrame, crs_df: pd.DataFrame):
         f"Matched {matched/1e6:,.0f}m out of {to_match/1e6:,.0f}m "
         f"({matched/to_match:.1%}) for provider {provider_code} - {provider}"
     )
-
     return matched_data, projects_df

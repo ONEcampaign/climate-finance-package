@@ -2,6 +2,7 @@ from pathlib import Path
 from tabnanny import check
 
 import pandas as pd
+from bblocks import convert_id
 
 from climate_finance.common.analysis_tools import (
     filter_providers,
@@ -135,12 +136,3 @@ def get_provider_perspective(
     data = pd.concat(dfs, ignore_index=True)
 
     return data
-
-
-if __name__ == "__main__":
-    df = get_provider_perspective(
-        2019,
-        2022,
-        force_update=False,
-        provider_code=[4],
-    )
