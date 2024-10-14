@@ -9,6 +9,7 @@ from climate_finance.common.schema import (
     MULTISYSTEM_COLUMNS,
 )
 from climate_finance.config import ClimateDataPath
+from climate_finance.core.tools import clean_multi_contributions
 from climate_finance.oecd.cleaning_tools.tools import (
     convert_flows_millions_to_units,
     channel_codes_to_names,
@@ -80,7 +81,7 @@ def get_multilateral_contributions(
     oda.load_indicator(indicators=list(MULTISYSTEM_INDICATORS))
 
     # Get all the data that has been loaded. Clean the dataframe.
-    data = oda.get_data().pipe(_clean_multi_contributions)
+    data = oda.get_data().pipe(clean_multi_contributions)
 
     data = filter_providers(data=data, provider_codes=provider_code)
 

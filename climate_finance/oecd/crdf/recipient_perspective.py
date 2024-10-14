@@ -2,10 +2,15 @@ from pathlib import Path
 
 import pandas as pd
 from oda_data import set_data_path
+from oda_data.clean_data.channels import clean_string
 
-from climate_finance.common.analysis_tools import filter_providers, filter_recipients
+from climate_finance.common.analysis_tools import (
+    get_providers_filter,
+    get_recipients_filter,
+    check_missing,
+)
 from climate_finance.common.schema import ClimateSchema
-from climate_finance.config import ClimateDataPath, logger
+from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.tools import (
     fix_crdf_provider_names_columns,
     fix_crdf_recipient_errors,
@@ -15,10 +20,9 @@ from climate_finance.oecd.crdf.tools import (
     download_file,
     load_or_download,
 )
-from oda_data.clean_data.channels import clean_string
 
 FILE_PATH: Path = (
-    ClimateDataPath.raw_data / "oecd_climate_recipient_perspective.feather"
+    ClimateDataPath.raw_data / "oecd_climate_recipient_perspective.parquet"
 )
 
 set_data_path(ClimateDataPath.raw_data)
@@ -97,27 +101,37 @@ def get_recipient_perspective(
     # Study years
     years = [y for y in range(start_year, end_year + 1)]
 
+    filters = []
+    # Provider and recipient filters
+    if provider_code is not None:
+        filters.append(
+            get_providers_filter(provider_code, provider_column="provider_code")
+        )
+    if recipient_code is not None:
+        filters.append(
+            get_recipients_filter(recipient_code, recipient_column="recipient_code")
+        )
+
+    # Provider and recipient filters
+    filters.append(["year", "in", years])
+
     # Check if data should be forced to update
     if force_update:
         download_file(base_url=BASE_URL, save_to_path=FILE_PATH)
 
     # Try to load file
-    df = load_or_download(base_url=BASE_URL, save_to_path=FILE_PATH)
-
-    # Filter for years
-    df = df.loc[lambda d: d[ClimateSchema.YEAR].isin(years)]
-
-    # filter for providers (if needed)
-    df = filter_providers(data=df, provider_codes=provider_code)
-
-    # filter for recipients (if needed)
-    df = filter_recipients(data=df, recipient_codes=recipient_code)
+    df = load_or_download(base_url=BASE_URL, save_to_path=FILE_PATH, filters=filters)
 
     # Rename provider columns
     df = df.pipe(fix_crdf_provider_names_columns)
 
     # Fix errors in recipient code
     df = df.pipe(fix_crdf_recipient_errors)
+
+    # Check if there are missing values from filter
+    check_missing(df, ClimateSchema.PROVIDER_CODE, provider_code)
+    check_missing(df, ClimateSchema.RECIPIENT_CODE, recipient_code)
+    check_missing(df, ClimateSchema.YEAR, years)
 
     # Clean long description
     df[ClimateSchema.PROJECT_DESCRIPTION] = clean_string(
@@ -131,4 +145,4 @@ def get_recipient_perspective(
 
 
 if __name__ == "__main__":
-    df = get_recipient_perspective(2019, 2022)
+    df = get_recipient_perspective(2019, 2022, recipient_code=[425])
