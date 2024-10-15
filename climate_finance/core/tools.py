@@ -373,25 +373,6 @@ def calculate_imputations(data: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
-def string_to_missing(data: pd.DataFrame, missing: str) -> pd.DataFrame:
-    """Convert the missing string to NaN in the data.
-
-    Args:
-        data: A pandas DataFrame.
-        missing: A string specifying the missing value.
-
-    Returns:
-        pd.DataFrame: The data with the missing values converted to NaN.
-
-    """
-
-    # Convert all non-numeric columns
-    for col in data.select_dtypes(exclude=[float, int, bool]):
-        data[col] = data[col].astype(str).replace(missing, pd.NA, regex=True)
-
-    return data
-
-
 def get_oecd_classification() -> dict:
     """Read the OECD CRS classification and return it as a dictionary."""
 
@@ -523,23 +504,6 @@ def alignment_pipeline(data: pd.DataFrame) -> pd.DataFrame:
         .pipe(align_oda_data_names, to_climate_names=True)
         .pipe(remove_channel_name_from_spending_data)
     )
-
-
-def remove_cross_cutting(data: pd.DataFrame) -> pd.DataFrame:
-    """Remove cross-cutting data from the dataframe.
-
-    Args:
-        data: A pandas DataFrame containing the CRS data.
-
-    """
-    return data.loc[
-        lambda d: ~d[ClimateSchema.INDICATOR].isin(
-            [
-                OECD_CLIMATE_INDICATORS[ClimateSchema.CROSS_CUTTING],
-                ClimateSchema.CROSS_CUTTING,
-            ]
-        )
-    ]
 
 
 def subtract_cross_cutting(data: pd.DataFrame) -> pd.DataFrame:
