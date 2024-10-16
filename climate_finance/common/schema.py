@@ -237,6 +237,12 @@ MAIN_FLOWS: list[str] = [
     ClimateSchema.USD_DISBURSEMENT,
 ]
 
+ALL_FLOWS: list[str] = MAIN_FLOWS + [
+    ClimateSchema.USD_RECEIVED,
+    ClimateSchema.USD_GRANT_EQUIV,
+    ClimateSchema.USD_NET_DISBURSEMENT,
+]
+
 CRDF_VALUES = [
     ClimateSchema.ADAPTATION_VALUE,
     ClimateSchema.MITIGATION_VALUE,

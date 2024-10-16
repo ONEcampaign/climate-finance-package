@@ -1,7 +1,7 @@
 import pandas as pd
 from oda_data import set_data_path
-from oda_data.clean_data.channels import add_multi_channel_codes
 
+from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import logger, ClimateDataPath
 from climate_finance.core import loaders
 from climate_finance.core.deflators import oecd_deflator
@@ -19,22 +19,23 @@ from climate_finance.core.tools import (
     data_to_share,
     filter_flows,
     clean_multi_contributions,
-    align_oda_data_names,
-    validate_multi_shares_groupers,
-    validate_multi_groupby,
     merge_spending_and_contributions,
     calculate_imputations,
-    remove_channel_name_from_spending_data,
     groupby_sum,
     get_oecd_classification,
     get_available_providers,
     match_providers,
+    alignment_pipeline,
+    subtract_cross_cutting,
+    compute_non_climate_from_climate_and_total,
 )
 from climate_finance.core.validation import (
     validate_prices_and_base_year,
     validate_methodology,
     validate_list_of_str,
     validate_source,
+    validate_multi_groupby,
+    validate_multi_shares_groupers,
 )
 from climate_finance.methodologies.spending.crdf import (
     transform_crdf_into_indicators,
@@ -126,6 +127,14 @@ class ClimateData:
         # By default, respect prices and currency request
         self._ignore_prices_and_currency: bool = False
 
+    def __repr__(self):
+        message: str = f"ClimateData object for {self._years_str}. "
+
+        if self.data is None:
+            message += "No data has been loaded yet. "
+
+        return message
+
     @property
     def _years_str(self):
         years_min = min(self.years)
@@ -198,14 +207,6 @@ class ClimateData:
     def get_private_providers() -> dict:
         """return a list of private providers"""
         return get_oecd_classification()["Private donor"]
-
-    def __repr__(self):
-        message: str = f"ClimateData object for {self._years_str}. "
-
-        if self.data is None:
-            message += "No data has been loaded yet. "
-
-        return message
 
     def _validate_loaded_data(self, message: str) -> None:
         """Validate the loaded data and raise an error if it is not valid."""
@@ -469,10 +470,38 @@ class ClimateData:
 
         return contributions_data
 
-    def _get_multilateral_spending_shares(
-        self, methodology, flows, source, rolling_years_spending, groupby, shareby
+    def _validate_shares_params(
+        self,
+        groupby: list[str] | str | None = None,
+        shareby: list[str] | str | None = None,
+    ) -> tuple[list[str], list[str]]:
+
+        # If no data has been loaded, raise an error
+        self._validate_loaded_data(
+            "No data has been loaded. In order to convert to shares,"
+            " spending data must be loaded first."
+        )
+
+        # If groupby columns is a string, convert to a list
+        if isinstance(groupby, str):
+            groupby = [groupby]
+
+        # If shareby columns is a string, convert to a list
+        if isinstance(shareby, str):
+            shareby = [shareby]
+
+        return groupby, shareby
+
+    def get_multilateral_spending_shares(
+        self,
+        methodology: SpendingMethodologies | str = "ONE",
+        flows: ValidFlows | str | list[ValidFlows | str] = "gross_disbursements",
+        source: ValidSources | str | list[ValidSources | str] = "OECD_CRDF_CRS",
+        rolling_years_spending: int = 2,
+        groupby: list[str] | str | None = None,
+        shareby: list[str] | str | None = None,
     ):
-        """Private pipeline method to load spending data and convert it to shares.
+        """Pipeline method to load spending data and convert it to shares.
            Args:
             methodology (str): The methodology to use for loading spending data.
             flows (str or list[str]): The flows to consider when loading spending data.
@@ -487,6 +516,13 @@ class ClimateData:
 
         """
         from oda_data import donor_groupings
+
+        # Temporarily store requested providers
+        if self.providers is not None:
+            logger.info(
+                "The `get_multilateral_spending_shares` method always returns shares "
+                "data for all multilateral providers"
+            )
 
         # Temporarily store requested providers
         providers = self.providers
@@ -506,22 +542,30 @@ class ClimateData:
 
         # For each source, add channel names
         for source in self.data:
-            self.data[source] = (
-                self.data[source]
-                .pipe(align_oda_data_names)
-                .pipe(add_multi_channel_codes)
-                .pipe(align_oda_data_names, to_climate_names=True)
-                .pipe(remove_channel_name_from_spending_data)
-            )
+            self.data[source] = alignment_pipeline(self.data[source])
+
+        # if groupby or shareby are empty, use the default values
+        if groupby is None:
+            groupby = groupby_none(data=self.data[source])
+        if shareby is None:
+            shareby = standard_shareby(data=self.data[source])
 
         # remove providers and agencies from groupers, in favor for name and code
         groupby = validate_multi_shares_groupers(groupby)
         shareby = validate_multi_shares_groupers(shareby)
 
         # convert them to spending shares
-        self.convert_to_shares(
-            rolling_years=rolling_years_spending, groupby=groupby, shareby=shareby
-        )
+        if source == "OECD_CRDF":
+            self.as_share_of_total(
+                rolling_years=rolling_years_spending,
+                groupby=groupby,
+                shareby=shareby,
+                remove_overlaps=not self.spending_args["highest_marker"],
+            )
+        else:
+            self.convert_to_shares(
+                rolling_years=rolling_years_spending, groupby=groupby, shareby=shareby
+            )
 
         # Revert providers
         self.providers = providers
@@ -573,7 +617,7 @@ class ClimateData:
         groupby = validate_multi_groupby(groupby)
 
         # Get spending shares
-        spending_shares = self._get_multilateral_spending_shares(
+        spending_shares = self.get_multilateral_spending_shares(
             methodology=spending_methodology,
             flows=flows,
             source=source,
@@ -597,6 +641,105 @@ class ClimateData:
 
         return self
 
+    def _get_total_crs_spending(
+        self, groupby: list[str] | str, allocable_only: bool = False
+    ) -> pd.DataFrame:
+        """Private function that gets the total CRS (allocable or total)
+
+        The data is always returned in current USD.
+
+        Args:
+            groupby: A list of columns to group by.
+            allocable_only: A boolean specifying whether to include only allocable data.
+            Defaults to False.
+
+        """
+        # Create new object
+        obj = ClimateData(
+            years=self.years, providers=self.providers, recipients=self.recipients
+        )
+
+        # Load the CRS data
+        methodology_suffix = "_ALLOCABLE" if allocable_only else ""
+        obj.load_spending_data(
+            methodology=f"OECD{methodology_suffix}",
+            source="OECD_CRS",
+            flows=self.spending_args["flows"],
+        )
+
+        # Get total allocable CRS
+        crs = obj.get_data().pipe(alignment_pipeline)
+
+        # Group by columns, excluding the indicator column
+        crs = crs.pipe(
+            groupby_sum,
+            groupby=[c for c in groupby if c != ClimateSchema.INDICATOR],
+        )
+
+        return crs
+
+    def as_share_of_total(
+        self,
+        rolling_years: int = 1,
+        remove_overlaps: bool = True,
+        groupby: list[str] | str | None = None,
+        shareby: list[str] | str | None = None,
+    ):
+        """
+        Convert the loaded data to shares of total allocable spending, as reported on
+        the CRS
+
+        Args:
+            rolling_years: Optional. An integer specifying the number of years to use
+            for the rolling total share. Defaults to 1.
+            remove_overlaps: A boolean specifying whether to make cross-cutting negative
+            from Adaptation and Mitigation. Defaults to True.
+            groupby: Optional. A list of strings or a string specifying the columns to
+            group by. Defaults to None which means the data is kept at the highest level
+            of detail.
+            shareby: Optional. A list of strings or a string specifying the columns to
+            calculate the shares by. Defaults to `None` which means the shares are
+            calculated for a year/provider/agency/flow_type level.
+
+        """
+        # Indicate what is happening
+        logger.info(
+            f"Converting to shares using a rolling window of {rolling_years} years."
+        )
+
+        # Validate groupby and shareby
+        groupby, shareby = self._validate_shares_params(
+            groupby=groupby, shareby=shareby
+        )
+
+        # Get the total CRS spending
+        crs = self._get_total_crs_spending(groupby=groupby, allocable_only=False)
+
+        # for each source, convert the data to shares
+        for source in self.data:
+            # Define the dataset as climate
+            climate = self.data[source].copy()
+
+            # Make cross-cutting negative to avoid double counting
+            if remove_overlaps:
+                climate = subtract_cross_cutting(climate)
+
+            # Non climate
+            non_climate = compute_non_climate_from_climate_and_total(
+                climate_df=climate, total_df=crs
+            )
+
+            # Combine the original data with the non climate data
+            total = pd.concat([climate, non_climate], ignore_index=True)
+
+            # Convert the data to shares
+            self.data[source] = data_to_share(
+                data=total,
+                groupby=groupby,
+                shareby=shareby,
+                rolling_years=rolling_years,
+            )
+
     def convert_to_shares(
         self,
         rolling_years: int = 1,
@@ -618,24 +761,14 @@ class ClimateData:
 
         """
 
-        # If no data has been loaded, raise an error
-        self._validate_loaded_data(
-            "No data has been loaded. In order to convert to shares,"
-            " spending data must be loaded first."
-        )
-
         # Indicate what is happening
         logger.info(
             f"Converting to shares using a rolling window of {rolling_years} years."
         )
 
-        # If groupby columns is a string, convert to a list
-        if isinstance(groupby, str):
-            groupby = [groupby]
-
-        # If shareby columns is a string, convert to a list
-        if isinstance(shareby, str):
-            shareby = [shareby]
+        groupby, shareby = self._validate_shares_params(
+            groupby=groupby, shareby=shareby
+        )
 
         # for each source, convert the data to shares
         for source in self.data:

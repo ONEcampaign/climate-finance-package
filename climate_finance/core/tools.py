@@ -1,9 +1,14 @@
 import pandas as pd
 from bblocks import convert_id
+from oda_data.clean_data.channels import add_multi_channel_codes
 from oda_data.clean_data.schema import OdaSchema
 from thefuzz import process
 
-from climate_finance.common.schema import ClimateSchema, CRS_MAPPING
+from climate_finance.common.schema import (
+    ClimateSchema,
+    CRS_MAPPING,
+    OECD_CLIMATE_INDICATORS,
+)
 from climate_finance.config import ClimateDataPath, logger
 from climate_finance.oecd.cleaning_tools.tools import (
     convert_flows_millions_to_units,
@@ -282,57 +287,6 @@ def align_oda_data_names(
     return data.rename(columns=names)
 
 
-def validate_multi_groupby(groupby: list[str] | None) -> list[str]:
-    """
-    Validate the groupby columns for multilateral imputations data.
-    This is done by adding the agency and provider codes and names to the groupby columns.
-
-    Args:
-        groupby: A list of strings or a string specifying the columns to group by.
-
-    Returns:
-        list[str]: The validated groupby columns.
-
-    """
-    # If string, convert to list
-    if isinstance(groupby, str):
-        groupby = [groupby]
-
-    # Check that groupby contains agencies for proper merging
-    if groupby is not None:
-        for attr in [ClimateSchema.AGENCY_CODE, ClimateSchema.AGENCY_NAME]:
-            if attr not in groupby:
-                groupby = groupby + [attr]
-    return groupby
-
-
-def validate_multi_shares_groupers(grouper: list[str]) -> list[str]:
-    """
-    Validate the groupby columns for multilateral shares data.
-    This is done by removing provider and agency codes and names from the groupers, and
-    adding the channel name and code.
-
-    Args:
-        grouper: A list of strings specifying the columns to group by.
-
-    Returns:
-        list[str]: The validated groupby columns.
-    """
-    return [
-        c
-        for c in grouper
-        if c
-        not in [
-            ClimateSchema.PROVIDER_NAME,
-            ClimateSchema.PROVIDER_CODE,
-            ClimateSchema.AGENCY_NAME,
-            ClimateSchema.AGENCY_CODE,
-            ClimateSchema.PRICES,
-            ClimateSchema.CURRENCY,
-        ]
-    ] + [ClimateSchema.CHANNEL_CODE]
-
-
 def remove_channel_name_from_spending_data(spending_data: pd.DataFrame) -> pd.DataFrame:
     """Remove the channel name column and group the data by remaining columns
     in order to have 1 line per matched provider
@@ -415,25 +369,6 @@ def calculate_imputations(data: pd.DataFrame) -> pd.DataFrame:
         [ClimateSchema.VALUE + "_inflow", ClimateSchema.VALUE + "_spending_share"],
         axis=1,
     )
-
-    return data
-
-
-def string_to_missing(data: pd.DataFrame, missing: str) -> pd.DataFrame:
-    """Convert the missing string to NaN in the data.
-
-    Args:
-        data: A pandas DataFrame.
-        missing: A string specifying the missing value.
-
-    Returns:
-        pd.DataFrame: The data with the missing values converted to NaN.
-
-    """
-
-    # Convert all non-numeric columns
-    for col in data.select_dtypes(exclude=[float, int, bool]):
-        data[col] = data[col].astype(str).replace(missing, pd.NA, regex=True)
 
     return data
 
@@ -552,3 +487,96 @@ def get_cross_cutting_data_oecd(
         .assign(**{ClimateSchema.INDICATOR: ClimateSchema.CROSS_CUTTING})
         .drop(columns=[ClimateSchema.MITIGATION, ClimateSchema.ADAPTATION])
     )
+
+
+def alignment_pipeline(data: pd.DataFrame) -> pd.DataFrame:
+    """Pipeline to align the data to the climate schema.
+    Args:
+        data: A raw dataframe to be aligned to the climate schema.
+
+    Returns:
+        pd.DataFrame: The aligned data.
+
+    """
+    return (
+        data.pipe(align_oda_data_names)
+        .pipe(add_multi_channel_codes)
+        .pipe(align_oda_data_names, to_climate_names=True)
+        .pipe(remove_channel_name_from_spending_data)
+    )
+
+
+def subtract_cross_cutting(data: pd.DataFrame) -> pd.DataFrame:
+    """Subtract cross-cutting data from Adaptation and Mitigation data."""
+
+    climate_columns = [
+        ClimateSchema.ADAPTATION,
+        ClimateSchema.MITIGATION,
+        ClimateSchema.CROSS_CUTTING,
+    ]
+
+    datap = (
+        data.pivot(
+            index=[c for c in data.columns if c not in ["indicator", "value"]],
+            columns="indicator",
+            values="value",
+        )
+        .fillna({c: 0 for c in climate_columns})
+        .reset_index()
+    )
+
+    # subtract cross-cutting from adaptation and mitigation
+    datap[ClimateSchema.ADAPTATION] = (
+        datap[ClimateSchema.ADAPTATION] - datap[ClimateSchema.CROSS_CUTTING]
+    )
+
+    datap[ClimateSchema.MITIGATION] = (
+        datap[ClimateSchema.MITIGATION] - datap[ClimateSchema.CROSS_CUTTING]
+    )
+
+    data = datap.melt(
+        id_vars=[c for c in datap.columns if c not in climate_columns],
+        var_name=ClimateSchema.INDICATOR,
+        value_name=ClimateSchema.VALUE,
+    )
+
+    return data
+
+
+def compute_non_climate_from_climate_and_total(
+    climate_df: pd.DataFrame, total_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Compute the non-climate finance from the climate and total finance data.
+
+    Non-climate finance is computed as the total finance minus the climate finance.
+    The data is grouped by the columns that are common to both the climate and total
+    finance data.
+
+    Args:
+        climate_df: A pandas DataFrame containing the climate finance data.
+        total_df: A pandas DataFrame containing the total finance data.
+
+    Returns:
+        pd.DataFrame: The non-climate finance data.
+
+    """
+
+    join_by = [c for c in climate_df.columns if c in total_df.columns and c != "value"]
+
+    data = (
+        climate_df.pipe(groupby_sum, groupby=join_by)
+        .merge(total_df, on=join_by, how="outer", suffixes=("", "_crs"))
+        .fillna({ClimateSchema.VALUE: 0})
+        .assign(
+            **{
+                ClimateSchema.VALUE: lambda x: x[f"{ClimateSchema.VALUE}_crs"]
+                - x[ClimateSchema.VALUE]
+            }
+        )
+        .dropna(subset=ClimateSchema.CHANNEL_CODE)
+        .drop(columns=[ClimateSchema.VALUE + "_crs"])
+    )
+
+    data[ClimateSchema.INDICATOR] = "Not climate relevant"
+
+    return data

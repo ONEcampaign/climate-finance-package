@@ -29,13 +29,6 @@ def _combine_clean_sort(dfs: list[pd.DataFrame], sort_cols: list[str]) -> pd.Dat
     """
     return (
         pd.concat(dfs, ignore_index=True)
-        .assign(
-            **{
-                ClimateSchema.INDICATOR: lambda d: d[ClimateSchema.INDICATOR].map(
-                    OECD_CLIMATE_INDICATORS
-                )
-            }
-        )
         .sort_values(by=sort_cols)
         .reset_index(drop=True)
     )

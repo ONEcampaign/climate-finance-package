@@ -9,14 +9,13 @@ packages = [{include = "climate_finance"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"
-numpy = "^1.25"
-requests = "^2.31"
+pandas = "^2"
+requests = "^2.3"
 selenium = "^4.10"
 openpyxl = "^3.1"
-pandas = "^2"
+oda-data = "^1.1"
 bblocks = "^1.2"
 thefuzz = {extras = ["speedup"], version = "^0.22"}
-oda-data = "^1.1"
 webdriver-manager = "^4.0.0"
 
 

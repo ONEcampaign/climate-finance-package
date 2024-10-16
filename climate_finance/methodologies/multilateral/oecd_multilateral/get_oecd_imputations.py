@@ -4,14 +4,16 @@ import pandas as pd
 from bblocks import clean_numeric_series
 from oda_data import set_data_path
 from oda_data.clean_data.channels import add_channel_codes
-from oda_data.get_data.common import fetch_file_from_url_selenium
 
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import logger, ClimateDataPath
-from climate_finance.methodologies.multilateral.tools import log_notes
 from climate_finance.oecd.cleaning_tools.tools import (
     convert_flows_millions_to_units,
     assign_usd_commitments_as_flow_type,
+)
+from climate_finance.oecd.crdf.tools import (
+    fetch_file_from_url_selenium,
+    enforce_pyarrow_types,
 )
 
 set_data_path(ClimateDataPath.raw_data)
@@ -21,7 +23,7 @@ FILE_URL: str = (
 )
 
 FILE_PATH: Path = (
-    ClimateDataPath.raw_data / "oecd_multilateral_climate_imputations.feather"
+    ClimateDataPath.raw_data / "oecd_multilateral_climate_imputations.parquet"
 )
 
 
@@ -37,10 +39,10 @@ def _read_and_clean_excel_sheets(excel_file: pd.ExcelFile) -> list[pd.DataFrame]
     """
     dfs = []
     for sheet in excel_file.sheet_names:
-        if sheet == "Notes":
-            log_notes(excel_file.parse(sheet))
+        if sheet.lower() == "notes":
             continue
-        dfs.append(_clean_df(excel_file.parse(sheet), int(sheet)))
+        if len(sheet) == 4:
+            dfs.append(_clean_df(excel_file.parse(sheet), int(sheet)))
     return dfs
 
 
@@ -133,30 +135,36 @@ def _clean_df(data: pd.DataFrame, year: int) -> pd.DataFrame:
     # Get rid of the first column (blank) and the first two rows (metadata)
     data = data.iloc[2:, 2:]
 
-    # Rename columns
-    try:
-        data.columns = [
-            "acronym",
-            ClimateSchema.CHANNEL_NAME,
-            "type",
-            "oecd_climate_total",
-            "oecd_climate_total_share",
-            "reporting_method",
-            "converged_reporting",
-        ]
-    except ValueError:
-        data.columns = [
-            "acronym",
-            ClimateSchema.CHANNEL_NAME,
-            "type",
-            "oecd_climate_total",
-            "oecd_climate_total_share",
-            "oecd_mitigation_share",
-            "oecd_adaptation_share",
-            "oecd_cross_cutting_share",
-            "reporting_method",
-            "converged_reporting",
-        ]
+    long_list = [
+        "acronym",
+        ClimateSchema.CHANNEL_NAME,
+        "type",
+        "oecd_climate_total",
+        "oecd_climate_total_share",
+        "oecd_mitigation_share",
+        "oecd_adaptation_share",
+        "oecd_cross_cutting_share",
+        "reporting_method",
+        "converged_reporting",
+    ]
+
+    short_list = [
+        "acronym",
+        ClimateSchema.CHANNEL_NAME,
+        "type",
+        "oecd_climate_total",
+        "oecd_climate_total_share",
+        "reporting_method",
+        "converged_reporting",
+    ]
+
+    if year < 2021:
+        data = data.iloc[:, : len(short_list)]
+        data.columns = short_list
+
+    else:
+        data = data.iloc[:, : len(long_list)]
+        data.columns = long_list
 
     # Identify the numeric columns
     numeric_cols = [
@@ -174,7 +182,7 @@ def _clean_df(data: pd.DataFrame, year: int) -> pd.DataFrame:
 
     # clean numeric columns (remove non-numeric characters to make them floats)
     for column in numeric_cols:
-        data[column] = clean_numeric_series(data[column])
+        data[column] = clean_numeric_series(data[column].replace("-", "").astype(str))
 
     # Convert flows to millions
     data = data.pipe(
@@ -214,17 +222,23 @@ def download_file() -> None:
     data = _merge_dataframes(dfs)
 
     # add channel codes
-    data = add_channel_codes(data)
+    data = add_channel_codes(
+        data, ClimateSchema.CHANNEL_NAME, ClimateSchema.CHANNEL_CODE
+    )
 
     # reorder columns
     data = _reorder_imputations_columns(data)
 
-    data.to_feather(FILE_PATH)
+    # enforce the correct data types
+    data = enforce_pyarrow_types(data.astype({ClimateSchema.YEAR: "int64"}))
+
+    data.to_parquet(FILE_PATH)
 
 
 def get_oecd_multilateral_climate_imputations(
     start_year: int = 2017,
     end_year: int = 2021,
+    filters: list[tuple] | None = None,
     force_update: bool = False,
 ) -> pd.DataFrame:
     """Get a clean, merged DataFrame of the OECD multilateral imputations.
@@ -233,15 +247,23 @@ def get_oecd_multilateral_climate_imputations(
     Args:
         start_year: starting year for the data
         end_year: ending year for the data. If not available, a warning is raised.
+        filters: dictionary of filters to apply to the data
         force_update: whether to update the data or not. If the
         data is not available locally, it will be downloaded regardless of this
         parameter.
 
     """
 
+    if filters is None:
+        filters = []
+
     if force_update or not FILE_PATH.exists():
         download_file()
 
-    return pd.read_feather(FILE_PATH).loc[
-        lambda d: d[ClimateSchema.YEAR].astype("Int32").between(start_year, end_year)
-    ]
+    # Study years
+    years = [y for y in range(start_year, end_year + 1)]
+
+    # Provider and recipient filters
+    filters.append(["year", "in", years])
+
+    return pd.read_parquet(FILE_PATH, filters=filters)

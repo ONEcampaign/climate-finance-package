@@ -55,7 +55,7 @@ def melt_crdf_values(df: pd.DataFrame, values: list[str] | None) -> pd.DataFrame
     return df
 
 
-def clean_crdf_markers(df: pd.DataFrame) -> pd.DataFrame:
+def transform_marker_columns_to_value_column(df: pd.DataFrame) -> pd.DataFrame:
     """
     Create a value column by adding adaptation + mitigation and subtracting cross-cutting.
 
@@ -254,15 +254,18 @@ def transform_crdf_into_indicators(
     # Split into data that uses markers and data that uses climate components
     markers, components = split_into_markers_and_components(df)
 
-    # Process the markers data
-    markers = markers.pipe(clean_crdf_markers).pipe(
-        transform_markers_into_indicators,
+    # Transform to value column
+    markers = transform_marker_columns_to_value_column(markers)
+
+    # Transform the markers into indicators
+    markers = transform_markers_into_indicators(
+        markers,
         percentage_significant=percentage_significant,
         percentage_principal=percentage_principal,
         highest_marker=highest_marker,
     )
 
-    # Process the climate components data
+    # Process the climate components data.
     components = components.pipe(
         process_climate_components, highest_marker=highest_marker
     )

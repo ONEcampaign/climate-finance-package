@@ -45,9 +45,7 @@ class SourceLoader(ABC):
             force_update=self.settings.get("update"),
         )
 
-        return data.loc[lambda d: d[ClimateSchema.YEAR].isin(years)].reset_index(
-            drop=True
-        )
+        return data
 
 
 class CrsLoader(SourceLoader):
