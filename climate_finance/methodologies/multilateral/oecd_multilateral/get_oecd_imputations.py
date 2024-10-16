@@ -267,6 +267,3 @@ def get_oecd_multilateral_climate_imputations(
     filters.append(["year", "in", years])
 
     return pd.read_parquet(FILE_PATH, filters=filters)
-
-
-df = get_oecd_multilateral_climate_imputations(force_update=True)
