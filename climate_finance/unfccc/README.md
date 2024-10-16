@@ -4,10 +4,6 @@ This module contains scripts for downloading and pre-processing data from UNFCCC
 
 There are two key ways to get data from UNFCCC:
 
-- [Manually download](#climatefinanceunfcccmanual) the BR data files (one excel per party)
-    - [read_data]
-    - [pre_process]
-    - [get_data]
 - Use an [automated tool](#climatefinanceunfcccdownload) to download the data from the UNFCCC data interface.
     - [download_data](#climatefinanceunfcccdownloaddownloaddata)
         - [get_unfccc_export()](#climatefinanceunfcccdownloaddownloaddatagetunfcccexport)
@@ -17,6 +13,12 @@ There are two key ways to get data from UNFCCC:
         - [get_unfccc_summary()](#climatefinanceunfcccdownloadgetdatagetunfcccsummary)
         - [get_unfccc_bilateral()](#climatefinanceunfcccdownloadgetdatagetunfcccbilateral)
         - [get_unfccc_multilateral()](#climatefinanceunfcccdownloadgetdatagetunfcccmultilateral)
+- [Manually download](#climatefinanceunfcccmanual) the BR data files (one excel per party)
+    - [read_data]
+    - [pre_process]
+    - [get_files]
+
+
 
 ## climate_finance.unfccc.download
 
@@ -195,7 +197,7 @@ df = get_unfccc_multilateral(start_year, end_year)
 
 #### climate_finance.unfccc.download.get_data.get_unfccc_bilateral()
 
-`get_unfccc_bilateral(start_year: int, end_year: int)` Reads and cleans the UNFCCC bilateral data.
+`get_unfccc_bilateral(start_year: int, end_year: int)` reads and cleans the UNFCCC bilateral data.
 
 The function takes two arguments:
 
@@ -224,12 +226,293 @@ df = get_unfccc_bilateral(start_year, end_year)
 
 ## climate_finance.unfccc.manual
 The `manual` module contains functions to manually clean the UNFCCC data. It is assumed that you have
-downloaded the BR data from the UNFCCC data and saved it as individual Excel files for each party.
+downloaded the BR data (CTF Tables) from the UNFCCC website and saved as individual Excel files for each party in a specified folder path.
 
-The files should be stored in a folder which only contains data from the same BR. In other words,
-the scripts assume one folder per BR.
+Users should save all BR files as the specific party name in the `..raw_data` folder (`../climate_finance/.raw_data`) before using the manual module. Files should be saved as the respective party names, outlined here (TO DO: add link to the file that specifies how to name parties/file names).
+
+### climate_finance.unfccc.manual.read_files
+
+The `read_files` sub-module deals with reading in the raw data from the UNFCCC biennial reports saved to the `folder_path`. 
+
+#### climate_finance.unfccc.manual.read_files.load_br_files_tables7()
+
+`load_br_files_tables7(folder_path: str | pathlib.Path)` loads all Table 7s (7, 7a and 7b) from the biennial reports saved in the folder path into a dictionary of DataFrames. 
+
+The arguement `folder_path` can either be inputted as a string (str) or a pathlib.Path object.
+
+The function passes the `folder_path` and `table_pattern="Table 7"` to the helper function `_load_br_files()`. 
+The helper function:
+- Creates a dictionary of all the parties available in the `folder_path` (using the csv file names. See (ADD SAME LINK AS ABOVE) for standardised party names).
+- Loops through all of the sheets within these BRs, and reads all of the "Table 7" tabs into the dictionary as DataFrames. 
+
+The result is a dictionary with all the parties saved as `str` and their corresponding table 7s saved as pandas DataFrames. 
+
+Here is an example of how to use `load_br_files_tables7()`
+
+```python
+# import load_br_files_tables7()
+from climate_finance.unfccc.manual.read_data import load_br_files_tables7
+
+# create an empty dictionary
+br_files = {}
+
+# populate dictionary with load_br_files_tables7
+br_files = load_br_files_tables7(folder_path)
+```
+
+### climate_finance.unfccc.manual.get_data
+
+The `get_data` sub-module contains the pipeline functions that read, process and output clean Table 7 data from the Biennial Reports. There are three pipeline functions, one for each table 7: `table7_pipeline`, `table7a_pipeline` and `table7b_pipeline`.
+
+#### climate_finance.unfccc.manual.get_data._table7_pipeline()
+
+`table7_pipeline(folder_path: str | pathlib.Path)` creates a single DataFrame of table 7 data.
+
+The arguement `folder_path` can either be inputted as a string (str) or a pathlib.Path object.
+
+The function passes the relevant arguements to the helper function `_load_br_files()` to 'get' Table 7 data.
+
+`_load_br_files(folder_path: str | pathlib.Path, table_name: str, clean_func: callable)` has the following three arguements:
+- `folder_path`: the location of the pre-downloaded Biennial Reports. The path can be inputted as either a string (str) or a pathlib.Path object.
+- `table_name`: the name of the required table. In this case: `Table 7`.
+- `clean_func`: the cleaning pipeline function in the `climate_finance.unfccc.manual.pre_process` sub-module. In this case: [clean_table7](#climatefinanceunfcccmanualpreprocesscleantable7).
+
+It returns a single DataFrame of table7 data. It does this by:
+- Loading the BR files using [load_br_files_tables7](#climatefinanceunfcccmanualreadfilesloadbrfilestables7)
+- Cleaning the data using the specified `clean_func` (cleaning each Table 7 by party and year). In this case: [clean_table7](#climatefinanceunfcccmanualpreprocesscleantable7)
+- Merging the cleaned DataFrames together. 
+
+For example, if Table 7 data is required: 
+
+```python
+# import table7_pipeline
+from climate_finance.unfccc.manual.get_data import table7_pipeline
+
+# run table7_pipeline
+df =  table7_pipeline(folder_path: str | pathlib.Path)
+```
+
+#### climate_finance.unfccc.manual.get_data._table7a_pipeline()
+
+`table7a_pipeline(folder_path: str | pathlib.Path)` creates a single DataFrame of table 7a data.
+
+The arguement `folder_path` can either be inputted as a string (str) or a pathlib.Path object.
+
+The function passes the relevant arguements to the helper function `_load_br_files()` to 'get' Table 7a data.
+
+`_load_br_files(folder_path: str | pathlib.Path, table_name: str, clean_func: callable)` has the following three arguements:
+- `folder_path`: the location of the pre-downloaded Biennial Reports. The path can be inputted as either a string (str) or a pathlib.Path object.
+- `table_name`: the name of the required table. In this case: `Table 7a`.
+- `clean_func`: the cleaning pipeline function in the `climate_finance.unfccc.manual.pre_process` sub-module. In this case: [clean_table7a](#climatefinanceunfcccmanualpreprocesscleantable7a).
+
+It returns a single DataFrame of table7a data. It does this by:
+- Loading the BR files using [load_br_files_tables7a](#climatefinanceunfcccmanualreadfilesloadbrfilestables7a)
+- Cleaning the data using the specified `clean_func` (cleaning each Table 7a by party and year). In this case: [clean_table7a](#climatefinanceunfcccmanualpreprocesscleantable7a)
+- Merging the cleaned DataFrames together. 
+
+For example, if Table 7a data is required: 
+
+```python
+# import table7a_pipeline
+from climate_finance.unfccc.manual.get_data import table7a_pipeline
+
+# run table7a_pipeline
+df =  table7a_pipeline(folder_path: str | pathlib.Path)
+```
+
+#### climate_finance.unfccc.manual.get_data._table7b_pipeline()
+
+`table7b_pipeline(folder_path: str | pathlib.Path)` creates a single DataFrame of table 7b data.
+
+The arguement `folder_path` can either be inputted as a string (str) or a pathlib.Path object.
+
+The function passes the relevant arguements to the helper function `_load_br_files()` to 'get' Table 7b data.
+
+`_load_br_files(folder_path: str | pathlib.Path, table_name: str, clean_func: callable)` has the following three arguements:
+- `folder_path`: the location of the pre-downloaded Biennial Reports. The path can be inputted as either a string (str) or a pathlib.Path object.
+- `table_name`: the name of the required table. In this case: `Table 7b`.
+- `clean_func`: the cleaning pipeline function in the `climate_finance.unfccc.manual.pre_process` sub-module. In this case: [clean_table7b](#climatefinanceunfcccmanualpreprocesscleantable7b).
+
+It returns a single DataFrame of table7b data. It does this by:
+- Loading the BR files using [load_br_files_tables7b](#climatefinanceunfcccmanualreadfilesloadbrfilestables7b)
+- Cleaning the data using the specified `clean_func` (cleaning each Table 7b by party and year). In this case: [clean_table7b](#climatefinanceunfcccmanualpreprocesscleantable7b)
+- Merging the cleaned DataFrames together. 
+
+For example, if Table 7b data is required: 
+
+```python
+# import table7b_pipeline
+from climate_finance.unfccc.manual.get_data import table7b_pipeline
+
+# run table7b_pipeline
+df =  table7b_pipeline(folder_path: str | pathlib.Path)
+```
+
+### climate_finance.unfccc.manual.pre_process
+
+The `pre-process` sub-module deals with the basic pre-processing of the downloaded data. The data available in the BR files requires significant cleaning before it can be used. There are three pipeline functions to do this: `clean_table7`, `clean_table7a`, and `clean_table7b`. 
+
+#### climate_finance.unfccc.manual.pre_process.clean_table7()
+
+`clean_table7(df: pd.DataFrame, country: str, year: int)` processes and cleans Table 7 data. 
+
+The function takes two arguements:
+- `country`: The country associated with the data.
+- `year`: The year associated with the data.
+
+It returns a cleaned DataFrame with clean table 7 data for the specified years and countries. 
+
+It does the following:
+- Identifies the first (domestic) and second (USD) currencies.
+- Cleans column names [clean_table_7_columns](#climatefinanceunfcccmanualpreprocesscleantable7columns).
+- Cleans channel names [clean_column_string](#climatefinanceunfcccmanualpreprocesscleancolumnstring).
+- Reshapes table7 data into long format [reshape_table_7](#climatefinanceunfcccmanualpreprocessreshapetable7), with columns for `channel`, `currency`, `indicator`, and `value`. 
+- Converts `value` into a float [clean_numeric_series](TODO: Add link to clean script from bblocks).
+- Drops all rows with no value. 
+- Adds columns for the specified `country` (party) and `year`.
+
+Here is an example of how to use `clean_table7()`
+
+```python
+# import clean_table7
+from climate_finance.unfccc.manual.pre_process import clean_table7
+
+# Assuming that the data is already loaded into a dataframe called df
+df =  clean_table7(df, “France”, 2020)
+```
+
+#### climate_finance.unfccc.manual.pre_process.clean_table7a()
+
+`clean_table7a(df: pd.DataFrame, country: str, year: int)` processes and cleans Table 7a data.
+
+The function takes two arguements:
+- `country`: The country associated with the data.
+- `year`: The year associated with the data.
+
+It returns a cleaned DataFrame with clean table 7a data for the specified years and countries. 
+
+The steps followed are very similar to `clean_table7()`, as follows: 
+- Identifies the first (domestic) and second (USD) currencies.
+- Cleans the column names using [rename_table_7a_columns](#climatefinanceunfcccmanualpreprocessrenametable7acolumns), using the `first_currency` and `second_currency` identified in the earlier step as arguments. 
+- Reshapes table7a data into long format using [reshape_table_7a](#climatefinanceunfcccmanualpreprocessreshapetable7a). This specificly excludes `recipient` and `additional_information` columns, leaving `status`, `funding_source`, `financial_instrument`, `type_of_support`, `channel`, `sector`, `currency`, `indicator`, and `value`. 
+- Converts `value` to a float (clean_numeric_series) (TODO: Add link to clean script)
+- Drops all rows with no value.
+- Maps multilaterals to correct category (e.g. "Multilateral climate change funds") using `table7a_heading_mapping`
+- Adds columns for the specified `country` (party) and `year`.
+
+Here is an example of how to use `clean_table7a()`
+
+```python
+# import clean_table7a
+from climate_finance.unfccc.manual.pre_process import clean_table7a
+
+# Assuming that the data is already loaded into a dataframe called df
+df =  clean_table7a(df, “France”, 2020)
+```
+
+#### climate_finance.unfccc.manual.pre_process.clean_table7b()
+
+`clean_table7b(df: pd.DataFrame, country: str, year: int)` processes and cleans Table 7b data. 
+
+The function takes two arguements:
+- `country`: The country associated with the data.
+- `year`: The year associated with the data.
+
+It returns a cleaned DataFrame with clean table 7b data for the specified years and countries. 
+
+The steps followed are very similar to `clean_table7()`, as follows: 
+- Identifies the first (domestic) and second (USD) currencies.
+- Cleans the column names using [rename_table_7b_columns](#climatefinanceunfcccmanualpreprocessrenametable7b) using the `first_currency` and `second_currency` identified in the earlier step as arguments.
+- Cleans the recipient names (clean_recipient_names) (TODO: Add link to tools script)
+- Reshapes table7b data into long format using [reshape_table_7b](#climatefinanceunfcccmanualpreprocessreshapetable7a). This specifically excludes the `channel` column, leaving `status`, `funding_source`, `financial_instrument`, `type_of_support`, `channel`, `sector`, `currency`, `recipient`, `additional_information`, `indicator`, and `value`. 
+- Converts `value` to a float (clean_numeric_series) (TODO: Add link to clean script)
+- Drops all rows with no value.
+- Adds columns for the specified `country` (party) and `year`.
+
+Here is an example of how to use `clean_table7b()`
+
+```python
+# import clean_table7b
+from climate_finance.unfccc.manual.pre_process import clean_table7b
+
+# Assuming that the data is already loaded into a dataframe called df
+df =  clean_table7b(df, “France”, 2020)
+```
+
+Below lists the functions implemented within the pipeline functions:
+
+#### climate_finance.unfccc.manual.pre_process.clean_column_string()
+
+`clean_column_string(string: str):` makes a series of replacements to clean up the strings of column names. It also removes any digits from column names using regex.
+
+#### climate_finance.unfccc.manual.pre_process.clean_table_7_columns()
+
+`clean_table_7_columns(df: pd.DataFrame, first_currency: str, second_currency: str)` cleans the column names of Table 7. 
+
+The function takes two arguements:
+- `first_currency`: The first currency. This is extracted from the data in a previous step.
+- `second_currency`: The second currency. This is extracted from the data in a previous step.
+
+It returns a DataFrame with cleaned column names for Table 7. 
+
+Column names are made for both the `first_currency` and `second_currency` for all indicators in the format `currency_indicator`. As such, the final DataFrame consists of column names for `channel`, `first_currency_core_contributions`, ...,`first_currency_mitigation`,..., `usd_core_contributions`, ... ,`usd_mitigation`. The indicator channel names are cleaned through `clean_column_string`. 
+
+#### climate_finance.unfccc.manual.pre_process.reshape_table7()
+
+`reshape_table_7(df: pd.DataFrame)` reshapes table 7 DataFrames into a long format. 
+
+It melts the table channel, pivotting on the 'currency_indicator' columns from `clean_table_7_columns`, before splitting into two columns: `currency` and `indicator`. 
+The result is a DataFrame with columns for `channel`, `currency`, `indicator` and `value`.
+
+#### climate_finance.unfccc.manual.pre_process.rename_table_7a_columns()
+
+`rename_table_7a_columns(df: pd.DataFrame, first_currency: str, second_currency: str)` cleans the column names for table 7a. 
+
+The function takes two arguements:
+- `first_currency`: The first currency. This is extracted from the data in a previous step.
+- `second_currency`: The second currency. This is extracted from the data in a previous step.
+
+It returns a DataFrame with cleaned column names for Table 7a. 
+
+#### climate_finance.unfccc.manual.pre_process.table7a_heading_mapping()
+
+`table7a_heading_mapping(df: pd.DataFrame)` maps rows in a DataFrame to the correct category. It takes a DataFrame containing a channel column and returns a DataFrame with mapped channel types. 
+
+It firstly cleans the channel names, before mapping them using the unfccc_channel_mapping.json file (TODO: add link to file). 
+
+#### climate_finance.unfccc.manual.pre_process.rename_table_7b_columns()
+
+`rename_table_7b_columns(df: pd.DataFrame, first_currency: str, second_currency: str)` cleans the column names for Table 7b. 
+
+The function takes two arguements:
+- `first_currency`: The first currency. This is extracted from the data in a previous step.
+- `second_currency`: The second currency. This is extracted from the data in a previous step.
+
+It returns a DataFrame of Table 7b with clean column names. 
+
+#### climate_finance.unfccc.manual.pre_process.reshape_table_7x()
+
+#### climate_finance.unfccc.manual.pre_process.reshape_table_7a()
+
+MODIFY FOR RESHAPE_TABLE_7A 
+`reshape_table_7x(df: pd.DataFrame, excluded_cols: list[str])` reshapes the dataframes into a long format. 
+The arguement `excluded_cols` is a list of columns to exclude from id_vars in the melt operation.
+
+`reshape_table_7x` is used as a partial function for variables `reshape_table_7a` and `reshape_table_7b`, which exclude different id_vars from the melt operation (and therefore have different arguements for `excluded_cols`). 
 
 
+
+Here is an example of these partial functions:
+
+```python
+# import `reshape_table_7x
+from climate_finance.unfccc.manual.pre_process import reshape_table_7x
+
+# Assuming that the data is already loaded into a dataframe called df
+reshape_table_7a = partial(reshape_table_7x, excluded_cols=["recipient", "additional_information"])
+```
+
+#### climate_finance.unfccc.manual.pre_process.reshape_table_7b()
 
 
 
