@@ -6,8 +6,15 @@ import pandas as pd
 from bblocks import clean_numeric_series
 
 from climate_finance import config
-from climate_finance.unfccc.cleaning_tools.tools import clean_recipient_names
-
+from climate_finance.unfccc.cleaning_tools.tools import (
+    clean_recipient_names,
+    rename_columns,
+    fill_type_of_support_gaps,
+    harmonise_type_of_support,
+    clean_status,
+    clean_funding_source,
+)
+from climate_finance.unfccc.download.pre_process import clean_unfccc
 
 TABLE7_COLUMNS: list[str] = [
     "status",
@@ -381,16 +388,38 @@ def clean_table7b(df: pd.DataFrame, country: str, year: int) -> pd.DataFrame:
     # Clean the column names
     df = rename_table_7b_columns(df, first_currency, second_currency)
 
-    # Clean the recipient names
-    df.recipient = clean_recipient_names(df.recipient)
-
     # Reshape the dataframe
     df = reshape_table_7b(df)
 
     # Clean the values
     df.value = clean_numeric_series(df.value)
 
+    df = (
+        df.pipe(rename_columns).dropna(subset=["value"]).pipe(harmonise_type_of_support)
+    )
+
+    # Try to clean status
+    try:
+        df = df.pipe(clean_status)
+    except AttributeError:
+        # If status not present, pass
+        pass
+
+    # Try to clean funding source
+    try:
+        df = df.pipe(clean_funding_source)
+    except AttributeError:
+        # If funding source not present, pass
+        pass
+
+    # Try to clean financial instrument
+    try:
+        df["financial_instrument"] = df["financial_instrument"].str.lower().str.strip()
+    except AttributeError:
+        # If financial instrument not present, pass
+        pass
+
     # drop rows with no value
     df = df.dropna(subset=["value"])
 
-    return df.assign(country=country, year=year)
+    return df.assign(party=country, year=year)
