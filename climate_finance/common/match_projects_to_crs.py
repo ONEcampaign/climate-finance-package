@@ -287,6 +287,9 @@ def _replace_problematic_column(
         column (str): The column to check for missing values.
     """
 
+    if column not in df.columns:
+        return
+
     missing_ratio = df[column].isna().mean()
 
     if missing_ratio > 0.25:

@@ -302,7 +302,7 @@ class ClimateData:
 
         if source == "OECD_CRS" or source == "OECD_CRS_ALLOCABLE":
             return transform_markers_into_indicators
-        elif source == "OECD_CRDF":
+        elif source == "OECD_CRDF" or "OECD_CRDF" in source:
             return transform_crdf_into_indicators
 
     def _transform_to_climate(self, source: str) -> None:
