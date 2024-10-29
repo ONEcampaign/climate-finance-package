@@ -57,7 +57,7 @@ def _create_and_validate_idx_col(idx: list[str], df: pd.DataFrame) -> pd.DataFra
     matched = [c for c in idx if c in df.columns]
     if len(matched) != len(idx):
         not_matched = [c for c in idx if c not in matched]
-        logger.info(f"Columns not matched: {not_matched}")
+        logger.debug(f"Columns not matched: {not_matched}")
 
     df["idx"] = (
         df[matched]
