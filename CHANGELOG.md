@@ -1,5 +1,8 @@
 # Changes to the climate_finance package
 
+## 1.1.2 (2025-03-20)
+- Re releases 1.1.1 since the version on PyPI doesn't match the GitHub version.
+
 ## 1.1.1 (2024-06-13)
 - Fixes a bug which prevented users from getting all providers by not specifying them (leaving `providers` as None).
 - Fixes a bug where the data wouldn't necessarily be stored in the desired user-defined folder.

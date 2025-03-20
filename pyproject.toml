@@ -22,7 +22,7 @@ webdriver-manager = "^4.0.0"
 [tool.poetry.group.dev.dependencies]
 pytest = "^8"
 bump2version = "^1.0"
-black = "^24"
+black = "^25"
 pytest-cov = "^4.1"
 
 [build-system]
