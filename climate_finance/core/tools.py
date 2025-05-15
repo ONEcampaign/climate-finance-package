@@ -1,7 +1,7 @@
 import pandas as pd
 from bblocks import convert_id
 from oda_data.clean_data.channels import add_multi_channel_codes
-from oda_data.clean_data.schema import OdaSchema
+from oda_data.clean_data.schema import ODASchema
 from thefuzz import process
 
 from climate_finance.common.schema import (
@@ -270,11 +270,11 @@ def align_oda_data_names(
     """
 
     names = {
-        ClimateSchema.PROVIDER_NAME: OdaSchema.PROVIDER_NAME,
-        ClimateSchema.PROVIDER_CODE: OdaSchema.PROVIDER_CODE,
-        ClimateSchema.AGENCY_NAME: OdaSchema.AGENCY_NAME,
-        ClimateSchema.AGENCY_CODE: OdaSchema.AGENCY_CODE,
-        ClimateSchema.CHANNEL_CODE: OdaSchema.CHANNEL_CODE,
+        ClimateSchema.PROVIDER_NAME: ODASchema.PROVIDER_NAME,
+        ClimateSchema.PROVIDER_CODE: ODASchema.PROVIDER_CODE,
+        ClimateSchema.AGENCY_NAME: ODASchema.AGENCY_NAME,
+        ClimateSchema.AGENCY_CODE: ODASchema.AGENCY_CODE,
+        ClimateSchema.CHANNEL_CODE: ODASchema.CHANNEL_CODE,
         ClimateSchema.CHANNEL_NAME: "name",
     }
 

@@ -1,6 +1,9 @@
 import numpy as np
 import pandas as pd
-from oda_data import set_data_path, ODAData
+from oda_data import set_data_path
+from oda_data.indicators.research.sector_imputations import (
+    core_multilateral_contributions_by_provider,
+)
 from pandas._typing import MergeHow, Suffixes
 
 from climate_finance.common.schema import (
@@ -498,7 +501,7 @@ def multi_flows_to_indicators(flows: list[str] | str) -> list[str]:
 
 def get_contributions_data(
     providers: list[int] | int,
-    recipients: list[str] | str,
+    recipients: list[int] | int,
     years: list[int] | int,
     currency: str,
     prices: str,
@@ -507,22 +510,24 @@ def get_contributions_data(
 ) -> pd.DataFrame:
     """Use ODA data to get contributions data"""
 
-    # if "disbursements" in the indicators, the 's' is removed
-    indicators = [
-        indicator.replace("disbursements", "disbursement") for indicator in indicators
-    ]
+    indicator = []
 
-    # create an instance of ODAData with the relevant settings
-    contributions = ODAData(
-        donors=providers,
-        recipients=recipients,
-        years=years,
-        currency=currency,
-        prices=prices,
-        base_year=base_year,
-    )
+    if any(["commitment" in i for i in indicators]):
+        indicator.append("commitment")
+    if any(["disbursement" in i for i in indicators]):
+        indicator.append("gross_disbursement")
 
-    # Load the indicators and get the data
-    contributions_data = contributions.load_indicator(indicators=indicators).get_data()
+    dfs = []
+    for i in indicator:
+        dfs.append(
+            core_multilateral_contributions_by_provider(
+                years=years,
+                providers=providers,
+                currency=currency,
+                base_year=base_year,
+                measure=i,
+            )
+        )
 
-    return contributions_data
+    data = pd.concat([dfs], ignore_index=True)
+    return data

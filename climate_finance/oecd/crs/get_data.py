@@ -1,5 +1,5 @@
 import pandas as pd
-from oda_data import read_crs, set_data_path, download_crs
+from oda_data import set_data_path, CRSData
 from oda_data.clean_data.channels import clean_string
 
 from climate_finance.common.analysis_tools import (
@@ -44,8 +44,11 @@ def read_clean_crs(
         f"Reading CRS data for {', '.join([str(y) for y in years])}. "
         f"This may take a while."
     )
+
+    crs = CRSData(years=years)
+
     return (
-        read_crs(years=years, filters=filters)
+        crs.read(using_bulk_download=True, additional_filters=filters)
         .pipe(rename_crs_columns)
         .pipe(set_default_types)
     )
@@ -89,7 +92,7 @@ def get_crs(
 
     # Check if data should be forced to update
     if force_update:
-        download_crs()
+        CRSData().download(bulk=True)
 
     # get relevant columns plus flow modality
     columns = relevant_crs_columns() + [ClimateSchema.FLOW_MODALITY]
