@@ -1,9 +1,10 @@
 import pandas as pd
 from oda_data import CRSData
 from oda_data.clean_data.schema import ODASchema
-
 from climate_finance.config import ClimateDataPath
+
 from climate_finance.common.schema import ClimateSchema
+from climate_finance.config import ClimateDataPath
 from climate_finance.oecd.cleaning_tools.tools import (
     rename_crs_columns,
     idx_to_str,
@@ -11,6 +12,9 @@ from climate_finance.oecd.cleaning_tools.tools import (
 from climate_finance.oecd.crdf.recipient_perspective import (
     get_recipient_perspective,
 )
+from oda_data import set_data_path, CRSData
+
+set_data_path(ClimateDataPath.raw_data)
 
 
 def _create_names(
@@ -20,6 +24,7 @@ def _create_names(
     crs = CRSData(years=[crs_year]).read(using_bulk_download=True)
     crs = (
         crs.pipe(rename_crs_columns)  # read the CRS  # rename the columns
+        .pipe(rename_crs_columns)  # rename the columns
         .drop_duplicates(subset=crs_idx)  # drop duplicates by index
         .filter(items=crs_idx)  # keep only the columns in the index
         .pipe(idx_to_str, idx=crs_idx)  # convert the index to strings

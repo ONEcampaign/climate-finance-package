@@ -1,5 +1,6 @@
 import pandas as pd
 from oda_data import CRSData, set_data_path
+from oda_data import set_data_path, CRSData
 from oda_data.clean_data.channels import clean_string
 
 from climate_finance.common.analysis_tools import (
@@ -98,7 +99,7 @@ def get_crs(
 
     # Check if data should be forced to update
     if force_update:
-        crs.download(bulk=True)
+        CRSData().download(bulk=True)
 
     # get relevant columns plus flow modality
     columns = relevant_crs_columns() + [ClimateSchema.FLOW_MODALITY]
