@@ -168,3 +168,4 @@ climate_finance/.raw_data/crs_codes.json
 climate_finance/.raw_data/oecd_multilateral_climate_imputations_channels_not_mapped.csv
 climate_finance/for_testing.py
 climate_finance/.raw_data/*.parquet
+/climate_finance/.raw_data
