@@ -818,7 +818,6 @@ class ClimateData:
             loaded_data = DEFLATOR(
                 data=loaded_data,
                 target_currency=self.currency,
-                prices=self.prices,
                 base_year=self.base_year,
             )
         else:
