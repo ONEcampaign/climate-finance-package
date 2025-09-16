@@ -310,7 +310,10 @@ def log_notes(df: pd.DataFrame) -> None:
         None
     """
 
-    logger.info(f"{df.iloc[1].values[0]}")
+    try:
+        logger.info(f"{df.iloc[1].values[0]}")
+    except Exception as e:
+        logger.warning(f"Could not log notes: {e}")
 
 
 def crdf_multilateral_provider_codes() -> list[str]:

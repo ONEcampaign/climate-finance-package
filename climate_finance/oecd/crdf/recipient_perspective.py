@@ -27,7 +27,7 @@ FILE_PATH: Path = (
 
 set_data_path(ClimateDataPath.raw_data)
 
-BASE_URL: str = "https://webfs.oecd.org/climate/RecipientPerspective/CRDF-RP-2000-"
+BASE_URL: str = "https://webfs.oecd.org/climate/RecipientPerspective/CRDF-RP-all%20years-2000-"
 
 UNIQUE_INDEX = [
     ClimateSchema.YEAR,
