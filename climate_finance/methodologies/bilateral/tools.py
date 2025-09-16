@@ -1,5 +1,5 @@
 import pandas as pd
-from oda_data import donor_groupings, set_data_path
+from oda_data import provider_groupings as donor_groupings, set_data_path
 
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import ClimateDataPath

@@ -515,7 +515,7 @@ class ClimateData:
             pd.DataFrame: The loaded data converted to shares.
 
         """
-        from oda_data import donor_groupings
+        from oda_data import provider_groupings as donor_groupings
 
         # Temporarily store requested providers
         if self.providers is not None:

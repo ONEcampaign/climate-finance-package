@@ -1,5 +1,5 @@
 import pandas as pd
-from oda_data import read_crs, set_data_path, download_crs
+from oda_data import CRSData, set_data_path
 from oda_data.clean_data.channels import clean_string
 
 from climate_finance.common.analysis_tools import (
@@ -44,8 +44,10 @@ def read_clean_crs(
         f"Reading CRS data for {', '.join([str(y) for y in years])}. "
         f"This may take a while."
     )
+
+    crs = CRSData(years=years)
     return (
-        read_crs(years=years, filters=filters)
+        crs.read(using_bulk_download=True, additional_filters=filters)
         .pipe(rename_crs_columns)
         .pipe(set_default_types)
     )
@@ -83,13 +85,18 @@ def get_crs(
     filters = []
     # Provider and recipient filters
     if provider_code is not None:
-        filters.append(get_providers_filter(provider_code))
+        _,_, p_codes = get_providers_filter(provider_code)
+    else: p_codes = None
     if recipient_code is not None:
-        filters.append(get_recipients_filter(recipient_code))
+        _,_, r_codes =get_recipients_filter(recipient_code)
+    else:
+        r_codes = None
+
+    crs = CRSData(years=years, providers=p_codes, recipients=r_codes)
 
     # Check if data should be forced to update
     if force_update:
-        download_crs()
+        crs.download(bulk=True)
 
     # get relevant columns plus flow modality
     columns = relevant_crs_columns() + [ClimateSchema.FLOW_MODALITY]
@@ -105,7 +112,7 @@ def get_crs(
     groupby = list(dict.fromkeys(groupby + [ClimateSchema.FLOW_TYPE]))
 
     # Read CRS and rename columns
-    crs = read_clean_crs(years=years, filters=filters)
+    crs = crs.read(additional_filters=filters, using_bulk_download=True)
 
     # Add net disbursement
     crs = crs.pipe(add_net_disbursement)
@@ -196,19 +203,26 @@ def get_raw_crs(
     # Study years
     years = range(start_year, end_year + 1)
 
-    # Check if data should be forced to update
-    if force_update:
-        download_crs()
+
 
     filters = []
     # Provider and recipient filters
     if provider_code is not None:
-        filters.append(get_providers_filter(provider_code))
+        _, _, p_codes = get_providers_filter(provider_code)
+    else:
+        p_codes = None
     if recipient_code is not None:
-        filters.append(get_recipients_filter(recipient_code))
+        _, _, r_codes = get_recipients_filter(recipient_code)
+    else:
+        r_codes = None
 
-    # Read the CRS data
-    crs_data = read_clean_crs(years=years, filters=filters)
+    crs = CRSData(years=years, providers=p_codes, recipients=r_codes)
+
+    # Check if data should be forced to update
+    if force_update:
+        crs.download(bulk=True)
+
+    crs_data = crs.read(using_bulk_download=True, additional_filters=filters)
 
     if allocable:
         crs_data = crs_data.pipe(keep_only_allocable_aid)
