@@ -1,5 +1,9 @@
 # Changes to the climate_finance package
 
+## 1.2 (2025-09-19)
+- Updates to dependencies and core logic based on
+changes to the underlying data structures from the OECD
+
 ## 1.1.2 (2025-03-20)
 - Re releases 1.1.1 since the version on PyPI doesn't match the GitHub version.
 

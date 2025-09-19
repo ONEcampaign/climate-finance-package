@@ -97,7 +97,7 @@ def process_not_climate_relevant(df) -> pd.DataFrame:
         ]
         .assign(
             **{ClimateSchema.INDICATOR: ClimateSchema.NOT_CLIMATE},
-            **{ClimateSchema.LEVEL: 0}
+            **{ClimateSchema.LEVEL: 0},
         )
         .drop(columns=[ClimateSchema.MITIGATION, ClimateSchema.ADAPTATION])
     )

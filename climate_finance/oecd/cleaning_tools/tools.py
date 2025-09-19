@@ -192,8 +192,8 @@ def rename_crdf_marker_columns(df: pd.DataFrame) -> pd.DataFrame:
     markers = {
         "adaptation_objective_applies_to_rio_marked_data_only": ClimateSchema.ADAPTATION,
         "mitigation_objective_applies_to_rio_marked_data_only": ClimateSchema.MITIGATION,
-        "adaptation_related_development_finance_commitment_current": ClimateSchema.ADAPTATION_VALUE,
-        "mitigation_related_development_finance_commitment_current": ClimateSchema.MITIGATION_VALUE,
+        "adaptation_related_development_finance_includes_overlap_commitment_current": ClimateSchema.ADAPTATION_VALUE,
+        "mitigation_related_development_finance_includes_overlap_commitment_current": ClimateSchema.MITIGATION_VALUE,
     }
 
     return df.rename(columns=markers)

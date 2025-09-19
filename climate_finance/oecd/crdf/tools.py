@@ -133,7 +133,7 @@ def read_excel_sheets(excel_file: pd.ExcelFile) -> list[pd.DataFrame]:
     """
     dfs = []
     for sheet in excel_file.sheet_names:
-        if sheet == "Notes":
+        if sheet.lower() == "notes":
             log_notes(excel_file.parse(sheet))
             continue
         dfs.append(excel_file.parse(sheet))

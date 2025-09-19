@@ -1,30 +1,20 @@
-[tool.poetry]
+[project]
 name = "climate-finance"
-version = "1.1.2"
+version = "1.2.0"
 description = "Climate Finance data"
 authors = ["Jorge Rivera, The ONE Campaign"]
 license = "MIT"
 readme = "README.md"
+requires-python = ">=3.11"
 packages = [{include = "climate_finance"}]
 
-[tool.poetry.dependencies]
-python = "^3.10"
-pandas = "^2"
-requests = "^2.3"
-selenium = "^4.10"
-openpyxl = "^3.1"
-oda-data = "^1.1"
-bblocks = "^1.2"
-thefuzz = {extras = ["speedup"], version = "^0.22"}
-webdriver-manager = "^4.0.0"
-
-
-[tool.poetry.group.dev.dependencies]
-pytest = "^8"
-bump2version = "^1.0"
-black = "^25"
-pytest-cov = "^4.1"
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+dependencies = [
+    "bblocks>=1.4.3,<2",
+    "oda-data>=2.1.2",
+    "openpyxl>=3.1.5",
+    "pandas>=2.3.2",
+    "requests>=2.32.5",
+    "selenium>=4.35.0",
+    "thefuzz[speedup]>=0.22.1",
+    "webdriver-manager>=4.0.2",
+]

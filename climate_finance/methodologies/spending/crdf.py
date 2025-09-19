@@ -186,6 +186,8 @@ def group_and_summarize(df: pd.DataFrame) -> pd.DataFrame:
     # Valid values
     values = [c for c in df.columns if c in VALUES]
 
+    df[values] = df[values].astype(float)
+
     # Group so that each project has only one row
     df = df.groupby(by=idx, observed=True, dropna=False)[values].sum().reset_index()
 

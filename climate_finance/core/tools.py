@@ -1,7 +1,7 @@
 import pandas as pd
 from bblocks import convert_id
 from oda_data.clean_data.channels import add_multi_channel_codes
-from oda_data.clean_data.schema import OdaSchema
+from oda_data.clean_data.schema import ODASchema as OdaSchema
 from thefuzz import process
 
 from climate_finance.common.schema import (
