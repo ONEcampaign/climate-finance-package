@@ -2,13 +2,12 @@
 name = "climate-finance"
 version = "1.2.0"
 description = "Climate Finance data"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
 authors = [
   { name = "Jorge Rivera", email = "jorge.rivera@one.org" }
 ]
-license = "MIT"
-readme = "README.md"
-requires-python = ">=3.11"
-packages = [{include = "climate_finance"}]
 
 dependencies = [
     "bblocks>=1.4.3,<2",
@@ -20,3 +19,6 @@ dependencies = [
     "thefuzz[speedup]>=0.22.1",
     "webdriver-manager>=4.0.2",
 ]
+
+[tool.setuptools.packages.find]
+include = ["climate_finance"]
