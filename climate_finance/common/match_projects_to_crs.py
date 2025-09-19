@@ -59,6 +59,10 @@ def _create_and_validate_idx_col(idx: list[str], df: pd.DataFrame) -> pd.DataFra
         not_matched = [c for c in idx if c not in matched]
         logger.debug(f"Columns not matched: {not_matched}")
 
+    if df.empty:
+        df["idx"] = pd.Series(dtype="string[pyarrow]")
+        return df
+
     df["idx"] = (
         df[matched]
         .astype("string[pyarrow]")
@@ -91,15 +95,14 @@ def _groupby_idx(df: pd.DataFrame, idx: list[str]) -> pd.DataFrame:
 
     if f"commitment_{ClimateSchema.CLIMATE_SHARE}" in df.columns:
 
-        df["original_commitment"] = (
-            df[CLIMATE_VALUES].max(axis=1)
-            / df[f"commitment_{ClimateSchema.CLIMATE_SHARE}"]
-        )
+        df["original_commitment"] = df[CLIMATE_VALUES].astype(float).max(axis=1) / df[
+            f"commitment_{ClimateSchema.CLIMATE_SHARE}"
+        ].astype(float)
 
     if "original_commitment" in df.columns:
         cols = cols + ["original_commitment"]
 
-    df[cols] = df[cols].fillna(0)
+    df[cols] = df[cols].astype(float).fillna(0)
 
     return df.groupby(id_columns, observed=True, dropna=False)[cols].sum().reset_index()
 
