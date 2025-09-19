@@ -1,5 +1,6 @@
 import pandas as pd
 from oda_data import CRSData
+from oda_data.clean_data.schema import ODASchema
 
 from climate_finance.config import ClimateDataPath
 from climate_finance.common.schema import ClimateSchema
@@ -249,3 +250,37 @@ def add_recipient_names(data: pd.DataFrame) -> pd.DataFrame:
     data = data.pipe(_add_names, names=names, idx=[ClimateSchema.RECIPIENT_CODE])
 
     return data
+
+def map_schemas(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Map the columns of the data to the ClimateSchema.
+
+    Args:
+        data: The data to map the columns of.
+
+    Returns:
+        The data with the columns mapped to the ClimateSchema.
+    """
+    names ={
+    ODASchema.PROVIDER_CODE: ClimateSchema.PROVIDER_CODE,
+    ODASchema.PROVIDER_NAME: ClimateSchema.PROVIDER_NAME,
+    ODASchema.AGENCY_CODE: ClimateSchema.AGENCY_CODE,
+    ODASchema.AGENCY_NAME: ClimateSchema.AGENCY_NAME,
+    ODASchema.RECIPIENT_CODE: ClimateSchema.RECIPIENT_CODE,
+    ODASchema.RECIPIENT_NAME: ClimateSchema.RECIPIENT_NAME,
+    ODASchema.FLOW_CODE: ClimateSchema.FLOW_CODE,
+    ODASchema.FLOW_NAME: ClimateSchema.FLOW_NAME,
+    ODASchema.SECTOR_CODE: ClimateSchema.SECTOR_CODE,
+    ODASchema.SECTOR_NAME: ClimateSchema.SECTOR_NAME,
+    ODASchema.PURPOSE_CODE: ClimateSchema.PURPOSE_CODE,
+    ODASchema.PURPOSE_NAME: ClimateSchema.PURPOSE_NAME,
+    ODASchema.PROJECT_TITLE: ClimateSchema.PROJECT_TITLE,
+    ODASchema.CRS_ID: ClimateSchema.CRS_ID,
+    ODASchema.PROJECT_ID: ClimateSchema.PROJECT_ID,
+    ODASchema.PROJECT_DESCRIPTION: ClimateSchema.PROJECT_DESCRIPTION,
+    ODASchema.CHANNEL_CODE: ClimateSchema.CHANNEL_CODE,
+    ODASchema.CHANNEL_NAME: ClimateSchema.CHANNEL_NAME,
+    ODASchema.COMMITMENT_DATE: ClimateSchema.COMMITMENT_DATE,
+    }
+
+    return data.rename(columns=names)

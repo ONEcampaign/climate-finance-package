@@ -10,6 +10,7 @@ from climate_finance.common.analysis_tools import (
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import ClimateDataPath, logger
 from climate_finance.core.dtypes import set_default_types
+from climate_finance.oecd.cleaning_tools.names import map_schemas
 from climate_finance.oecd.cleaning_tools.settings import (
     relevant_crs_columns,
     all_flow_columns,
@@ -85,10 +86,11 @@ def get_crs(
     filters = []
     # Provider and recipient filters
     if provider_code is not None:
-        _,_, p_codes = get_providers_filter(provider_code)
-    else: p_codes = None
+        _, _, p_codes = get_providers_filter(provider_code)
+    else:
+        p_codes = None
     if recipient_code is not None:
-        _,_, r_codes =get_recipients_filter(recipient_code)
+        _, _, r_codes = get_recipients_filter(recipient_code)
     else:
         r_codes = None
 
@@ -112,7 +114,9 @@ def get_crs(
     groupby = list(dict.fromkeys(groupby + [ClimateSchema.FLOW_TYPE]))
 
     # Read CRS and rename columns
-    crs = crs.read(additional_filters=filters, using_bulk_download=True)
+    crs = crs.read(additional_filters=filters, using_bulk_download=True).pipe(
+        map_schemas
+    )
 
     # Add net disbursement
     crs = crs.pipe(add_net_disbursement)
@@ -203,8 +207,6 @@ def get_raw_crs(
     # Study years
     years = range(start_year, end_year + 1)
 
-
-
     filters = []
     # Provider and recipient filters
     if provider_code is not None:
@@ -222,7 +224,9 @@ def get_raw_crs(
     if force_update:
         crs.download(bulk=True)
 
-    crs_data = crs.read(using_bulk_download=True, additional_filters=filters)
+    crs_data = crs.read(using_bulk_download=True, additional_filters=filters).pipe(
+        map_schemas
+    )
 
     if allocable:
         crs_data = crs_data.pipe(keep_only_allocable_aid)
