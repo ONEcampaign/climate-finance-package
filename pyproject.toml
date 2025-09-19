@@ -2,7 +2,7 @@
 name = "climate-finance"
 version = "1.2.0"
 description = "Climate Finance data"
-authors = ["Jorge Rivera, The ONE Campaign"]
+authors = ["jorge.rivera@one.org"]
 license = "MIT"
 readme = "README.md"
 requires-python = ">=3.11"
