@@ -20,7 +20,9 @@ from climate_finance.oecd.crdf.tools import (
 )
 
 FILE_PATH: Path = ClimateDataPath.raw_data / "oecd_climate_provider_perspective.parquet"
-BASE_URL: str = "https://webfs.oecd.org/climate/DonorPerspective/CRDF-DP-all%20years-2012-"
+BASE_URL: str = (
+    "https://webfs.oecd.org/climate/DonorPerspective/CRDF-DP-all%20years-2012-"
+)
 
 
 def _get_and_remove_multilateral(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
