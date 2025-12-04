@@ -1,5 +1,8 @@
 # Changes to the climate_finance package
 
+## 1.2.1 (2025-12-04)
+- Adds testing suite and updates project structure. It also fixes a publishing issue.
+
 ## 1.2 (2025-09-19)
 - Updates to dependencies and core logic based on
 changes to the underlying data structures from the OECD

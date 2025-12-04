@@ -172,7 +172,10 @@ def fix_crs_year_encoding(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def clean_adaptation_and_mitigation_columns(df: pd.DataFrame) -> pd.DataFrame:
-    df[CRS_CLIMATE_COLUMNS] = df[CRS_CLIMATE_COLUMNS].fillna(0)
+    # Fill NaN values with 0 for climate columns, explicitly setting dtype to avoid downcasting warning
+    for col in CRS_CLIMATE_COLUMNS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype('int64')
 
     return df
 
