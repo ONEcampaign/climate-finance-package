@@ -173,3 +173,4 @@ climate_finance/.raw_data/*.parquet
 /climate_finance/.raw_data/oda_reader
 
 src/climate_finance/.raw_data/
+/climate_finance/.raw_data/
