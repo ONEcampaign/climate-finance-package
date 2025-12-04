@@ -20,5 +20,27 @@ dependencies = [
     "webdriver-manager>=4.0.2",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-snapshot>=0.9.0",
+]
+
 [tool.setuptools.packages.find]
 include = ["climate_finance"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: integration tests",
+    "unit: unit tests",
+]
+addopts = [
+    "--strict-markers",
+    "--tb=short",
+]

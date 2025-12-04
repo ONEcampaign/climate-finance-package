@@ -247,7 +247,7 @@ def table7a_heading_mapping(df: pd.DataFrame) -> pd.DataFrame:
         pd.DataFrame: DataFrame with mapped channel types.
     """
 
-    df["channel"] = df.channel.str.replace(f"[\d()+-]+|\.+", "", regex=True).str.strip()
+    df["channel"] = df.channel.str.replace(r"[\d()+-]+|\.+", "", regex=True).str.strip()
 
     # read mapping from json
     with open(

@@ -1,0 +1,6 @@
+year,oecd_provider_code,provider,oecd_recipient_code,recipient,climate_adaptation,climate_mitigation,usd_commitment,usd_disbursement,flow_type,currency,prices,crs_id
+2020,4,France,50,Bangladesh,2,0,1000000,800000,gross_disbursements,USD,current,20200001
+2020,4,France,64,Ethiopia,1,2,2000000,1600000,gross_disbursements,USD,current,20200002
+2020,12,United Kingdom,50,Bangladesh,2,1,1500000,1200000,gross_disbursements,USD,current,20200003
+2021,4,France,50,Bangladesh,1,1,1200000,960000,gross_disbursements,USD,current,20210001
+2021,12,United Kingdom,106,Vietnam,2,0,1800000,1440000,gross_disbursements,USD,current,20210002

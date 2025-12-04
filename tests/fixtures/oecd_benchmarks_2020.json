@@ -1,0 +1,24 @@
+{
+  "description": "OECD published totals for climate finance in 2020",
+  "source": "OECD CRDF 2020 recipient perspective",
+  "extracted_date": "2025-10-27",
+  "benchmarks": {
+    "crs_total_commitments_2020": {
+      "methodology": "OECD",
+      "flow": "commitments",
+      "year": 2020,
+      "providers": "all_dac",
+      "total_usd_millions": 80500,
+      "tolerance_percent": 1.0,
+      "note": "Total climate finance commitments from DAC countries"
+    },
+    "france_commitments_2020": {
+      "methodology": "OECD",
+      "flow": "commitments",
+      "year": 2020,
+      "providers": [4],
+      "total_usd_millions": 5200,
+      "tolerance_percent": 1.0
+    }
+  }
+}
