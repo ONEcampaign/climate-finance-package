@@ -73,10 +73,6 @@ wheel-exclude = ["**/Data/**", "**/.raw_data/**", "**/__pycache__/**"]
 # Exclude from source distribution as well
 source-exclude = ["**/Data/**", "**/.raw_data/**"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["src"]
-
 [tool.coverage.run]
 source = ["src/climate_finance"]
 branch = true
