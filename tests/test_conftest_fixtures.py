@@ -1,6 +1,5 @@
 """Test to verify conftest fixtures are working correctly."""
 import pandas as pd
-import pytest
 from climate_finance.common.schema import ClimateSchema
 
 

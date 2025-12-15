@@ -1,6 +1,6 @@
 [project]
 name = "climate-finance"
-version = "1.2.1"
+version = "1.2.2"
 description = "Climate Finance data"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -21,7 +21,7 @@ classifiers = [
 
 dependencies = [
     "bblocks>=1.4.3,<2",
-    "oda-data>=2.3.0.post1",
+    "oda-data>=2.3.1",
     "openpyxl>=3.1.5",
     "pandas>=2.3.2",
     "requests>=2.32.5",

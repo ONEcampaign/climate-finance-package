@@ -1,4 +1,4 @@
-__version__ = "1.2.1"
+__version__ = "1.2.2"
 
 # Easy access to importers
 
@@ -13,8 +13,6 @@ def set_climate_finance_data_path(path):
     from pydeflate import set_pydeflate_path
 
     """Set the path to the _data folder."""
-    global ClimateDataPath
-
     ClimateDataPath.raw_data = Path(path).resolve()
     set_data_path(Path(path).resolve())
     set_pydeflate_path(Path(path).resolve())

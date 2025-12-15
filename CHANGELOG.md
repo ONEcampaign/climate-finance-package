@@ -1,5 +1,13 @@
 # Changes to the climate_finance package
 
+## 1.2.2 (2025-12-15)
+- Fixes indicator compatibility issue with oda-data >= 2.3.1 by switching to the new `core_multilateral_contributions_by_provider` function.
+- Updates `oda-data` dependency to >= 2.3.1.
+- Adds `KeysView` type support in `to_list_of_ints` helper function.
+- Automatically extends years range when rolling years exceed the requested years.
+- Changes default `rolling_years_spending` from 1 to 3 in `load_multilateral_imputations_data`.
+- Removes deprecated `clean_multisystem_indicators` function.
+
 ## 1.2.1 (2025-12-04)
 - Adds testing suite and updates project structure. It also fixes a publishing issue.
 

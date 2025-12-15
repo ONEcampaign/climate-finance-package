@@ -2,7 +2,6 @@ import pandas as pd
 
 from climate_finance.common.schema import (
     ClimateSchema,
-    OECD_CLIMATE_INDICATORS,
     CRS_CLIMATE_COLUMNS,
 )
 from climate_finance.methodologies.spending.tools import (

@@ -7,14 +7,11 @@ from bblocks import clean_numeric_series
 
 from climate_finance import config
 from climate_finance.unfccc.cleaning_tools.tools import (
-    clean_recipient_names,
     rename_columns,
-    fill_type_of_support_gaps,
     harmonise_type_of_support,
     clean_status,
     clean_funding_source,
 )
-from climate_finance.unfccc.download.pre_process import clean_unfccc
 
 TABLE7_COLUMNS: list[str] = [
     "status",

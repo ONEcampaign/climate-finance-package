@@ -47,7 +47,6 @@ from climate_finance.methodologies.spending.crs import (
     transform_markers_into_indicators,
 )
 from climate_finance.oecd.cleaning_tools.tools import (
-    multi_flows_to_indicators,
     get_contributions_data,
 )
 
@@ -451,8 +450,6 @@ class ClimateData:
             pd.DataFrame: The loaded data.
 
         """
-        # Validate flows as oda-data indicators
-        indicators = multi_flows_to_indicators(flows=flows)
 
         # get contributions data and clean it
         contributions_data = get_contributions_data(
@@ -462,9 +459,8 @@ class ClimateData:
             currency=self.currency,
             prices=self.prices,
             base_year=self.base_year,
-            indicators=indicators,
+            flows=flows
         )
-
         # clean data
         contributions_data = contributions_data.pipe(clean_multi_contributions)
 
@@ -529,6 +525,14 @@ class ClimateData:
         self.providers = donor_groupings()["multilateral"].keys()
 
         # Temporarily shift the years to account for rolling
+        if len(self.years) < rolling_years_spending:
+            logger.info(
+                f"The number of years requested ({len(self.years)}) is less than "
+                f"the rolling years for spending shares ({rolling_years_spending}). "
+                f"Extending the years range to accommodate the rolling window."
+            )
+            self.years = list(range(min(self.years) - rolling_years_spending + 1, max(self.years) + 1))
+
         years = self.years
         self.years = [
             y
@@ -578,7 +582,7 @@ class ClimateData:
     def load_multilateral_imputations_data(
         self,
         spending_methodology: SpendingMethodologies | str = "OECD",
-        rolling_years_spending: int = 1,
+        rolling_years_spending: int = 3,
         flows: ValidFlows | str | list[ValidFlows | str] = "gross_disbursements",
         source: ValidSources | str | list[ValidSources | str] = "OECD_CRDF_CRS",
         groupby: list[str] | str | None = None,

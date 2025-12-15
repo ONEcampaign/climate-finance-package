@@ -7,7 +7,6 @@ from climate_finance.oecd.cleaning_tools.tools import (
     clean_adaptation_and_mitigation_columns,
     fix_crs_year_encoding,
     convert_flows_millions_to_units,
-    rename_crs_columns,
 )
 from tests.fixtures.builders import build_crs_data
 

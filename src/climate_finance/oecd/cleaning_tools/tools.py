@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
-from oda_data import set_data_path, ODAData
+from oda_data import set_data_path
+from oda_data.indicators.research.sector_imputations import core_multilateral_contributions_by_provider
 from pandas._typing import MergeHow, Suffixes
 
 from climate_finance.common.schema import (
@@ -9,9 +10,8 @@ from climate_finance.common.schema import (
     ClimateSchema,
     CRS_CLIMATE_COLUMNS,
     OECD_CLIMATE_INDICATORS,
-    MULTISYSTEM_INDICATORS,
 )
-from climate_finance.config import ClimateDataPath
+from climate_finance.config import ClimateDataPath, logger
 from climate_finance.oecd.cleaning_tools.settings import relevant_crs_columns
 
 set_data_path(ClimateDataPath.raw_data)
@@ -408,14 +408,6 @@ def channel_codes_to_names(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def clean_multisystem_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    return df.assign(
-        **{
-            ClimateSchema.FLOW_TYPE: lambda d: d[ClimateSchema.INDICATOR].map(
-                MULTISYSTEM_INDICATORS
-            )
-        }
-    )
 
 
 def _fill_missing_by_type(series: pd.Series) -> pd.Series:
@@ -506,26 +498,28 @@ def get_contributions_data(
     currency: str,
     prices: str,
     base_year: int | None,
-    indicators: list[str],
+    flows: list[str] | str,
 ) -> pd.DataFrame:
-    """Use ODA data to get contributions data"""
+    """Use ODA data to get the multisystem_multilateral_contributions data"""
 
-    # if "disbursements" in the indicators, the 's' is removed
-    indicators = [
-        indicator.replace("disbursements", "disbursement") for indicator in indicators
-    ]
+    if recipients is not None:
+        logger.warning("Recipients parameter is ignored for multilateral contributions data.")
 
-    # create an instance of ODAData with the relevant settings
-    contributions = ODAData(
-        donors=providers,
-        recipients=recipients,
+    if isinstance(flows, list):
+        if len(flows) > 1:
+            raise ValueError("Only a single flow type can be requested at a time.")
+        flows = flows[0]
+
+    flows = flows.replace("commitments","commitment").replace("disbursements","disbursement")
+
+    contributions_data= core_multilateral_contributions_by_provider(
+        providers=providers,
         years=years,
         currency=currency,
-        prices=prices,
         base_year=base_year,
+        measure=flows
     )
 
-    # Load the indicators and get the data
-    contributions_data = contributions.load_indicator(indicators=indicators).get_data()
+    contributions_data[ClimateSchema.FLOW_TYPE] = flows
 
     return contributions_data

@@ -5,7 +5,7 @@ from climate_finance.common.schema import ClimateSchema
 
 # Try to import pytest-snapshot plugin
 try:
-    import pytest_snapshot
+    import pytest_snapshot  # noqa: F401
     HAS_SNAPSHOT = True
 except ImportError:
     HAS_SNAPSHOT = False

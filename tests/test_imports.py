@@ -1,5 +1,4 @@
 """Test that required imports work correctly in test environment."""
-import pytest
 
 
 def test_can_import_climate_schema():

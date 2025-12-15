@@ -1,4 +1,3 @@
-import pandas as pd
 import pytest
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.methodologies.spending.crs import (
