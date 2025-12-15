@@ -1,6 +1,5 @@
 """Integration test to demonstrate all conftest fixtures work together."""
 import pandas as pd
-import pytest
 from climate_finance.common.schema import ClimateSchema
 
 

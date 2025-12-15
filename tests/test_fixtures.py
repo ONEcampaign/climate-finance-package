@@ -1,5 +1,4 @@
 """Test the basic fixtures from conftest.py"""
-import pandas as pd
 from climate_finance.common.schema import ClimateSchema
 
 

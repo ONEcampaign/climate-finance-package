@@ -334,7 +334,7 @@ wheels = [
 
 [[package]]
 name = "climate-finance"
-version = "1.2.1"
+version = "1.2.2"
 source = { editable = "." }
 dependencies = [
     { name = "bblocks" },
@@ -357,7 +357,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "bblocks", specifier = ">=1.4.3,<2" },
-    { name = "oda-data", specifier = ">=2.3.0.post1" },
+    { name = "oda-data", specifier = ">=2.3.1" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "pandas", specifier = ">=2.3.2" },
     { name = "requests", specifier = ">=2.32.5" },
@@ -537,6 +537,15 @@ wheels = [
 ]
 
 [[package]]
+name = "diskcache"
+version = "5.6.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3f/21/1c1ffc1a039ddcc459db43cc108658f32c57d271d7289a2794e401d0fdb6/diskcache-5.6.3.tar.gz", hash = "sha256:2c3a3fa2743d8535d832ec61c2054a1641f41775aa7c556758a109941e33e4fc", size = 67916, upload-time = "2023-08-31T06:12:00.316Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/27/4570e78fc0bf5ea0ca45eb1de3818a23787af9b390c0b0a0033a1b8236f9/diskcache-5.6.3-py3-none-any.whl", hash = "sha256:5e31b2d5fbad117cc363ebaf6b689474db18a1f6438bc82358b024abd4c2ca19", size = 45550, upload-time = "2023-08-31T06:11:58.822Z" },
+]
+
+[[package]]
 name = "et-xmlfile"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -607,21 +616,21 @@ wheels = [
 
 [[package]]
 name = "hdx-python-country"
-version = "3.9.6"
+version = "3.9.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "hdx-python-utilities" },
     { name = "libhxl" },
     { name = "tenacity" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/88/96/ac55b204699cd216a22a943f64aafac32bba818f624a5d44879d60368fad/hdx_python_country-3.9.6.tar.gz", hash = "sha256:7791f4b9c5ae3e62e82795c266a3ca6ee23c7bab706c91533844edf2ebd9bb18", size = 529232, upload-time = "2025-07-09T22:56:32.162Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ce/cc/5621c48b79a510a87288495f4bdde38a292f0f97dd14177e2cc77c8a79bb/hdx_python_country-3.9.8.tar.gz", hash = "sha256:de9d928e490490fe6fa2d743597464fa8bae317f808667a947e734c1ea26e4d9", size = 531031, upload-time = "2025-09-21T23:42:45.054Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/45/90/646b56ec12df459799510d6d0869ada210ad9f765ad104e50dae4867eb50/hdx_python_country-3.9.6-py3-none-any.whl", hash = "sha256:4c1833bdf3cbd14dfff0146e0bdcae5763931d344fce5f1b42493dc8751e3d4a", size = 55554, upload-time = "2025-07-09T22:56:30.128Z" },
+    { url = "https://files.pythonhosted.org/packages/ce/8f/7d961e17372bb9df875e988432a2abb9ca4883b4a0592dfccefa50cb697f/hdx_python_country-3.9.8-py3-none-any.whl", hash = "sha256:602e495028e474e2f93094136007b2c0e765d88af55b2cae7e0ba778e178bcaf", size = 56383, upload-time = "2025-09-21T23:42:43.267Z" },
 ]
 
 [[package]]
 name = "hdx-python-utilities"
-version = "3.9.1"
+version = "3.9.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "frictionless" },
@@ -639,9 +648,9 @@ dependencies = [
     { name = "xlsx2csv" },
     { name = "xlwt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ae/16/c4a6d5122d5d0715d2cc7926261cfb009b0a6f5cf0fef2a0f528472cde3c/hdx_python_utilities-3.9.1.tar.gz", hash = "sha256:8816336b9b42238ff2608c0aa240277d625ed44d7ee4dcb954508305bf1e5708", size = 656745, upload-time = "2025-08-28T04:24:19.539Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9d/bf/de293fb5c61ff02cac39ca57ddba368d3319412728d7d8157ea6f2d95ed0/hdx_python_utilities-3.9.5.tar.gz", hash = "sha256:7d3125930405e27b18a20e2b52c1ae797ba9ca059f420624581273db09c0dd66", size = 659625, upload-time = "2025-10-09T22:01:26.101Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/64/6c/98db61b291046634b8d73163126cf4f55e15783b0e28ab14adf12dc0d02f/hdx_python_utilities-3.9.1-py3-none-any.whl", hash = "sha256:935d10121eaf03f7a5cf242aa507e003afb838b84d3edcb378639bdcf70ade61", size = 61143, upload-time = "2025-08-28T04:24:17.677Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/6d/4be80d9367e385f11c441daf1289f629976b5108fea37ae97bcac4fc13ad/hdx_python_utilities-3.9.5-py3-none-any.whl", hash = "sha256:e5e324ce000045f07e7948622abe0186c86085f40c6ed47c7650792b6cd4775b", size = 62298, upload-time = "2025-10-09T22:01:24.019Z" },
 ]
 
 [[package]]
@@ -722,17 +731,18 @@ wheels = [
 
 [[package]]
 name = "imf-reader"
-version = "1.3.0"
+version = "1.4.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "beautifulsoup4" },
     { name = "chardet" },
+    { name = "diskcache" },
     { name = "pandas" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/af/45/24521d229aec5c058d998510794567788bc7b1b764dfaa02fb8e0aeda4b7/imf_reader-1.3.0.tar.gz", hash = "sha256:3f3130dd793a112fdd5913a7c7b733847a5a07fd70dee14d57624ae4e021a141", size = 12990, upload-time = "2025-02-06T09:16:10.723Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/16/5a/c8bc268ae5b6dbab4db01d92f9d34713a7c487bc85f2522173cf24bc5c74/imf_reader-1.4.1.tar.gz", hash = "sha256:2584e45485b539cd2d15bf0a785e6ac5f29775c042d9d5f83c7af5d5f0947c0b", size = 13271, upload-time = "2025-12-05T11:41:01.049Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fd/5b/3a063116950f2aa2b450120e78162bb5b87098dde3b75ae90210c6f2c099/imf_reader-1.3.0-py3-none-any.whl", hash = "sha256:3515c6644dfef44d5fda89f5bb3786b4f83da20f49184911f0df2386782106f1", size = 16520, upload-time = "2025-02-06T09:16:09.042Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/79/97bd7b6c3af609b33ba2d787ea9e06ad93b1deca38388a345b6c913825ea/imf_reader-1.4.1-py3-none-any.whl", hash = "sha256:16c0dafcbe0e6630e7d3adbccb81e828b3e971b79e3969b79fbd6772151165c5", size = 19285, upload-time = "2025-12-05T11:41:00.218Z" },
 ]
 
 [[package]]
@@ -967,6 +977,15 @@ wheels = [
 ]
 
 [[package]]
+name = "mypy-extensions"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a2/6e/371856a3fb9d31ca8dac321cda606860fa4548858c0cc45d9d1d4ca2628b/mypy_extensions-1.1.0.tar.gz", hash = "sha256:52e68efc3284861e772bbcd66823fde5ae21fd2fdb51c62a211403730b916558", size = 6343, upload-time = "2025-04-22T14:54:24.164Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/79/7b/2c79738432f5c924bef5071f933bcc9efd0473bac3b4aa584a6f7c1c8df8/mypy_extensions-1.1.0-py3-none-any.whl", hash = "sha256:1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505", size = 4963, upload-time = "2025-04-22T14:54:22.983Z" },
+]
+
+[[package]]
 name = "numba"
 version = "0.62.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1135,7 +1154,7 @@ wheels = [
 
 [[package]]
 name = "oda-data"
-version = "2.3.0.post1"
+version = "2.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cachetools" },
@@ -1146,9 +1165,9 @@ dependencies = [
     { name = "reader" },
     { name = "thefuzz" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/df/26/c177dd7b6cbf705172e9339f8024a5f13f8228ea2ccac2a336a9dfe4401b/oda_data-2.3.0.post1.tar.gz", hash = "sha256:d57c80b33ef66f2b81ff527352f6f65770d65dc47058f35be00d56b959903908", size = 183742, upload-time = "2025-10-16T17:46:04.871Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fc/b1/d0104b5b878a5d0766ca30d7676ab2c8f0a678204a6ba2e4e6836b62ecfa/oda_data-2.3.1.tar.gz", hash = "sha256:b5c99e8c649567f11d3c53f21220ac7c5d4a1775b666f3aa88f580f16db5a2a1", size = 224954, upload-time = "2025-12-15T10:15:16.126Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ef/45/60d2bf0e5e61064e8ddf617048710449bed24d8d54e488e656e5ebea8d9e/oda_data-2.3.0.post1-py3-none-any.whl", hash = "sha256:890074ea9bf50c47764b5e6d262b39a8c22bd74577ce43adf53d4ecf319e5246", size = 202735, upload-time = "2025-10-16T17:46:02.974Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/3c/2562a78216723f40107e69232390f85c392eedb314e1556c8f3d31362ff8/oda_data-2.3.1-py3-none-any.whl", hash = "sha256:a2301164623813304eca2917c3162bac1b86b86cf0220e53c4d8b5093af2b5e4", size = 243640, upload-time = "2025-12-15T10:15:17.051Z" },
 ]
 
 [[package]]
@@ -1286,6 +1305,22 @@ performance = [
     { name = "bottleneck" },
     { name = "numba" },
     { name = "numexpr" },
+]
+
+[[package]]
+name = "pandera"
+version = "0.27.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "pydantic" },
+    { name = "typeguard" },
+    { name = "typing-extensions" },
+    { name = "typing-inspect" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ed/9d/36af210c7cef275d646b8dded8cc555078a271514e34f8f8d1c056462dc3/pandera-0.27.0.tar.gz", hash = "sha256:83c66d5896b97b3a91c810621038d2495f56c83864493819e7587d2059e641ad", size = 567135, upload-time = "2025-11-25T16:20:35.156Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/26/8e4a28ffbf3406c60d58eaa7f0529fb6197f5ae49f77b173dc84c057e1a2/pandera-0.27.0-py3-none-any.whl", hash = "sha256:e43b8062dfcde984300d798686815cc93feaae09645d3cddee3ab437f2d11ed5", size = 295880, upload-time = "2025-11-25T16:20:33.635Z" },
 ]
 
 [[package]]
@@ -1547,20 +1582,23 @@ wheels = [
 
 [[package]]
 name = "pydeflate"
-version = "2.1.3"
+version = "2.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "filelock" },
     { name = "hdx-python-country" },
     { name = "imf-reader" },
     { name = "oda-reader" },
     { name = "pandas" },
+    { name = "pandera" },
+    { name = "platformdirs" },
     { name = "pyarrow" },
     { name = "requests" },
     { name = "wbgapi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5e/72/3e56d8166ca4b366a4e37c85711a706bba66768f70ba690bdb279f728d8d/pydeflate-2.1.3.tar.gz", hash = "sha256:48a2b74ad900dd8c50dfb1e4cdfcea8ca11cbd2d3a713bf9208f2028fea4cf4f", size = 26586, upload-time = "2025-06-03T09:38:12.25Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/09/cc/1661ca602d899247552cf851b3d48e95e152ce7ffd706f6c15afc918619c/pydeflate-2.3.3.tar.gz", hash = "sha256:298607a894cff9fb9786ba85924ff122fd72258b6802a6debf5ef66af1f33bf3", size = 39487, upload-time = "2025-12-07T09:41:36.937Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/31/31/e703ab5bc311c58e4dc00759d7a48a850877b8bbcd64c9778e2315e06bd5/pydeflate-2.1.3-py3-none-any.whl", hash = "sha256:09ebdde04eb2fea1c4b6712889cb2a9d4c2dd22ce0204aaeae64f4335667354f", size = 32540, upload-time = "2025-06-03T09:38:10.858Z" },
+    { url = "https://files.pythonhosted.org/packages/15/fc/52a47b29d97d22fec1289602fe65346dedfffbc797fe3df953f484641a31/pydeflate-2.3.3-py3-none-any.whl", hash = "sha256:a19448158bd5cc17848336391d8461f860421dbf75c984b4685e14b93e8b88f3", size = 54114, upload-time = "2025-12-07T09:41:37.803Z" },
 ]
 
 [[package]]
@@ -2443,6 +2481,18 @@ wheels = [
 ]
 
 [[package]]
+name = "typeguard"
+version = "4.4.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c7/68/71c1a15b5f65f40e91b65da23b8224dad41349894535a97f63a52e462196/typeguard-4.4.4.tar.gz", hash = "sha256:3a7fd2dffb705d4d0efaed4306a704c89b9dee850b688f060a8b1615a79e5f74", size = 75203, upload-time = "2025-06-18T09:56:07.624Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1b/a9/e3aee762739c1d7528da1c3e06d518503f8b6c439c35549b53735ba52ead/typeguard-4.4.4-py3-none-any.whl", hash = "sha256:b5f562281b6bfa1f5492470464730ef001646128b180769880468bd84b68b09e", size = 34874, upload-time = "2025-06-18T09:56:05.999Z" },
+]
+
+[[package]]
 name = "typer"
 version = "0.17.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2464,6 +2514,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/98/5a/da40306b885cc8c09109dc2e1abd358d5684b1425678151cdaed4731c822/typing_extensions-4.14.1.tar.gz", hash = "sha256:38b39f4aeeab64884ce9f74c94263ef78f3c22467c8724005483154c26648d36", size = 107673, upload-time = "2025-07-04T13:28:34.16Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b5/00/d631e67a838026495268c2f6884f3711a15a9a2a96cd244fdaea53b823fb/typing_extensions-4.14.1-py3-none-any.whl", hash = "sha256:d1e1e3b58374dc93031d6eda2420a48ea44a36c2b4766a4fdeb3710755731d76", size = 43906, upload-time = "2025-07-04T13:28:32.743Z" },
+]
+
+[[package]]
+name = "typing-inspect"
+version = "0.9.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mypy-extensions" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/dc/74/1789779d91f1961fa9438e9a8710cdae6bd138c80d7303996933d117264a/typing_inspect-0.9.0.tar.gz", hash = "sha256:b23fc42ff6f6ef6954e4852c1fb512cdd18dbea03134f91f856a95ccc9461f78", size = 13825, upload-time = "2023-05-24T20:25:47.612Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/65/f3/107a22063bf27bdccf2024833d3445f4eea42b2e598abfbd46f6a63b6cb0/typing_inspect-0.9.0-py3-none-any.whl", hash = "sha256:9ee6fc59062311ef8547596ab6b955e1b8aa46242d854bfc78f4f6b0eff35f9f", size = 8827, upload-time = "2023-05-24T20:25:45.287Z" },
 ]
 
 [[package]]

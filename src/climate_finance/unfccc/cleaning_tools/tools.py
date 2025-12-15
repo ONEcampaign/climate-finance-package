@@ -1,4 +1,3 @@
-import re
 
 import numpy as np
 import pandas as pd
@@ -237,7 +236,7 @@ def clean_recipient_names(recipients_col: pd.Series) -> pd.Series:
 
     # Keep only characters and spaces (including french accents)
     recipients_col = recipients_col.str.replace(
-        rf"[^a-zA-Z\sô'éà]+", "", regex=True
+        r"[^a-zA-Z\sô'éà]+", "", regex=True
     ).str.strip()
 
     # Add additional mapping

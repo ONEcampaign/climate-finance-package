@@ -1,8 +1,9 @@
+from typing import KeysView
+
 import pandas as pd
 
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import logger
-from climate_finance.oecd.cleaning_tools.tools import keep_only_allocable_aid
 
 
 def to_list_of_ints(value):
@@ -16,6 +17,8 @@ def to_list_of_ints(value):
         A list of strings where each item is converted to its string representation.
 
     """
+    if isinstance(value, KeysView):
+        value = list(value)
     if isinstance(value, (str, int)):
         return [int(value)]
     elif isinstance(value, list):
@@ -37,7 +40,7 @@ def check_codes_type(
     if codes is None:
         return None
     if isinstance(codes, float):
-        raise TypeError(f"Codes must be integers")
+        raise TypeError("Codes must be integers")
 
     codes = to_list_of_ints(codes)
 
@@ -45,7 +48,7 @@ def check_codes_type(
         try:
             codes = [int(code) for code in codes]
         except ValueError:
-            raise TypeError(f"Codes must all be integers")
+            raise TypeError("Codes must all be integers")
     return codes
 
 

@@ -2,7 +2,6 @@ import pandas as pd
 import pytest
 from pathlib import Path
 from climate_finance.common.schema import ClimateSchema
-from unittest.mock import Mock
 
 
 @pytest.fixture

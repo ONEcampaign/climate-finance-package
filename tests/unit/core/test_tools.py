@@ -1,5 +1,4 @@
 import pandas as pd
-import pytest
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.common.analysis_tools import (
     get_providers_filter,
@@ -76,7 +75,7 @@ def test_filter_providers_with_none_returns_all():
 
 
 # Tests for groupby and aggregation functions
-from climate_finance.core.tools import groupby_sum
+from climate_finance.core.tools import groupby_sum  # noqa: E402
 
 
 def test_groupby_sum_aggregates_values_correctly():

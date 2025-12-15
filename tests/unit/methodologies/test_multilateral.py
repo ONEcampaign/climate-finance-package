@@ -2,7 +2,6 @@ import pandas as pd
 import pytest
 from climate_finance.common.schema import ClimateSchema
 from climate_finance.core.tools import data_to_share, calculate_imputations, merge_spending_and_contributions
-from tests.fixtures.builders import build_contributions_data, build_spending_shares
 
 
 def test_data_to_share_calculates_correct_proportions():

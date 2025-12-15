@@ -7,12 +7,10 @@ from thefuzz import process
 from climate_finance.common.schema import (
     ClimateSchema,
     CRS_MAPPING,
-    OECD_CLIMATE_INDICATORS,
 )
 from climate_finance.config import ClimateDataPath, logger
 from climate_finance.oecd.cleaning_tools.tools import (
     convert_flows_millions_to_units,
-    clean_multisystem_indicators,
     channel_codes_to_names,
 )
 
@@ -218,9 +216,6 @@ def clean_multi_contributions(df: pd.DataFrame) -> pd.DataFrame:
 
     # convert to millions
     df = convert_flows_millions_to_units(df, flow_columns=[ClimateSchema.VALUE])
-
-    # rename indicators
-    df = clean_multisystem_indicators(df)
 
     # map channel names
     df = channel_codes_to_names(df)

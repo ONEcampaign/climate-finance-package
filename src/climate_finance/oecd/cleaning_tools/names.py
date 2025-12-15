@@ -98,7 +98,7 @@ def read_provider_agency_names() -> pd.DataFrame:
         ClimateDataPath.scripts
         / "oecd"
         / "cleaning_tools"
-        / f"provider_agency_names.feather"
+        / "provider_agency_names.feather"
     ).rename(
         columns={
             "oecd_party_code": ClimateSchema.PROVIDER_CODE,
@@ -109,7 +109,7 @@ def read_provider_agency_names() -> pd.DataFrame:
 
 def read_provider_names() -> pd.DataFrame:
     return pd.read_feather(
-        ClimateDataPath.scripts / "oecd" / "cleaning_tools" / f"provider_names.feather"
+        ClimateDataPath.scripts / "oecd" / "cleaning_tools" / "provider_names.feather"
     ).rename(
         columns={
             "oecd_party_code": ClimateSchema.PROVIDER_CODE,
@@ -120,7 +120,7 @@ def read_provider_names() -> pd.DataFrame:
 
 def read_recipient_names() -> pd.DataFrame:
     return pd.read_feather(
-        ClimateDataPath.scripts / "oecd" / "cleaning_tools" / f"recipient_names.feather"
+        ClimateDataPath.scripts / "oecd" / "cleaning_tools" / "recipient_names.feather"
     )
 
 

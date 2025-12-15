@@ -61,11 +61,11 @@ def _check_and_download(
 ) -> bool:
     # Check that data was returned. If not, log a message.
     if len(df) == 0:
-        logger.info(f"No data found. Downloading data from UNFCCC website.")
+        logger.info("No data found. Downloading data from UNFCCC website.")
 
     # If force_download is True, log a message
     if force_download:
-        logger.info(f"Downloading data from UNFCCC website.")
+        logger.info("Downloading data from UNFCCC website.")
 
     # Download the data if no data was found or force_download is True
     if len(df) == 0 or force_download:

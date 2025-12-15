@@ -3,7 +3,6 @@ from typing import Any
 
 import pandas as pd
 
-from climate_finance.common.schema import ClimateSchema
 from climate_finance.config import logger
 from climate_finance.oecd.crdf.provider_perspective import get_provider_perspective
 from climate_finance.oecd.crdf.recipient_perspective import get_recipient_perspective

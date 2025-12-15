@@ -195,7 +195,7 @@ def get_marker_data(df: pd.DataFrame, marker: str):
 def _load(
     save_to_path: str | pathlib.Path, filters: list[tuple] | None = None
 ) -> pd.DataFrame:
-    logger.info(f"Loadings CRDF data. This may take a while.")
+    logger.info("Loadings CRDF data. This may take a while.")
     return (
         pd.read_parquet(save_to_path, filters=filters)
         .rename(columns=CRS_MAPPING)
