@@ -1,5 +1,8 @@
 # Changes to the climate_finance package
 
+## 1.2.3 (2026-08-11)
+- Declares `pydeflate`, `numpy` and `python-dateutil` as direct dependencies instead of relying on them arriving transitively.
+
 ## 1.2.2 (2025-12-15)
 - Fixes indicator compatibility issue with oda-data >= 2.3.1 by switching to the new `core_multilateral_contributions_by_provider` function.
 - Updates `oda-data` dependency to >= 2.3.1.
