@@ -21,9 +21,12 @@ classifiers = [
 
 dependencies = [
     "bblocks>=1.4.3,<2",
+    "numpy>=2.3.3",
     "oda-data>=2.3.1",
     "openpyxl>=3.1.5",
     "pandas>=2.3.2",
+    "pydeflate>=2.3.3",
+    "python-dateutil>=2.9.0.post0",
     "requests>=2.32.5",
     "selenium>=4.35.0",
     "thefuzz[speedup]>=0.22.1",
