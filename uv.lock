@@ -338,9 +338,12 @@ version = "1.2.2"
 source = { editable = "." }
 dependencies = [
     { name = "bblocks" },
+    { name = "numpy" },
     { name = "oda-data" },
     { name = "openpyxl" },
     { name = "pandas" },
+    { name = "pydeflate" },
+    { name = "python-dateutil" },
     { name = "requests" },
     { name = "selenium" },
     { name = "thefuzz" },
@@ -357,9 +360,12 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "bblocks", specifier = ">=1.4.3,<2" },
+    { name = "numpy", specifier = ">=2.3.3" },
     { name = "oda-data", specifier = ">=2.3.1" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "pandas", specifier = ">=2.3.2" },
+    { name = "pydeflate", specifier = ">=2.3.3" },
+    { name = "python-dateutil", specifier = ">=2.9.0.post0" },
     { name = "requests", specifier = ">=2.32.5" },
     { name = "selenium", specifier = ">=4.35.0" },
     { name = "thefuzz", extras = ["speedup"], specifier = ">=0.22.1" },
