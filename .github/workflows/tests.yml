@@ -26,12 +26,16 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
+      # --locked, not --frozen: --frozen would install the existing lockfile
+      # without checking it still matches pyproject.toml, so a PR that edits a
+      # dependency and forgets to relock would pass this gate while testing a
+      # dependency set no user will resolve. --locked fails on that drift.
       - name: Install the project
-        run: uv sync --frozen --python ${{ matrix.python-version }}
+        run: uv sync --locked --python ${{ matrix.python-version }}
 
       # Tests marked `integration` download OECD bulk data over the network, so
       # they fail whenever the upstream endpoint is slow or unavailable. They
       # are deselected here to keep this a deterministic gate; run them locally
       # with `uv run pytest -m integration`.
       - name: Run tests
-        run: uv run --frozen --python ${{ matrix.python-version }} pytest -m "not integration"
+        run: uv run --no-sync --python ${{ matrix.python-version }} pytest -m "not integration"
