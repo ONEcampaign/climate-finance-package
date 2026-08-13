@@ -3,7 +3,7 @@ name: release & publish
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
 
 jobs:
@@ -15,8 +15,14 @@ jobs:
       matrix:
         python-versions: ["3.10"]
 
+    # Matches the environment named in the PyPI trusted publisher for this
+    # project. The names must agree or PyPI rejects the OIDC claim.
+    environment: pypi
     permissions:
-      contents: write  # needed by action-gh-release
+      # Declaring any permission drops the rest to none, so checkout needs
+      # contents spelled out alongside the OIDC token the publish step mints.
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout
@@ -38,7 +44,9 @@ jobs:
       - name: Show dist/
         run: ls -l dist
 
-      - name: Publish to PyPI (uv)
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-        run: uv publish
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          skip-existing: true
+          verify-metadata: true
+          verbose: true
