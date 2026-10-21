@@ -211,13 +211,26 @@ def test_config_resolves_paths_against_its_file(config: BuildConfig) -> None:
     assert config.sources.btr_archive == BUILD_TOML.parent / "data/raw/unfccc_btr1"
 
 
-def test_last_complete_crs_year_lies_inside_the_crs_years(tmp_path: Path) -> None:
-    text = BUILD_TOML.read_text().replace(
-        "crs_last_complete = 2024", "crs_last_complete = 2026"
-    )
-    (tmp_path / "build.toml").write_text(text)
+@pytest.mark.parametrize(
+    ("line", "replacement", "match"),
+    [
+        ("crs_last_complete = 2024", "crs_last_complete = 2026", "crs_last_complete"),
+        # Normalise reads only raw/, so no source names a table outside it.
+        (
+            'btr_archive = "data/raw/unfccc_btr1"',
+            'btr_archive = "data/raw/unfccc_btr1"\nbtr_table = "btr.parquet"',
+            "btr_table",
+        ),
+    ],
+)
+def test_invalid_config_is_refused(
+    tmp_path: Path, line: str, replacement: str, match: str
+) -> None:
+    text = BUILD_TOML.read_text()
+    assert line in text
+    (tmp_path / "build.toml").write_text(text.replace(line, replacement))
 
-    with pytest.raises(ConfigError, match="crs_last_complete"):
+    with pytest.raises(ConfigError, match=match):
         load_config(tmp_path / "build.toml")
 
 

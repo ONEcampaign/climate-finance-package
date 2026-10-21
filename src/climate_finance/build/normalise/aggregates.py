@@ -156,12 +156,15 @@ def _pool(
             a=pl.col("rio_adaptation").fill_null(0),
         )
         .group_by(keys)
-        .agg(pl.col("commitment_usd").sum(), pl.col("title").min())
-        .filter(pl.col("commitment_usd") > 0)
+        .agg(
+            pl.col("commitment_usd").sum().alias("unit_commitment"),
+            pl.col("title").min(),
+        )
+        .filter(pl.col("unit_commitment") > 0)
         .sort(keys, nulls_last=True)
         .collect()
         .with_row_index("record")
-        .rename({"donor_code": "provider_code"})
+        .rename({"donor_code": "provider_code", "unit_commitment": "commitment_usd"})
         .with_columns(continent=continent(pl.col("recipient_code")))
     )
 
@@ -204,11 +207,10 @@ def _match(parents: pl.DataFrame, records: pl.DataFrame) -> pl.DataFrame:
 def _targets(cell: pl.DataFrame, *, codes: set[int]) -> pl.DataFrame:
     """Each record's target row code: its recipient, its continent, or 998."""
     recipient, region = pl.col("recipient_code"), pl.col("continent")
-    present = pl.Series(sorted(codes), dtype=pl.Int32)
     target = (
-        pl.when(recipient.is_in(present))
+        pl.when(recipient.is_in(codes))
         .then(recipient)
-        .when(region.is_in(present))
+        .when(region.is_in(codes))
         .then(region)
         .when(pl.lit(schema.UNSPECIFIED_RECIPIENT in codes))
         .then(pl.lit(schema.UNSPECIFIED_RECIPIENT, pl.Int32))

@@ -37,8 +37,12 @@ def test_providers_resolve_on_exact_names_only() -> None:
     orgs = _resolve(
         [
             ("provider", "Germany", None),
+            # Ambiguous with two places when the remote geo packs are cached.
+            ("provider", "Russia", None),
             # The org pack labels this exact name full-text.
             ("provider", "Gates Foundation", None),
+            # And this one fuzzy.
+            ("provider", "H&M Foundation", None),
             # The geo pack offers the United States, at its fuzzy tier.
             ("provider", "UNAIDS", None),
             ("provider", "Lilongwe Youth Organization", None),
@@ -47,7 +51,9 @@ def test_providers_resolve_on_exact_names_only() -> None:
 
     assert _codes(orgs, "donor_code") == {
         "Germany": (5, "exact_name"),
+        "Russia": (87, "exact_name"),
         "Gates Foundation": (1601, "exact_name"),
+        "H&M Foundation": (1612, "exact_name"),
         "UNAIDS": (971, "exact_name"),
     }
 

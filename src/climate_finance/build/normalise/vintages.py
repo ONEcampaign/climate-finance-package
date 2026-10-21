@@ -138,8 +138,8 @@ def commitment_keys(crs: pl.LazyFrame) -> pl.LazyFrame:
     return (
         _crs_units(crs)
         .group_by(units)
-        .agg(pl.col("commitment_usd").sum())
-        .filter(pl.col("commitment_usd") > 0, pl.col("crs_id").is_not_null())
+        .agg(pl.col("commitment_usd").sum().alias("unit_commitment"))
+        .filter(pl.col("unit_commitment") > 0, pl.col("crs_id").is_not_null())
         .select(
             provider_code="donor_code",
             crs_id="crs_id",

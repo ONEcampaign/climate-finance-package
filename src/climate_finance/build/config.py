@@ -69,8 +69,7 @@ class Sources(_Section):
     downloads the file with oda-reader. `crdf_etags`, when not empty, pins every
     CRDF workbook fetch reads to the ETag it maps the workbook's name to.
     `iati_archive` holds one directory of activity XML per publisher, and fetch
-    copies those of `iati_publishers`. `btr_table`, when set, names an ingested
-    BTR table that normalise reads.
+    copies those of `iati_publishers`.
     """
 
     crs_version: str
@@ -79,7 +78,6 @@ class Sources(_Section):
     iati_archive: ConfigPath
     iati_publishers: tuple[str, ...]
     btr_archive: ConfigPath
-    btr_table: ConfigPath | None = None
     ledger_archive: ConfigPath
     review_decisions: ConfigPath
 

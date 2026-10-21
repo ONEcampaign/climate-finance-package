@@ -150,16 +150,18 @@ def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> Non
     Reads only local files.
 
     Raises:
-        SourceUnavailableError: when `recorded` lacks a source `config` needs or
-            records a CRS file other than the one `config` names, or when `raw`
-            lacks a recorded file, holds an unrecorded one, or holds one whose
-            sha256 differs from the recorded one. The message names every such
-            file.
+        SourceUnavailableError: when the sources `recorded` holds differ from those
+            `config` names, in either direction, or `recorded` names a CRS file
+            other than the one `config` names, or when `raw` lacks a recorded
+            file, holds an unrecorded one, or holds one whose sha256 differs from
+            the recorded one. The message names every such source or file.
     """
-    if missing := sorted(set(expected_sources(config)) - set(recorded["source"])):
+    expected, held = set(expected_sources(config)), set(recorded["source"])
+    if expected != held:
         raise SourceUnavailableError(
-            f"The raw_manifest records no file for {missing}; run the fetch stage "
-            "online."
+            f"The raw_manifest records no file for {sorted(expected - held)} and "
+            f"records {sorted(held - expected)}, which build.toml does not name; "
+            "run the fetch stage online."
         )
     crs = config.sources.crs_file
     if crs is not None and recorded.filter(source="crs")["sha256"].to_list() != [

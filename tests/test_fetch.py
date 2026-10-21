@@ -1,13 +1,14 @@
 import re
 import socket
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import oda_reader
 import oda_reader.crs
 import pandas as pd
 import polars as pl
-import pydeflate
 import pytest
 
 from climate_finance.build import BuildConfig, Stage, build, fetch, load_config
@@ -39,7 +40,9 @@ class FakeSources:
         monkeypatch.setattr(oda_reader, "download_crdf", self.download_crdf)
         monkeypatch.setattr(oda_reader, "download_multisystem", self.multisystem)
         monkeypatch.setattr(oda_reader, "download_crdf_file", self.crdf_file)
-        monkeypatch.setattr(pydeflate, "get_oecd_dac_exchange_rates", self.rates)
+        # A stand-in module, so this file never imports pydeflate (and wbgapi).
+        pydeflate = SimpleNamespace(get_oecd_dac_exchange_rates=self.rates)
+        monkeypatch.setitem(sys.modules, "pydeflate", pydeflate)
         transport = httpx.MockTransport(self.gcf)
         monkeypatch.setattr(
             fetch, "_http_client", lambda: httpx.Client(transport=transport)
@@ -225,6 +228,24 @@ def test_offline_fetch_refuses_raw_files_that_differ_from_the_manifest(
             target.write_bytes(b"<iati-activities/>")
 
     with pytest.raises(SourceUnavailableError, match=re.escape(str(target))):
+        _fetch(config, tmp_path / "out", offline=True)
+
+
+@pytest.mark.parametrize(
+    ("publishers", "named"),
+    [(("caf",), "iati_gef"), (("caf", "gef", "eib"), "iati_eib")],
+)
+def test_offline_fetch_refuses_a_manifest_for_other_sources(
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    publishers: tuple[str, ...],
+    named: str,
+) -> None:
+    _fetch(_config(crs_file=crs_file), tmp_path / "out")
+    config = _config(crs_file=crs_file, iati_publishers=publishers)
+
+    with pytest.raises(SourceUnavailableError, match=named):
         _fetch(config, tmp_path / "out", offline=True)
 
 

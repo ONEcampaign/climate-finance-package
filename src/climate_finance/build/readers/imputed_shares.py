@@ -9,7 +9,7 @@ import polars as pl
 
 _HEADER = "MDB or International Organisation"
 _NAME_COLUMN = 3
-_TOTAL_COLUMN = 5
+_CLIMATE_FINANCE_COLUMN = 5
 # Header text, in the header row or the row above it, of the column holding an
 # agency's whole climate share.
 _SHARE_HEADERS = ("Imputed multilateral contribution", "Overall climate share")
@@ -77,9 +77,11 @@ def read_imputed_shares(path: Path) -> pl.DataFrame:
     also the cross_cutting row. An agency
     with only a whole climate share, as every agency has before 2021 and the IPCC,
     the Montreal Protocol and the UNFCCC have after, gives one `climate` row. An
-    agency with no share gives no rows. The Inter-American Development Bank and IDB
-    Invest share one channel code; their shares are averaged, weighted by each
-    agency's climate finance total.
+    agency with no share gives no rows. The Inter-American Development Bank, IDB
+    Invest and the IIC and MIF share one channel code; their shares are averaged,
+    weighted by each agency's total development finance, which is its climate
+    finance (column F) over its whole climate share. The pooled share is then the
+    group's climate finance over its total finance.
 
     Args:
         path: The OECD workbook.
@@ -107,7 +109,7 @@ def read_imputed_shares(path: Path) -> pl.DataFrame:
                 "year": pl.Int16,
                 "objective": pl.String,
                 "share": pl.Float64,
-                "total": pl.Float64,
+                "finance": pl.Float64,
             },
         )
         .with_columns(
@@ -121,7 +123,7 @@ def read_imputed_shares(path: Path) -> pl.DataFrame:
             pl.when(pl.len() == 1)
             .then(pl.col("share").first())
             .otherwise(
-                (pl.col("share") * pl.col("total")).sum() / pl.col("total").sum()
+                (pl.col("share") * pl.col("finance")).sum() / pl.col("finance").sum()
             )
             .alias("share")
         )
@@ -166,12 +168,19 @@ def _sheet_rows(
                     shares[objective] += both
         if not shares and isinstance(share := row[climate_column], int | float):
             shares = {"climate": share}
-        total = row[_TOTAL_COLUMN]
+        climate, whole = row[_CLIMATE_FINANCE_COLUMN], row[climate_column]
+        finance = (
+            climate / whole
+            if isinstance(climate, int | float)
+            and isinstance(whole, int | float)
+            and whole > 0
+            else None
+        )
         for objective, share in shares.items():
             yield {
                 "name": str(row[_NAME_COLUMN]).strip(),
                 "year": int(title),
                 "objective": objective,
                 "share": share,
-                "total": total if isinstance(total, int | float) else None,
+                "finance": finance,
             }

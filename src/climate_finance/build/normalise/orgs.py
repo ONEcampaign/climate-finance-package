@@ -28,6 +28,24 @@ _EXACT_TIERS = ("exact_code", "exact_name")
 _NO_CHANNEL = (0, 99999)
 # A channel string takes a code when this share of its coded CRS rows carry it.
 _PROPAGATION_SHARE = 0.9
+# The resolvekit modules shipped inside the package, in resolvekit's own registry
+# order. The remote admin and city packs hold places that share country names:
+# with them, "Russia" comes back ambiguous between the country and two places;
+# with these alone it resolves to provider 87. Order matters: with
+# `org.companies` or `org.lenders` ahead of `org.providers`, the org pack makes
+# no fuzzy candidates, and "H&M Foundation" finds nothing.
+RESOLVER_MODULES = (
+    "geo.countries",
+    "geo.regions",
+    "geo.continental_unions",
+    "geo.continents",
+    "org.providers",
+    "org.lenders",
+    "org.political_parties",
+    "org.companies",
+    "org.governments",
+    "org.data_sources",
+)
 
 # Development finance institutions and agencies the org pack misses or finds only
 # by full-text search: (donor code, agency code, name, aliases). Each code is one
@@ -356,15 +374,21 @@ def _normal(text: str) -> str:
 
 @cache
 def _resolver() -> rk.Resolver:
-    """resolvekit's shipped packs, routed by the domain each call names."""
-    return rk.Resolver.auto(routing_mode=RoutingMode.EXPLICIT)
+    """resolvekit's bundled packs, routed by the domain each call names.
+
+    The module list is fixed so the result does not depend on which remote packs
+    (the admin tiers and cities) the machine has cached.
+    """
+    return rk.Resolver.from_modules(
+        module_ids=list(RESOLVER_MODULES), routing_mode=RoutingMode.EXPLICIT
+    )
 
 
 @cache
 def _scope_key(donor_code: int) -> str:
     """The org pack's key for a donor's agencies: ISO3 for a country, else the
     provider code."""
-    iso3 = rk.resolve(str(donor_code), from_system="oecd:provider", to="iso3")
+    iso3 = _resolver().resolve(str(donor_code), from_system="oecd:provider", to="iso3")
     return iso3 if isinstance(iso3, str) else str(donor_code)
 
 

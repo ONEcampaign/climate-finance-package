@@ -71,12 +71,11 @@ def test_every_crs_donor_with_an_oecd_provider_code_resolves(
 
     assert donors.height == 169
     resolved = donors.drop_nulls("donor_code")
-    assert resolved.height == 167
+    assert resolved.height == 168
     assert (resolved["donor_code"] == resolved["truth"]).all()
-    # resolvekit's packs give neither an `oecd:provider` code.
+    # resolvekit's bundled packs give it no `oecd:provider` code.
     assert set(donors.filter(pl.col("donor_code").is_null())["donor_name"]) == {
-        "EU Institutions",
-        "Russia",
+        "EU Institutions"
     }
 
 

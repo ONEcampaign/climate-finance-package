@@ -33,8 +33,8 @@ if TYPE_CHECKING:
 def run_normalise(context: StageContext) -> StageOutput:
     """Normalise the files fetch wrote under `raw/` into the normalise tables.
 
-    Reads only those files, and the ingested BTR table when the config names one
-    (`sources.btr_table`); `btr` is left out otherwise. `crdf` marks rows repeated
+    Reads only those files, and writes no `btr` table, which the release treats as
+    optional. `crdf` marks rows repeated
     across vintages (`repeat_of`) and gains child rows for the bilateral aggregate
     rows the bulk records rebuild (`parent_row_id`). `orgs` resolves the CRS's
     and CRDF's provider, agency and channel names to DAC codes, and is written only
@@ -77,7 +77,4 @@ def run_normalise(context: StageContext) -> StageOutput:
                 "channel_code", "channel_name", "channel_reported_name"
             ),
         )
-    # BuildConfig declares no `btr_table` until the BTR reader is built.
-    if (btr_table := context.config.sources.btr_table) is not None:
-        tables["btr"] = pl.scan_parquet(btr_table)
     return tables
