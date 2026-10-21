@@ -55,18 +55,21 @@ agencies = [
 # latest: the cumulative ratio pools the whole run, and the window ratio pools the
 # run from the commitment year. `by_recipient` computes them per recipient where the
 # CRS holds the recipient's commitments. `vintage` replaces both with the ratio of
-# the projects first committed in the commitment year, disbursed over committed. `report_ratios` are disbursed-over-committed ratios from the
-# provider's own reports. `statuses` limits the line to commitments of those
-# statuses. `cancelled_crs_ids` are projects the provider cancelled, set to zero.
+# the projects first committed in the commitment year, disbursed over committed.
+# `report_ratios` are disbursed-over-committed ratios from the provider's own
+# reports, each with its year and source. `statuses` limits the line to commitments
+# of those statuses. `cancelled_crs_ids` are projects the provider cancelled, set
+# to zero.
 
 [[modelled]]
-# IFC reports projects to the CRS with an empty disbursement column. IFC Annual
-# Report 2022, Operational Highlights, printed p.12: own-account disbursed over
-# committed, 0.92 in FY21 and 1.05 in FY22.
+# IFC reports projects to the CRS with an empty disbursement column.
 provider_code = 903
 basis = "ifc_annual_report_2022"
 crs_ratios = false
-report_ratios = [0.92, 1.05]
+report_ratios = [
+    { ratio = 0.92, year = 2021, source = "IFC Annual Report 2022, Operational Highlights, printed p.12: own-account disbursed over committed, FY21" },
+    { ratio = 1.05, year = 2022, source = "IFC Annual Report 2022, Operational Highlights, printed p.12: own-account disbursed over committed, FY22" },
+]
 
 [[modelled]]
 # CAF's aggregate disbursement rows equal its Annual Report 2022, table 6, by
@@ -81,12 +84,13 @@ provider_code = 1019
 basis = "crs_aggregates"
 
 [[modelled]]
-# NDB Annual Report 2022, p.41: USD 15.4bn disbursed of USD 32.8bn approved to the
-# end of 2022. SABESP and Manaus water and wastewater are cancelled.
+# SABESP and Manaus water and wastewater are cancelled.
 provider_code = 1044
 basis = "crs_aggregates_by_recipient_and_annual_report_2022"
 by_recipient = true
-report_ratios = [0.47]
+report_ratios = [
+    { ratio = 0.47, year = 2022, source = "NDB Annual Report 2022, p.41: USD 15.4bn disbursed of USD 32.8bn approved to the end of 2022" },
+]
 cancelled_crs_ids = ["2022900004", "2022900006"]
 
 [[modelled]]

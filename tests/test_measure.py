@@ -14,6 +14,7 @@ from climate_finance.build.measure import (
     AgencyChannel,
     ModelledProvider,
     ProviderFacts,
+    ReportRatio,
     agency_shares,
     load_provider_facts,
     modelled_ranges,
@@ -149,6 +150,10 @@ def test_oecd_shares_are_the_imputed_shares_unchanged() -> None:
     assert set(shares["source"]) == {"oecd"}
 
 
+def _report(ratio: float) -> ReportRatio:
+    return ReportRatio(ratio=ratio, year=2022, source="annual report")
+
+
 def _ratios(
     frame: pl.LazyFrame,
 ) -> dict[tuple[int, int, int | None], tuple[float, ...]]:
@@ -242,7 +247,10 @@ def test_portfolio_ratios_ignore_recipients() -> None:
 
 def test_report_ratios_bound_the_range_and_negative_rows_are_left_out() -> None:
     ifc = ModelledProvider(
-        provider_code=IFC, basis="report", crs_ratios=False, report_ratios=(0.92, 1.05)
+        provider_code=IFC,
+        basis="report",
+        crs_ratios=False,
+        report_ratios=(_report(0.92), _report(1.05)),
     )
     crdf = crdf_rows(
         _bank("i1", 2022, provider_code=IFC, recipient_code=UNSPECIFIED,
@@ -260,7 +268,7 @@ def test_cancelled_projects_model_nothing() -> None:
     ndb = ModelledProvider(
         provider_code=NDB,
         basis="crs",
-        report_ratios=(0.47,),
+        report_ratios=(_report(0.47),),
         cancelled_crs_ids=("2022900004",),
     )
     crdf = crdf_rows(

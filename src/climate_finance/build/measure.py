@@ -4,9 +4,14 @@
 spending that is climate finance, from two sources. `oecd` copies the OECD's imputed
 shares. `one` is the agency's own climate commitments under the ONE method (the
 highest-marker rule, significant markers at 0.4, climate components as reported)
-over its total CRS commitments, both summed over the year and the year before, as
-the OECD computes its two-year shares. Adaptation and mitigation shares each include
-the cross-cutting share.
+over its total CRS commitments, both summed over the year and the year before. This
+is the OECD's imputed-share construction with ONE's coefficients: for the banks that
+report climate components, which both methods take as reported, the two agree within
+0.004 in 2021 and 2022 (IBRD 0.310 and 0.309, IDA 0.313 and 0.313, AfDB 0.399 and
+0.398, CAF 0.224 and 0.226). Shares rest on commitments, where 1.x divided matched
+disbursements by all disbursements: on the trace, untraced disbursement stays in the
+denominator and pushes banks the trace cannot follow to zero. Adaptation and
+mitigation shares each include the cross-cutting share.
 
 `modelled` holds, for providers that publish no project disbursements, their CRDF
 climate commitments times a range of disbursement ratios, as `providers.toml` sets.
@@ -56,6 +61,15 @@ class AgencyChannel(_Fact):
     agency_codes: tuple[int, ...] | None = None
 
 
+class ReportRatio(_Fact):
+    """A disbursed-over-committed ratio a provider publishes, with where and for
+    which year."""
+
+    ratio: float
+    year: int
+    source: str
+
+
 class ModelledProvider(_Fact):
     """How a provider's modelled disbursement range is measured.
 
@@ -70,7 +84,7 @@ class ModelledProvider(_Fact):
     crs_ratios: bool = True
     by_recipient: bool = False
     vintage: bool = False
-    report_ratios: tuple[float, ...] = ()
+    report_ratios: tuple[ReportRatio, ...] = ()
     statuses: tuple[str, ...] | None = None
     cancelled_crs_ids: tuple[str, ...] = ()
 
@@ -338,7 +352,7 @@ def _modelled(
         return None
     rows = selected.lazy()
 
-    ratios = [pl.lit(ratio) for ratio in provider.report_ratios]
+    ratios = [pl.lit(report.ratio) for report in provider.report_ratios]
     if provider.crs_ratios:
         rows = _with_crs_ratios(rows, records=records, provider=provider)
         ratios.append(pl.col("_period"))
