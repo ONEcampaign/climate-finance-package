@@ -145,5 +145,5 @@ src/climate_finance/for_testing.py
 .reports/
 
 # Build inputs and caches: archived raw sources and the Jev response cache
-/data/raw/
-/data/jev-cache/
+/data/raw
+/data/jev-cache
