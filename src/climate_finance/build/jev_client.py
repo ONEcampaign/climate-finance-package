@@ -1,4 +1,4 @@
-"""The Jev client: canonical request hashing, cache replay, cost cap, backoff.
+"""The Jev client: canonical request hashing, cache replay, cost cap, retries.
 
 A request is the body of TypeSafe's `POST /v1/systemone` without its model:
 `{"state": ..., "questions": {...}}`. The client adds the pinned model, so the
@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import os
+import random
 import threading
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -36,10 +37,14 @@ USD_PER_INPUT_TOKEN = {"jev-1.13.0": 0.042e-6, "jev-1.14.0": 0.042e-6}
 # 0.364, so the estimate overstates a typical batch by about a third.
 TOKENS_PER_CHAR = 0.5
 
-RETRY_STATUSES = frozenset({429, 529})
+# The TypeSafe SDK's default retry policy: 408, 429 and every 5xx (529 included).
+RETRY_STATUSES = frozenset({408, 429, *range(500, 600)})
 MAX_RETRIES = 8
 BACKOFF_INITIAL_S = 1.0
 BACKOFF_MAX_S = 60.0
+# Each computed backoff loses up to this share of itself, so parallel workers
+# spread out. A delay the server asked for is a floor and is waited in full.
+JITTER_SHARE = 0.25
 
 
 class JevError(BuildError):
@@ -128,11 +133,20 @@ def _api_key() -> str:
         raise JevError(f"No Jev API key in ${API_KEY_ENV} or {API_KEY_PATH}") from error
 
 
-def _retry_delay(response: httpx.Response, attempt: int) -> float:
+def _backoff(attempt: int) -> float:
+    return min(BACKOFF_MAX_S, BACKOFF_INITIAL_S * 2**attempt)
+
+
+def _server_delay(response: httpx.Response) -> float | None:
+    """Seconds the server asked for in `retry-after-ms` or `retry-after`, if any."""
+    try:
+        return float(response.headers["retry-after-ms"]) / 1000
+    except (KeyError, ValueError):
+        pass
     try:
         return float(response.headers["retry-after"])
     except (KeyError, ValueError):
-        return min(BACKOFF_MAX_S, BACKOFF_INITIAL_S * 2**attempt)
+        return None
 
 
 class JevClient:
@@ -152,6 +166,7 @@ class JevClient:
         transport: httpx.BaseTransport | None = None,
         max_workers: int = 6,
         sleep: Callable[[float], None] = time.sleep,
+        jitter: Callable[[], float] = random.random,
     ) -> None:
         if model not in USD_PER_INPUT_TOKEN:
             raise JevError(f"No price for Jev model {model!r}")
@@ -164,6 +179,7 @@ class JevClient:
         self._transport = transport
         self._max_workers = max_workers
         self._sleep = sleep
+        self._jitter = jitter
         self._path = cache_dir / f"{model}.jsonl"
         self._cache = _read_cache(self._path)
         self._lock = threading.Lock()
@@ -182,8 +198,10 @@ class JevClient:
             CostCapExceededError: when the batch's estimated cost exceeds the cap.
             JevError: when Jev answers with another model.
             httpx.HTTPStatusError: when Jev refuses a request, or still answers
-                429 or 529 after `MAX_RETRIES` retries. Responses received before
-                the failure are cached, so a rerun resumes from them.
+                a `RETRY_STATUSES` code after `MAX_RETRIES` retries.
+            httpx.TransportError: when a timeout or connection failure persists
+                through `MAX_RETRIES` retries. Responses received before either
+                failure are cached, so a rerun resumes from them.
         """
         misses: dict[str, str] = {}
         digests = []
@@ -231,14 +249,29 @@ class JevClient:
                     future.cancel()
                 raise
 
+    def _jittered_backoff(self, attempt: int) -> float:
+        return _backoff(attempt) * (1 - JITTER_SHARE * self._jitter())
+
     def _call(
         self, http: httpx.Client, stream: IO[str], digest: str, body: str
     ) -> None:
         for attempt in range(MAX_RETRIES + 1):
-            response = http.post(API_URL, content=body.encode())
-            if response.status_code not in RETRY_STATUSES or attempt == MAX_RETRIES:
-                break
-            self._sleep(_retry_delay(response, attempt))
+            try:
+                response = http.post(API_URL, content=body.encode())
+            except httpx.TransportError:
+                if attempt == MAX_RETRIES:
+                    raise
+                delay = self._jittered_backoff(attempt)
+            else:
+                if response.status_code not in RETRY_STATUSES or attempt == MAX_RETRIES:
+                    break
+                server_delay = _server_delay(response)
+                delay = (
+                    self._jittered_backoff(attempt)
+                    if server_delay is None
+                    else server_delay
+                )
+            self._sleep(delay)
         response.raise_for_status()
         answer = response.json()
         if answer.get("model") != self.model:

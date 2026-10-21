@@ -61,8 +61,32 @@ def _transport(
 
 
 def _client(cache_dir: Path, transport: httpx.MockTransport, **kwargs) -> JevClient:
-    options = {"cost_cap_usd": 10.0, "offline": False, "max_workers": 1} | kwargs
+    options = {
+        "cost_cap_usd": 10.0,
+        "offline": False,
+        "max_workers": 1,
+        "jitter": lambda: 0.0,
+    } | kwargs
     return JevClient(model=MODEL, cache_dir=cache_dir, transport=transport, **options)
+
+
+def _fails(failure: int | Exception) -> Callable[[httpx.Request], httpx.Response]:
+    """A reply that answers a status, or raises a transport error."""
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        if isinstance(failure, Exception):
+            raise failure
+        return httpx.Response(failure)
+
+    return reply
+
+
+def _fails_once(failure: int | Exception) -> Callable[[httpx.Request], httpx.Response]:
+    replies = iter([_fails(failure), lambda _: httpx.Response(200, json=_answer())])
+    return lambda request: next(replies)(request)
+
+
+TRANSPORT_ERRORS = [httpx.ConnectError("reset"), httpx.ReadTimeout("slow")]
 
 
 def _request(text: str) -> dict[str, object]:
@@ -227,10 +251,83 @@ def test_rate_limit_backs_off_then_succeeds(tmp_path: Path) -> None:
     assert len(sent) == 3
 
 
-def test_rate_limit_gives_up_after_the_retries(tmp_path: Path) -> None:
-    transport, sent = _transport(lambda _: httpx.Response(429))
+@pytest.mark.parametrize(
+    "failure", [408, 429, 500, 502, 503, 504, 529, 599, *TRANSPORT_ERRORS]
+)
+def test_transient_failure_is_retried_once_then_succeeds(
+    tmp_path: Path, failure: int | Exception
+) -> None:
+    transport, sent = _transport(_fails_once(failure))
+    sleeps: list[float] = []
+
+    responses = _client(tmp_path, transport, sleep=sleeps.append).score([_request("a")])
+
+    assert responses == [_answer()]
+    assert len(sent) == 2
+    assert sleeps == [1.0]
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
+def test_other_client_errors_fail_at_once(tmp_path: Path, status: int) -> None:
+    transport, sent = _transport(_fails(status))
+    sleeps: list[float] = []
 
     with pytest.raises(httpx.HTTPStatusError):
+        _client(tmp_path, transport, sleep=sleeps.append).score([_request("a")])
+
+    assert len(sent) == 1
+    assert sleeps == []
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected"),
+    [
+        ({"retry-after-ms": "1500", "retry-after": "9"}, 1.5),
+        ({"retry-after": "7"}, 7.0),
+    ],
+)
+def test_server_delay_is_waited_in_full_whatever_the_jitter(
+    tmp_path: Path, headers: dict[str, str], expected: float
+) -> None:
+    replies = iter(
+        [httpx.Response(503, headers=headers), httpx.Response(200, json=_answer())]
+    )
+    transport, _ = _transport(lambda _: next(replies))
+    sleeps: list[float] = []
+
+    _client(tmp_path, transport, sleep=sleeps.append, jitter=lambda: 1.0).score(
+        [_request("a")]
+    )
+
+    assert sleeps == [expected]
+
+
+@pytest.mark.parametrize("draw", [0.0, 0.5, 1.0])
+def test_jitter_takes_up_to_a_quarter_off_each_backoff(
+    tmp_path: Path, draw: float
+) -> None:
+    transport, _ = _transport(_fails_once(429))
+    sleeps: list[float] = []
+
+    _client(tmp_path, transport, sleep=sleeps.append, jitter=lambda: draw).score(
+        [_request("a")]
+    )
+
+    assert sleeps == [pytest.approx(1.0 - 0.25 * draw)]
+    assert 0.75 <= sleeps[0] <= 1.0
+
+
+@pytest.mark.parametrize(
+    ("failure", "error"),
+    [(429, httpx.HTTPStatusError), (503, httpx.HTTPStatusError)]
+    + [(failure, type(failure)) for failure in TRANSPORT_ERRORS],
+)
+def test_rate_limit_gives_up_after_the_retries(
+    tmp_path: Path, failure: int | Exception, error: type[Exception]
+) -> None:
+    transport, sent = _transport(_fails(failure))
+
+    with pytest.raises(error):
         _client(tmp_path, transport, sleep=lambda _: None).score([_request("a")])
 
     assert len(sent) == MAX_RETRIES + 1
