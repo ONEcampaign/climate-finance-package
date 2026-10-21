@@ -499,7 +499,13 @@ def test_run_link_writes_the_deterministic_tables(tmp_path: Path) -> None:
 
     hashes = write_stage(link, run_link(context), tmp_path)
 
-    assert set(hashes) == {"links", "units", "id_practice"}
+    assert set(hashes) == {
+        "links",
+        "units",
+        "id_practice",
+        "programme_stems",
+        "candidates",
+    }
     links = pl.read_parquet(table_path(tmp_path, "link", "links"))
     crdf = pl.read_parquet(table_path(tmp_path, "normalise", "crdf"))
     crdf_links = links.filter(task="crdf_crs")

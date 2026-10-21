@@ -440,13 +440,37 @@ ID_PRACTICE = _table(
     pn_share=_f64(nullable=True),
 )
 
+# One rule per (donor, agency, project-number shape): strip `segments` trailing
+# segments to reach the programme's number. `pairs` counts the pairs of distinct
+# project numbers the rule merges, and `consistent_pairs` those whose titles agree.
 PROGRAMME_STEMS = _table(
     "programme_stems",
     ("donor_code", "agency_code", "pattern"),
     donor_code=_code(),
     agency_code=_code(),
     pattern=_str(),
-    programme_level=Column(pl.Int8()),
+    segments=Column(pl.Int8(), values=(1, 2)),
+    pairs=_count(),
+    consistent_pairs=_count(),
+)
+
+# Unit pairs for the scoring stage: a disbursement unit (left) and a commitment unit a
+# CRDF row reaches (right), of one donor, the disbursement of a later record year,
+# under a blocking rule. `eligible` pairs are open to scoring: no key linked either
+# unit and neither agency's ids persist. The other rows pair commitments of
+# `id_persistent` agencies, whose label is `same_crs_id`. `programme_level` is 2 for
+# the same project number, 1 for siblings under one programme stem, else 0.
+CANDIDATES = _table(
+    "candidates",
+    ("left_id", "right_id"),
+    left_id=_str(),
+    right_id=_str(),
+    donor_code=_code(),
+    year_gap=Column(pl.Int16()),
+    programme_level=Column(pl.Int8(), values=(0, 1, 2)),
+    same_crs_id=_bool(),
+    id_persistent=_bool(),
+    eligible=_bool(),
 )
 
 PROVIDER_PROFILE = _table(
@@ -777,7 +801,9 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
     "normalise": _by_name(
         CRDF, CRS, CORE_CONTRIBUTIONS, IMPUTED_SHARES, EXTERNAL, BTR, ORGS
     ),
-    "link": _by_name(LINKS, UNITS, ID_PRACTICE, PROGRAMME_STEMS, PROVIDER_PROFILE),
+    "link": _by_name(
+        LINKS, UNITS, ID_PRACTICE, PROGRAMME_STEMS, CANDIDATES, PROVIDER_PROFILE
+    ),
     "allocate": _by_name(
         ALLOCATIONS, COMMITMENT_STATUS, CANCELLATIONS, YEARS_SINCE_COMMITMENT
     ),
@@ -789,15 +815,14 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
 }
 # Tables a stage may leave out. A stage that reads one that was not written raises
 # StageInputMissingError. `orgs` is written when recoveries are on, `btr` when the
-# build config names an ingested BTR table. `programme_stems` and `provider_profile`
-# are written by the link stage's candidate and scoring steps. The key tiers and the
-# within-year join write the other link tables without them. `bank_year_overlap` is
-# written by the bank-ledger gap fill, and `review_queue` and `pair_labels` by the
-# review queue. With their switches off the two stages pass the tables they carry
-# forward through unchanged.
+# build config names an ingested BTR table. `provider_profile` is written by the
+# link stage's scoring step, and the other link steps write their tables without it.
+# `bank_year_overlap` is written by the bank-ledger gap fill, and `review_queue` and
+# `pair_labels` by the review queue. With their switches off the two stages pass the
+# tables they carry forward through unchanged.
 OPTIONAL_STAGE_TABLES: Mapping[str, frozenset[str]] = {
     "normalise": frozenset({"btr", "orgs"}),
-    "link": frozenset({"programme_stems", "provider_profile"}),
+    "link": frozenset({"provider_profile"}),
     "fill": frozenset({"bank_year_overlap"}),
     "review": frozenset({"review_queue", "pair_labels"}),
 }

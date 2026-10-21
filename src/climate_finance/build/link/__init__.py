@@ -7,6 +7,10 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from climate_finance.build.fetch import DAC_EXCHANGE_FILE
+from climate_finance.build.link.candidates import (
+    generate_candidates,
+    learn_programme_stems,
+)
 from climate_finance.build.link.crdf_crs import link_within_year, recover
 from climate_finance.build.link.id_practice import classify_id_practice
 from climate_finance.build.link.key_repair import repair_keys
@@ -26,11 +30,14 @@ def run_link(context: StageContext) -> StageOutput:
     `key_repair` is on. When `recoveries` is on, the EIB recovery routes link the
     EIB rows the within-year join leaves out, reading the `external` table and the
     DAC exchange rates fetch wrote, except the routes `skip_eib_routes` names.
+    Programme stems are learned from the trace population, and blocking pairs the
+    units the keys left for scoring.
     """
     config = context.config
     crs = context.read("normalise", "crs")
     crdf = context.read("normalise", "crdf").filter(perspective="recipient")
-    units = build_units(trace_population(crs)).collect()
+    population = trace_population(crs)
+    units = build_units(population).collect()
     id_practice = classify_id_practice(units)
     trace = link_by_keys(units, id_practice=id_practice, first_year=config.years.crs[0])
     crdf_crs = link_within_year(crdf, units=units.lazy()).collect()
@@ -44,9 +51,25 @@ def run_link(context: StageContext) -> StageOutput:
             exchange=pl.read_parquet(context.raw_dir / DAC_EXCHANGE_FILE),
             skip=config.skip_eib_routes,
         )
-    links = [trace, crdf_crs]
+    found = [trace, crdf_crs]
     if config.key_repair:
-        links.append(
+        found.append(
             repair_keys(units, crs=crs, links=trace, first_year=config.years.crs[0])
         )
-    return {"links": pl.concat(links), "units": units, "id_practice": id_practice}
+    links = pl.concat(found)
+    stems = learn_programme_stems(population).collect()
+    candidates = generate_candidates(
+        units,
+        crs=population,
+        links=links,
+        id_practice=id_practice,
+        stems=stems,
+        first_year=config.years.crs[0],
+    )
+    return {
+        "links": links,
+        "units": units,
+        "id_practice": id_practice,
+        "programme_stems": stems,
+        "candidates": candidates,
+    }
