@@ -59,3 +59,11 @@ def test_table_refuses_names_outside_the_release_contract() -> None:
     with pytest.raises(KeyError, match="links"):
         snap.table("links")
     assert set(RELEASE_TABLES) <= set(snap.manifest.tables)
+
+
+def test_disbursement_profile_reads_the_release_table_by_group_and_year() -> None:
+    profile = cf.load(path=FIXTURE_DIR).disbursement_profile()
+
+    assert profile.columns == ["group", "years_since", "cumulative_share", "vintages"]
+    assert profile.filter(group="all", years_since=0)["cumulative_share"].item() == 0.23
+    assert profile["years_since"].is_sorted()

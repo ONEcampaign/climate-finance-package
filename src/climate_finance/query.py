@@ -3,9 +3,9 @@
 `spending()` builds one row per counted amount, weights it under each method,
 converts it, and sums the rows into the result table. Rows have one of three origins:
 
-- `commitment`: a CRDF commitment at face value (`flow="commitments"`). Repeats of an
-  earlier vintage, and aggregate rows rebuilt into child rows, are left out.
-- `disbursement`: a CRS record's allocation to a commitment at face value
+- `commitment`: a CRDF commitment at face value (`flow="commitments"`). Rows that
+  repeat an earlier vintage are left out; `quality()` reports them.
+- `disbursement`: a CRS record's allocation to a counted commitment at face value
   (`allocated_usd`, or for `flow="grant_equivalent"` the record's grant equivalent
   times allocated_usd over the record's disbursement),
   weighted by the markers and climate share it inherits from that commitment. `low`
@@ -187,12 +187,13 @@ def _conditions(
 
 
 def _counted_commitments(snapshot: Snapshot) -> pl.LazyFrame:
-    """Commitments that count: no repeats, and no aggregate rebuilt into children."""
-    commitments = snapshot.table("commitments")
-    parents = commitments.select(row_id=pl.col("parent_row_id")).drop_nulls().unique()
-    return commitments.filter(pl.col("repeat_of").is_null()).join(
-        parents, on="row_id", how="anti"
-    )
+    """Commitments that count: every row except repeats of an earlier vintage.
+
+    The release leaves out aggregate rows rebuilt into children, so their children's
+    `parent_row_id` names a published CRDF row outside the release and nothing joins
+    on it.
+    """
+    return snapshot.table("commitments").filter(pl.col("repeat_of").is_null())
 
 
 def _in_view(view: View) -> pl.Expr:
@@ -226,7 +227,7 @@ def _base_rows(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
             )
         )
 
-    commitments = snapshot.table("commitments").select(
+    commitments = _counted_commitments(snapshot).select(
         "row_id",
         "status",
         "face_usd",
@@ -422,7 +423,12 @@ def _aggregate(rows: pl.LazyFrame) -> pl.LazyFrame:
 def _totals(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
     """All CRS flows of `spec.flow` by the table's keys, plus a row per provider, year
     and Bi_Multi code with a null recipient that sums every recipient, for rows such
-    as attribution that have none."""
+    as attribution that have none.
+
+    CRDF commitments carry their provider's class, Bi_Multi 1 for a bilateral
+    provider, where the CRS splits bilateral flows over codes 1, 3, 7 and 8, so
+    commitment totals count those four codes as 1.
+    """
     keys = ["year", "provider_code", "recipient_code", "bi_multi"]
     conditions = _conditions(
         providers=spec.providers, recipients=spec.recipients, years=spec.years
@@ -430,7 +436,13 @@ def _totals(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
     flows = snapshot.table("total_flows").filter(
         pl.col("flow") == spec.flow, *conditions
     )
-    by_recipient = flows.select(*keys, total="amount_usd")
+    if spec.flow == "commitments":
+        flows = flows.with_columns(
+            bi_multi=pl.when(pl.col("bi_multi").is_in(BILATERAL))
+            .then(pl.lit(BILATERAL[0], pl.Int8))
+            .otherwise(pl.col("bi_multi"))
+        )
+    by_recipient = flows.group_by(keys).agg(total=pl.col("amount_usd").sum())
     all_recipients = (
         flows.group_by("year", "provider_code", "bi_multi")
         .agg(total=pl.col("amount_usd").sum())

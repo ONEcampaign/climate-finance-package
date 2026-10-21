@@ -105,7 +105,7 @@ def test_continents_and_categories_agree_with_the_bulk_file(bulk: pl.LazyFrame) 
         .then(889)
         .when(region.str.contains("Europe"))
         .then(89)
-        .otherwise(9998)
+        .otherwise(998)
     )
     pairs = (
         bulk.filter(pl.col("year").is_between(2010, 2025), region.is_not_null())

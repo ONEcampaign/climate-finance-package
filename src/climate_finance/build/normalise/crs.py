@@ -3,6 +3,7 @@
 import polars as pl
 
 from climate_finance.build.normalise.ids import content_id, text_digest
+from climate_finance.schema import CRS_UNSPECIFIED_RECIPIENT, UNSPECIFIED_RECIPIENT
 
 # The bulk file publishes amounts in USD million at current prices.
 _USD_PER_UNIT = 1e6
@@ -63,7 +64,12 @@ def normalise_crs(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFrame:
             pl.col("donor_code", "agency_code").cast(pl.Int32),
             pl.col("crs_id", "project_number").cast(pl.String),
             title=pl.col("project_title").cast(pl.String),
-            recipient_code=pl.col("recipient_code").cast(pl.Int32),
+            # The bulk CRS publishes "Developing countries, unspecified" as 9998;
+            # the CRDF and the DAC recipient list use 998. Writing 998 here gives
+            # every stage and release table one code.
+            recipient_code=pl.col("recipient_code")
+            .cast(pl.Int32)
+            .replace(CRS_UNSPECIFIED_RECIPIENT, UNSPECIFIED_RECIPIENT),
             purpose_code=pl.col("purpose_code").cast(pl.Int32),
             channel_code=pl.col("channel_code").cast(pl.Int32),
             bi_multi=pl.col("bi_multi").cast(pl.Int8),

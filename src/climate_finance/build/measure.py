@@ -43,8 +43,6 @@ PROVIDERS_TOML = Path(__file__).with_name("providers.toml")
 SHARE_YEARS = 2
 # A commitment cannot disburse more than its face value, so ratios stop here.
 RATIO_CAP = 1.0
-# The CRS writes "Developing countries, unspecified" as 9998, the CRDF as 998.
-_UNSPECIFIED = {9998: 998}
 _OBJECTIVES = ("adaptation", "mitigation", "cross_cutting")
 
 
@@ -405,7 +403,7 @@ def _with_crs_ratios(
     records = records.select(
         "year",
         "project_number",
-        pl.col("recipient_code").replace(_UNSPECIFIED),
+        "recipient_code",
         _portfolio=pl.lit(0),
         com=pl.col("commitment_usd").fill_null(0.0),
         dis=pl.col("disbursement_usd").fill_null(0.0),

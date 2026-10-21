@@ -7,7 +7,7 @@ from normalised import crdf_rows, crs_records
 from climate_finance import schema
 from climate_finance.build.normalise.aggregates import continent, rebuild_aggregates
 
-KENYA, GHANA, AFRICA, UNSPECIFIED_CRDF, UNSPECIFIED_CRS = 248, 238, 298, 998, 9998
+KENYA, GHANA, AFRICA, UNSPECIFIED = 248, 238, 298, 998
 
 
 def _aggregate(row_id: str, recipient: int, climate: float, **fields: object) -> dict:
@@ -118,17 +118,17 @@ def test_rows_a_partition_misses_share_the_cells_records() -> None:
     # 298 gets 4m against 5m and 998 gets 6m against 5m, but the cell's 10m agrees.
     crdf = crdf_rows(
         _aggregate("africa", AFRICA, 5e6),
-        _aggregate("unspecified", UNSPECIFIED_CRDF, 5e6),
+        _aggregate("unspecified", UNSPECIFIED, 5e6),
     )
     crs = crs_records(
-        _record("000001", KENYA, 4e6), _record("000002", UNSPECIFIED_CRS, 6e6)
+        _record("000001", KENYA, 4e6), _record("000002", UNSPECIFIED, 6e6)
     )
 
     assert _parts(_children(crdf, crs)) == [
         ("africa", KENYA, "2021000001", 2e6),
-        ("africa", UNSPECIFIED_CRDF, "2021000002", 3e6),
+        ("africa", UNSPECIFIED, "2021000002", 3e6),
         ("unspecified", KENYA, "2021000001", 2e6),
-        ("unspecified", UNSPECIFIED_CRDF, "2021000002", 3e6),
+        ("unspecified", UNSPECIFIED, "2021000002", 3e6),
     ]
 
 
@@ -186,7 +186,7 @@ def test_rows_outside_the_population_are_not_rebuilt(fields: dict) -> None:
         (589, 798),
         (832, 889),
         (1035, 889),
-        (9998, 9998),
+        (998, 998),
     ],
 )
 def test_continent_of_a_recipient(recipient: int, region: int) -> None:

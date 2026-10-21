@@ -67,6 +67,19 @@ def test_crs_keeps_records_with_an_amount_in_usd_units(crs: pl.DataFrame) -> Non
     assert core["rio_adaptation"] is None
 
 
+def test_crs_writes_unspecified_recipients_as_the_crdf_does() -> None:
+    # The bulk CRS codes "Developing countries, unspecified" 9998.
+    raw = pl.read_parquet(OECD / "CRS.parquet").with_columns(
+        recipient_code=pl.when(pl.col("crs_id") == "2022000601")
+        .then(pl.lit(9998, pl.Int32))
+        .otherwise(pl.col("recipient_code"))
+    )
+
+    crs = normalise_crs(raw.lazy(), years=YEARS).collect()
+
+    assert _row(crs, crs_id="2022000601")["recipient_code"] == 998
+
+
 def test_crs_keeps_the_expected_start_and_completion_dates() -> None:
     raw = pl.read_parquet(OECD / "CRS.parquet").with_columns(
         expected_start_date=pl.when(pl.col("crs_id") == "2022000102").then(

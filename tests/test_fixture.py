@@ -138,6 +138,23 @@ def _orphan_allocation(frame: pl.DataFrame) -> pl.DataFrame:
     return pl.concat([frame, orphan])
 
 
+def _keep_a_parent_beside_its_child(frame: pl.DataFrame) -> pl.DataFrame:
+    # DEU-2 becomes a child of DEU-1, which the release still holds.
+    return frame.with_columns(
+        parent_row_id=pl.when(pl.col("row_id") == "DEU-2")
+        .then(pl.lit("DEU-1"))
+        .otherwise(pl.col("parent_row_id"))
+    )
+
+
+def _code_unspecified_as_the_bulk_crs_does(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(
+        recipient_code=pl.when(pl.col("recipient_code") == 998)
+        .then(9998)
+        .otherwise(pl.col("recipient_code"))
+    )
+
+
 def _split_a_climate_only_share(frame: pl.DataFrame) -> pl.DataFrame:
     # AfDB's 2020 OECD share is climate-only; a mitigation row joins it.
     split = frame.filter(objective="climate").with_columns(
@@ -154,6 +171,8 @@ def _split_a_climate_only_share(frame: pl.DataFrame) -> pl.DataFrame:
         ("commitments", _break_face_cap, "DEU-1"),
         ("commitments", _revise_face_below_zero, "DEU-1"),
         ("disbursements", _orphan_allocation, "NONE-1"),
+        ("commitments", _keep_a_parent_beside_its_child, "DEU-1"),
+        ("disbursements", _code_unspecified_as_the_bulk_crs_does, "disbursements"),
         ("disbursements", _break_record_grant_equiv, "JPN-SPLIT"),
         ("disbursements", _break_record_disbursement, "JPN-SPLIT"),
         ("disbursements", _overdraw_record, "JPN-SPLIT"),

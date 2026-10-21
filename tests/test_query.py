@@ -373,3 +373,52 @@ def test_explain_names_providers_without_a_confirmed_coefficient() -> None:
     text = SNAP.spending(method=cf.methods.PROVIDER).explain()
 
     assert "providers 4, 8, 701 have no confirmed coefficient and take 0.4" in text
+
+
+def _repeat_jpn_2(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(
+        repeat_of=pl.when(pl.col("row_id") == "JPN-2")
+        .then(pl.lit("JPN-1"))
+        .otherwise(pl.col("repeat_of"))
+    )
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+def test_a_repeat_and_the_disbursements_allocated_to_it_stay_out(
+    tmp_path: Path, flow: str
+) -> None:
+    release = copy_release(tmp_path / "release", edits={"commitments": _repeat_jpn_2})
+
+    rows = cf.load(path=release).spending(flow=flow).rows()
+
+    assert rows.height
+    left_out = set(SNAP.spending(flow=flow).rows()["row_id"]) - set(rows["row_id"])
+    assert left_out == {"JPN-2"}
+
+
+def _split_norway_bilateral_totals(frame: pl.DataFrame) -> pl.DataFrame:
+    # Norway's 2021 commitments to Bangladesh in all flows, half under Bi_Multi 3.
+    key = (
+        (pl.col("flow") == "commitments")
+        & (pl.col("provider_code") == 8)
+        & (pl.col("year") == 2021)
+    )
+    halves = frame.filter(key).with_columns(pl.col("amount_usd") / 2)
+    return pl.concat(
+        [frame.filter(~key), halves, halves.with_columns(bi_multi=pl.lit(3, pl.Int8))]
+    )
+
+
+def test_a_bilateral_commitment_divides_by_every_bilateral_code(
+    tmp_path: Path,
+) -> None:
+    release = copy_release(
+        tmp_path / "release", edits={"total_flows": _split_norway_bilateral_totals}
+    )
+    spec = Spec(flow="commitments", providers=(8,), years=(2021,))
+
+    shares = cf.load(path=release).spending(spec=spec).share_of_total()
+
+    expected = SNAP.spending(spec=spec).share_of_total().table.to_polars()
+    assert expected.height
+    assert_frame_equal(shares.table.to_polars(), expected)

@@ -309,8 +309,8 @@ def test_a_taken_over_commitment_allocates_to_the_earliest_row() -> None:
 
 
 def _aggregate(child_recipient: int) -> tuple[pl.DataFrame, pl.DataFrame]:
-    # A Norwegian aggregate row rebuilt from one id-less record, coded 9998 in the
-    # bulk CRS and 998 in the CRDF.
+    # A Norwegian aggregate row rebuilt from one id-less record to unspecified
+    # recipients, which normalise codes 998 in the CRS as in the CRDF.
     aggregate = {"provider_code": 8, "purpose_code": 99810, "recipient_code": 998}
     return _recover(
         [
@@ -329,7 +329,7 @@ def _aggregate(child_recipient: int) -> tuple[pl.DataFrame, pl.DataFrame]:
                 "year": 2021,
                 "donor_code": 8,
                 "agency_code": 8,
-                "recipient_code": 9998,
+                "recipient_code": 998,
                 "purpose_code": 99810,
                 "commitment_usd": 50.0,
                 "disbursement_usd": 50.0,

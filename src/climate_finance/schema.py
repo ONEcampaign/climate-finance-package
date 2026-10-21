@@ -613,6 +613,8 @@ COMMITMENTS = _table(
     disbursed_high_usd=_usd(),
     project_disbursing=_bool(),
     repeat_of=_str(nullable=True),
+    # The published CRDF aggregate row this child was rebuilt from. The release
+    # leaves such parents out, so the id names a CRDF row and no release row.
     parent_row_id=_str(nullable=True),
 )
 
@@ -803,6 +805,10 @@ def validate(table: TableSchema, frame: pl.DataFrame) -> None:
 
 # Absolute tolerance, in USD, for the amount checks in `release_invariants`.
 INVARIANT_TOLERANCE_USD = 1e-6
+# "Developing countries, unspecified": 998 in the CRDF and the DAC recipient list,
+# 9998 in the bulk CRS. Release tables carry 998 only.
+UNSPECIFIED_RECIPIENT = 998
+CRS_UNSPECIFIED_RECIPIENT = 9998
 
 # Pairs (smaller, larger) of amounts that must hold smaller <= larger. "0" is zero.
 _ALLOCATION_ORDER = (
@@ -843,13 +849,24 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     or below (a published downward revision) allows nothing disbursed. A record's
     rows share one `record_disbursement_usd` and one `record_grant_equiv_usd` (all
     null or all set), and its allocated amounts sum to at most
-    `record_disbursement_usd`. Amounts compare within `INVARIANT_TOLERANCE_USD`. A
-    channel, year and source of `agency_shares` holds either split rows or one
-    `climate` row. An empty list means every check passed.
+    `record_disbursement_usd`. Amounts compare within `INVARIANT_TOLERANCE_USD`. No
+    commitment is another's `parent_row_id`, and no table in `tables` holds the
+    bulk CRS's `CRS_UNSPECIFIED_RECIPIENT`. A channel, year and source of
+    `agency_shares` holds either split rows or one `climate` row. An empty list
+    means every check passed.
     """
     commitments = tables["commitments"]
     disbursements = tables["disbursements"]
     problems = []
+    parents = commitments.join(
+        commitments.select(row_id=pl.col("parent_row_id")).drop_nulls(),
+        on="row_id",
+        how="semi",
+    )
+    problems.extend(
+        f"commitments {row_id}: an aggregate parent beside its children"
+        for row_id in parents["row_id"].sort()
+    )
     for smaller, larger in _ALLOCATION_ORDER:
         failing = disbursements.filter(_exceeds(smaller, larger))
         problems.extend(
@@ -894,6 +911,17 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     )
     problems.extend(_record_problems(disbursements))
     problems.extend(_share_problems(tables["agency_shares"]))
+    problems.extend(
+        f"{name}: {count} rows with recipient_code {CRS_UNSPECIFIED_RECIPIENT}, "
+        f"which releases write as {UNSPECIFIED_RECIPIENT}"
+        for name, frame in tables.items()
+        if "recipient_code" in frame.columns
+        and (
+            count := frame.filter(
+                pl.col("recipient_code") == CRS_UNSPECIFIED_RECIPIENT
+            ).height
+        )
+    )
     return problems
 
 

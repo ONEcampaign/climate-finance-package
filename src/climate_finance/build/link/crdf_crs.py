@@ -39,9 +39,6 @@ from climate_finance.build.normalise.vintages import match_eib, pair_one_to_one
 # the CRS donor, are one commitment: 99.5% of such keys pair one to one.
 WITHIN_YEAR_KEY = ("donor_code", "crs_id", "year", "purpose_code")
 
-# The CRDF codes "Developing countries, unspecified" 998, the bulk CRS 9998.
-_CRDF_UNSPECIFIED = 998
-_CRS_UNSPECIFIED = 9998
 _EIB_DONOR = 918
 _EIB_AGENCY = 3
 # The EIB's IATI activity id: its project serial, then one finance contract number.
@@ -168,11 +165,9 @@ def _by_aggregate_record(crdf: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataF
         "agency_code",
         "purpose_code",
         "year",
+        "recipient_code",
         donor_code="provider_code",
         project_number=normalise_pn(pl.col("project_number")),
-        recipient_code=pl.col("recipient_code").replace(
-            _CRDF_UNSPECIFIED, _CRS_UNSPECIFIED
-        ),
     )
     commitments = units.filter(
         pl.col("crs_id").is_null(), pl.col("commitment_usd") > 0

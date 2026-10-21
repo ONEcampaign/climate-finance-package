@@ -39,9 +39,6 @@ _BILATERAL = 1
 _PART_TOLERANCE = 0.001
 _CELL_TOLERANCE = 0.01
 _SINGLE_TOLERANCE = 0.01
-# The CRDF codes "Developing countries, unspecified" 998, the bulk CRS 9998.
-_CRDF_UNSPECIFIED = 998
-_CRS_UNSPECIFIED = 9998
 # The CRDF prints the bulk CRS `category` as its flow code: ODA 10, OOF 21, private
 # flows 30 and private development finance 60. The bulk flow codes map onto them.
 FLOW_CATEGORY = {11: 10, 13: 10, 19: 10, 14: 21, 30: 30, 60: 60}
@@ -93,14 +90,14 @@ def rebuild_aggregates(crdf: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame
 
 
 def continent(recipient_code: pl.Expr) -> pl.Expr:
-    """The DAC regional code of a recipient's continent; 9998 outside them all."""
+    """The DAC regional code of a recipient's continent; 998 outside them all."""
     regions = (
         pl.when(pl.any_horizontal(recipient_code.is_between(*r) for r in ranges)).then(
             pl.lit(code, pl.Int32)
         )
         for code, ranges in _CONTINENTS
     )
-    return pl.coalesce(*regions, pl.lit(_CRS_UNSPECIFIED, pl.Int32))
+    return pl.coalesce(*regions, pl.lit(schema.UNSPECIFIED_RECIPIENT, pl.Int32))
 
 
 def aggregate_rows(rows: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
@@ -129,7 +126,7 @@ def aggregate_rows(rows: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
 def _rebuild(rows: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
     """Child rows for one perspective's aggregate rows."""
     parents = aggregate_rows(rows, crs=crs).with_columns(
-        target=pl.col("recipient_code").replace(_CRDF_UNSPECIFIED, _CRS_UNSPECIFIED),
+        target=pl.col("recipient_code"),
         m=pl.col("rio_mitigation").fill_null(0),
         a=pl.col("rio_adaptation").fill_null(0),
     )
@@ -205,7 +202,7 @@ def _match(parents: pl.DataFrame, records: pl.DataFrame) -> pl.DataFrame:
 
 
 def _targets(cell: pl.DataFrame, *, codes: set[int]) -> pl.DataFrame:
-    """Each record's target row code: its recipient, its continent, or 9998."""
+    """Each record's target row code: its recipient, its continent, or 998."""
     recipient, region = pl.col("recipient_code"), pl.col("continent")
     present = pl.Series(sorted(codes), dtype=pl.Int32)
     target = (
@@ -213,8 +210,8 @@ def _targets(cell: pl.DataFrame, *, codes: set[int]) -> pl.DataFrame:
         .then(recipient)
         .when(region.is_in(present))
         .then(region)
-        .when(pl.lit(_CRS_UNSPECIFIED in codes))
-        .then(pl.lit(_CRS_UNSPECIFIED, pl.Int32))
+        .when(pl.lit(schema.UNSPECIFIED_RECIPIENT in codes))
+        .then(pl.lit(schema.UNSPECIFIED_RECIPIENT, pl.Int32))
     )
     return cell.with_columns(target=target, direct=recipient == target)
 
@@ -290,9 +287,7 @@ def _children(
         .with_columns(
             pl.col(_AMOUNTS) * share,
             *(pl.col(f"record_{name}").alias(name) for name in _RECORD_FIELDS),
-            recipient_code=pl.col("record_recipient_code").replace(
-                _CRS_UNSPECIFIED, _CRDF_UNSPECIFIED
-            ),
+            recipient_code=pl.col("record_recipient_code"),
             id_scheme=pl.lit(None, pl.String),
             parent_row_id=pl.col("row_id"),
         )

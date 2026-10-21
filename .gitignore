@@ -147,3 +147,6 @@ src/climate_finance/for_testing.py
 # Build inputs and caches: archived raw sources and the Jev response cache
 /data/raw
 /data/jev-cache
+
+# A sample of a real release: OECD rows stay out of git.
+/tests/fixtures/real_snapshot/

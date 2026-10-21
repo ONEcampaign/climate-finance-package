@@ -175,7 +175,7 @@ def _caf_records() -> pl.DataFrame:
         (2022, PERU, 100.0, 40.0),
         (2021, MEXICO, 100.0, None),
         (2022, MEXICO, None, 150.0),
-        (2021, 9998, 100.0, 50.0),
+        (2021, 998, 100.0, 50.0),
     ]
     return crs_records(
         *(
@@ -228,7 +228,7 @@ def test_recipient_ratios_run_from_cumulative_to_window_capped_at_one() -> None:
     ranges = _modelled(_caf_rows(), _caf_records(), caf)
 
     # Over the 2020 to 2022 run: Peru cumulative 100/300, window from 2021 70/200;
-    # Mexico 150/100 both ways, capped; 9998 is the CRDF's 998, 50/100 both ways;
+    # Mexico 150/100 both ways, capped; unspecified (998) 50/100 both ways;
     # the regional row has no CRS commitments, so it takes the portfolio's
     # cumulative 300/500 and window 270/400.
     expected = {

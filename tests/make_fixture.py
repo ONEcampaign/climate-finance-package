@@ -1,4 +1,5 @@
-"""Write the synthetic release snapshot in tests/fixtures/snapshot/.
+"""Write the synthetic release snapshot in tests/fixtures/snapshot/, or a sample of a
+real release in tests/fixtures/real_snapshot/.
 
 Run `uv run python tests/make_fixture.py [out_dir]`. The snapshot is schema-valid,
 passes `release_invariants`, and covers six providers, a Bi_Multi 2 row, Bi_Multi 4
@@ -7,10 +8,14 @@ method, a CRS record split across two commitments with excess, a bank-ledger gap
 fill, cross-cutting agency shares, a climate share with no split by objective, core
 contributions for every flow, and a confirmed and an unconfirmed provider
 coefficient. Amounts are invented.
+
+Run `uv run python tests/make_fixture.py --from-release <dir> [out_dir]` to sample a
+built release: about 300 commitments and their 2,000 or so CRS records from six
+providers. The sample holds real OECD rows, so its directory is gitignored.
 """
 
+import argparse
 import itertools
-import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -29,10 +34,12 @@ from climate_finance.schema import (
 )
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "snapshot"
+REAL_SNAPSHOT_DIR = Path(__file__).parent / "fixtures" / "real_snapshot"
 RELEASE = "fixture"
 
 # DAC codes: Germany, France, Norway, Japan, IDA, AfDB; IFC has only a modelled line.
-DEU, FRA, NOR, JPN, IDA, AFDB, IFC = 5, 4, 8, 701, 905, 913, 903
+# The EIB appears only in the sample of a real release.
+DEU, FRA, NOR, JPN, IDA, AFDB, IFC, EIB = 5, 4, 8, 701, 905, 913, 903, 918
 IDA_CH, AFDB_CH = 44002, 46002
 KEN, BGD, IRQ, UNS = 248, 666, 543, 998
 NO_RECORD = "no_disbursement_record"
@@ -50,7 +57,7 @@ COMMITMENT_SPECS = [
     ("FRA-1", FRA, 1, IRQ, None, 1, 2021, 0, 2, None, 30e6, NO_RECORD),
     ("FRA-2", FRA, 1, KEN, None, 1, 2022, 1, 0, None, 12e6, "pending_review"),
     ("NOR-1", NOR, 1, BGD, None, 1, 2021, 2, 1, None, 18e6, "disbursed"),
-    ("NOR-2", NOR, 1, IRQ, None, 3, 2022, 0, 1, None, 9e6, NO_RECORD),
+    ("NOR-2", NOR, 1, IRQ, None, 1, 2022, 0, 1, None, 9e6, NO_RECORD),
     ("JPN-1", JPN, 2, BGD, None, 1, 2021, 0, 2, None, 80e6, "partly_disbursed"),
     ("JPN-2", JPN, 2, KEN, None, 1, 2022, 1, 1, None, 50e6, "disbursed"),
     ("JPN-3", JPN, 2, BGD, None, 1, 2022, 0, 2, None, 30e6, "partly_disbursed"),
@@ -85,6 +92,10 @@ COMMITMENT_SPECS = [
     ),
     ("AFDB-2", AFDB, 1, IRQ, AFDB_CH, 4, 2022, None, None, 0.50, 45e6, "not_traceable"),
 ]
+
+# CRDF rows carry their provider's class, Bi_Multi 1 for a bilateral provider, while
+# each CRS record keeps its own code: NOR-1's records are Bi_Multi 3.
+RECORD_BI_MULTI = {"NOR-1": 3}
 
 # Share of face value disbursed through each commitment's own three records, by
 # status. IDA-1 disburses its whole face value, which fills its high bound to face.
@@ -190,7 +201,9 @@ def _allocation(
         "agency_code": commitment["agency_code"],
         "recipient_code": commitment["recipient_code"],
         "channel_code": commitment["channel_code"],
-        "bi_multi": commitment["bi_multi"],
+        "bi_multi": RECORD_BI_MULTI.get(
+            str(commitment["row_id"]), commitment["bi_multi"]
+        ),
         "purpose_code": 41010,
         "flow_code": _flow_code(commitment),
         "project_number": f"PN-{commitment['row_id']}",
@@ -573,30 +586,137 @@ def _quality(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataF
 
 def write_fixture(out_dir: Path) -> ReleaseManifest:
     """Write every release table and `release.json` to `out_dir`."""
-    tables = build_tables()
+    return _write_release(
+        build_tables(),
+        out_dir,
+        manifest=ReleaseManifest(
+            release=RELEASE,
+            created_at=datetime(2026, 10, 21, tzinfo=UTC),
+            package_version=__version__,
+            tables={},
+            source_versions={"crs": "fixture", "crdf": "fixture"},
+            model_versions={"jev": "jev-1.14.0"},
+            gates={},
+            precision_gate_waived=False,
+        ),
+    )
+
+
+# The real sample: Germany, France, Japan, IDA, AfDB and the EIB, whose rows include
+# repeats of an earlier vintage, children of aggregate rows, climate components and
+# the modelled line.
+SAMPLE_PROVIDERS = (DEU, FRA, JPN, IDA, AFDB, EIB)
+SAMPLE_COMMITMENTS = 50
+# Per provider: up to this many commitments of each status, repeats with
+# allocations, and children of aggregate rows. The rest of the provider's 50 are
+# commitments with at least `SAMPLE_MIN_RECORDS` CRS records, then any others.
+SAMPLE_PER_KIND = 3
+SAMPLE_MIN_RECORDS = 8
+SAMPLE_SEED = 7
+# Tables sampled by provider; the rest are copied whole.
+BY_PROVIDER = ("core_contributions", "quality", "modelled", "total_flows")
+
+
+def sample_release(release: Path) -> dict[str, pl.DataFrame]:
+    """The release tables of `release` cut to a sample of `SAMPLE_PROVIDERS`.
+
+    Each commitment keeps every allocation and each record its objective labels, so
+    the commitments' disbursed amounts still sum from their allocations. `quality`,
+    `modelled`, `core_contributions` and `total_flows` keep the six providers' rows
+    for the whole release.
+    """
+    tables = {
+        name: pl.read_parquet(release / f"{name}.parquet") for name in RELEASE_TABLES
+    }
+    disbursements = tables["disbursements"]
+    records = disbursements.group_by("row_id").agg(
+        records=pl.col("record_id").n_unique()
+    )
+    candidates = (
+        tables["commitments"]
+        .filter(pl.col("provider_code").is_in(SAMPLE_PROVIDERS))
+        .join(records, on="row_id", how="left")
+        .with_columns(
+            pl.col("records").fill_null(0),
+            order=pl.col("row_id").hash(SAMPLE_SEED),
+        )
+        .sort("order", "row_id")
+    )
+    kinds = [
+        pl.col("status") == status for status in candidates["status"].unique().sort()
+    ]
+    kinds += [
+        pl.col("repeat_of").is_not_null() & (pl.col("records") > 0),
+        pl.col("parent_row_id").is_not_null(),
+    ]
+    chosen = []
+    for provider in SAMPLE_PROVIDERS:
+        rows = candidates.filter(pl.col("provider_code") == provider)
+        picked = pl.concat(rows.filter(kind).head(SAMPLE_PER_KIND) for kind in kinds)
+        picked = picked.unique("row_id", keep="first", maintain_order=True)
+        rest = (
+            rows.join(picked, on="row_id", how="anti")
+            .with_columns(few=pl.col("records") < SAMPLE_MIN_RECORDS)
+            .sort("few", maintain_order=True)
+            .drop("few")
+        )
+        chosen.append(pl.concat([picked, rest]).head(SAMPLE_COMMITMENTS)["row_id"])
+    row_ids = pl.concat(chosen).implode()
+
+    sample = dict(tables)
+    sample["commitments"] = tables["commitments"].filter(
+        pl.col("row_id").is_in(row_ids)
+    )
+    sample["disbursements"] = disbursements.filter(pl.col("row_id").is_in(row_ids))
+    sample["objectives"] = tables["objectives"].join(
+        sample["disbursements"].select("record_id").unique(), on="record_id"
+    )
+    for name in BY_PROVIDER:
+        sample[name] = tables[name].filter(
+            pl.col("provider_code").is_in(SAMPLE_PROVIDERS)
+        )
+    return sample
+
+
+def write_sample(release: Path, out_dir: Path) -> ReleaseManifest:
+    """Write a sample of `release` to `out_dir`, named after it."""
+    source = ReleaseManifest.model_validate_json((release / "release.json").read_text())
+    return _write_release(
+        sample_release(release),
+        out_dir,
+        manifest=source.model_copy(
+            update={"release": f"{source.release}-sample", "tables": {}}
+        ),
+    )
+
+
+def _write_release(
+    tables: dict[str, pl.DataFrame], out_dir: Path, *, manifest: ReleaseManifest
+) -> ReleaseManifest:
+    """Validate and write `tables` and `release.json`, `manifest` with their hashes."""
     if problems := release_invariants(tables):
-        raise ValueError(f"fixture breaks release invariants: {problems}")
+        raise ValueError(f"release breaks its invariants: {problems}")
     entries = {}
     for name, frame in tables.items():
         table = RELEASE_TABLES[name]
         validate(table, frame)
         sha256 = write_table(frame, table, out_dir / f"{name}.parquet")
         entries[name] = TableEntry(sha256=sha256, rows=frame.height)
-    manifest = ReleaseManifest(
-        release=RELEASE,
-        created_at=datetime(2026, 10, 21, tzinfo=UTC),
-        package_version=__version__,
-        tables=entries,
-        source_versions={"crs": "fixture", "crdf": "fixture"},
-        model_versions={"jev": "jev-1.14.0"},
-        gates={},
-        precision_gate_waived=False,
-    )
-    (out_dir / "release.json").write_text(manifest.model_dump_json(indent=2) + "\n")
-    return manifest
+    written = manifest.model_copy(update={"tables": entries})
+    (out_dir / "release.json").write_text(written.model_dump_json(indent=2) + "\n")
+    return written
 
 
 if __name__ == "__main__":
-    target = Path(sys.argv[1]) if len(sys.argv) > 1 else FIXTURE_DIR
-    written = write_fixture(target)
-    print(f"wrote {len(written.tables)} tables to {target}")
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("out_dir", nargs="?", type=Path)
+    parser.add_argument("--from-release", type=Path, metavar="DIR")
+    args = parser.parse_args()
+    if args.from_release is None:
+        target = args.out_dir or FIXTURE_DIR
+        written = write_fixture(target)
+    else:
+        target = args.out_dir or REAL_SNAPSHOT_DIR
+        written = write_sample(args.from_release, target)
+    rows = {name: entry.rows for name, entry in written.tables.items()}
+    print(f"wrote {len(rows)} tables to {target}: {rows}")
