@@ -25,7 +25,7 @@ def run_link(context: StageContext) -> StageOutput:
     through the exact key tiers under each agency's id practice. Key repair runs when
     `key_repair` is on. When `recoveries` is on, the EIB recovery routes link the
     EIB rows the within-year join leaves out, reading the `external` table and the
-    DAC exchange rates fetch wrote.
+    DAC exchange rates fetch wrote, except the routes `skip_eib_routes` names.
     """
     config = context.config
     crs = context.read("normalise", "crs")
@@ -42,6 +42,7 @@ def run_link(context: StageContext) -> StageOutput:
             crs=crs,
             external=context.read("normalise", "external"),
             exchange=pl.read_parquet(context.raw_dir / DAC_EXCHANGE_FILE),
+            skip=config.skip_eib_routes,
         )
     links = [trace, crdf_crs]
     if config.key_repair:

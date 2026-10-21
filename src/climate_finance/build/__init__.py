@@ -4,8 +4,9 @@ Needs the [build] extra. The stage writer sorts every table by its schema's sort
 then by its remaining flat columns, so two builds from the same inputs give the same
 sha256 per table. It writes a stage to a temporary directory and moves it into place
 once every table is written, so a stage that fails leaves the last good one intact. A
-build that died while moving a stage into place left `<stage>.old`, and the next
-build restores or removes it before any stage runs.
+build that died while writing left that temporary directory, and one that died while
+moving a stage into place left `<stage>.old`; the next build restores or removes both
+before any stage runs.
 """
 
 import shutil
@@ -102,7 +103,9 @@ def write_stage(
     for name, frame in frames.items():
         validate(stage.tables[name], frame)
     release_dir.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=f".{stage.name}-", dir=release_dir))
+    staging = Path(
+        tempfile.mkdtemp(prefix=_staging_prefix(stage.name), dir=release_dir)
+    )
     try:
         sha256 = {
             name: write_table(frame, stage.tables[name], staging / f"{name}.parquet")
@@ -114,6 +117,11 @@ def write_stage(
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     return sha256
+
+
+def _staging_prefix(stage: str) -> str:
+    """The name start of the temporary directory `write_stage` fills for `stage`."""
+    return f".{stage}-"
 
 
 def _replace_dir(source: Path, target: Path) -> None:
@@ -133,12 +141,15 @@ def _old_dir(target: Path) -> Path:
 
 
 def recover_stage_dirs(registry: Sequence[StageDef], release_dir: Path) -> None:
-    """Undo a stage swap a build died in the middle of.
+    """Undo a stage write or swap a build died in the middle of.
 
     A `<stage>.old` beside a missing stage directory is the last good stage, and moves
-    back. Beside a stage directory it is the stage that was replaced, and goes.
+    back. Beside a stage directory it is the stage that was replaced, and goes. The
+    temporary directory `write_stage` fills goes too.
     """
     for stage in registry:
+        for leftover in release_dir.glob(f"{_staging_prefix(stage.name)}*"):
+            shutil.rmtree(leftover)
         target = stage_dir(release_dir, stage.name)
         old = _old_dir(target)
         if not old.exists():

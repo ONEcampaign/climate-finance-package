@@ -26,7 +26,7 @@ The last two take a project whose commitments from the row's year on come within
 first.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 
 import polars as pl
 
@@ -89,6 +89,7 @@ def recover(
     crs: pl.LazyFrame,
     external: pl.LazyFrame,
     exchange: pl.DataFrame,
+    skip: Collection[str] = (),
 ) -> pl.DataFrame:
     """Add the recovery routes' links to the within-year `crdf_crs` links.
 
@@ -105,6 +106,8 @@ def recover(
         crs: Normalised CRS records.
         external: The `external` table, read for the EIB's IATI activity ids.
         exchange: DAC exchange rates with `iso_code`, `year` and `exchange_rate`.
+        skip: Names of EIB routes (`eib_list`, `crosswalk`, `title_recipient`) to
+            leave out, to measure what one route adds. A release builds with none.
 
     Returns:
         `within_year`, with groups taken over re-pointed to the row that took them,
@@ -113,7 +116,7 @@ def recover(
 
     Raises:
         LinkInputError: when the euro has no DAC rate for a year an EIB row or bulk
-            EIB commitment needs.
+            EIB commitment needs, or `skip` names a route that does not exist.
     """
     rates = exchange.filter(pl.col("iso_code") == _EURO_ISSUER).select(
         year=pl.col("year").cast(pl.Int16), euro_per_usd=pl.col("exchange_rate")
@@ -140,9 +143,13 @@ def recover(
         ("crosswalk", lambda left: _by_crosswalk(left, records, crosswalk)),
         ("title_recipient", lambda left: _by_title(left, records)),
     )
+    if unknown := sorted(set(skip) - {method for method, _ in routes}):
+        raise LinkInputError(f"Unknown EIB recovery routes to skip: {unknown}")
     repeats = crdf.select(holder="row_id", first_row="repeat_of").collect()
     links = within_year
     for method, route in routes:
+        if method in skip:
+            continue
         left = rows.join(links.select(row_id="left_id"), on="row_id", how="anti")
         links = _settle(route(left), links=links, repeats=repeats, method=method)
     return pl.concat([links, _by_aggregate_record(crdf, units=units)])

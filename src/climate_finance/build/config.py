@@ -99,11 +99,17 @@ class Embedding(_Section):
 
 
 class BuildConfig(_Section):
-    """Every build setting."""
+    """Every build setting.
+
+    `skip_eib_routes` names EIB recovery routes the link stage leaves out when
+    `recoveries` is on. A release builds with none; an end-to-end test sets one to
+    measure what that route adds.
+    """
 
     offline: bool = False
     key_repair: bool = True
     recoveries: bool = True
+    skip_eib_routes: tuple[str, ...] = ()
     gap_fill: bool = False
     review: bool = False
     years: Years
