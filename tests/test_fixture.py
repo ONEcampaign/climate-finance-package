@@ -1,5 +1,6 @@
 """The committed synthetic snapshot is schema-valid, hashed and covers the cases."""
 
+from collections.abc import Callable
 from pathlib import Path
 
 import polars as pl
@@ -11,6 +12,7 @@ from climate_finance.schema import (
     RELEASE_TABLES,
     STATUSES,
     ReleaseManifest,
+    release_invariants,
     sha256_file,
     validate,
 )
@@ -57,3 +59,59 @@ def test_regenerating_the_fixture_gives_the_same_tables(tmp_path: Path) -> None:
 
     for table in RELEASE_TABLES:
         assert pl.read_parquet(tmp_path / f"{table}.parquet").equals(_read(table))
+
+
+def test_fixture_holds_the_release_invariants() -> None:
+    tables = {name: _read(name) for name in ("commitments", "disbursements")}
+
+    assert release_invariants(tables) == []
+
+
+def _break_allocation_bound(frame: pl.DataFrame) -> pl.DataFrame:
+    is_row = pl.col("record_id") == "DEU-1-R1"
+    return frame.with_columns(
+        allocated_low_usd=pl.when(is_row)
+        .then(pl.col("allocated_usd") + 1.0)
+        .otherwise(pl.col("allocated_low_usd"))
+    )
+
+
+def _break_disbursed_sum(frame: pl.DataFrame) -> pl.DataFrame:
+    is_row = pl.col("row_id") == "DEU-1"
+    return frame.with_columns(
+        disbursed_usd=pl.when(is_row)
+        .then(pl.col("disbursed_usd") - 1e-3)
+        .otherwise(pl.col("disbursed_usd"))
+    )
+
+
+def _break_face_cap(frame: pl.DataFrame) -> pl.DataFrame:
+    is_row = pl.col("row_id") == "DEU-1"
+    return frame.with_columns(
+        face_usd=pl.when(is_row).then(1.0).otherwise(pl.col("face_usd"))
+    )
+
+
+def _orphan_allocation(frame: pl.DataFrame) -> pl.DataFrame:
+    return pl.concat([frame, frame.head(1).with_columns(row_id=pl.lit("NONE-1"))])
+
+
+@pytest.mark.parametrize(
+    ("table", "edit", "row_id"),
+    [
+        ("disbursements", _break_allocation_bound, "DEU-1"),
+        ("commitments", _break_disbursed_sum, "DEU-1"),
+        ("commitments", _break_face_cap, "DEU-1"),
+        ("disbursements", _orphan_allocation, "NONE-1"),
+    ],
+)
+def test_release_invariants_name_the_row_that_breaks_one(
+    table: str, edit: Callable[[pl.DataFrame], pl.DataFrame], row_id: str
+) -> None:
+    tables = {name: _read(name) for name in ("commitments", "disbursements")}
+    tables[table] = edit(tables[table])
+
+    problems = release_invariants(tables)
+
+    assert problems
+    assert all(row_id in problem for problem in problems)

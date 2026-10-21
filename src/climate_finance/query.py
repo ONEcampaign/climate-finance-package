@@ -5,11 +5,12 @@ converts it, and sums the rows into the result table. Rows have one of three ori
 
 - `commitment`: a CRDF commitment at face value (`flow="commitments"`). Repeats of an
   earlier vintage, and aggregate rows rebuilt into child rows, are left out.
-- `disbursement`: a CRS record's allocation to a commitment (`allocated_usd`, or the
-  record's `grant_equiv_usd` for `flow="grant_equivalent"`), weighted by the markers
-  and climate share it inherits from that commitment.
-- `attribution`: under `view="provider"`, a provider's core contribution to an
-  agency times the agency's climate share.
+- `disbursement`: a CRS record's allocation to a commitment at face value
+  (`allocated_usd`, or its pro-rata `grant_equiv_usd` for `flow="grant_equivalent"`),
+  weighted by the markers and climate share it inherits from that commitment. `low`
+  and `high` scale by the allocation's own bounds.
+- `attribution`: under `view="provider"`, a provider's core contribution of the
+  spec's flow to an agency times the agency's climate share.
 
 The release's commitments are recipient-perspective CRDF rows only, so views filter
 on Bi_Multi alone and provider attribution comes only from core contributions.
@@ -100,7 +101,7 @@ def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
     for method in methods:
         frames = [base]
         if spec.view == "provider":
-            frames.append(_attributed_rows(snapshot, method=method))
+            frames.append(_attributed_rows(snapshot, spec=spec, method=method))
         for frame in frames:
             filtered = frame.filter(*conditions) if conditions else frame
             weighted.append(
@@ -218,7 +219,6 @@ def _base_rows(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
             )
         )
 
-    disbursed = pl.col("disbursed_usd")
     commitments = snapshot.table("commitments").select(
         "row_id",
         "status",
@@ -226,17 +226,19 @@ def _base_rows(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
         "adaptation_usd",
         "mitigation_usd",
         "overlap_usd",
-        low_ratio=pl.when(disbursed > 0)
-        .then(pl.col("disbursed_low_usd") / disbursed)
-        .otherwise(1.0),
-        high_ratio=pl.when(disbursed > 0)
-        .then(pl.col("disbursed_high_usd") / disbursed)
-        .otherwise(1.0),
     )
     allocated = pl.col("allocated_usd")
     disbursements = (
         snapshot.table("disbursements")
-        .with_columns(allocation_weight=allocated / allocated.sum().over("record_id"))
+        .with_columns(
+            allocation_weight=allocated / allocated.sum().over("record_id"),
+            low_ratio=pl.when(allocated > 0)
+            .then(pl.col("allocated_low_usd") / allocated)
+            .otherwise(1.0),
+            high_ratio=pl.when(allocated > 0)
+            .then(pl.col("allocated_high_usd") / allocated)
+            .otherwise(1.0),
+        )
         .join(commitments, on="row_id", how="inner", validate="m:1")
         .filter(_in_view(spec.view))
         .join(_labels(snapshot), on="record_id", how="left")
@@ -284,11 +286,12 @@ def _labels(snapshot: Snapshot) -> pl.LazyFrame:
     )
 
 
-def _attributed_rows(snapshot: Snapshot, *, method: Method) -> pl.LazyFrame:
-    """Core contributions times the agency's climate share by objective.
+def _attributed_rows(snapshot: Snapshot, *, spec: Spec, method: Method) -> pl.LazyFrame:
+    """Core contributions of `spec.flow` times the agency's climate share by objective.
 
     Under OECD the share is the OECD's imputed share; under any other method it is
-    the agency's own climate spending. An agency without a share attributes nothing.
+    the agency's own climate spending. The adaptation and mitigation shares each
+    include the cross-cutting share. An agency without a share attributes nothing.
     """
     source = "oecd" if method == OECD else "one"
 
@@ -307,6 +310,7 @@ def _attributed_rows(snapshot: Snapshot, *, method: Method) -> pl.LazyFrame:
     )
     return _conform(
         snapshot.table("core_contributions")
+        .filter(pl.col("flow") == spec.flow)
         .join(shares, on=["channel_code", "year"], how="inner")
         .with_columns(
             origin=pl.lit("attribution"),
@@ -335,14 +339,16 @@ def _coefficients(
 ) -> pl.LazyFrame:
     """Set `significant` and `coefficient_basis` for `method`.
 
-    Under provider coefficients a provider with a row in `provider_coefficients`
-    takes its own significant coefficient and that row's basis; any other provider
-    takes the method's, with a null basis.
+    Under provider coefficients a provider with a confirmed row in
+    `provider_coefficients` takes its own significant coefficient and that row's
+    basis; any other provider takes the method's, with a null basis.
     """
     if method.coefficients == "fixed":
         return frame.with_columns(significant=pl.lit(method.significant))
-    own = snapshot.table("provider_coefficients").select(
-        "provider_code", _own="significant", _basis="basis"
+    own = (
+        snapshot.table("provider_coefficients")
+        .filter(pl.col("confirmed"))
+        .select("provider_code", _own="significant", _basis="basis")
     )
     return (
         frame.join(own, on="provider_code", how="left", validate="m:1")

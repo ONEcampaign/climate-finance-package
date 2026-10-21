@@ -186,13 +186,17 @@ class Quality:
     def summary(self) -> pl.DataFrame:
         """Per provider: link rate, linked share above 0.8, label sources, status split.
 
-        Shares are of climate value, except `grant_equiv_coverage`, the share of
-        linked records with a grant equivalent, weighted by linked value. The
-        precision interval joins in slice S17.
+        Shares are of climate value of commitments: `link_rate` is the share that
+        traces to CRS records, and `linked_high_probability_share` the part of that
+        whose most probable link is at least 0.8. `grant_equiv_coverage` is the
+        share of linked records with a grant equivalent, weighted by linked climate
+        value over the years that have linked records. The precision interval
+        joins in slice S17.
         """
         climate = pl.col("climate_usd").sum()
         linked = pl.col("linked_usd").sum()
-        coverage = pl.col("grant_equiv_coverage") * pl.col("linked_usd")
+        coverage = pl.col("grant_equiv_coverage")
+        known = coverage.is_not_null()
         rates = self.table._frame.group_by("provider_code").agg(
             pl.col("commitments").sum(),
             climate_usd=climate,
@@ -201,7 +205,10 @@ class Quality:
             / linked,
             model_labelled_share=pl.col("model_labelled_usd").sum() / climate,
             report_labelled_share=pl.col("report_labelled_usd").sum() / climate,
-            grant_equiv_coverage=coverage.sum() / linked,
+            grant_equiv_coverage=pl.when(known.any()).then(
+                (coverage * pl.col("linked_usd")).sum()
+                / pl.col("linked_usd").filter(known).sum()
+            ),
         )
         split = self.status._frame.group_by("provider_code").agg(
             (
@@ -225,7 +232,7 @@ def explain(
     """The method, view, flow, filters and units behind `spec`, in plain language.
 
     `fallbacks` maps each provider-coefficient method's label to the providers that
-    have no coefficient of their own in the release.
+    have no confirmed coefficient of their own in the release.
     """
     fallbacks = fallbacks or {}
     methods = spec.methods
@@ -235,7 +242,7 @@ def explain(
         if missing := fallbacks.get(label(method)):
             lines.append(
                 f"Provider coefficients: providers {', '.join(map(str, missing))} "
-                f"have none and take {method.significant:g}."
+                f"have no confirmed coefficient and take {method.significant:g}."
             )
     if len(methods) > 1:
         lines.append("low and high are the lowest and highest bound across methods.")
@@ -280,10 +287,12 @@ _VIEWS = {
 _FLOWS = {
     "commitments": "Flow: commitments at face value; low and high equal value.",
     "disbursements": "Flow: disbursements allocated to climate commitments, weighted "
-    "by the commitment's markers; low and high scale each commitment's disbursed "
-    "bounds. The modelled table holds providers that report no disbursements.",
-    "grant_equivalent": "Flow: grant equivalent of disbursements; records without "
-    "one stay missing, and snap.quality() reports coverage.",
+    "by the commitment's markers; low and high scale by each allocation's bounds. "
+    "Attributed finance counts core contributions disbursed. The modelled table "
+    "holds providers that report no disbursements.",
+    "grant_equivalent": "Flow: grant equivalent of disbursements, shared across the "
+    "commitments a record funds in proportion to the amount each receives; records "
+    "without one stay missing, and snap.quality() reports coverage.",
 }
 
 

@@ -16,7 +16,7 @@ def test_load_opens_the_fixture_with_its_manifest() -> None:
     snap = cf.load(path=FIXTURE_DIR)
 
     assert snap.manifest.release == "fixture"
-    assert snap.table("commitments").collect().height == 13
+    assert snap.table("commitments").collect().height == 14
 
 
 def test_a_table_whose_bytes_changed_fails_its_hash(tmp_path: Path) -> None:

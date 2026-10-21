@@ -224,12 +224,14 @@ CRS = _table(
     text_hash=_str(nullable=True),
 )
 
+# One row per provider, agency, year and flow: the build writes every flow in FLOWS.
 CORE_CONTRIBUTIONS = _table(
     "core_contributions",
-    ("provider_code", "channel_code", "year"),
+    ("provider_code", "channel_code", "year", "flow"),
     provider_code=_code(),
     channel_code=_code(),
     year=_year(),
+    flow=_str(values=FLOWS),
     contribution_usd=_usd(),
 )
 
@@ -455,6 +457,9 @@ JEV_LEVEL_MAP = _table(
     level=_f64(),
 )
 
+# Shares of the agency's spending by objective. The adaptation and mitigation shares
+# each include the cross_cutting share, as `adaptation_usd`, `mitigation_usd` and
+# `overlap_usd` do, so the climate share is adaptation + mitigation - cross_cutting.
 AGENCY_SHARES = _table(
     "agency_shares",
     ("channel_code", "year", "objective", "source"),
@@ -499,10 +504,15 @@ COMMITMENTS = _table(
     climate_share=_f64(nullable=True),
     face_usd=_usd(),
     climate_usd=_usd(),
+    # Adaptation and mitigation each include the overlap: climate is a + m - overlap.
     adaptation_usd=_usd(),
     mitigation_usd=_usd(),
     overlap_usd=_usd(),
     status=_str(values=STATUSES),
+    # Face value, as CRS records carry whole-project disbursements and FIFO caps at
+    # face; the query applies the climate share. Sums of the commitment's
+    # `disbursements` rows: allocated, allocated_low and allocated_high, with
+    # 0 <= disbursed_low <= disbursed <= disbursed_high <= face.
     disbursed_usd=_usd(),
     disbursed_low_usd=_usd(),
     disbursed_high_usd=_usd(),
@@ -526,7 +536,13 @@ DISBURSEMENTS = _table(
     flow_code=_code(nullable=True),
     project_number=_str(nullable=True),
     title=_str(nullable=True),
+    # Face value of the record's disbursement allocated to `row_id`, with the
+    # allocation's bounds: 0 <= allocated_low <= allocated <= allocated_high.
     allocated_usd=_usd(),
+    allocated_low_usd=_usd(),
+    allocated_high_usd=_usd(),
+    # The record's grant equivalent times allocated_usd over the record's
+    # disbursement, so a record split across commitments counts once.
     grant_equiv_usd=_usd(nullable=True),
     inherited_rio_adaptation=_rio(),
     inherited_rio_mitigation=_rio(),
@@ -550,6 +566,10 @@ DISBURSEMENT_PROFILE = _table(
     vintages=Column(pl.Int16()),
 )
 
+# Every amount is climate value of counted commitments: all of them (`climate_usd`),
+# those that trace to at least one CRS record (`linked_usd`), those whose most
+# probable link is at least 0.8, and those labelled by a model or by a report.
+# `grant_equiv_coverage` is the share of linked records with a grant equivalent.
 QUALITY = _table(
     "quality",
     ("provider_code", "year"),
@@ -661,6 +681,88 @@ def validate(table: TableSchema, frame: pl.DataFrame) -> None:
                 problems[name] = f"values outside the vocabulary: {shown}"
     if problems:
         raise SchemaError(table.name, problems)
+
+
+# Release invariants -------------------------------------------------------------
+
+# Absolute tolerance, in USD, for the amount checks in `release_invariants`.
+INVARIANT_TOLERANCE_USD = 1e-6
+
+# Pairs (smaller, larger) of amounts that must hold smaller <= larger; "0" is zero.
+_ALLOCATION_ORDER = (
+    ("0", "allocated_low_usd"),
+    ("allocated_low_usd", "allocated_usd"),
+    ("allocated_usd", "allocated_high_usd"),
+)
+_DISBURSED_ORDER = (
+    ("0", "disbursed_low_usd"),
+    ("disbursed_low_usd", "disbursed_usd"),
+    ("disbursed_usd", "disbursed_high_usd"),
+    ("disbursed_high_usd", "face_usd"),
+)
+_DISBURSED_SUMS = {
+    "disbursed_usd": "allocated_usd",
+    "disbursed_low_usd": "allocated_low_usd",
+    "disbursed_high_usd": "allocated_high_usd",
+}
+
+
+def _exceeds(smaller: str, larger: str) -> pl.Expr:
+    """True where `smaller` is above `larger` by more than the tolerance."""
+
+    def amount(name: str) -> pl.Expr:
+        return pl.lit(0.0) if name == "0" else pl.col(name)
+
+    return amount(smaller) - amount(larger) > INVARIANT_TOLERANCE_USD
+
+
+def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
+    """Problems with the amounts in a release's `commitments` and `disbursements`.
+
+    Every disbursements row holds 0 <= allocated_low <= allocated <= allocated_high
+    and names a commitment. Per commitment, its rows' allocated, allocated_low and
+    allocated_high sum to disbursed, disbursed_low and disbursed_high, and
+    0 <= disbursed_low <= disbursed <= disbursed_high <= face. Amounts compare
+    within `INVARIANT_TOLERANCE_USD`. An empty list means every check passed.
+    """
+    commitments = tables["commitments"]
+    disbursements = tables["disbursements"]
+    problems = []
+    for smaller, larger in _ALLOCATION_ORDER:
+        failing = disbursements.filter(_exceeds(smaller, larger))
+        problems.extend(
+            f"disbursements {row['row_id']} {row['record_id']} {row['year']}: "
+            f"{smaller} > {larger}"
+            for row in failing.iter_rows(named=True)
+        )
+    orphans = disbursements.join(commitments, on="row_id", how="anti")
+    problems.extend(
+        f"disbursements {row_id}: no such commitment"
+        for row_id in orphans["row_id"].unique().sort()
+    )
+
+    sums = disbursements.group_by("row_id").agg(
+        pl.col(part).sum().alias(f"_{part}") for part in _DISBURSED_SUMS.values()
+    )
+    totals = commitments.join(sums, on="row_id", how="left").with_columns(
+        pl.col(f"_{part}").fill_null(0.0) for part in _DISBURSED_SUMS.values()
+    )
+    for total, part in _DISBURSED_SUMS.items():
+        failing = totals.filter(
+            (pl.col(total) - pl.col(f"_{part}")).abs() > INVARIANT_TOLERANCE_USD
+        )
+        problems.extend(
+            f"commitments {row['row_id']}: {total} {row[total]!r} differs from the "
+            f"sum of {part} {row[f'_{part}']!r}"
+            for row in failing.iter_rows(named=True)
+        )
+    for smaller, larger in _DISBURSED_ORDER:
+        failing = commitments.filter(_exceeds(smaller, larger))
+        problems.extend(
+            f"commitments {row_id}: {smaller} > {larger}"
+            for row_id in failing["row_id"]
+        )
+    return problems
 
 
 # release.json --------------------------------------------------------------------

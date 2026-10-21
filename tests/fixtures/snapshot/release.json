@@ -3,33 +3,29 @@
   "created_at": "2026-10-21T00:00:00Z",
   "package_version": "2.0.0.dev0",
   "tables": {
-    "commitments": {
-      "sha256": "5fb856f1bd02bf8058e10d3114cd92e0953f0f29bc610df148fa2e57abbeb5da",
-      "rows": 13
-    },
     "disbursements": {
-      "sha256": "134bd4721086e5ecc2e93643f6a6b1390681b0a6c326a406f4aecbb40351f979",
-      "rows": 31
+      "sha256": "bc2bb5d6e00e78dad6fc3228f89f7a8c5c71c3f00cf5eef3caeb8e4e8da2ee06",
+      "rows": 36
     },
     "objectives": {
-      "sha256": "4b65c444d9ad8d6ebc53e0217975bc4b99362f44b9e5d3f57c39c1891bb21d16",
-      "rows": 61
+      "sha256": "8880fe62e58d370845bb1d11013469449c3ab61d13a9752c48f59d4215637cbb",
+      "rows": 69
     },
     "agency_shares": {
-      "sha256": "a60dc58fb2b584ea21b2626c26253290e2fc87abff8b38954bd17d6b37207d22",
-      "rows": 16
+      "sha256": "1af35490e05bb7510ba2802b6a0b84c41c81e21b0b39b87ed96c43efa84e2642",
+      "rows": 24
     },
     "modelled": {
       "sha256": "92784c29c5b001f8fe979ca655b262455bc68630aea6fef03d92e18b13227257",
       "rows": 3
     },
     "core_contributions": {
-      "sha256": "b9317d2a9e2ff3a9fd9f4a4cce4b5b2c2c62a24050d01083adff355570502227",
-      "rows": 6
+      "sha256": "710184225fa326e3d8367e847f88a8ea82d877c20b222d441b68fb93aea50d96",
+      "rows": 18
     },
     "provider_coefficients": {
-      "sha256": "3db8e871ec05d38875f5645d2c7cebbd1dd548c723e849bef348c6f030b64def",
-      "rows": 1
+      "sha256": "1c3a3a0bfddaa4aef5eda6b8a70c5d82c6c5aea67712cbcabdf120dbbac2a906",
+      "rows": 2
     },
     "btr": {
       "sha256": "3af8deb9ea17dbbcbb0afdbcf98a4ebd949eba678022fd470465ce49fe075f1e",
@@ -39,13 +35,17 @@
       "sha256": "8ad93644528bf7178ab05f25dd121c1a5939bdfb670e14c4ce4dffb9dbc4fd73",
       "rows": 9
     },
+    "commitments": {
+      "sha256": "f2510481497e61b11f803f3d755657e12777a2a05e2b1635eeda2298f1769e71",
+      "rows": 14
+    },
     "quality": {
-      "sha256": "16a7b0cbf0e4cdd69c8b449e88fde2b899de5056b2afe5143c7de57f5c59cbc2",
+      "sha256": "96562613c79c5b5102349ef0002657e86c6628253d05038de841138b8c2f0219",
       "rows": 12
     },
     "total_flows": {
-      "sha256": "66cefe937e01f0cf7fc9ca44c4450109d66dfda30e42112ea8176ae8c92a560e",
-      "rows": 86
+      "sha256": "506e5e1befd4ce02f881119fe0b7df7ab546897050c7388a169332d4b172056e",
+      "rows": 89
     }
   },
   "source_versions": {
