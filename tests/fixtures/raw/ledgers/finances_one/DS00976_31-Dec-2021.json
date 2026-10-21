@@ -1,0 +1,38 @@
+[
+ {
+  "credit_number": "IDA90001",
+  "disbursed_amount_us_": 120000,
+  "project_name": "Invented project 90001",
+  "end_of_period": "31-Dec-2021",
+  "project_id": "P990001",
+  "country_code": "ZZ",
+  "credit_status": "Disbursing&Repaying"
+ },
+ {
+  "credit_number": "IDA90002",
+  "disbursed_amount_us_": 760000,
+  "project_name": "Invented project 90002",
+  "end_of_period": "31-Dec-2021",
+  "project_id": "P990002",
+  "country_code": "ZZ",
+  "credit_status": "Disbursing&Repaying"
+ },
+ {
+  "credit_number": "IDA90003",
+  "disbursed_amount_us_": 0,
+  "project_name": "Invented project 90003",
+  "end_of_period": "31-Dec-2021",
+  "project_id": "P990003",
+  "country_code": "ZZ",
+  "credit_status": "Disbursing&Repaying"
+ },
+ {
+  "credit_number": "IDA90004",
+  "disbursed_amount_us_": 330000,
+  "project_name": "Invented project 90004",
+  "end_of_period": "31-Dec-2021",
+  "project_id": "P990004",
+  "country_code": "ZZ",
+  "credit_status": "Disbursing&Repaying"
+ }
+]

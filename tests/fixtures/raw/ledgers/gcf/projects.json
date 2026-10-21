@@ -1,0 +1,82 @@
+[
+ {
+  "ApprovedRef": "FP901",
+  "ProjectName": "Invented wetland resilience project",
+  "ApprovalDate": "2015-11-05T00:00:00.000Z",
+  "Disbursements": [
+   {
+    "AmountDisbursed": 1000000,
+    "AmountDisbursedUSDeq": 1000000,
+    "Currency": "USD",
+    "DateEffective": "2017-05-31"
+   },
+   {
+    "AmountDisbursed": 1300000,
+    "AmountDisbursedUSDeq": 1300000,
+    "Currency": "USD",
+    "DateEffective": "2019-10-25"
+   },
+   {
+    "AmountDisbursed": 1900000,
+    "AmountDisbursedUSDeq": 1900000,
+    "Currency": "USD",
+    "DateEffective": "2021-03-23"
+   },
+   {
+    "AmountDisbursed": 1500000,
+    "AmountDisbursedUSDeq": 1500000,
+    "Currency": "USD",
+    "DateEffective": "2022-10-05"
+   },
+   {
+    "AmountDisbursed": 400000,
+    "AmountDisbursedUSDeq": 400000,
+    "Currency": "USD",
+    "DateEffective": "2022-12-15"
+   }
+  ]
+ },
+ {
+  "ApprovedRef": "FP941",
+  "ProjectName": "Invented climate resilience project",
+  "ApprovalDate": "2017-04-06T00:00:00.000Z",
+  "Disbursements": [
+   {
+    "AmountDisbursed": 4000000,
+    "AmountDisbursedUSDeq": 4500000,
+    "Currency": "EUR",
+    "DateEffective": "2020-11-02"
+   },
+   {
+    "AmountDisbursed": 2000000,
+    "AmountDisbursedUSDeq": 2250000,
+    "Currency": "EUR",
+    "DateEffective": "2021-06-30"
+   },
+   {
+    "AmountDisbursed": 1000000,
+    "AmountDisbursedUSDeq": 1100000,
+    "Currency": "EUR"
+   }
+  ]
+ },
+ {
+  "ApprovedRef": "FP951",
+  "ProjectName": "Invented solar project",
+  "ApprovalDate": "2019-03-14T00:00:00.000Z",
+  "Disbursements": [
+   {
+    "AmountDisbursed": 3000000,
+    "AmountDisbursedUSDeq": 3000000,
+    "Currency": "USD",
+    "DateEffective": "2021-05-05"
+   },
+   {
+    "AmountDisbursed": 500000,
+    "AmountDisbursedUSDeq": 500000,
+    "Currency": "USD",
+    "DateEffective": null
+   }
+  ]
+ }
+]

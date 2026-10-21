@@ -63,6 +63,12 @@ REVIEW_REASONS = (
     "over_face",
     "ledger_contradicted",
 )
+LEDGER_TRANSACTION_TYPES = (
+    "commitment",
+    "disbursement",
+    "expenditure",
+    "disbursed_to_date",
+)
 LEDGER_CHECKS = ("confirmed", "contradicted", "none", "confirmed_undisbursed")
 DISBURSEMENT_SOURCES = ("crs", "bank_ledger", "none")
 ALLOCATION_RULES = ("fifo", "dated", "window", "excess", "bank_ledger")
@@ -288,6 +294,32 @@ EXTERNAL = _table(
     recipient_code=_code(nullable=True),
     cumulative_declared=_bool(),
     title=_str(nullable=True),
+)
+
+# Bank and bilateral ledgers, as the ledger readers return them: one row per
+# transaction, or per World Bank loan and year. `key` is the id the CRS project number
+# carries, so a ledger row and a CRS row join on it; `activity_id` is the id as
+# published. Amounts are as published, in `currency`; `amount_usd` is filled for USD
+# rows only. A World Bank row is the December-to-December flow of a loan, dated 31
+# December. A GEF disbursement is the rise of its running peak, since GEF declares its
+# figures cumulative. `disbursed_to_date` is a GCF readiness grant's disbursed amount,
+# which the list does not date: its `date` and `year` are null and no calendar-year
+# check can use it. `other_ids` lists the activity's other identifiers, which the
+# bilateral id matching reads.
+LEDGER = _table(
+    "ledger",
+    ("publisher", "key", "transaction_type", "date", "currency", "amount"),
+    publisher=_str(),
+    key=_str(),
+    activity_id=_str(),
+    transaction_type=_str(values=LEDGER_TRANSACTION_TYPES),
+    date=Column(pl.Date(), nullable=True),
+    year=_year(nullable=True),
+    currency=_str(),
+    amount=_f64(),
+    amount_usd=_usd(nullable=True),
+    title=_str(nullable=True),
+    other_ids=Column(pl.List(pl.String())),
 )
 
 BTR = _table(

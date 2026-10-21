@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<iati-activities version="2.03">
+<iati-activity default-currency="USD" xml:lang="en">
+  <iati-identifier>XM-DAC-46004-90001-001-LN9001</iati-identifier>
+  <reporting-org ref="XM-DAC-46004" type="40">
+    <narrative>Invented Bank</narrative>
+  </reporting-org>
+  <title>
+    <narrative>Invented urban programme</narrative>
+  </title>
+  <other-identifier ref="46004" type="B1">
+    <owner-org ref="XM-DAC-0">
+      <narrative>Invented Bank</narrative>
+    </owner-org>
+  </other-identifier>
+  <transaction>
+    <transaction-type code="2" />
+    <transaction-date iso-date="2010-01-15" />
+    <value value-date="2010-01-15">100000000</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2014-03-31" />
+    <value value-date="2014-03-31">1000000</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2014-06-30" />
+    <value value-date="2014-06-30">2500000</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2015-01-31" />
+    <value value-date="2015-01-31">500000</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="5" />
+    <transaction-date iso-date="2014-03-31" />
+    <value value-date="2014-03-31">70000</value>
+  </transaction>
+</iati-activity>
+<iati-activity default-currency="USD" xml:lang="en">
+  <iati-identifier>XM-DAC-46004-90002-001-LN9002-KfW</iati-identifier>
+  <reporting-org ref="XM-DAC-46004" type="40">
+    <narrative>Invented Bank</narrative>
+  </reporting-org>
+  <title>
+    <narrative>Invented marine programme</narrative>
+  </title>
+  <other-identifier ref="46004" type="B1">
+    <owner-org ref="XM-DAC-0">
+      <narrative>Invented Bank</narrative>
+    </owner-org>
+  </other-identifier>
+  <transaction>
+    <transaction-type code="2" />
+    <transaction-date iso-date="2025-12-26" />
+    <value value-date="2025-12-26">5000000</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2025-12-31" />
+    <value value-date="2025-12-31">0.00</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2026-01-31" />
+    <value value-date="2026-01-31">0.00</value>
+  </transaction>
+</iati-activity>
+</iati-activities>

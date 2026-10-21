@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<iati-activities version="2.03">
+<iati-activity default-currency="USD" xml:lang="en">
+  <iati-identifier>XI-IATI-IADB-ZZ-L9001</iati-identifier>
+  <reporting-org ref="XI-IATI-IADB" type="40">
+    <narrative>Invented Bank</narrative>
+  </reporting-org>
+  <title>
+    <narrative>Invented agricultural project</narrative>
+  </title>
+  <transaction>
+    <transaction-type code="2" />
+    <transaction-date iso-date="2010-09-29" />
+    <value currency="USD" value-date="2010-09-29">12000000</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2014-02-28" />
+    <value currency="USD" value-date="2014-02-28">2000</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2014-02-28" />
+    <value currency="USD" value-date="2014-02-28">300</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2014-02-28" />
+    <value currency="USD" value-date="2014-02-28">300</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2014-02-28" />
+    <value currency="USD" value-date="2014-02-28">2000</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2013-02-28" />
+    <value currency="USD" value-date="2013-02-28">20000</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2014-04-30" />
+    <value currency="USD" value-date="2014-04-30">250</value>
+  </transaction>
+</iati-activity>
+</iati-activities>
