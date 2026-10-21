@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 import polars as pl
@@ -20,7 +19,7 @@ from climate_finance.build.normalise.aggregates import rebuild_aggregates
 from climate_finance.build.normalise.crdf import normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs
 from climate_finance.build.normalise.external import normalise_external
-from climate_finance.build.normalise.orgs import resolve_orgs
+from climate_finance.build.normalise.orgs import org_names, resolve_orgs
 from climate_finance.build.normalise.vintages import mark_repeats
 from climate_finance.build.readers.gcf import read_gcf_projects
 from climate_finance.build.readers.iati import read_iati_activities
@@ -37,18 +36,18 @@ def run_normalise(context: StageContext) -> StageOutput:
     Reads only those files, and the ingested BTR table when the config names one
     (`sources.btr_table`); `btr` is left out otherwise. `crdf` marks rows repeated
     across vintages (`repeat_of`) and gains child rows for the bilateral aggregate
-    rows the bulk records rebuild (`parent_row_id`). `orgs` resolves the CRDF's
-    provider, agency and channel names, and is written only when recoveries are on,
-    the only routes that read it.
+    rows the bulk records rebuild (`parent_row_id`). `orgs` resolves the CRS's
+    and CRDF's provider, agency and channel names to DAC codes, and is written only
+    when recoveries are on.
     """
     raw = context.raw_dir
     raw_crdf = {
         perspective: pl.scan_parquet(raw / path)
         for perspective, path in CRDF_FILES.items()
     }
-    crs = normalise_crs(
-        pl.scan_parquet(raw / CRS_FILE), years=context.config.years.crs
-    ).collect()
+    raw_crs = pl.scan_parquet(raw / CRS_FILE)
+    first, last = context.config.years.crs
+    crs = normalise_crs(raw_crs, years=(first, last)).collect()
     exchange = pl.read_parquet(raw / DAC_EXCHANGE_FILE)
     crdf = pl.concat(
         normalise_crdf(frame, perspective=perspective, crs=crs.lazy())
@@ -71,22 +70,14 @@ def run_normalise(context: StageContext) -> StageOutput:
         "external": external,
     }
     if context.config.recoveries:
-        tables["orgs"] = resolve_orgs(_org_names(raw_crdf.values()))
+        in_years = raw_crs.filter(pl.col("year").is_between(first, last))
+        tables["orgs"] = resolve_orgs(
+            org_names(crs=in_years, crdf=raw_crdf.values()),
+            channels=in_years.select(
+                "channel_code", "channel_name", "channel_reported_name"
+            ),
+        )
     # BuildConfig declares no `btr_table` until the BTR reader is built.
     if (btr_table := context.config.sources.btr_table) is not None:
         tables["btr"] = pl.scan_parquet(btr_table)
     return tables
-
-
-def _org_names(frames: Iterable[pl.LazyFrame]) -> pl.LazyFrame:
-    """Every provider, agency and channel name the CRDF prints, once."""
-    columns = ("provider_name", "agency_name", "channel_name")
-    return (
-        pl.concat(
-            frame.select(source_name=pl.col(name))
-            for frame in frames
-            for name in columns
-        )
-        .drop_nulls()
-        .unique()
-    )

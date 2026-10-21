@@ -8,7 +8,6 @@ import polars as pl
 import pytest
 
 from climate_finance import schema
-from climate_finance.build import normalise as normalise_stage
 from climate_finance.build import write_stage
 from climate_finance.build.config import load_config
 from climate_finance.build.fetch import (
@@ -248,7 +247,7 @@ def test_crdf_vintage_is_the_workbooks_latest_year(crs: pl.DataFrame) -> None:
 
 @pytest.mark.parametrize("recoveries", [False, True])
 def test_run_normalise_writes_every_table_from_raw(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recoveries: bool
+    tmp_path: Path, recoveries: bool
 ) -> None:
     raw = tmp_path / "raw"
     fixtures = OECD.parent
@@ -281,27 +280,15 @@ def test_run_normalise_writes_every_table_from_raw(
     )
     normalise = next(stage for stage in REGISTRY if stage.name == "normalise")
 
-    resolved: list[str] = []
-
-    def resolve(names: pl.LazyFrame) -> pl.LazyFrame:
-        resolved.extend(names.collect()["source_name"])
-        return pl.LazyFrame(
-            {"source_name": ["Germany"], "donor_code": [5]},
-            schema={"source_name": pl.String, "donor_code": pl.Int32},
-        ).with_columns(
-            agency_code=pl.lit(None, pl.Int32),
-            channel_code=pl.lit(None, pl.Int32),
-            method=pl.lit("exact_name"),
-        )
-
-    monkeypatch.setattr(normalise_stage, "resolve_orgs", resolve)
-
     hashes = write_stage(normalise, run_normalise(context), tmp_path)
 
     # `btr` waits for an ingested BTR table; `orgs` is written with recoveries.
     expected = set(schema.STAGE_TABLES["normalise"]) - {"btr", "orgs"}
     assert set(hashes) == expected | ({"orgs"} if recoveries else set())
-    assert ("European Investment Bank" in resolved) == recoveries
+    if recoveries:
+        orgs = pl.read_parquet(table_path(tmp_path, "normalise", "orgs"))
+        eib = orgs.filter(role="agency", source_name="European Investment Bank")
+        assert eib.select("donor_code", "agency_code").rows() == [(918, 3)]
     external = pl.read_parquet(table_path(tmp_path, "normalise", "external"))
     # GCF's euro project converts at the euro's DAC rate.
     euro = external.filter(currency="EUR", source="gcf")

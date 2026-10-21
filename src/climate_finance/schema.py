@@ -84,6 +84,7 @@ SCORING_GROUPS = ("truth", "weak", "splink", "pooled_splink")
 SHARE_SOURCES = ("oecd", "one")
 FETCH_METHODS = ("http", "registered", "manual")
 PERSPECTIVES = ("provider", "recipient")
+ORG_ROLES = ("provider", "agency", "channel")
 FLOWS = ("commitments", "disbursements", "grant_equivalent")
 DECISIONS = ("accept", "reject")
 # Code 6 holds private-sector and philanthropic outflows, kept as published; the query
@@ -311,9 +312,12 @@ BTR = _table(
     source_file=_str(),
 )
 
+# One row per resolved organisation name and role. An agency name resolves within
+# the donor it was printed under, so one name can hold a row per donor.
 ORGS = _table(
     "orgs",
-    ("source_name",),
+    ("role", "source_name", "donor_code"),
+    role=_str(values=ORG_ROLES),
     source_name=_str(),
     donor_code=_code(nullable=True),
     agency_code=_code(nullable=True),

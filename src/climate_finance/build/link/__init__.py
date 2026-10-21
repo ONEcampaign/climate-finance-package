@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from climate_finance.build.fetch import DAC_EXCHANGE_FILE
 from climate_finance.build.link.crdf_crs import link_within_year, recover
 from climate_finance.build.link.id_practice import classify_id_practice
 from climate_finance.build.link.key_repair import repair_keys
@@ -22,8 +23,9 @@ def run_link(context: StageContext) -> StageOutput:
     Units sum the CRS trace population. Recipient-perspective CRDF rows join
     commitment units within their year, and disbursement units link to commitments
     through the exact key tiers under each agency's id practice. Key repair runs when
-    `key_repair` is on, and the recovery routes, with the tables only they read,
-    when `recoveries` is on.
+    `key_repair` is on. When `recoveries` is on, the EIB recovery routes link the
+    EIB rows the within-year join leaves out, reading the `external` table and the
+    DAC exchange rates fetch wrote.
     """
     config = context.config
     crs = context.read("normalise", "crs")
@@ -31,7 +33,17 @@ def run_link(context: StageContext) -> StageOutput:
     units = build_units(trace_population(crs)).collect()
     id_practice = classify_id_practice(units)
     trace = link_by_keys(units, id_practice=id_practice, first_year=config.years.crs[0])
-    links = [trace, link_within_year(crdf, units=units.lazy()).collect()]
+    crdf_crs = link_within_year(crdf, units=units.lazy()).collect()
+    if config.recoveries:
+        crdf_crs = recover(
+            crdf,
+            within_year=crdf_crs,
+            units=units.lazy(),
+            crs=crs,
+            external=context.read("normalise", "external"),
+            exchange=pl.read_parquet(context.raw_dir / DAC_EXCHANGE_FILE),
+        )
+    links = [trace, crdf_crs]
     if config.key_repair:
         links.append(
             repair_keys(
@@ -40,7 +52,4 @@ def run_link(context: StageContext) -> StageOutput:
                 links=trace.lazy(),
             ).collect()
         )
-    if config.recoveries:
-        external = context.read("normalise", "external")
-        links.append(recover(crdf, crs=crs, external=external).collect())
     return {"links": pl.concat(links), "units": units, "id_practice": id_practice}

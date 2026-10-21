@@ -43,3 +43,7 @@ class CostCapExceededError(BuildError):
 
 class AllocationInputError(BuildError):
     """Links that allocation cannot split without breaking a face cap or a total."""
+
+
+class LinkInputError(BuildError):
+    """Link-stage inputs that a linking route cannot use."""
