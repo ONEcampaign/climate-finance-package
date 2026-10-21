@@ -13,6 +13,11 @@ crs = [2010, 2025]
 
 [sources]
 crs_version = "v20261006"
+# The bulk CRS parquet, downloaded by browser. Without it, fetch downloads the file.
+crs_file = { path = "data/raw/oecd/CRS_v20261006.parquet", sha256 = "d24840a5fad50e718da4eb5831c3e1e333e7c5ef6b46c158e3510c7497518f06" }
+# Archived IATI activity XML, one directory per publisher.
+iati_archive = "data/raw/external/iati"
+iati_publishers = ["caf", "eib", "gcf", "gef", "idbinvest", "ifcwbg"]
 btr_archive = "data/raw/unfccc_btr1"
 ledger_archive = "data/raw/ledgers"
 review_decisions = "data/review_decisions.parquet"

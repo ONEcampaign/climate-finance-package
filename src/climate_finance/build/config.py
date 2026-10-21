@@ -8,6 +8,7 @@ from pydantic import (
     AfterValidator,
     BaseModel,
     ConfigDict,
+    StringConstraints,
     ValidationError,
     ValidationInfo,
 )
@@ -23,6 +24,7 @@ def _resolve(path: Path, info: ValidationInfo) -> Path:
 
 
 ConfigPath = Annotated[Path, AfterValidator(_resolve)]
+Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 
 class _Section(BaseModel):
@@ -36,12 +38,31 @@ class Years(_Section):
     crs: tuple[int, int]
 
 
+class LocalFile(_Section):
+    """A source file downloaded by hand, and the sha256 it must have."""
+
+    path: ConfigPath
+    sha256: Sha256
+
+
 class Sources(_Section):
-    """Pinned source versions and local source paths."""
+    """Pinned source versions and local source paths.
+
+    `crs_file` names a browser-downloaded bulk CRS parquet; without it, fetch
+    downloads the file with oda-reader. `crdf_etags`, when not empty, pins every
+    CRDF workbook fetch reads to the ETag it maps the workbook's name to.
+    `iati_archive` holds one directory of activity XML per publisher, and fetch
+    copies those of `iati_publishers`. `btr_table`, when set, names an ingested
+    BTR table that normalise reads.
+    """
 
     crs_version: str
+    crs_file: LocalFile | None = None
     crdf_etags: dict[str, str]
+    iati_archive: ConfigPath
+    iati_publishers: tuple[str, ...]
     btr_archive: ConfigPath
+    btr_table: ConfigPath | None = None
     ledger_archive: ConfigPath
     review_decisions: ConfigPath
 
