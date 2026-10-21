@@ -12,8 +12,9 @@ from climate_finance.errors import ReleaseIntegrityError
 from climate_finance.schema import RELEASE_TABLES
 
 
-def test_load_opens_the_fixture_with_its_manifest() -> None:
-    snap = cf.load(path=FIXTURE_DIR)
+@pytest.mark.parametrize("as_path", [Path, str])
+def test_load_opens_the_fixture_with_its_manifest(as_path) -> None:
+    snap = cf.load(path=as_path(FIXTURE_DIR))
 
     assert snap.manifest.release == "fixture"
     assert snap.table("commitments").collect().height == 14

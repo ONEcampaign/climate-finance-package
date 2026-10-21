@@ -95,7 +95,7 @@ def describe(method: Method | MethodRange) -> str:
     if method.coefficients == "provider":
         text += (
             " Each provider takes its own significant coefficient from the release, "
-            f"or {method.significant:g} where it has none."
+            f"or {method.significant:g} where it has no confirmed coefficient."
         )
     return text
 

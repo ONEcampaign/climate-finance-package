@@ -92,8 +92,8 @@ class Snapshot:
 def load(
     release: str = "latest",
     *,
-    path: Path | None = None,
-    cache_dir: Path | None = None,
+    path: str | Path | None = None,
+    cache_dir: str | Path | None = None,
     refresh: bool = False,
 ) -> Snapshot:
     """Open a release from `path`, or download `release` into `cache_dir` once.
@@ -104,6 +104,7 @@ def load(
     """
     if path is None:
         raise NotImplementedError("downloading a release: slice S10b")
+    path = Path(path)
     manifest_path = path / "release.json"
     if not manifest_path.is_file():
         raise ReleaseIntegrityError(f"{path} has no release.json")
