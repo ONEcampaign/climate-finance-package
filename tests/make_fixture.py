@@ -37,6 +37,7 @@ KEN, BGD, IRQ, UNS = 248, 666, 543, 998
 NO_RECORD = "no_disbursement_record"
 # FRA-1's project pays earlier tranches; AFDB-2 is the id-less multilateral row.
 PROJECT_DISBURSING = {"FRA-1"}
+FULLY_DISBURSED = {"IDA-1"}
 ID_LESS = {"AFDB-2"}
 
 # (row_id, provider, agency, recipient, channel, bi_multi, year, rio_adaptation,
@@ -85,7 +86,7 @@ COMMITMENT_SPECS = [
 ]
 
 # Share of face value disbursed through each commitment's own three records, by
-# status.
+# status. IDA-1 disburses its whole face value, which fills its high bound to face.
 DISBURSED_SHARE = {
     "disbursed": 0.95,
     "partly_disbursed": 0.5,
@@ -94,7 +95,8 @@ DISBURSED_SHARE = {
     "not_traceable": 0.0,
 }
 # An allocation counts in the low bound when its link is at least this probable,
-# and its high bound is this multiple of the allocation.
+# and its high bound is this multiple of the allocation, capped so the commitment's
+# high bounds stay within its face value.
 CERTAIN_PROBABILITY = 0.9
 HIGH_FACTOR = 1.05
 # A record's grant equivalent as a share of its disbursement, by flow code.
@@ -149,7 +151,9 @@ def _allocation(
     record_id: str,
     year: int,
     allocated: float,
-    grant_equiv: float | None,
+    allocated_high: float,
+    record_disbursement: float,
+    record_grant_equiv: float | None,
     link_method: str | None,
     link_probability: float | None,
     rule: str,
@@ -157,6 +161,7 @@ def _allocation(
 ) -> dict[str, object]:
     """A disbursements row allocating `allocated` of `record_id` to `commitment`.
 
+    `record_disbursement` and `record_grant_equiv` are the whole CRS record's.
     Unlinked rows (a bank-ledger fill) count in full in the low bound.
     """
     certain = link_probability is None or link_probability >= CERTAIN_PROBABILITY
@@ -177,8 +182,9 @@ def _allocation(
         "title": f"Climate project {commitment['row_id']}",
         "allocated_usd": allocated,
         "allocated_low_usd": allocated if certain else 0.0,
-        "allocated_high_usd": allocated * HIGH_FACTOR,
-        "grant_equiv_usd": grant_equiv,
+        "allocated_high_usd": allocated_high,
+        "record_disbursement_usd": record_disbursement,
+        "record_grant_equiv_usd": record_grant_equiv,
         "inherited_rio_adaptation": rio_a,
         "inherited_rio_mitigation": rio_m,
         "record_rio_adaptation": None if first else rio_a,
@@ -228,6 +234,20 @@ def build_tables() -> dict[str, pl.DataFrame]:
     commitments: dict[str, dict[str, object]] = {}
     disbursement_rows: list[dict[str, object]] = []
     objective_rows: list[dict[str, object]] = []
+    high_used: dict[str, float] = {}
+
+    def allocate(
+        commitment: dict[str, object], *, allocated: float, reserved: float = 0.0, **row
+    ) -> None:
+        """Add an allocation whose high bound leaves `reserved` of the commitment's
+        face value for the allocations still to come."""
+        row_id = str(commitment["row_id"])
+        headroom = float(commitment["face_usd"]) - high_used.get(row_id, 0.0) - reserved
+        high = min(allocated * HIGH_FACTOR, headroom)
+        high_used[row_id] = high_used.get(row_id, 0.0) + high
+        disbursement_rows.append(
+            _allocation(commitment, allocated=allocated, allocated_high=high, **row)
+        )
 
     for (
         row_id, provider, agency, recipient, channel, bi_multi, year, rio_a, rio_m,
@@ -268,21 +288,22 @@ def build_tables() -> dict[str, pl.DataFrame]:
         # from the commitment year, so every link method appears across the fixture.
         if not DISBURSED_SHARE[status]:
             continue
-        allocated = face * DISBURSED_SHARE[status] / 3
+        disbursed_share = 1.0 if row_id in FULLY_DISBURSED else DISBURSED_SHARE[status]
+        allocated = face * disbursed_share / 3
         for index in range(3):
             record_id = f"{row_id}-R{index}"
             grant_equiv = allocated * GRANT_EQUIV_RATIO[_flow_code(commitment)]
-            disbursement_rows.append(
-                _allocation(
-                    commitment,
-                    record_id=record_id,
-                    year=year + index,
-                    allocated=allocated,
-                    grant_equiv=grant_equiv if index else None,
-                    link_method=next(methods),
-                    link_probability=1.0 if index == 0 else 0.85,
-                    rule="dated" if index == 0 else "fifo",
-                )
+            allocate(
+                commitment,
+                record_id=record_id,
+                year=year + index,
+                allocated=allocated,
+                reserved=allocated * (2 - index),
+                record_disbursement=allocated,
+                record_grant_equiv=grant_equiv if index else None,
+                link_method=next(methods),
+                link_probability=1.0 if index == 0 else 0.85,
+                rule="dated" if index == 0 else "fifo",
             )
             objective_rows.extend(_objectives(commitment, record_id))
 
@@ -291,33 +312,31 @@ def build_tables() -> dict[str, pl.DataFrame]:
         raise ValueError(f"fixture misses link methods {sorted(missing)}")
 
     for row_id, allocated, link_method, probability in SPLIT_ALLOCATIONS:
-        disbursement_rows.append(
-            _allocation(
-                commitments[row_id],
-                record_id=SPLIT_RECORD,
-                year=SPLIT_YEAR,
-                allocated=allocated,
-                grant_equiv=SPLIT_GRANT_EQUIV * allocated / SPLIT_DISBURSEMENT,
-                link_method=link_method,
-                link_probability=probability,
-                rule="fifo",
-            )
+        allocate(
+            commitments[row_id],
+            record_id=SPLIT_RECORD,
+            year=SPLIT_YEAR,
+            allocated=allocated,
+            record_disbursement=SPLIT_DISBURSEMENT,
+            record_grant_equiv=SPLIT_GRANT_EQUIV,
+            link_method=link_method,
+            link_probability=probability,
+            rule="fifo",
         )
     objective_rows.extend(_objectives(commitments["JPN-1"], SPLIT_RECORD))
-    disbursement_rows.append(
-        _allocation(
-            commitments["AFDB-1"],
-            record_id=LEDGER_RECORD,
-            year=2023,
-            allocated=LEDGER_ALLOCATED,
-            grant_equiv=None,
-            link_method=None,
-            link_probability=None,
-            rule="bank_ledger",
-            disbursement_source="bank_ledger",
-        )
-        | {"ledger_check": None}
+    allocate(
+        commitments["AFDB-1"],
+        record_id=LEDGER_RECORD,
+        year=2023,
+        allocated=LEDGER_ALLOCATED,
+        record_disbursement=LEDGER_ALLOCATED,
+        record_grant_equiv=None,
+        link_method=None,
+        link_probability=None,
+        rule="bank_ledger",
+        disbursement_source="bank_ledger",
     )
+    disbursement_rows[-1]["ledger_check"] = None
     # A Jev objective label on one record without markers.
     objective_rows.append(
         {
@@ -505,7 +524,7 @@ def _quality(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataF
     links = disbursements.group_by("row_id").agg(
         best_probability=pl.col("link_probability").max(),
         records=pl.len(),
-        with_grant_equiv=pl.col("grant_equiv_usd").is_not_null().sum(),
+        with_grant_equiv=pl.col("record_grant_equiv_usd").is_not_null().sum(),
     )
     climate = pl.col("climate_usd")
     traced = pl.col("status").is_in(TRACED)

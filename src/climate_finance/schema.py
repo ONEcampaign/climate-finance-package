@@ -541,9 +541,13 @@ DISBURSEMENTS = _table(
     allocated_usd=_usd(),
     allocated_low_usd=_usd(),
     allocated_high_usd=_usd(),
-    # The record's grant equivalent times allocated_usd over the record's
-    # disbursement, so a record split across commitments counts once.
-    grant_equiv_usd=_usd(nullable=True),
+    # The CRS record's own disbursement at face value and grant equivalent, the same
+    # on every row of a record. The query takes an allocation's grant equivalent as
+    # record_grant_equiv_usd * allocated_usd / record_disbursement_usd, so a record
+    # split across commitments counts once. A record's allocated_usd sums to at most
+    # record_disbursement_usd; the rest is excess that reaches no commitment.
+    record_disbursement_usd=_usd(),
+    record_grant_equiv_usd=_usd(nullable=True),
     inherited_rio_adaptation=_rio(),
     inherited_rio_mitigation=_rio(),
     record_rio_adaptation=_rio(),
@@ -700,6 +704,8 @@ _DISBURSED_ORDER = (
     ("disbursed_usd", "disbursed_high_usd"),
     ("disbursed_high_usd", "face_usd"),
 )
+# Columns that hold one value across all rows of a CRS record.
+_RECORD_COLUMNS = ("record_disbursement_usd", "record_grant_equiv_usd")
 _DISBURSED_SUMS = {
     "disbursed_usd": "allocated_usd",
     "disbursed_low_usd": "allocated_low_usd",
@@ -722,8 +728,10 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     Every disbursements row holds 0 <= allocated_low <= allocated <= allocated_high
     and names a commitment. Per commitment, its rows' allocated, allocated_low and
     allocated_high sum to disbursed, disbursed_low and disbursed_high, and
-    0 <= disbursed_low <= disbursed <= disbursed_high <= face. Amounts compare
-    within `INVARIANT_TOLERANCE_USD`. An empty list means every check passed.
+    0 <= disbursed_low <= disbursed <= disbursed_high <= face. A record's rows share
+    one `record_disbursement_usd` and one `record_grant_equiv_usd` (all null or all
+    set), and its allocated amounts sum to at most `record_disbursement_usd`. Amounts
+    compare within `INVARIANT_TOLERANCE_USD`. An empty list means every check passed.
     """
     commitments = tables["commitments"]
     disbursements = tables["disbursements"]
@@ -762,6 +770,41 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
             f"commitments {row_id}: {smaller} > {larger}"
             for row_id in failing["row_id"]
         )
+    problems.extend(_record_problems(disbursements))
+    return problems
+
+
+def _record_problems(disbursements: pl.DataFrame) -> list[str]:
+    """Record-level columns that differ between a record's rows, and records whose
+    allocations exceed their disbursement."""
+    records = disbursements.group_by("record_id").agg(
+        pl.col("allocated_usd").sum().alias("_allocated"),
+        *(
+            expression
+            for column in _RECORD_COLUMNS
+            for expression in (
+                (pl.col(column).max() - pl.col(column).min()).alias(f"_{column}_gap"),
+                pl.col(column).null_count().alias(f"_{column}_nulls"),
+            )
+        ),
+        pl.col("record_disbursement_usd").max().alias("_disbursement"),
+        pl.len().alias("_rows"),
+    )
+    problems = []
+    for row in records.sort("record_id").iter_rows(named=True):
+        for column in _RECORD_COLUMNS:
+            gap, nulls = row[f"_{column}_gap"], row[f"_{column}_nulls"]
+            if (gap or 0.0) > INVARIANT_TOLERANCE_USD or 0 < nulls < row["_rows"]:
+                problems.append(
+                    f"disbursements record {row['record_id']}: {column} differs "
+                    "between rows"
+                )
+        if row["_allocated"] - row["_disbursement"] > INVARIANT_TOLERANCE_USD:
+            problems.append(
+                f"disbursements record {row['record_id']}: allocated_usd sums to "
+                f"{row['_allocated']!r}, above record_disbursement_usd "
+                f"{row['_disbursement']!r}"
+            )
     return problems
 
 

@@ -189,6 +189,18 @@ def test_a_component_row_counts_its_climate_share_of_face_value_disbursed(
     assert rows["value"].sum() == pytest.approx(200e6 * 0.5 * 0.30)
 
 
+@pytest.mark.parametrize("method", [cf.methods.ONE, cf.methods.OECD])
+def test_a_fully_disbursed_component_counts_all_of_its_climate_value(
+    method: Method,
+) -> None:
+    rows = SNAP.spending(method=method).rows(row_id="IDA-1")
+
+    # IDA-1: face 150m, climate share 0.45, disbursed in full over three years.
+    assert rows["year"].n_unique() == 3
+    assert rows["value"].sum() == pytest.approx(67.5e6)
+    assert rows["high"].sum() == pytest.approx(67.5e6)
+
+
 def test_a_split_record_counts_its_grant_equivalent_once() -> None:
     rows = SNAP.spending(flow="grant_equivalent").rows(record_id="JPN-SPLIT")
 

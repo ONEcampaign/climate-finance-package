@@ -6,7 +6,8 @@ converts it, and sums the rows into the result table. Rows have one of three ori
 - `commitment`: a CRDF commitment at face value (`flow="commitments"`). Repeats of an
   earlier vintage, and aggregate rows rebuilt into child rows, are left out.
 - `disbursement`: a CRS record's allocation to a commitment at face value
-  (`allocated_usd`, or its pro-rata `grant_equiv_usd` for `flow="grant_equivalent"`),
+  (`allocated_usd`, or for `flow="grant_equivalent"` the record's grant equivalent
+  times allocated_usd over the record's disbursement),
   weighted by the markers and climate share it inherits from that commitment. `low`
   and `high` scale by the allocation's own bounds.
 - `attribution`: under `view="provider"`, a provider's core contribution of the
@@ -243,11 +244,18 @@ def _base_rows(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
         .filter(_in_view(spec.view))
         .join(_labels(snapshot), on="record_id", how="left")
     )
-    amount = "grant_equiv_usd" if spec.flow == "grant_equivalent" else "allocated_usd"
+    amount = allocated
+    if spec.flow == "grant_equivalent":
+        record = pl.col("record_disbursement_usd")
+        amount = (
+            pl.when(record != 0)
+            .then(pl.col("record_grant_equiv_usd") * allocated / record)
+            .otherwise(None)
+        )
     return _conform(
         disbursements.with_columns(
             origin=pl.lit("disbursement"),
-            amount=pl.col(amount),
+            amount=amount,
             rio_adaptation=pl.col("inherited_rio_adaptation"),
             rio_mitigation=pl.col("inherited_rio_mitigation"),
             **shares,

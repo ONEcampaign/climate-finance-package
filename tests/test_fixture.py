@@ -92,8 +92,39 @@ def _break_face_cap(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def _break_record_grant_equiv(frame: pl.DataFrame) -> pl.DataFrame:
+    # JPN-SPLIT's second allocation carries its own share instead of the record's.
+    is_row = (pl.col("record_id") == "JPN-SPLIT") & (pl.col("row_id") == "JPN-3")
+    return frame.with_columns(
+        record_grant_equiv_usd=pl.when(is_row)
+        .then(pl.col("record_grant_equiv_usd") * 10 / 30)
+        .otherwise(pl.col("record_grant_equiv_usd"))
+    )
+
+
+def _break_record_disbursement(frame: pl.DataFrame) -> pl.DataFrame:
+    is_row = (pl.col("record_id") == "JPN-SPLIT") & (pl.col("row_id") == "JPN-3")
+    return frame.with_columns(
+        record_disbursement_usd=pl.when(is_row)
+        .then(pl.col("allocated_usd"))
+        .otherwise(pl.col("record_disbursement_usd"))
+    )
+
+
+def _overdraw_record(frame: pl.DataFrame) -> pl.DataFrame:
+    # JPN-SPLIT allocates 22m; its disbursement is cut to 20m on every row.
+    return frame.with_columns(
+        record_disbursement_usd=pl.when(pl.col("record_id") == "JPN-SPLIT")
+        .then(20e6)
+        .otherwise(pl.col("record_disbursement_usd"))
+    )
+
+
 def _orphan_allocation(frame: pl.DataFrame) -> pl.DataFrame:
-    return pl.concat([frame, frame.head(1).with_columns(row_id=pl.lit("NONE-1"))])
+    orphan = frame.head(1).with_columns(
+        row_id=pl.lit("NONE-1"), record_id=pl.lit("NONE-1-R0")
+    )
+    return pl.concat([frame, orphan])
 
 
 @pytest.mark.parametrize(
@@ -103,6 +134,9 @@ def _orphan_allocation(frame: pl.DataFrame) -> pl.DataFrame:
         ("commitments", _break_disbursed_sum, "DEU-1"),
         ("commitments", _break_face_cap, "DEU-1"),
         ("disbursements", _orphan_allocation, "NONE-1"),
+        ("disbursements", _break_record_grant_equiv, "JPN-SPLIT"),
+        ("disbursements", _break_record_disbursement, "JPN-SPLIT"),
+        ("disbursements", _overdraw_record, "JPN-SPLIT"),
     ],
 )
 def test_release_invariants_name_the_row_that_breaks_one(
