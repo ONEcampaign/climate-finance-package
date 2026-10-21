@@ -37,13 +37,13 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "snapshot"
 REAL_SNAPSHOT_DIR = Path(__file__).parent / "fixtures" / "real_snapshot"
 RELEASE = "fixture"
 
-# DAC codes: Germany, France, Norway, Japan, IDA, AfDB; IFC has only a modelled line.
+# DAC codes: Germany, France, Norway, Japan, IDA, AfDB. IFC has only a modelled line.
 # The EIB appears only in the sample of a real release.
 DEU, FRA, NOR, JPN, IDA, AFDB, IFC, EIB = 5, 4, 8, 701, 905, 913, 903, 918
 IDA_CH, AFDB_CH = 44002, 46002
 KEN, BGD, IRQ, UNS = 248, 666, 543, 998
 NO_RECORD = "no_disbursement_record"
-# FRA-1's project pays earlier tranches; AFDB-2 is the id-less multilateral row.
+# FRA-1's project pays earlier tranches, and AFDB-2 is the id-less multilateral row.
 PROJECT_DISBURSING = {"FRA-1"}
 FULLY_DISBURSED = {"IDA-1"}
 ID_LESS = {"AFDB-2"}
@@ -94,7 +94,7 @@ COMMITMENT_SPECS = [
 ]
 
 # CRDF rows carry their provider's class, Bi_Multi 1 for a bilateral provider, while
-# each CRS record keeps its own code: NOR-1's records are Bi_Multi 3.
+# each CRS record keeps its own code. NOR-1's records are Bi_Multi 3.
 RECORD_BI_MULTI = {"NOR-1": 3}
 
 # Share of face value disbursed through each commitment's own three records, by
@@ -125,7 +125,7 @@ SPLIT_ALLOCATIONS = (
     ("JPN-1", 12e6, "crs_id", 1.0),
     ("JPN-3", 10e6, "pn_recipient", 0.85),
 )
-# A bank-ledger gap fill on AFDB-1: no CRS link, so no method or probability.
+# A bank-ledger gap fill on AFDB-1 has no CRS link, so no method or probability.
 LEDGER_RECORD = "AFDB-1-LEDGER"
 LEDGER_ALLOCATED = 1e6
 
@@ -555,8 +555,8 @@ TRACED = ("disbursed", "partly_disbursed", "no_disbursement_record")
 
 
 def _quality(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataFrame:
-    """Climate value by provider and commitment year: all of it, the part that
-    traces, and the part whose most probable link is at least 0.8; and the share of
+    """Climate value by provider and commitment year (all of it, the part that
+    traces, and the part whose most probable link is at least 0.8), and the share of
     the traced commitments' records with a grant equivalent."""
     links = disbursements.group_by("row_id").agg(
         best_probability=pl.col("link_probability").max(),
@@ -622,7 +622,7 @@ SAMPLE_COMMITMENTS = 50
 SAMPLE_PER_KIND = 3
 SAMPLE_MIN_RECORDS = 8
 SAMPLE_SEED = 7
-# Tables sampled by provider; the rest are copied whole.
+# Tables sampled by provider. The rest are copied whole.
 BY_PROVIDER = ("core_contributions", "quality", "modelled", "total_flows")
 
 

@@ -140,7 +140,7 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
             links=links,
         ).collect(),
         "total_flows": total_flows(crs).collect(),
-        # Provider coefficients come from the BTR link, which is not built yet.
+        # Provider coefficients come from the BTR link, which is not implemented.
         "provider_coefficients": _empty(PROVIDER_COEFFICIENTS),
     }
 

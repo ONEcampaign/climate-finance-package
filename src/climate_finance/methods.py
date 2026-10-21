@@ -57,8 +57,8 @@ class MethodRange(Frozen):
 
 
 ONE = Method(significant=0.4, principal=1.0, highest_marker=True)
-# The OECD's imputed shares hold no EU channel: it counts EU Institutions as a
-# provider. PROVIDER reads ONE's agency shares, so it keeps ONE's EU setting.
+# The OECD's imputed shares hold no EU channel, because it counts EU Institutions as
+# a provider. PROVIDER reads ONE's agency shares, so it keeps ONE's EU setting.
 OECD = Method(significant=1.0, principal=1.0, highest_marker=False, eu="provider")
 PROVIDER = Method(
     significant=0.4, principal=1.0, highest_marker=True, coefficients="provider"

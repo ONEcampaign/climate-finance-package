@@ -12,7 +12,7 @@ def read_gcf_projects(path: Path) -> pl.DataFrame:
     """GCF commitments and disbursements per project, year and currency.
 
     A commitment is the project's GCF funding (co-financing excluded) in the year of
-    its approval. A disbursement is dated by its effective date; the API's undated
+    its approval. A disbursement is dated by its effective date, and the API's undated
     rows (all zero in the 2026 file) are dropped. Amounts are in the currency the
     API reports them in, and `amount_usd` is filled for USD rows only.
     `recipient_iso` holds the project's ISO 3 country codes, sorted and joined by

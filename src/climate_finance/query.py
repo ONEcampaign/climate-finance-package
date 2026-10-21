@@ -4,7 +4,7 @@
 converts it, and sums the rows into the result table. Rows have one of three origins:
 
 - `commitment`: a CRDF commitment at face value (`flow="commitments"`). Rows that
-  repeat an earlier vintage are left out; `quality()` reports them.
+  repeat an earlier vintage are left out, and `quality()` reports them.
 - `disbursement`: a CRS record's allocation to a counted commitment at face value
   (`allocated_usd`, or for `flow="grant_equivalent"` the record's grant equivalent
   times allocated_usd over the record's disbursement),
@@ -318,7 +318,7 @@ def _labels(snapshot: Snapshot) -> pl.LazyFrame:
 def _attributed_rows(snapshot: Snapshot, *, spec: Spec, method: Method) -> pl.LazyFrame:
     """Core contributions of `spec.flow` times the agency's climate share by objective.
 
-    Under OECD the share is the OECD's imputed share; under any other method it is
+    Under OECD the share is the OECD's imputed share. Under any other method it is
     the agency's own climate spending. The adaptation and mitigation shares each
     include the cross-cutting share. A share with no split by objective (a `climate`
     row) is the unsplit share, and the three objective shares are 0. An agency
@@ -396,7 +396,7 @@ def _coefficients(
 
     Under provider coefficients a provider with a confirmed row in
     `provider_coefficients` takes its own significant coefficient and that row's
-    basis; any other provider takes the method's, with a null basis.
+    basis. Any other provider takes the method's, with a null basis.
     """
     if method.coefficients == "fixed":
         return frame.with_columns(significant=pl.lit(method.significant))

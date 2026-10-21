@@ -90,7 +90,7 @@ def rebuild_aggregates(crdf: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame
 
 
 def continent(recipient_code: pl.Expr) -> pl.Expr:
-    """The DAC regional code of a recipient's continent; 998 outside them all."""
+    """The DAC regional code of a recipient's continent, 998 outside them all."""
     regions = (
         pl.when(pl.any_horizontal(recipient_code.is_between(*r) for r in ranges)).then(
             pl.lit(code, pl.Int32)
@@ -103,7 +103,7 @@ def continent(recipient_code: pl.Expr) -> pl.Expr:
 def aggregate_rows(rows: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
     """Bilateral rows with a climate value and no crs id the CRS knows.
 
-    EIB rows (the only rows with an `id_scheme`) are left out: the EIB is a
+    EIB rows (the only rows with an `id_scheme`) are left out. The EIB is a
     development bank inside a bilateral provider, EU Institutions, and its rows
     carry ids of their own scheme that the EIB recovery route matches.
     """

@@ -38,7 +38,7 @@ _PROJECT_ID_MIN_CHARS = 3
 
 # The EIB reports to the CRDF as agency 3 of EU Institutions (918).
 _EIB = {"donor_code": 918, "agency_code": 3}
-# DAC exchange rates are by country; the euro's is held by EU Institutions.
+# DAC exchange rates are by country. The euro's is held by EU Institutions.
 _EURO_ISSUER = "EUI"
 # An EIB match needs euro amounts within 3%, and an equal project number, a title
 # overlap of at least 0.5 or an equal purpose. Purpose-only matches are dropped once

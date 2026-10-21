@@ -7,7 +7,7 @@ name comes back ambiguous; the one candidate with the wanted id prefix is taken 
 it matches the name exactly. A hand-built pack adds development finance institutions
 the org pack misses. A CRS channel string without a code takes the code its coded
 rows carry, else the channel whose codelist name it equals. Fuzzy and full-text
-matches are never taken: on channel names they were 15% correct.
+matches are not taken, because on channel names they were 15% correct.
 """
 
 import re
@@ -29,9 +29,9 @@ _NO_CHANNEL = (0, 99999)
 # A channel string takes a code when this share of its coded CRS rows carry it.
 _PROPAGATION_SHARE = 0.9
 # The resolvekit modules shipped inside the package, in resolvekit's own registry
-# order. The remote admin and city packs hold places that share country names:
-# with them, "Russia" comes back ambiguous between the country and two places;
-# with these alone it resolves to provider 87. Order matters: with
+# order. The remote admin and city packs hold places that share country names. With
+# them, "Russia" comes back ambiguous between the country and two places, and with
+# these modules alone it resolves to provider 87. The order matters. With
 # `org.companies` or `org.lenders` ahead of `org.providers`, the org pack makes
 # no fuzzy candidates, and "H&M Foundation" finds nothing.
 RESOLVER_MODULES = (
@@ -290,12 +290,11 @@ def _agency(name: str, scope: int | None) -> dict[str, object] | None:
 def _unique_exact(
     name: str, *, prefix: str, context: rk.ResolutionContext | None = None
 ) -> tuple[str, str] | None:
-    """The one org-pack candidate under `prefix` that matches `name` exactly, as
-    (the id after the prefix, method).
+    """The one org-pack candidate under `prefix` that matches `name` exactly.
 
-    resolvekit labels some exact matches full-text, so a candidate whose canonical
-    name equals `name`, case, accents and punctuation set aside, counts as an exact
-    name.
+    Returns the id after the prefix and the match method. resolvekit labels some exact
+    matches full-text, so a candidate whose canonical name equals `name`, case, accents
+    and punctuation set aside, counts as an exact name.
     """
     result = _resolver().resolve(name, as_result=True, domain="org", context=context)
     exact: dict[str, str] = {}
@@ -386,7 +385,7 @@ def _resolver() -> rk.Resolver:
 
 @cache
 def _scope_key(donor_code: int) -> str:
-    """The org pack's key for a donor's agencies: ISO3 for a country, else the
+    """The org pack's key for a donor's agencies, ISO3 for a country else the
     provider code."""
     iso3 = _resolver().resolve(str(donor_code), from_system="oecd:provider", to="iso3")
     return iso3 if isinstance(iso3, str) else str(donor_code)

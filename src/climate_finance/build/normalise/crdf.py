@@ -254,7 +254,7 @@ def _marker(column: str) -> pl.Expr:
 
 
 def _published_share(frame: pl.DataFrame) -> pl.Expr:
-    """The climate share as a fraction; null where the row publishes none.
+    """The climate share as a fraction, null where the row publishes none.
 
     Live files print a percentage (`climate_share_pct`), archived files a fraction
     (`underlying_commitment_share`).

@@ -27,15 +27,15 @@ _ACTIVITY = re.compile(r"<iati-activity\b.*?</iati-activity>", re.DOTALL)
 def read_iati_activities(path: Path) -> pl.DataFrame:
     """Commitment (type 2) and disbursement (type 3) transactions by activity.
 
-    Every transaction is kept in its own currency; `amount_usd` is filled for USD
+    Every transaction is kept in its own currency, and `amount_usd` is filled for USD
     rows only. `recipient_iso` holds the ISO 3166 codes the transaction or, failing
     that, its activity names, sorted and joined by commas (null when it names no
     country). Amounts are summed by year as published. `cumulative_declared` is true
     for every row of an activity whose description declares its disbursement data
-    cumulative (GEF); the figures are left as published, since the reconciling stage
+    cumulative (GEF). The figures are left as published, since the reconciling stage
     owns their interpretation. Activities that do not parse or repeat an identifier
-    already read, and transactions without a date, value or currency, are skipped;
-    the counts are logged.
+    already read, and transactions without a date, value or currency, are skipped
+    and counted in the log.
 
     Args:
         path: A directory with one subdirectory of activity XML files per publisher.

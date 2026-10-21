@@ -33,12 +33,11 @@ if TYPE_CHECKING:
 def run_normalise(context: StageContext) -> StageOutput:
     """Normalise the files fetch wrote under `raw/` into the normalise tables.
 
-    Reads only those files, and writes no `btr` table, which the release treats as
-    optional. `crdf` marks rows repeated
-    across vintages (`repeat_of`) and gains child rows for the bilateral aggregate
-    rows the bulk records rebuild (`parent_row_id`). `orgs` resolves the CRS's
-    and CRDF's provider, agency and channel names to DAC codes, and is written only
-    when recoveries are on.
+    Reads only those files. It writes no `btr` table, which the release treats as
+    optional. `crdf` marks rows repeated across vintages (`repeat_of`) and gains
+    child rows for the bilateral aggregate rows the bulk records rebuild
+    (`parent_row_id`). `orgs` resolves the CRS's and CRDF's provider, agency and
+    channel names to DAC codes, and is written only when recoveries are on.
     """
     raw = context.raw_dir
     raw_crdf = {

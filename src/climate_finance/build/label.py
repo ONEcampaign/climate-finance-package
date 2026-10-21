@@ -32,7 +32,7 @@ def run_label(context: StageContext) -> StageOutput:
     """Write `objectives` and `jev_level_map`.
 
     The objectives hold the CRDF and marker labels of linked records. Jev labels and
-    their level map are not built yet, so `jev_level_map` is written empty.
+    their level map are not implemented, so `jev_level_map` is written empty.
     """
     objectives = reported_objectives(
         context.read("fill", "allocations"),

@@ -1,4 +1,4 @@
-"""The allocate stage: dated FIFO allocation and commitment status.
+"""The allocate stage, dated FIFO allocation and commitment status.
 
 The link stage sums CRS records into `units` and links them. A `trace` link runs
 from a disbursement unit (left) to each commitment unit (right) it may fill. A
@@ -9,11 +9,11 @@ record year or floor rules out, since the group pools their disbursement. A
 `crdf_crs` link runs from a CRDF row to a commitment unit, and its `group_id` holds
 every row and unit of one commitment.
 
-Allocation runs on the CRS records inside those units (`units.record_ids`): a record
+Allocation runs on the CRS records inside those units (`units.record_ids`). A record
 with a positive commitment in a commitment unit is a commitment at the unit's
 `placed_year`, and a record with a positive disbursement in a linked unit is a
-disbursement. Negative commitments are cancellations: they never reduce a
-commitment's headroom and are reported by provider and year.
+disbursement. Negative commitments are cancellations. They leave a commitment's
+headroom unchanged and are reported by provider and year.
 
 Passes run by record year, then link method in `LINK_METHODS` order, then class:
 records with a date floor first, oldest floor first, then a dated donor's records
@@ -22,15 +22,16 @@ disbursement and fills its commitments oldest `placed_year` first, pro rata to
 headroom within a year, capped at face value. A record whose unit carries groups of
 several methods enters one pass per group, in `LINK_METHODS` order, and each later
 pass receives only what the earlier ones left: the exact key tiers first, then the
-key-repair rules. What the last pass leaves is excess. Two
-per-donor switches change the order. A dated donor's record dated in its own year
-fills that year's commitments first. A window donor's other records fill first the
-commitments whose expected start to completion window, plus `WINDOW_GRACE` years,
-covers the record year.
+key-repair rules. What the last pass leaves is excess.
+
+Two per-donor switches change the order. A dated donor's record dated in its own
+year fills that year's commitments first. A window donor's other records fill first
+the commitments whose expected start to completion window, plus `WINDOW_GRACE`
+years, covers the record year.
 
 A `crdf_crs` group's allocation is split over its CRDF rows by face value, over the
 larger of the group's CRS and CRDF face, so no row receives more than its face and
-no record gives more than it disbursed. Amounts stay at face value; the release
+no record gives more than it disbursed. Amounts stay at face value. The release
 query applies the climate share.
 """
 
@@ -144,8 +145,8 @@ def _unit_records(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame:
 
 
 def _commitment_records(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
-    """Records with a positive commitment in commitment units: (record_id, unit_id,
-    face)."""
+    """Records with a positive commitment in commitment units, as (record_id,
+    unit_id, face)."""
     return (
         _unit_records(units.filter(pl.col("commitment_usd") > 0), crs=crs)
         .filter(pl.col("commitment_usd") > 0)
@@ -166,7 +167,7 @@ def _unit_windows(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame:
 def dated_donors(units: pl.LazyFrame) -> list[int]:
     """Donors whose disbursement-only units carry the original commitment's date.
 
-    Measured on units with disbursement and no commitment in `DATED_YEARS`: the
+    Measured on units with disbursement and no commitment in `DATED_YEARS`. The
     dollar share whose commitment year precedes the record year must reach
     `DATED_SHARE`.
     """
@@ -190,7 +191,7 @@ def window_donors(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> list[int]:
     """Donors whose expected start to completion windows bracket later disbursement.
 
     Tested on (donor, crs id) pairs whose commitment units sit in one year of
-    `WINDOW_TEST_YEARS` and carry a completion year: the dollar share of later
+    `WINDOW_TEST_YEARS` and carry a completion year. The dollar share of later
     same-id disbursement whose record year lies in [start year (or commitment year),
     completion year + `WINDOW_GRACE`] must reach `WINDOW_SHARE`, over at least
     `WINDOW_MIN_USD`.
@@ -288,7 +289,7 @@ def _trace_pairs(
     windowed: Collection[int],
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Every (commitment record, disbursement record) pair the links allow, with its
-    pass, order and rule; and the commitment records by `c_idx`.
+    pass, order and rule, and the commitment records by `c_idx`.
 
     Order, class and rule are facts of the unit pair, as a unit's records share
     their years and keys.
@@ -424,16 +425,16 @@ def allocate(
         units: the link stage's `units`.
         crs: the CRS records the trace follows, with `expected_start_date` and
             `completion_date`.
-        links: `links` rows; the `trace` task is read.
+        links: `links` rows, of which the `trace` task is read.
         dated: dated donors (see `dated_donors`).
         windowed: window donors (see `window_donors`).
 
     Returns:
         One row per (commitment record, disbursement record) that received an
         amount: `commitment_id` (the commitment's CRS record_id), `record_id`,
-        `year` (the record's), `allocated_usd` and `rule`; plus a `rule="excess"`
-        row with a null `commitment_id` for each record its groups could not take
-        in full.
+        `year` (the record's), `allocated_usd` and `rule`. It also holds a
+        `rule="excess"` row with a null `commitment_id` for each record its groups
+        could not take in full.
 
     Raises:
         AllocationInputError: when the links break the contract in the module
@@ -463,7 +464,7 @@ def allocate(
         raise AllocationInputError("Two groups of one pass share a commitment")
 
     headroom = commitments["face"].to_numpy().astype(np.float64, copy=True)
-    # What each record has left to give: its disbursement less earlier passes.
+    # What each record has left to give, its disbursement less earlier passes.
     left = records["amount"].to_numpy().astype(np.float64, copy=True)
     by_pass = candidates.partition_by("pass", as_dict=True)
     entries_by_pass = entries.partition_by("pass", as_dict=True)
@@ -526,7 +527,7 @@ def allocate(
 
 
 def _fill(candidates: pl.DataFrame, headroom: np.ndarray) -> pl.DataFrame:
-    """One pass's fill per candidate: each group's `total` fills its candidates in
+    """One pass's fill per candidate. Each group's `total` fills its candidates in
     ascending `order`, pro rata to headroom within one order. `capacity` is the
     group's headroom, so its excess is whatever of `total` exceeds it."""
     group_order = ["group_id", "order"]
@@ -636,7 +637,7 @@ def _commitment_groups(
         .then(pl.col("face_usd") / (denominator / pl.col("crs_face")))
         .otherwise(pl.col("face_usd")),
     )
-    # The share of a group's allocation its rows take: exactly 1 when their face
+    # The share of a group's allocation its rows take, exactly 1 when their face
     # covers the CRS face.
     spread = faces.select(
         "group_id",
@@ -655,7 +656,7 @@ def allocate_to_rows(
     crs: pl.LazyFrame,
     links: pl.LazyFrame,
 ) -> pl.DataFrame:
-    """The `allocations` table: `allocate` output split over CRDF commitment rows.
+    """The `allocations` table, `allocate` output split over CRDF commitment rows.
 
     A pair's amount goes to the rows of its commitment's `crdf_crs` group by weight
     (see `_commitment_groups`). The rest, and every pair whose commitment has no
@@ -762,14 +763,14 @@ def status_basis(
     pairs: pl.DataFrame,
     id_practice: pl.LazyFrame,
 ) -> pl.DataFrame:
-    """The `compute_status` input: each CRDF row with the facts allocation fixes.
+    """The `compute_status` input, each CRDF row with the facts allocation fixes.
 
     `traceable` is false when the row reaches no commitment unit, or its commitment
     unit's agency is classed `neither` in the period of the row's year.
     `id_disbursing` is true when allocation gave disbursement to a commitment of the
     row's (donor, crs id) placed in a year before the row's commitment.
     `crs_face_usd` is the row's share of its linked CRS commitment's face, which
-    status reads its allocations against (see `_commitment_groups`); it is the
+    status reads its allocations against (see `_commitment_groups`). It is the
     row's own face outside every group.
     """
     weights, _, unit_groups = _commitment_groups(
@@ -853,16 +854,15 @@ def compute_status(
         pending: the `row_id`s of commitments pending review.
 
     Returns:
-        The `commitments` stage table. Status uses the linked CRS commitment's
-        face: its ratio is the group's allocation over the CRS face, which is the
-        row's disbursed amount over `crs_face_usd`. `disbursed_usd`
-        sums the row's allocations in the dollars disbursed, so it can sit below
-        face for a disbursed commitment when exchange rates move between the
-        commitment and disbursement years. The ratio reads `disbursed` at
-        `DISBURSED_RATIO` or more, `partly_disbursed` above 0. With nothing
-        allocated a row is `not_traceable` when not `traceable`, else
-        `no_disbursement_record`. A pending row is `pending_review` whatever its
-        ratio. `project_disbursing` marks a no-record row whose id is disbursing.
+        The `commitments` stage table. Status uses the linked CRS commitment's face. Its
+        ratio is the group's allocation over the CRS face, which is the row's disbursed
+        amount over `crs_face_usd`. `disbursed_usd` sums the row's allocations in the
+        dollars disbursed, so it can sit below face for a disbursed commitment when
+        exchange rates move between the commitment and disbursement years. The ratio
+        reads `disbursed` at `DISBURSED_RATIO` or more, `partly_disbursed` above 0. With
+        nothing allocated a row is `not_traceable` when not `traceable`, else
+        `no_disbursement_record`. A pending row is `pending_review` whatever its ratio.
+        `project_disbursing` marks a no-record row whose id is disbursing.
     """
     disbursed = (
         allocations.lazy()

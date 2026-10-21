@@ -4,7 +4,7 @@ Fetch owns every network call of the build. It writes each source to its place i
 the raw layout under `<release_dir>/raw/` and records one `raw_manifest` row per
 file, with its sha256. Online, it fetches into `raw.partial/` and swaps that in
 whole once every source has arrived, so a failed fetch leaves the previous `raw/`
-in place. Offline, it makes no network call: it checks that `raw/` holds exactly
+in place. Offline, it makes no network call. It checks that `raw/` holds exactly
 the files the previous `raw_manifest` records, each with its recorded sha256, and
 returns that manifest unchanged.
 """

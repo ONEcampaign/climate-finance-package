@@ -138,7 +138,7 @@ class Result:
         """The same result with every amount divided by all CRS flows of its key.
 
         The denominator is the release's `total_flows` for the same flow, year,
-        provider, recipient and Bi_Multi code; a row without a recipient, such as
+        provider, recipient and Bi_Multi code. A row without a recipient, such as
         attributed finance, divides by the sum over recipients. Totals cover every
         flow code, so under `oda_only` the share is ODA climate finance over all
         flows. A key missing from `total_flows` gives null shares. The rows and the
@@ -231,8 +231,8 @@ def explain(
 
     `fallbacks` maps each provider-coefficient method's label to the providers that
     have no confirmed coefficient of their own in the release. `unsplit` maps a
-    method's label to the agency channel codes whose climate share it reads has no
-    split by objective.
+    method's label to the agency channel codes whose climate share has no split by
+    objective.
     """
     fallbacks = fallbacks or {}
     unsplit = unsplit or {}

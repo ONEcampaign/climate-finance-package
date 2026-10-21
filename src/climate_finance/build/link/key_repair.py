@@ -3,7 +3,7 @@ donor keyed one project two ways.
 
 A rule links a disbursement unit to a commitment unit of the same donor, under
 another crs id, that no exact tier reached. The disbursement unit may carry exact
-links too: allocation runs its groups in `LINK_METHODS` order, so a rule receives
+links too. Allocation runs its groups in `LINK_METHODS` order, so a rule receives
 only what the exact tiers and the earlier rules left of the unit's disbursement.
 The rules run in `schema.KEY_REPAIR_METHODS` order, and a commitment unit one rule
 links is left out of the later ones:
@@ -22,8 +22,8 @@ links is left out of the later ones:
 - `repair_title_recipient`: the same agency, recipient and title words in any
   order (`title_words`), where those words name one crs id among all the agency's
   commitments in the recipient and one project among the disbursements that match
-  them: at most one project number, the shared title naming the project where the
-  number is missing.
+  them. A project here has at most one project number, and the shared title names
+  it where the number is missing.
 
 Both guards count projects, not crs ids, since a donor such as the AfDB files each
 year's disbursements of one project under a new crs id.
@@ -69,7 +69,7 @@ _CORE = ("donor_code", "agency_code", "core")
 _LOAN = ("donor_code", "loan")
 _PLACE = ("donor_code", "agency_code", "recipient_code")
 _TITLE_KEY = (*_PLACE, "title_words")
-# What `_settle` reads of a rule's candidate pairs; commitment columns end in `_c`.
+# What `_settle` reads of a rule's candidate pairs. Commitment columns end in `_c`.
 _PAIR = (
     "left_id",
     "right_id",
@@ -85,7 +85,7 @@ type Rule = Callable[[pl.DataFrame, pl.DataFrame], pl.DataFrame]
 
 def project_core(project_number: pl.Expr) -> pl.Expr:
     """A project number without separators, a trailing `CRSn` suffix or the leading
-    zeros of its digit runs; null below `CORE_MIN_CHARS` characters."""
+    zeros of its digit runs, or null below `CORE_MIN_CHARS` characters."""
     core = (
         project_number.str.to_uppercase()
         .str.replace_all("[^A-Z0-9]", "")
@@ -97,13 +97,13 @@ def project_core(project_number: pl.Expr) -> pl.Expr:
 
 def wb_loan(project_number: pl.Expr) -> pl.Expr:
     """The loan or credit number in a World Bank `P<project>.<loan>.CRS<n>` project
-    number; null for other numbers."""
+    number, or null for other numbers."""
     return project_number.str.to_uppercase().str.extract(_WB_LOAN, 1)
 
 
 def rounded_digits(project_number: pl.Expr) -> pl.Expr:
     """For a project number a spreadsheet rounded, the digits it kept (`prefix`) and
-    the length of the number it stands for (`digits`); null for other numbers."""
+    the length of the number it stands for (`digits`), or null for other numbers."""
     scientific = project_number.str.extract_groups(_SCIENTIFIC)
     lead, rest, exponent = (scientific.struct.field(name) for name in ("1", "2", "3"))
     zeros = project_number.str.contains(_LONG_NUMBER) & project_number.str.ends_with(
@@ -126,7 +126,7 @@ def rounded_digits(project_number: pl.Expr) -> pl.Expr:
 
 def title_tokens(title: pl.Expr) -> pl.Expr:
     """A title lower-cased, with each run of anything but ASCII letters and digits
-    as one space; empty when there is no title."""
+    as one space, or empty when there is no title."""
     return (
         title.fill_null("")
         .str.to_lowercase()
@@ -149,9 +149,8 @@ def repair_keys(
     Args:
         units: the link stage's units.
         crs: the CRS records the units sum, for their titles.
-        links: the exact tiers' `trace` links; the commitments they reach are left
-            to them.
-        first_year: the first CRS year the build loads; a disbursement whose floor
+        links: the exact tiers' `trace` links, whose commitments are left to them.
+        first_year: the first CRS year the build loads. A disbursement whose floor
             precedes it links to nothing, as in the exact tiers.
 
     Returns:
@@ -239,7 +238,7 @@ def _candidates(
     no earlier than its floor year, grouped by the columns `key`, for disbursement
     units no commitment of whose group shares their crs id.
 
-    Disbursement columns keep their names, under `left_id` for the unit; commitment
+    Disbursement columns keep their names, under `left_id` for the unit. Commitment
     columns end in `_c`, under `right_id` for the unit.
     """
     pairs = (

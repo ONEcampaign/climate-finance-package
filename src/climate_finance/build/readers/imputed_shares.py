@@ -17,7 +17,7 @@ _SHARE_HEADERS = ("Imputed multilateral contribution", "Overall climate share")
 # Header text naming the years a sheet's shares average, such as "2021-2022 average".
 _SPAN = re.compile(r"(\d{4})-(\d{4}) average")
 # Header text of the three columns that split an agency's climate share. The columns
-# are disjoint; the reader adds "both" to the other two.
+# are disjoint, and the reader adds "both" to the other two.
 _OBJECTIVES = {
     "Mitigation only": "mitigation",
     "Adaptation only": "adaptation",
@@ -90,8 +90,8 @@ def read_imputed_shares(path: Path) -> pl.DataFrame:
 
     The workbook has one sheet per year. An agency the sheet splits by objective gives
     a row per objective with a figure. The sheet's columns are disjoint ("adaptation
-    only", "mitigation only", "both"); the rows are inclusive, as in
-    `agency_shares`: adaptation and mitigation each add the "both" share, which is
+    only", "mitigation only", "both"), and the rows are inclusive, as in
+    `agency_shares`. Adaptation and mitigation each add the "both" share, which is
     also the cross_cutting row. An agency
     with only a whole climate share, as every agency has before 2021 and the IPCC,
     the Montreal Protocol and the UNFCCC have after, gives one `climate` row. An

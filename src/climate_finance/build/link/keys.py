@@ -1,12 +1,12 @@
 """CRS records into units, and the exact key tiers that link them, first match wins.
 
 A unit sums the CRS records that share every key field (`UNIT_KEY`). Each disbursement
-unit takes the first tier in `TIERS` whose key reaches an eligible commitment unit:
-one placed at or before the disbursement's record year and, outside the parent-id
-tier, at or after its floor year. The parent-id tier ignores the floor, since an EU
-contract record carries the contract's own date, which falls on or after its
-decision's commitment. A disbursement whose floor precedes the first CRS year
-continues a commitment the build cannot see, and links to nothing.
+unit takes the first tier in `TIERS` whose key reaches an eligible commitment unit,
+meaning one placed at or before the disbursement's record year and, outside the
+parent-id tier, at or after its floor year. The parent-id tier ignores the floor, since
+an EU contract record carries the contract's own date, which falls on or after its
+decision's commitment. A disbursement whose floor precedes the first CRS year continues
+a commitment the build cannot see, and links to nothing.
 
 The project-number tiers are off for an agency whose ids persist in the period of the
 record year (see `id_practice`). They link only where (donor, agency, project number,
@@ -58,8 +58,9 @@ PLACEHOLDER_PNS = (
 
 @dataclass(frozen=True)
 class Tier:
-    """A key tier: the commitment key, the disbursement key it must equal, whether
-    it reads project numbers, and whether it holds to the disbursement's floor."""
+    """A key tier. It holds the commitment key, the disbursement key it must equal,
+    whether it reads project numbers, and whether it holds to the disbursement's
+    floor."""
 
     name: str
     commitment_key: tuple[str, ...]
@@ -94,8 +95,8 @@ if tuple(tier.name for tier in TIERS) != schema.KEY_TIERS:
 
 
 def normalise_pn(project_number: pl.Expr) -> pl.Expr:
-    """Upper-case, drop a float artefact `.0` and every space; null placeholders
-    and values shorter than two characters or holding no letter or digit."""
+    """Upper-case, drop a float artefact `.0` and every space. Placeholders and
+    values shorter than two characters or holding no letter or digit become null."""
     pn = (
         project_number.str.to_uppercase()
         .str.strip_chars()
@@ -122,7 +123,7 @@ def build_units(crs: pl.LazyFrame) -> pl.LazyFrame:
             commitment_year=pl.col("commitment_date").dt.year().cast(pl.Int16),
         )
         .group_by(UNIT_KEY)
-        # Amounts are summed as lists in record order: a partitioned group sum
+        # Amounts are summed as lists in record order. A partitioned group sum
         # adds in whatever order threads finish, which changes the last bit.
         .agg(
             pl.col("commitment_usd", "disbursement_usd").sort_by("record_id"),

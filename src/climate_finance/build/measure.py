@@ -5,12 +5,12 @@ spending that is climate finance, from two sources. `oecd` copies the OECD's imp
 shares. `one` is the agency's own climate commitments under the ONE method (the
 highest-marker rule, significant markers at 0.4, climate components as reported)
 over its total CRS commitments, both summed over the year and the year before. This
-is the OECD's imputed-share construction with ONE's coefficients: for the banks that
+is the OECD's imputed-share construction with ONE's coefficients. For the banks that
 report climate components, which both methods take as reported, the two agree within
 0.004 in 2021 and 2022 (IBRD 0.310 and 0.309, IDA 0.313 and 0.313, AfDB 0.399 and
-0.398, CAF 0.224 and 0.226). Shares rest on commitments, where 1.x divided matched
-disbursements by all disbursements: on the trace, untraced disbursement stays in the
-denominator and pushes banks the trace cannot follow to zero. Adaptation and
+0.398, CAF 0.224 and 0.226). Shares rest on commitments. Dividing matched
+disbursements by all disbursements would leave untraced disbursement in the
+denominator and push banks the trace cannot follow to zero. Adaptation and
 mitigation shares each include the cross-cutting share.
 
 `modelled` holds, for providers that publish no project disbursements, their CRDF
@@ -52,8 +52,8 @@ class _Fact(BaseModel):
 
 
 class AgencyChannel(_Fact):
-    """The CRS reporter behind a channel of delivery; with no `agency_codes`, every
-    agency of the provider."""
+    """The CRS reporter behind a channel of delivery. With no `agency_codes`, it is
+    every agency of the provider."""
 
     channel_code: int
     provider_code: int
@@ -233,7 +233,8 @@ def _by_channel(
         },
         orient="row",
     )
-    # A record's own channel_code is where it was delivered, not who reports it.
+    # A record's own channel_code is its channel of delivery, so the reporting channel
+    # comes from the mapping.
     return (
         frame.drop("channel_code")
         .join(mapping, on="provider_code")
@@ -396,7 +397,7 @@ def _with_crs_ratios(
     """Add `_cumulative` and `_period` CRS ratios to `rows`.
 
     Ratios pool the provider's unbroken run of years with disbursement that ends at
-    its latest. The cumulative ratio pools the whole run; the period ratio pools the
+    its latest. The cumulative ratio pools the whole run. The period ratio pools the
     run from the commitment year, or for `vintage` providers is the commitment
     year's vintage ratio. Recipient ratios replace portfolio ones where the run
     holds the recipient's commitments.
@@ -458,8 +459,9 @@ def _reporting_run(years: set[int]) -> tuple[int, int]:
 def _ratio(flows: pl.LazyFrame, *, by: Sequence[str]) -> pl.LazyFrame:
     """Disbursed over committed per `by`; null where commitments are not positive.
 
-    The ratio is null, not filtered out: with a cached input, polars 2.0 pushes a
-    filter on a sum below the aggregation when the sum keeps its input's name.
+    The ratio is null where commitments are not positive, and the group stays in the
+    result. With a cached input, polars 2.0 pushes a filter on a sum below the
+    aggregation when the sum keeps its input's name.
     """
     committed = pl.col("committed")
     return (

@@ -12,7 +12,7 @@ An agency is `unclassified` below `MIN_OPEN` open commitments, `neither` when un
 `parent_id_persistent` or `pn_persistent` when that route carries at least
 `PERSISTENT_SHARE` of the continued value (the parent class counting id and parent
 together, with parent the larger), else `mixed`. A disbursement takes the class of its
-record year's period; later years reuse the last period.
+record year's period. Later years reuse the last period.
 """
 
 from collections.abc import Mapping
@@ -44,14 +44,14 @@ _ROUTES = ("id", "parent", "pn")
 
 
 def parent_id(crs_id: pl.Expr) -> pl.Expr:
-    """The EU decision id a contract's crs id begins with; null for shorter ids."""
+    """The EU decision id a contract's crs id begins with, or null for a shorter id."""
     return pl.when(crs_id.str.len_chars() > _PARENT_ID_LENGTH).then(
         crs_id.str.slice(0, _PARENT_ID_LENGTH)
     )
 
 
 def period_of(year: pl.Expr) -> pl.Expr:
-    """The id-practice period a record year falls in; later years take the last."""
+    """The id-practice period a record year falls in. Later years take the last."""
     (first_name, (_, first_last)), *middle, (last_name, _) = PERIODS.items()
     period = pl.when(year <= first_last).then(pl.lit(first_name))
     for name, (_, last) in middle:

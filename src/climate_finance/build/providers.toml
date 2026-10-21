@@ -23,7 +23,7 @@ agencies = [
     { channel_code = 46007, provider_code = 910 },  # CABEI
     { channel_code = 46008, provider_code = 1015 },  # CAF
     { channel_code = 46009, provider_code = 906 },  # Caribbean Development Bank
-    # The IDB's ordinary capital and IDB Invest share one channel; its Fund for
+    # The IDB's ordinary capital and IDB Invest share one channel. Its Fund for
     # Special Operations has its own.
     { channel_code = 46012, provider_code = 909, agency_codes = [1, 4, 5, 6, 15, 16, 17, 18, 20] },
     { channel_code = 46012, provider_code = 1019 },
@@ -52,7 +52,7 @@ agencies = [
 # commitments go on the "modelled, not reported" line as a range of disbursement
 # ratios, each capped at 1.0. CRS ratios come from the provider's aggregate
 # disbursement rows over its unbroken run of reporting years that ends at its
-# latest: the cumulative ratio pools the whole run, and the window ratio pools the
+# latest. The cumulative ratio pools the whole run, and the window ratio pools the
 # run from the commitment year. `by_recipient` computes them per recipient where the
 # CRS holds the recipient's commitments. `vintage` replaces both with the ratio of
 # the projects first committed in the commitment year, disbursed over committed.

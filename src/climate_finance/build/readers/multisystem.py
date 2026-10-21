@@ -4,7 +4,8 @@ from pathlib import Path
 
 import polars as pl
 
-# MULTI measure 10; measure 20 is "Contributions through" (earmarked bilateral money).
+# MULTI measure 10 is core contributions. Measure 20, "Contributions through", is
+# earmarked bilateral money.
 _CORE_MEASURE = 10
 # The cell that holds a donor's total: all developing countries, all sectors. The
 # other recipient and sector cells repeat the same figure for core contributions.
@@ -12,7 +13,7 @@ _TOTAL_RECIPIENT = 10100
 _TOTAL_SECTOR = 1000
 # Donor codes from 20000 are groups (20001 DAC countries, 20006 non-DAC countries).
 _AGGREGATE_DONOR_FLOOR = 20000
-# Current prices; "D" is constant prices.
+# "A" is current prices and "D" constant prices.
 _CURRENT_PRICES = "A"
 # MULTI publishes commitments and disbursements. It has no grant-equivalent flow.
 _FLOW_BY_TYPE = {"C": "commitments", "D": "disbursements"}

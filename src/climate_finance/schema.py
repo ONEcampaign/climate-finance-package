@@ -89,7 +89,7 @@ PERSPECTIVES = ("provider", "recipient")
 ORG_ROLES = ("provider", "agency", "channel")
 FLOWS = ("commitments", "disbursements", "grant_equivalent")
 DECISIONS = ("accept", "reject")
-# Code 6 holds private-sector and philanthropic outflows, kept as published; the query
+# Code 6 holds private-sector and philanthropic outflows, kept as published. The query
 # views list the codes they count and leave it out.
 BI_MULTI_CODES = (1, 2, 3, 4, 6, 7, 8)
 RIO_MARKERS = (0, 1, 2)
@@ -261,7 +261,7 @@ IMPUTED_SHARES = _table(
     share=_f64(),
 )
 
-# Amounts are as the publisher reports them, in the original currency; `amount_usd`
+# Amounts are as the publisher reports them, in the original currency. `amount_usd`
 # is filled by the reader for USD rows only. `cumulative_declared` marks activities
 # whose files state that their disbursements are cumulative (GEF); the reader leaves
 # those figures unchanged and the stage that reconciles them reads the flag.
@@ -328,7 +328,7 @@ ORGS = _table(
 )
 
 # The comparison levels a scored pair carries, one Int8 level per field compared. The
-# scoring stage fills them; key links leave `levels` null.
+# scoring stage fills them, and key links leave `levels` null.
 COMPARISON_LEVELS = pl.Struct(
     {
         f"gamma_{name}": pl.Int8()
@@ -650,7 +650,7 @@ DISBURSEMENTS = _table(
     # on every row of a record. The query takes an allocation's grant equivalent as
     # record_grant_equiv_usd * allocated_usd / record_disbursement_usd, so a record
     # split across commitments counts once. A record's allocated_usd sums to at most
-    # record_disbursement_usd; the rest is excess that reaches no commitment.
+    # record_disbursement_usd. The rest is excess that reaches no commitment.
     record_disbursement_usd=_usd(),
     record_grant_equiv_usd=_usd(nullable=True),
     inherited_rio_adaptation=_rio(),
@@ -758,10 +758,10 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
 # Tables a stage may leave out. A stage that reads one that was not written raises
 # StageInputMissingError. `orgs` is written when recoveries are on, `btr` when the
 # build config names an ingested BTR table. `programme_stems` and `provider_profile`
-# are written by the link stage's candidate and scoring steps; the key tiers and the
+# are written by the link stage's candidate and scoring steps. The key tiers and the
 # within-year join write the other link tables without them. `bank_year_overlap` is
 # written by the bank-ledger gap fill, and `review_queue` and `pair_labels` by the
-# review queue; with their switches off the two stages pass the tables they carry
+# review queue. With their switches off the two stages pass the tables they carry
 # forward through unchanged.
 OPTIONAL_STAGE_TABLES: Mapping[str, frozenset[str]] = {
     "normalise": frozenset({"btr", "orgs"}),

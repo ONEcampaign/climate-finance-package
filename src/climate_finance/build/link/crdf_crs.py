@@ -1,4 +1,4 @@
-"""CRDF rows to CRS commitments: within a year, then the recovery routes.
+"""CRDF rows to CRS commitments, within a year and then by the recovery routes.
 
 Within a year, a CRDF row joins the commitment units that share its provider, crs
 id, purpose and year. The recovery routes link rows that join reaches no unit for.
@@ -36,14 +36,14 @@ from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.normalise.vintages import match_eib, pair_one_to_one
 
 # CRDF rows and CRS commitments that agree on these, the CRDF provider standing for
-# the CRS donor, are one commitment: 99.5% of such keys pair one to one.
+# the CRS donor, are one commitment. 99.5% of such keys pair one to one.
 WITHIN_YEAR_KEY = ("donor_code", "crs_id", "year", "purpose_code")
 
 _EIB_DONOR = 918
 _EIB_AGENCY = 3
 # The EIB's IATI activity id: its project serial, then one finance contract number.
 _EIB_ACTIVITY = r"^XM-DAC-918-3-(?<serial>\d{8})-(?<contract>\d{5})$"
-# DAC exchange rates are by country; the euro's is held by EU Institutions.
+# DAC exchange rates are by country, and the euro's is held by EU Institutions.
 _EURO_ISSUER = "EUI"
 # A project's commitments match a row's face value within this share, in euros.
 _AMOUNT_TOLERANCE = 0.10
@@ -95,7 +95,7 @@ def recover(
     The EIB routes run in order on the EIB rows that no earlier link reaches,
     leaving out rows that repeat an earlier row (`repeat_of`). A recovered EIB row's
     links form its own group, `<link_method>|<row_id>`. A row whose units another
-    row's group already holds stays unlinked, unless every holder repeats it: the
+    row's group already holds stays unlinked, unless every holder repeats it. The
     earliest row counts, so it takes over its repeats' group.
 
     Args:
@@ -336,7 +336,7 @@ def _settle(
     """Add a route's (row_id, unit_id) pairs to `links` as `method` groups.
 
     A row loses its pairs when another row's group holds one of its units, unless
-    that holder repeats it; then the row takes over the holder's group.
+    that holder repeats it, in which case the row takes over the holder's group.
     """
     holders = links.select(
         unit_id="right_id", group_id="group_id", holder="left_id"

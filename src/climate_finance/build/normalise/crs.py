@@ -9,7 +9,7 @@ from climate_finance.schema import CRS_UNSPECIFIED_RECIPIENT, UNSPECIFIED_RECIPI
 _USD_PER_UNIT = 1e6
 # Bi_Multi 2 is a donor's core contribution to a multilateral agency. The agency's
 # own outflows (code 4) carry that money to recipients, so the trace leaves code 2
-# out; provider totals count it only as core contributions.
+# out. Provider totals count it only as core contributions.
 CORE_CONTRIBUTION = 2
 
 _AMOUNTS = {
@@ -64,8 +64,8 @@ def normalise_crs(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFrame:
             pl.col("donor_code", "agency_code").cast(pl.Int32),
             pl.col("crs_id", "project_number").cast(pl.String),
             title=pl.col("project_title").cast(pl.String),
-            # The bulk CRS publishes "Developing countries, unspecified" as 9998;
-            # the CRDF and the DAC recipient list use 998. Writing 998 here gives
+            # The bulk CRS publishes "Developing countries, unspecified" as 9998,
+            # and the CRDF and the DAC recipient list use 998. Writing 998 here gives
             # every stage and release table one code.
             recipient_code=pl.col("recipient_code")
             .cast(pl.Int32)
