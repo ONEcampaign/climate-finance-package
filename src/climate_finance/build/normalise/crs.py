@@ -73,6 +73,8 @@ def normalise_crs(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFrame:
                 for name, source in _AMOUNTS.items()
             },
             commitment_date=pl.col("commitment_date").cast(pl.Date),
+            expected_start_date=pl.col("expected_start_date").cast(pl.Date),
+            completion_date=pl.col("completion_date").cast(pl.Date),
             rio_adaptation=pl.col("climate_adaptation").cast(pl.Int8),
             rio_mitigation=pl.col("climate_mitigation").cast(pl.Int8),
             text_hash=pl.col("text_hash"),

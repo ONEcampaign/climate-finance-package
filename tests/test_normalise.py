@@ -1,6 +1,7 @@
 """The normalise stage on hand-built OECD raw files."""
 
 import shutil
+from datetime import date
 from pathlib import Path
 
 import polars as pl
@@ -65,6 +66,24 @@ def test_crs_keeps_records_with_an_amount_in_usd_units(crs: pl.DataFrame) -> Non
     core = _row(crs, crs_id="2022000900")
     assert core["bi_multi"] == 2
     assert core["rio_adaptation"] is None
+
+
+def test_crs_keeps_the_expected_start_and_completion_dates() -> None:
+    raw = pl.read_parquet(OECD / "CRS.parquet").with_columns(
+        expected_start_date=pl.when(pl.col("crs_id") == "2022000102").then(
+            pl.date(2022, 4, 1)
+        ),
+        completion_date=pl.when(pl.col("crs_id") == "2022000102").then(
+            pl.date(2025, 12, 31)
+        ),
+    )
+    crs = normalise_crs(raw.lazy(), years=YEARS).collect()
+    solar = _row(crs, crs_id="2022000102")
+    assert (solar["expected_start_date"], solar["completion_date"]) == (
+        date(2022, 4, 1),
+        date(2025, 12, 31),
+    )
+    assert crs["completion_date"].null_count() == crs.height - 1
 
 
 def test_crs_record_ids_are_unique_and_stable(crs: pl.DataFrame) -> None:

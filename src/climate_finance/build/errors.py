@@ -39,3 +39,7 @@ class CostCapExceededError(BuildError):
             f"Estimated cost USD {estimate_usd:.2f} exceeds the cap of "
             f"USD {cap_usd:.2f}."
         )
+
+
+class AllocationInputError(BuildError):
+    """Links that allocation cannot split without breaking a face cap or a total."""

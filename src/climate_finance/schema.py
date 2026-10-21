@@ -226,6 +226,9 @@ CRS = _table(
     disbursement_usd=_usd(nullable=True),
     grant_equiv_usd=_usd(nullable=True),
     commitment_date=Column(pl.Date(), nullable=True),
+    # The project's expected start and completion, which the window rule reads.
+    expected_start_date=Column(pl.Date(), nullable=True),
+    completion_date=Column(pl.Date(), nullable=True),
     rio_adaptation=_rio(),
     rio_mitigation=_rio(),
     text_hash=_str(nullable=True),
@@ -420,6 +423,10 @@ PROVIDER_PROFILE = _table(
     key_link_share=_f64(nullable=True),
 )
 
+# A CRS record's disbursement at face value, split over CRDF commitments (`row_id`).
+# A null `row_id` holds the part that reached CRS commitments outside the CRDF, or,
+# under rule `excess`, the part that reached no commitment, so a linked record's
+# rows sum to its disbursement. Bounds as in `disbursements`.
 ALLOCATIONS = _table(
     "allocations",
     ("row_id", "record_id", "year", "rule"),
@@ -427,6 +434,8 @@ ALLOCATIONS = _table(
     record_id=_str(),
     year=_year(),
     allocated_usd=_usd(),
+    allocated_low_usd=_usd(),
+    allocated_high_usd=_usd(),
     rule=_str(values=ALLOCATION_RULES),
     disbursement_source=_str(values=DISBURSEMENT_SOURCES),
 )
@@ -442,6 +451,11 @@ COMMITMENT_STATUS = _table(
     disbursed_low_usd=_usd(),
     disbursed_high_usd=_usd(),
     project_disbursing=_bool(),
+    # Status inputs that allocation fixes, so a later stage can recompute status:
+    # whether the row reaches a CRS commitment through an agency whose ids persist,
+    # and whether allocation gives its id's disbursement to earlier commitments.
+    traceable=_bool(),
+    id_disbursing=_bool(),
 )
 
 CANCELLATIONS = _table(
