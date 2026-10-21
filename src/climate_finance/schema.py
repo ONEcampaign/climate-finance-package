@@ -444,6 +444,9 @@ ALLOCATIONS = _table(
     disbursement_source=_str(values=DISBURSEMENT_SOURCES),
 )
 
+# Status uses the linked CRS commitment's face. disbursed_usd is in the dollars
+# disbursed and can sit below face for a disbursed commitment when exchange rates
+# move.
 COMMITMENT_STATUS = _table(
     "commitments",
     ("row_id",),

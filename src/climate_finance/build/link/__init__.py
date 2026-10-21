@@ -46,10 +46,6 @@ def run_link(context: StageContext) -> StageOutput:
     links = [trace, crdf_crs]
     if config.key_repair:
         links.append(
-            repair_keys(
-                units.lazy(),
-                commitments=units.lazy().filter(pl.col("commitment_usd") > 0),
-                links=trace.lazy(),
-            ).collect()
+            repair_keys(units, crs=crs, links=trace, first_year=config.years.crs[0])
         )
     return {"links": pl.concat(links), "units": units, "id_practice": id_practice}

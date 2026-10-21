@@ -31,6 +31,7 @@ build = [
     "oda-reader>=1.12.0",
     "openpyxl>=3.0.10",
     "pyyaml>=6.0.1",
+    "rapidfuzz>=3.6.0",
     "resolvekit>=0.1.13",
     "rich>=13.8.0",
     "typer>=0.16.0",

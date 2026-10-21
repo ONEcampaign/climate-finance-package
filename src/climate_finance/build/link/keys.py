@@ -122,11 +122,13 @@ def build_units(crs: pl.LazyFrame) -> pl.LazyFrame:
             commitment_year=pl.col("commitment_date").dt.year().cast(pl.Int16),
         )
         .group_by(UNIT_KEY)
+        # Amounts are summed as lists in record order: a partitioned group sum
+        # adds in whatever order threads finish, which changes the last bit.
         .agg(
-            commitment_usd=pl.col("commitment_usd").sum(),
-            disbursement_usd=pl.col("disbursement_usd").sum(),
+            pl.col("commitment_usd", "disbursement_usd").sort_by("record_id"),
             record_ids=pl.col("record_id").sort(),
         )
+        .with_columns(pl.col("commitment_usd", "disbursement_usd").list.sum())
         .filter((pl.col("commitment_usd") != 0) | (pl.col("disbursement_usd") != 0))
         .with_columns(
             unit_id=content_id(UNIT_KEY, order_by=UNIT_KEY),

@@ -1,11 +1,13 @@
 """The allocate stage: dated FIFO allocation and commitment status.
 
 The link stage sums CRS records into `units` and links them. A `trace` link runs
-from a disbursement unit (left) to each commitment unit (right) it may fill; every
-link of one disbursement unit shares one `link_method` and one `group_id`, and a
-group holds one key of one method, so the groups of one method never share a
-commitment. A `crdf_crs` link runs from a CRDF row to a commitment unit, and its
-`group_id` holds every row and unit of one commitment.
+from a disbursement unit (left) to each commitment unit (right) it may fill. A
+disbursement unit carries at most one `group_id` per `link_method`, and a group
+holds one key of one method, so the groups of one method never share a commitment.
+Every disbursement unit of a group reaches the same commitments, less those its
+record year or floor rules out, since the group pools their disbursement. A
+`crdf_crs` link runs from a CRDF row to a commitment unit, and its `group_id` holds
+every row and unit of one commitment.
 
 Allocation runs on the CRS records inside those units (`units.record_ids`): a record
 with a positive commitment in a commitment unit is a commitment at the unit's
@@ -17,7 +19,10 @@ Passes run by record year, then link method in `LINK_METHODS` order, then class:
 records with a date floor first, oldest floor first, then a dated donor's records
 dated in their own year, then the rest. Within a pass a group pools its records'
 disbursement and fills its commitments oldest `placed_year` first, pro rata to
-headroom within a year, capped at face value; the remainder is excess. Two
+headroom within a year, capped at face value. A record whose unit carries groups of
+several methods enters one pass per group, in `LINK_METHODS` order, and each later
+pass receives only what the earlier ones left: the exact key tiers first, then the
+key-repair rules. What the last pass leaves is excess. Two
 per-donor switches change the order. A dated donor's record dated in its own year
 fills that year's commitments first. A window donor's other records fill first the
 commitments whose expected start to completion window, plus `WINDOW_GRACE` years,
@@ -232,9 +237,10 @@ def _trace_links(links: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataFrame:
     """The `trace` links as (disbursement unit, commitment unit, group, method).
 
     Raises:
-        AllocationInputError: when a link lacks a group, a disbursement unit carries
-            two methods or groups, or a link names a unit that is not a positive
-            disbursement (left) or commitment (right).
+        AllocationInputError: when a link lacks a group, a group spans two
+            methods, a disbursement unit carries two groups of one method, or a
+            link names a unit that is not a positive disbursement (left) or
+            commitment (right).
     """
     trace = (
         links.filter(pl.col("task") == "trace")
@@ -248,13 +254,17 @@ def _trace_links(links: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataFrame:
     )
     if trace["group_id"].null_count():
         raise AllocationInputError("trace links without a group_id")
-    split = trace.group_by("d_unit").agg(
-        methods=pl.col("method").n_unique(), groups=pl.col("group_id").n_unique()
-    )
-    if (bad := split.filter((pl.col("methods") > 1) | (pl.col("groups") > 1))).height:
+    spans = trace.group_by("group_id").agg(pl.col("method").n_unique())
+    if (bad := spans.filter(pl.col("method") > 1)).height:
         raise AllocationInputError(
-            f"{bad.height} disbursement units carry more than one link method or "
-            f"group, such as {bad['d_unit'].sort().head(3).to_list()}"
+            f"{bad.height} trace groups span more than one link method, such as "
+            f"{bad['group_id'].sort().head(3).to_list()}"
+        )
+    split = trace.group_by("d_unit", "method").agg(pl.col("group_id").n_unique())
+    if (bad := split.filter(pl.col("group_id") > 1)).height:
+        raise AllocationInputError(
+            f"{bad['d_unit'].n_unique()} disbursement units carry two groups of one "
+            f"link method, such as {bad['d_unit'].unique().sort().head(3).to_list()}"
         )
     amounts = units.select("unit_id", "commitment_usd", "disbursement_usd").collect()
     disbursing = amounts.filter(pl.col("disbursement_usd") > 0).select(d_unit="unit_id")
@@ -281,6 +291,11 @@ def _trace_pairs(
 
     Order, class and rule are facts of the unit pair, as a unit's records share
     their years and keys.
+
+    Raises:
+        AllocationInputError: when the links break the contract in the module
+            docstring, including disbursement units of one group and pass that
+            reach different commitments.
     """
     trace = _trace_links(links, units=units)
     disbursements = units.select(
@@ -340,6 +355,10 @@ def _trace_pairs(
         .sort("year", "rank", "class_year", nulls_last=True)
         .with_row_index("pass")
     )
+    unit_pairs = unit_pairs.join(
+        passes, on=["year", "rank", "class_year"], nulls_equal=True
+    )
+    _check_pooling(unit_pairs)
     commitments = (
         _commitment_records(units, crs=crs).sort("record_id").with_row_index("c_idx")
     )
@@ -351,8 +370,7 @@ def _trace_pairs(
         .collect()
     )
     pairs = (
-        unit_pairs.join(passes, on=["year", "rank", "class_year"], nulls_equal=True)
-        .join(records, on="d_unit")
+        unit_pairs.join(records, on="d_unit")
         .join(
             commitments.select("c_idx", c_unit="unit_id"),
             on="c_unit",
@@ -371,6 +389,25 @@ def _trace_pairs(
     return pairs, commitments
 
 
+def _check_pooling(unit_pairs: pl.DataFrame) -> None:
+    """Refuse a group whose disbursement units of one pass reach different
+    commitments, since the pass pools their disbursement over all of them.
+
+    Raises:
+        AllocationInputError: naming such groups.
+    """
+    group = ["pass", "group_id"]
+    reached = unit_pairs.group_by(*group, "d_unit").agg(pl.col("c_unit").n_unique())
+    pooled = unit_pairs.group_by(group).agg(pooled=pl.col("c_unit").n_unique())
+    bad = reached.join(pooled, on=group).filter(pl.col("c_unit") != pl.col("pooled"))
+    if bad.height:
+        raise AllocationInputError(
+            f"{bad['group_id'].n_unique()} trace groups pool disbursement units that "
+            "reach different commitments in one pass, such as "
+            f"{bad['group_id'].unique().sort().head(3).to_list()}"
+        )
+
+
 def allocate(
     units: pl.LazyFrame,
     *,
@@ -379,7 +416,8 @@ def allocate(
     dated: Collection[int] = (),
     windowed: Collection[int] = (),
 ) -> pl.DataFrame:
-    """Split each linked disbursement record over its group's commitment records.
+    """Split each linked disbursement record over its groups' commitment records,
+    each later group of its unit taking what the earlier ones left.
 
     Args:
         units: the link stage's `units`.
@@ -393,7 +431,7 @@ def allocate(
         One row per (commitment record, disbursement record) that received an
         amount: `commitment_id` (the commitment's CRS record_id), `record_id`,
         `year` (the record's), `allocated_usd` and `rule`; plus a `rule="excess"`
-        row with a null `commitment_id` for each record its group could not take
+        row with a null `commitment_id` for each record its groups could not take
         in full.
 
     Raises:
@@ -409,57 +447,83 @@ def allocate(
     # same inputs give the same bits.
     passes = ["pass", "group_id"]
     records = (
-        pairs.select(*passes, "record_id", "year", "amount", "rule")
+        pairs.select("record_id", "year", "amount")
         .unique()
-        .sort(*passes, "record_id")
+        .sort("record_id")
+        .with_row_index("r_idx")
     )
-    totals = records.group_by(passes, maintain_order=True).agg(
-        total=pl.col("amount").sum()
+    # A record enters one pass per group of its unit, in pass order.
+    entries = (
+        pairs.select(*passes, "record_id", "rule")
+        .unique()
+        .join(records.select("record_id", "r_idx", "year"), on="record_id")
+        .sort(*passes, "record_id")
     )
     candidates = pairs.select(*passes, "c_idx", "order").unique()
     if candidates.select("pass", "c_idx").is_duplicated().any():
         raise AllocationInputError("Two groups of one pass share a commitment")
 
     headroom = commitments["face"].to_numpy().astype(np.float64, copy=True)
-    fills = []
-    by_pass = (
-        candidates.join(totals, on=passes)
-        .sort(*passes, "order", "c_idx")
-        .partition_by("pass", as_dict=True)
-    )
+    # What each record has left to give: its disbursement less earlier passes.
+    left = records["amount"].to_numpy().astype(np.float64, copy=True)
+    by_pass = candidates.partition_by("pass", as_dict=True)
+    entries_by_pass = entries.partition_by("pass", as_dict=True)
+    allocated = []
     for key in sorted(by_pass):
-        part = by_pass[key]
+        entered = entries_by_pass[key]
+        entered = entered.with_columns(
+            left=pl.Series(left[entered["r_idx"].to_numpy()])
+        ).filter(pl.col("left") > 0)
+        if entered.is_empty():
+            continue
+        totals = entered.group_by("group_id", maintain_order=True).agg(
+            total=pl.col("left").sum()
+        )
+        part = by_pass[key].join(totals, on="group_id").sort(*passes, "order", "c_idx")
         filled = _fill(part, headroom[part["c_idx"].to_numpy()])
         headroom[part["c_idx"].to_numpy()] -= filled["fill"].to_numpy()
-        fills.append(filled)
 
-    filled = pl.concat(fills)
-    capacity = filled.group_by(passes, maintain_order=True).agg(
-        pl.col("capacity").first()
-    )
-    records = records.join(totals, on=passes).join(capacity, on=passes)
-    share = pl.col("amount") / pl.col("total")
-    allocated = (
-        filled.filter(pl.col("fill") > 0)
-        .join(records, on=passes)
-        .join(commitments.select("c_idx", commitment_id="record_id"), on="c_idx")
-        .select(
-            "commitment_id",
-            "record_id",
-            "year",
-            allocated_usd=pl.col("fill") * share,
-            rule="rule",
+        capacity = filled.group_by("group_id", maintain_order=True).agg(
+            pl.col("capacity").first()
         )
+        given = entered.join(totals, on="group_id").join(capacity, on="group_id")
+        share = pl.col("left") / pl.col("total")
+        # A group that takes its whole total takes each record's whole remainder.
+        taken = given.select(
+            "r_idx",
+            taken=pl.when(pl.col("total") <= pl.col("capacity"))
+            .then(pl.col("left"))
+            .otherwise(pl.col("capacity") * share),
+        )
+        index = taken["r_idx"].to_numpy()
+        left[index] = np.maximum(left[index] - taken["taken"].to_numpy(), 0.0)
+        allocated.append(
+            filled.filter(pl.col("fill") > 0)
+            .join(given, on="group_id")
+            .select(
+                "c_idx",
+                "record_id",
+                "year",
+                allocated_usd=pl.col("fill") * share,
+                rule="rule",
+            )
+        )
+
+    commitment_ids = commitments.select("c_idx", commitment_id="record_id")
+    filled_pairs = (
+        pl.concat(allocated)
+        .join(commitment_ids, on="c_idx")
+        .drop("c_idx")
+        .select(_PAIRS_SCHEMA.names())
     )
     excess = records.select(
         commitment_id=pl.lit(None, dtype=pl.String),
         record_id="record_id",
         year="year",
-        allocated_usd=(pl.col("total") - pl.col("capacity")).clip(lower_bound=0.0)
-        * share,
+        allocated_usd=pl.Series(left),
         rule=pl.lit("excess"),
     ).filter(pl.col("allocated_usd") > 0)
-    return pl.concat([allocated.cast(_PAIRS_SCHEMA), excess.cast(_PAIRS_SCHEMA)])
+    return pl.concat([filled_pairs.cast(_PAIRS_SCHEMA), excess.cast(_PAIRS_SCHEMA)])
 
 
 def _fill(candidates: pl.DataFrame, headroom: np.ndarray) -> pl.DataFrame:
@@ -499,12 +563,14 @@ def _commitment_groups(
     crs: pl.LazyFrame,
     links: pl.LazyFrame,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    """The `crdf_crs` groups as (row_id, group_id, weight), (group_id, spread) and
-    (unit_id, group_id).
+    """The `crdf_crs` groups as (row_id, group_id, weight, crs_face_usd),
+    (group_id, spread) and (unit_id, group_id).
 
     A row's weight is its face value over the larger of its group's CRS commitment
     face (its commitment records' sum) and CRDF face, so a group's weights sum to at
-    most 1.
+    most 1. `crs_face_usd` is the row's weight times the CRS face, so a row's
+    allocations over it are the group's allocation over the CRS face. The two faces
+    differ when they convert one currency amount at different years' rates.
 
     Raises:
         AllocationInputError: when a link has no group, or a row or a unit sits in
@@ -551,6 +617,11 @@ def _commitment_groups(
         weight=pl.when(denominator > 0)
         .then(positive_face / denominator)
         .otherwise(0.0),
+        crs_face_usd=pl.when(pl.col("crs_face") > 0)
+        # Divided by the face ratio, so a row whose CRS face covers it keeps its
+        # face to the bit.
+        .then(pl.col("face_usd") / (denominator / pl.col("crs_face")))
+        .otherwise(pl.col("face_usd")),
     )
     # The share of a group's allocation its rows take: exactly 1 when their face
     # covers the CRS face.
@@ -576,8 +647,9 @@ def allocate_to_rows(
     A pair's amount goes to the rows of its commitment's `crdf_crs` group by weight
     (see `_commitment_groups`). The rest, and every pair whose commitment has no
     CRDF row, goes to a null `row_id`, so each record's rows sum to what `allocate`
-    gave it, excess included. Bounds equal the allocation, since every key link
-    holds with probability 1.
+    gave it, excess included. A repeat row's share then moves to the row it repeats
+    (see `_to_first_rows`). Bounds equal the allocation, since every key link holds
+    with probability 1.
     """
     weights, spread, unit_groups = _commitment_groups(
         crdf, units=units, crs=crs, links=links
@@ -596,6 +668,7 @@ def allocate_to_rows(
         "commitment_id",
         allocated_usd=pl.col("allocated_usd") * pl.col("weight"),
     )
+    to_rows = _to_first_rows(to_rows, crdf=crdf)
     rest = grouped.join(spread, on="group_id", how="left").select(
         row_id=pl.lit(None, dtype=pl.String),
         record_id="record_id",
@@ -624,6 +697,49 @@ def allocate_to_rows(
     )
 
 
+def _to_first_rows(to_rows: pl.DataFrame, *, crdf: pl.LazyFrame) -> pl.DataFrame:
+    """Move each repeat row's allocations to the row it repeats (`repeat_of`).
+
+    A republished commitment is the same commitment, so its disbursement belongs to
+    the first row. The first row keeps its own allocations and takes its repeats'
+    up to its face, in record order; the rest goes to a null `row_id`, as the part
+    of a commitment without a CRDF row does.
+    """
+    rows = crdf.select("row_id", "repeat_of", "face_usd").collect()
+    amount = pl.col("allocated_usd")
+    repeat = pl.col("repeat_of").is_not_null()
+    headroom = (pl.col("face") - pl.col("before")).clip(lower_bound=0.0)
+    ordered = (
+        to_rows.join(rows.select("row_id", "repeat_of"), on="row_id", how="left")
+        .with_columns(first=pl.coalesce("repeat_of", "row_id"))
+        .join(
+            rows.select(first="row_id", face=pl.col("face_usd").clip(lower_bound=0.0)),
+            on="first",
+            how="left",
+        )
+        .sort("first", repeat, "row_id", "record_id", "year", "rule", "commitment_id")
+        .with_columns(before=amount.cum_sum().over("first") - amount)
+        .with_columns(
+            kept=pl.when(repeat)
+            .then(pl.min_horizontal(amount, headroom.fill_null(0.0)))
+            .otherwise(amount)
+        )
+    )
+    columns = ("record_id", "year", "rule", "commitment_id")
+    return pl.concat(
+        [
+            ordered.select(
+                pl.col("first").alias("row_id"), *columns, amount=pl.col("kept")
+            ),
+            ordered.select(
+                pl.lit(None, dtype=pl.String).alias("row_id"),
+                *columns,
+                amount=amount - pl.col("kept"),
+            ),
+        ]
+    ).rename({"amount": "allocated_usd"})
+
+
 def status_basis(
     crdf: pl.LazyFrame,
     *,
@@ -639,6 +755,9 @@ def status_basis(
     unit's agency is classed `neither` in the period of the row's year.
     `id_disbursing` is true when allocation gave disbursement to a commitment of the
     row's (donor, crs id) placed in a year before the row's commitment.
+    `crs_face_usd` is the row's share of its linked CRS commitment's face, which
+    status reads its allocations against (see `_commitment_groups`); it is the
+    row's own face outside every group.
     """
     weights, _, unit_groups = _commitment_groups(
         crdf, units=units, crs=crs, links=links
@@ -657,7 +776,11 @@ def status_basis(
     rows = (
         crdf.select("row_id", "year", "face_usd", "climate_usd")
         .collect()
-        .join(weights.select("row_id", "group_id"), on="row_id", how="left")
+        .join(
+            weights.select("row_id", "group_id", "crs_face_usd"),
+            on="row_id",
+            how="left",
+        )
         .join(group_facts, on="group_id", how="left")
         .with_columns(period=period_of(pl.col("year")))
     )
@@ -696,6 +819,7 @@ def status_basis(
             "climate_usd",
             traceable=pl.col("placed_year").is_not_null() & pl.col("neither").is_null(),
             id_disbursing=pl.col("id_disbursing").fill_null(False),
+            crs_face_usd=pl.col("crs_face_usd").fill_null(pl.col("face_usd")),
         )
     )
 
@@ -709,16 +833,20 @@ def compute_status(
     """Status, disbursed bounds and `project_disbursing` per commitment.
 
     Args:
-        commitments: `row_id`, `face_usd`, `climate_usd`, `traceable` and
-            `id_disbursing`, as `status_basis` builds them or the allocate stage's
-            `commitments` table holds them.
+        commitments: `row_id`, `face_usd`, `climate_usd`, `traceable`,
+            `id_disbursing` and `crs_face_usd`, as `status_basis` builds them.
         allocations: the `allocations` table.
         pending: the `row_id`s of commitments pending review.
 
     Returns:
-        The `commitments` stage table. Status reads allocated over face:
-        `disbursed` at `DISBURSED_RATIO` or more, `partly_disbursed` above 0. With
-        nothing allocated a row is `not_traceable` when not `traceable`, else
+        The `commitments` stage table. Status uses the linked CRS commitment's
+        face: its ratio is the group's allocation over the CRS face, which is the
+        row's disbursed amount over `crs_face_usd`. `disbursed_usd`
+        sums the row's allocations in the dollars disbursed, so it can sit below
+        face for a disbursed commitment when exchange rates move between the
+        commitment and disbursement years. The ratio reads `disbursed` at
+        `DISBURSED_RATIO` or more, `partly_disbursed` above 0. With nothing
+        allocated a row is `not_traceable` when not `traceable`, else
         `no_disbursement_record`. A pending row is `pending_review` whatever its
         ratio. `project_disbursing` marks a no-record row whose id is disbursing.
     """
@@ -738,7 +866,7 @@ def compute_status(
         if pending is None
         else pending.lazy().select("row_id")
     )
-    face = pl.col("face_usd")
+    face = pl.col("crs_face_usd")
     ratio = pl.when(face > 0).then(pl.col("disbursed_usd") / face).otherwise(0.0)
     status = (
         pl.when(pl.col("pending"))
@@ -754,7 +882,14 @@ def compute_status(
     amounts = ("disbursed_usd", "disbursed_low_usd", "disbursed_high_usd")
     return (
         commitments.lazy()
-        .select("row_id", "face_usd", "climate_usd", "traceable", "id_disbursing")
+        .select(
+            "row_id",
+            "face_usd",
+            "climate_usd",
+            "traceable",
+            "id_disbursing",
+            "crs_face_usd",
+        )
         .join(disbursed, on="row_id", how="left")
         .join(
             pending_ids.unique().with_columns(pending=pl.lit(True)),
@@ -762,7 +897,8 @@ def compute_status(
             how="left",
         )
         .with_columns(
-            pl.col(*amounts).fill_null(0.0), pl.col("pending").fill_null(False)
+            pl.col(*amounts).fill_null(0.0),
+            pl.col("pending").fill_null(False),
         )
         .with_columns(status=status)
         .select(
