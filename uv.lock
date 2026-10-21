@@ -136,6 +136,7 @@ build = [
     { name = "oda-reader" },
     { name = "openpyxl" },
     { name = "pyyaml" },
+    { name = "resolvekit" },
     { name = "rich" },
     { name = "typer" },
 ]
@@ -161,6 +162,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10.0" },
     { name = "pydeflate", specifier = ">=2.6.2" },
     { name = "pyyaml", marker = "extra == 'build'", specifier = ">=6.0.1" },
+    { name = "resolvekit", marker = "extra == 'build'", specifier = ">=0.1.13" },
     { name = "rich", marker = "extra == 'build'", specifier = ">=13.8.0" },
     { name = "typer", marker = "extra == 'build'", specifier = ">=0.16.0" },
 ]

@@ -174,6 +174,24 @@ def test_a_stage_returning_undeclared_tables_writes_nothing(
     assert not (tmp_path / "s").exists()
 
 
+@pytest.mark.parametrize(("returned", "left_out"), [("crdf", None), ("orgs", "crdf")])
+def test_only_optional_tables_may_be_left_out(
+    config: BuildConfig, tmp_path: Path, returned: str, left_out: str | None
+) -> None:
+    stage = StageDef(
+        name="normalise",
+        run=lambda _: {returned: _numbers(["a"], [1.0])["numbers"]},
+        tables={"crdf": TABLE, "orgs": TABLE},
+    )
+
+    if left_out is None:
+        manifest = run_stages([stage], release="r", release_dir=tmp_path, config=config)
+        assert list(manifest.tables["normalise"]) == [returned]
+        return
+    with pytest.raises(StageOutputError, match=left_out):
+        run_stages([stage], release="r", release_dir=tmp_path, config=config)
+
+
 def test_unknown_stage_is_refused(config: BuildConfig, tmp_path: Path) -> None:
     with pytest.raises(BuildError, match="nonsense"):
         run_stages(

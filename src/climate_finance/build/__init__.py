@@ -30,7 +30,12 @@ from climate_finance.build.stages import (  # noqa: E402
     StageOutput,
     table_path,
 )
-from climate_finance.schema import TableSchema, sha256_file, validate  # noqa: E402
+from climate_finance.schema import (  # noqa: E402
+    OPTIONAL_STAGE_TABLES,
+    TableSchema,
+    sha256_file,
+    validate,
+)
 
 
 @dataclass(frozen=True)
@@ -63,17 +68,21 @@ def write_stage(
     """Validate every table `stage` returned, then write them all.
 
     Raises:
-        StageOutputError: when the returned tables differ from the declared ones.
+        StageOutputError: when the returned tables differ from the declared ones,
+            other than by leaving out a table in `OPTIONAL_STAGE_TABLES`.
         SchemaError: when a table fails its schema.
     """
-    missing = sorted(set(stage.tables) - set(output))
+    optional = OPTIONAL_STAGE_TABLES.get(stage.name, frozenset())
+    missing = sorted(set(stage.tables) - set(output) - optional)
     unexpected = sorted(set(output) - set(stage.tables))
     if missing or unexpected:
         raise StageOutputError(
             f"Stage {stage.name!r} returned unexpected tables {unexpected} "
             f"and left out {missing}"
         )
-    frames = {name: output[name].lazy().collect() for name in stage.tables}
+    frames = {
+        name: output[name].lazy().collect() for name in stage.tables if name in output
+    }
     for name, frame in frames.items():
         validate(stage.tables[name], frame)
     return {

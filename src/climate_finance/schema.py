@@ -86,7 +86,9 @@ FETCH_METHODS = ("http", "registered", "manual")
 PERSPECTIVES = ("provider", "recipient")
 FLOWS = ("commitments", "disbursements", "grant_equivalent")
 DECISIONS = ("accept", "reject")
-BI_MULTI_CODES = (1, 2, 3, 4, 7, 8)
+# Code 6 holds private-sector and philanthropic outflows, kept as published; the query
+# views list the codes they count and leave it out.
+BI_MULTI_CODES = (1, 2, 3, 4, 6, 7, 8)
 RIO_MARKERS = (0, 1, 2)
 
 type DType = pl.DataType | type[pl.DataType]
@@ -189,7 +191,9 @@ CRDF = _table(
     bi_multi=_bi_multi(),
     purpose_code=_code(nullable=True),
     flow_code=_code(nullable=True),
-    objective=_str(values=OBJECTIVES),
+    # Provider-perspective imputed multilateral contribution rows carry a climate
+    # total only, so their objective is `climate`.
+    objective=_str(values=SHARE_OBJECTIVES),
     rio_adaptation=_rio(),
     rio_mitigation=_rio(),
     face_usd=_usd(),
@@ -671,6 +675,12 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
     "label": _by_name(OBJECTIVE_LABELS, JEV_LEVEL_MAP),
     "measure": _by_name(AGENCY_SHARES, MODELLED),
     "assemble": RELEASE_TABLES,
+}
+# Tables a stage may leave out. A stage that reads one that was not written raises
+# StageInputMissingError. `orgs` is written when recoveries are on, `btr` when the
+# build config names an ingested BTR table.
+OPTIONAL_STAGE_TABLES: Mapping[str, frozenset[str]] = {
+    "normalise": frozenset({"btr", "orgs"}),
 }
 
 
