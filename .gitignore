@@ -8,7 +8,10 @@ __pycache__/
 
 # Distribution / packaging
 .Python
-build/
+# Anchored so the climate_finance.build package is not ignored.
+/build/
+# Default cf-build output directory.
+/releases/
 develop-eggs/
 dist/
 downloads/

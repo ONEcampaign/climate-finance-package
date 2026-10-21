@@ -1,25 +1,23 @@
-__version__ = "1.2.3"
+"""Climate finance figures from OECD and UNFCCC data, traced to the project."""
 
-# Easy access to importers
+from importlib.metadata import version
 
-from climate_finance.unfccc import get_unfccc_data
-from climate_finance.core.data import ClimateData
+from climate_finance import methods
+from climate_finance.catalogue import flows, providers
+from climate_finance.methods import Method
+from climate_finance.result import compare
+from climate_finance.snapshot import load
+from climate_finance.spec import Spec
 
-
-def set_climate_finance_data_path(path):
-    from pathlib import Path
-    from climate_finance.config import ClimateDataPath
-    from oda_data import set_data_path
-    from pydeflate import set_pydeflate_path
-
-    """Set the path to the _data folder."""
-    ClimateDataPath.raw_data = Path(path).resolve()
-    set_data_path(Path(path).resolve())
-    set_pydeflate_path(Path(path).resolve())
-
+__version__ = version("climate-finance")
 
 __all__ = [
-    "set_climate_finance_data_path",
-    "get_unfccc_data",
-    "ClimateData",
+    "Method",
+    "Spec",
+    "__version__",
+    "compare",
+    "flows",
+    "load",
+    "methods",
+    "providers",
 ]

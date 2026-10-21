@@ -59,8 +59,7 @@ where the data will be stored. This can be done importing using the
 ```python
 from climate_finance import set_climate_finance_data_path
 
-set_climate_finance_data_path('path/to/your/data')
-
+set_climate_finance_data_path("path/to/your/data")
 ```
 
 The easiest way to interact with the data is through the `ClimateData` class.
