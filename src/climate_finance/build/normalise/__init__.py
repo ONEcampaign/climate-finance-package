@@ -16,10 +16,12 @@ from climate_finance.build.fetch import (
     IMPUTED_SHARES_FILE,
     MULTISYSTEM_FILE,
 )
+from climate_finance.build.normalise.aggregates import rebuild_aggregates
 from climate_finance.build.normalise.crdf import normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs
 from climate_finance.build.normalise.external import normalise_external
 from climate_finance.build.normalise.orgs import resolve_orgs
+from climate_finance.build.normalise.vintages import mark_repeats
 from climate_finance.build.readers.gcf import read_gcf_projects
 from climate_finance.build.readers.iati import read_iati_activities
 from climate_finance.build.readers.imputed_shares import read_imputed_shares
@@ -33,7 +35,9 @@ def run_normalise(context: StageContext) -> StageOutput:
     """Normalise the files fetch wrote under `raw/` into the normalise tables.
 
     Reads only those files, and the ingested BTR table when the config names one
-    (`sources.btr_table`); `btr` is left out otherwise. `orgs` resolves the CRDF's
+    (`sources.btr_table`); `btr` is left out otherwise. `crdf` marks rows repeated
+    across vintages (`repeat_of`) and gains child rows for the bilateral aggregate
+    rows the bulk records rebuild (`parent_row_id`). `orgs` resolves the CRDF's
     provider, agency and channel names, and is written only when recoveries are on,
     the only routes that read it.
     """
@@ -45,15 +49,19 @@ def run_normalise(context: StageContext) -> StageOutput:
     crs = normalise_crs(
         pl.scan_parquet(raw / CRS_FILE), years=context.config.years.crs
     ).collect()
+    exchange = pl.read_parquet(raw / DAC_EXCHANGE_FILE)
     crdf = pl.concat(
         normalise_crdf(frame, perspective=perspective, crs=crs.lazy())
         for perspective, frame in raw_crdf.items()
+    )
+    crdf = rebuild_aggregates(
+        mark_repeats(crdf, crs=crs.lazy(), exchange=exchange), crs=crs.lazy()
     )
     external = normalise_external(
         pl.concat(
             [read_iati_activities(raw / IATI_DIR), read_gcf_projects(raw / GCF_FILE)]
         ),
-        exchange=pl.read_parquet(raw / DAC_EXCHANGE_FILE),
+        exchange=exchange,
     )
     tables: dict[str, pl.DataFrame | pl.LazyFrame] = {
         "crdf": crdf,

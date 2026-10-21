@@ -318,8 +318,8 @@ ORGS = _table(
     method=_str(values=("exact_code", "exact_name", "pack", "propagated")),
 )
 
-# The comparison levels a scored pair carries, one Int8 level per field compared.
-# Key links carry none.
+# The comparison levels a scored pair carries, one Int8 level per field compared. The
+# scoring stage fills them; key links leave `levels` null.
 COMPARISON_LEVELS = pl.Struct(
     {
         f"gamma_{name}": pl.Int8()
