@@ -318,6 +318,26 @@ ORGS = _table(
     method=_str(values=("exact_code", "exact_name", "pack", "propagated")),
 )
 
+# The comparison levels a scored pair carries, one Int8 level per field compared.
+# Key links carry none.
+COMPARISON_LEVELS = pl.Struct(
+    {
+        f"gamma_{name}": pl.Int8()
+        for name in (
+            "project_number",
+            "text",
+            "purpose",
+            "recipient_code",
+            "channel_code",
+            "flow_code",
+            "finance_type_code",
+            "amount",
+            "later_commitment",
+            "year_gap",
+        )
+    }
+)
+
 LINKS = _table(
     "links",
     ("task", "left_id", "right_id"),
@@ -331,13 +351,39 @@ LINKS = _table(
     p_jev=_f64(nullable=True),
     cosine=_f64(nullable=True),
     programme_level=Column(pl.Int8(), nullable=True),
-    levels=Column(pl.Struct, nullable=True),
+    levels=Column(COMPARISON_LEVELS, nullable=True),
     model_version=_str(nullable=True),
     jev_model=_str(nullable=True),
     label_set=_str(nullable=True),
     ledger_check=_str(nullable=True, values=LEDGER_CHECKS),
     review=_bool(),
     review_reason=_str(nullable=True, values=REVIEW_REASONS),
+)
+
+# The CRS records the trace links, summed over records that share every key field:
+# donor, agency, crs id, normalised project number, recipient, purpose, record year
+# and commitment-date year. A unit with a positive commitment is a commitment; one
+# with a positive disbursement is a disbursement record; one unit can be both. A
+# commitment is placed at `placed_year`, its commitment-date year when that precedes
+# the record year. A disbursement whose commitment date precedes its record year
+# carries that year as `floor_year`, and fills only commitments placed from then on.
+UNITS = _table(
+    "units",
+    ("unit_id",),
+    unit_id=_str(),
+    donor_code=_code(),
+    agency_code=_code(nullable=True),
+    crs_id=_str(nullable=True),
+    project_number=_str(nullable=True),
+    recipient_code=_code(),
+    purpose_code=_code(nullable=True),
+    year=_year(),
+    commitment_year=_year(nullable=True),
+    placed_year=_year(),
+    floor_year=_year(nullable=True),
+    commitment_usd=_usd(),
+    disbursement_usd=_usd(),
+    record_ids=Column(pl.List(pl.String())),
 )
 
 ID_PRACTICE = _table(
@@ -666,7 +712,7 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
     "normalise": _by_name(
         CRDF, CRS, CORE_CONTRIBUTIONS, IMPUTED_SHARES, EXTERNAL, BTR, ORGS
     ),
-    "link": _by_name(LINKS, ID_PRACTICE, PROGRAMME_STEMS, PROVIDER_PROFILE),
+    "link": _by_name(LINKS, UNITS, ID_PRACTICE, PROGRAMME_STEMS, PROVIDER_PROFILE),
     "allocate": _by_name(
         ALLOCATIONS, COMMITMENT_STATUS, CANCELLATIONS, YEARS_SINCE_COMMITMENT
     ),
@@ -678,9 +724,12 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
 }
 # Tables a stage may leave out. A stage that reads one that was not written raises
 # StageInputMissingError. `orgs` is written when recoveries are on, `btr` when the
-# build config names an ingested BTR table.
+# build config names an ingested BTR table. `programme_stems` and `provider_profile`
+# are written by the link stage's candidate and scoring steps; the key tiers and the
+# within-year join write the other link tables without them.
 OPTIONAL_STAGE_TABLES: Mapping[str, frozenset[str]] = {
     "normalise": frozenset({"btr", "orgs"}),
+    "link": frozenset({"programme_stems", "provider_profile"}),
 }
 
 
