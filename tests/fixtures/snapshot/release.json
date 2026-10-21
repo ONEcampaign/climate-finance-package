@@ -12,16 +12,16 @@
       "rows": 69
     },
     "agency_shares": {
-      "sha256": "1af35490e05bb7510ba2802b6a0b84c41c81e21b0b39b87ed96c43efa84e2642",
-      "rows": 24
+      "sha256": "961970dd2ccc3f7558f9bc842f9a4dd8f0056f216c6910fc329afb5ac06cac0f",
+      "rows": 25
     },
     "modelled": {
       "sha256": "92784c29c5b001f8fe979ca655b262455bc68630aea6fef03d92e18b13227257",
       "rows": 3
     },
     "core_contributions": {
-      "sha256": "710184225fa326e3d8367e847f88a8ea82d877c20b222d441b68fb93aea50d96",
-      "rows": 18
+      "sha256": "0f0e22936884daaebd9c2bb821042a655a7803b8a586f2628fe9a96fecb23de2",
+      "rows": 21
     },
     "provider_coefficients": {
       "sha256": "1c3a3a0bfddaa4aef5eda6b8a70c5d82c6c5aea67712cbcabdf120dbbac2a906",
@@ -44,8 +44,8 @@
       "rows": 12
     },
     "total_flows": {
-      "sha256": "86c54066aa5dddd4b64407eaa363b3cab1371583fada3533b14870c8494c34ea",
-      "rows": 89
+      "sha256": "14ff12d552c9ee5649ac4eb3c4a66f5e0af18d98473bb5539d78f36eafa6e06d",
+      "rows": 92
     }
   },
   "source_versions": {

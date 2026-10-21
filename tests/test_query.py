@@ -15,7 +15,7 @@ from polars.testing import assert_frame_equal
 from releases import copy_release
 
 import climate_finance as cf
-from climate_finance.methods import OECD, RANGE, Method, MethodRange
+from climate_finance.methods import OECD, RANGE, Method, MethodRange, label
 from climate_finance.query import BILATERAL
 from climate_finance.result import AMOUNTS
 from climate_finance.snapshot import Snapshot
@@ -35,17 +35,39 @@ def _golden(name: str, frame: pl.DataFrame) -> None:
     assert_frame_equal(frame, expected, check_exact=False, rel_tol=1e-12)
 
 
-@pytest.mark.parametrize(
-    ("name", "spec"),
-    [
-        ("one_disbursements_recipient", Spec()),
-        ("oecd_commitments_recipient", Spec(method=OECD, flow="commitments")),
-        ("range_disbursements_provider", Spec(method=RANGE, view="provider")),
-        ("one_grant_equivalent_recipient", Spec(flow="grant_equivalent")),
-    ],
-)
+GOLDEN_SPECS = {
+    "one_disbursements_recipient": Spec(),
+    "oecd_commitments_recipient": Spec(method=OECD, flow="commitments"),
+    "range_disbursements_provider": Spec(method=RANGE, view="provider"),
+    "one_grant_equivalent_recipient": Spec(flow="grant_equivalent"),
+}
+# France's 2020 core contribution to AfDB, whose 2020 OECD share has no split.
+CLIMATE_ONLY_SPEC = Spec(view="provider", method=RANGE, providers=(4,), years=(2020,))
+
+
+@pytest.mark.parametrize(("name", "spec"), GOLDEN_SPECS.items())
 def test_method_outputs_match_their_golden_tables(name: str, spec: Spec) -> None:
     _golden(name, SNAP.spending(spec=spec).table.to_polars())
+
+
+@pytest.mark.parametrize("spec", [*GOLDEN_SPECS.values(), CLIMATE_ONLY_SPEC])
+def test_value_is_the_objectives_plus_unsplit(spec: Spec) -> None:
+    result = SNAP.spending(spec=spec)
+    # Under the highest-marker rule the objectives are disjoint; otherwise adaptation
+    # and mitigation each include cross_cutting.
+    sign = pl.col("method").replace_strict(
+        {label(method): 1 if method.highest_marker else -1 for method in spec.methods}
+    )
+
+    for frame in (result.rows(), result.table.to_polars()):
+        parts = frame.select(
+            pl.col("adaptation")
+            + pl.col("mitigation")
+            + sign * pl.col("cross_cutting")
+            + pl.col("unsplit")
+        ).to_series()
+        assert frame.height
+        assert parts.to_list() == pytest.approx(frame["value"].to_list())
 
 
 def test_quality_summary_matches_its_golden_table() -> None:
@@ -140,7 +162,10 @@ def test_keyword_arguments_build_the_same_spec() -> None:
 def test_the_provider_view_attributes_core_contributions_of_its_flow(
     flow: str,
 ) -> None:
-    rows = SNAP.spending(view="provider", flow=flow).rows(origin="attribution")
+    # OECD has a share for every agency and year with a core contribution.
+    rows = SNAP.spending(view="provider", flow=flow, method=OECD).rows(
+        origin="attribution"
+    )
     contributions = (
         SNAP.table("core_contributions").filter(pl.col("flow") == flow).collect()
     )
@@ -177,6 +202,26 @@ def test_attribution_reads_agency_shares_as_inclusive_of_cross_cutting(
 
     assert rows.height == 1
     assert rows.row(0) == pytest.approx(expected)
+
+
+def test_a_climate_only_share_attributes_value_as_unsplit() -> None:
+    # France gives AfDB (channel 46002) 25m in 2020. AfDB's 2020 OECD share is 0.35
+    # in total, with no split by objective, and it has no ONE share that year.
+    result = SNAP.spending(spec=CLIMATE_ONLY_SPEC)
+    columns = (
+        "adaptation", "mitigation", "cross_cutting", "unsplit", "value", "low", "high",
+    )  # fmt: skip
+    expected = (0.0, 0.0, 0.0, *[pytest.approx(25e6 * 0.35)] * 4)
+
+    rows = result.rows(origin="attribution")
+    assert rows["method"].to_list() == ["OECD"]
+    assert rows.select(columns).row(0) == expected
+    assert result.table.to_polars().select(columns).row(0) == expected
+    # France's 2020 code 2 flows total 1.5 times its contribution.
+    share = result.share_of_total().table.to_polars()["value"].item()
+    assert share == pytest.approx(0.35 / 1.5)
+    assert "Channels 46002: the climate share has no split" in result.explain()
+    assert "value sits in unsplit" in result.explain()
 
 
 @pytest.mark.parametrize("method", [cf.methods.ONE, cf.methods.OECD])

@@ -31,12 +31,14 @@ def test_compare_sets_one_value_column_per_result_on_shared_keys() -> None:
 
     assert table.columns == [*KEYS, "ONE", "OECD"]
     # Attribution rows have no recipient. Their null key must match across results.
-    assert table.filter(bi_multi=2).height == _values(one).filter(bi_multi=2).height
+    # Only OECD has a share for AfDB in 2020, so its attribution keys cover ONE's.
+    assert table.filter(bi_multi=2).height == _values(oecd).filter(bi_multi=2).height
     for name, result in (("ONE", one), ("OECD", oecd)):
         assert (
             table.select(*KEYS, value=name)
+            .drop_nulls("value")
             .sort(KEYS)
-            .equals(_values(result).sort(KEYS))
+            .equals(_values(result).drop_nulls("value").sort(KEYS))
         )
 
 
@@ -76,14 +78,14 @@ def test_compare_needs_a_result() -> None:
 
 RESULT_REPR = """\
 Result: ONE; disbursements; recipient view; providers Germany; years 2021; USD at current prices; release fixture
-shape: (1, 12)
-┌──────┬───────────────┬────────────────┬──────────┬────────┬──────────┬────────────┬────────────┬───────────────┬──────────┬──────────┬────────┐
-│ year ┆ provider_code ┆ recipient_code ┆ bi_multi ┆ method ┆ amount   ┆ adaptation ┆ mitigation ┆ cross_cutting ┆ value    ┆ low      ┆ high   │
-│ ---  ┆ ---           ┆ ---            ┆ ---      ┆ ---    ┆ ---      ┆ ---        ┆ ---        ┆ ---           ┆ ---      ┆ ---      ┆ ---    │
-│ i16  ┆ i32           ┆ i32            ┆ i8       ┆ str    ┆ f64      ┆ f64        ┆ f64        ┆ f64           ┆ f64      ┆ f64      ┆ f64    │
-╞══════╪═══════════════╪════════════════╪══════════╪════════╪══════════╪════════════╪════════════╪═══════════════╪══════════╪══════════╪════════╡
-│ 2021 ┆ 5             ┆ 248            ┆ 1        ┆ ONE    ┆ 1.2667e7 ┆ 1.2667e7   ┆ 0.0        ┆ 0.0           ┆ 1.2667e7 ┆ 1.2667e7 ┆ 1.33e7 │
-└──────┴───────────────┴────────────────┴──────────┴────────┴──────────┴────────────┴────────────┴───────────────┴──────────┴──────────┴────────┘"""  # noqa: E501 (a table snapshot)
+shape: (1, 13)
+┌──────┬───────────────┬────────────────┬──────────┬────────┬──────────┬────────────┬────────────┬───────────────┬─────────┬──────────┬──────────┬────────┐
+│ year ┆ provider_code ┆ recipient_code ┆ bi_multi ┆ method ┆ amount   ┆ adaptation ┆ mitigation ┆ cross_cutting ┆ unsplit ┆ value    ┆ low      ┆ high   │
+│ ---  ┆ ---           ┆ ---            ┆ ---      ┆ ---    ┆ ---      ┆ ---        ┆ ---        ┆ ---           ┆ ---     ┆ ---      ┆ ---      ┆ ---    │
+│ i16  ┆ i32           ┆ i32            ┆ i8       ┆ str    ┆ f64      ┆ f64        ┆ f64        ┆ f64           ┆ f64     ┆ f64      ┆ f64      ┆ f64    │
+╞══════╪═══════════════╪════════════════╪══════════╪════════╪══════════╪════════════╪════════════╪═══════════════╪═════════╪══════════╪══════════╪════════╡
+│ 2021 ┆ 5             ┆ 248            ┆ 1        ┆ ONE    ┆ 1.2667e7 ┆ 1.2667e7   ┆ 0.0        ┆ 0.0           ┆ 0.0     ┆ 1.2667e7 ┆ 1.2667e7 ┆ 1.33e7 │
+└──────┴───────────────┴────────────────┴──────────┴────────┴──────────┴────────────┴────────────┴───────────────┴─────────┴──────────┴──────────┴────────┘"""  # noqa: E501 (a table snapshot)
 
 COMPARISON_REPR = """\
 Comparison of 2 results: ONE; OECD

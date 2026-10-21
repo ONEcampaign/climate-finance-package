@@ -4,8 +4,9 @@ Run `uv run python tests/make_fixture.py [out_dir]`. The snapshot is schema-vali
 passes `release_invariants`, and covers six providers, a Bi_Multi 2 row, Bi_Multi 4
 rows, an id-less multilateral row, a modelled-line provider, every status, every link
 method, a CRS record split across two commitments with excess, a bank-ledger gap
-fill, cross-cutting agency shares, core contributions for every flow, and a confirmed
-and an unconfirmed provider coefficient. Amounts are invented.
+fill, cross-cutting agency shares, a climate share with no split by objective, core
+contributions for every flow, and a confirmed and an unconfirmed provider
+coefficient. Amounts are invented.
 """
 
 import itertools
@@ -125,8 +126,22 @@ AGENCY_SHARES = {
     (AFDB_CH, "oecd"): (0.30, 0.35, 0.10),
     (AFDB_CH, "one"): (0.27, 0.30, 0.08),
 }
-# Core contributions disbursed each year, and each flow's amount as a multiple.
-CORE_CONTRIBUTIONS = ((DEU, IDA_CH, 60e6), (FRA, AFDB_CH, 25e6), (NOR, IDA_CH, 15e6))
+# AfDB's OECD share for 2020: a climate total with no split by objective, as the
+# OECD gives before 2021. AfDB has no ONE share that year.
+CLIMATE_ONLY_SHARE = {
+    "channel_code": AFDB_CH,
+    "year": 2020,
+    "objective": "climate",
+    "share": 0.35,
+    "source": "oecd",
+}
+# Core contributions disbursed in each of their years, and each flow's amount as a
+# multiple.
+CORE_CONTRIBUTIONS = (
+    (DEU, IDA_CH, 60e6, (2021, 2022)),
+    (FRA, AFDB_CH, 25e6, (2020, 2021, 2022)),
+    (NOR, IDA_CH, 15e6, (2021, 2022)),
+)
 CORE_FLOW_FACTOR = {"commitments": 1.2, "disbursements": 1.0, "grant_equivalent": 1.0}
 # Germany's coefficient is confirmed. Japan's is not, so PROVIDER gives Japan 0.4.
 PROVIDER_COEFFICIENTS = ((DEU, 0.5, True), (JPN, 0.6, False))
@@ -364,7 +379,8 @@ def build_tables() -> dict[str, pl.DataFrame]:
             for objective, share in zip(
                 ("adaptation", "mitigation", "cross_cutting"), shares, strict=True
             )
-        ],
+        ]
+        + [CLIMATE_ONLY_SHARE],
         "modelled": [
             {
                 "provider_code": IFC,
@@ -388,8 +404,8 @@ def build_tables() -> dict[str, pl.DataFrame]:
                 "flow": flow,
                 "contribution_usd": amount * CORE_FLOW_FACTOR[flow],
             }
-            for provider, channel, amount in CORE_CONTRIBUTIONS
-            for year in (2021, 2022)
+            for provider, channel, amount, years in CORE_CONTRIBUTIONS
+            for year in years
             for flow in FLOWS
         ],
         "provider_coefficients": [

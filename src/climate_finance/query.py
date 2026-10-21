@@ -11,7 +11,11 @@ converts it, and sums the rows into the result table. Rows have one of three ori
   weighted by the markers and climate share it inherits from that commitment. `low`
   and `high` scale by the allocation's own bounds.
 - `attribution`: under `view="provider"`, a provider's core contribution of the
-  spec's flow to an agency times the agency's climate share.
+  spec's flow to an agency times the agency's climate share. An agency share with no
+  split by objective counts in `unsplit`, with the objectives 0.
+
+Every row holds `value` = adaptation + mitigation - cross_cutting + unsplit, or
++ cross_cutting under the highest-marker rule, whose objectives are disjoint.
 
 The release's commitments are recipient-perspective CRDF rows only, so views filter
 on Bi_Multi alone and provider attribution comes only from core contributions.
@@ -77,6 +81,7 @@ _WEIGHT_INPUTS: dict[str, pl.DataType] = {
     "share_adaptation": pl.Float64(),
     "share_mitigation": pl.Float64(),
     "share_overlap": pl.Float64(),
+    "share_unsplit": pl.Float64(),
     "low_ratio": pl.Float64(),
     "high_ratio": pl.Float64(),
     "significant": pl.Float64(),
@@ -207,6 +212,7 @@ def _base_rows(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
         "share_adaptation": _share("adaptation_usd"),
         "share_mitigation": _share("mitigation_usd"),
         "share_overlap": _share("overlap_usd"),
+        "share_unsplit": pl.lit(0.0),
     }
     if spec.flow == "commitments":
         commitments = _counted_commitments(snapshot).filter(_in_view(spec.view))
@@ -299,7 +305,9 @@ def _attributed_rows(snapshot: Snapshot, *, spec: Spec, method: Method) -> pl.La
 
     Under OECD the share is the OECD's imputed share; under any other method it is
     the agency's own climate spending. The adaptation and mitigation shares each
-    include the cross-cutting share. An agency without a share attributes nothing.
+    include the cross-cutting share. A share with no split by objective (a `climate`
+    row) is the unsplit share, and the three objective shares are 0. An agency
+    without a share attributes nothing.
     """
     source = "oecd" if method == OECD else "one"
 
@@ -314,6 +322,7 @@ def _attributed_rows(snapshot: Snapshot, *, spec: Spec, method: Method) -> pl.La
             share_adaptation=share("adaptation"),
             share_mitigation=share("mitigation"),
             share_overlap=share("cross_cutting"),
+            share_unsplit=share("climate"),
         )
     )
     return _conform(
@@ -326,7 +335,8 @@ def _attributed_rows(snapshot: Snapshot, *, spec: Spec, method: Method) -> pl.La
             amount=pl.col("contribution_usd"),
             climate_share=pl.col("share_adaptation")
             + pl.col("share_mitigation")
-            - pl.col("share_overlap"),
+            - pl.col("share_overlap")
+            + pl.col("share_unsplit"),
             low_ratio=pl.lit(1.0),
             high_ratio=pl.lit(1.0),
         )
@@ -369,15 +379,18 @@ def _coefficients(
 
 
 def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
+    """Weight each row's amount by objective, unsplit and in total under `method`."""
     amount = pl.col("amount")
     fractions = weights(method, significant=pl.col("significant"))
+    unsplit = pl.col("share_unsplit")
     return (
         frame.with_columns(
             method=pl.lit(label(method)),
             adaptation=amount * fractions["adaptation"],
             mitigation=amount * fractions["mitigation"],
             cross_cutting=amount * fractions["cross_cutting"],
-            value=amount * fractions["climate"],
+            unsplit=amount * unsplit,
+            value=amount * (fractions["climate"] + unsplit),
         )
         .with_columns(
             low=pl.col("value") * pl.col("low_ratio"),

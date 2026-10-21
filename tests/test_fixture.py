@@ -61,8 +61,11 @@ def test_regenerating_the_fixture_gives_the_same_tables(tmp_path: Path) -> None:
         assert pl.read_parquet(tmp_path / f"{table}.parquet").equals(_read(table))
 
 
+INVARIANT_TABLES = ("commitments", "disbursements", "agency_shares")
+
+
 def test_fixture_holds_the_release_invariants() -> None:
-    tables = {name: _read(name) for name in ("commitments", "disbursements")}
+    tables = {name: _read(name) for name in INVARIANT_TABLES}
 
     assert release_invariants(tables) == []
 
@@ -127,6 +130,14 @@ def _orphan_allocation(frame: pl.DataFrame) -> pl.DataFrame:
     return pl.concat([frame, orphan])
 
 
+def _split_a_climate_only_share(frame: pl.DataFrame) -> pl.DataFrame:
+    # AfDB's 2020 OECD share is climate-only; a mitigation row joins it.
+    split = frame.filter(objective="climate").with_columns(
+        objective=pl.lit("mitigation")
+    )
+    return pl.concat([frame, split])
+
+
 @pytest.mark.parametrize(
     ("table", "edit", "row_id"),
     [
@@ -137,12 +148,13 @@ def _orphan_allocation(frame: pl.DataFrame) -> pl.DataFrame:
         ("disbursements", _break_record_grant_equiv, "JPN-SPLIT"),
         ("disbursements", _break_record_disbursement, "JPN-SPLIT"),
         ("disbursements", _overdraw_record, "JPN-SPLIT"),
+        ("agency_shares", _split_a_climate_only_share, "46002 2020 oecd"),
     ],
 )
 def test_release_invariants_name_the_row_that_breaks_one(
     table: str, edit: Callable[[pl.DataFrame], pl.DataFrame], row_id: str
 ) -> None:
-    tables = {name: _read(name) for name in ("commitments", "disbursements")}
+    tables = {name: _read(name) for name in INVARIANT_TABLES}
     tables[table] = edit(tables[table])
 
     problems = release_invariants(tables)

@@ -67,6 +67,9 @@ LEDGER_CHECKS = ("confirmed", "contradicted", "none", "confirmed_undisbursed")
 DISBURSEMENT_SOURCES = ("crs", "bank_ledger", "none")
 ALLOCATION_RULES = ("fifo", "dated", "window", "excess", "bank_ledger")
 OBJECTIVES = ("adaptation", "mitigation", "cross_cutting")
+# An agency share's objective: one of OBJECTIVES, or `climate` for a total climate
+# share with no split by objective, as the OECD gives before 2021.
+SHARE_OBJECTIVES = (*OBJECTIVES, "climate")
 LABEL_SOURCES = ("crdf", "marker", "jev")
 PAIR_LABEL_SOURCES = ("key", "rule", "jev", "human", "ledger")
 ID_PRACTICE_CLASSES = (
@@ -235,25 +238,45 @@ CORE_CONTRIBUTIONS = _table(
     contribution_usd=_usd(),
 )
 
+# The OECD's imputed shares, under the same rule as `agency_shares`. A channel and
+# year holds either split rows or one `climate` row. Split rows are inclusive:
+# adaptation is the workbook's "adaptation only" plus "both", mitigation is
+# "mitigation only" plus "both", and cross_cutting is "both".
 IMPUTED_SHARES = _table(
     "imputed_shares",
     ("channel_code", "year", "objective"),
     channel_code=_code(),
     year=_year(),
-    objective=_str(values=OBJECTIVES),
+    objective=_str(values=SHARE_OBJECTIVES),
     share=_f64(),
 )
 
+# Amounts are as the publisher reports them, in the original currency; `amount_usd`
+# is filled by the reader for USD rows only. `cumulative_declared` marks activities
+# whose files state that their disbursements are cumulative (GEF); the reader leaves
+# those figures unchanged and the stage that reconciles them reads the flag.
 EXTERNAL = _table(
     "external",
-    ("source", "publisher", "activity_id", "year", "transaction_type"),
+    (
+        "source",
+        "publisher",
+        "activity_id",
+        "year",
+        "transaction_type",
+        "currency",
+        "recipient_iso",
+    ),
     source=_str(values=("iati", "gcf")),
     publisher=_str(),
     activity_id=_str(),
     year=_year(),
     transaction_type=_str(values=("commitment", "disbursement")),
-    amount_usd=_usd(),
+    currency=_str(),
+    amount=_f64(),
+    amount_usd=_usd(nullable=True),
+    recipient_iso=_str(nullable=True),
     recipient_code=_code(nullable=True),
+    cumulative_declared=_bool(),
     title=_str(nullable=True),
 )
 
@@ -460,12 +483,14 @@ JEV_LEVEL_MAP = _table(
 # Shares of the agency's spending by objective. The adaptation and mitigation shares
 # each include the cross_cutting share, as `adaptation_usd`, `mitigation_usd` and
 # `overlap_usd` do, so the climate share is adaptation + mitigation - cross_cutting.
+# A channel, year and source holds either those split rows or one `climate` row, the
+# total climate share with no split by objective.
 AGENCY_SHARES = _table(
     "agency_shares",
     ("channel_code", "year", "objective", "source"),
     channel_code=_code(),
     year=_year(),
-    objective=_str(values=OBJECTIVES),
+    objective=_str(values=SHARE_OBJECTIVES),
     share=_f64(),
     source=_str(values=SHARE_SOURCES),
 )
@@ -723,7 +748,7 @@ def _exceeds(smaller: str, larger: str) -> pl.Expr:
 
 
 def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
-    """Problems with the amounts in a release's `commitments` and `disbursements`.
+    """Problems with a release's `commitments`, `disbursements` and `agency_shares`.
 
     Every disbursements row holds 0 <= allocated_low <= allocated <= allocated_high
     and names a commitment. Per commitment, its rows' allocated, allocated_low and
@@ -731,7 +756,9 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     0 <= disbursed_low <= disbursed <= disbursed_high <= face. A record's rows share
     one `record_disbursement_usd` and one `record_grant_equiv_usd` (all null or all
     set), and its allocated amounts sum to at most `record_disbursement_usd`. Amounts
-    compare within `INVARIANT_TOLERANCE_USD`. An empty list means every check passed.
+    compare within `INVARIANT_TOLERANCE_USD`. A channel, year and source of
+    `agency_shares` holds either split rows or one `climate` row. An empty list means
+    every check passed.
     """
     commitments = tables["commitments"]
     disbursements = tables["disbursements"]
@@ -771,7 +798,24 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
             for row_id in failing["row_id"]
         )
     problems.extend(_record_problems(disbursements))
+    problems.extend(_share_problems(tables["agency_shares"]))
     return problems
+
+
+def _share_problems(agency_shares: pl.DataFrame) -> list[str]:
+    """Agency share keys that hold both a `climate` row and split rows."""
+    climate = pl.col("objective") == "climate"
+    mixed = (
+        agency_shares.group_by("channel_code", "year", "source")
+        .agg(climate.any().alias("_climate"), (~climate).any().alias("_split"))
+        .filter(pl.col("_climate"), pl.col("_split"))
+        .sort("channel_code", "year", "source")
+    )
+    return [
+        f"agency_shares {row['channel_code']} {row['year']} {row['source']}: a "
+        "climate row beside split rows"
+        for row in mixed.iter_rows(named=True)
+    ]
 
 
 def _record_problems(disbursements: pl.DataFrame) -> list[str]:

@@ -18,7 +18,8 @@ if TYPE_CHECKING:
     import pyarrow as pa
 
 AMOUNTS = (
-    "amount", "adaptation", "mitigation", "cross_cutting", "value", "low", "high",
+    "amount", "adaptation", "mitigation", "cross_cutting", "unsplit", "value", "low",
+    "high",
 )  # fmt: skip
 
 
@@ -120,7 +121,18 @@ class Result:
             for method in self.spec.methods
             if method.coefficients == "provider"
         }
-        return explain(self.spec, release=self.meta.release, fallbacks=fallbacks)
+        unsplit = (
+            self._rows.filter(pl.col("origin") == "attribution", pl.col("unsplit") != 0)
+            .group_by("method")
+            .agg(pl.col("channel_code").unique().sort())
+            .collect()
+        )
+        return explain(
+            self.spec,
+            release=self.meta.release,
+            fallbacks=fallbacks,
+            unsplit=dict(unsplit.iter_rows()),
+        )
 
     def share_of_total(self) -> Result:
         """The same result with every amount divided by all CRS flows of its key.
@@ -210,13 +222,17 @@ def explain(
     *,
     release: str,
     fallbacks: Mapping[str, Sequence[int]] | None = None,
+    unsplit: Mapping[str, Sequence[int]] | None = None,
 ) -> str:
     """The method, view, flow, filters and units behind `spec`, in plain language.
 
     `fallbacks` maps each provider-coefficient method's label to the providers that
-    have no confirmed coefficient of their own in the release.
+    have no confirmed coefficient of their own in the release. `unsplit` maps a
+    method's label to the agency channel codes whose climate share it reads has no
+    split by objective.
     """
     fallbacks = fallbacks or {}
+    unsplit = unsplit or {}
     methods = spec.methods
     lines = [f"Release {release}."]
     for method in methods:
@@ -225,6 +241,11 @@ def explain(
             lines.append(
                 f"Provider coefficients: providers {', '.join(map(str, missing))} "
                 f"have no confirmed coefficient and take {method.significant:g}."
+            )
+        if channels := unsplit.get(label(method)):
+            lines.append(
+                f"Channels {', '.join(map(str, channels))}: the climate share has no "
+                "split by objective, so their attributed value sits in unsplit."
             )
     if len(methods) > 1:
         lines.append("low and high are the lowest and highest bound across methods.")
