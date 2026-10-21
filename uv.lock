@@ -170,7 +170,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10.0" },
     { name = "pydeflate", specifier = ">=2.6.2" },
     { name = "pyyaml", marker = "extra == 'build'", specifier = ">=6.0.1" },
-    { name = "rapidfuzz", marker = "extra == 'build'", specifier = ">=3.6.0" },
+    { name = "rapidfuzz", marker = "extra == 'build'", specifier = ">=3.8.0" },
     { name = "resolvekit", marker = "extra == 'build'", specifier = ">=0.1.13" },
     { name = "rich", marker = "extra == 'build'", specifier = ">=13.8.0" },
     { name = "scikit-learn", marker = "extra == 'build'", specifier = ">=1.9.0" },
