@@ -92,11 +92,6 @@ def test_factors_match_pydeflate_on_its_own_frame(
 
 
 @pytest.mark.integration
-@pytest.mark.xfail(
-    strict=True,
-    reason="pydeflate 2.6.1 maps EUR to EU Institutions, reported in USD; passes "
-    "once L1 pins the pydeflate release with the EUR fix",
-)
 def test_euro_conversion_uses_the_dac_euro_rate() -> None:
     frame = _amounts((GERMANY, 2022, 100.0))
 

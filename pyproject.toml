@@ -22,7 +22,7 @@ dependencies = [
     "polars>=1.33.0",
     "pyarrow>=16.1.0",
     "pydantic>=2.10.0",
-    "pydeflate>=2.6.1",
+    "pydeflate>=2.6.2",
 ]
 
 [project.optional-dependencies]

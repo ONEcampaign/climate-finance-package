@@ -139,7 +139,7 @@ requires-dist = [
     { name = "polars", specifier = ">=1.33.0" },
     { name = "pyarrow", specifier = ">=16.1.0" },
     { name = "pydantic", specifier = ">=2.10.0" },
-    { name = "pydeflate", specifier = ">=2.6.1" },
+    { name = "pydeflate", specifier = ">=2.6.2" },
     { name = "rich", marker = "extra == 'build'", specifier = ">=13.8.0" },
     { name = "typer", marker = "extra == 'build'", specifier = ">=0.16.0" },
 ]
@@ -687,7 +687,7 @@ wheels = [
 
 [[package]]
 name = "pydeflate"
-version = "2.6.1"
+version = "2.6.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
@@ -702,9 +702,9 @@ dependencies = [
     { name = "resolvekit" },
     { name = "wbgapi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/46/6a/7b3ede2337b4b30d9cec645c8a4d7cc36e00e2487a39fc52edb1fc4c88b4/pydeflate-2.6.1.tar.gz", hash = "sha256:3a2d87e69d0221139bad5d95ceca07d4728b4f974070063252b6ebbb287b1d86", size = 55340, upload-time = "2026-06-15T09:01:13.061Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/72/2a/d2149dc20d678026484dc8b574f4e9917530ab04b535830529d9fbc4640b/pydeflate-2.6.2.tar.gz", hash = "sha256:8b348092c595c35254bf1f0f121ad00ddd1e0a7772ba9f82ef92fde6cceb825e", size = 55361, upload-time = "2026-10-21T14:37:18.604Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bb/e3/21f5fc03244d9168b71ec8b9ebec262fa50a8c721d3d799fcd4c5b0cb28d/pydeflate-2.6.1-py3-none-any.whl", hash = "sha256:e9f415645677143002f85627cb6e578c2ee0b5b9b8c97fa271a832b1ac5ce70a", size = 74717, upload-time = "2026-06-15T09:01:14.284Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/37/08a5cbbb870dc3e087a708e135e9aeab87cd013f60511031b5508ab6f6ee/pydeflate-2.6.2-py3-none-any.whl", hash = "sha256:58d7db4f7bf4ed315c83c6b540a76ca9c09404f4e51eeeadb1a0b69c592eaef5", size = 74724, upload-time = "2026-10-21T14:37:17.415Z" },
 ]
 
 [[package]]
