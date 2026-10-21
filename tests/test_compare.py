@@ -30,7 +30,7 @@ def test_compare_sets_one_value_column_per_result_on_shared_keys() -> None:
     table = cf.compare(one, oecd).table.to_polars()
 
     assert table.columns == [*KEYS, "ONE", "OECD"]
-    # Attribution rows have no recipient; a null key must still match across results.
+    # Attribution rows have no recipient. Their null key must match across results.
     assert table.filter(bi_multi=2).height == _values(one).filter(bi_multi=2).height
     for name, result in (("ONE", one), ("OECD", oecd)):
         assert (

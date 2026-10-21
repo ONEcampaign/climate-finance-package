@@ -1,6 +1,6 @@
 """Currency and price conversion through pydeflate's OECD DAC data, applied last.
 
-USD at current prices returns the plan unchanged and never imports pydeflate, which
+USD at current prices returns the plan unchanged and skips importing pydeflate, which
 imports pandas. Every other target joins one factor per provider and year: the DAC
 exchange rate for current prices, or the inverse of the DAC deflator for constant
 prices. A provider without its own DAC series, such as a multilateral agency, takes
@@ -51,7 +51,7 @@ def dac_factors(
 
 
 def _require_factors(keys: pl.Series) -> pl.Series:
-    """Pass the factors through; raise naming every provider and year without one."""
+    """The factors, or an error naming every provider and year without one."""
     frame = keys.struct.unnest()
     missing = frame.filter(pl.col("factor").is_null())
     if missing.height:

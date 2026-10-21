@@ -1,4 +1,4 @@
-"""The review stage: ledger check, review queue, pending status; decisions."""
+"""The review stage: ledger check, review queue, pending status and decisions."""
 
 from __future__ import annotations
 

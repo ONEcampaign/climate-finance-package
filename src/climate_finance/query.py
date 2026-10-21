@@ -139,7 +139,7 @@ def quality(
     providers: Sequence[str | int] | None = None,
     years: Iterable[int] | None = None,
 ) -> Quality:
-    """Coverage and status statistics; the precision interval comes from the gate.
+    """Coverage and status statistics.
 
     The status split covers the commitments the trace follows: bilateral rows and
     multilateral outflows, without core contributions.
@@ -157,7 +157,7 @@ def quality(
 
 
 def _codes(values: Sequence[str | int], *, listing: catalogue.Catalogue) -> list[int]:
-    """DAC codes for `values`: codes pass through, names resolve through `listing`."""
+    """DAC codes for `values`, with names resolved through `listing`."""
     return [
         listing.code(value) if isinstance(value, str) else value for value in values
     ]
@@ -393,7 +393,7 @@ def _sum(name: str) -> pl.Expr:
 
 
 def _aggregate(rows: pl.LazyFrame) -> pl.LazyFrame:
-    """Sum rows by `KEYS`; `low` and `high` then span every method for the same key."""
+    """Sum rows by `KEYS`. `low` and `high` then span every method for the same key."""
     across_methods = [key for key in KEYS if key != "method"]
     return (
         rows.group_by(KEYS)

@@ -71,7 +71,7 @@ class Snapshot:
         providers: str | int | Sequence[str | int] | None = None,
         years: int | Iterable[int] | None = None,
     ) -> Quality:
-        """Link, coverage and status statistics; precision intervals join in S17."""
+        """Link, coverage and status statistics."""
         return query.quality(self, providers=_as_tuple(providers), years=_years(years))
 
     def reconcile(

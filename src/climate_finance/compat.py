@@ -73,8 +73,8 @@ _NO_EQUIVALENT = {
 class ClimateData:
     """The 1.2.3 constructor and methods, returning pandas.
 
-    `snapshot` is new: the release to query. Without it, `load_spending_data` opens
-    the latest release with `climate_finance.load()`.
+    `snapshot` is the release to query. Without it, `load_spending_data` opens the
+    latest release with `climate_finance.load()`.
 
     Raises:
         ValueError: for a currency or price choice 1.2.3 refused.
@@ -319,7 +319,7 @@ def _as_list(values: str | list[str]) -> list[str]:
 
 
 def _choice[T](value: str, choices: Mapping[str, T], *, what: str) -> T:
-    """The 2.0 value of a 1.x choice; NotImplementedError when 2.0 has none."""
+    """The 2.0 value of a 1.x choice, or NotImplementedError when 2.0 has none."""
     if value in _NO_EQUIVALENT:
         raise NotImplementedError(_NO_EQUIVALENT[value])
     if value not in choices:

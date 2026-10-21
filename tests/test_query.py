@@ -218,7 +218,7 @@ def test_bounds_follow_each_allocation_in_its_own_year() -> None:
     rows = SNAP.spending(flow="disbursements").rows(row_id="DEU-1").sort("year")
 
     # DEU-1: face 40m, 95% disbursed in three equal records, a principal marker.
-    # The 2021 link is certain; the 2022 and 2023 links have probability 0.85, so
+    # The 2021 link is certain. The 2022 and 2023 links have probability 0.85, so
     # they leave the low bound. Each high bound is 1.05 times the allocation.
     allocated = 40e6 * 0.95 / 3
     assert rows["year"].to_list() == [2021, 2022, 2023]
@@ -310,7 +310,7 @@ def test_share_of_total_divides_each_key_by_its_total_flows() -> None:
 
 @pytest.mark.parametrize(
     ("row_id", "significant"),
-    # Germany's 0.5 is confirmed; Japan's 0.6 is not, so Japan takes ONE's 0.4.
+    # Germany's 0.5 is confirmed. Japan's 0.6 is not, so Japan takes ONE's 0.4.
     [("DEU-2", 0.5), ("JPN-2", 0.4)],
 )
 def test_provider_coefficients_replace_the_significant_coefficient_once_confirmed(

@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.0
-      # --locked fails when uv.lock no longer matches pyproject.toml, so a PR that
+      # --locked fails when uv.lock is out of date with pyproject.toml, so a PR that
       # edits a dependency without relocking cannot pass.
       - run: uv sync --locked --python 3.12 --all-extras --all-groups
       - run: uv run --no-sync ruff check

@@ -56,7 +56,7 @@ class Jev(_Section):
 
 
 class Embedding(_Section):
-    """The pinned embedding model; embeddings are deferred from 2.0."""
+    """The pinned embedding model, reserved for a later release."""
 
     model: str
     revision: str

@@ -5,8 +5,8 @@ Recipient names come from `data/recipients.csv`: DAC recipient codes and their E
 names as the OECD CRS bulk download spells them, carried over from climate-finance
 1.2.3 (`oecd/cleaning_tools/recipient_names.feather`, built from the 2021 CRS).
 
-Names resolve to codes by exact match, ignoring case and accents; close names are
-offered as suggestions in the error, never used in their place.
+Names resolve to codes by exact match, ignoring case and accents. Close names appear
+as suggestions in the error and are not applied.
 """
 
 import unicodedata

@@ -1,8 +1,8 @@
 """Table schemas for every build stage and release table, and `release.json`.
 
 Amounts are float64 USD in units at current prices, DAC codes int32, ids strings,
-years int16, `bi_multi` and Rio markers int8. Each table has a sort key; the stage
-writer sorts by it before writing so two builds from the same inputs hash the same.
+years int16, `bi_multi` and Rio markers int8. Each table has a sort key. The stage
+writer sorts by it before writing, so two builds from the same inputs hash the same.
 """
 
 import hashlib
@@ -224,7 +224,7 @@ CRS = _table(
     text_hash=_str(nullable=True),
 )
 
-# One row per provider, agency, year and flow: the build writes every flow in FLOWS.
+# One row per provider, agency, year and flow. The build writes every flow in FLOWS.
 CORE_CONTRIBUTIONS = _table(
     "core_contributions",
     ("provider_code", "channel_code", "year", "flow"),
@@ -504,13 +504,13 @@ COMMITMENTS = _table(
     climate_share=_f64(nullable=True),
     face_usd=_usd(),
     climate_usd=_usd(),
-    # Adaptation and mitigation each include the overlap: climate is a + m - overlap.
+    # Adaptation and mitigation each include the overlap, so climate is a + m - overlap.
     adaptation_usd=_usd(),
     mitigation_usd=_usd(),
     overlap_usd=_usd(),
     status=_str(values=STATUSES),
     # Face value, as CRS records carry whole-project disbursements and FIFO caps at
-    # face; the query applies the climate share. Sums of the commitment's
+    # face. The query applies the climate share. Sums of the commitment's
     # `disbursements` rows: allocated, allocated_low and allocated_high, with
     # 0 <= disbursed_low <= disbursed <= disbursed_high <= face.
     disbursed_usd=_usd(),
@@ -588,7 +588,7 @@ QUALITY = _table(
     grant_equiv_coverage=_f64(nullable=True),
 )
 
-# Every CRS flow, climate or not, summed: the denominator of `share_of_total`.
+# Every CRS flow, climate or not, summed. This is the denominator of `share_of_total`.
 TOTAL_FLOWS = _table(
     "total_flows",
     ("provider_code", "recipient_code", "year", "bi_multi", "flow"),
@@ -692,7 +692,7 @@ def validate(table: TableSchema, frame: pl.DataFrame) -> None:
 # Absolute tolerance, in USD, for the amount checks in `release_invariants`.
 INVARIANT_TOLERANCE_USD = 1e-6
 
-# Pairs (smaller, larger) of amounts that must hold smaller <= larger; "0" is zero.
+# Pairs (smaller, larger) of amounts that must hold smaller <= larger. "0" is zero.
 _ALLOCATION_ORDER = (
     ("0", "allocated_low_usd"),
     ("allocated_low_usd", "allocated_usd"),

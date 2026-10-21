@@ -156,9 +156,9 @@ class Result:
 
 
 class Quality:
-    """Link, coverage and status statistics for a slice of a release.
+    """Link, coverage and status statistics for part of a release.
 
-    `table` holds the release's `quality` rows by provider and year; `status` holds
+    `table` holds the release's `quality` rows by provider and year. `status` holds
     climate value by provider and commitment status.
     """
 
@@ -169,12 +169,11 @@ class Quality:
     def summary(self) -> pl.DataFrame:
         """Per provider: link rate, linked share above 0.8, label sources, status split.
 
-        Shares are of climate value of commitments: `link_rate` is the share that
+        Shares are of the climate value of commitments. `link_rate` is the share that
         traces to CRS records, and `linked_high_probability_share` the part of that
         whose most probable link is at least 0.8. `grant_equiv_coverage` is the
         share of linked records with a grant equivalent, weighted by linked climate
-        value over the years that have linked records. The precision interval
-        joins in slice S17.
+        value over the years that have linked records.
         """
         climate = pl.col("climate_usd").sum()
         linked = pl.col("linked_usd").sum()
@@ -292,7 +291,7 @@ class Reconciliation:
 
 
 class Comparison:
-    """Several results side by side: a long table with one column per result."""
+    """Several results side by side, as a long table with one column per result."""
 
     def __init__(self, *, table: Table, results: tuple[Result, ...]) -> None:
         self.table = table
@@ -319,7 +318,7 @@ def compare(*results: Result) -> Comparison:
     code, and one `value` column per result and method.
 
     Columns are named by the spec fields that set the results apart, such as "ONE"
-    and "OECD", or "commitments" and "disbursements"; a result under several methods
+    and "OECD", or "commitments" and "disbursements". A result under several methods
     gives one column per method. A key a result has no row for is null in its column.
 
     Raises:

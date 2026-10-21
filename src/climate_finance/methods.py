@@ -37,7 +37,7 @@ class Method(Frozen):
 
 
 class MethodRange(Frozen):
-    """Several methods reported together; `low` and `high` are their row-wise bounds."""
+    """Several methods reported together. `low` and `high` are their row-wise bounds."""
 
     methods: tuple[Method, ...] = Field(min_length=1)
 
@@ -146,11 +146,11 @@ def weights(
     """Fractions of a row's amount counted per objective, and in total, under `method`.
 
     Marker rows (null `climate_share`) weight `rio_adaptation` and `rio_mitigation`
-    (nulls count as 0) by the method's coefficients; `significant` replaces the
+    (nulls count as 0) by the method's coefficients. `significant` replaces the
     method's significant coefficient, for example with a per-provider column. Under
     the highest-marker rule a row goes to its higher marker and equal markers become
     cross-cutting, so the three objectives are disjoint. Without it adaptation and
-    mitigation each count their own marker, and `cross_cutting` is their overlap: the
+    mitigation each count their own marker, and `cross_cutting` is their overlap, the
     smaller of the two weighted shares, which `climate` counts once.
 
     Climate-component rows (non-null `climate_share`) ignore the coefficients and use
@@ -186,7 +186,7 @@ def transform_markers_into_indicators(
 ) -> pl.LazyFrame:
     """One row per activity and objective it counts towards, `value` weighted.
 
-    Each row of `frame` needs `rio_adaptation` and `rio_mitigation`; the result
+    Each row of `frame` needs `rio_adaptation` and `rio_mitigation`. The result
     replaces both with `objective` and `level`. Under the highest-marker rule the
     objective is the higher marker, or `cross_cutting` when they are equal. Without
     it each positive marker gives its own row, and a row with both also gives a

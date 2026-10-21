@@ -102,7 +102,7 @@ HIGH_FACTOR = 1.05
 # A record's grant equivalent as a share of its disbursement, by flow code.
 GRANT_EQUIV_RATIO = {11: 1.0, 13: 0.6}
 
-# One CRS record split across JPN-1 and JPN-3; the rest of its disbursement is
+# One CRS record split across JPN-1 and JPN-3. The rest of its disbursement is
 # excess, which reaches no commitment and so has no row.
 SPLIT_RECORD = "JPN-SPLIT"
 SPLIT_YEAR = 2023
@@ -128,7 +128,7 @@ AGENCY_SHARES = {
 # Core contributions disbursed each year, and each flow's amount as a multiple.
 CORE_CONTRIBUTIONS = ((DEU, IDA_CH, 60e6), (FRA, AFDB_CH, 25e6), (NOR, IDA_CH, 15e6))
 CORE_FLOW_FACTOR = {"commitments": 1.2, "disbursements": 1.0, "grant_equivalent": 1.0}
-# Germany's coefficient is confirmed; Japan's is not, so PROVIDER gives Japan 0.4.
+# Germany's coefficient is confirmed. Japan's is not, so PROVIDER gives Japan 0.4.
 PROVIDER_COEFFICIENTS = ((DEU, 0.5, True), (JPN, 0.6, False))
 
 

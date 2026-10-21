@@ -12,7 +12,7 @@ class SourceUnavailableError(ClimateFinanceError):
 
 
 class UnknownNameError(ClimateFinanceError, LookupError):
-    """A name is not in its listing; `suggestions` holds close names, if any."""
+    """A name is not in its listing. `suggestions` holds close names, if any."""
 
     def __init__(
         self, name: str, *, kind: str, suggestions: Sequence[str] = ()
@@ -43,7 +43,7 @@ class ReleaseIntegrityError(ClimateFinanceError):
 
 
 class SchemaError(ClimateFinanceError):
-    """A table does not match its schema; `problems` maps each bad column to why."""
+    """A table does not match its schema. `problems` maps each bad column to why."""
 
     def __init__(self, table: str, problems: Mapping[str, str]) -> None:
         self.table = table

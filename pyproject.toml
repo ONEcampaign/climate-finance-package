@@ -64,7 +64,7 @@ target-version = "py312"
 select = [
     "E", "F", "B", "UP", "SIM", "RUF", "PERF", "C4", "RET", "PIE", "FURB", "TRY", "I",
 ]
-# Exception messages name the owning slice or the offending columns inline.
+# Exception messages name the offending columns inline.
 ignore = ["TRY003"]
 
 [tool.ty.environment]
