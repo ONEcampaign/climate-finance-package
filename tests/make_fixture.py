@@ -565,6 +565,7 @@ def _quality(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataF
         .with_columns(
             model_labelled_usd=pl.lit(0.0),
             report_labelled_usd=pl.col("climate_usd"),
+            repeat_climate_usd=pl.lit(0.0),
         )
         .select(list(RELEASE_TABLES["quality"].columns))
     )

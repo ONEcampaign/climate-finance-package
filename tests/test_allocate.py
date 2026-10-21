@@ -853,4 +853,4 @@ def test_run_allocate_writes_tables_that_pass_their_schemas(tmp_path: Path) -> N
     since = pl.read_parquet(
         table_path(release_dir, "allocate", "years_since_commitment")
     )
-    assert since["years_since"].max() == 2025 - crdf["year"].min()
+    assert since["years_since"].max() == 2024 - crdf["year"].min()

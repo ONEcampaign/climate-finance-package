@@ -102,7 +102,7 @@ def run_allocate(context: StageContext) -> StageOutput:
         "commitments": compute_status(commitments=basis, allocations=allocations),
         "cancellations": cancellations(crs),
         "years_since_commitment": years_since_commitment(
-            allocations, crdf=crdf, last_year=context.config.years.crs[1]
+            allocations, crdf=crdf, last_year=context.config.years.crs_last_complete
         ),
     }
 

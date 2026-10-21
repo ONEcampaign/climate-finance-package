@@ -2,7 +2,7 @@
 
 import tomllib
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 
 from pydantic import (
     AfterValidator,
@@ -11,6 +11,7 @@ from pydantic import (
     StringConstraints,
     ValidationError,
     ValidationInfo,
+    model_validator,
 )
 
 from climate_finance.build.errors import ConfigError
@@ -32,10 +33,26 @@ class _Section(BaseModel):
 
 
 class Years(_Section):
-    """Inclusive first and last years read from each source."""
+    """Inclusive first and last years read from each source.
+
+    `crs_last_complete` is the last CRS year every provider has reported; the CRS
+    years after it hold early reports only. Disbursement observed over time and
+    the modelled line's CRS series end there.
+    """
 
     crdf: tuple[int, int]
     crs: tuple[int, int]
+    crs_last_complete: int
+
+    @model_validator(mode="after")
+    def _complete_year_inside_crs(self) -> Self:
+        first, last = self.crs
+        if not first <= self.crs_last_complete <= last:
+            raise ValueError(
+                f"crs_last_complete {self.crs_last_complete} lies outside the CRS "
+                f"years {first} to {last}"
+            )
+        return self
 
 
 class LocalFile(_Section):
@@ -89,6 +106,8 @@ class BuildConfig(_Section):
     offline: bool = False
     key_repair: bool = True
     recoveries: bool = True
+    gap_fill: bool = False
+    review: bool = False
     years: Years
     sources: Sources
     jev: Jev

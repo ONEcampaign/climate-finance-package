@@ -211,6 +211,16 @@ def test_config_resolves_paths_against_its_file(config: BuildConfig) -> None:
     assert config.sources.btr_archive == BUILD_TOML.parent / "data/raw/unfccc_btr1"
 
 
+def test_last_complete_crs_year_lies_inside_the_crs_years(tmp_path: Path) -> None:
+    text = BUILD_TOML.read_text().replace(
+        "crs_last_complete = 2024", "crs_last_complete = 2026"
+    )
+    (tmp_path / "build.toml").write_text(text)
+
+    with pytest.raises(ConfigError, match="crs_last_complete"):
+        load_config(tmp_path / "build.toml")
+
+
 def test_missing_config_raises_config_error(tmp_path: Path) -> None:
     with pytest.raises(ConfigError):
         load_config(tmp_path / "absent.toml")

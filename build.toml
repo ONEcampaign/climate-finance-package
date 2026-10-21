@@ -6,10 +6,18 @@ offline = false
 key_repair = true
 # Recovery routes: DFI aggregate rebuild, EIB project-list rules, GCF and GEF joins.
 recoveries = true
+# Bank-ledger gap fill and the GCF and GEF routes (the fill stage). Off passes
+# allocations and commitments through unchanged.
+gap_fill = false
+# Ledger check, review queue and pending status (the review stage). Off passes links
+# and commitments through unchanged.
+review = false
 
 [years]
 crdf = [2015, 2024]
 crs = [2010, 2025]
+# The last CRS year every provider has reported; later years hold early reports.
+crs_last_complete = 2024
 
 [sources]
 crs_version = "v20261006"

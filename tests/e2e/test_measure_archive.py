@@ -105,7 +105,7 @@ def test_modelled_ranges(crs: pl.LazyFrame, crdf: pl.LazyFrame) -> None:
     providers = load_provider_facts().modelled
     not_traceable = crdf.select("row_id", status=pl.lit("not_traceable"))
     modelled = modelled_ranges(
-        crdf, crs=crs, status=not_traceable, providers=providers
+        crdf, crs=crs, status=not_traceable, providers=providers, last_year=2024
     ).collect()
     schema.validate(schema.MODELLED, modelled)
 

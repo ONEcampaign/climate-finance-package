@@ -152,6 +152,7 @@ def run_measure(context: StageContext) -> StageOutput:
             crs=crs,
             status=context.read("review", "commitments"),
             providers=facts.modelled,
+            last_year=context.config.years.crs_last_complete,
         ),
     }
 
@@ -292,6 +293,7 @@ def modelled_ranges(
     crs: pl.LazyFrame,
     status: pl.LazyFrame,
     providers: Sequence[ModelledProvider],
+    last_year: int,
 ) -> pl.LazyFrame:
     """Low and high disbursement for providers that publish none.
 
@@ -303,6 +305,7 @@ def modelled_ranges(
         crs: the CRS records the trace follows.
         status: commitment statuses, read for providers that limit their statuses.
         providers: how each provider's ratios are measured.
+        last_year: the last complete CRS year, where CRS ratios' series end.
 
     Raises:
         ConfigError: when a provider measured from the CRS has no disbursement
@@ -311,7 +314,14 @@ def modelled_ranges(
     frames = [
         frame
         for provider in providers
-        if (frame := _modelled(crdf, crs=crs, status=status, provider=provider))
+        if (
+            frame := _modelled(
+                crdf,
+                crs=crs.filter(pl.col("year") <= last_year),
+                status=status,
+                provider=provider,
+            )
+        )
         is not None
     ]
     columns = list(MODELLED.columns)

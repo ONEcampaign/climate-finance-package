@@ -95,6 +95,14 @@ def _break_face_cap(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def _revise_face_below_zero(frame: pl.DataFrame) -> pl.DataFrame:
+    # A downward revision may keep its row, but not the disbursement against it.
+    is_row = pl.col("row_id") == "DEU-1"
+    return frame.with_columns(
+        face_usd=pl.when(is_row).then(-1.0).otherwise(pl.col("face_usd"))
+    )
+
+
 def _break_record_grant_equiv(frame: pl.DataFrame) -> pl.DataFrame:
     # JPN-SPLIT's second allocation carries its own share instead of the record's.
     is_row = (pl.col("record_id") == "JPN-SPLIT") & (pl.col("row_id") == "JPN-3")
@@ -144,6 +152,7 @@ def _split_a_climate_only_share(frame: pl.DataFrame) -> pl.DataFrame:
         ("disbursements", _break_allocation_bound, "DEU-1"),
         ("commitments", _break_disbursed_sum, "DEU-1"),
         ("commitments", _break_face_cap, "DEU-1"),
+        ("commitments", _revise_face_below_zero, "DEU-1"),
         ("disbursements", _orphan_allocation, "NONE-1"),
         ("disbursements", _break_record_grant_equiv, "JPN-SPLIT"),
         ("disbursements", _break_record_disbursement, "JPN-SPLIT"),

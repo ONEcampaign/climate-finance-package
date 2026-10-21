@@ -207,12 +207,17 @@ def _modelled(
     crs: pl.DataFrame,
     *providers: ModelledProvider,
     status: pl.DataFrame | None = None,
+    last_year: int = 2022,
 ) -> dict[tuple[int, int, int | None], tuple[float, ...]]:
     if status is None:
         status = pl.DataFrame(schema={"row_id": pl.String, "status": pl.String})
     return _ratios(
         modelled_ranges(
-            crdf.lazy(), crs=crs.lazy(), status=status.lazy(), providers=providers
+            crdf.lazy(),
+            crs=crs.lazy(),
+            status=status.lazy(),
+            providers=providers,
+            last_year=last_year,
         )
     )
 
@@ -235,6 +240,22 @@ def test_recipient_ratios_run_from_cumulative_to_window_capped_at_one() -> None:
     assert ranges.keys() == {(CAF, 2021, recipient) for recipient in expected}
     for recipient, bounds in expected.items():
         assert ranges[CAF, 2021, recipient] == pytest.approx(bounds), recipient
+
+
+def test_crs_ratios_end_at_the_last_complete_year() -> None:
+    caf = ModelledProvider(provider_code=CAF, basis="crs", by_recipient=True)
+    # An early 2023 report of Peru's disbursement.
+    early = crs_records(
+        {"record_id": "2023-peru", "year": 2023, "donor_code": CAF,
+         "recipient_code": PERU, "disbursement_usd": 500.0}
+    )  # fmt: skip
+    records = pl.concat([_caf_records(), early])
+
+    complete = _modelled(_caf_rows(), records, caf, last_year=2022)
+    with_early = _modelled(_caf_rows(), records, caf, last_year=2023)
+
+    assert complete == _modelled(_caf_rows(), _caf_records(), caf)
+    assert with_early[CAF, 2021, PERU] != complete[CAF, 2021, PERU]
 
 
 def test_portfolio_ratios_ignore_recipients() -> None:
@@ -330,7 +351,7 @@ def test_vintage_ratios_model_only_the_statuses_named() -> None:
         }
     )
 
-    ranges = _modelled(crdf, crs, eib, status=status)
+    ranges = _modelled(crdf, crs, eib, status=status, last_year=2023)
 
     assert ranges == {
         (EU, 2021, 248): pytest.approx((7.0, 7.0)),

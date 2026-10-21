@@ -605,7 +605,9 @@ COMMITMENTS = _table(
     # Face value, as CRS records carry whole-project disbursements and FIFO caps at
     # face. The query applies the climate share. Sums of the commitment's
     # `disbursements` rows: allocated, allocated_low and allocated_high, with
-    # 0 <= disbursed_low <= disbursed <= disbursed_high <= face.
+    # 0 <= disbursed_low <= disbursed <= disbursed_high <= face. A negative face
+    # value (a published downward revision) stays as published, with nothing
+    # disbursed.
     disbursed_usd=_usd(),
     disbursed_low_usd=_usd(),
     disbursed_high_usd=_usd(),
@@ -667,6 +669,8 @@ DISBURSEMENT_PROFILE = _table(
 # those that trace to at least one CRS record (`linked_usd`), those whose most
 # probable link is at least 0.8, and those labelled by a model or by a report.
 # `grant_equiv_coverage` is the share of linked records with a grant equivalent.
+# `repeat_climate_usd` is the climate value of rows that repeat an earlier vintage,
+# which the counted amounts leave out.
 QUALITY = _table(
     "quality",
     ("provider_code", "year"),
@@ -678,6 +682,7 @@ QUALITY = _table(
     linked_high_probability_usd=_usd(),
     model_labelled_usd=_usd(),
     report_labelled_usd=_usd(),
+    repeat_climate_usd=_usd(),
     grant_equiv_coverage=_f64(nullable=True),
 )
 
@@ -744,10 +749,15 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
 # StageInputMissingError. `orgs` is written when recoveries are on, `btr` when the
 # build config names an ingested BTR table. `programme_stems` and `provider_profile`
 # are written by the link stage's candidate and scoring steps; the key tiers and the
-# within-year join write the other link tables without them.
+# within-year join write the other link tables without them. `bank_year_overlap` is
+# written by the bank-ledger gap fill, and `review_queue` and `pair_labels` by the
+# review queue; with their switches off the two stages pass the tables they carry
+# forward through unchanged.
 OPTIONAL_STAGE_TABLES: Mapping[str, frozenset[str]] = {
     "normalise": frozenset({"btr", "orgs"}),
     "link": frozenset({"programme_stems", "provider_profile"}),
+    "fill": frozenset({"bank_year_overlap"}),
+    "review": frozenset({"review_queue", "pair_labels"}),
 }
 
 
@@ -804,7 +814,6 @@ _DISBURSED_ORDER = (
     ("0", "disbursed_low_usd"),
     ("disbursed_low_usd", "disbursed_usd"),
     ("disbursed_usd", "disbursed_high_usd"),
-    ("disbursed_high_usd", "face_usd"),
 )
 # Columns that hold one value across all rows of a CRS record.
 _RECORD_COLUMNS = ("record_disbursement_usd", "record_grant_equiv_usd")
@@ -830,12 +839,13 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     Every disbursements row holds 0 <= allocated_low <= allocated <= allocated_high
     and names a commitment. Per commitment, its rows' allocated, allocated_low and
     allocated_high sum to disbursed, disbursed_low and disbursed_high, and
-    0 <= disbursed_low <= disbursed <= disbursed_high <= face. A record's rows share
-    one `record_disbursement_usd` and one `record_grant_equiv_usd` (all null or all
-    set), and its allocated amounts sum to at most `record_disbursement_usd`. Amounts
-    compare within `INVARIANT_TOLERANCE_USD`. A channel, year and source of
-    `agency_shares` holds either split rows or one `climate` row. An empty list means
-    every check passed.
+    0 <= disbursed_low <= disbursed <= disbursed_high <= face, where a face of zero
+    or below (a published downward revision) allows nothing disbursed. A record's
+    rows share one `record_disbursement_usd` and one `record_grant_equiv_usd` (all
+    null or all set), and its allocated amounts sum to at most
+    `record_disbursement_usd`. Amounts compare within `INVARIANT_TOLERANCE_USD`. A
+    channel, year and source of `agency_shares` holds either split rows or one
+    `climate` row. An empty list means every check passed.
     """
     commitments = tables["commitments"]
     disbursements = tables["disbursements"]
@@ -874,6 +884,14 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
             f"commitments {row_id}: {smaller} > {larger}"
             for row_id in failing["row_id"]
         )
+    cap = pl.col("face_usd").clip(lower_bound=0.0)
+    failing = commitments.filter(
+        pl.col("disbursed_high_usd") - cap > INVARIANT_TOLERANCE_USD
+    )
+    problems.extend(
+        f"commitments {row_id}: disbursed_high_usd > max(face_usd, 0)"
+        for row_id in failing["row_id"]
+    )
     problems.extend(_record_problems(disbursements))
     problems.extend(_share_problems(tables["agency_shares"]))
     return problems
