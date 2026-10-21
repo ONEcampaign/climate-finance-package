@@ -14,6 +14,11 @@ converts it, and sums the rows into the result table. Rows have one of three ori
   spec's flow to an agency times the agency's climate share. An agency share with no
   split by objective counts in `unsplit`, with the objectives 0.
 
+Under `view="provider"` the method's `eu` setting counts EU Institutions once. As a
+channel, EU Institutions' own rows leave a result that also attributes another
+provider's contribution to an EU channel. As a provider, the EU channels attribute
+nothing.
+
 Every row holds `value` = adaptation + mitigation - cross_cutting + unsplit, or
 + cross_cutting under the highest-marker rule, whose objectives are disjoint.
 
@@ -42,6 +47,10 @@ BILATERAL = (1, 3, 7, 8)
 MULTILATERAL_OUTFLOW = 4
 CORE_CONTRIBUTION = 2
 ODA_FLOW_CODES = (11, 13, 19)
+# EU Institutions and their channels: the EU budget, the EDF and the EIB, as
+# build/providers.toml maps them.
+EU_INSTITUTIONS = 918
+EU_CHANNELS = (42001, 42003, 42004)
 # The objective label a record shows when several sources label it: the bank's own
 # climate components first, then Jev, then the donor's markers.
 LABEL_PRECEDENCE = {"crdf": 0, "jev": 1, "marker": 2}
@@ -102,17 +111,22 @@ def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
             pl.col("flow_code").is_in(ODA_FLOW_CODES)
             | (pl.col("origin") == "attribution")
         )
-    base = _base_rows(snapshot, spec=spec)
+
+    def filtered(frame: pl.LazyFrame) -> pl.LazyFrame:
+        return frame.filter(*conditions) if conditions else frame
+
+    base = filtered(_base_rows(snapshot, spec=spec))
     weighted = []
     for method in methods:
-        frames = [base]
+        frame = base
         if spec.view == "provider":
-            frames.append(_attributed_rows(snapshot, spec=spec, method=method))
-        for frame in frames:
-            filtered = frame.filter(*conditions) if conditions else frame
-            weighted.append(
-                _weigh(_coefficients(snapshot, filtered, method=method), method=method)
-            )
+            attributed = filtered(_attributed_rows(snapshot, spec=spec, method=method))
+            if method.eu == "channel":
+                frame = _without_eu_own_rows(frame, attributed=attributed)
+            frame = pl.concat([frame, attributed])
+        weighted.append(
+            _weigh(_coefficients(snapshot, frame, method=method), method=method)
+        )
 
     rows = convert(
         pl.concat(weighted),
@@ -308,23 +322,22 @@ def _attributed_rows(snapshot: Snapshot, *, spec: Spec, method: Method) -> pl.La
     the agency's own climate spending. The adaptation and mitigation shares each
     include the cross-cutting share. A share with no split by objective (a `climate`
     row) is the unsplit share, and the three objective shares are 0. An agency
-    without a share attributes nothing.
+    without a share attributes nothing, and neither do the EU channels when the
+    method counts EU Institutions as a provider.
     """
     source = "oecd" if method == OECD else "one"
+    channels = snapshot.table("agency_shares").filter(pl.col("source") == source)
+    if method.eu == "provider":
+        channels = channels.filter(~pl.col("channel_code").is_in(EU_CHANNELS))
 
     def share(objective: str) -> pl.Expr:
         return pl.col("share").filter(pl.col("objective") == objective).sum()
 
-    shares = (
-        snapshot.table("agency_shares")
-        .filter(pl.col("source") == source)
-        .group_by("channel_code", "year")
-        .agg(
-            share_adaptation=share("adaptation"),
-            share_mitigation=share("mitigation"),
-            share_overlap=share("cross_cutting"),
-            share_unsplit=share("climate"),
-        )
+    shares = channels.group_by("channel_code", "year").agg(
+        share_adaptation=share("adaptation"),
+        share_mitigation=share("mitigation"),
+        share_overlap=share("cross_cutting"),
+        share_unsplit=share("climate"),
     )
     return _conform(
         snapshot.table("core_contributions")
@@ -341,6 +354,25 @@ def _attributed_rows(snapshot: Snapshot, *, spec: Spec, method: Method) -> pl.La
             low_ratio=pl.lit(1.0),
             high_ratio=pl.lit(1.0),
         )
+    )
+
+
+def _without_eu_own_rows(
+    frame: pl.LazyFrame, *, attributed: pl.LazyFrame
+) -> pl.LazyFrame:
+    """`frame` without EU Institutions' own rows if `attributed` holds another
+    provider's contribution to an EU channel, which already counts that money."""
+    members = attributed.select(
+        _members=(
+            pl.col("channel_code").is_in(EU_CHANNELS)
+            & (pl.col("provider_code") != EU_INSTITUTIONS)
+        ).any()
+    )
+    own = pl.col("provider_code") == EU_INSTITUTIONS
+    return (
+        frame.join(members, how="cross")
+        .filter(~(own & pl.col("_members")))
+        .drop("_members")
     )
 
 

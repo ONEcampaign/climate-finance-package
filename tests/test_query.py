@@ -6,6 +6,7 @@ deliberate change, then review the diff.
 
 import itertools
 import os
+import tomllib
 from pathlib import Path
 
 import polars as pl
@@ -16,7 +17,7 @@ from releases import copy_release
 
 import climate_finance as cf
 from climate_finance.methods import OECD, RANGE, Method, MethodRange, label
-from climate_finance.query import BILATERAL
+from climate_finance.query import BILATERAL, EU_CHANNELS, EU_INSTITUTIONS
 from climate_finance.result import AMOUNTS
 from climate_finance.snapshot import Snapshot
 from climate_finance.spec import Spec
@@ -139,6 +140,7 @@ def test_code_2_rows_leave_every_total_unchanged(
             oda_only=True,
         ),
         Spec(method=cf.methods.ONE.replace(significant=0.25), flow="grant_equivalent"),
+        Spec(method=cf.methods.ONE.replace(eu="provider"), view="provider"),
     ],
 )
 def test_a_spec_round_trips_through_json_and_reruns_identically(spec: Spec) -> None:
@@ -329,6 +331,7 @@ def test_explain_names_the_method_view_and_units() -> None:
     text = SNAP.spending(method=cf.methods.OECD, view="provider").explain()
 
     assert "Method OECD" in text
+    assert "EU Institutions count as a provider" in text
     assert "Provider view" in text
     assert "USD at current prices" in text
 
@@ -422,3 +425,153 @@ def test_a_bilateral_commitment_divides_by_every_bilateral_code(
     expected = SNAP.spending(spec=spec).share_of_total().table.to_polars()
     assert expected.height
     assert_frame_equal(shares.table.to_polars(), expected)
+
+
+ONE_EU_AS_PROVIDER = cf.methods.ONE.replace(eu="provider")
+# France gives the EU budget (channel 42001) 30m a year in every flow, whose ONE
+# climate share is 0.30. EU Institutions' own commitment EU-1 copies Norway's NOR-1.
+EU_CONTRIBUTION, EU_SHARE = 30e6, 0.30
+
+
+def _with_eu_commitment(frame: pl.DataFrame) -> pl.DataFrame:
+    eu = frame.filter(pl.col("row_id") == "NOR-1").with_columns(
+        row_id=pl.lit("EU-1"), provider_code=pl.lit(EU_INSTITUTIONS, pl.Int32)
+    )
+    if "record_id" in frame.columns:
+        eu = eu.with_columns(pl.col("record_id").str.replace("NOR-1", "EU-1"))
+    return pl.concat([frame, eu])
+
+
+def _with_eu_contributions(frame: pl.DataFrame) -> pl.DataFrame:
+    rows = pl.DataFrame(
+        {
+            "provider_code": 4,
+            "channel_code": 42001,
+            "year": [year for year in (2021, 2022) for _ in FLOWS],
+            "flow": list(FLOWS) * 2,
+            "contribution_usd": EU_CONTRIBUTION,
+        }
+    )
+    return pl.concat([frame, rows.cast(frame.schema)])
+
+
+def _with_eu_shares(frame: pl.DataFrame) -> pl.DataFrame:
+    rows = pl.DataFrame(
+        {
+            "channel_code": 42001,
+            "year": [year for year in (2021, 2022) for _ in range(3)],
+            "objective": ["adaptation", "mitigation", "cross_cutting"] * 2,
+            "share": [0.10, 0.25, 0.05] * 2,
+            "source": "one",
+        }
+    )
+    # The OECD's share for the same channel, which OECD ignores.
+    oecd = rows.with_columns(source=pl.lit("oecd"))
+    return pl.concat([frame, rows.cast(frame.schema), oecd.cast(frame.schema)])
+
+
+@pytest.fixture(scope="module")
+def eu_snap(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
+    release = copy_release(
+        tmp_path_factory.mktemp("eu") / "release",
+        edits={
+            "commitments": _with_eu_commitment,
+            "disbursements": _with_eu_commitment,
+            "core_contributions": _with_eu_contributions,
+            "agency_shares": _with_eu_shares,
+        },
+    )
+    return cf.load(path=release)
+
+
+def test_the_eu_constants_match_the_channels_the_build_maps_to_eu_institutions() -> (
+    None
+):
+    toml = Path(cf.__file__).parent / "build" / "providers.toml"
+    agencies = tomllib.loads(toml.read_text())["agencies"]
+
+    channels = {
+        row["channel_code"]
+        for row in agencies
+        if row["provider_code"] == EU_INSTITUTIONS
+    }
+    assert channels == set(EU_CHANNELS)
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+@pytest.mark.parametrize(
+    ("method", "eu_own_rows", "eu_attributed"),
+    [
+        # As a channel, France's contribution carries the EU's share and the EU's
+        # own rows leave the all-provider total.
+        (cf.methods.ONE, False, EU_SHARE),
+        (ONE_EU_AS_PROVIDER, True, 0.0),
+        (cf.methods.OECD, True, 0.0),
+    ],
+)
+def test_an_all_provider_total_counts_eu_money_once(
+    eu_snap: Snapshot,
+    method: Method,
+    flow: str,
+    eu_own_rows: bool,
+    eu_attributed: float,
+) -> None:
+    rows = eu_snap.spending(view="provider", method=method, flow=flow).rows()
+
+    own = rows.filter(pl.col("provider_code") == EU_INSTITUTIONS)
+    attributed = rows.filter(pl.col("channel_code").is_in(EU_CHANNELS))
+    assert (own.height > 0) == eu_own_rows
+    assert attributed.filter(pl.col("provider_code") == EU_INSTITUTIONS).is_empty()
+    assert attributed["value"].sum() == pytest.approx(
+        2 * EU_CONTRIBUTION * eu_attributed
+    )
+
+
+@pytest.mark.parametrize("view", VIEWS)
+@pytest.mark.parametrize("flow", FLOWS)
+def test_eu_institutions_alone_return_their_own_spending_under_either_setting(
+    eu_snap: Snapshot, flow: str, view: str
+) -> None:
+    def eu_alone(method: Method) -> pl.DataFrame:
+        result = eu_snap.spending(
+            view=view, method=method, flow=flow, providers=EU_INSTITUTIONS
+        )
+        return result.table.to_polars().drop("method")
+
+    as_channel = eu_alone(cf.methods.ONE)
+    assert as_channel.height
+    assert_frame_equal(as_channel, eu_alone(ONE_EU_AS_PROVIDER))
+
+
+@pytest.mark.parametrize(
+    ("providers", "eu_own_rows"),
+    [
+        ((EU_INSTITUTIONS,), True),
+        # IDA attributes nothing to an EU channel, so no EU money counts twice.
+        ((EU_INSTITUTIONS, 905), True),
+        ((EU_INSTITUTIONS, 4), False),
+        (None, False),
+    ],
+)
+def test_eu_own_rows_leave_a_result_only_beside_eu_attribution(
+    eu_snap: Snapshot, providers: tuple[int, ...] | None, eu_own_rows: bool
+) -> None:
+    rows = eu_snap.spending(view="provider", providers=providers).rows(
+        provider_code=EU_INSTITUTIONS
+    )
+
+    assert (rows.height > 0) == eu_own_rows
+
+
+def test_a_member_counts_its_eu_share_only_with_the_eu_as_a_channel(
+    eu_snap: Snapshot,
+) -> None:
+    def france(method: Method) -> float:
+        result = eu_snap.spending(
+            view="provider", method=method, providers=4, years=2021
+        )
+        return result.rows(origin="attribution")["value"].sum()
+
+    assert france(cf.methods.ONE) - france(ONE_EU_AS_PROVIDER) == pytest.approx(
+        EU_CONTRIBUTION * EU_SHARE
+    )

@@ -112,6 +112,8 @@ def test_climate_components_ignore_coefficients_and_count_the_overlap_once(
 def test_named_methods_print_their_names_and_custom_ones_their_coefficients() -> None:
     assert label(ONE) == "ONE"
     assert label(ONE.replace(significant=0.5)).startswith("significant 0.5,")
+    assert label(ONE.replace(eu="provider")) == "ONE, EU as a provider"
+    assert label(OECD.replace(eu="channel")) == "OECD, EU as a channel"
 
 
 def test_coefficients_outside_zero_to_one_are_refused() -> None:

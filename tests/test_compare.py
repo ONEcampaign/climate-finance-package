@@ -120,13 +120,17 @@ def test_a_comparison_prints_its_columns_and_table() -> None:
 def test_methods_print_as_models_and_render_their_description() -> None:
     assert repr(ONE) == (
         "Method(significant=0.4, principal=1.0, highest_marker=True, "
-        "coefficients='fixed', relevance='markers')"
+        "coefficients='fixed', relevance='markers', eu='channel')"
     )
     assert ONE._repr_markdown_() == (
         "Method ONE: significant markers count 40% of face value and principal "
         "markers 100%; each activity counts once, under its higher Rio marker, with "
         "equal markers as cross-cutting. Climate-component rows from development "
-        "banks count their reported climate share and ignore the coefficients."
+        "banks count their reported climate share and ignore the coefficients. In "
+        "the provider view EU Institutions count as a channel: members' core "
+        "contributions to the EU budget, the EDF and the EIB carry the EU's climate "
+        "share, and EU Institutions' own rows leave any result that holds such an "
+        "attribution, so EU spending counts once."
     )
     assert RANGE._repr_markdown_() == (
         "Methods ONE / OECD / PROVIDER, reported together; low and high are the "
