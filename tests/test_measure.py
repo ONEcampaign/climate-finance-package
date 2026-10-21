@@ -1,7 +1,9 @@
 """Agency climate shares and the modelled line on hand-built CRDF and CRS rows."""
 
+from collections.abc import Callable
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 import pytest
 from normalised import crdf_rows, crs_records
@@ -452,3 +454,67 @@ def test_core_contribution_rows_change_no_measure(tmp_path: Path) -> None:
     assert not baseline["agency_shares"].is_empty()
     for table, frame in baseline.items():
         assert with_core[table].equals(frame), table
+
+
+# Enough rows per group that polars' threaded group sum, left in place, changes the
+# last bit of a float total on most runs.
+RERUN_ROWS = 10_000
+RERUNS = 10
+
+
+def _rerun_frames() -> tuple[pl.LazyFrame, pl.LazyFrame]:
+    """ASDB and IFC commitments, and ASDB and CAF records, over 2020 and 2021."""
+    rng = np.random.default_rng(7)
+    climate, committed, disbursed = rng.lognormal(15, 3, (3, RERUN_ROWS)).tolist()
+    crdf = crdf_rows(
+        *(
+            _bank(f"r{i}", 2020 + i % 2, provider_code=(ASDB, IFC)[i % 2],
+                  recipient_code=UNSPECIFIED, climate_usd=amount,
+                  adaptation_usd=amount / 3, overlap_usd=amount / 3)
+            for i, amount in enumerate(climate)
+        )
+    )  # fmt: skip
+    crs = crs_records(
+        *(
+            {"record_id": f"x{i}", "year": 2020 + i % 2,
+             "donor_code": (ASDB, CAF)[i % 2], "project_number": f"p{i % 7}",
+             "recipient_code": UNSPECIFIED, "commitment_usd": com,
+             "disbursement_usd": dis}
+            for i, (com, dis) in enumerate(zip(committed, disbursed, strict=True))
+        )
+    )  # fmt: skip
+    return crdf.lazy(), crs.lazy()
+
+
+def _rerun_agency_shares() -> pl.LazyFrame:
+    crdf, crs = _rerun_frames()
+    return agency_shares(
+        crdf, crs=crs, imputed_shares=NO_IMPUTED, agencies=AGENCIES, years=(2020, 2021)
+    )
+
+
+def _rerun_modelled_ranges() -> pl.LazyFrame:
+    crdf, crs = _rerun_frames()
+    providers = (
+        ModelledProvider(
+            provider_code=IFC,
+            basis="report",
+            crs_ratios=False,
+            report_ratios=(_report(0.92), _report(1.05)),
+        ),
+        ModelledProvider(provider_code=CAF, basis="crs"),
+    )
+    status = pl.LazyFrame(schema={"row_id": pl.String, "status": pl.String})
+    return modelled_ranges(
+        crdf, crs=crs, status=status, providers=providers, last_year=2021
+    )
+
+
+@pytest.mark.parametrize("table", [_rerun_agency_shares, _rerun_modelled_ranges])
+def test_measures_give_the_same_bits_on_every_run(
+    table: Callable[[], pl.LazyFrame],
+) -> None:
+    first = table().collect()
+
+    for _ in range(RERUNS):
+        assert table().collect().sort(first.columns).equals(first.sort(first.columns))

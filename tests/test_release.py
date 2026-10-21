@@ -1,18 +1,28 @@
 """The assemble stage on hand-built normalised tables, run through the stage runner
 from link to assemble, and the fill and review pass-through."""
 
+import shutil
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 import pytest
 from normalised import crdf_rows, crs_records
 
 import climate_finance as cf
 from climate_finance import schema
-from climate_finance.build import BuildConfig, load_config, run_stages, write_table
+from climate_finance.build import (
+    BuildConfig,
+    load_config,
+    release,
+    run_stages,
+    write_table,
+)
 from climate_finance.build.errors import ReleaseInvariantError
 from climate_finance.build.stages import REGISTRY, Stage, StageContext, table_path
+from climate_finance.errors import SchemaError
 from climate_finance.schema import STAGE_TABLES
 
 BUILD_TOML = Path(__file__).parents[1] / "build.toml"
@@ -212,18 +222,47 @@ def test_profile_pools_traceable_value_by_years_since_commitment(
     assert set(profile["vintages"]) == {1}
 
 
-def test_assemble_refuses_tables_that_break_an_invariant(
-    release_dir: Path, config: BuildConfig
-) -> None:
-    status = pl.read_parquet(table_path(release_dir, "review", "commitments"))
-    broken = status.with_columns(disbursed_usd=pl.col("disbursed_usd") + 1.0)
-    _write(release_dir, "review", {"commitments": broken})
+def _overstate_r1(status: pl.DataFrame) -> pl.DataFrame:
+    return status.with_columns(disbursed_usd=pl.col("disbursed_usd") + 1.0)
 
-    with pytest.raises(ReleaseInvariantError, match="R1"):
+
+def _drop_r1(status: pl.DataFrame) -> pl.DataFrame:
+    # R1 joins no status, so its status and disbursed amounts are null.
+    return status.filter(pl.col("row_id") != "R1")
+
+
+@pytest.mark.parametrize(
+    ("edit", "error"),
+    [(_overstate_r1, ReleaseInvariantError), (_drop_r1, SchemaError)],
+)
+@pytest.mark.parametrize("rebuild", [True, False])
+def test_a_failing_assemble_leaves_the_last_good_release(
+    release_dir: Path,
+    config: BuildConfig,
+    edit: Callable[[pl.DataFrame], pl.DataFrame],
+    error: type[Exception],
+    rebuild: bool,
+) -> None:
+    assemble = release_dir / "assemble"
+    last_good = {path.name: path.read_bytes() for path in assemble.iterdir()}
+    if not rebuild:
+        shutil.rmtree(assemble)
+    status = pl.read_parquet(table_path(release_dir, "review", "commitments"))
+    _write(release_dir, "review", {"commitments": edit(status)})
+
+    with pytest.raises(error):
         run_stages(
             REGISTRY, release="r", release_dir=release_dir, config=config,
             stages=["assemble"],
         )  # fmt: skip
+
+    if rebuild:
+        assert {path.name: path.read_bytes() for path in assemble.iterdir()} == (
+            last_good
+        )
+    else:
+        assert not assemble.exists()
+    assert not [path for path in release_dir.iterdir() if path.name.startswith(".")]
 
 
 @pytest.mark.parametrize(
@@ -260,3 +299,72 @@ def test_fill_and_review_pass_through_with_their_switch_off(
         assert output[table].lazy().collect().equals(written)
     with pytest.raises(NotImplementedError):
         run(context(on=True))
+
+
+# Enough rows per group that polars' threaded group sum, left in place, changes the
+# last bit of a float total on most runs.
+RERUN_ROWS = 10_000
+RERUNS = 10
+
+
+def _amounts(seed: int) -> np.ndarray:
+    return np.random.default_rng(seed).lognormal(15, 3, RERUN_ROWS)
+
+
+def _rerun_total_flows() -> pl.LazyFrame:
+    crs = pl.LazyFrame(
+        {
+            "donor_code": np.arange(RERUN_ROWS) % 2,
+            "recipient_code": 248,
+            "year": 2021,
+            "bi_multi": 1,
+            "commitment_usd": _amounts(1),
+            "disbursement_usd": _amounts(2),
+            "grant_equiv_usd": _amounts(3),
+        },
+        schema_overrides={"donor_code": pl.Int32, "recipient_code": pl.Int32,
+                          "year": pl.Int16, "bi_multi": pl.Int8},
+    )  # fmt: skip
+    return release.total_flows(crs)
+
+
+def _rerun_commitments() -> pl.LazyFrame:
+    row = np.arange(RERUN_ROWS)
+    return pl.LazyFrame(
+        {
+            "row_id": [f"R{i}" for i in row],
+            "provider_code": row % 2,
+            "year": 2019,
+            "climate_usd": _amounts(4),
+            "repeat_of": [None if i % 5 else "R0" for i in row],
+        },
+        schema_overrides={
+            "provider_code": pl.Int32, "year": pl.Int16, "repeat_of": pl.String
+        },
+    )  # fmt: skip
+
+
+def _rerun_quality() -> pl.LazyFrame:
+    commitments = _rerun_commitments()
+    return release.quality(
+        commitments,
+        disbursements=commitments.select(
+            "row_id", record_id="row_id", record_grant_equiv_usd="climate_usd"
+        ),
+        objectives=commitments.select(
+            record_id="row_id", label_source=pl.lit("jev")
+        ).head(RERUN_ROWS // 2),
+        links=commitments.select(
+            task=pl.lit("crdf_crs"), left_id="row_id", probability=pl.lit(0.9)
+        ),
+    )
+
+
+@pytest.mark.parametrize("table", [_rerun_total_flows, _rerun_quality])
+def test_release_tables_give_the_same_bits_on_every_run(
+    table: Callable[[], pl.LazyFrame],
+) -> None:
+    first = table().collect()
+
+    for _ in range(RERUNS):
+        assert table().collect().sort(first.columns).equals(first.sort(first.columns))

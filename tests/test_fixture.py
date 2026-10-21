@@ -163,10 +163,46 @@ def _split_a_climate_only_share(frame: pl.DataFrame) -> pl.DataFrame:
     return pl.concat([frame, split])
 
 
+def _null_disbursed(frame: pl.DataFrame) -> pl.DataFrame:
+    is_row = pl.col("row_id") == "DEU-1"
+    return frame.with_columns(
+        disbursed_usd=pl.when(~is_row).then(pl.col("disbursed_usd"))
+    )
+
+
+def _null_allocation_bound(frame: pl.DataFrame) -> pl.DataFrame:
+    is_row = pl.col("record_id") == "DEU-1-R1"
+    return frame.with_columns(
+        allocated_low_usd=pl.when(~is_row).then(pl.col("allocated_low_usd"))
+    )
+
+
+def _null_record_disbursement(frame: pl.DataFrame) -> pl.DataFrame:
+    is_record = pl.col("record_id") == "JPN-SPLIT"
+    return frame.with_columns(
+        record_disbursement_usd=pl.when(~is_record).then(
+            pl.col("record_disbursement_usd")
+        )
+    )
+
+
+def _repeat_an_allocated_row(frame: pl.DataFrame) -> pl.DataFrame:
+    # DEU-1 holds allocations; as a repeat of DEU-2 its money drops out of totals.
+    return frame.with_columns(
+        repeat_of=pl.when(pl.col("row_id") == "DEU-1")
+        .then(pl.lit("DEU-2"))
+        .otherwise(pl.col("repeat_of"))
+    )
+
+
 @pytest.mark.parametrize(
     ("table", "edit", "row_id"),
     [
         ("disbursements", _break_allocation_bound, "DEU-1"),
+        ("commitments", _null_disbursed, "DEU-1"),
+        ("disbursements", _null_allocation_bound, "DEU-1"),
+        ("disbursements", _null_record_disbursement, "JPN-SPLIT"),
+        ("commitments", _repeat_an_allocated_row, "DEU-1"),
         ("commitments", _break_disbursed_sum, "DEU-1"),
         ("commitments", _break_face_cap, "DEU-1"),
         ("commitments", _revise_face_below_zero, "DEU-1"),

@@ -193,6 +193,14 @@ def _allocation(
     certain = link_probability is None or link_probability >= CERTAIN_PROBABILITY
     first = record_id.endswith("-R0")
     rio_a, rio_m = commitment["rio_adaptation"], commitment["rio_mitigation"]
+    record_rio_a = None if first else rio_a
+    # As label.inherit_markers sets it.
+    if commitment["climate_share"] is not None:
+        marker_source = "components"
+    elif record_rio_a == rio_a:
+        marker_source = "commitment"
+    else:
+        marker_source = "record_differs"
     return {
         "row_id": commitment["row_id"],
         "record_id": record_id,
@@ -215,9 +223,9 @@ def _allocation(
         "record_grant_equiv_usd": record_grant_equiv,
         "inherited_rio_adaptation": rio_a,
         "inherited_rio_mitigation": rio_m,
-        "record_rio_adaptation": None if first else rio_a,
+        "record_rio_adaptation": record_rio_a,
         "record_rio_mitigation": rio_m,
-        "marker_source": "record" if first else "commitment",
+        "marker_source": marker_source,
         "climate_share": commitment["climate_share"],
         "link_method": link_method,
         "link_probability": link_probability,
@@ -607,9 +615,10 @@ def write_fixture(out_dir: Path) -> ReleaseManifest:
 # the modelled line.
 SAMPLE_PROVIDERS = (DEU, FRA, JPN, IDA, AFDB, EIB)
 SAMPLE_COMMITMENTS = 50
-# Per provider: up to this many commitments of each status, repeats with
-# allocations, and children of aggregate rows. The rest of the provider's 50 are
-# commitments with at least `SAMPLE_MIN_RECORDS` CRS records, then any others.
+# Per provider: up to this many commitments of each status, repeats whose first row
+# holds allocations, and children of aggregate rows. The rest of the provider's 50
+# are commitments with at least `SAMPLE_MIN_RECORDS` CRS records, then any others.
+# Each sampled repeat brings its first row.
 SAMPLE_PER_KIND = 3
 SAMPLE_MIN_RECORDS = 8
 SAMPLE_SEED = 7
@@ -621,7 +630,8 @@ def sample_release(release: Path) -> dict[str, pl.DataFrame]:
     """The release tables of `release` cut to a sample of `SAMPLE_PROVIDERS`.
 
     Each commitment keeps every allocation and each record its objective labels, so
-    the commitments' disbursed amounts still sum from their allocations. `quality`,
+    the commitments' disbursed amounts still sum from their allocations. Each repeat
+    keeps the first row it repeats, which holds its allocations. `quality`,
     `modelled`, `core_contributions` and `total_flows` keep the six providers' rows
     for the whole release.
     """
@@ -645,8 +655,9 @@ def sample_release(release: Path) -> dict[str, pl.DataFrame]:
     kinds = [
         pl.col("status") == status for status in candidates["status"].unique().sort()
     ]
+    allocated = candidates.filter(pl.col("records") > 0)["row_id"].implode()
     kinds += [
-        pl.col("repeat_of").is_not_null() & (pl.col("records") > 0),
+        pl.col("repeat_of").is_in(allocated),
         pl.col("parent_row_id").is_not_null(),
     ]
     chosen = []
@@ -661,7 +672,11 @@ def sample_release(release: Path) -> dict[str, pl.DataFrame]:
             .drop("few")
         )
         chosen.append(pl.concat([picked, rest]).head(SAMPLE_COMMITMENTS)["row_id"])
-    row_ids = pl.concat(chosen).implode()
+    picked_ids = pl.concat(chosen)
+    first_rows = tables["commitments"].filter(
+        pl.col("row_id").is_in(picked_ids.implode())
+    )["repeat_of"]
+    row_ids = pl.concat([picked_ids, first_rows.drop_nulls()]).unique().implode()
 
     sample = dict(tables)
     sample["commitments"] = tables["commitments"].filter(
@@ -694,13 +709,13 @@ def _write_release(
     tables: dict[str, pl.DataFrame], out_dir: Path, *, manifest: ReleaseManifest
 ) -> ReleaseManifest:
     """Validate and write `tables` and `release.json`, `manifest` with their hashes."""
+    for name, frame in tables.items():
+        validate(RELEASE_TABLES[name], frame)
     if problems := release_invariants(tables):
         raise ValueError(f"release breaks its invariants: {problems}")
     entries = {}
     for name, frame in tables.items():
-        table = RELEASE_TABLES[name]
-        validate(table, frame)
-        sha256 = write_table(frame, table, out_dir / f"{name}.parquet")
+        sha256 = write_table(frame, RELEASE_TABLES[name], out_dir / f"{name}.parquet")
         entries[name] = TableEntry(sha256=sha256, rows=frame.height)
     written = manifest.model_copy(update={"tables": entries})
     (out_dir / "release.json").write_text(written.model_dump_json(indent=2) + "\n")

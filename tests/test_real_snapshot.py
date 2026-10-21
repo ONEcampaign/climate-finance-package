@@ -33,24 +33,21 @@ def test_the_sample_holds_the_invariants_and_the_cases_it_was_drawn_for(
     assert release_invariants(tables) == []
     assert set(commitments["provider_code"]) == set(SAMPLE_PROVIDERS)
     assert set(commitments["status"]) == set(STATUSES) - {"pending_review"}
-    assert commitments.filter(
-        pl.col("repeat_of").is_not_null(), pl.col("row_id").is_in(allocated_rows)
-    ).height
+    assert commitments.filter(pl.col("repeat_of").is_in(allocated_rows)).height
     assert commitments["parent_row_id"].drop_nulls().len()
 
 
 @pytest.mark.parametrize("flow", FLOWS)
 def test_repeats_stay_out_of_every_flow(snap: cf.Snapshot, flow: str) -> None:
     repeats = (
-        snap.table("commitments")
-        .filter(pl.col("repeat_of").is_not_null())
-        .collect()["row_id"]
+        snap.table("commitments").filter(pl.col("repeat_of").is_not_null()).collect()
     )
 
     rows = snap.spending(flow=flow).rows()
 
     assert rows.height
-    assert not rows.filter(pl.col("row_id").is_in(repeats.implode())).height
+    assert not rows.filter(pl.col("row_id").is_in(repeats["row_id"].implode())).height
+    assert rows.filter(pl.col("row_id").is_in(repeats["repeat_of"].implode())).height
 
 
 @pytest.mark.parametrize("flow", ["commitments", "disbursements"])

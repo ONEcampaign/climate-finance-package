@@ -187,7 +187,7 @@ class Quality:
         is the share of linked records with a grant equivalent, weighted by linked
         climate value over the years that have linked records. `repeat_climate_usd`
         is the climate value of rows that repeat an earlier vintage, which every
-        total, and the disbursements allocated to those rows, leave out.
+        total leaves out. Their disbursements count on the row they repeat.
         """
         climate = pl.col("climate_usd").sum()
         linked = pl.col("linked_usd").sum()
@@ -255,8 +255,9 @@ def explain(
     lines.append(_VIEWS[spec.view])
     lines.append(_FLOWS[spec.flow])
     lines.append(
-        "Commitments that repeat an earlier vintage, and disbursements allocated to "
-        "them, are left out; snap.quality() reports their value."
+        "Commitments that repeat an earlier vintage are left out, and their "
+        "disbursements count on the row they repeat; snap.quality() reports their "
+        "value."
     )
     filters = [
         f"{name} {', '.join(map(str, values))}"

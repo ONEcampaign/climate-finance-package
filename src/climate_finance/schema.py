@@ -71,6 +71,8 @@ OBJECTIVES = ("adaptation", "mitigation", "cross_cutting")
 # share with no split by objective, as the OECD gives before 2021.
 SHARE_OBJECTIVES = (*OBJECTIVES, "climate")
 LABEL_SOURCES = ("crdf", "marker", "jev")
+# How a disbursement's own Rio markers relate to the ones it inherits.
+MARKER_SOURCES = ("components", "commitment", "record_differs")
 PAIR_LABEL_SOURCES = ("key", "rule", "jev", "human", "ledger")
 ID_PRACTICE_CLASSES = (
     "id_persistent",
@@ -652,7 +654,7 @@ DISBURSEMENTS = _table(
     inherited_rio_mitigation=_rio(),
     record_rio_adaptation=_rio(),
     record_rio_mitigation=_rio(),
-    marker_source=_str(),
+    marker_source=_str(values=MARKER_SOURCES),
     climate_share=_f64(nullable=True),
     link_method=_str(nullable=True, values=LINK_METHODS),
     link_probability=_f64(nullable=True),
@@ -831,6 +833,12 @@ _DISBURSED_SUMS = {
     "disbursed_low_usd": "allocated_low_usd",
     "disbursed_high_usd": "allocated_high_usd",
 }
+# The amounts the checks compare, by table. A null among them fails no comparison,
+# so each null is a problem of its own.
+_COMPARED_AMOUNTS = {
+    "commitments": ("face_usd", *_DISBURSED_SUMS),
+    "disbursements": (*_DISBURSED_SUMS.values(), "record_disbursement_usd"),
+}
 
 
 def _exceeds(smaller: str, larger: str) -> pl.Expr:
@@ -852,7 +860,9 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     or below (a published downward revision) allows nothing disbursed. A record's
     rows share one `record_disbursement_usd` and one `record_grant_equiv_usd` (all
     null or all set), and its allocated amounts sum to at most
-    `record_disbursement_usd`. Amounts compare within `INVARIANT_TOLERANCE_USD`. No
+    `record_disbursement_usd`. Amounts compare within `INVARIANT_TOLERANCE_USD`, and
+    none of them is null. No disbursements row names a commitment that repeats an
+    earlier vintage, as allocate moves a repeat's allocations to its first row. No
     commitment is another's `parent_row_id`, and no table in `tables` holds the
     bulk CRS's `CRS_UNSPECIFIED_RECIPIENT`. A channel, year and source of
     `agency_shares` holds either split rows or one `climate` row. An empty list
@@ -860,7 +870,12 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     """
     commitments = tables["commitments"]
     disbursements = tables["disbursements"]
-    problems = []
+    problems = [
+        f"{name} {_row_label(row)}: {column} is null"
+        for name, columns in _COMPARED_AMOUNTS.items()
+        for column in columns
+        for row in tables[name].filter(pl.col(column).is_null()).iter_rows(named=True)
+    ]
     parents = commitments.join(
         commitments.select(row_id=pl.col("parent_row_id")).drop_nulls(),
         on="row_id",
@@ -877,6 +892,13 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
             f"{smaller} > {larger}"
             for row in failing.iter_rows(named=True)
         )
+    on_repeats = disbursements.join(
+        commitments.filter(pl.col("repeat_of").is_not_null()), on="row_id", how="semi"
+    )
+    problems.extend(
+        f"disbursements {row_id}: allocated to a row that repeats an earlier vintage"
+        for row_id in on_repeats["row_id"].unique().sort()
+    )
     orphans = disbursements.join(commitments, on="row_id", how="anti")
     problems.extend(
         f"disbursements {row_id}: no such commitment"
@@ -928,6 +950,13 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     return problems
 
 
+def _row_label(row: Mapping[str, object]) -> str:
+    """A commitments row's id, or a disbursements row's id, record and year."""
+    if "record_id" in row:
+        return f"{row['row_id']} {row['record_id']} {row['year']}"
+    return str(row["row_id"])
+
+
 def _share_problems(agency_shares: pl.DataFrame) -> list[str]:
     """Agency share keys that hold both a `climate` row and split rows."""
     climate = pl.col("objective") == "climate"
@@ -969,7 +998,11 @@ def _record_problems(disbursements: pl.DataFrame) -> list[str]:
                     f"disbursements record {row['record_id']}: {column} differs "
                     "between rows"
                 )
-        if row["_allocated"] - row["_disbursement"] > INVARIANT_TOLERANCE_USD:
+        disbursement = row["_disbursement"]
+        if (
+            disbursement is not None
+            and row["_allocated"] - disbursement > INVARIANT_TOLERANCE_USD
+        ):
             problems.append(
                 f"disbursements record {row['record_id']}: allocated_usd sums to "
                 f"{row['_allocated']!r}, above record_disbursement_usd "

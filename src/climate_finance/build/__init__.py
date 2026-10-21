@@ -2,11 +2,15 @@
 
 Needs the [build] extra. The stage writer sorts every table by its schema's sort key,
 then by its remaining flat columns, so two builds from the same inputs give the same
-sha256 per table.
+sha256 per table. It writes a stage to a temporary directory and moves it into place
+once every table is written, so a stage that fails leaves the last good one intact.
 """
 
-from collections.abc import Collection, Mapping, Sequence
+import shutil
+import tempfile
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -28,7 +32,7 @@ from climate_finance.build.stages import (  # noqa: E402
     StageContext,
     StageDef,
     StageOutput,
-    table_path,
+    stage_dir,
 )
 from climate_finance.schema import (  # noqa: E402
     OPTIONAL_STAGE_TABLES,
@@ -63,9 +67,19 @@ def write_table(frame: pl.DataFrame, table: TableSchema, path: Path) -> str:
 
 
 def write_stage(
-    stage: StageDef, output: StageOutput, release_dir: Path
+    stage: StageDef,
+    output: StageOutput,
+    release_dir: Path,
+    *,
+    seal: Callable[[Mapping[str, pl.DataFrame], Mapping[str, str], Path], None]
+    | None = None,
 ) -> dict[str, str]:
     """Validate every table `stage` returned, then write them all.
+
+    The tables go to a temporary directory beside the stage's own. `seal`, given
+    the tables, their sha256 and that directory, may check them and add files
+    before the directory replaces `<release_dir>/<stage>/`. Nothing replaces it
+    when validation, writing or `seal` raises.
 
     Raises:
         StageOutputError: when the returned tables differ from the declared ones,
@@ -85,12 +99,30 @@ def write_stage(
     }
     for name, frame in frames.items():
         validate(stage.tables[name], frame)
-    return {
-        name: write_table(
-            frame, stage.tables[name], table_path(release_dir, stage.name, name)
-        )
-        for name, frame in frames.items()
-    }
+    release_dir.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{stage.name}-", dir=release_dir))
+    try:
+        sha256 = {
+            name: write_table(frame, stage.tables[name], staging / f"{name}.parquet")
+            for name, frame in frames.items()
+        }
+        if seal is not None:
+            seal(frames, sha256, staging)
+        _replace_dir(staging, stage_dir(release_dir, stage.name))
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    return sha256
+
+
+def _replace_dir(source: Path, target: Path) -> None:
+    """Move `source` to `target`, removing what `target` held."""
+    if target.exists():
+        old = source.with_name(f"{source.name}.old")
+        target.rename(old)
+        source.rename(target)
+        shutil.rmtree(old)
+    else:
+        source.rename(target)
 
 
 def run_stages(
@@ -115,7 +147,12 @@ def run_stages(
         release=release, release_dir=release_dir, config=config, offline=offline
     )
     tables = {
-        stage.name: write_stage(stage, stage.run(context), release_dir)
+        stage.name: write_stage(
+            stage,
+            stage.run(context),
+            release_dir,
+            seal=None if stage.seal is None else partial(stage.seal, context),
+        )
         for stage in registry
         if stage.name in selected
     }

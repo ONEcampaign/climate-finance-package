@@ -1,8 +1,9 @@
 """The assemble stage and release packing.
 
-Assemble projects the stage tables into the release tables the analysis layer reads,
-and writes them with `release.json` to `<release_dir>/assemble/`, the directory
-`cf.load(path=...)` opens.
+Assemble projects the stage tables into the release tables the analysis layer reads.
+The stage writer validates and writes them, `seal_release` checks
+`schema.release_invariants` and adds `release.json`, and only then does the release
+replace `<release_dir>/assemble/`, the directory `cf.load(path=...)` opens.
 
 `commitments` holds the CRDF rows the trace follows: recipient-perspective rows,
 with an aggregate parent left out where its rebuilt children stand in for it. Rows
@@ -24,6 +25,7 @@ from climate_finance import __version__
 from climate_finance.build.allocate import counted_rows, years_since_commitment
 from climate_finance.build.errors import ReleaseInvariantError, StageInputMissingError
 from climate_finance.build.label import inherit_markers
+from climate_finance.build.sums import ordered_sum
 from climate_finance.query import BILATERAL, MULTILATERAL_OUTFLOW
 from climate_finance.schema import (
     BTR,
@@ -44,8 +46,7 @@ from climate_finance.schema import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from climate_finance.build.config import BuildConfig
-    from climate_finance.build.stages import StageContext, StageOutput
+    from climate_finance.build.stages import StageContext
 
 # A commitment's link counts as high probability from this value.
 HIGH_PROBABILITY = 0.8
@@ -64,26 +65,39 @@ _FLOW_AMOUNTS = {
 }
 
 
-def run_assemble(context: StageContext) -> StageOutput:
-    """Project stage tables into the release tables and write `release.json`.
-
-    The tables are written here as well as by the stage writer, which writes the
-    same bytes, so `release.json` carries the sha256 of the files `cf.load` reads.
+def seal_release(
+    context: StageContext,
+    tables: Mapping[str, pl.DataFrame],
+    sha256: Mapping[str, str],
+    out_dir: Path,
+) -> None:
+    """Check the written release tables and write `release.json` beside them.
 
     Raises:
         ReleaseInvariantError: when the tables break `schema.release_invariants`.
     """
-    tables = assemble(context)
     if problems := release_invariants(tables):
         raise ReleaseInvariantError(problems)
-    write_release(
-        tables,
+    manifest = ReleaseManifest(
         release=context.release,
-        out_dir=context.release_dir / "assemble",
-        raw_manifest=context.read("fetch", "raw_manifest").collect(),
-        config=context.config,
+        created_at=datetime.now(UTC),
+        package_version=__version__,
+        tables={
+            name: TableEntry(sha256=sha256[name], rows=tables[name].height)
+            for name in RELEASE_TABLES
+        },
+        source_versions=source_versions(
+            context.read("fetch", "raw_manifest").collect()
+        ),
+        model_versions={
+            "jev": context.config.jev.model,
+            "embedding": (
+                f"{context.config.embedding.model}@{context.config.embedding.revision}"
+            ),
+        },
+        gates={},
     )
-    return tables
+    (out_dir / "release.json").write_text(manifest.model_dump_json(indent=2) + "\n")
 
 
 def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
@@ -275,7 +289,7 @@ def total_flows(crs: pl.LazyFrame) -> pl.LazyFrame:
         )
         .drop_nulls("usd")
         .group_by(*keys, "flow")
-        .agg(amount_usd=pl.col("usd").sum())
+        .agg(amount_usd=ordered_sum(pl.col("usd")))
         .select(list(TOTAL_FLOWS.columns))
     )
 
@@ -331,14 +345,14 @@ def quality(
         .group_by("provider_code", "year")
         .agg(
             commitments=counted.sum().cast(pl.Int32),
-            climate_usd=climate.filter(counted).sum(),
-            linked_usd=climate.filter(linked).sum(),
-            linked_high_probability_usd=climate.filter(
-                linked, pl.col("best_probability") >= HIGH_PROBABILITY
-            ).sum(),
-            model_labelled_usd=climate.filter(model).sum(),
-            report_labelled_usd=climate.filter(counted & ~model).sum(),
-            repeat_climate_usd=climate.filter(~counted).sum(),
+            climate_usd=ordered_sum(climate.filter(counted)),
+            linked_usd=ordered_sum(climate.filter(linked)),
+            linked_high_probability_usd=ordered_sum(
+                climate.filter(linked, pl.col("best_probability") >= HIGH_PROBABILITY)
+            ),
+            model_labelled_usd=ordered_sum(climate.filter(model)),
+            report_labelled_usd=ordered_sum(climate.filter(counted & ~model)),
+            repeat_climate_usd=ordered_sum(climate.filter(~counted)),
             linked_records=pl.col("records").filter(linked).sum(),
             with_grant_equiv=pl.col("grant_equiv_records").filter(linked).sum(),
         )
@@ -388,47 +402,13 @@ def disbursement_profile(
         observed.filter(pl.col("bi_multi").is_in(codes))
         .group_by("years_since")
         .agg(
-            cumulative_share=pl.col("disbursed_climate").sum()
-            / pl.col("climate_usd").sum(),
+            cumulative_share=ordered_sum(pl.col("disbursed_climate"))
+            / ordered_sum(pl.col("climate_usd")),
             vintages=pl.col("year").n_unique().cast(pl.Int16),
         )
         .with_columns(group=pl.lit(group))
         for group, codes in PROFILE_GROUPS.items()
     ).select(list(DISBURSEMENT_PROFILE.columns))
-
-
-def write_release(
-    tables: Mapping[str, pl.DataFrame],
-    *,
-    release: str,
-    out_dir: Path,
-    raw_manifest: pl.DataFrame,
-    config: BuildConfig,
-) -> ReleaseManifest:
-    """Write every release table and `release.json` to `out_dir`."""
-    # Imported here: `climate_finance.build` imports this module through the stage
-    # registry.
-    from climate_finance.build import write_table
-
-    entries = {}
-    for name, table in RELEASE_TABLES.items():
-        frame = tables[name]
-        sha256 = write_table(frame, table, out_dir / f"{name}.parquet")
-        entries[name] = TableEntry(sha256=sha256, rows=frame.height)
-    manifest = ReleaseManifest(
-        release=release,
-        created_at=datetime.now(UTC),
-        package_version=__version__,
-        tables=entries,
-        source_versions=source_versions(raw_manifest),
-        model_versions={
-            "jev": config.jev.model,
-            "embedding": f"{config.embedding.model}@{config.embedding.revision}",
-        },
-        gates={},
-    )
-    (out_dir / "release.json").write_text(manifest.model_dump_json(indent=2) + "\n")
-    return manifest
 
 
 def source_versions(raw_manifest: pl.DataFrame) -> dict[str, str]:

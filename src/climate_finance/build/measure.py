@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from climate_finance.build.allocate import counted_rows
 from climate_finance.build.errors import ConfigError
 from climate_finance.build.normalise.crs import trace_population
+from climate_finance.build.sums import ordered_sum
 from climate_finance.methods import ONE, weights
 from climate_finance.schema import AGENCY_SHARES, MODELLED, STATUSES
 
@@ -281,7 +282,7 @@ def _rolling_sum(
         .explode("year")
         .filter(pl.col("year").is_between(first + SHARE_YEARS - 1, last))
         .group_by("channel_code", "year")
-        .agg(pl.col(column).sum() for column in columns)
+        .agg(ordered_sum(pl.col(column)) for column in columns)
     )
 
 
@@ -330,7 +331,7 @@ def modelled_ranges(
     return (
         pl.concat(frames)
         .group_by("provider_code", "year", "recipient_code", "basis")
-        .agg(pl.col("low_usd").sum(), pl.col("high_usd").sum())
+        .agg(ordered_sum(pl.col("low_usd")), ordered_sum(pl.col("high_usd")))
         .select(columns)
     )
 
@@ -463,7 +464,10 @@ def _ratio(flows: pl.LazyFrame, *, by: Sequence[str]) -> pl.LazyFrame:
     committed = pl.col("committed")
     return (
         flows.group_by(*by)
-        .agg(committed=pl.col("com").sum(), disbursed=pl.col("dis").sum())
+        .agg(
+            committed=ordered_sum(pl.col("com")),
+            disbursed=ordered_sum(pl.col("dis")),
+        )
         .select(*by, ratio=pl.when(committed > 0).then(pl.col("disbursed") / committed))
     )
 

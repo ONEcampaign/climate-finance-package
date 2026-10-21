@@ -24,7 +24,6 @@ if TYPE_CHECKING:
     from climate_finance.build.jev_client import JevClient
     from climate_finance.build.stages import StageContext, StageOutput
 
-MARKER_SOURCES = ("components", "commitment", "record_differs")
 # The level a climate-component commitment gives its CRDF objective.
 COMPONENT_LEVEL = 2
 
