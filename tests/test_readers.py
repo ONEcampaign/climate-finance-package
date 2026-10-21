@@ -91,13 +91,18 @@ def test_imputed_shares_average_the_agencies_that_share_a_channel_code() -> None
         RAW / "imputed_shares" / "Imputed_multilateral_shares.xlsx"
     )
 
-    # IDB (3000m of climate finance, whole share 0.39; mitigation only 0.25, both
-    # 0.08) and IDB Invest (1000m, 0.64; 0.5 and 0.02) report under 46012. Each
-    # weighs by its total finance, climate finance over whole share.
-    idb, invest = 3000 / 0.39, 1000 / 0.64
+    # IDB (3000m of climate finance in 2024 and 929.372286m in 2023, whole share
+    # 0.39; mitigation only 0.25, both 0.08) and IDB Invest (1000m and 9.676708m,
+    # 0.64; 0.5 and 0.02) report under 46012. The 2024 shares average 2023 and 2024,
+    # so each agency weighs by its climate finance in both years over its share.
+    idb, invest = (929.372286 + 3000) / 0.39, (9.676708 + 1000) / 0.64
     expected = (idb * (0.25 + 0.08) + invest * (0.5 + 0.02)) / (idb + invest)
     mitigation = _value(frame, channel_code=46012, year=2024, objective="mitigation")
     assert mitigation == pytest.approx(expected)
+    # The 2020 shares average 2019 and 2020, and the workbook has no 2019 sheet.
+    idb, invest = 16.19794 / 0.70273, 264.10911 / 0.09801
+    expected = (16.19794 + 264.10911) / (idb + invest)
+    assert _value(frame, channel_code=46012, year=2020) == pytest.approx(expected)
 
 
 def test_imputed_shares_refuse_an_agency_without_a_channel_code(

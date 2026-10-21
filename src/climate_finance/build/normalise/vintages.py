@@ -6,7 +6,8 @@ different years, within one perspective and provider:
 
 - same id: a row whose crs id the CRS knows, but with no CRS commitment under its
   own key (provider, crs id, year, purpose), shares provider, crs id and purpose
-  with a row of another year.
+  with a row of an earlier year. A row of a later year that the CRS commits money
+  under is new money under the old id, such as a yearly contribution to a fund.
 - EIB bulk record: an EIB row without a CRS commitment of its own matches a bulk
   EIB commitment (`_match_eib`) whose key, or crs id, an EIB row of another year
   carries.
@@ -206,13 +207,13 @@ def _with_keys(rows: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
 
 
 def _same_id_edges(rows: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
-    """Rows whose id the CRS knows but commits nothing under, paired across years."""
+    """Rows whose id the CRS knows but commits nothing under, and earlier rows."""
     key = ["perspective", "provider_code", "crs_id", "purpose_code"]
     unbacked = rows.filter(pl.col("id_in_crs"), ~pl.col("backed"))
     return _edges(
-        unbacked.select("row_id", "year", *key).join(
-            rows.select(*key, other="row_id", other_year="year"), on=key
-        )
+        unbacked.select("row_id", "year", *key)
+        .join(rows.select(*key, other="row_id", other_year="year"), on=key)
+        .filter(pl.col("other_year") < pl.col("year"))
     )
 
 

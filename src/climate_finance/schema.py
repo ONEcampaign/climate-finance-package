@@ -864,7 +864,8 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     rows share one `record_disbursement_usd` and one `record_grant_equiv_usd` (all
     null or all set), and its allocated amounts sum to at most
     `record_disbursement_usd`. Amounts compare within `INVARIANT_TOLERANCE_USD`, and
-    none of them is null. No disbursements row names a commitment that repeats an
+    none of them is null. Every disbursements row but a bank-ledger fill names the
+    link that carried it. No disbursements row names a commitment that repeats an
     earlier vintage, as allocate moves a repeat's allocations to its first row. No
     commitment is another's `parent_row_id`, and no table in `tables` holds the
     bulk CRS's `CRS_UNSPECIFIED_RECIPIENT`. A channel, year and source of
@@ -895,6 +896,13 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
             f"{smaller} > {larger}"
             for row in failing.iter_rows(named=True)
         )
+    unlinked = disbursements.filter(
+        pl.col("link_method").is_null(), pl.col("rule") != "bank_ledger"
+    )
+    problems.extend(
+        f"disbursements {_row_label(row)}: no link carried it"
+        for row in unlinked.iter_rows(named=True)
+    )
     on_repeats = disbursements.join(
         commitments.filter(pl.col("repeat_of").is_not_null()), on="row_id", how="semi"
     )

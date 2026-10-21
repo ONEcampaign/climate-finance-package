@@ -1,7 +1,8 @@
 """`Imputed_multilateral_shares.xlsx`: the OECD's imputed climate shares."""
 
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import openpyxl
@@ -13,6 +14,8 @@ _CLIMATE_FINANCE_COLUMN = 5
 # Header text, in the header row or the row above it, of the column holding an
 # agency's whole climate share.
 _SHARE_HEADERS = ("Imputed multilateral contribution", "Overall climate share")
+# Header text naming the years a sheet's shares average, such as "2021-2022 average".
+_SPAN = re.compile(r"(\d{4})-(\d{4}) average")
 # Header text of the three columns that split an agency's climate share. The columns
 # are disjoint; the reader adds "both" to the other two.
 _OBJECTIVES = {
@@ -67,6 +70,21 @@ _CHANNEL_CODES: dict[str, int | None] = {
 }
 
 
+@dataclass(frozen=True)
+class _SheetRow:
+    """One share of one agency on a year sheet."""
+
+    name: str
+    year: int
+    objective: str
+    share: float
+    # The agency's climate finance in the sheet's year (column F), its whole climate
+    # share, and the years the sheet's shares average.
+    climate: float | None
+    whole: float | None
+    span: range
+
+
 def read_imputed_shares(path: Path) -> pl.DataFrame:
     """Climate shares by channel, year and objective, skipping the draft sheet.
 
@@ -79,9 +97,11 @@ def read_imputed_shares(path: Path) -> pl.DataFrame:
     the Montreal Protocol and the UNFCCC have after, gives one `climate` row. An
     agency with no share gives no rows. The Inter-American Development Bank, IDB
     Invest and the IIC and MIF share one channel code; their shares are averaged,
-    weighted by each agency's total development finance, which is its climate
-    finance (column F) over its whole climate share. The pooled share is then the
-    group's climate finance over its total finance.
+    weighted by each agency's total development finance over the years the shares
+    average (two years, such as 2021-2022 on the 2022 sheet). That total is the
+    agency's climate finance in those years, column F of each year's sheet, over its
+    whole climate share; a year without a sheet or without the agency adds nothing.
+    The pooled share is then the group's climate finance over its total finance.
 
     Args:
         path: The OECD workbook.
@@ -98,12 +118,23 @@ def read_imputed_shares(path: Path) -> pl.DataFrame:
         if re.fullmatch(r"\d{4}", sheet.title)
         for row in _sheet_rows(list(sheet.iter_rows(values_only=True)), sheet.title)
     ]
-    unknown = sorted({str(row["name"]) for row in rows} - _CHANNEL_CODES.keys())
+    unknown = sorted({row.name for row in rows} - _CHANNEL_CODES.keys())
     if unknown:
         raise ValueError(f"No channel code for the agencies {unknown}")
+    climate = {(row.name, row.year): row.climate for row in rows}
     return (
         pl.DataFrame(
-            rows,
+            [
+                (
+                    row.name,
+                    row.year,
+                    row.objective,
+                    row.share,
+                    _span_finance(row, climate=climate),
+                )
+                for row in rows
+            ],
+            orient="row",
             schema={
                 "name": pl.String,
                 "year": pl.Int16,
@@ -131,10 +162,22 @@ def read_imputed_shares(path: Path) -> pl.DataFrame:
     )
 
 
-def _sheet_rows(
-    sheet: Sequence[Sequence[object]], title: str
-) -> Iterator[dict[str, object]]:
-    """Per agency of a year sheet, its split rows, else its `climate` row."""
+def _span_finance(
+    row: _SheetRow, *, climate: Mapping[tuple[str, int], float | None]
+) -> float | None:
+    """The agency's total finance over the years its share averages."""
+    if row.climate is None or row.whole is None or row.whole <= 0:
+        return None
+    amounts = (climate.get((row.name, year)) for year in row.span)
+    return sum(amount for amount in amounts if amount is not None) / row.whole
+
+
+def _sheet_rows(sheet: Sequence[Sequence[object]], title: str) -> Iterator[_SheetRow]:
+    """Per agency of a year sheet, its split rows, else its `climate` row.
+
+    Each row carries the agency's climate finance (column F), its whole climate
+    share and the years the sheet's shares average.
+    """
     header = next((i for i, row in enumerate(sheet) if _HEADER in row), None)
     if header is None:
         raise ValueError(f"Sheet {title} has no {_HEADER!r} header")
@@ -149,6 +192,20 @@ def _sheet_rows(
     )
     if climate_column is None:
         raise ValueError(f"Sheet {title} has no climate share column")
+    averaged = next(
+        (
+            found
+            for row in sheet[: header + 1]
+            for cell in row
+            if isinstance(cell, str) and (found := _SPAN.search(cell))
+        ),
+        None,
+    )
+    span = (
+        range(int(averaged[1]), int(averaged[2]) + 1)
+        if averaged
+        else range(int(title), int(title) + 1)
+    )
     columns = {
         column: _OBJECTIVES[cell]
         for column, cell in enumerate(sheet[header])
@@ -168,19 +225,17 @@ def _sheet_rows(
                     shares[objective] += both
         if not shares and isinstance(share := row[climate_column], int | float):
             shares = {"climate": share}
-        climate, whole = row[_CLIMATE_FINANCE_COLUMN], row[climate_column]
-        finance = (
-            climate / whole
-            if isinstance(climate, int | float)
-            and isinstance(whole, int | float)
-            and whole > 0
-            else None
-        )
         for objective, share in shares.items():
-            yield {
-                "name": str(row[_NAME_COLUMN]).strip(),
-                "year": int(title),
-                "objective": objective,
-                "share": share,
-                "finance": finance,
-            }
+            yield _SheetRow(
+                name=str(row[_NAME_COLUMN]).strip(),
+                year=int(title),
+                objective=objective,
+                share=share,
+                climate=_number(row[_CLIMATE_FINANCE_COLUMN]),
+                whole=_number(row[climate_column]),
+                span=span,
+            )
+
+
+def _number(cell: object) -> float | None:
+    return float(cell) if isinstance(cell, int | float) else None

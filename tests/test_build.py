@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 import polars as pl
@@ -158,6 +159,34 @@ def test_a_stage_reads_an_earlier_stage_from_disk(
 
     doubled = pl.read_parquet(tmp_path / "second" / "numbers.parquet")
     assert doubled["value"].to_list() == [3.0]
+
+
+@pytest.mark.parametrize("replaced", [False, True])
+def test_a_build_recovers_a_stage_swap_that_died_halfway(
+    config: BuildConfig, tmp_path: Path, replaced: bool
+) -> None:
+    registry = [
+        _stage("first", lambda _: _numbers(["a"], [1.5])),
+        _stage("second", lambda context: {"numbers": context.read("first", "numbers")}),
+    ]
+    run_stages(
+        registry, release="r", release_dir=tmp_path, config=config, stages=["first"]
+    )
+    # The build died with the last good stage moved aside, before or after the new
+    # one moved into its place.
+    first, old = tmp_path / "first", tmp_path / "first.old"
+    if replaced:
+        shutil.copytree(first, old)
+    else:
+        first.rename(old)
+
+    run_stages(
+        registry, release="r", release_dir=tmp_path, config=config, stages=["second"]
+    )
+
+    assert not old.exists()
+    assert pl.read_parquet(first / "numbers.parquet")["value"].to_list() == [1.5]
+    assert pl.read_parquet(tmp_path / "second" / "numbers.parquet").height == 1
 
 
 def test_a_stage_returning_undeclared_tables_writes_nothing(

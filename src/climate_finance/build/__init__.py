@@ -3,7 +3,9 @@
 Needs the [build] extra. The stage writer sorts every table by its schema's sort key,
 then by its remaining flat columns, so two builds from the same inputs give the same
 sha256 per table. It writes a stage to a temporary directory and moves it into place
-once every table is written, so a stage that fails leaves the last good one intact.
+once every table is written, so a stage that fails leaves the last good one intact. A
+build that died while moving a stage into place left `<stage>.old`, and the next
+build restores or removes it before any stage runs.
 """
 
 import shutil
@@ -117,12 +119,34 @@ def write_stage(
 def _replace_dir(source: Path, target: Path) -> None:
     """Move `source` to `target`, removing what `target` held."""
     if target.exists():
-        old = source.with_name(f"{source.name}.old")
+        old = _old_dir(target)
         target.rename(old)
         source.rename(target)
         shutil.rmtree(old)
     else:
         source.rename(target)
+
+
+def _old_dir(target: Path) -> Path:
+    """Where `_replace_dir` keeps `target` while its replacement moves in."""
+    return target.with_name(f"{target.name}.old")
+
+
+def recover_stage_dirs(registry: Sequence[StageDef], release_dir: Path) -> None:
+    """Undo a stage swap a build died in the middle of.
+
+    A `<stage>.old` beside a missing stage directory is the last good stage, and moves
+    back. Beside a stage directory it is the stage that was replaced, and goes.
+    """
+    for stage in registry:
+        target = stage_dir(release_dir, stage.name)
+        old = _old_dir(target)
+        if not old.exists():
+            continue
+        if target.exists():
+            shutil.rmtree(old)
+        else:
+            old.rename(target)
 
 
 def run_stages(
@@ -143,6 +167,7 @@ def run_stages(
     selected = set(names) if stages is None else set(stages)
     if unknown := sorted(selected - set(names)):
         raise BuildError(f"Unknown stages {unknown}; the stages are {names}")
+    recover_stage_dirs(registry, release_dir)
     context = StageContext(
         release=release, release_dir=release_dir, config=config, offline=offline
     )

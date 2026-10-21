@@ -186,6 +186,11 @@ def _null_record_disbursement(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def _unlink_an_allocation(frame: pl.DataFrame) -> pl.DataFrame:
+    is_row = pl.col("record_id") == "DEU-1-R1"
+    return frame.with_columns(link_method=pl.when(~is_row).then(pl.col("link_method")))
+
+
 def _repeat_an_allocated_row(frame: pl.DataFrame) -> pl.DataFrame:
     # DEU-1 holds allocations; as a repeat of DEU-2 its money drops out of totals.
     return frame.with_columns(
@@ -202,6 +207,7 @@ def _repeat_an_allocated_row(frame: pl.DataFrame) -> pl.DataFrame:
         ("commitments", _null_disbursed, "DEU-1"),
         ("disbursements", _null_allocation_bound, "DEU-1"),
         ("disbursements", _null_record_disbursement, "JPN-SPLIT"),
+        ("disbursements", _unlink_an_allocation, "DEU-1"),
         ("commitments", _repeat_an_allocated_row, "DEU-1"),
         ("commitments", _break_disbursed_sum, "DEU-1"),
         ("commitments", _break_face_cap, "DEU-1"),

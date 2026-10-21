@@ -35,29 +35,37 @@ def _repeats(
     return dict(marked.select("row_id", "repeat_of").iter_rows())
 
 
-@pytest.mark.parametrize(("committed_again", "repeat_of"), [(False, "a"), (True, None)])
+@pytest.mark.parametrize(
+    ("committed", "repeat_of"),
+    [
+        ({2019: 1e6}, "a"),
+        # A second commitment under the same id is a new commitment, not a repeat.
+        ({2019: 1e6, 2021: 1e6}, None),
+        # A token first row without a commitment of its own, and new money under the
+        # id later: the later row repeats nothing.
+        ({2017: 1e6, 2021: 1e6}, None),
+    ],
+)
 def test_same_id_without_a_commitment_repeats(
-    committed_again: bool, repeat_of: str | None
+    committed: dict[int, float], repeat_of: str | None
 ) -> None:
     crdf = crdf_rows(
         {"row_id": "a", "year": 2019, "crs_id": "2019000001"},
         {"row_id": "b", "year": 2021, "crs_id": "2019000001"},
     )
-    records = [
-        {"record_id": "r1", "year": 2019, "crs_id": "2019000001", "commitment_usd": 1e6}
-    ]
-    if committed_again:
-        # A second commitment under the same id is a new commitment, not a repeat.
-        records.append(
+    records = crs_records(
+        *(
             {
-                "record_id": "r2",
-                "year": 2021,
+                "record_id": f"r{year}",
+                "year": year,
                 "crs_id": "2019000001",
-                "commitment_usd": 1e6,
+                "commitment_usd": amount,
             }
+            for year, amount in committed.items()
         )
+    )
 
-    assert _repeats(crdf, crs_records(*records)) == {"a": None, "b": repeat_of}
+    assert _repeats(crdf, records) == {"a": None, "b": repeat_of}
 
 
 BACKING = crs_records(

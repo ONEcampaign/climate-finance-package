@@ -176,6 +176,32 @@ def test_disbursements_carry_the_record_and_its_link_and_leave_out_excess(
     assert rows["provider_code"].to_list() == [NOR, NOR]
 
 
+def test_an_allocation_moved_from_a_repeat_keeps_the_repeats_link() -> None:
+    # R2 repeats R1 and sits in the crdf_crs group that traced record d20; allocate
+    # moved d20's allocation from R2 to R1, which has no group of its own.
+    links = pl.LazyFrame(
+        {
+            "task": ["crdf_crs", "trace"],
+            "left_id": ["R2", "u-d20"],
+            "right_id": ["u-c19", "u-c19"],
+            "group_id": ["g", None],
+            "probability": [1.0, 0.9],
+            "link_method": ["crs_id_purpose", "within_year"],
+            "ledger_check": [None, None],
+        }
+    )
+    units = pl.LazyFrame({"unit_id": ["u-d20"], "record_ids": [["d20"]]})
+    allocated = pl.LazyFrame({"row_id": ["R1"], "record_id": ["d20"]})
+
+    carried = release.carrying_links(
+        allocated, crdf=CRDF.lazy(), units=units, links=links
+    ).collect()
+
+    assert carried.select("row_id", "record_id", "link_method").rows() == [
+        ("R1", "d20", "within_year")
+    ]
+
+
 def test_quality_counts_repeats_on_their_own_line(release_dir: Path) -> None:
     quality = _read(release_dir, "quality").row(0, named=True)
 

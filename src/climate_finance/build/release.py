@@ -202,7 +202,7 @@ def release_disbursements(
         inherit_markers(allocated, commitments=crdf, crs=crs)
         .join(record, on="record_id", how="left", validate="m:1")
         .join(
-            carrying_links(allocated, units=units, links=links),
+            carrying_links(allocated, crdf=crdf, units=units, links=links),
             on=["row_id", "record_id"],
             how="left",
             validate="m:1",
@@ -212,19 +212,29 @@ def release_disbursements(
 
 
 def carrying_links(
-    allocated: pl.LazyFrame, *, units: pl.LazyFrame, links: pl.LazyFrame
+    allocated: pl.LazyFrame,
+    *,
+    crdf: pl.LazyFrame,
+    units: pl.LazyFrame,
+    links: pl.LazyFrame,
 ) -> pl.LazyFrame:
     """Per allocation's (row_id, record_id), the link that carried it.
 
     That is the most probable `trace` link from the record's unit to a commitment
-    unit of the row's `crdf_crs` group, the lowest unit id among equals.
+    unit of a `crdf_crs` group of the row or of a row that repeats it, the lowest
+    unit id among equals. Allocate moves a repeat's allocations to its first row
+    (`repeat_of`), so the link can sit in the repeat's group.
     """
     record_units = units.select(d_unit="unit_id", record_id="record_ids").explode(
         "record_id"
     )
     groups = links.filter(pl.col("task") == "crdf_crs")
+    first_rows = crdf.select("row_id", first_row=pl.coalesce("repeat_of", "row_id"))
     row_units = (
         groups.select(row_id="left_id", group_id="group_id")
+        .unique()
+        .join(first_rows, on="row_id", how="left")
+        .select(row_id=pl.coalesce("first_row", "row_id"), group_id="group_id")
         .unique()
         .join(
             groups.select(c_unit="right_id", group_id="group_id").unique(),
