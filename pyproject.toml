@@ -28,6 +28,7 @@ dependencies = [
 [project.optional-dependencies]
 build = [
     "httpx>=0.27.0",
+    "oda-reader>=1.12.0",
     "openpyxl>=3.0.10",
     "pyyaml>=6.0.1",
     "rich>=13.8.0",
