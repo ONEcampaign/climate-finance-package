@@ -132,6 +132,7 @@ Thumbs.db
 
 # Generated data files
 *.xlsx
+!tests/fixtures/**/*.xlsx
 
 climate_finance/for_testing.py
 climate_finance/.raw_data/*.parquet
@@ -143,3 +144,6 @@ climate_finance/.raw_data/*.parquet
 src/climate_finance/for_testing.py
 .reports/
 
+# Build inputs and caches: archived raw sources and the Jev response cache
+/data/raw/
+/data/jev-cache/
