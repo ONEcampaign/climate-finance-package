@@ -13,10 +13,18 @@ OBJECTIVES: tuple[Objective, ...] = ("adaptation", "mitigation", "cross_cutting"
 NOT_CLIMATE = "not_climate_relevant"
 
 
-class Method(BaseModel):
-    """Coefficients applied to face value by Rio marker level."""
+class Frozen(BaseModel):
+    """A frozen model that rejects unknown fields and copies itself with changes."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    def replace(self, **changes: object) -> Self:
+        """Return a copy with `changes` applied, validated again."""
+        return self.model_validate({**self.model_dump(), **changes})
+
+
+class Method(Frozen):
+    """Coefficients applied to face value by Rio marker level."""
 
     significant: float = Field(ge=0.0, le=1.0)
     principal: float = Field(ge=0.0, le=1.0)
@@ -24,18 +32,12 @@ class Method(BaseModel):
     coefficients: Literal["fixed", "provider"] = "fixed"
     relevance: Literal["markers", "jev"] = "markers"
 
-    def replace(self, **changes: object) -> Self:
-        """Return a copy with `changes` applied, validated again."""
-        return self.model_validate({**self.model_dump(), **changes})
-
     def _repr_markdown_(self) -> str:
         return describe(self)
 
 
-class MethodRange(BaseModel):
+class MethodRange(Frozen):
     """Several methods reported together; `low` and `high` are their row-wise bounds."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     methods: tuple[Method, ...] = Field(min_length=1)
 

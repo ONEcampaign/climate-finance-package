@@ -20,21 +20,19 @@ classifiers = [
 ]
 
 dependencies = [
-    "httpx>=0.28.1",
-    "narwhals>=2.27.1",
-    "polars>=2.0.0",
-    "pyarrow>=26.0.0",
-    "pydantic>=2.14.1",
+    "polars>=1.33.0",
+    "pyarrow>=16.1.0",
+    "pydantic>=2.10.0",
     "pydeflate>=2.6.1",
-    "rich>=15.0.0",
 ]
 
 [project.optional-dependencies]
 build = [
-    "typer>=0.27.3",
+    "rich>=13.8.0",
+    "typer>=0.16.0",
 ]
 compat = [
-    "pandas>=2.3",
+    "pandas>=2.2.2",
 ]
 
 [project.scripts]

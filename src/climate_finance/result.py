@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
 from html import escape
-from importlib import import_module
 from typing import TYPE_CHECKING
 
 import polars as pl
@@ -34,12 +33,7 @@ class Table:
         return self._frame.collect()
 
     def to_pandas(self) -> pd.DataFrame:
-        """The table as a pandas DataFrame; needs the [compat] extra.
-
-        Raises:
-            ImportError: when pandas is not installed.
-        """
-        require_pandas()
+        """The table as a pandas DataFrame."""
         return self.to_polars().to_pandas()
 
     def to_arrow(self) -> pa.Table:
@@ -51,17 +45,6 @@ class Table:
 
     def _repr_html_(self) -> str:
         return self.to_polars()._repr_html_()
-
-
-def require_pandas() -> None:
-    """Raise an ImportError naming the [compat] extra when pandas is missing."""
-    try:
-        import_module("pandas")
-    except ImportError as error:
-        raise ImportError(
-            "pandas output needs the compat extra: "
-            "pip install 'climate-finance[compat]'"
-        ) from error
 
 
 class Meta(BaseModel):

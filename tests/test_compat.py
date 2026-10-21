@@ -165,14 +165,3 @@ def test_custom_methodology_needs_its_coefficients_first() -> None:
 def test_get_data_before_loading_raises_as_in_1x() -> None:
     with pytest.raises(AttributeError, match="No data has been loaded"):
         _climate_data().get_data()
-
-
-def test_pandas_output_without_pandas_names_the_compat_extra(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setitem(sys.modules, "pandas", None)
-
-    with pytest.raises(ImportError, match=r"climate-finance\[compat\]"):
-        SNAP.spending().table.to_pandas()
-    with pytest.raises(ImportError, match=r"\[compat\]"):
-        _climate_data()

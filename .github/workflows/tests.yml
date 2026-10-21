@@ -39,6 +39,19 @@ jobs:
       # `integration` tests reach the network; `slow` tests need real data.
       - run: uv run --no-sync pytest -m "not integration and not slow"
 
+  lowest-direct:
+    name: lowest supported dependencies
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.0
+      # --isolated resolves every direct dependency to its floor in pyproject.toml
+      # without rewriting uv.lock.
+      - run: >
+          uv run --isolated --resolution lowest-direct --python 3.12 --all-extras
+          pytest -m "not integration and not slow"
+
   base-install:
     name: base install imports no build dependency
     if: github.event_name != 'schedule'

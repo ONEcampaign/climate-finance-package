@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Literal, NoReturn, Self
 import polars as pl
 
 from climate_finance.methods import OECD, ONE, Method
-from climate_finance.result import Table, require_pandas
+from climate_finance.result import Table
 from climate_finance.snapshot import Snapshot, load
 from climate_finance.spec import Currency, Flow, View
 
@@ -71,13 +71,12 @@ _NO_EQUIVALENT = {
 
 
 class ClimateData:
-    """The 1.2.3 constructor and methods, returning pandas; needs [compat].
+    """The 1.2.3 constructor and methods, returning pandas.
 
     `snapshot` is new: the release to query. Without it, `load_spending_data` opens
     the latest release with `climate_finance.load()`.
 
     Raises:
-        ImportError: when pandas is not installed.
         ValueError: for a currency or price choice 1.2.3 refused.
     """
 
@@ -93,7 +92,6 @@ class ClimateData:
         snapshot: Snapshot | None = None,
     ) -> None:
         warnings.warn(DEPRECATION, DeprecationWarning, stacklevel=2)
-        require_pandas()
         self.years = list(years)
         self.providers = _listed(providers)
         self.recipients = _listed(recipients)
