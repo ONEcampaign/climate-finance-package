@@ -462,9 +462,12 @@ COMMITMENT_STATUS = _table(
     project_disbursing=_bool(),
     # Status inputs that allocation fixes, so a later stage can recompute status:
     # whether the row reaches a CRS commitment through an agency whose ids persist,
-    # and whether allocation gives its id's disbursement to earlier commitments.
+    # whether allocation gives its id's disbursement to earlier commitments, and
+    # the row's share of its linked CRS commitment's face, which status reads the
+    # row's allocations against. The release table leaves crs_face_usd out.
     traceable=_bool(),
     id_disbursing=_bool(),
+    crs_face_usd=_usd(),
 )
 
 CANCELLATIONS = _table(

@@ -1,7 +1,7 @@
 """Allocation and status on hand-built CRS records, linked by the link stage's own
 `build_units`, `link_by_keys` and `link_within_year`."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import date
 from functools import cache
 from pathlib import Path
@@ -9,10 +9,12 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import pytest
+from polars.testing import assert_frame_equal
 
 from climate_finance import schema
 from climate_finance.build import write_stage
 from climate_finance.build.allocate import (
+    _fill,
     allocate,
     allocate_to_rows,
     cancellations,
@@ -540,11 +542,17 @@ def test_rows_below_crs_face_leave_the_rest_to_the_crs_commitment() -> None:
     assert got == pytest.approx({"half": 50.0, None: 50.0})
 
 
-def test_a_group_gives_its_allocation_to_its_first_row_and_not_its_repeat() -> None:
+@pytest.mark.parametrize(
+    ("disbursed", "expected"), [(100.0, "disbursed"), (46.0, "partly_disbursed")]
+)
+def test_a_group_gives_its_allocation_to_its_first_row_and_not_its_repeat(
+    disbursed: float, expected: str
+) -> None:
     # The 2022 row reports the 2021 commitment again and sits in its group: the
-    # first row takes its own half and its repeat's, up to its face.
+    # first row takes the group's whole allocation, and its status reads that over
+    # the whole CRS face.
     crs, crdf, units, links = link(
-        [record("c21", 2021, commit=100.0), record("d22", 2022, disburse=100.0)],
+        [record("c21", 2021, commit=100.0), record("d22", 2022, disburse=disbursed)],
         [
             crdf_row("first", 2021, 100.0),
             {**crdf_row("repeat", 2022, 100.0), "repeat_of": "first"},
@@ -555,7 +563,17 @@ def test_a_group_gives_its_allocation_to_its_first_row_and_not_its_repeat() -> N
     pairs = allocate(units, crs=crs, links=links)
     rows = allocate_to_rows(pairs, crdf=crdf, units=units, crs=crs, links=links)
     got = dict(rows.select("row_id", "allocated_usd").iter_rows())
-    assert got == pytest.approx({"first": 100.0})
+    assert got == pytest.approx({"first": disbursed})
+    facts = status_basis(
+        crdf,
+        units=units,
+        crs=crs,
+        links=links,
+        pairs=pairs,
+        id_practice=no_classes().lazy(),
+    )
+    status = statuses(compute_status(commitments=facts, allocations=rows))
+    assert status["first"] == expected
 
 
 @pytest.mark.parametrize(
@@ -765,6 +783,63 @@ def test_a_row_linked_across_years_reads_status_over_the_crs_face() -> None:
     assert status["status"] == "disbursed"
     assert status["disbursed_usd"] == pytest.approx(889.0)
     assert table["allocated_usd"].sum() == pytest.approx(889.0)
+
+
+def _status_bits(rng: np.random.Generator) -> bytes:
+    rows = rng.integers(0, 500, 2_000)
+    amounts = rng.lognormal(12, 2, rows.size)
+    table = pl.DataFrame(
+        {
+            "row_id": rows.astype(str),
+            "record_id": np.arange(rows.size).astype(str),
+            "year": np.full(rows.size, 2022, dtype=np.int16),
+            "allocated_usd": amounts,
+            "allocated_low_usd": amounts,
+            "allocated_high_usd": amounts,
+            "rule": "fifo",
+        }
+    )
+    facts = basis(**{str(row): (1e9, True, False) for row in range(500)})
+    status = compute_status(commitments=facts, allocations=table).collect()
+    return status.sort("row_id")["disbursed_usd"].to_numpy().tobytes()
+
+
+def _fill_bits(rng: np.random.Generator) -> bytes:
+    size = 400_000
+    candidates = pl.DataFrame(
+        {
+            "pass": np.zeros(size, dtype=np.uint32),
+            "group_id": rng.integers(0, 50_000, size).astype(str),
+            "c_idx": np.arange(size, dtype=np.uint32),
+            "order": rng.integers(2010, 2013, size).astype(np.int32),
+        }
+    ).with_columns(total=pl.len().over("group_id").cast(pl.Float64) * 3e5)
+    filled = _fill(candidates, rng.lognormal(12, 2, size))
+    return filled.select("fill", "capacity").to_numpy().tobytes()
+
+
+def _cancellation_bits(rng: np.random.Generator) -> bytes:
+    size = 50_000
+    crs = pl.LazyFrame(
+        {
+            "record_id": np.arange(size).astype(str),
+            "donor_code": rng.integers(1, 30, size).astype(np.int32),
+            "year": rng.integers(2010, 2025, size).astype(np.int16),
+            "commitment_usd": rng.normal(0, 1e6, size),
+        }
+    )
+    reported = cancellations(crs).collect().sort("provider_code", "year")
+    return reported["cancelled_usd"].to_numpy().tobytes()
+
+
+@pytest.mark.parametrize("bits", [_status_bits, _fill_bits, _cancellation_bits])
+def test_float_sums_give_the_same_bits_on_every_run(
+    bits: Callable[[np.random.Generator], bytes],
+) -> None:
+    # A polars group sum adds its threads' partial sums in any order; at these
+    # sizes a plain sum changed the last bits from one run to the next.
+    runs = {bits(np.random.default_rng(0)) for _ in range(6)}
+    assert len(runs) == 1
 
 
 def test_years_since_commitment_accumulates_by_record_year() -> None:
@@ -1087,6 +1162,10 @@ def test_run_allocate_writes_tables_that_pass_their_schemas(tmp_path: Path) -> N
     status = pl.read_parquet(table_path(release_dir, "allocate", "commitments"))
     assert sorted(status["row_id"]) == sorted(rows.collect()["row_id"])
     assert "parent" not in status["row_id"]
+    # A later stage recomputes status from the stage's own tables.
+    table = pl.read_parquet(table_path(release_dir, "allocate", "allocations"))
+    again = compute_status(commitments=status, allocations=table).collect()
+    assert_frame_equal(again, status, check_row_order=False)
     since = pl.read_parquet(
         table_path(release_dir, "allocate", "years_since_commitment")
     )

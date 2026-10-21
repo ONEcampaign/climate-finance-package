@@ -86,6 +86,10 @@ ALLOCATE = {
         "return recipient",
     ),
     "repeats_to_first_rows": ("    to_rows = _to_first_rows(to_rows, crdf=crdf)\n", ""),
+    "repeat_in_its_first_rows_group_takes_no_weight": (
+        'pl.when(pl.col("first_in_group"))',
+        "pl.when(pl.lit(False))",
+    ),
     "first_row_face_cap": (
         ".then(pl.min_horizontal(amount, headroom.fill_null(0.0)))",
         ".then(amount)",
@@ -93,6 +97,15 @@ ALLOCATE = {
     "status_over_crs_face": (
         'face = pl.col("crs_face_usd")',
         'face = pl.col("face_usd")',
+    ),
+    "status_keeps_crs_face": ('crs_face_usd=pl.col("crs_face_usd"),', ""),
+    "status_sums_ordered": (
+        'disbursed_usd=ordered_sum(pl.col("allocated_usd")),\n'
+        '            disbursed_low_usd=ordered_sum(pl.col("allocated_low_usd")),\n'
+        '            disbursed_high_usd=ordered_sum(pl.col("allocated_high_usd")),',
+        'disbursed_usd=pl.col("allocated_usd").sum(),\n'
+        '            disbursed_low_usd=pl.col("allocated_low_usd").sum(),\n'
+        '            disbursed_high_usd=pl.col("allocated_high_usd").sum(),',
     ),
     "disbursed_at_ninety_percent": ("ratio >= DISBURSED_RATIO", "ratio >= 1.0"),
     "not_traceable": ('.when(~pl.col("traceable"))', ".when(pl.lit(False))"),

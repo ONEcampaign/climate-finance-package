@@ -45,6 +45,7 @@ import polars as pl
 from climate_finance.build.errors import AllocationInputError
 from climate_finance.build.link.id_practice import period_of
 from climate_finance.build.normalise.crs import trace_population
+from climate_finance.build.sums import ordered_sum
 from climate_finance.schema import LINK_METHODS
 
 if TYPE_CHECKING:
@@ -178,7 +179,7 @@ def dated_donors(units: pl.LazyFrame) -> list[int]:
             pl.col("year").is_between(*DATED_YEARS),
         )
         .group_by("donor_code")
-        .agg(share=disbursed.filter(early).sum() / disbursed.sum())
+        .agg(share=ordered_sum(disbursed.filter(early)) / ordered_sum(disbursed))
         .filter(pl.col("share") >= DATED_SHARE)
         .collect()
     )
@@ -219,11 +220,11 @@ def window_donors(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> list[int]:
     donors = (
         units.filter(usd > 0)
         .group_by(*ids, "year")
-        .agg(usd.sum())
+        .agg(ordered_sum(usd))
         .join(tested, on=ids)
         .filter(year > pl.col("cyear"))
         .group_by("donor_code")
-        .agg(tested=usd.sum(), inside=usd.filter(in_window).sum())
+        .agg(tested=ordered_sum(usd), inside=ordered_sum(usd.filter(in_window)))
         .filter(
             pl.col("tested") >= WINDOW_MIN_USD,
             pl.col("inside") / pl.col("tested") >= WINDOW_SHARE,
@@ -443,8 +444,6 @@ def allocate(
     )
     if pairs.is_empty():
         return pl.DataFrame(schema=_PAIRS_SCHEMA)
-    # Every float sum below reads rows in a sorted order, so two builds from the
-    # same inputs give the same bits.
     passes = ["pass", "group_id"]
     records = (
         pairs.select("record_id", "year", "amount")
@@ -477,7 +476,7 @@ def allocate(
         if entered.is_empty():
             continue
         totals = entered.group_by("group_id", maintain_order=True).agg(
-            total=pl.col("left").sum()
+            total=ordered_sum(pl.col("left"))
         )
         part = by_pass[key].join(totals, on="group_id").sort(*passes, "order", "c_idx")
         filled = _fill(part, headroom[part["c_idx"].to_numpy()])
@@ -537,8 +536,8 @@ def _fill(candidates: pl.DataFrame, headroom: np.ndarray) -> pl.DataFrame:
         candidates.lazy()
         .with_columns(headroom=pl.Series(headroom))
         .with_columns(
-            block=available.sum().over(group_order),
-            capacity=available.sum().over("group_id"),
+            block=ordered_sum(available).over(group_order),
+            capacity=ordered_sum(available).over("group_id"),
         )
         .with_columns(through=available.cum_sum().over("group_id", order_by="order"))
         .with_columns(before=pl.col("through").max().over(group_order) - block)
@@ -572,6 +571,10 @@ def _commitment_groups(
     allocations over it are the group's allocation over the CRS face. The two faces
     differ when they convert one currency amount at different years' rates.
 
+    A repeat row whose first row (`repeat_of`) sits in its group takes no weight
+    and adds nothing to the CRDF face: `_to_first_rows` would hand its share to the
+    first row, whose `crs_face_usd` must then cover the group's whole CRS face.
+
     Raises:
         AllocationInputError: when a link has no group, or a row or a unit sits in
             two groups.
@@ -579,7 +582,7 @@ def _commitment_groups(
     joined = (
         links.filter(pl.col("task") == "crdf_crs")
         .select(row_id="left_id", unit_id="right_id", group_id="group_id")
-        .join(crdf.select("row_id", "face_usd"), on="row_id")
+        .join(crdf.select("row_id", "face_usd", "repeat_of"), on="row_id")
         .collect()
     )
     if joined["group_id"].null_count():
@@ -594,29 +597,39 @@ def _commitment_groups(
             raise AllocationInputError(
                 f"{many.height} crdf_crs {side} values sit in more than one group"
             )
-    positive_face = pl.col("face_usd").clip(lower_bound=0.0)
     unit_groups = joined.select("unit_id", "group_id").unique()
-    rows = joined.select("row_id", "group_id", "face_usd").unique().sort("row_id")
+    rows = joined.select("row_id", "group_id", "face_usd", "repeat_of").unique()
+    firsts = rows.select(
+        repeat_of="row_id", group_id="group_id", first_in_group=pl.lit(True)
+    )
+    rows = (
+        rows.join(firsts, on=["repeat_of", "group_id"], how="left")
+        .with_columns(
+            share_face=pl.when(pl.col("first_in_group"))
+            .then(0.0)
+            .otherwise(pl.col("face_usd").clip(lower_bound=0.0))
+        )
+        .sort("row_id")
+    )
+    share_face = pl.col("share_face")
     crs_face = (
         _commitment_records(units, crs=crs)
         .join(unit_groups, on="unit_id")
         .sort("record_id")
         .group_by("group_id", maintain_order=True)
-        .agg(crs_face=pl.col("face").sum())
+        .agg(crs_face=ordered_sum(pl.col("face")))
     )
     denominator = pl.col("denominator")
     faces = (
         rows.group_by("group_id", maintain_order=True)
-        .agg(crdf_face=positive_face.sum())
+        .agg(crdf_face=ordered_sum(share_face))
         .join(crs_face, on="group_id")
         .with_columns(denominator=pl.max_horizontal("crs_face", "crdf_face"))
     )
     weights = rows.join(faces, on="group_id").select(
         "row_id",
         "group_id",
-        weight=pl.when(denominator > 0)
-        .then(positive_face / denominator)
-        .otherwise(0.0),
+        weight=pl.when(denominator > 0).then(share_face / denominator).otherwise(0.0),
         crs_face_usd=pl.when(pl.col("crs_face") > 0)
         # Divided by the face ratio, so a row whose CRS face covers it keeps its
         # face to the bit.
@@ -683,7 +696,7 @@ def allocate_to_rows(
         .filter(amount > 0)
         .sort("row_id", "record_id", "year", "rule", "commitment_id")
         .group_by("row_id", "record_id", "year", "rule", maintain_order=True)
-        .agg(amount.sum())
+        .agg(ordered_sum(amount))
         .select(
             "row_id",
             "record_id",
@@ -834,7 +847,8 @@ def compute_status(
 
     Args:
         commitments: `row_id`, `face_usd`, `climate_usd`, `traceable`,
-            `id_disbursing` and `crs_face_usd`, as `status_basis` builds them.
+            `id_disbursing` and `crs_face_usd`, as `status_basis` builds them or
+            the allocate stage's `commitments` table holds them.
         allocations: the `allocations` table.
         pending: the `row_id`s of commitments pending review.
 
@@ -853,12 +867,11 @@ def compute_status(
     disbursed = (
         allocations.lazy()
         .filter(pl.col("row_id").is_not_null(), pl.col("rule") != "excess")
-        .sort("row_id", "record_id", "year", "rule")
-        .group_by("row_id", maintain_order=True)
+        .group_by("row_id")
         .agg(
-            disbursed_usd=pl.col("allocated_usd").sum(),
-            disbursed_low_usd=pl.col("allocated_low_usd").sum(),
-            disbursed_high_usd=pl.col("allocated_high_usd").sum(),
+            disbursed_usd=ordered_sum(pl.col("allocated_usd")),
+            disbursed_low_usd=ordered_sum(pl.col("allocated_low_usd")),
+            disbursed_high_usd=ordered_sum(pl.col("allocated_high_usd")),
         )
     )
     pending_ids = (
@@ -911,6 +924,7 @@ def compute_status(
             & pl.col("id_disbursing"),
             traceable=pl.col("traceable"),
             id_disbursing=pl.col("id_disbursing"),
+            crs_face_usd=pl.col("crs_face_usd"),
         )
     )
 
@@ -920,7 +934,7 @@ def cancellations(crs: pl.LazyFrame) -> pl.LazyFrame:
     return (
         crs.filter(pl.col("commitment_usd") < 0)
         .group_by(provider_code="donor_code", year="year")
-        .agg(cancelled_usd=-pl.col("commitment_usd").sum())
+        .agg(cancelled_usd=-ordered_sum(pl.col("commitment_usd")))
     )
 
 
@@ -944,7 +958,7 @@ def years_since_commitment(
             .cast(pl.Int16),
             maintain_order=True,
         )
-        .agg(pl.col("allocated_usd").sum())
+        .agg(ordered_sum(pl.col("allocated_usd")))
     )
     return (
         rows.filter(pl.col("year") <= last_year)
