@@ -41,6 +41,11 @@ def table_path(release_dir: Path, stage: str, table: str) -> Path:
     return release_dir / stage / f"{table}.parquet"
 
 
+def raw_dir(release_dir: Path) -> Path:
+    """Where fetch writes the raw source files that normalise reads."""
+    return release_dir / "raw"
+
+
 @dataclass(frozen=True)
 class StageContext:
     """What every stage function receives."""
@@ -49,6 +54,11 @@ class StageContext:
     release_dir: Path
     config: BuildConfig
     offline: bool
+
+    @property
+    def raw_dir(self) -> Path:
+        """Where fetch writes the raw source files that normalise reads."""
+        return raw_dir(self.release_dir)
 
     def read(self, stage: str, table: str) -> pl.LazyFrame:
         """Scan a table an earlier stage wrote.
