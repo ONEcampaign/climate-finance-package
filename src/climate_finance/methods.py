@@ -28,8 +28,9 @@ class Method(Frozen):
 
     `eu` sets how EU Institutions (provider 918) count in the provider view. As a
     `"channel"`, members' core contributions to the EU budget, the EDF and the EIB
-    carry the EU's climate share, and 918's own rows leave any result that also
-    holds such an attribution, so EU money counts once, inside its members' totals.
+    carry the EU's climate share, and 918's own rows leave a result in each year
+    where it also holds such an attribution, so EU money counts once, inside its
+    members' totals.
     As a `"provider"`, those three channels attribute nothing and 918 counts in its
     own right, as the OECD counts it. Either way a query for 918 alone returns its
     own spending.
@@ -118,8 +119,8 @@ def describe(method: Method | MethodRange) -> str:
 _EU = {
     "channel": " In the provider view EU Institutions count as a channel: members' "
     "core contributions to the EU budget, the EDF and the EIB carry the EU's climate "
-    "share, and EU Institutions' own rows leave any result that holds such an "
-    "attribution, so EU spending counts once.",
+    "share, and EU Institutions' own rows leave a result in each year where it "
+    "holds such an attribution, so EU spending counts once.",
     "provider": " In the provider view EU Institutions count as a provider: "
     "contributions to the EU budget, the EDF and the EIB attribute nothing, and EU "
     "Institutions' own rows count in their own right.",

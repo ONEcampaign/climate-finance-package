@@ -15,9 +15,9 @@ converts it, and sums the rows into the result table. Rows have one of three ori
   split by objective counts in `unsplit`, with the objectives 0.
 
 Under `view="provider"` the method's `eu` setting counts EU Institutions once. As a
-channel, EU Institutions' own rows leave a result that also attributes another
-provider's contribution to an EU channel. As a provider, the EU channels attribute
-nothing.
+channel, EU Institutions' own rows leave a result in each year where it also
+attributes another provider's contribution to an EU channel. As a provider, the EU
+channels attribute nothing.
 
 Every row holds `value` = adaptation + mitigation - cross_cutting + unsplit, or
 + cross_cutting under the highest-marker rule, whose objectives are disjoint.
@@ -360,19 +360,23 @@ def _attributed_rows(snapshot: Snapshot, *, spec: Spec, method: Method) -> pl.La
 def _without_eu_own_rows(
     frame: pl.LazyFrame, *, attributed: pl.LazyFrame
 ) -> pl.LazyFrame:
-    """`frame` without EU Institutions' own rows if `attributed` holds another
-    provider's contribution to an EU channel, which already counts that money."""
-    members = attributed.select(
-        _members=(
-            pl.col("channel_code").is_in(EU_CHANNELS)
-            & (pl.col("provider_code") != EU_INSTITUTIONS)
-        ).any()
+    """`frame` without EU Institutions' own rows in the years where `attributed`
+    holds another provider's contribution to an EU channel, which already counts
+    that money. `attributed` carries one flow, the spec's."""
+    years = (
+        attributed.filter(
+            pl.col("channel_code").is_in(EU_CHANNELS),
+            pl.col("provider_code") != EU_INSTITUTIONS,
+        )
+        .select("year")
+        .unique()
     )
-    own = pl.col("provider_code") == EU_INSTITUTIONS
-    return (
-        frame.join(members, how="cross")
-        .filter(~(own & pl.col("_members")))
-        .drop("_members")
+    own = frame.filter(pl.col("provider_code") == EU_INSTITUTIONS)
+    return pl.concat(
+        [
+            frame.filter(pl.col("provider_code").ne_missing(EU_INSTITUTIONS)),
+            own.join(years, on="year", how="anti"),
+        ]
     )
 
 

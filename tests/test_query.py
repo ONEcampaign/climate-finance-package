@@ -428,9 +428,11 @@ def test_a_bilateral_commitment_divides_by_every_bilateral_code(
 
 
 ONE_EU_AS_PROVIDER = cf.methods.ONE.replace(eu="provider")
-# France gives the EU budget (channel 42001) 30m a year in every flow, whose ONE
-# climate share is 0.30. EU Institutions' own commitment EU-1 copies Norway's NOR-1.
+# France gives the EU budget (channel 42001) 30m a year in 2021 and 2022 in every
+# flow, whose ONE climate share is 0.30. EU Institutions' own commitment EU-1 copies
+# Norway's NOR-1: committed in 2021, disbursed in 2021, 2022 and 2023.
 EU_CONTRIBUTION, EU_SHARE = 30e6, 0.30
+EU_ATTRIBUTION_YEARS = (2021, 2022)
 
 
 def _with_eu_commitment(frame: pl.DataFrame) -> pl.DataFrame:
@@ -518,7 +520,10 @@ def test_an_all_provider_total_counts_eu_money_once(
 ) -> None:
     rows = eu_snap.spending(view="provider", method=method, flow=flow).rows()
 
-    own = rows.filter(pl.col("provider_code") == EU_INSTITUTIONS)
+    own = rows.filter(
+        pl.col("provider_code") == EU_INSTITUTIONS,
+        pl.col("year").is_in(EU_ATTRIBUTION_YEARS),
+    )
     attributed = rows.filter(pl.col("channel_code").is_in(EU_CHANNELS))
     assert (own.height > 0) == eu_own_rows
     assert attributed.filter(pl.col("provider_code") == EU_INSTITUTIONS).is_empty()
@@ -556,9 +561,9 @@ def test_eu_institutions_alone_return_their_own_spending_under_either_setting(
 def test_eu_own_rows_leave_a_result_only_beside_eu_attribution(
     eu_snap: Snapshot, providers: tuple[int, ...] | None, eu_own_rows: bool
 ) -> None:
-    rows = eu_snap.spending(view="provider", providers=providers).rows(
-        provider_code=EU_INSTITUTIONS
-    )
+    rows = eu_snap.spending(
+        view="provider", providers=providers, years=EU_ATTRIBUTION_YEARS
+    ).rows(provider_code=EU_INSTITUTIONS)
 
     assert (rows.height > 0) == eu_own_rows
 
@@ -574,4 +579,20 @@ def test_a_member_counts_its_eu_share_only_with_the_eu_as_a_channel(
 
     assert france(cf.methods.ONE) - france(ONE_EU_AS_PROVIDER) == pytest.approx(
         EU_CONTRIBUTION * EU_SHARE
+    )
+
+
+def test_eu_own_rows_stay_in_a_year_without_eu_attribution(eu_snap: Snapshot) -> None:
+    # EU-1 disburses in 2023, a year in which France attributes nothing to the EU.
+    def eu_rows(method: Method) -> pl.DataFrame:
+        rows = eu_snap.spending(view="provider", method=method).rows(
+            provider_code=EU_INSTITUTIONS
+        )
+        return rows.drop("method")
+
+    as_channel = eu_rows(cf.methods.ONE)
+
+    assert set(as_channel["year"]) == {2023}
+    assert_frame_equal(
+        as_channel, eu_rows(ONE_EU_AS_PROVIDER).filter(pl.col("year") == 2023)
     )
