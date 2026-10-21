@@ -11,14 +11,31 @@ class SourceUnavailableError(ClimateFinanceError):
     """A source file or service could not be read."""
 
 
-class UnknownProviderError(ClimateFinanceError, LookupError):
-    """A provider name or code is not in the release."""
+class UnknownNameError(ClimateFinanceError, LookupError):
+    """A name is not in its listing; `suggestions` holds close names, if any."""
 
-    def __init__(self, name: str, *, suggestions: Sequence[str] = ()) -> None:
+    def __init__(
+        self, name: str, *, kind: str, suggestions: Sequence[str] = ()
+    ) -> None:
         self.name = name
+        self.kind = kind
         self.suggestions = tuple(suggestions)
         hint = f" Did you mean: {', '.join(self.suggestions)}?" if suggestions else ""
-        super().__init__(f"Unknown provider {name!r}.{hint}")
+        super().__init__(f"Unknown {kind} {name!r}.{hint}")
+
+
+class UnknownProviderError(UnknownNameError):
+    """A provider name is not in `cf.providers`."""
+
+    def __init__(self, name: str, *, suggestions: Sequence[str] = ()) -> None:
+        super().__init__(name, kind="provider", suggestions=suggestions)
+
+
+class UnknownRecipientError(UnknownNameError):
+    """A recipient name is not in `cf.recipients`."""
+
+    def __init__(self, name: str, *, suggestions: Sequence[str] = ()) -> None:
+        super().__init__(name, kind="recipient", suggestions=suggestions)
 
 
 class ReleaseIntegrityError(ClimateFinanceError):

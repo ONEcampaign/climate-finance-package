@@ -206,11 +206,6 @@ def test_explain_names_the_method_view_and_units() -> None:
     assert "USD at current prices" in text
 
 
-def test_provider_names_wait_for_the_catalogue() -> None:
-    with pytest.raises(NotImplementedError, match="S09b"):
-        SNAP.spending(providers="Germany")
-
-
 def test_share_of_total_divides_each_key_by_its_total_flows() -> None:
     result = SNAP.spending(view="provider", providers=5, years=2021)
 

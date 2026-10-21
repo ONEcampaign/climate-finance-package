@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from climate_finance import catalogue
 from climate_finance.convert import convert
 from climate_finance.methods import OECD, Method, label, weights
 from climate_finance.result import AMOUNTS, Meta, Quality, Result, Table
@@ -153,13 +154,11 @@ def quality(
     return Quality(table=Table(table), status=Table(status))
 
 
-def _codes(values: Sequence[str | int]) -> list[int]:
-    """DAC codes for `values`; names resolve through the catalogue in slice S09b."""
-    if names := [value for value in values if isinstance(value, str)]:
-        raise NotImplementedError(
-            f"names {names} need the catalogue (slice S09b); pass DAC codes"
-        )
-    return [int(value) for value in values]
+def _codes(values: Sequence[str | int], *, listing: catalogue.Catalogue) -> list[int]:
+    """DAC codes for `values`: codes pass through, names resolve through `listing`."""
+    return [
+        listing.code(value) if isinstance(value, str) else value for value in values
+    ]
 
 
 def _conditions(
@@ -170,9 +169,11 @@ def _conditions(
 ) -> list[pl.Expr]:
     conditions = []
     if providers is not None:
-        conditions.append(pl.col("provider_code").is_in(_codes(providers)))
+        codes = _codes(providers, listing=catalogue.providers)
+        conditions.append(pl.col("provider_code").is_in(codes))
     if recipients is not None:
-        conditions.append(pl.col("recipient_code").is_in(_codes(recipients)))
+        codes = _codes(recipients, listing=catalogue.recipients)
+        conditions.append(pl.col("recipient_code").is_in(codes))
     if years is not None:
         conditions.append(pl.col("year").is_in(list(years)))
     return conditions

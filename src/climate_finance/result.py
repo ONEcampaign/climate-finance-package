@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
+from html import escape
+from importlib import import_module
 from typing import TYPE_CHECKING
 
 import polars as pl
 from pydantic import BaseModel, ConfigDict
 
-from climate_finance.methods import label
+from climate_finance.methods import Method, MethodRange, describe, label
 from climate_finance.schema import STATUSES
 from climate_finance.spec import Spec
 
@@ -32,12 +34,34 @@ class Table:
         return self._frame.collect()
 
     def to_pandas(self) -> pd.DataFrame:
-        """The table as a pandas DataFrame; needs the [compat] extra."""
-        raise NotImplementedError("slice S09b")
+        """The table as a pandas DataFrame; needs the [compat] extra.
+
+        Raises:
+            ImportError: when pandas is not installed.
+        """
+        require_pandas()
+        return self.to_polars().to_pandas()
 
     def to_arrow(self) -> pa.Table:
         """The table as a pyarrow Table."""
         return self.to_polars().to_arrow()
+
+    def __repr__(self) -> str:
+        return repr(self.to_polars())
+
+    def _repr_html_(self) -> str:
+        return self.to_polars()._repr_html_()
+
+
+def require_pandas() -> None:
+    """Raise an ImportError naming the [compat] extra when pandas is missing."""
+    try:
+        import_module("pandas")
+    except ImportError as error:
+        raise ImportError(
+            "pandas output needs the compat extra: "
+            "pip install 'climate-finance[compat]'"
+        ) from error
 
 
 class Meta(BaseModel):
@@ -70,6 +94,13 @@ class Result:
         self.meta = meta
         self._rows = rows
         self._totals = totals
+
+    def __repr__(self) -> str:
+        return f"{_title(self.spec, release=self.meta.release)}\n{self.table!r}"
+
+    def _repr_html_(self) -> str:
+        title = escape(_title(self.spec, release=self.meta.release))
+        return f"<p>{title}</p>{self.table._repr_html_()}"
 
     def rows(self, **filters: object) -> pl.DataFrame:
         """The project rows behind the table, filtered by column equality.
@@ -200,29 +231,11 @@ def explain(
     methods = spec.methods
     lines = [f"Release {release}."]
     for method in methods:
-        rule = (
-            "each activity counts once, under its higher Rio marker, with equal "
-            "markers as cross-cutting"
-            if method.highest_marker
-            else "adaptation and mitigation count separately; cross_cutting is their "
-            "overlap, which value counts once"
-        )
-        lines.append(
-            f"Method {label(method)}: significant markers count "
-            f"{method.significant:.0%} of face value and principal markers "
-            f"{method.principal:.0%}; {rule}. Climate-component rows from development "
-            "banks count their reported climate share and ignore the coefficients."
-        )
-        if method.coefficients == "provider":
+        lines.append(describe(method))
+        if missing := fallbacks.get(label(method)):
             lines.append(
-                "Provider coefficients: each provider takes its own significant "
-                "coefficient from the release"
-                + (
-                    f"; providers {', '.join(map(str, missing))} have none and take "
-                    f"{method.significant:g}."
-                    if (missing := fallbacks.get(label(method)))
-                    else "."
-                )
+                f"Provider coefficients: providers {', '.join(map(str, missing))} "
+                f"have none and take {method.significant:g}."
             )
     if len(methods) > 1:
         lines.append("low and high are the lowest and highest bound across methods.")
@@ -293,7 +306,105 @@ class Comparison:
         self.table = table
         self.results = results
 
+    def __repr__(self) -> str:
+        return f"{self._title()}\n{self.table!r}"
+
+    def _repr_html_(self) -> str:
+        return f"<p>{escape(self._title())}</p>{self.table._repr_html_()}"
+
+    def _title(self) -> str:
+        columns = self.table._frame.collect_schema().names()[len(COMPARE_KEYS) :]
+        count = len(self.results)
+        results = "result" if count == 1 else "results"
+        return f"Comparison of {count} {results}: {'; '.join(columns)}"
+
+
+COMPARE_KEYS = ("year", "provider_code", "recipient_code", "bi_multi")
+
 
 def compare(*results: Result) -> Comparison:
-    """Set results side by side, one value column per result."""
-    raise NotImplementedError("slice S09b")
+    """Set results side by side: one row per year, provider, recipient and Bi_Multi
+    code, and one `value` column per result and method.
+
+    Columns are named by the spec fields that set the results apart, such as "ONE"
+    and "OECD", or "commitments" and "disbursements"; a result under several methods
+    gives one column per method. A key a result has no row for is null in its column.
+
+    Raises:
+        ValueError: when no result is given.
+    """
+    if not results:
+        raise ValueError("compare() needs at least one result")
+    names = _result_names([result.spec for result in results])
+    frames = []
+    for name, result in zip(names, results, strict=True):
+        methods = [label(method) for method in result.spec.methods]
+        for method in methods:
+            column = name if len(methods) == 1 else f"{name}: {method}"
+            frames.append(
+                result.table._frame.filter(pl.col("method") == method).select(
+                    *COMPARE_KEYS, pl.col("value").alias(column)
+                )
+            )
+    table = frames[0]
+    for frame in frames[1:]:
+        table = table.join(
+            frame, on=COMPARE_KEYS, how="full", nulls_equal=True, coalesce=True
+        )
+    return Comparison(
+        table=Table(table.sort(COMPARE_KEYS, nulls_last=True)), results=results
+    )
+
+
+def _result_names(specs: Sequence[Spec]) -> list[str]:
+    """Per spec, the values of the fields that differ across `specs`, or its method
+    when none differ. Specs that nothing sets apart are numbered as well.
+    """
+    differing = [
+        field
+        for field in Spec.model_fields
+        if len({repr(getattr(spec, field)) for spec in specs}) > 1
+    ] or ["method"]
+    names = [
+        ", ".join(_field_text(field, getattr(spec, field)) for field in differing)
+        for spec in specs
+    ]
+    if len(set(names)) == len(names):
+        return names
+    return [f"result {number}: {name}" for number, name in enumerate(names, start=1)]
+
+
+def _field_text(field: str, value: object) -> str:
+    """One spec field as a short column-name fragment."""
+    match field, value:
+        case "method", Method() | MethodRange():
+            return label(value)
+        case "oda_only", bool():
+            return "ODA only" if value else "all flows"
+        case "prices", _:
+            return f"{value} prices"
+        case "view", _:
+            return f"{value} view"
+        case (("providers" | "recipients" | "years"), None):
+            return f"all {field}"
+        case (("providers" | "recipients" | "years"), tuple()):
+            return f"{field} {', '.join(map(str, value))}"
+    return str(value)
+
+
+def _title(spec: Spec, *, release: str) -> str:
+    """One line naming the method, flow, view, filters, units and release."""
+    parts = [
+        label(spec.method),
+        spec.flow,
+        _field_text("view", spec.view),
+        *(
+            _field_text(field, getattr(spec, field))
+            for field in ("providers", "recipients", "years")
+            if getattr(spec, field) is not None
+        ),
+        f"{spec.currency} at {_field_text('prices', spec.prices)}",
+    ]
+    if spec.oda_only:
+        parts.append("ODA only")
+    return f"Result: {'; '.join(parts)}; release {release}"

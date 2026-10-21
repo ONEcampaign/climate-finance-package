@@ -28,6 +28,9 @@ class Method(BaseModel):
         """Return a copy with `changes` applied, validated again."""
         return self.model_validate({**self.model_dump(), **changes})
 
+    def _repr_markdown_(self) -> str:
+        return describe(self)
+
 
 class MethodRange(BaseModel):
     """Several methods reported together; `low` and `high` are their row-wise bounds."""
@@ -35,6 +38,9 @@ class MethodRange(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     methods: tuple[Method, ...] = Field(min_length=1)
+
+    def _repr_markdown_(self) -> str:
+        return describe(self)
 
 
 ONE = Method(significant=0.4, principal=1.0, highest_marker=True)
@@ -47,8 +53,12 @@ RANGE = MethodRange(methods=(ONE, OECD, PROVIDER))
 _NAMED = {"ONE": ONE, "OECD": OECD, "PROVIDER": PROVIDER}
 
 
-def label(method: Method) -> str:
+def label(method: Method | MethodRange) -> str:
     """The method's name if it is a named method, else its coefficients."""
+    if isinstance(method, MethodRange):
+        if method == RANGE:
+            return "RANGE"
+        return f"range of {' / '.join(label(member) for member in method.methods)}"
     for name, named in _NAMED.items():
         if method == named:
             return name
@@ -57,6 +67,35 @@ def label(method: Method) -> str:
         f"significant {method.significant:g}, principal {method.principal:g}, {rule}"
         f", {method.coefficients} coefficients, {method.relevance} relevance"
     )
+
+
+def describe(method: Method | MethodRange) -> str:
+    """What `method` counts, in plain language."""
+    if isinstance(method, MethodRange):
+        names = " / ".join(label(member) for member in method.methods)
+        return (
+            f"Methods {names}, reported together; low and high are the lowest and "
+            "highest value across them."
+        )
+    rule = (
+        "each activity counts once, under its higher Rio marker, with equal "
+        "markers as cross-cutting"
+        if method.highest_marker
+        else "adaptation and mitigation count separately; cross_cutting is their "
+        "overlap, which value counts once"
+    )
+    text = (
+        f"Method {label(method)}: significant markers count "
+        f"{method.significant:.0%} of face value and principal markers "
+        f"{method.principal:.0%}; {rule}. Climate-component rows from development "
+        "banks count their reported climate share and ignore the coefficients."
+    )
+    if method.coefficients == "provider":
+        text += (
+            " Each provider takes its own significant coefficient from the release, "
+            f"or {method.significant:g} where it has none."
+        )
+    return text
 
 
 def _coefficient(level: pl.Expr, method: Method, significant: pl.Expr) -> pl.Expr:
