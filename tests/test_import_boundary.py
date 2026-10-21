@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 from importlib.util import find_spec
+from pathlib import Path
 
 import pytest
 
@@ -22,6 +23,9 @@ BUILD_ONLY = (
     "resolvekit",
 )
 COMPAT_ONLY = ("pandas",)
+# pydeflate imports pandas, so only a currency or price conversion may load it.
+CONVERSION_ONLY = ("pydeflate",)
+FIXTURE = Path(__file__).parent / "fixtures" / "snapshot"
 BASE_INSTALL = os.environ.get("CF_BASE_INSTALL") == "1"
 
 
@@ -36,6 +40,22 @@ def test_importing_the_package_loads_no_build_or_compat_module() -> None:
     result = _run(
         "import sys, climate_finance\n"
         f"print(sorted(m for m in {BUILD_ONLY + COMPAT_ONLY!r} if m in sys.modules))"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "[]"
+
+
+def test_a_usd_query_loads_no_build_compat_or_conversion_module() -> None:
+    result = _run(
+        "import sys\n"
+        "from pathlib import Path\n"
+        "import climate_finance as cf\n"
+        f"result = cf.load(path=Path({str(FIXTURE)!r})).spending()\n"
+        "assert result.table.to_polars().height\n"
+        "assert result.rows().height\n"
+        f"loaded = {BUILD_ONLY + COMPAT_ONLY + CONVERSION_ONLY!r}\n"
+        "print(sorted(m for m in loaded if m in sys.modules))"
     )
 
     assert result.returncode == 0, result.stderr

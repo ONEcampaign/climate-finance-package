@@ -2,7 +2,8 @@
 
 Run `uv run python tests/make_fixture.py [out_dir]`. The snapshot is schema-valid and
 covers six providers, a Bi_Multi 2 row, Bi_Multi 4 rows, an id-less multilateral row,
-a modelled-line provider, every status and every link method. Amounts are invented.
+a modelled-line provider, every status, every link method and a provider coefficient
+for Germany. Amounts are invented.
 """
 
 import itertools
@@ -176,7 +177,6 @@ def build_tables() -> dict[str, pl.DataFrame]:
             {
                 "row_id": row_id,
                 "vintage": year,
-                "perspective": "recipient" if bi_multi == 4 else "provider",
                 "year": year,
                 "provider_code": provider,
                 "agency_code": agency,
@@ -280,6 +280,14 @@ def build_tables() -> dict[str, pl.DataFrame]:
             )
             for year in (2021, 2022)
         ],
+        "provider_coefficients": [
+            {
+                "provider_code": DEU,
+                "significant": 0.5,
+                "basis": "btr_crs_ratio",
+                "confirmed": False,
+            }
+        ],
         "btr": [
             {
                 "row_id": f"BTR-{party}-{year}",
@@ -325,12 +333,48 @@ def build_tables() -> dict[str, pl.DataFrame]:
         for name, rows in tables.items()
     }
     frames["quality"] = _quality(frames["commitments"], frames["disbursements"])
+    frames["total_flows"] = _total_flows(
+        frames["commitments"], frames["disbursements"], frames["core_contributions"]
+    )
     return frames
 
 
 def _polars_schema(table: str) -> pl.Schema:
     columns = RELEASE_TABLES[table].columns
     return pl.Schema({name: column.dtype for name, column in columns.items()})
+
+
+def _total_flows(
+    commitments: pl.DataFrame,
+    disbursements: pl.DataFrame,
+    core_contributions: pl.DataFrame,
+) -> pl.DataFrame:
+    """All CRS flows: four times the climate rows' amounts, plus core contributions
+    to unspecified recipients, so every climate figure has a larger total."""
+    keys = ["provider_code", "recipient_code", "year", "bi_multi"]
+    committed = commitments.select(*keys, amount_usd=pl.col("face_usd") * 4)
+    disbursed = disbursements.select(*keys, amount_usd=pl.col("allocated_usd") * 4)
+    core = core_contributions.select(
+        "provider_code",
+        recipient_code=pl.lit(UNS, pl.Int32),
+        year="year",
+        bi_multi=pl.lit(2, pl.Int8),
+        amount_usd=pl.col("contribution_usd") * 1.5,
+    )
+    flows = [
+        ("commitments", pl.concat([committed, core])),
+        ("disbursements", pl.concat([disbursed, core])),
+        (
+            "grant_equivalent",
+            pl.concat([disbursed, core]).with_columns(pl.col("amount_usd") * 0.9),
+        ),
+    ]
+    return pl.concat(
+        frame.group_by(keys)
+        .agg(pl.col("amount_usd").sum())
+        .with_columns(flow=pl.lit(flow))
+        for flow, frame in flows
+    ).select(list(RELEASE_TABLES["total_flows"].columns))
 
 
 def _quality(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataFrame:

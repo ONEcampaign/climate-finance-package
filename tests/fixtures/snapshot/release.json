@@ -4,7 +4,7 @@
   "package_version": "2.0.0.dev0",
   "tables": {
     "commitments": {
-      "sha256": "fb19de29983bd8faca3b00c9825257421fa864ee5f6d69709c44b2647047ef5a",
+      "sha256": "5fb856f1bd02bf8058e10d3114cd92e0953f0f29bc610df148fa2e57abbeb5da",
       "rows": 13
     },
     "disbursements": {
@@ -27,6 +27,10 @@
       "sha256": "b9317d2a9e2ff3a9fd9f4a4cce4b5b2c2c62a24050d01083adff355570502227",
       "rows": 6
     },
+    "provider_coefficients": {
+      "sha256": "3db8e871ec05d38875f5645d2c7cebbd1dd548c723e849bef348c6f030b64def",
+      "rows": 1
+    },
     "btr": {
       "sha256": "3af8deb9ea17dbbcbb0afdbcf98a4ebd949eba678022fd470465ce49fe075f1e",
       "rows": 4
@@ -38,6 +42,10 @@
     "quality": {
       "sha256": "16a7b0cbf0e4cdd69c8b449e88fde2b899de5056b2afe5143c7de57f5c59cbc2",
       "rows": 12
+    },
+    "total_flows": {
+      "sha256": "66cefe937e01f0cf7fc9ca44c4450109d66dfda30e42112ea8176ae8c92a560e",
+      "rows": 86
     }
   },
   "source_versions": {

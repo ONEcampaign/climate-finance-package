@@ -81,6 +81,7 @@ SCORING_GROUPS = ("truth", "weak", "splink", "pooled_splink")
 SHARE_SOURCES = ("oecd", "one")
 FETCH_METHODS = ("http", "registered", "manual")
 PERSPECTIVES = ("provider", "recipient")
+FLOWS = ("commitments", "disbursements", "grant_equivalent")
 DECISIONS = ("accept", "reject")
 BI_MULTI_CODES = (1, 2, 3, 4, 7, 8)
 RIO_MARKERS = (0, 1, 2)
@@ -477,12 +478,12 @@ MODELLED = _table(
 
 # Release tables ------------------------------------------------------------------
 
+# Recipient-perspective CRDF rows only: bilateral flows and multilateral outflows.
 COMMITMENTS = _table(
     "commitments",
     ("row_id",),
     row_id=_str(),
     vintage=_year(),
-    perspective=_str(values=PERSPECTIVES),
     year=_year(),
     provider_code=_code(),
     agency_code=_code(nullable=True),
@@ -563,6 +564,28 @@ QUALITY = _table(
     grant_equiv_coverage=_f64(nullable=True),
 )
 
+# Every CRS flow, climate or not, summed: the denominator of `share_of_total`.
+TOTAL_FLOWS = _table(
+    "total_flows",
+    ("provider_code", "recipient_code", "year", "bi_multi", "flow"),
+    provider_code=_code(),
+    recipient_code=_code(),
+    year=_year(),
+    bi_multi=_bi_multi(),
+    flow=_str(values=FLOWS),
+    amount_usd=_usd(),
+)
+
+# Each provider's own significant-marker coefficient, from BTR-to-CRS amount ratios.
+PROVIDER_COEFFICIENTS = _table(
+    "provider_coefficients",
+    ("provider_code",),
+    provider_code=_code(),
+    significant=_f64(),
+    basis=_str(),
+    confirmed=_bool(),
+)
+
 RELEASE_TABLES: Mapping[str, TableSchema] = {
     table.name: table
     for table in (
@@ -575,6 +598,8 @@ RELEASE_TABLES: Mapping[str, TableSchema] = {
         BTR,
         DISBURSEMENT_PROFILE,
         QUALITY,
+        TOTAL_FLOWS,
+        PROVIDER_COEFFICIENTS,
     )
 }
 
