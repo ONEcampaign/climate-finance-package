@@ -41,6 +41,7 @@ from climate_finance.schema import (
     ReleaseManifest,
     TableEntry,
     TableSchema,
+    aggregate_channels,
     release_invariants,
 )
 
@@ -147,7 +148,11 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
 
 
 def release_commitments(crdf: pl.LazyFrame, *, status: pl.LazyFrame) -> pl.LazyFrame:
-    """The CRDF rows allocation follows, with their status and disbursed amounts."""
+    """The CRDF rows allocation follows, with their status and disbursed amounts.
+
+    The CRDF stage's `flow_code` holds the flow category the CRDF publishes (10 for
+    ODA), so the release names it `flow_category`.
+    """
     return (
         counted_rows(crdf)
         .join(
@@ -163,6 +168,7 @@ def release_commitments(crdf: pl.LazyFrame, *, status: pl.LazyFrame) -> pl.LazyF
             how="left",
             validate="1:1",
         )
+        .rename({"flow_code": "flow_category"})
         .select(list(COMMITMENTS.columns))
     )
 
@@ -276,12 +282,15 @@ def carrying_links(
 
 
 def core_contributions(stage: pl.LazyFrame) -> pl.LazyFrame:
-    """Core contributions for every flow.
+    """Core contributions to leaf channels for every flow.
 
+    MULTI publishes aggregate channels beside their members, and each provider's
+    members sum to its aggregate, so the aggregates leave (`aggregate_channels`).
     MULTI publishes commitments and disbursements. The grant-equivalent rows equal
     the disbursement rows, as the DAC's grant-equivalent measure counts core
     contributions to multilateral agencies at face value.
     """
+    stage = stage.join(aggregate_channels(stage), on="channel_code", how="anti")
     grant_equivalent = stage.filter(pl.col("flow") == "disbursements").with_columns(
         flow=pl.lit("grant_equivalent")
     )

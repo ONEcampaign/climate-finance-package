@@ -129,8 +129,12 @@ def test_methods_print_as_models_and_render_their_description() -> None:
         "banks count their reported climate share and ignore the coefficients. In "
         "the provider view EU Institutions count as a channel: members' core "
         "contributions to the EU budget, the EDF and the EIB carry the EU's climate "
-        "share, and EU Institutions' own rows leave a result in each year where it "
-        "holds such an attribution, so EU spending counts once."
+        "share, and each EU agency's own rows leave a result in the years its channel "
+        "holds such an attribution, so EU spending counts once. The EIB's own lending "
+        "reaches members' totals only through their paid-in capital, as every "
+        "development bank's own lending does: under ONE, USD 0.035bn attributed "
+        "against 2.72bn the EIB disbursed in 2021 and 2022. It stays in the recipient "
+        "view, and quality() reports the EU rows left out."
     )
     assert RANGE._repr_markdown_() == (
         "Methods ONE / OECD / PROVIDER, reported together; low and high are the "

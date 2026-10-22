@@ -249,6 +249,25 @@ def test_core_contributions_count_disbursements_as_grant_equivalent(
     }
 
 
+def test_core_contributions_keep_leaf_channels_only() -> None:
+    # MULTI's 40000 and 44000 aggregate IDA's 44002; 47066 has no aggregate here.
+    stage = pl.LazyFrame(
+        {
+            "provider_code": [NOR] * 4,
+            "channel_code": [40000, 44000, IDA_CHANNEL, 47066],
+            "year": [2021] * 4,
+            "flow": ["disbursements"] * 4,
+            "contribution_usd": [15.0, 10.0, 10.0, 5.0],
+        },
+        schema_overrides={"channel_code": pl.Int32, "year": pl.Int16},
+    )
+
+    core = release.core_contributions(stage).collect()
+
+    assert set(core["channel_code"]) == {IDA_CHANNEL, 47066}
+    assert core.filter(flow="disbursements")["contribution_usd"].sum() == 15.0
+
+
 def test_total_flows_sum_every_crs_record(release_dir: Path) -> None:
     totals = _read(release_dir, "total_flows")
 

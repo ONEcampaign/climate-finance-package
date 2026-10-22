@@ -290,6 +290,44 @@ def test_oecd_attribution_uses_the_imputed_shares() -> None:
     assert attributed(cf.methods.OECD) > attributed(cf.methods.ONE)
 
 
+def _hold_afdb_2022(frame: pl.DataFrame) -> pl.DataFrame:
+    # AfDB's 2022 ONE share repeats an earlier year's.
+    key = (
+        (pl.col("channel_code") == 46002)
+        & (pl.col("year") == 2022)
+        & (pl.col("source") == "one")
+    )
+    return frame.with_columns(
+        share_source=pl.when(key).then(pl.lit("held")).otherwise("share_source")
+    )
+
+
+def test_attributed_value_shows_and_sums_by_share_source(tmp_path: Path) -> None:
+    snap = cf.load(
+        path=copy_release(
+            tmp_path / "release", edits={"agency_shares": _hold_afdb_2022}
+        )
+    )
+    rows = snap.spending(view="provider").rows(origin="attribution")
+    by_source = rows.group_by("provider_code", "year", "share_source").agg(
+        pl.col("value").sum()
+    )
+
+    attribution = snap.quality().attribution.to_polars().filter(flow="disbursements")
+    columns = attribution.unpivot(
+        index=["provider_code", "year"],
+        on=["computed_usd", "held_usd", "oecd_usd"],
+        variable_name="share_source",
+    ).filter(pl.col("value") != 0)
+
+    assert set(rows["share_source"]) == {"computed", "held"}
+    assert sorted(
+        columns.with_columns(pl.col("share_source").str.strip_suffix("_usd")).rows()
+    ) == pytest.approx(sorted(by_source.select(columns.columns).rows()))
+    oecd_rows = snap.spending(view="provider", method=OECD).rows(origin="attribution")
+    assert set(oecd_rows["share_source"]) == {"oecd"}
+
+
 def test_grant_equivalent_gaps_stay_missing() -> None:
     rows = SNAP.spending(flow="grant_equivalent").rows()
 
@@ -297,11 +335,47 @@ def test_grant_equivalent_gaps_stay_missing() -> None:
     assert rows.filter(pl.col("amount").is_null())["value"].is_null().all()
 
 
-def test_oda_only_drops_rows_outside_oda_flow_codes() -> None:
-    rows = SNAP.spending(flow="commitments", oda_only=True).rows()
+def test_oda_only_counts_commitments_of_the_oda_flow_category() -> None:
+    oda = (
+        pl.read_parquet(FIXTURE_DIR / "commitments.parquet")
+        .filter(pl.col("flow_category") == 10, pl.col("bi_multi") != 2)
+        .sort("row_id")
+    )
+    rows = SNAP.spending(flow="commitments", method=OECD, oda_only=True).rows()
 
-    assert set(rows["flow_code"]) <= {11, 13, 19}
-    assert SNAP.spending(oda_only=True).modelled.to_polars().is_empty()
+    assert rows["row_id"].sort().to_list() == oda["row_id"].to_list()
+    assert rows["value"].sum() > 0
+    assert rows["value"].sum() == pytest.approx(oda["climate_usd"].sum())
+
+
+def test_oda_only_counts_disbursements_of_oda_flow_codes() -> None:
+    result = SNAP.spending(oda_only=True)
+
+    assert result.rows().height
+    assert set(result.rows()["flow_code"]) <= {11, 13, 19}
+    assert result.modelled.to_polars().is_empty()
+
+
+def _publish_deu_2_at_40_percent(frame: pl.DataFrame) -> pl.DataFrame:
+    # As IFAD publishes its significant rows: climate value 40% of face value.
+    is_row = pl.col("row_id") == "DEU-2"
+    return frame.with_columns(
+        pl.when(is_row).then(pl.col(name) * 0.4).otherwise(pl.col(name)).alias(name)
+        for name in ("climate_usd", "adaptation_usd", "mitigation_usd", "overlap_usd")
+    )
+
+
+def test_a_marker_row_counts_at_most_its_published_climate_share(
+    tmp_path: Path,
+) -> None:
+    release = copy_release(
+        tmp_path / "release", edits={"commitments": _publish_deu_2_at_40_percent}
+    )
+
+    result = cf.load(path=release).spending(flow="commitments", method=OECD)
+    row = result.rows(row_id="DEU-2")
+
+    assert row["value"].item() == pytest.approx(0.4 * 25e6)
 
 
 def test_rows_filter_by_equality_and_membership() -> None:
@@ -522,10 +596,11 @@ def _with_eu_shares(frame: pl.DataFrame) -> pl.DataFrame:
             "objective": ["adaptation", "mitigation", "cross_cutting"] * 2,
             "share": [0.10, 0.25, 0.05] * 2,
             "source": "one",
+            "share_source": "computed",
         }
     )
     # The OECD's share for the same channel, which OECD ignores.
-    oecd = rows.with_columns(source=pl.lit("oecd"))
+    oecd = rows.with_columns(source=pl.lit("oecd"), share_source=pl.lit("oecd"))
     return pl.concat([frame, rows.cast(frame.schema), oecd.cast(frame.schema)])
 
 
@@ -653,3 +728,70 @@ def test_eu_own_rows_stay_in_a_year_without_eu_attribution(eu_snap: Snapshot) ->
     assert_frame_equal(
         as_channel, eu_rows(ONE_EU_AS_PROVIDER).filter(pl.col("year") == 2023)
     )
+
+
+def _with_eib_and_no_2022_budget_share(frame: pl.DataFrame) -> pl.DataFrame:
+    # France also gives the EIB (42004), with an EIB share in 2021 and 2022, and the
+    # EU budget's 2022 share is missing.
+    eib = _with_eu_shares(frame.clear()).with_columns(
+        channel_code=pl.lit(42004, pl.Int32)
+    )
+    budget = _with_eu_shares(frame).filter(
+        ~((pl.col("channel_code") == 42001) & (pl.col("year") == 2022))
+    )
+    return pl.concat([budget, eib])
+
+
+def _with_eib_contributions(frame: pl.DataFrame) -> pl.DataFrame:
+    with_budget = _with_eu_contributions(frame)
+    eib = with_budget.filter(channel_code=42001).with_columns(
+        channel_code=pl.lit(42004, pl.Int32)
+    )
+    return pl.concat([with_budget, eib])
+
+
+def test_a_year_without_a_budget_share_keeps_the_budgets_own_rows(
+    tmp_path: Path,
+) -> None:
+    release = copy_release(
+        tmp_path / "release",
+        edits={
+            "commitments": _with_eu_commitment,
+            "disbursements": _with_eu_commitment,
+            "core_contributions": _with_eib_contributions,
+            "agency_shares": _with_eib_and_no_2022_budget_share,
+        },
+    )
+
+    # EU-1 is a budget row (agency 1). In 2022 only the EIB's channel attributes.
+    rows = cf.load(path=release).spending(view="provider").rows(row_id="EU-1")
+
+    assert set(rows["year"]) == {2022, 2023}
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+def test_quality_reports_the_eu_rows_a_provider_total_leaves_out(
+    eu_snap: Snapshot, flow: str
+) -> None:
+    own = (
+        eu_snap.spending(
+            view="provider",
+            method=ONE_EU_AS_PROVIDER,
+            flow=flow,
+            providers=EU_INSTITUTIONS,
+            years=EU_ATTRIBUTION_YEARS,
+        )
+        .rows()
+        .group_by("year")
+        .agg(pl.col("value").sum())
+    )
+
+    left_out = eu_snap.quality().eu_left_out.to_polars().filter(flow=flow)
+
+    assert own.height
+    assert set(left_out.select("agency_code", "channel_code").rows()) == {(1, 42001)}
+    assert dict(left_out.select("year", "value").rows()) == pytest.approx(
+        dict(own.rows())
+    )
+    assert eu_snap.quality(method=ONE_EU_AS_PROVIDER).eu_left_out.to_polars().is_empty()
+    assert eu_snap.quality(providers=4).eu_left_out.to_polars().is_empty()

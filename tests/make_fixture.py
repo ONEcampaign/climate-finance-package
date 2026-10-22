@@ -111,6 +111,10 @@ DISBURSED_SHARE = {
 # high bounds stay within its face value.
 CERTAIN_PROBABILITY = 0.9
 HIGH_FACTOR = 1.05
+# Commitments carry the CRDF's flow category: ODA (10) but for AFDB-2, an other
+# official flow (21). Records carry CRS flow codes.
+ODA_CATEGORY, OOF_CATEGORY = 10, 21
+OTHER_OFFICIAL = {"AFDB-2"}
 # A record's grant equivalent as a share of its disbursement, by flow code.
 GRANT_EQUIV_RATIO = {11: 1.0, 13: 0.6}
 
@@ -145,6 +149,7 @@ CLIMATE_ONLY_SHARE = {
     "objective": "climate",
     "share": 0.35,
     "source": "oecd",
+    "share_source": "oecd",
 }
 # Core contributions disbursed in each of their years, and each flow's amount as a
 # multiple.
@@ -303,7 +308,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
             "channel_code": channel,
             "bi_multi": bi_multi,
             "purpose_code": 41010,
-            "flow_code": 11,
+            "flow_category": OOF_CATEGORY if row_id in OTHER_OFFICIAL else ODA_CATEGORY,
             "crs_id": f"{year}00{row_id}" if has_ids else None,
             "project_number": f"PN-{row_id}" if has_ids else None,
             "rio_adaptation": rio_a,
@@ -395,6 +400,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
                 "objective": objective,
                 "share": share,
                 "source": source,
+                "share_source": "computed" if source == "one" else "oecd",
             }
             for (channel, source), shares in AGENCY_SHARES.items()
             for year in (2021, 2022)

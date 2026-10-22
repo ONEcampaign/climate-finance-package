@@ -70,9 +70,13 @@ class Snapshot:
         *,
         providers: str | int | Sequence[str | int] | None = None,
         years: int | Iterable[int] | None = None,
+        method: Method = ONE,
     ) -> Quality:
-        """Link, coverage and status statistics."""
-        return query.quality(self, providers=_as_tuple(providers), years=_years(years))
+        """Link, coverage and status statistics, and the EU Institutions rows that
+        `method`'s provider view leaves out."""
+        return query.quality(
+            self, providers=_as_tuple(providers), years=_years(years), method=method
+        )
 
     def reconcile(
         self,

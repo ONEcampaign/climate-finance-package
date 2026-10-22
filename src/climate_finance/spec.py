@@ -17,9 +17,10 @@ class Spec(Frozen):
     plus each provider's core contributions times the agency's climate share. Both
     leave out code 2 rows, so no dollar counts twice.
 
-    `oda_only=True` keeps rows with ODA flow codes 11, 13 and 19, drops rows without
-    a flow code and the modelled line (neither can be shown to be ODA), and keeps
-    attributed core contributions, which count as ODA.
+    `oda_only=True` keeps commitments of the CRDF's ODA flow category (10) and
+    disbursements of the CRS's ODA flow codes 11, 13 and 19. It drops rows without
+    a flow category or code and the modelled line (neither can be shown to be ODA),
+    and keeps attributed core contributions, which count as ODA.
     """
 
     providers: tuple[str | int, ...] | None = None

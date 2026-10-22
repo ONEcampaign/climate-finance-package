@@ -12,12 +12,13 @@ converts it, and sums the rows into the result table. Rows have one of three ori
   and `high` scale by the allocation's own bounds.
 - `attribution`: under `view="provider"`, a provider's core contribution of the
   spec's flow to an agency times the agency's climate share. An agency share with no
-  split by objective counts in `unsplit`, with the objectives 0.
+  split by objective counts in `unsplit`, with the objectives 0. `share_source` says
+  where the share comes from: `computed`, `held` or `oecd`.
 
 Under `view="provider"` the method's `eu` setting counts EU Institutions once. As a
-channel, EU Institutions' own rows leave a result in each year where it also
-attributes another provider's contribution to an EU channel. As a provider, the EU
-channels attribute nothing.
+channel, the own rows of each EU Institutions agency leave a result in the years
+where that agency's channel attributes another provider's contribution, and
+`quality()` reports them. As a provider, the EU channels attribute nothing.
 
 Every row holds `value` = adaptation + mitigation - cross_cutting + unsplit, or
 + cross_cutting under the highest-marker rule, whose objectives are disjoint.
@@ -32,16 +33,19 @@ on Bi_Multi alone and provider attribution comes only from core contributions.
 
 from __future__ import annotations
 
+import tomllib
 from collections.abc import Iterable, Sequence
 from importlib.metadata import version
+from importlib.resources import files
 from typing import TYPE_CHECKING
 
 import polars as pl
 
 from climate_finance import catalogue
 from climate_finance.convert import convert
-from climate_finance.methods import OECD, Method, label, weights
+from climate_finance.methods import OECD, ONE, Method, face_shares, label, weights
 from climate_finance.result import AMOUNTS, Meta, Quality, Result, Table
+from climate_finance.schema import FLOWS, SHARE_ORIGINS
 from climate_finance.spec import Spec, View
 
 if TYPE_CHECKING:
@@ -50,11 +54,27 @@ if TYPE_CHECKING:
 BILATERAL = (1, 3, 7, 8)
 MULTILATERAL_OUTFLOW = 4
 CORE_CONTRIBUTION = 2
+# A commitment's ODA test reads the CRDF's flow category, a disbursement's the CRS
+# record's flow code: grants (11), loans (13) and equity (19) form category 10.
+ODA_FLOW_CATEGORY = 10
 ODA_FLOW_CODES = (11, 13, 19)
-# EU Institutions and their channels: the EU budget, the EDF and the EIB, as
-# build/providers.toml maps them.
 EU_INSTITUTIONS = 918
-EU_CHANNELS = (42001, 42003, 42004)
+
+
+def _eu_agency_channels() -> dict[int, int]:
+    """Each EU Institutions agency's channel, as build/providers.toml maps them."""
+    toml = files("climate_finance").joinpath("build", "providers.toml").read_text()
+    return {
+        agency: row["channel_code"]
+        for row in tomllib.loads(toml)["agencies"]
+        if row["provider_code"] == EU_INSTITUTIONS
+        for agency in row["agency_codes"]
+    }
+
+
+# The EU budget (42001), the EDF (42003) and the EIB (42004), by agency.
+EU_AGENCY_CHANNELS = _eu_agency_channels()
+EU_CHANNELS = tuple(sorted(set(EU_AGENCY_CHANNELS.values())))
 # The objective label a record shows when several sources label it: the bank's own
 # climate components first, then Jev, then the donor's markers.
 LABEL_PRECEDENCE = {"crdf": 0, "jev": 1, "marker": 2}
@@ -71,6 +91,7 @@ ROW_COLUMNS: dict[str, pl.DataType] = {
     "channel_code": pl.Int32(),
     "bi_multi": pl.Int8(),
     "purpose_code": pl.Int32(),
+    "flow_category": pl.Int32(),
     "flow_code": pl.Int32(),
     "project_number": pl.String(),
     "title": pl.String(),
@@ -81,6 +102,7 @@ ROW_COLUMNS: dict[str, pl.DataType] = {
     "record_rio_mitigation": pl.Int8(),
     "marker_source": pl.String(),
     "climate_share": pl.Float64(),
+    "share_source": pl.String(),
     "link_method": pl.String(),
     "link_probability": pl.Float64(),
     "allocation_weight": pl.Float64(),
@@ -92,6 +114,7 @@ ROW_COLUMNS: dict[str, pl.DataType] = {
 }
 # Inputs to the weighting that the rows do not show.
 _WEIGHT_INPUTS: dict[str, pl.DataType] = {
+    "share_climate": pl.Float64(),
     "share_adaptation": pl.Float64(),
     "share_mitigation": pl.Float64(),
     "share_overlap": pl.Float64(),
@@ -111,8 +134,11 @@ def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
     )
     if spec.oda_only:
         conditions.append(
-            pl.col("flow_code").is_in(ODA_FLOW_CODES)
-            | (pl.col("origin") == "attribution")
+            pl.any_horizontal(
+                pl.col("flow_category") == ODA_FLOW_CATEGORY,
+                pl.col("flow_code").is_in(ODA_FLOW_CODES),
+                pl.col("origin") == "attribution",
+            )
         )
 
     def filtered(frame: pl.LazyFrame) -> pl.LazyFrame:
@@ -125,7 +151,8 @@ def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
         if spec.view == "provider":
             attributed = filtered(_attributed_rows(snapshot, spec=spec, method=method))
             if method.eu == "channel":
-                frame = _without_eu_own_rows(frame, attributed=attributed)
+                frame = _mark_eu_left_out(frame, attributed=attributed)
+                frame = frame.filter(~pl.col("eu_left_out")).drop("eu_left_out")
             frame = pl.concat([frame, attributed])
         weighted.append(
             _weigh(_coefficients(snapshot, frame, method=method), method=method)
@@ -160,12 +187,15 @@ def quality(
     *,
     providers: Sequence[str | int] | None = None,
     years: Iterable[int] | None = None,
+    method: Method = ONE,
 ) -> Quality:
     """Coverage and status statistics.
 
     The status split covers the commitments the trace follows: bilateral rows and
-    multilateral outflows, without core contributions.
+    multilateral outflows, without core contributions. `eu_left_out` holds the EU
+    Institutions rows an all-provider provider view leaves out under `method`.
     """
+    years = None if years is None else tuple(years)
     conditions = _conditions(providers=providers, recipients=None, years=years)
     table = snapshot.table("quality")
     status = (
@@ -175,7 +205,91 @@ def quality(
     )
     if conditions:
         table, status = table.filter(*conditions), status.filter(*conditions)
-    return Quality(table=Table(table), status=Table(status))
+    eu_left_out = _eu_left_out(snapshot, years=years, method=method)
+    if providers is not None and EU_INSTITUTIONS not in _codes(
+        providers, listing=catalogue.providers
+    ):
+        eu_left_out = eu_left_out.clear()
+    return Quality(
+        table=Table(table),
+        status=Table(status),
+        eu_left_out=Table(eu_left_out),
+        attribution=Table(
+            _attribution(snapshot, providers=providers, years=years, method=method)
+        ),
+    )
+
+
+def _attribution(
+    snapshot: Snapshot,
+    *,
+    providers: Sequence[str | int] | None,
+    years: tuple[int, ...] | None,
+    method: Method,
+) -> pl.LazyFrame:
+    """Per provider, year and flow, the value `method` attributes through core
+    contributions, in one column per share source, in USD at current prices."""
+    conditions = _conditions(providers=providers, recipients=None, years=years)
+    parts = []
+    for flow in FLOWS:
+        spec = Spec(flow=flow, view="provider", method=method)
+        attributed = _attributed_rows(snapshot, spec=spec, method=method)
+        if conditions:
+            attributed = attributed.filter(*conditions)
+        parts.append(
+            _weigh(_coefficients(snapshot, attributed, method=method), method=method)
+            .group_by("provider_code", "year")
+            .agg(
+                pl.col("value")
+                .filter(pl.col("share_source") == origin)
+                .sum()
+                .alias(f"{origin}_usd")
+                for origin in SHARE_ORIGINS
+            )
+            .with_columns(flow=pl.lit(flow))
+        )
+    return (
+        pl.concat(parts)
+        .select("provider_code", "year", "flow", *(f"{o}_usd" for o in SHARE_ORIGINS))
+        .sort("provider_code", "year", "flow")
+    )
+
+
+def _eu_left_out(
+    snapshot: Snapshot, *, years: tuple[int, ...] | None, method: Method
+) -> pl.LazyFrame:
+    """Per EU Institutions agency, its channel, year and flow, the value of its own
+    rows that a provider view of every provider leaves out under `method`, in USD at
+    current prices. Empty when the method counts EU Institutions as a provider."""
+    conditions = _conditions(providers=None, recipients=None, years=years)
+    parts = []
+    for flow in FLOWS:
+        spec = Spec(flow=flow, view="provider", method=method, years=years)
+        own = _base_rows(snapshot, spec=spec).filter(
+            pl.col("provider_code") == EU_INSTITUTIONS, *conditions
+        )
+        attributed = _attributed_rows(snapshot, spec=spec, method=method)
+        left_out = _mark_eu_left_out(own, attributed=attributed).filter("eu_left_out")
+        parts.append(
+            _weigh(
+                _coefficients(snapshot, left_out.drop("eu_left_out"), method=method),
+                method=method,
+            )
+            .group_by("agency_code", "year")
+            .agg(value=pl.col("value").sum())
+            .with_columns(flow=pl.lit(flow))
+        )
+    left_out = (
+        pl.concat(parts)
+        .with_columns(
+            channel_code=pl.col("agency_code").replace_strict(
+                EU_AGENCY_CHANNELS, return_dtype=pl.Int32
+            )
+        )
+        .select("agency_code", "channel_code", "year", "flow", "value")
+        .sort("agency_code", "year", "flow")
+    )
+    return left_out if method.eu == "channel" else left_out.clear()
 
 
 def _codes(values: Sequence[str | int], *, listing: catalogue.Catalogue) -> list[int]:
@@ -219,19 +333,8 @@ def _in_view(view: View) -> pl.Expr:
     return pl.col("bi_multi").is_in(codes)
 
 
-def _share(part: str) -> pl.Expr:
-    """`part` as a fraction of `face_usd`, 0 for a zero face value."""
-    face = pl.col("face_usd")
-    return pl.when(face != 0).then(pl.col(part) / face).otherwise(0.0)
-
-
 def _base_rows(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
-    shares = {
-        "share_adaptation": _share("adaptation_usd"),
-        "share_mitigation": _share("mitigation_usd"),
-        "share_overlap": _share("overlap_usd"),
-        "share_unsplit": pl.lit(0.0),
-    }
+    shares = {**face_shares(), "share_unsplit": pl.lit(0.0)}
     if spec.flow == "commitments":
         commitments = _counted_commitments(snapshot).filter(_in_view(spec.view))
         return _conform(
@@ -248,6 +351,7 @@ def _base_rows(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
         "row_id",
         "status",
         "face_usd",
+        "climate_usd",
         "adaptation_usd",
         "mitigation_usd",
         "overlap_usd",
@@ -335,7 +439,9 @@ def _attributed_rows(snapshot: Snapshot, *, spec: Spec, method: Method) -> pl.La
     include the cross-cutting share. A share with no split by objective (a `climate`
     row) is the unsplit share, and the three objective shares are 0. An agency
     without a share attributes nothing, and neither do the EU channels when the
-    method counts EU Institutions as a provider.
+    method counts EU Institutions as a provider. Each row carries its share's
+    `share_source`, which `release_invariants` holds to one per channel, year and
+    source.
     """
     source = "oecd" if method == OECD else "one"
     channels = snapshot.table("agency_shares").filter(pl.col("source") == source)
@@ -350,6 +456,7 @@ def _attributed_rows(snapshot: Snapshot, *, spec: Spec, method: Method) -> pl.La
         share_mitigation=share("mitigation"),
         share_overlap=share("cross_cutting"),
         share_unsplit=share("climate"),
+        share_source=pl.col("share_source").first(),
     )
     return _conform(
         snapshot.table("core_contributions")
@@ -369,26 +476,34 @@ def _attributed_rows(snapshot: Snapshot, *, spec: Spec, method: Method) -> pl.La
     )
 
 
-def _without_eu_own_rows(
-    frame: pl.LazyFrame, *, attributed: pl.LazyFrame
-) -> pl.LazyFrame:
-    """`frame` without EU Institutions' own rows in the years where `attributed`
-    holds another provider's contribution to an EU channel, which already counts
-    that money. `attributed` carries one flow, the spec's."""
-    years = (
+def _mark_eu_left_out(frame: pl.LazyFrame, *, attributed: pl.LazyFrame) -> pl.LazyFrame:
+    """`frame` with `eu_left_out`, true on an EU Institutions row whose agency's
+    channel holds another provider's contribution in `attributed` in the row's year,
+    which already counts that money. `attributed` carries one flow, the spec's.
+
+    The rule runs per agency, so a year in which the EU budget has no climate share
+    keeps the budget's own rows even when the EIB's channel attributes.
+    """
+    attributing = (
         attributed.filter(
             pl.col("channel_code").is_in(EU_CHANNELS),
             pl.col("provider_code") != EU_INSTITUTIONS,
         )
-        .select("year")
+        .select("year", _eu_channel="channel_code", eu_left_out=pl.lit(True))
         .unique()
     )
-    own = frame.filter(pl.col("provider_code") == EU_INSTITUTIONS)
-    return pl.concat(
-        [
-            frame.filter(pl.col("provider_code").ne_missing(EU_INSTITUTIONS)),
-            own.join(years, on="year", how="anti"),
-        ]
+    channel = pl.col("agency_code").replace_strict(
+        EU_AGENCY_CHANNELS, default=None, return_dtype=pl.Int32
+    )
+    return (
+        frame.with_columns(
+            _eu_channel=pl.when(pl.col("provider_code") == EU_INSTITUTIONS).then(
+                channel
+            )
+        )
+        .join(attributing, on=["_eu_channel", "year"], how="left")
+        .with_columns(pl.col("eu_left_out").fill_null(False))
+        .drop("_eu_channel")
     )
 
 
@@ -430,7 +545,9 @@ def _coefficients(
 def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
     """Weight each row's amount by objective, unsplit and in total under `method`."""
     amount = pl.col("amount")
-    fractions = weights(method, significant=pl.col("significant"))
+    fractions = weights(
+        method, significant=pl.col("significant"), published=pl.col("share_climate")
+    )
     unsplit = pl.col("share_unsplit")
     return (
         frame.with_columns(

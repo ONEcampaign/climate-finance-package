@@ -15,6 +15,7 @@ import polars as pl
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from climate_finance.errors import SchemaError
+from climate_finance.methods import OECD, face_shares, weights
 
 STATUSES = (
     "disbursed",
@@ -90,6 +91,10 @@ ID_PRACTICE_CLASSES = (
 )
 SCORING_GROUPS = ("truth", "weak", "splink", "pooled_splink")
 SHARE_SOURCES = ("oecd", "one")
+# Where a `one` agency share comes from: measured on the share years' commitments,
+# held from the last year measured on enough commitments, or the OECD's imputed share
+# where ONE has none. An `oecd` share is always `oecd`.
+SHARE_ORIGINS = ("computed", "held", "oecd")
 FETCH_METHODS = ("http", "registered", "manual")
 PERSPECTIVES = ("provider", "recipient")
 ORG_ROLES = ("provider", "agency", "channel")
@@ -249,6 +254,9 @@ CRS = _table(
 )
 
 # One row per provider, agency, year and flow. The build writes every flow in FLOWS.
+# MULTI publishes aggregate channels beside their members, such as 40000 for all
+# multilaterals and 44000 for the World Bank Group. Normalise keeps them; the
+# release keeps leaf channels only, so each dollar counts once (`aggregate_channels`).
 CORE_CONTRIBUTIONS = _table(
     "core_contributions",
     ("provider_code", "channel_code", "year", "flow"),
@@ -633,6 +641,7 @@ AGENCY_SHARES = _table(
     objective=_str(values=SHARE_OBJECTIVES),
     share=_f64(),
     source=_str(values=SHARE_SOURCES),
+    share_source=_str(values=SHARE_ORIGINS),
 )
 
 MODELLED = _table(
@@ -661,7 +670,10 @@ COMMITMENTS = _table(
     channel_code=_code(nullable=True),
     bi_multi=_bi_multi(),
     purpose_code=_code(nullable=True),
-    flow_code=_code(nullable=True),
+    # The CRS flow category the CRDF publishes: 10 ODA, 21 other official flows,
+    # 22, 30 private grants and 60 private market flows. Disbursements carry the CRS
+    # record's flow code (11 ODA grants, 13 ODA loans, 19 equity) instead.
+    flow_category=_code(nullable=True),
     crs_id=_str(nullable=True),
     project_number=_str(nullable=True),
     rio_adaptation=_rio(),
@@ -907,6 +919,25 @@ _COMPARED_AMOUNTS = {
 }
 
 
+def aggregate_channels(frame: pl.LazyFrame) -> pl.LazyFrame:
+    """The `channel_code`s of `frame` that aggregate another of its channels.
+
+    A DAC channel code X0000 aggregates every code X????, and XY000 every code XY???,
+    as 40000 holds all multilaterals and 44000 the World Bank Group's 44001.
+    """
+    codes = frame.select("channel_code").unique()
+    parent, child = pl.col("channel_code"), pl.col("child")
+    aggregates = ((parent % 10_000 == 0) & (child // 10_000 == parent // 10_000)) | (
+        (parent % 1_000 == 0) & (child // 1_000 == parent // 1_000)
+    )
+    return (
+        codes.join(codes.select(child="channel_code"), how="cross")
+        .filter(parent != child, aggregates)
+        .select("channel_code")
+        .unique()
+    )
+
+
 def _exceeds(smaller: str, larger: str) -> pl.Expr:
     """True where `smaller` is above `larger` by more than the tolerance."""
 
@@ -917,7 +948,8 @@ def _exceeds(smaller: str, larger: str) -> pl.Expr:
 
 
 def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
-    """Problems with a release's `commitments`, `disbursements` and `agency_shares`.
+    """Problems with a release's `commitments`, `disbursements`, `agency_shares` and
+    `core_contributions`.
 
     Every disbursements row holds 0 <= allocated_low <= allocated <= allocated_high
     and names a commitment. Per commitment, its rows' allocated, allocated_low and
@@ -932,8 +964,11 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     earlier vintage, as allocate moves a repeat's allocations to its first row. No
     commitment is another's `parent_row_id`, and no table in `tables` holds the
     bulk CRS's `CRS_UNSPECIFIED_RECIPIENT`. A channel, year and source of
-    `agency_shares` holds either split rows or one `climate` row. An empty list
-    means every check passed.
+    `agency_shares` holds either split rows or one `climate` row, all of one
+    `share_source`. Each commitment's
+    value under the OECD method equals its published `climate_usd`, and no channel
+    of `core_contributions` aggregates another of its channels. An empty list means
+    every check passed.
     """
     commitments = tables["commitments"]
     disbursements = tables["disbursements"]
@@ -1010,6 +1045,13 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     )
     problems.extend(_record_problems(disbursements))
     problems.extend(_share_problems(tables["agency_shares"]))
+    problems.extend(_oecd_problems(commitments))
+    problems.extend(
+        f"core_contributions {code}: an aggregate channel beside its members"
+        for code in aggregate_channels(tables["core_contributions"].lazy())
+        .collect()["channel_code"]
+        .sort()
+    )
     problems.extend(
         f"{name}: {count} rows with recipient_code {CRS_UNSPECIFIED_RECIPIENT}, "
         f"which releases write as {UNSPECIFIED_RECIPIENT}"
@@ -1031,19 +1073,40 @@ def _row_label(row: Mapping[str, object]) -> str:
     return str(row["row_id"])
 
 
+def _oecd_problems(commitments: pl.DataFrame) -> list[str]:
+    """Commitments whose value under the OECD method differs from `climate_usd`."""
+    oecd = weights(OECD, published=pl.col("share_climate"))["climate"]
+    failing = commitments.with_columns(**face_shares()).filter(
+        (pl.col("face_usd") * oecd - pl.col("climate_usd")).abs()
+        > INVARIANT_TOLERANCE_USD
+    )
+    return [
+        f"commitments {row_id}: the OECD method's value differs from climate_usd"
+        for row_id in failing["row_id"].sort()
+    ]
+
+
 def _share_problems(agency_shares: pl.DataFrame) -> list[str]:
-    """Agency share keys that hold both a `climate` row and split rows."""
+    """Agency share keys that hold both a `climate` row and split rows, or rows of
+    several share sources."""
     climate = pl.col("objective") == "climate"
-    mixed = (
+    keys = (
         agency_shares.group_by("channel_code", "year", "source")
-        .agg(climate.any().alias("_climate"), (~climate).any().alias("_split"))
-        .filter(pl.col("_climate"), pl.col("_split"))
+        .agg(
+            climate.any().alias("_climate"),
+            (~climate).any().alias("_split"),
+            pl.col("share_source").n_unique().alias("_origins"),
+        )
         .sort("channel_code", "year", "source")
     )
     return [
-        f"agency_shares {row['channel_code']} {row['year']} {row['source']}: a "
-        "climate row beside split rows"
-        for row in mixed.iter_rows(named=True)
+        f"agency_shares {row['channel_code']} {row['year']} {row['source']}: {problem}"
+        for row in keys.iter_rows(named=True)
+        for problem, broken in (
+            ("a climate row beside split rows", row["_climate"] and row["_split"]),
+            ("rows of several share sources", row["_origins"] > 1),
+        )
+        if broken
     ]
 
 

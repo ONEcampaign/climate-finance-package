@@ -61,7 +61,12 @@ def test_regenerating_the_fixture_gives_the_same_tables(tmp_path: Path) -> None:
         assert pl.read_parquet(tmp_path / f"{table}.parquet").equals(_read(table))
 
 
-INVARIANT_TABLES = ("commitments", "disbursements", "agency_shares")
+INVARIANT_TABLES = (
+    "commitments",
+    "disbursements",
+    "agency_shares",
+    "core_contributions",
+)
 
 
 def test_fixture_holds_the_release_invariants() -> None:
@@ -163,6 +168,36 @@ def _split_a_climate_only_share(frame: pl.DataFrame) -> pl.DataFrame:
     return pl.concat([frame, split])
 
 
+def _publish_more_climate_than_face(frame: pl.DataFrame) -> pl.DataFrame:
+    # DEU-1's Rio markers count its 40m face value at most, not 80m.
+    return frame.with_columns(
+        climate_usd=pl.when(pl.col("row_id") == "DEU-1")
+        .then(pl.col("climate_usd") * 2)
+        .otherwise(pl.col("climate_usd"))
+    )
+
+
+def _keep_an_aggregate_channel(frame: pl.DataFrame) -> pl.DataFrame:
+    # 44000, the World Bank Group, holds IDA's 44002.
+    aggregate = frame.filter(channel_code=44002).with_columns(
+        channel_code=pl.lit(44000, pl.Int32)
+    )
+    return pl.concat([frame, aggregate])
+
+
+def _mix_share_sources(frame: pl.DataFrame) -> pl.DataFrame:
+    # One of IDA's 2021 ONE objective rows is held, the others computed.
+    first = (
+        (pl.col("channel_code") == 44002)
+        & (pl.col("year") == 2021)
+        & (pl.col("source") == "one")
+        & (pl.col("objective") == "adaptation")
+    )
+    return frame.with_columns(
+        share_source=pl.when(first).then(pl.lit("held")).otherwise("share_source")
+    )
+
+
 def _null_disbursed(frame: pl.DataFrame) -> pl.DataFrame:
     is_row = pl.col("row_id") == "DEU-1"
     return frame.with_columns(
@@ -219,6 +254,9 @@ def _repeat_an_allocated_row(frame: pl.DataFrame) -> pl.DataFrame:
         ("disbursements", _break_record_disbursement, "JPN-SPLIT"),
         ("disbursements", _overdraw_record, "JPN-SPLIT"),
         ("agency_shares", _split_a_climate_only_share, "46002 2020 oecd"),
+        ("agency_shares", _mix_share_sources, "44002 2021 one"),
+        ("commitments", _publish_more_climate_than_face, "DEU-1"),
+        ("core_contributions", _keep_an_aggregate_channel, "44000"),
     ],
 )
 def test_release_invariants_name_the_row_that_breaks_one(
