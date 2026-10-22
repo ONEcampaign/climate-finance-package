@@ -177,17 +177,19 @@ def test_the_classifier_meets_its_targets_on_the_prototype_years(
         pairs.filter(crdf_years), truth.filter(crdf_years), threshold=threshold
     )
 
-    assert threshold == 0.42
+    # `carried_continuations` labels the UK's and the Adaptation Fund's new lines
+    # true and leaves 1,641 of Canada's pairs unlabelled, which refits the threshold.
+    assert threshold == 0.43
     assert prototype["f1"] >= F1_TARGET
     assert every_year["ece"] <= ECE_TARGET
-    # Canada renumbers its lines from year to year, so it carries 746 of the 1,950
-    # held-out misses over the build's CRDF years.
+    # Canada renumbers its lines from year to year, so it carries 771 of the 1,957
+    # held-out misses over the build's CRDF years and 0.014 of the ECE.
     assert every_year == pytest.approx(
-        {"precision": 0.91238, "recall": 0.89263, "f1": 0.90240, "ece": 0.02261},
+        {"precision": 0.91520, "recall": 0.89329, "f1": 0.90411, "ece": 0.01973},
         abs=1e-5,
     )
     assert prototype == pytest.approx(
-        {"precision": 0.94731, "recall": 0.92776, "f1": 0.93743, "ece": 0.02864},
+        {"precision": 0.94641, "recall": 0.92607, "f1": 0.93613, "ece": 0.02921},
         abs=1e-5,
     )
 
@@ -206,23 +208,26 @@ def test_held_out_figures_by_provider_class(
         for category in ("bilateral", "private", "banks", "other_multilateral")
     }
     assert measured == {
+        # The UK's `-c` copies of its committed ids now count as true.
         "bilateral": pytest.approx(
-            {"precision": 0.91153, "recall": 0.88750, "f1": 0.89935, "ece": 0.02312},
+            {"precision": 0.91635, "recall": 0.88705, "f1": 0.90146, "ece": 0.02009},
             abs=1e-5,
         ),
+        # Private donors and banks gain no labels; their figures move with the refit.
         "private": pytest.approx(
-            {"precision": 0.93043, "recall": 0.98567, "f1": 0.95726, "ece": 0.02534},
+            {"precision": 0.93237, "recall": 0.98772, "f1": 0.95924, "ece": 0.04474},
             abs=1e-5,
         ),
         "banks": pytest.approx(
-            {"precision": 0.99130, "recall": 0.99130, "f1": 0.99130, "ece": 0.01090},
+            {"precision": 0.97414, "recall": 0.98261, "f1": 0.97835, "ece": 0.02833},
             abs=1e-5,
         ),
-        # The class's held-out pairs are the Adaptation Fund's. 57 of its disbursement
-        # units take their best commitment at 0.386, below the threshold, and 19 of
-        # those are true.
+        # The class's held-out pairs are the Adaptation Fund's, and all 46 of its
+        # true disbursement units link. 52 of its 98 links are false: most continue
+        # a commitment under a new crs id and project number at once, with no record
+        # that bridges the two, so no label reaches them.
         "other_multilateral": pytest.approx(
-            {"precision": 0.54054, "recall": 0.51282, "f1": 0.52632, "ece": 0.08194},
+            {"precision": 0.46939, "recall": 1.0, "f1": 0.63889, "ece": 0.13720},
             abs=1e-5,
         ),
     }
@@ -238,7 +243,7 @@ def test_the_link_stage_writes_the_classifier_links_and_profile(
     assert written.equals(scored.links)
     scoring = profile.drop_nulls("scoring_group").select(scored.profile.columns)
     assert scoring.equals(scored.profile)
-    assert written.height == 6_468
+    assert written.height == 6_522
     assert dict(scoring.group_by("scoring_group").len().iter_rows()) == {
         "truth": 25,
         "splink": 6,

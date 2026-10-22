@@ -16,7 +16,9 @@ line no record commits. Where a project's later records contradict its ids this 
 place for lines the id cannot follow (see `id_truth`). Where the project committed
 two lines to one recipient in a year, a new line of that recipient continues one of
 them and nothing says which: those pairs are `unlabelled`, and neither train nor
-measure the classifier.
+measure the classifier. Where a donor changes a project's number or agency and then
+issues a new crs id, the new line continues what the records that bridge the change
+continue (see `carried_continuations`).
 
 Labelled pairs split into halves by the md5 of their commitment's donor and crs id
 (the unit id where it has none). The classifier trains on one half, with five folds
@@ -214,6 +216,10 @@ def id_truth(
     pairs are `ambiguous`: they continue one of the recipient's lines, and nothing
     says which.
 
+    A new line that neither the id nor the commitment's project number reaches
+    continues what its own project's earlier records continue (see
+    `carried_continuations`).
+
     Args:
         contradicted: `contradicted_commitments`.
 
@@ -286,7 +292,7 @@ def id_truth(
             new_line.fill_null(value=False),
         )
     )
-    return pl.concat(
+    found = pl.concat(
         [
             by_id.join(passed, on=["unit_id", "unit_id_left"], how="anti").select(
                 left_id="unit_id_left",
@@ -301,7 +307,79 @@ def id_truth(
                 ambiguous="ambiguous",
             ),
         ]
-    ).sort(*_PAIR)
+    )
+    carried = carried_continuations(units, continuations=found, first_year=first_year)
+    return pl.concat([found, carried]).sort(*_PAIR)
+
+
+def carried_continuations(
+    units: pl.DataFrame, *, continuations: pl.DataFrame, first_year: int
+) -> pl.DataFrame:
+    """The commitments a new line continues, read from its project's earlier records.
+
+    A donor can change the project number or agency it reports a project under and
+    then issue a new crs id, so that neither the commitment's id nor its project
+    number reaches the new line. The Adaptation Fund commits crs id 2017000003 under
+    project number `FSM/RIE/COASTAL/2015/1`, reports that id under `AF00000107` in
+    2020, and from 2021 reports `AF00000107` under crs id 2021000032; the UK commits
+    crs id 2019000029 under DFID (agency 1), and from 2021 reports it, and a `-c`
+    copy of it, under FCDO (agency 17). The records that bridge the change carry the
+    new (donor, agency, project number, recipient) and continue the commitment.
+
+    A disbursement unit no pair of `continuations` holds, whose floor year is not
+    before `first_year` and whose crs id the donor never commits, continues each
+    commitment of its recipient that a held pair continues from a disbursement unit
+    of its donor, agency, project number and recipient in or before its record year,
+    where the commitment's record year is before its crs id's first. A bridge from
+    another recipient's commitment says nothing, since a line can pass between
+    recipients. Where those commitments
+    have more than one crs id, the unit continues one of the lines and nothing says
+    which: its pairs are `ambiguous`.
+
+    Args:
+        continuations: left_id, right_id and ambiguous of the pairs known to
+            continue; ambiguous pairs carry nothing.
+
+    Returns:
+        left_id, right_id, donor_code and ambiguous.
+    """
+    disbursements = _later_lines(units, first_year=first_year).drop_nulls(
+        ["crs_id", "project_number"]
+    )
+    history = (
+        continuations.filter(~pl.col("ambiguous"))
+        .join(
+            disbursements.select(*_BY_PROJECT, left_id="unit_id", year_held="year"),
+            on="left_id",
+        )
+        .join(
+            units.select(
+                "recipient_code",
+                right_id="unit_id",
+                year_right="year",
+                line="crs_id",
+            ),
+            on=["right_id", "recipient_code"],
+        )
+        .select(*_BY_PROJECT, "year_held", "right_id", "year_right", "line")
+    )
+    return (
+        disbursements.filter(~pl.col("committed"))
+        .join(continuations, left_on="unit_id", right_on="left_id", how="anti")
+        .select(*_BY_PROJECT, "unit_id", "year", "seen_year")
+        .join(history, on=_BY_PROJECT)
+        .filter(
+            pl.col("year_held") <= pl.col("year"),
+            pl.col("year_right") < pl.col("seen_year"),
+        )
+        .unique(["unit_id", "right_id"])
+        .select(
+            left_id="unit_id",
+            right_id="right_id",
+            donor_code="donor_code",
+            ambiguous=pl.col("line").n_unique().over("unit_id") > 1,
+        )
+    )
 
 
 def _later_lines(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:

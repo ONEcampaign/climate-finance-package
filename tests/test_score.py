@@ -545,6 +545,123 @@ def test_a_contradicted_project_continues_by_project_and_recipient(
     }
 
 
+def _fund(
+    record_id: str,
+    crs_id: str,
+    *,
+    year: int,
+    committed: bool = False,
+    project: str = "AF00000107",
+    agency: int = 1,
+    recipient: int = 860,
+) -> dict[str, object]:
+    """A record of an Adaptation Fund project."""
+    return {
+        "record_id": record_id,
+        "donor_code": 1012,
+        "agency_code": agency,
+        "crs_id": crs_id,
+        "project_number": project,
+        "recipient_code": recipient,
+        "purpose_code": 41010,
+        "year": year,
+        "commitment_date": None,
+        "commitment_usd": 10.0 if committed else None,
+        "disbursement_usd": None if committed else 4.0,
+    }
+
+
+# The fund commits under one project number, and the id's later records carry
+# another.
+_FUND = [
+    _fund("c", "2017000003", year=2017, committed=True, project="FSM/RIE/2015/1"),
+    _fund("b", "2017000003", year=2020),
+]
+_NEW_LINE = _fund("n", "2021000032", year=2021)
+
+
+@pytest.mark.parametrize(
+    ("later", "expected"),
+    [
+        # A new id under the bridged project number continues the commitment.
+        ([_NEW_LINE], {("b", "c", False), ("n", "c", False)}),
+        # So does a copy of the id under the agency the project moved to.
+        (
+            [
+                _fund(
+                    "b17", "2017000003", year=2021, project="FSM/RIE/2015/1", agency=17
+                ),
+                _fund(
+                    "n", "2017000003-c", year=2021, project="FSM/RIE/2015/1", agency=17
+                ),
+            ],
+            {("b", "c", False), ("b17", "c", False), ("n", "c", False)},
+        ),
+        # Two lines bridged to one project number leave the new line ambiguous.
+        (
+            [
+                _fund("c2", "2017000004", year=2017, committed=True, project="FSM/X"),
+                _fund("b2", "2017000004", year=2020),
+                _NEW_LINE,
+            ],
+            {
+                ("b", "c", False),
+                ("b2", "c2", False),
+                ("n", "c", True),
+                ("n", "c2", True),
+            },
+        ),
+        # A bridge to another recipient, a line recorded by the commitment's year,
+        # a bridge after the unit, and an id committed elsewhere carry nothing.
+        (
+            [
+                _fund("x", "2017000003", year=2020, recipient=861),
+                _fund("y", "2021000032", year=2021, recipient=861),
+                _fund("z", "2017000099", year=2017),
+                _fund("z2", "2017000099", year=2021),
+                _fund("w", "2019000001", year=2019),
+                _fund("m", "2021000005", year=2021, committed=True, project="Z"),
+                _fund("v", "2021000005", year=2022),
+            ],
+            {("b", "c", False), ("x", "c", False), ("v", "m", False)},
+        ),
+    ],
+)
+def test_a_new_line_continues_what_its_bridged_project_continues(
+    later: list[dict[str, object]], expected: set[tuple[str, str, bool]]
+) -> None:
+    units = build_units(pl.LazyFrame([*_FUND, *later], schema=_CRS_SCHEMA)).collect()
+    unit = {
+        ids[0]: unit_id
+        for unit_id, ids in units.select("unit_id", "record_ids").iter_rows()
+    }
+    truth = id_truth(
+        units,
+        links=units.filter(pl.col("commitment_usd") > 0).select(
+            task=pl.lit("crdf_crs"), right_id="unit_id"
+        ),
+        id_practice=pl.DataFrame(
+            {
+                "donor_code": [1012, 1012],
+                "agency_code": [1, 1],
+                "period": ["2015-2018", "2019-2022"],
+                "id_class": ["id_persistent", "id_persistent"],
+            },
+            schema={
+                "donor_code": pl.Int32,
+                "agency_code": pl.Int32,
+                "period": pl.String,
+                "id_class": pl.String,
+            },
+        ),
+        first_year=2010,
+        contradicted=contradicted_commitments(units, first_year=2010),
+    )
+    assert set(truth.select("left_id", "right_id", "ambiguous").iter_rows()) == {
+        (unit[left], unit[right], ambiguous) for left, right, ambiguous in expected
+    }
+
+
 def test_the_classifier_scores_only_the_truth_group(scores: TruthScores) -> None:
     assert set(scores.pairs["donor_code"]) == {1, 2}
     assert 0 < scores.threshold < 1
