@@ -3,42 +3,49 @@
 # The CRS reporter behind each multilateral channel of delivery that core
 # contributions reach, for the agency's own climate share (agency_shares, source
 # "one"). Without `agency_codes`, every agency of the provider belongs to the
-# channel. Several reporters may share one channel; their spending pools.
+# channel. Several reporters may share one channel; their spending pools. Each entry
+# needs CRS commitments in the share years, and each listed agency CRDF rows or a
+# reason in `without_crdf`. Channels with no CRS reporter, such as the Asian
+# Development Fund (46005), the Montreal Protocol fund (47078), the UNFCCC (41316)
+# and the IPCC (47067), have no entry and take the OECD's imputed share.
 agencies = [
     { channel_code = 41108, provider_code = 988 },  # IFAD
     { channel_code = 41301, provider_code = 932 },  # FAO
     { channel_code = 41317, provider_code = 1016 },  # Green Climate Fund
     # EU Institutions: the budget, the European Development Fund and the EIB.
+    # Macro-Financial Assistance (agency 5) is EU borrowing lent on to governments
+    # and belongs to no channel.
     { channel_code = 42001, provider_code = 918, agency_codes = [1] },
-    { channel_code = 42003, provider_code = 918, agency_codes = [2, 4, 5] },
+    { channel_code = 42003, provider_code = 918, agency_codes = [2] },
     { channel_code = 42004, provider_code = 918, agency_codes = [3] },
+    { channel_code = 43007, provider_code = 1058 },  # IMF Resilience and Sustainability Trust
     { channel_code = 44001, provider_code = 901 },  # IBRD
     { channel_code = 44002, provider_code = 905 },  # IDA
     { channel_code = 44004, provider_code = 903 },  # IFC
     { channel_code = 46002, provider_code = 913 },  # African Development Bank
     { channel_code = 46003, provider_code = 914 },  # African Development Fund
     { channel_code = 46004, provider_code = 915 },  # Asian Development Bank
-    { channel_code = 46005, provider_code = 916 },  # Asian Development Fund
     { channel_code = 46006, provider_code = 981 },  # Black Sea Trade and Development Bank
     { channel_code = 46007, provider_code = 910 },  # CABEI
     { channel_code = 46008, provider_code = 1015 },  # CAF
     { channel_code = 46009, provider_code = 906 },  # Caribbean Development Bank
     # The IDB's ordinary capital and IDB Invest share one channel. Its Fund for
-    # Special Operations has its own.
-    { channel_code = 46012, provider_code = 909, agency_codes = [1, 4, 5, 6, 15, 16, 17, 18, 20] },
+    # Special Operations has its own. The IDB's agencies 11 and 14 report Clean
+    # Technology Fund and Strategic Climate Fund money, which is neither.
+    { channel_code = 46012, provider_code = 909, agency_codes = [1, 4, 5, 6, 15, 16, 17, 18, 20], without_crdf = { 17 = "commits (USD 1,013 in 2018) with no climate rows", 20 = "commits (USD 2.0m in 2019 to 2021) with no climate rows" } },
     { channel_code = 46012, provider_code = 1019 },
-    { channel_code = 46013, provider_code = 909, agency_codes = [2, 3, 11, 14] },
+    { channel_code = 46013, provider_code = 909, agency_codes = [2, 3] },
     { channel_code = 46015, provider_code = 990 },  # EBRD
     { channel_code = 46024, provider_code = 1013 },  # Council of Europe Development Bank
     { channel_code = 46025, provider_code = 976 },  # Islamic Development Bank
     { channel_code = 46026, provider_code = 1024 },  # AIIB
     { channel_code = 46028, provider_code = 1044 },  # New Development Bank
+    { channel_code = 47015, provider_code = 1055 },  # CGIAR
     # The GEF trust fund, the Least Developed Countries Fund and the Special Climate
     # Change Fund.
-    { channel_code = 47044, provider_code = 811, agency_codes = [1, 11, 14, 15, 16] },
+    { channel_code = 47044, provider_code = 811, agency_codes = [1, 11, 15] },
     { channel_code = 47129, provider_code = 811, agency_codes = [12] },
     { channel_code = 47130, provider_code = 811, agency_codes = [13] },
-    { channel_code = 47078, provider_code = 812 },  # Montreal Protocol fund
     { channel_code = 47111, provider_code = 1012 },  # Adaptation Fund
     { channel_code = 47128, provider_code = 104 },  # Nordic Development Fund
     # The Climate Investment Funds: the Clean Technology Fund and the Strategic
