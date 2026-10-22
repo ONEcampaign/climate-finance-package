@@ -15,11 +15,10 @@ from climate_finance.build.link.key_repair import (
     MAX_COMMITMENTS,
     project_core,
     repair_keys,
-    rounded_digits,
     title_tokens,
     title_words,
 )
-from climate_finance.build.link.keys import build_units, link_by_keys
+from climate_finance.build.link.keys import build_units, link_by_keys, rounded_digits
 from climate_finance.build.normalise.crdf import normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs
 from climate_finance.build.stages import REGISTRY, StageContext, table_path
@@ -468,6 +467,7 @@ def test_project_core(published: str | None, core: str | None) -> None:
     [
         ("2.10015E+12", {"prefix": "210015", "digits": 13}),
         ("2100150000000", {"prefix": "210015", "digits": 13}),
+        (" 2.10015e+12 ", {"prefix": "210015", "digits": 13}),
         ("2100150000123", None),
         ("210000", None),
         ("G-1", None),

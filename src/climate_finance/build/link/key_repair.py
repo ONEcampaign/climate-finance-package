@@ -45,7 +45,11 @@ from rapidfuzz import fuzz
 from rapidfuzz.process import cpdist
 
 from climate_finance import schema
-from climate_finance.build.link.keys import as_exact_links
+from climate_finance.build.link.keys import (
+    ROUNDED_MIN_DIGITS,
+    as_exact_links,
+    rounded_digits,
+)
 
 # A disbursement reaching more commitments than this sits under a shared key.
 MAX_COMMITMENTS = 5
@@ -53,13 +57,10 @@ MAX_COMMITMENTS = 5
 TITLE_AGREES = 80
 # The title rule reads titles of at least this many characters.
 TITLE_MIN_CHARS = 15
-# A numeric project number at least this long can be one a spreadsheet rounded.
-ROUNDED_MIN_DIGITS = 10
 # The shortest project core that still names a project.
 CORE_MIN_CHARS = 4
 
 _LONG_NUMBER = rf"^\d{{{ROUNDED_MIN_DIGITS},}}$"
-_SCIENTIFIC = r"^(\d)\.(\d+)E\+(\d+)$"
 _PN = ("donor_code", "agency_code", "project_number")
 _CORE = ("donor_code", "agency_code", "core")
 _PLACE = ("donor_code", "agency_code", "recipient_code")
@@ -88,29 +89,6 @@ def project_core(project_number: pl.Expr) -> pl.Expr:
         .str.replace_all("(^|[A-Z])0+([0-9])", "${1}${2}")
     )
     return pl.when(core.str.len_chars() >= CORE_MIN_CHARS).then(core)
-
-
-def rounded_digits(project_number: pl.Expr) -> pl.Expr:
-    """For a project number a spreadsheet rounded, the digits it kept (`prefix`) and
-    the length of the number it stands for (`digits`), or null for other numbers."""
-    scientific = project_number.str.extract_groups(_SCIENTIFIC)
-    lead, rest, exponent = (scientific.struct.field(name) for name in ("1", "2", "3"))
-    zeros = project_number.str.contains(_LONG_NUMBER) & project_number.str.ends_with(
-        "0000"
-    )
-    prefix = (
-        pl.when(lead.is_not_null())
-        .then(lead + rest)
-        .when(zeros)
-        .then(project_number.str.strip_chars_end("0"))
-    )
-    digits = (
-        pl.when(lead.is_not_null())
-        .then(exponent.cast(pl.Int32) + 1)
-        .when(zeros)
-        .then(project_number.str.len_chars().cast(pl.Int32))
-    )
-    return pl.when(prefix.is_not_null()).then(pl.struct(prefix=prefix, digits=digits))
 
 
 def title_tokens(title: pl.Expr) -> pl.Expr:
@@ -179,25 +157,33 @@ def repair_keys(
 
 def _unit_facts(units: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
     """Units with the keys the rules derive, and the title tokens and words of their
-    first record, by record id, that has a title."""
-    titles = (
+    first record, by record id, that has a title.
+
+    A rounded number is no unit key (`normalise_pn`), so `rounded` comes from the
+    first record, by record id, whose published project number is one."""
+    records = (
         units.lazy()
         .select("unit_id", record_id="record_ids")
         .explode("record_id")
-        .join(crs.select("record_id", "title").drop_nulls("title"), on="record_id")
+        .join(
+            crs.select(
+                "record_id",
+                "title",
+                rounded=rounded_digits(pl.col("project_number")),
+            ),
+            on="record_id",
+        )
         .group_by("unit_id")
-        .agg(pl.col("title").sort_by("record_id").first())
+        .agg(pl.col("title", "rounded").sort_by("record_id").drop_nulls().first())
         .collect()
     )
-    pn = pl.col("project_number")
     return (
         units.drop("record_ids")
-        .join(titles, on="unit_id", how="left")
+        .join(records, on="unit_id", how="left")
         .with_columns(title=title_tokens(pl.col("title")))
         .with_columns(
             title_words=title_words(pl.col("title")),
-            core=project_core(pn),
-            rounded=rounded_digits(pn),
+            core=project_core(pl.col("project_number")),
         )
     )
 

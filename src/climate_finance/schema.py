@@ -220,6 +220,9 @@ CRDF = _table(
     repeat_of=_str(nullable=True),
     parent_row_id=_str(nullable=True),
 )
+# Recipient rows of the year before the first `crdf` year, which give the first
+# agency share year its two-year span.
+CRDF_SPAN = _table("crdf_span", CRDF.sort_key, **CRDF.columns)
 
 CRS = _table(
     "crs",
@@ -820,7 +823,15 @@ def _by_name(*tables: TableSchema) -> Mapping[str, TableSchema]:
 STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
     "fetch": _by_name(RAW_MANIFEST),
     "normalise": _by_name(
-        CRDF, CRS, CORE_CONTRIBUTIONS, IMPUTED_SHARES, EXTERNAL, BTR, ORGS, LEDGER
+        CRDF,
+        CRDF_SPAN,
+        CRS,
+        CORE_CONTRIBUTIONS,
+        IMPUTED_SHARES,
+        EXTERNAL,
+        BTR,
+        ORGS,
+        LEDGER,
     ),
     "link": _by_name(
         LINKS, UNITS, ID_PRACTICE, PROGRAMME_STEMS, CANDIDATES, PROVIDER_PROFILE

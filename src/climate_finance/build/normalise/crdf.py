@@ -95,7 +95,8 @@ def normalise_crdf(
     Excel damage is repaired or nulled, with counts logged: error text such as
     `#NAME?` becomes null, and a project number Excel turned into a date takes the
     record's project number in `crs` (same donor, crs id and year) when exactly one
-    exists, else null.
+    exists, else null. Crs ids and project numbers lose leading and trailing
+    spaces, as in `normalise_crs`.
 
     Args:
         raw: `oda_reader.download_crdf(perspective=..., pre_process=True)` output.
@@ -106,8 +107,9 @@ def normalise_crdf(
         CRDFNormaliseError: when a provider has no CRS record, a row has no climate
             part, or an EIB id follows no known scheme.
     """
+    ids = pl.col("crs_id", "project_number").cast(pl.String).str.strip_chars()
     frame = (
-        _repair_excel_damage(raw.collect(), crs=crs)
+        _repair_excel_damage(raw.with_columns(ids).collect(), crs=crs)
         .with_columns(perspective=pl.lit(perspective))
         .with_columns(row_id=content_id(_IDENTITY, order_by=list(_AMOUNTS.values())))
     )

@@ -156,6 +156,7 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
             "oecd/CRS.parquet",
             "oecd/crdf_recipient.parquet",
             "oecd/crdf_provider.parquet",
+            "oecd/crdf_span.parquet",
             "oecd/multisystem.parquet",
             "oecd/Imputed_multilateral_shares.xlsx",
             "external/gcf/projects.json",
@@ -186,6 +187,16 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
             "perspective": "recipient",
             "start_year": 2015,
             "end_year": 2024,
+            "pre_process": True,
+        },
+    ) in sources.calls
+    # The year before the CRDF years, for the first share year's span.
+    assert (
+        "download_crdf",
+        {
+            "perspective": "recipient",
+            "start_year": 2014,
+            "end_year": 2014,
             "pre_process": True,
         },
     ) in sources.calls

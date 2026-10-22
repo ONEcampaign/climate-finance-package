@@ -17,6 +17,7 @@ from climate_finance.build import Stage, build, write_table
 from climate_finance.build.config import BuildConfig, LocalFile, load_config
 from climate_finance.build.fetch import (
     CRDF_FILES,
+    CRDF_SPAN_FILE,
     CRS_FILE,
     DAC_EXCHANGE_FILE,
     GCF_FILE,
@@ -119,6 +120,7 @@ def _lay_out_raw(release_dir: Path, *, archive: Path, config: BuildConfig) -> No
             f"crdf_{perspective}": [(path, path)]
             for perspective, path in CRDF_FILES.items()
         },
+        "crdf_span": [(CRDF_SPAN_FILE, CRDF_SPAN_FILE)],
         "multisystem": [(MULTISYSTEM_FILE, MULTISYSTEM_FILE)],
         "imputed_shares": [(IMPUTED_SHARES_FILE, IMPUTED_SHARES_FILE)],
         "gcf_projects": [(Path("external/gcf_api/projects.json"), GCF_FILE)],

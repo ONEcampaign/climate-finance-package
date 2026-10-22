@@ -12,6 +12,7 @@ from climate_finance.build import write_stage
 from climate_finance.build.config import Ledgers, load_config
 from climate_finance.build.fetch import (
     CRDF_FILES,
+    CRDF_SPAN_FILE,
     CRS_FILE,
     DAC_EXCHANGE_FILE,
     GCF_FILE,
@@ -117,6 +118,49 @@ def test_crs_record_ids_are_unique_and_stable(crs: pl.DataFrame) -> None:
     assert crs.filter(crs_id="2022000101")["record_id"].n_unique() == 2
 
 
+def test_crs_record_ids_follow_long_descriptions_through_a_revision() -> None:
+    # Two tranches agree on every identifying field; their long descriptions differ.
+    tranche = pl.col("crs_id") == "2022000101"
+    raw = pl.read_parquet(OECD / "CRS.parquet").with_columns(
+        long_description=pl.when(tranche)
+        .then(pl.concat_str("long_description", pl.col("usd_commitment").cast(str)))
+        .otherwise("long_description")
+    )
+    # The revision swaps the tranches' amounts.
+    revised = raw.with_columns(
+        pl.when(tranche)
+        .then(pl.col(name).reverse().over(tranche))
+        .otherwise(pl.col(name))
+        .alias(name)
+        for name in ("usd_commitment", "usd_disbursement", "usd_grant_equiv")
+    )
+
+    ids = [
+        normalise_crs(frame.lazy(), years=YEARS)
+        .filter(crs_id="2022000101")
+        .select("long_description", "record_id")
+        .sort("long_description")
+        .collect()
+        for frame in (raw, revised)
+    ]
+
+    assert ids[0].equals(ids[1])
+
+
+def test_crs_trims_ids(crs: pl.DataFrame) -> None:
+    raw = pl.read_parquet(OECD / "CRS.parquet").with_columns(
+        pl.when(pl.col("crs_id") == "2022000102")
+        .then(pl.concat_str(pl.col(name), pl.lit(" ")))
+        .otherwise(pl.col(name))
+        .alias(name)
+        for name in ("crs_id", "project_number")
+    )
+
+    padded = normalise_crs(raw.lazy(), years=YEARS).collect()
+
+    assert padded.equals(crs)
+
+
 def test_trace_population_leaves_out_core_contributions(crs: pl.DataFrame) -> None:
     traced = trace_population(crs.lazy()).collect()
 
@@ -212,6 +256,16 @@ def test_crdf_repairs_excel_damage(crs: pl.DataFrame) -> None:
     assert _row(crdf, crs_id="2015009999")["project_number"] is None
 
 
+def test_crdf_trims_ids(crs: pl.DataFrame) -> None:
+    raw = pl.read_parquet(OECD / "crdf_recipient.parquet")
+    padded = raw.with_columns(
+        pl.concat_str(pl.lit(" "), pl.col(name), pl.lit(" ")).alias(name)
+        for name in ("crs_id", "project_number")
+    )
+
+    assert _crdf(crs, raw=padded).equals(_crdf(crs, raw=raw))
+
+
 @pytest.mark.parametrize(
     ("project_number", "scheme"),
     [
@@ -278,6 +332,15 @@ def test_run_normalise_writes_every_table_from_raw(
     ]:
         (raw / target).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(source, raw / target)
+    # 2014 rows of the 2014-2015 workbook, whose 2015 rows are in crdf_recipient:
+    # orchards under their 2015 crs id, and school gardens under another, which
+    # the 2015 row repeats by title and amount.
+    pl.read_parquet(OECD / "crdf_recipient.parquet").filter(
+        pl.col("crs_id").is_in(["2015009999", "2015001842"])
+    ).with_columns(
+        year=pl.lit(2014, pl.Int32),
+        crs_id=pl.col("crs_id").replace({"2015001842": "2014001842"}),
+    ).write_parquet(raw / CRDF_SPAN_FILE)
     shutil.copytree(
         fixtures / "iati", raw / IATI_DIR, ignore=shutil.ignore_patterns("*.md")
     )
@@ -336,6 +399,14 @@ def test_run_normalise_writes_every_table_from_raw(
         orgs = pl.read_parquet(table_path(tmp_path, "normalise", "orgs"))
         eib = orgs.filter(role="agency", source_name="European Investment Bank")
         assert eib.select("donor_code", "agency_code").rows() == [(918, 3)]
+    # The year before the CRDF years goes to crdf_span alone, dated by its workbook
+    # and without the row a 2015 row repeats.
+    span = pl.read_parquet(table_path(tmp_path, "normalise", "crdf_span"))
+    assert span.select("year", "vintage", "crs_id").rows() == [
+        (2014, 2015, "2015009999")
+    ]
+    crdf = pl.read_parquet(table_path(tmp_path, "normalise", "crdf"))
+    assert crdf["year"].min() == config.years.crdf[0]
     external = pl.read_parquet(table_path(tmp_path, "normalise", "external"))
     # GCF's euro project converts at the euro's DAC rate.
     euro = external.filter(currency="EUR", source="gcf")

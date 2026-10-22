@@ -35,6 +35,9 @@ class _Section(BaseModel):
 class Years(_Section):
     """Inclusive first and last years read from each source.
 
+    Fetch also reads the recipient CRDF of the year before `crdf`, which gives the
+    first agency share year its two-year span.
+
     `crs_last_complete` is the last CRS year every provider has reported; the CRS
     years after it hold early reports only. Disbursement observed over time and
     the modelled line's CRS series end there.

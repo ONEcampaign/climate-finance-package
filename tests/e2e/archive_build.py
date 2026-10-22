@@ -22,6 +22,7 @@ ARCHIVE_FILES = {
     ("oecd/CRS.parquet", "crs"): "oecd/CRS_v20261006.parquet",
     ("oecd/crdf_recipient.parquet", "crdf_recipient"): "oecd/crdf_recipient.parquet",
     ("oecd/crdf_provider.parquet", "crdf_provider"): "oecd/crdf_provider.parquet",
+    ("oecd/crdf_span.parquet", "crdf_span"): "oecd/crdf_span.parquet",
     ("oecd/multisystem.parquet", "multisystem"): "oecd/multisystem.parquet",
     (
         "oecd/Imputed_multilateral_shares.xlsx",

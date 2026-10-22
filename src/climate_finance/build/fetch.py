@@ -54,6 +54,9 @@ CRDF_FILES: dict[Perspective, Path] = {
     "recipient": Path("oecd/crdf_recipient.parquet"),
     "provider": Path("oecd/crdf_provider.parquet"),
 }
+# Recipient rows of the year before `years.crdf`, so the first share year has the
+# two-year span of `measure.agency_shares`.
+CRDF_SPAN_FILE = Path("oecd/crdf_span.parquet")
 MULTISYSTEM_FILE = Path("oecd/multisystem.parquet")
 IMPUTED_SHARES_NAME = "Imputed_multilateral_shares.xlsx"
 IMPUTED_SHARES_FILE = Path("oecd") / IMPUTED_SHARES_NAME
@@ -122,18 +125,30 @@ def fetch_sources(
         if sources.crs_file is not None
         else _download_crs(raw)
     )
+    first, last = config.years.crdf
     crdf = [
         _download_crdf(
             raw,
             perspective=perspective,
-            years=config.years.crdf,
+            years=(first, last),
             pins=sources.crdf_etags,
+            relative=relative,
+            source=f"crdf_{perspective}",
         )
-        for perspective in CRDF_FILES
+        for perspective, relative in CRDF_FILES.items()
     ]
+    span = _download_crdf(
+        raw,
+        perspective="recipient",
+        years=(first - 1, first - 1),
+        pins=sources.crdf_etags,
+        relative=CRDF_SPAN_FILE,
+        source="crdf_span",
+    )
     return [
         crs,
         *crdf,
+        span,
         _download_multisystem(raw, years=config.years.crdf),
         _download_imputed_shares(raw),
         *download_gcf_projects(raw, offline=False, client=client),
@@ -166,6 +181,7 @@ def expected_sources(config: BuildConfig) -> list[str]:
     return [
         "crs",
         *(f"crdf_{perspective}" for perspective in CRDF_FILES),
+        "crdf_span",
         "multisystem",
         "imputed_shares",
         "gcf_projects",
@@ -354,9 +370,16 @@ def _download_crs(raw: Path) -> RawFile:
 
 
 def _download_crdf(
-    raw: Path, *, perspective: Perspective, years: tuple[int, int], pins: dict[str, str]
+    raw: Path,
+    *,
+    perspective: Perspective,
+    years: tuple[int, int],
+    pins: dict[str, str],
+    relative: Path,
+    source: str,
 ) -> RawFile:
-    """Write one perspective of the CRDF as oda-reader returns it.
+    """Write the `years` of one perspective of the CRDF, as oda-reader returns
+    them, to `relative`.
 
     Raises:
         SourceUnavailableError: when `pins` is not empty and a workbook read is
@@ -378,11 +401,8 @@ def _download_crdf(
             raise SourceUnavailableError(
                 f"CRDF workbooks differ from the ETags pinned in build.toml: {unpinned}"
             )
-    relative = CRDF_FILES[perspective]
     frame.to_parquet(_target(raw, relative), index=False)
-    return _record(
-        raw, relative, source=f"crdf_{perspective}", method="http", url=CRDF_URL
-    )
+    return _record(raw, relative, source=source, method="http", url=CRDF_URL)
 
 
 def _download_multisystem(raw: Path, *, years: tuple[int, int]) -> RawFile:
