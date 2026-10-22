@@ -16,8 +16,7 @@ from polars.testing import assert_frame_equal
 from releases import copy_release
 
 import climate_finance as cf
-from climate_finance.errors import ReleaseIntegrityError
-from climate_finance.methods import OECD, RANGE, Method, MethodRange, label
+from climate_finance.methods import OECD, ONE, RANGE, Method, MethodRange, label
 from climate_finance.query import BILATERAL, EU_CHANNELS, EU_INSTITUTIONS
 from climate_finance.result import AMOUNTS
 from climate_finance.snapshot import Snapshot
@@ -315,27 +314,46 @@ def test_rows_filter_by_equality_and_membership() -> None:
 
 
 def test_a_record_shows_its_jev_label_before_its_markers() -> None:
-    row = SNAP.spending().rows(record_id="JPN-1-R1")
+    row = SNAP.spending().rows(record_id="JPN-2-R1")
 
-    assert row.select("objective_label", "label_source").row(0) == ("adaptation", "jev")
-    # Its expected coefficient, 0.6, lies a quarter of the way between the map's
-    # points at 0.5 (0.3) and 0.9 (0.7).
-    assert row["jev_level"].to_list() == [pytest.approx(0.4)]
-
-
-JEV_OECD = OECD.replace(relevance="jev")
+    assert row.select("objective_label", "label_source", "jev_level").row(0) == (
+        "adaptation",
+        "jev",
+        2,
+    )
 
 
-def test_jev_relevance_weighs_a_labelled_record_at_its_calibrated_level() -> None:
-    row = SNAP.spending(method=JEV_OECD).rows(record_id="JPN-1-R1")
+JEV_ONE = ONE.replace(relevance="jev")
 
-    # JPN-1 carries a principal mitigation marker and no adaptation marker.
+
+@pytest.mark.parametrize(
+    ("method", "adaptation", "cross_cutting", "value"),
+    [
+        # JPN-2 marks both objectives significant: cross-cutting at 0.4.
+        (ONE, 0.0, 0.4, 0.4),
+        # Jev's principal adaptation level outranks the significant mitigation one.
+        (JEV_ONE, 1.0, 0.0, 1.0),
+        # Each marker counts at the method's own coefficients: 0.5 and 1.0.
+        (
+            Method(
+                significant=0.5, principal=1.0, highest_marker=False, relevance="jev"
+            ),
+            1.0,
+            0.5,
+            1.0,
+        ),
+    ],
+)
+def test_jev_relevance_weighs_a_jev_level_like_a_marker(
+    method: Method, adaptation: float, cross_cutting: float, value: float
+) -> None:
+    row = SNAP.spending(method=method).rows(record_id="JPN-2-R1")
+
     amount = row["amount"].item()
-    assert row.select("adaptation", "mitigation", "cross_cutting", "value").row(0) == (
-        pytest.approx(0.4 * amount),
-        pytest.approx(amount),
-        pytest.approx(0.4 * amount),
-        pytest.approx(amount),
+    assert row.select("adaptation", "cross_cutting", "value").row(0) == (
+        pytest.approx(adaptation * amount),
+        pytest.approx(cross_cutting * amount),
+        pytest.approx(value * amount),
     )
 
 
@@ -344,31 +362,18 @@ def test_jev_relevance_leaves_records_jev_did_not_label_alone() -> None:
         return (
             SNAP.spending(method=method)
             .rows()
-            .filter(pl.col("record_id").ne_missing("JPN-1-R1"))
+            .filter(pl.col("record_id").ne_missing("JPN-2-R1"))
             .drop("method")
         )
 
-    assert_frame_equal(unlabelled(JEV_OECD), unlabelled(OECD))
-
-
-def test_jev_relevance_refuses_a_release_without_a_level_map(tmp_path: Path) -> None:
-    release = copy_release(
-        tmp_path / "release", edits={"jev_level_map": lambda frame: frame.clear()}
-    )
-    snapshot = cf.load(path=release)
-
-    assert snapshot.spending().rows(record_id="JPN-1-R1")["jev_level"].to_list() == [
-        None
-    ]
-    with pytest.raises(ReleaseIntegrityError, match="jev_level_map"):
-        snapshot.spending(method=JEV_OECD)
+    assert_frame_equal(unlabelled(JEV_ONE), unlabelled(ONE))
 
 
 def test_explain_says_what_jev_relevance_replaces() -> None:
-    text = SNAP.spending(method=JEV_OECD).explain()
+    text = SNAP.spending(method=JEV_ONE).explain()
 
-    assert "count adaptation at Jev's calibrated level" in text
-    assert "Mitigation keeps its marker" in text
+    assert "read Jev's adaptation level (none, significant or principal)" in text
+    assert "Jev labels only records whose commitment is marked adaptation" in text
 
 
 def test_the_modelled_line_stays_out_of_traced_totals() -> None:

@@ -8,7 +8,7 @@
       "rows": 36
     },
     "objectives": {
-      "sha256": "bf78ea86fd3f887c6115ad33b05fbb31524e1f93fdf2c12d2aad6bf7130972b5",
+      "sha256": "a0910f1de034e40a7832b615bb31722597a525aad0363fe18cf3abf23f403a58",
       "rows": 69
     },
     "agency_shares": {
@@ -30,10 +30,6 @@
     "btr": {
       "sha256": "3af8deb9ea17dbbcbb0afdbcf98a4ebd949eba678022fd470465ce49fe075f1e",
       "rows": 4
-    },
-    "jev_level_map": {
-      "sha256": "ddd2d633ab013d99639d176e8525339e1270836ea5ac057ef8e53b136cc27995",
-      "rows": 3
     },
     "disbursement_profile": {
       "sha256": "8ad93644528bf7178ab05f25dd121c1a5939bdfb670e14c4ce4dffb9dbc4fd73",

@@ -22,9 +22,9 @@ channels attribute nothing.
 Every row holds `value` = adaptation + mitigation - cross_cutting + unsplit, or
 + cross_cutting under the highest-marker rule, whose objectives are disjoint.
 
-A disbursement whose record Jev labelled shows `jev_level`, Jev's expected
-coefficient through the release's `jev_level_map`. Under `relevance="jev"` it
-replaces the record's adaptation marker coefficient.
+A disbursement whose record Jev labelled shows `jev_level`, Jev's adaptation level
+(0, 1 or 2). Under `relevance="jev"` it replaces the adaptation marker the row
+inherits.
 
 The release's commitments are recipient-perspective CRDF rows only, so views filter
 on Bi_Multi alone and provider attribution comes only from core contributions.
@@ -40,7 +40,6 @@ import polars as pl
 
 from climate_finance import catalogue
 from climate_finance.convert import convert
-from climate_finance.errors import ReleaseIntegrityError
 from climate_finance.methods import OECD, Method, label, weights
 from climate_finance.result import AMOUNTS, Meta, Quality, Result, Table
 from climate_finance.spec import Spec, View
@@ -87,7 +86,7 @@ ROW_COLUMNS: dict[str, pl.DataType] = {
     "allocation_weight": pl.Float64(),
     "objective_label": pl.String(),
     "label_source": pl.String(),
-    "jev_level": pl.Float64(),
+    "jev_level": pl.Int8(),
     "amount": pl.Float64(),
     "coefficient_basis": pl.String(),
 }
@@ -106,8 +105,6 @@ _WEIGHT_INPUTS: dict[str, pl.DataType] = {
 def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
     """Climate finance for `spec` from `snapshot`'s release tables."""
     methods = spec.methods
-    if any(method.relevance == "jev" for method in methods):
-        _check_jev_levels(snapshot)
 
     conditions = _conditions(
         providers=spec.providers, recipients=spec.recipients, years=spec.years
@@ -290,77 +287,9 @@ def _base_rows(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
     )
 
 
-def jev_levels(labels: pl.LazyFrame, *, level_map: pl.LazyFrame) -> pl.LazyFrame:
-    """Each Jev adaptation label's calibrated level, `jev_level`, by `record_id`.
-
-    The label's expected coefficient goes through the map's adaptation points,
-    interpolated linearly between them and clipped at the ends. A label has a null
-    level when the map holds no adaptation points.
-    """
-    points = (
-        level_map.filter(pl.col("objective") == "adaptation")
-        .select(x="expected_coefficient", y="level")
-        .sort("x")
-    )
-    x, lower_x, upper_x = pl.col("x"), pl.col("lower_x"), pl.col("upper_x")
-    lower_y, upper_y = pl.col("lower_y"), pl.col("upper_y")
-    return (
-        labels.filter(
-            pl.col("label_source") == "jev", pl.col("objective") == "adaptation"
-        )
-        .select("record_id", x="expected_coefficient")
-        .sort("x")
-        .join_asof(
-            points.select(lower_x="x", lower_y="y"),
-            left_on="x",
-            right_on="lower_x",
-            strategy="backward",
-        )
-        .join_asof(
-            points.select(upper_x="x", upper_y="y"),
-            left_on="x",
-            right_on="upper_x",
-            strategy="forward",
-        )
-        .select(
-            "record_id",
-            jev_level=pl.when(lower_x.is_null())
-            .then(upper_y)
-            .when(upper_x.is_null() | (upper_x == lower_x))
-            .then(lower_y)
-            .otherwise(
-                lower_y + (x - lower_x) * (upper_y - lower_y) / (upper_x - lower_x)
-            ),
-        )
-    )
-
-
-def _check_jev_levels(snapshot: Snapshot) -> None:
-    """Refuse a release with a Jev label that its level map cannot calibrate.
-
-    Raises:
-        ReleaseIntegrityError: when a Jev adaptation label has no expected
-            coefficient, or `jev_level_map` holds no adaptation points.
-    """
-    missing = (
-        jev_levels(
-            snapshot.table("objectives"), level_map=snapshot.table("jev_level_map")
-        )
-        .filter(pl.col("jev_level").is_null())
-        .select(pl.len())
-        .collect()
-        .item()
-    )
-    if missing:
-        raise ReleaseIntegrityError(
-            f"{missing} Jev labels have no calibrated level in jev_level_map, so "
-            "relevance='jev' cannot weigh them"
-        )
-
-
 def _labels(snapshot: Snapshot) -> pl.LazyFrame:
     """Per record, the highest-marker objective from its first-ranked label source,
-    and the calibrated level of its Jev adaptation label."""
+    and the level of its Jev adaptation label."""
     rank = pl.col("label_source").replace_strict(LABEL_PRECEDENCE, return_dtype=pl.Int8)
 
     def level(objective: str) -> pl.Expr:
@@ -388,7 +317,9 @@ def _labels(snapshot: Snapshot) -> pl.LazyFrame:
             .then(pl.lit("mitigation")),
         )
         .join(
-            jev_levels(objectives, level_map=snapshot.table("jev_level_map")),
+            objectives.filter(
+                pl.col("label_source") == "jev", pl.col("objective") == "adaptation"
+            ).select("record_id", jev_level="level"),
             on="record_id",
             how="left",
             validate="1:1",

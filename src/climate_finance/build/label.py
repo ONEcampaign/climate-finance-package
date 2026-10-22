@@ -12,13 +12,13 @@ the climate-component commitments it fills (`crdf`, level 2), and the record's o
 Rio markers (`marker`).
 
 With `jev_labels` on, Jev reads the title and long description of every record
-allocated to a commitment without climate components, as the human-coded projects
-give them, and answers three adaptation questions in one request.
-Its answers to the same questions on Weikmans et al.'s human-coded projects fit two
-things: the cut on the lenient answer that labels a record adaptation, and
-`jev_level_map`, an isotonic map from Jev's expected coefficient (0.4 x
-p(significant) + 1.0 x p(principal)) to the human-coded coefficient. Mitigation has
-no human-coded set yet, so Jev labels adaptation only.
+allocated to a commitment its donor marked adaptation (marker 1 or 2) without climate
+components, as the human-coded projects give them, and answers three adaptation
+questions in one request. Weikmans et al.'s human-coded projects are all
+donor-marked adaptation, so the labels cover that population only. Jev's answers to
+the same questions on those projects fit the cut on the lenient answer that labels a
+record adaptation. A label carries a Rio level, which the weighting reads like a
+donor's marker. Mitigation has no human-coded set yet, so Jev labels adaptation only.
 """
 
 from __future__ import annotations
@@ -27,11 +27,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import polars as pl
-from sklearn.isotonic import IsotonicRegression
 
 from climate_finance.build.fetch import ADAPTATION_LABELS_FILE
-from climate_finance.methods import ONE
-from climate_finance.schema import JEV_LEVEL_MAP, OBJECTIVE_LABELS, OBJECTIVES
+from climate_finance.schema import OBJECTIVE_LABELS, OBJECTIVES
 
 if TYPE_CHECKING:
     from climate_finance.build.jev_client import JevClient
@@ -89,19 +87,18 @@ NO_TEXT = "(no text)"
 
 
 def run_label(context: StageContext) -> StageOutput:
-    """Write `objectives` and `jev_level_map`.
+    """Write `objectives`.
 
     The objectives hold the CRDF and marker labels of linked records. With
-    `jev_labels` on they also hold Jev's adaptation labels, and `jev_level_map`
-    holds the level map fitted on the human-coded labels fetch copied into `raw/`.
-    Off, the map is written empty.
+    `jev_labels` on they also hold Jev's adaptation labels, cut at the threshold
+    fitted on the human-coded labels fetch copied into `raw/`.
     """
     allocations = context.read("fill", "allocations")
     commitments = context.read("normalise", "crdf")
     crs = context.read("normalise", "crs")
     objectives = reported_objectives(allocations, commitments=commitments, crs=crs)
     if not context.config.jev_labels:
-        return {"objectives": objectives, "jev_level_map": _empty_level_map()}
+        return {"objectives": objectives}
 
     human = read_adaptation_labels(context.raw_dir / ADAPTATION_LABELS_FILE)
     fitted = human.join(
@@ -114,16 +111,7 @@ def run_label(context: StageContext) -> StageOutput:
         ask_jev(records, client=context.jev),
         threshold=fit_adaptation_threshold(fitted),
     )
-    return {
-        "objectives": pl.concat([objectives.collect(), labels]),
-        "jev_level_map": fit_jev_level_map(fitted, model=context.jev.model),
-    }
-
-
-def _empty_level_map() -> pl.DataFrame:
-    return pl.DataFrame(
-        schema={name: column.dtype for name, column in JEV_LEVEL_MAP.columns.items()}
-    )
+    return {"objectives": pl.concat([objectives.collect(), labels])}
 
 
 def inherit_markers(
@@ -216,10 +204,7 @@ def reported_objectives(
         pl.concat([crdf, markers])
         .group_by("record_id", "objective", "label_source")
         .agg(pl.col("level").max())
-        .with_columns(
-            probability=pl.lit(None, pl.Float64),
-            expected_coefficient=pl.lit(None, pl.Float64),
-        )
+        .with_columns(probability=pl.lit(None, pl.Float64))
         .select(list(OBJECTIVE_LABELS.columns))
     )
 
@@ -258,9 +243,13 @@ def jev_records(
     """The records Jev labels, with their `project_text`.
 
     A record qualifies when it is allocated to a commitment without climate
-    components, whose markers it inherits, and has a title or long description.
+    components whose adaptation marker, which the record inherits, is 1 or 2, and
+    has a title or long description. A commitment marked 0 lies outside the
+    human-coded projects, which are all marked adaptation.
     """
-    marked = commitments.filter(pl.col("climate_share").is_null()).select("row_id")
+    marked = commitments.filter(
+        pl.col("climate_share").is_null(), pl.col("rio_adaptation").is_in([1, 2])
+    ).select("row_id")
     return (
         allocations.join(marked, on="row_id", how="semi")
         .select("record_id")
@@ -292,8 +281,8 @@ def ask_jev(texts: pl.DataFrame, *, client: JevClient) -> pl.DataFrame:
         client: the build's Jev client.
 
     Returns:
-        The id columns with Jev's `lenient` answer, `p_significant`, `p_principal`
-        and `expected_coefficient`, 0.4 x p_significant + 1.0 x p_principal.
+        The id columns with Jev's `lenient` answer, `p_significant` and
+        `p_principal`.
     """
     unique = texts.select(pl.col("text").unique().sort())
     responses = client.score(
@@ -306,9 +295,6 @@ def ask_jev(texts: pl.DataFrame, *, client: JevClient) -> pl.DataFrame:
         lenient=pl.Series([_answer(r, "lenient")["noul"] for r in responses]),
         p_significant=pl.Series([_level(r, "significant") for r in responses]),
         p_principal=pl.Series([_level(r, "principal") for r in responses]),
-    ).with_columns(
-        expected_coefficient=ONE.significant * pl.col("p_significant")
-        + ONE.principal * pl.col("p_principal")
     )
     return texts.join(answers, on="text", how="left", validate="m:1").drop("text")
 
@@ -347,43 +333,13 @@ def fit_adaptation_threshold(fitted: pl.DataFrame) -> float:
     return max(zip(scores, THRESHOLDS, strict=True))[1]
 
 
-def fit_jev_level_map(fitted: pl.DataFrame, *, model: str) -> pl.DataFrame:
-    """The isotonic map from Jev's expected coefficient to the human coefficient.
-
-    Args:
-        fitted: human-coded projects with their `level` and Jev's
-            `expected_coefficient`.
-        model: the Jev model that answered.
-
-    Returns:
-        `jev_level_map` rows: the map's points for `adaptation`. Human levels
-        count at ONE's coefficients, 0.4 for significant and 1.0 for principal.
-    """
-    points = fitted.sort("expected_coefficient", "level")
-    coefficient = points["level"].replace_strict(
-        {0: 0.0, 1: ONE.significant, 2: ONE.principal}, return_dtype=pl.Float64
-    )
-    isotonic = IsotonicRegression(out_of_bounds="clip").fit(
-        points["expected_coefficient"].to_numpy(), coefficient.to_numpy()
-    )
-    return pl.DataFrame(
-        {
-            "objective": "adaptation",
-            "jev_model": model,
-            "expected_coefficient": isotonic.X_thresholds_,
-            "level": isotonic.y_thresholds_,
-        },
-        schema={name: column.dtype for name, column in JEV_LEVEL_MAP.columns.items()},
-    )
-
-
 def jev_objectives(answers: pl.DataFrame, *, threshold: float) -> pl.DataFrame:
     """Jev's adaptation labels, one per record.
 
     A record is labelled adaptation when its lenient answer reaches `threshold`, at
     level 2 when Jev finds principal likelier than significant and 1 otherwise, and
     at level 0 below it. `probability` is the lenient answer, which is not
-    calibrated; the level map calibrates `expected_coefficient` instead.
+    calibrated.
     """
     adaptation = pl.col("lenient") >= threshold
     principal = pl.col("p_principal") > pl.col("p_significant")
@@ -397,5 +353,4 @@ def jev_objectives(answers: pl.DataFrame, *, threshold: float) -> pl.DataFrame:
         .otherwise(pl.lit(0, pl.Int8)),
         label_source=pl.lit("jev"),
         probability="lenient",
-        expected_coefficient="expected_coefficient",
     )

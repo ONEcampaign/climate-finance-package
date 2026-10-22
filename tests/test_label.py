@@ -21,9 +21,9 @@ from climate_finance.build.label import (
     WEIKMANS_LEVEL,
     ask_jev,
     fit_adaptation_threshold,
-    fit_jev_level_map,
     inherit_markers,
     jev_objectives,
+    jev_records,
     read_adaptation_labels,
     reported_objectives,
 )
@@ -278,10 +278,10 @@ def test_jev_answers_each_distinct_text_once_and_joins_back(tmp_path: Path) -> N
 
     answers = ask_jev(texts, client=_client(tmp_path))
 
-    assert answers.select("id", "lenient", "expected_coefficient").rows() == [
-        (1, 0.9, pytest.approx(0.4 * 0.3 + 0.6)),
+    assert answers.select("id", "lenient", "p_principal").rows() == [
+        (1, 0.9, 0.6),
         (2, 0.2, 0.0),
-        (3, 0.9, pytest.approx(0.4 * 0.3 + 0.6)),
+        (3, 0.9, 0.6),
     ]
 
 
@@ -292,22 +292,28 @@ def test_the_threshold_maximises_f1_and_takes_the_higher_cut_on_a_tie() -> None:
     assert fit_adaptation_threshold(fitted) == 0.8
 
 
-def test_the_level_map_is_isotonic_in_the_expected_coefficient() -> None:
-    # The first two projects disagree with the order, so the map pools them at 0.2.
-    fitted = pl.DataFrame(
-        {"expected_coefficient": [0.1, 0.2, 0.5, 0.9], "level": [1, 0, 2, 2]}
+def test_jev_labels_only_records_on_commitments_marked_adaptation() -> None:
+    commitments = crdf_rows(
+        {"row_id": "adaptation", "year": 2021, "rio_adaptation": 1},
+        # Mitigation only, and unmarked: outside the human-coded projects.
+        {"row_id": "mitigation", "year": 2021, "rio_adaptation": 0},
+        {"row_id": "unmarked", "year": 2021, "rio_adaptation": None},
     )
+    records = crs_records(
+        *(
+            {"record_id": f"r_{row_id}", "year": 2022, "title": f"Project {row_id}"}
+            for row_id in ("adaptation", "mitigation", "unmarked")
+        )
+    )
+    allocations = pl.DataFrame(
+        {"row_id": ["adaptation", "mitigation", "unmarked"]}
+    ).with_columns(record_id="r_" + pl.col("row_id"))
 
-    level_map = fit_jev_level_map(fitted, model=MODEL)
+    texts = jev_records(
+        allocations.lazy(), commitments=commitments.lazy(), crs=records.lazy()
+    ).collect()
 
-    schema.validate(schema.JEV_LEVEL_MAP, level_map)
-    assert level_map.select("expected_coefficient", "level").rows() == [
-        (0.1, pytest.approx(0.2)),
-        (0.2, pytest.approx(0.2)),
-        (0.5, 1.0),
-        (0.9, 1.0),
-    ]
-    assert set(level_map["jev_model"]) == {MODEL}
+    assert texts.rows() == [("r_adaptation", "Project adaptation")]
 
 
 @pytest.mark.parametrize(
@@ -323,7 +329,6 @@ def test_a_jev_label_reaches_adaptation_at_the_threshold(
             "lenient": [lenient],
             "p_significant": [significant],
             "p_principal": [principal],
-            "expected_coefficient": [0.4 * significant + principal],
         }
     )
 
@@ -368,10 +373,6 @@ def test_run_label_labels_described_marker_records_with_one_shared_client(
         .select("record_id", "level")
         .iter_rows()
     ) == [("r_other", 0), ("r_same", 2)]
-    level_map = pl.read_parquet(
-        table_path(context.release_dir, "label", "jev_level_map")
-    )
-    assert level_map.height
     assert context.jev is context.jev
     assert context.jev.live_calls == 0
 

@@ -26,8 +26,8 @@ class Frozen(BaseModel):
 class Method(Frozen):
     """Coefficients applied to face value by Rio marker level.
 
-    `relevance="jev"` counts a disbursement whose record Jev labelled at Jev's
-    calibrated adaptation level in place of its adaptation marker's coefficient.
+    `relevance="jev"` reads Jev's adaptation level, where Jev labelled a
+    disbursement's record, in place of the adaptation marker it inherits.
 
     `eu` sets how EU Institutions (provider 918) count in the provider view. As a
     `"channel"`, members' core contributions to the EU budget, the EDF and the EIB
@@ -118,11 +118,11 @@ def describe(method: Method | MethodRange) -> str:
         )
     if method.relevance == "jev":
         text += (
-            " Disbursements whose CRS record Jev labelled count adaptation at Jev's "
-            "calibrated level in place of the adaptation marker: Jev's expected "
-            "coefficient mapped to the level human coders gave similar projects, at "
-            "0.4 for significant and 1.0 for principal. Mitigation keeps its marker, "
-            "as do commitments and records Jev did not label."
+            " Disbursements whose CRS record Jev labelled read Jev's adaptation "
+            "level (none, significant or principal) in place of the adaptation "
+            "marker, at the same coefficients. Jev labels only records whose "
+            "commitment is marked adaptation. Mitigation keeps its marker, as do "
+            "commitments and records Jev did not label."
         )
     return text + _EU[method.eu]
 
@@ -148,15 +148,20 @@ def _coefficient(level: pl.Expr, method: Method, significant: pl.Expr) -> pl.Exp
     )
 
 
-def _markers() -> tuple[pl.Expr, pl.Expr]:
-    return pl.col("rio_adaptation").fill_null(0), pl.col("rio_mitigation").fill_null(0)
+def _markers(*, jev: bool = False) -> tuple[pl.Expr, pl.Expr]:
+    """The adaptation and mitigation levels, nulls as 0. With `jev`, a row's
+    `jev_level` replaces its adaptation marker where set."""
+    adaptation = pl.col("rio_adaptation")
+    if jev:
+        adaptation = pl.coalesce("jev_level", adaptation)
+    return adaptation.fill_null(0), pl.col("rio_mitigation").fill_null(0)
 
 
 def _marker_rules(
     method: Method, significant: pl.Expr
 ) -> dict[str, tuple[pl.Expr, pl.Expr, pl.Expr]]:
     """Per objective: whether a marker row counts towards it, its level, its weight."""
-    rio_a, rio_m = _markers()
+    rio_a, rio_m = _markers(jev=method.relevance == "jev")
     if method.highest_marker:
         level = pl.max_horizontal(rio_a, rio_m)
         weight = _coefficient(level, method, significant)
@@ -178,30 +183,6 @@ def _marker_rules(
     }
 
 
-def _jev_fractions(method: Method, significant: pl.Expr) -> dict[str, pl.Expr]:
-    """Per objective, the weight of a row whose adaptation coefficient is
-    `jev_level` and whose mitigation coefficient comes from its marker."""
-    adaptation = pl.col("jev_level")
-    mitigation = _coefficient(_markers()[1], method, significant)
-    if not method.highest_marker:
-        return {
-            "adaptation": adaptation,
-            "mitigation": mitigation,
-            "cross_cutting": pl.min_horizontal(adaptation, mitigation),
-        }
-
-    def keep(counts: pl.Expr, weight: pl.Expr) -> pl.Expr:
-        return pl.when(counts).then(weight).otherwise(0.0)
-
-    return {
-        "adaptation": keep(adaptation > mitigation, adaptation),
-        "mitigation": keep(mitigation > adaptation, mitigation),
-        "cross_cutting": keep(
-            (adaptation == mitigation) & (adaptation > 0), adaptation
-        ),
-    }
-
-
 def weights(
     method: Method, *, significant: pl.Expr | None = None
 ) -> dict[str, pl.Expr]:
@@ -215,9 +196,8 @@ def weights(
     mitigation each count their own marker, and `cross_cutting` is their overlap, the
     smaller of the two weighted shares, which `climate` counts once.
 
-    Under `relevance="jev"` a marker row with a `jev_level` takes it as its
-    adaptation coefficient. The highest-marker rule then compares the adaptation and
-    mitigation coefficients, and equal positive ones are cross-cutting.
+    Under `relevance="jev"` a marker row's `jev_level`, where set, replaces its
+    adaptation marker, and every rule above reads it as one.
 
     Climate-component rows (non-null `climate_share`) ignore the coefficients and use
     `share_adaptation`, `share_mitigation` and `share_overlap`, fractions of the amount
@@ -233,22 +213,14 @@ def weights(
     }
     if significant is None:
         significant = pl.lit(method.significant)
-    marker = {
-        objective: pl.when(counts).then(weight).otherwise(0.0)
-        for objective, (counts, _, weight) in _marker_rules(method, significant).items()
-    }
-    if method.relevance == "jev":
-        jev = _jev_fractions(method, significant)
-        has_jev = pl.col("jev_level").is_not_null()
-        marker = {
-            objective: pl.when(has_jev).then(jev[objective]).otherwise(fraction)
-            for objective, fraction in marker.items()
-        }
-    fractions: dict[str, pl.Expr] = {
+    rules = _marker_rules(method, significant)
+    fractions = {
         objective: pl.when(pl.col("climate_share").is_not_null())
         .then(component[objective])
-        .otherwise(marker[objective])
-        for objective in OBJECTIVES
+        .when(counts)
+        .then(weight)
+        .otherwise(0.0)
+        for objective, (counts, _, weight) in rules.items()
     }
     a, m, c = (fractions[objective] for objective in OBJECTIVES)
     fractions["climate"] = a + m + c if method.highest_marker else a + m - c
@@ -265,9 +237,10 @@ def transform_markers_into_indicators(
     objective is the higher marker, or `cross_cutting` when they are equal. Without
     it each positive marker gives its own row, and a row with both also gives a
     `cross_cutting` row for the overlap. Rows with neither marker keep their value as
-    `not_climate_relevant` at level 0.
+    `not_climate_relevant` at level 0. Under `relevance="jev"`, a `jev_level`
+    column replaces the adaptation marker where set.
     """
-    rio_a, rio_m = _markers()
+    rio_a, rio_m = _markers(jev=method.relevance == "jev")
     parts = [
         frame.filter(counts).with_columns(
             objective=pl.lit(objective),

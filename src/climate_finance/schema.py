@@ -618,21 +618,6 @@ OBJECTIVE_LABELS = _table(
     level=Column(pl.Int8(), values=RIO_MARKERS),
     label_source=_str(values=LABEL_SOURCES),
     probability=_f64(nullable=True),
-    # Jev labels only: 0.4 x p(significant) + 1.0 x p(principal), which the query maps
-    # through `jev_level_map` to a calibrated level.
-    expected_coefficient=_f64(nullable=True),
-)
-
-# The isotonic map from Jev's expected coefficient to a calibrated level, fitted on
-# human-coded projects for one Jev model. A level between two points is interpolated
-# linearly, and one outside them takes the nearest point's level.
-JEV_LEVEL_MAP = _table(
-    "jev_level_map",
-    ("objective", "jev_model", "expected_coefficient"),
-    objective=_str(values=OBJECTIVES),
-    jev_model=_str(),
-    expected_coefficient=_f64(),
-    level=_f64(),
 )
 
 # Shares of the agency's spending by objective. The adaptation and mitigation shares
@@ -811,7 +796,6 @@ RELEASE_TABLES: Mapping[str, TableSchema] = {
         QUALITY,
         TOTAL_FLOWS,
         PROVIDER_COEFFICIENTS,
-        JEV_LEVEL_MAP,
     )
 }
 
@@ -833,7 +817,7 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
     ),
     "fill": _by_name(ALLOCATIONS, COMMITMENT_STATUS, BANK_YEAR_OVERLAP),
     "review": _by_name(LINKS, REVIEW_QUEUE, PAIR_LABELS, COMMITMENT_STATUS),
-    "label": _by_name(OBJECTIVE_LABELS, JEV_LEVEL_MAP),
+    "label": _by_name(OBJECTIVE_LABELS),
     "measure": _by_name(AGENCY_SHARES, MODELLED),
     "assemble": RELEASE_TABLES,
 }

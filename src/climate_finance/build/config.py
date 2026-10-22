@@ -88,7 +88,7 @@ class Sources(_Section):
     copies those of `iati_publishers`. Without `ledgers`, fetch and normalise skip
     the bank ledgers. `adaptation_labels` names Weikmans et al.'s human-coded
     adaptation re-evaluation, which fetch copies into `raw/` when `jev_labels` is on
-    and which fits Jev's level map.
+    and which fits the cut on Jev's answers.
     """
 
     crs_version: str
@@ -124,7 +124,7 @@ class BuildConfig(_Section):
     `skip_eib_routes` names EIB recovery routes the link stage leaves out when
     `recoveries` is on. A release builds with none; an end-to-end test sets one to
     measure what that route adds. `jev_labels` has the label stage ask Jev about
-    linked records and fit its level map on `sources.adaptation_labels`.
+    linked records and fit its adaptation cut on `sources.adaptation_labels`.
     """
 
     offline: bool = False

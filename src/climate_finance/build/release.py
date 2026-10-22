@@ -143,7 +143,6 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         "total_flows": total_flows(crs).collect(),
         # Provider coefficients come from the BTR link, which is not implemented.
         "provider_coefficients": _empty(PROVIDER_COEFFICIENTS),
-        "jev_level_map": context.read("label", "jev_level_map").collect(),
     }
 
 
