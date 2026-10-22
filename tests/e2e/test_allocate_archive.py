@@ -81,8 +81,10 @@ RELEASE_RULE_BN = {
 # reaches the World Bank commitments the rules would, so the rules move no IBRD or
 # IDA value. Both builds carry classifier links. In the build without the rules, the
 # classifier already lifts USD 0.097 bn of bilateral rows out of no record through
-# commitments the rules reach, so the rules move that much less.
-REPAIR_MOVED_BN = {"bilateral": 0.87, "banks": 2.02}
+# commitments the rules reach, so the rules move that much less. Rounded AfDB project
+# numbers are null, so `repair_title_recipient` also takes AfDB commitments whose
+# disbursement units spell one rounded number two ways (USD 0.11 bn).
+REPAIR_MOVED_BN = {"bilateral": 0.87, "banks": 2.16}
 REPAIR_TOLERANCE_BN = 0.05
 _CATEGORY = {
     "DAC member": "bilateral",

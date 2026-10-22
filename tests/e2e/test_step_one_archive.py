@@ -39,12 +39,12 @@ LOAN_TIER_MOVED_BN = {
     "not_traceable": 0.0,
 }
 # The target links by key alone. The truth-group classifier (`link.score`) links
-# disbursements the keys left to commitments, which moves value out of no record and
-# not traceable into disbursed and partly disbursed.
+# disbursements the keys left to commitments, which moves value out of no record,
+# partly disbursed and not traceable into disbursed.
 CLASSIFIER_MOVED_BN = {
-    "disbursed": 0.1684,
-    "partly_disbursed": 0.0158,
-    "no_disbursement_record": -0.1836,
+    "disbursed": 0.1851,
+    "partly_disbursed": -0.0060,
+    "no_disbursement_record": -0.1785,
     "not_traceable": -0.0007,
 }
 TOLERANCE_BN = 0.001

@@ -86,9 +86,11 @@ def test_without_decisions_splink_only_asks_for_calibration_labels(
     assert set(queued["len"]) == {CALIBRATION_LABELS}
     assert set(scores["review_reason"].drop_nulls()) == {CALIBRATION_REASON}
     # The archive build: 41 providers outside the truth group and seven usable
-    # models (USA, five more providers of their own and the pooled model).
+    # models (USA, five more providers of their own and the pooled model). The pairs
+    # are those providers' eligible candidates, blocked on trimmed ids and on project
+    # numbers with rounded ones null.
     assert len(providers) == 41
-    assert scores.height == 1_833_183
+    assert scores.height == 1_829_473
     assert queued.height == 7
 
 
@@ -215,10 +217,10 @@ def test_calibrated_splink_against_id_truth(tables: LinkTables) -> None:
         )
         for row in measured.filter(pl.col("p_0.5_links") > 0).iter_rows(named=True)
     }
+    # The pooled model's providers (68, 1624, 76) link nothing at 0.5.
     assert at_half == {
-        1: (1511, 0.744, 0.822),
-        3: (916, 0.634, 0.485),
-        4: (1908, 0.954, 0.852),
+        1: (1633, 0.662, 0.791),
+        3: (842, 0.632, 0.447),
+        4: (1908, 0.955, 0.852),
         820: (1170, 0.740, 0.665),
-        1624: (11, 1.0, 0.064),
     }

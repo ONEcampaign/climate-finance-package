@@ -177,21 +177,17 @@ def test_the_classifier_meets_its_targets_on_the_prototype_years(
         pairs.filter(crdf_years), truth.filter(crdf_years), threshold=threshold
     )
 
-    canada = pl.col("provider_code") == 301  # S13C-PIN
-    print("S13C-PIN threshold", threshold, "prototype", prototype, "every_year", every_year)  # S13C-PIN
-    print("S13C-PIN canada", _measure(pairs.filter(crdf_years & canada), truth.filter(crdf_years & canada), threshold=threshold))  # S13C-PIN
-    assert threshold == 0.34
+    assert threshold == 0.42
     assert prototype["f1"] >= F1_TARGET
     assert every_year["ece"] <= ECE_TARGET
-    # Over the build's CRDF years F1 falls short of the target: Canada's 2018 crs
-    # ids share one project number and title with sibling ids, so their true pairs
-    # look like the false ones and none links (1,868 of 3,765 held-out misses).
+    # Canada renumbers its lines from year to year, so it carries 746 of the 1,950
+    # held-out misses over the build's CRDF years.
     assert every_year == pytest.approx(
-        {"precision": 0.85137, "recall": 0.86912, "f1": 0.86015, "ece": 0.01245},
+        {"precision": 0.91238, "recall": 0.89263, "f1": 0.90240, "ece": 0.02261},
         abs=1e-5,
     )
     assert prototype == pytest.approx(
-        {"precision": 0.89863, "recall": 0.92560, "f1": 0.91191, "ece": 0.02240},
+        {"precision": 0.94731, "recall": 0.92776, "f1": 0.93743, "ece": 0.02864},
         abs=1e-5,
     )
 
@@ -209,22 +205,24 @@ def test_held_out_figures_by_provider_class(
         )
         for category in ("bilateral", "private", "banks", "other_multilateral")
     }
-    print("S13C-PIN classes", measured)  # S13C-PIN
     assert measured == {
         "bilateral": pytest.approx(
-            {"precision": 0.85827, "recall": 0.86883, "f1": 0.86352, "ece": 0.01314},
+            {"precision": 0.91153, "recall": 0.88750, "f1": 0.89935, "ece": 0.02312},
             abs=1e-5,
         ),
         "private": pytest.approx(
-            {"precision": 0.73379, "recall": 0.85941, "f1": 0.79164, "ece": 0.06155},
+            {"precision": 0.93043, "recall": 0.98567, "f1": 0.95726, "ece": 0.02534},
             abs=1e-5,
         ),
         "banks": pytest.approx(
-            {"precision": 0.93043, "recall": 0.98165, "f1": 0.95536, "ece": 0.01446},
+            {"precision": 0.99130, "recall": 0.99130, "f1": 0.99130, "ece": 0.01090},
             abs=1e-5,
         ),
+        # The class's held-out pairs are the Adaptation Fund's. 57 of its disbursement
+        # units take their best commitment at 0.386, below the threshold, and 19 of
+        # those are true.
         "other_multilateral": pytest.approx(
-            {"precision": 0.53876, "recall": 0.89677, "f1": 0.67312, "ece": 0.04787},
+            {"precision": 0.54054, "recall": 0.51282, "f1": 0.52632, "ece": 0.08194},
             abs=1e-5,
         ),
     }
@@ -237,11 +235,10 @@ def test_the_link_stage_writes_the_classifier_links_and_profile(
     profile = _read(release_dir, "link", "provider_profile")
     schema.validate(schema.PROVIDER_PROFILE, profile)
 
-    print("S13C-PIN links", written.height, written["left_id"].n_unique(), written["right_id"].n_unique(), dict(profile.group_by("scoring_group").len().iter_rows()))  # S13C-PIN
     assert written.equals(scored.links)
     scoring = profile.drop_nulls("scoring_group").select(scored.profile.columns)
     assert scoring.equals(scored.profile)
-    assert written.height == 2_096
+    assert written.height == 6_468
     assert dict(scoring.group_by("scoring_group").len().iter_rows()) == {
         "truth": 25,
         "splink": 6,
@@ -292,13 +289,12 @@ def test_classifier_links_move_statuses(
         status: linked.get(status, 0.0) - keyed.get(status, 0.0)
         for status in schema.STATUSES
     }
-    print("S13C-PIN keyed", keyed, "moved", moved)  # S13C-PIN
     assert sum(moved.values()) == pytest.approx(0.0, abs=1e-9)
     assert moved == pytest.approx(
         {
-            "disbursed": 0.17322,
-            "partly_disbursed": -0.14321,
-            "no_disbursement_record": -0.03001,
+            "disbursed": 0.18125,
+            "partly_disbursed": -0.14055,
+            "no_disbursement_record": -0.04070,
             "not_traceable": 0.0,
             "pending_review": 0.0,
         },
