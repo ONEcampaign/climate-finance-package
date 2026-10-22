@@ -69,7 +69,9 @@ class Sources(_Section):
     downloads the file with oda-reader. `crdf_etags`, when not empty, pins every
     CRDF workbook fetch reads to the ETag it maps the workbook's name to.
     `iati_archive` holds one directory of activity XML per publisher, and fetch
-    copies those of `iati_publishers`.
+    copies those of `iati_publishers`. `adaptation_labels` names Weikmans et al.'s
+    human-coded adaptation re-evaluation, which fetch copies into `raw/` when
+    `jev_labels` is on and which fits Jev's level map.
     """
 
     crs_version: str
@@ -80,6 +82,7 @@ class Sources(_Section):
     btr_archive: ConfigPath
     ledger_archive: ConfigPath
     review_decisions: ConfigPath
+    adaptation_labels: LocalFile | None = None
 
 
 class Jev(_Section):
@@ -103,7 +106,8 @@ class BuildConfig(_Section):
 
     `skip_eib_routes` names EIB recovery routes the link stage leaves out when
     `recoveries` is on. A release builds with none; an end-to-end test sets one to
-    measure what that route adds.
+    measure what that route adds. `jev_labels` has the label stage ask Jev about
+    linked records and fit its level map on `sources.adaptation_labels`.
     """
 
     offline: bool = False
@@ -112,10 +116,17 @@ class BuildConfig(_Section):
     skip_eib_routes: tuple[str, ...] = ()
     gap_fill: bool = False
     review: bool = False
+    jev_labels: bool = False
     years: Years
     sources: Sources
     jev: Jev
     embedding: Embedding
+
+    @model_validator(mode="after")
+    def _jev_labels_need_human_labels(self) -> Self:
+        if self.jev_labels and self.sources.adaptation_labels is None:
+            raise ValueError("jev_labels needs sources.adaptation_labels")
+        return self
 
 
 def load_config(path: Path) -> BuildConfig:

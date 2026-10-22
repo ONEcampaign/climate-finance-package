@@ -326,3 +326,34 @@ def test_crdf_workbooks_must_match_their_pinned_etags(
 
     with pytest.raises(SourceUnavailableError, match=re.escape("CRDF-PP_2024.xlsx")):
         _fetch(_config(crs_file=crs_file, crdf_etags=pins), tmp_path / "out")
+
+
+def test_jev_labels_bring_the_pinned_adaptation_labels_into_raw(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    path = crs_file.path.with_name("wk.csv")
+    path.write_text("text,level\nSeawalls,2\n")
+    labels = LocalFile(path=path, sha256=sha256_file(path))
+    config = _config(crs_file=crs_file, adaptation_labels=labels).model_copy(
+        update={"jev_labels": True}
+    )
+
+    release = _fetch(config, tmp_path / "out")
+
+    row = (
+        pl.read_parquet(release / MANIFEST)
+        .filter(source="adaptation_labels")
+        .row(0, named=True)
+    )
+    assert (row["path"], row["method"], row["sha256"]) == (
+        "labels/adaptation_labels.csv",
+        "manual",
+        labels.sha256,
+    )
+    assert (release / "raw" / row["path"]).read_bytes() == path.read_bytes()
+    other = _config(
+        crs_file=crs_file,
+        adaptation_labels=LocalFile(path=path, sha256="0" * 64),
+    ).model_copy(update={"jev_labels": True})
+    with pytest.raises(SourceUnavailableError, match="adaptation label file"):
+        _fetch(other, tmp_path / "out", offline=True)

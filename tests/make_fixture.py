@@ -37,6 +37,11 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "snapshot"
 REAL_SNAPSHOT_DIR = Path(__file__).parent / "fixtures" / "real_snapshot"
 RELEASE = "fixture"
 
+# Jev's expected coefficient on JPN-1-R1, and the level map's points: 0.6 lies a
+# quarter of the way from 0.5 to 0.9, so it maps to 0.3 + 0.25 * 0.4 = 0.4.
+JEV_EXPECTED_COEFFICIENT = 0.6
+JEV_LEVEL_POINTS = ((0.1, 0.0), (0.5, 0.3), (0.9, 0.7))
+
 # DAC codes: Germany, France, Norway, Japan, IDA, AfDB. IFC has only a modelled line.
 # The EIB appears only in the sample of a real release.
 DEU, FRA, NOR, JPN, IDA, AFDB, IFC, EIB = 5, 4, 8, 701, 905, 913, 903, 918
@@ -259,6 +264,7 @@ def _objectives(
             "level": level,
             "label_source": source,
             "probability": None,
+            "expected_coefficient": None,
         }
         for objective, level, source in labels
     ]
@@ -381,6 +387,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
             "level": 1,
             "label_source": "jev",
             "probability": 0.72,
+            "expected_coefficient": JEV_EXPECTED_COEFFICIENT,
         }
     )
 
@@ -465,6 +472,15 @@ def build_tables() -> dict[str, pl.DataFrame]:
                 ("NOR", "NOK", 0.1, 150e6),
             )
             for year in (2021, 2022)
+        ],
+        "jev_level_map": [
+            {
+                "objective": "adaptation",
+                "jev_model": "jev-1.14.0",
+                "expected_coefficient": expected,
+                "level": level,
+            }
+            for expected, level in JEV_LEVEL_POINTS
         ],
         "disbursement_profile": [
             {

@@ -12,6 +12,8 @@ gap_fill = false
 # Ledger check, review queue and pending status (the review stage). Off passes links
 # and commitments through unchanged.
 review = false
+# Jev objective labels on linked records, and the level map behind relevance="jev".
+jev_labels = false
 
 [years]
 crdf = [2015, 2024]
@@ -29,6 +31,9 @@ iati_publishers = ["caf", "eib", "gcf", "gef", "idbinvest", "ifcwbg"]
 btr_archive = "data/raw/unfccc_btr1"
 ledger_archive = "data/raw/ledgers"
 review_decisions = "data/review_decisions.parquet"
+# Weikmans et al.'s human-coded adaptation levels; they fit the Jev level map and are
+# never published.
+adaptation_labels = { path = "data/raw/classifiers/toetzke/wk.csv", sha256 = "6eafebb197764603754cbaddeef4534b62fefcadfc439e1f67c7f2dbad61e218" }
 
 # CRDF file name -> ETag of the pinned copy.
 [sources.crdf_etags]

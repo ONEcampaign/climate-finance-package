@@ -26,6 +26,9 @@ class Frozen(BaseModel):
 class Method(Frozen):
     """Coefficients applied to face value by Rio marker level.
 
+    `relevance="jev"` counts a disbursement whose record Jev labelled at Jev's
+    calibrated adaptation level in place of its adaptation marker's coefficient.
+
     `eu` sets how EU Institutions (provider 918) count in the provider view. As a
     `"channel"`, members' core contributions to the EU budget, the EDF and the EIB
     carry the EU's climate share, and 918's own rows leave a result in each year
@@ -113,6 +116,14 @@ def describe(method: Method | MethodRange) -> str:
             " Each provider takes its own significant coefficient from the release, "
             f"or {method.significant:g} where it has no confirmed coefficient."
         )
+    if method.relevance == "jev":
+        text += (
+            " Disbursements whose CRS record Jev labelled count adaptation at Jev's "
+            "calibrated level in place of the adaptation marker: Jev's expected "
+            "coefficient mapped to the level human coders gave similar projects, at "
+            "0.4 for significant and 1.0 for principal. Mitigation keeps its marker, "
+            "as do commitments and records Jev did not label."
+        )
     return text + _EU[method.eu]
 
 
@@ -167,6 +178,30 @@ def _marker_rules(
     }
 
 
+def _jev_fractions(method: Method, significant: pl.Expr) -> dict[str, pl.Expr]:
+    """Per objective, the weight of a row whose adaptation coefficient is
+    `jev_level` and whose mitigation coefficient comes from its marker."""
+    adaptation = pl.col("jev_level")
+    mitigation = _coefficient(_markers()[1], method, significant)
+    if not method.highest_marker:
+        return {
+            "adaptation": adaptation,
+            "mitigation": mitigation,
+            "cross_cutting": pl.min_horizontal(adaptation, mitigation),
+        }
+
+    def keep(counts: pl.Expr, weight: pl.Expr) -> pl.Expr:
+        return pl.when(counts).then(weight).otherwise(0.0)
+
+    return {
+        "adaptation": keep(adaptation > mitigation, adaptation),
+        "mitigation": keep(mitigation > adaptation, mitigation),
+        "cross_cutting": keep(
+            (adaptation == mitigation) & (adaptation > 0), adaptation
+        ),
+    }
+
+
 def weights(
     method: Method, *, significant: pl.Expr | None = None
 ) -> dict[str, pl.Expr]:
@@ -179,6 +214,10 @@ def weights(
     cross-cutting, so the three objectives are disjoint. Without it adaptation and
     mitigation each count their own marker, and `cross_cutting` is their overlap, the
     smaller of the two weighted shares, which `climate` counts once.
+
+    Under `relevance="jev"` a marker row with a `jev_level` takes it as its
+    adaptation coefficient. The highest-marker rule then compares the adaptation and
+    mitigation coefficients, and equal positive ones are cross-cutting.
 
     Climate-component rows (non-null `climate_share`) ignore the coefficients and use
     `share_adaptation`, `share_mitigation` and `share_overlap`, fractions of the amount
@@ -194,14 +233,22 @@ def weights(
     }
     if significant is None:
         significant = pl.lit(method.significant)
-    rules = _marker_rules(method, significant)
-    fractions = {
+    marker = {
+        objective: pl.when(counts).then(weight).otherwise(0.0)
+        for objective, (counts, _, weight) in _marker_rules(method, significant).items()
+    }
+    if method.relevance == "jev":
+        jev = _jev_fractions(method, significant)
+        has_jev = pl.col("jev_level").is_not_null()
+        marker = {
+            objective: pl.when(has_jev).then(jev[objective]).otherwise(fraction)
+            for objective, fraction in marker.items()
+        }
+    fractions: dict[str, pl.Expr] = {
         objective: pl.when(pl.col("climate_share").is_not_null())
         .then(component[objective])
-        .when(counts)
-        .then(weight)
-        .otherwise(0.0)
-        for objective, (counts, _, weight) in rules.items()
+        .otherwise(marker[objective])
+        for objective in OBJECTIVES
     }
     a, m, c = (fractions[objective] for objective in OBJECTIVES)
     fractions["climate"] = a + m + c if method.highest_marker else a + m - c

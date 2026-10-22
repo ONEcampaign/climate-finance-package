@@ -9,6 +9,7 @@ stage's `seal` runs on the written tables before they replace the stage's direct
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import cached_property
 from pathlib import Path
 
 import polars as pl
@@ -16,6 +17,7 @@ import polars as pl
 from climate_finance.build import allocate, fetch, label, measure, release
 from climate_finance.build.config import BuildConfig
 from climate_finance.build.errors import StageInputMissingError
+from climate_finance.build.jev_client import JevClient
 from climate_finance.build.link import gap_fill, review, run_link
 from climate_finance.build.normalise import run_normalise
 from climate_finance.schema import STAGE_TABLES, TableSchema
@@ -54,7 +56,11 @@ def raw_dir(release_dir: Path) -> Path:
 
 @dataclass(frozen=True)
 class StageContext:
-    """What every stage function receives."""
+    """What every stage function receives.
+
+    The runner builds one context per build, so every stage that asks Jev shares
+    one `jev` client and one cost cap.
+    """
 
     release: str
     release_dir: Path
@@ -65,6 +71,17 @@ class StageContext:
     def raw_dir(self) -> Path:
         """Where fetch writes the raw source files that normalise reads."""
         return raw_dir(self.release_dir)
+
+    @cached_property
+    def jev(self) -> JevClient:
+        """The build's Jev client, made on first use from `config.jev`."""
+        jev = self.config.jev
+        return JevClient(
+            model=jev.model,
+            cost_cap_usd=jev.cost_cap_usd,
+            cache_dir=jev.cache_dir,
+            offline=self.offline,
+        )
 
     def read(self, stage: str, table: str) -> pl.LazyFrame:
         """Scan a table an earlier stage wrote.

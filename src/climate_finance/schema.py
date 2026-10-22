@@ -225,12 +225,17 @@ CRS = _table(
     agency_code=_code(nullable=True),
     crs_id=_str(nullable=True),
     project_number=_str(nullable=True),
+    # The bulk CRS's project_title, short_description and long_description.
     title=_str(nullable=True),
+    short_description=_str(nullable=True),
+    long_description=_str(nullable=True),
     recipient_code=_code(),
     purpose_code=_code(nullable=True),
     channel_code=_code(nullable=True),
     bi_multi=_bi_multi(),
     flow_code=_code(),
+    # The type of finance, such as 110 for a standard grant.
+    finance_t=_code(nullable=True),
     commitment_usd=_usd(nullable=True),
     disbursement_usd=_usd(nullable=True),
     grant_equiv_usd=_usd(nullable=True),
@@ -601,8 +606,14 @@ OBJECTIVE_LABELS = _table(
     level=Column(pl.Int8(), values=RIO_MARKERS),
     label_source=_str(values=LABEL_SOURCES),
     probability=_f64(nullable=True),
+    # Jev labels only: 0.4 x p(significant) + 1.0 x p(principal), which the query maps
+    # through `jev_level_map` to a calibrated level.
+    expected_coefficient=_f64(nullable=True),
 )
 
+# The isotonic map from Jev's expected coefficient to a calibrated level, fitted on
+# human-coded projects for one Jev model. A level between two points is interpolated
+# linearly, and one outside them takes the nearest point's level.
 JEV_LEVEL_MAP = _table(
     "jev_level_map",
     ("objective", "jev_model", "expected_coefficient"),
@@ -788,6 +799,7 @@ RELEASE_TABLES: Mapping[str, TableSchema] = {
         QUALITY,
         TOTAL_FLOWS,
         PROVIDER_COEFFICIENTS,
+        JEV_LEVEL_MAP,
     )
 }
 

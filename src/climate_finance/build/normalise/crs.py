@@ -64,6 +64,8 @@ def normalise_crs(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFrame:
             pl.col("donor_code", "agency_code").cast(pl.Int32),
             pl.col("crs_id", "project_number").cast(pl.String),
             title=pl.col("project_title").cast(pl.String),
+            short_description=pl.col("short_description").cast(pl.String),
+            long_description=pl.col("long_description").cast(pl.String),
             # The bulk CRS publishes "Developing countries, unspecified" as 9998,
             # and the CRDF and the DAC recipient list use 998. Writing 998 here gives
             # every stage and release table one code.
@@ -74,6 +76,7 @@ def normalise_crs(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFrame:
             channel_code=pl.col("channel_code").cast(pl.Int32),
             bi_multi=pl.col("bi_multi").cast(pl.Int8),
             flow_code=pl.col("flow_code").cast(pl.Int32),
+            finance_t=pl.col("finance_t").cast(pl.Int32),
             **{
                 name: pl.col(source).cast(pl.Float64) * _USD_PER_UNIT
                 for name, source in _AMOUNTS.items()

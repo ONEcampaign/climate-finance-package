@@ -40,6 +40,7 @@ IMPUTED_SHARES_FILE = Path("oecd") / IMPUTED_SHARES_NAME
 GCF_FILE = Path("external/gcf/projects.json")
 IATI_DIR = Path("external/iati")
 DAC_EXCHANGE_FILE = Path("dac_exchange.parquet")
+ADAPTATION_LABELS_FILE = Path("labels/adaptation_labels.csv")
 
 CRDF_URL = "https://webfs.oecd.org/climate/"
 GCF_URL = "https://api.gcfund.org/v1/projects"
@@ -105,7 +106,13 @@ def fetch_sources(
     """
     sources = config.sources
     crs = (
-        _link_crs(raw, local=sources.crs_file, version=sources.crs_version)
+        _link_local(
+            raw,
+            local=sources.crs_file,
+            relative=CRS_FILE,
+            source="crs",
+            version=sources.crs_version,
+        )
         if sources.crs_file is not None
         else _download_crs(raw)
     )
@@ -128,6 +135,18 @@ def fetch_sources(
         *_copy_iati(
             raw, archive=sources.iati_archive, publishers=sources.iati_publishers
         ),
+        *(
+            [
+                _link_local(
+                    raw,
+                    local=labels,
+                    relative=ADAPTATION_LABELS_FILE,
+                    source="adaptation_labels",
+                )
+            ]
+            if (labels := _pinned_files(config).get("adaptation_labels"))
+            else []
+        ),
     ]
 
 
@@ -141,7 +160,21 @@ def expected_sources(config: BuildConfig) -> list[str]:
         "gcf_projects",
         "dac_exchange",
         *(f"iati_{publisher}" for publisher in config.sources.iati_publishers),
+        *(["adaptation_labels"] if config.jev_labels else []),
     ]
+
+
+def _pinned_files(config: BuildConfig) -> dict[str, LocalFile]:
+    """The local files `config` names for fetch to copy, by source name.
+
+    The adaptation labels count only when `jev_labels` is on, as only then does a
+    stage read them.
+    """
+    sources = config.sources
+    pinned = {"crs": sources.crs_file}
+    if config.jev_labels:
+        pinned["adaptation_labels"] = sources.adaptation_labels
+    return {source: local for source, local in pinned.items() if local is not None}
 
 
 def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> None:
@@ -151,8 +184,9 @@ def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> Non
 
     Raises:
         SourceUnavailableError: when the sources `recorded` holds differ from those
-            `config` names, in either direction, or `recorded` names a CRS file
-            other than the one `config` names, or when `raw` lacks a recorded
+            `config` names, in either direction, or `recorded` names a CRS or
+            adaptation label file other than the one `config` names, or when
+            `raw` lacks a recorded
             file, holds an unrecorded one, or holds one whose sha256 differs from
             the recorded one. The message names every such source or file.
     """
@@ -163,14 +197,13 @@ def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> Non
             f"records {sorted(held - expected)}, which build.toml does not name; "
             "run the fetch stage online."
         )
-    crs = config.sources.crs_file
-    if crs is not None and recorded.filter(source="crs")["sha256"].to_list() != [
-        crs.sha256
-    ]:
-        raise SourceUnavailableError(
-            f"build.toml names the CRS file {crs.path} (sha256 {crs.sha256}), and "
-            "the raw_manifest records another; run the fetch stage online."
-        )
+    for source, local in _pinned_files(config).items():
+        if recorded.filter(source=source)["sha256"].to_list() != [local.sha256]:
+            raise SourceUnavailableError(
+                f"build.toml names the {_DESCRIPTIONS[source]} {local.path} (sha256 "
+                f"{local.sha256}), and the raw_manifest records another; run the "
+                "fetch stage online."
+            )
 
     on_disk = {
         path.relative_to(raw).as_posix() for path in raw.rglob("*") if path.is_file()
@@ -231,25 +264,37 @@ def _place(origin: Path, target: Path) -> None:
         shutil.copyfile(origin, target)
 
 
-def _link_crs(raw: Path, *, local: LocalFile, version: str) -> RawFile:
-    """Put the browser-downloaded bulk CRS parquet in place, checking its sha256.
+_DESCRIPTIONS = {"crs": "CRS file", "adaptation_labels": "adaptation label file"}
+
+
+def _link_local(
+    raw: Path,
+    *,
+    local: LocalFile,
+    relative: Path,
+    source: str,
+    version: str | None = None,
+) -> RawFile:
+    """Put a local file, such as the browser-downloaded bulk CRS, at `relative`,
+    checking its sha256.
 
     Raises:
         SourceUnavailableError: when the file is missing or its sha256 differs.
     """
     if not local.path.is_file():
         raise SourceUnavailableError(
-            f"build.toml names the CRS file {local.path}, which does not exist."
+            f"build.toml names the {_DESCRIPTIONS[source]} {local.path}, which does "
+            "not exist."
         )
     if (actual := sha256_file(local.path)) != local.sha256:
         raise SourceUnavailableError(
             f"{local.path} has sha256 {actual}, and build.toml expects {local.sha256}."
         )
-    _place(local.path, _target(raw, CRS_FILE))
+    _place(local.path, _target(raw, relative))
     return _record(
         raw,
-        CRS_FILE,
-        source="crs",
+        relative,
+        source=source,
         method="manual",
         version=version,
         sha256=local.sha256,
