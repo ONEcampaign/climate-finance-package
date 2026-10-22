@@ -11,8 +11,8 @@ from climate_finance.build.readers.ledgers.frame import ledger_frame
 
 logger = logging.getLogger(__name__)
 
-_PUBLISHER = "gcf"
-_READINESS_PUBLISHER = "gcf_readiness"
+PUBLISHER = "gcf"
+READINESS_PUBLISHER = "gcf_readiness"
 
 
 def read_gcf_disbursements(path: Path) -> pl.DataFrame:
@@ -39,7 +39,7 @@ def read_gcf_disbursements(path: Path) -> pl.DataFrame:
                 continue
             rows.append(
                 {
-                    "publisher": _PUBLISHER,
+                    "publisher": PUBLISHER,
                     "key": project["ApprovedRef"],
                     "activity_id": project["ApprovedRef"],
                     "transaction_type": "disbursement",
@@ -76,7 +76,7 @@ def read_gcf_readiness(path: Path) -> pl.DataFrame:
             unreferenced += 1
             continue
         base = {
-            "publisher": _READINESS_PUBLISHER,
+            "publisher": READINESS_PUBLISHER,
             "key": key,
             "activity_id": grant["RequestID"],
             "currency": "USD",

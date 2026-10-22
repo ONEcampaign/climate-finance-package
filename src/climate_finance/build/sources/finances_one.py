@@ -2,13 +2,14 @@
 
 import json
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 import httpx
 
 from climate_finance.build.readers.ledgers.finances_one import (
     DATASETS,
+    Dataset,
     snapshot_file,
     snapshot_years,
 )
@@ -24,6 +25,7 @@ from climate_finance.build.sources.files import (
 from climate_finance.errors import SourceUnavailableError
 
 SOURCE = "ledger_finances_one"
+FOLDER = Path(LEDGER_DIR) / "finances_one"
 API = "https://datacatalogapi.worldbank.org/dexapps/fone/api/apiservice"
 _RESOURCE = "RS00905"
 _PAGE = 1000
@@ -34,6 +36,7 @@ def download_finances_one(
     *,
     years: Iterable[int],
     offline: bool,
+    datasets: Sequence[Dataset] = tuple(DATASETS),
     archive: Path | None = None,
     client: httpx.Client | None = None,
     pause_seconds: float = 1.5,
@@ -42,13 +45,16 @@ def download_finances_one(
 
     The full Finances One file exceeds 300 MB, so each snapshot comes through filtered
     API calls of 1,000 rows, a pause apart. Files land in
-    `<raw_dir>/ledgers/finances_one/`, one per dataset and year-end.
+    `<raw_dir>/ledgers/finances_one/`, one per dataset and year-end, each recorded
+    under its own source name (`source_name`).
 
     Args:
         raw_dir: The raw directory.
         years: The calendar years to read; each needs its own and the previous
             year-end.
         offline: Refuse to call the API. Ignored when `archive` is given.
+        datasets: The datasets to save, IBRD (`DS00975`) and IDA (`DS00976`) by
+            default.
         archive: A directory holding the snapshot files, named as the download names
             them. They are copied and no request is made.
         client: An HTTP client to use in place of the default.
@@ -58,19 +64,17 @@ def download_finances_one(
         SourceUnavailableError: when offline without an archive, when the archive
             lacks a snapshot, or when the API returns none for a year-end.
     """
-    folder = Path(LEDGER_DIR) / "finances_one"
-    year_ends = snapshot_years(years)
-    wanted = [(dataset, year) for dataset in DATASETS for year in year_ends]
+    wanted = [(dataset, year) for dataset in datasets for year in snapshot_years(years)]
     if archive is not None:
-        return import_archive(
-            {
-                folder / snapshot_file(dataset, year): archive
-                / snapshot_file(dataset, year)
-                for dataset, year in wanted
-            },
-            raw_dir=raw_dir,
-            source=SOURCE,
-        )
+        records = []
+        for dataset, year in wanted:
+            name = snapshot_file(dataset, year)
+            records += import_archive(
+                {FOLDER / name: archive / name},
+                raw_dir=raw_dir,
+                source=source_name(dataset, year),
+            )
+        return records
     require_online(SOURCE, offline=offline)
     records = []
     with http_client(client) as session:
@@ -80,12 +84,17 @@ def download_finances_one(
                 save(
                     json.dumps(rows).encode(),
                     raw_dir=raw_dir,
-                    relative=folder / snapshot_file(dataset, year),
-                    source=SOURCE,
+                    relative=FOLDER / snapshot_file(dataset, year),
+                    source=source_name(dataset, year),
                     url=API,
                 )
             )
     return records
+
+
+def source_name(dataset: Dataset, year: int) -> str:
+    """The `raw_manifest` source of the 31 December `year` snapshot of `dataset`."""
+    return f"{SOURCE}_{dataset}_{year}"
 
 
 def _pull(

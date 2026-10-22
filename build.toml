@@ -29,11 +29,17 @@ crs_file = { path = "data/raw/oecd/CRS_v20261006.parquet", sha256 = "d24840a5fad
 iati_archive = "data/raw/external/iati"
 iati_publishers = ["caf", "eib", "gcf", "gef", "idbinvest", "ifcwbg"]
 btr_archive = "data/raw/unfccc_btr1"
-ledger_archive = "data/raw/ledgers"
 review_decisions = "data/review_decisions.parquet"
 # Weikmans et al.'s human-coded adaptation levels; they fit the Jev level map and are
 # never published.
 adaptation_labels = { path = "data/raw/classifiers/toetzke/wk.csv", sha256 = "6eafebb197764603754cbaddeef4534b62fefcadfc439e1f67c7f2dbad61e218" }
+
+# Bank ledgers for the review stage's ledger check. Without this section, fetch and
+# normalise skip them. `archive` is a local copy laid out as raw/ledgers/.
+# [sources.ledgers]
+# years = [2021, 2024]
+# publishers = ["ibrd", "ida", "asdb", "afdb", "iadb", "isdb", "ebrd", "bcie", "gcf", "gef"]
+# archive = "data/raw/ledgers"
 
 # CRDF file name -> ETag of the pinned copy.
 [sources.crdf_etags]

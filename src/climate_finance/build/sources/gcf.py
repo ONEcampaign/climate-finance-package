@@ -17,11 +17,13 @@ from climate_finance.build.sources.files import (
 )
 from climate_finance.errors import SourceUnavailableError
 
-PROJECTS_SOURCE = "ledger_gcf_projects"
+PROJECTS_SOURCE = "gcf_projects"
 READINESS_SOURCE = "ledger_gcf_readiness"
 PROJECTS_URL = "https://api.gcfund.org/v1/projects"
 READINESS_URL = "https://data.greenclimate.fund/public/data/readiness"
-PROJECTS_FILE = Path(LEDGER_DIR) / "gcf" / "projects.json"
+# The projects file feeds the external GCF reader and the GCF ledger, so it sits with
+# the external sources and every fetch writes it.
+PROJECTS_FILE = Path("external") / "gcf" / "projects.json"
 READINESS_FILE = Path(LEDGER_DIR) / "gcf" / "readiness.json"
 # The readiness page is server-rendered with its full table in this script tag.
 _PAGE_DATA = re.compile(
@@ -33,36 +35,32 @@ def download_gcf_projects(
     raw_dir: Path,
     *,
     offline: bool,
-    archive: Path | None = None,
     client: httpx.Client | None = None,
     pause_seconds: float = 1.0,
 ) -> list[RawFile]:
     """Save the projects API response, which carries each project's disbursements.
 
-    The file lands at `<raw_dir>/ledgers/gcf/projects.json`, the file
-    `read_gcf_disbursements` and the external-sources GCF reader take.
+    The file lands at `<raw_dir>/external/gcf/projects.json`, the file
+    `read_gcf_projects` and `read_gcf_disbursements` take.
 
     Args:
         raw_dir: The raw directory.
-        offline: Refuse to call the API. Ignored when `archive` is given.
-        archive: A directory holding `projects.json`, which is copied.
+        offline: Refuse to call the API.
         client: An HTTP client to use in place of the default.
         pause_seconds: The pause before a retry.
 
     Raises:
-        SourceUnavailableError: when offline without an archive, or when the API
-            answers with anything but a list of projects.
+        SourceUnavailableError: when offline, or when the API answers with anything
+            but a JSON list of projects.
     """
-    if archive is not None:
-        return import_archive(
-            {PROJECTS_FILE: archive / PROJECTS_FILE.name},
-            raw_dir=raw_dir,
-            source=PROJECTS_SOURCE,
-        )
     require_online(PROJECTS_SOURCE, offline=offline)
     with http_client(client) as session:
         response = get(session, PROJECTS_URL, pause_seconds=pause_seconds)
-    if not isinstance(response.json(), list):
+    try:
+        projects = response.json()
+    except ValueError as error:
+        raise SourceUnavailableError(f"{PROJECTS_URL} did not return JSON.") from error
+    if not isinstance(projects, list):
         raise SourceUnavailableError(f"{PROJECTS_URL} did not return a list.")
     return [
         save(

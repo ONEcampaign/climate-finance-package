@@ -20,7 +20,7 @@ from climate_finance.build import (
     run_stages,
     write_table,
 )
-from climate_finance.build.errors import ReleaseInvariantError
+from climate_finance.build.errors import ConfigError, ReleaseInvariantError
 from climate_finance.build.stages import REGISTRY, Stage, StageContext, table_path
 from climate_finance.errors import SchemaError
 from climate_finance.schema import STAGE_TABLES
@@ -292,14 +292,17 @@ def test_a_failing_assemble_leaves_the_last_good_release(
 
 
 @pytest.mark.parametrize(
-    ("stage", "switch", "carried"),
+    ("stage", "switch", "carried", "unbuilt"),
     [
         (
             Stage.FILL,
             "gap_fill",
             {"allocations": "allocate", "commitments": "allocate"},
+            NotImplementedError,
         ),
-        (Stage.REVIEW, "review", {"links": "link", "commitments": "fill"}),
+        # The review stage's ledger check needs ledger sources, which the config
+        # leaves out.
+        (Stage.REVIEW, "review", {"links": "link", "commitments": "fill"}, ConfigError),
     ],
 )
 def test_fill_and_review_pass_through_with_their_switch_off(
@@ -308,6 +311,7 @@ def test_fill_and_review_pass_through_with_their_switch_off(
     stage: Stage,
     switch: str,
     carried: dict[str, str],
+    unbuilt: type[Exception],
 ) -> None:
     run = next(entry.run for entry in REGISTRY if entry.name == stage)
 
@@ -323,7 +327,7 @@ def test_fill_and_review_pass_through_with_their_switch_off(
     for table, source in carried.items():
         written = pl.read_parquet(table_path(release_dir, source, table))
         assert output[table].lazy().collect().equals(written)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(unbuilt):
         run(context(on=True))
 
 

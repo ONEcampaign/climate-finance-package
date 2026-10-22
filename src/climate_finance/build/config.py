@@ -62,6 +62,22 @@ class LocalFile(_Section):
     sha256: Sha256
 
 
+class Ledgers(_Section):
+    """The ledgers the review stage checks bank links against.
+
+    Each name in `publishers` is a ledger: `ibrd` and `ida` read World Bank
+    Finances One, `gcf` the GCF projects file fetch always writes, `gcf_readiness`
+    the GCF readiness list, and any other name the files of that publisher on the
+    IATI Bulk Data Service. `years` are the first and last calendar years read and
+    checked. With `archive`, a directory laid out as `raw/ledgers/`, fetch copies the
+    files from it and downloads none.
+    """
+
+    years: tuple[int, int]
+    publishers: tuple[str, ...]
+    archive: ConfigPath | None = None
+
+
 class Sources(_Section):
     """Pinned source versions and local source paths.
 
@@ -69,9 +85,10 @@ class Sources(_Section):
     downloads the file with oda-reader. `crdf_etags`, when not empty, pins every
     CRDF workbook fetch reads to the ETag it maps the workbook's name to.
     `iati_archive` holds one directory of activity XML per publisher, and fetch
-    copies those of `iati_publishers`. `adaptation_labels` names Weikmans et al.'s
-    human-coded adaptation re-evaluation, which fetch copies into `raw/` when
-    `jev_labels` is on and which fits Jev's level map.
+    copies those of `iati_publishers`. Without `ledgers`, fetch and normalise skip
+    the bank ledgers. `adaptation_labels` names Weikmans et al.'s human-coded
+    adaptation re-evaluation, which fetch copies into `raw/` when `jev_labels` is on
+    and which fits Jev's level map.
     """
 
     crs_version: str
@@ -80,7 +97,7 @@ class Sources(_Section):
     iati_archive: ConfigPath
     iati_publishers: tuple[str, ...]
     btr_archive: ConfigPath
-    ledger_archive: ConfigPath
+    ledgers: Ledgers | None = None
     review_decisions: ConfigPath
     adaptation_labels: LocalFile | None = None
 

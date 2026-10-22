@@ -312,7 +312,7 @@ def test_gcf_projects_are_saved_as_served_and_feed_the_reader(tmp_path: Path) ->
         tmp_path, offline=False, client=_client(api), pause_seconds=0
     )
 
-    assert record["path"] == "ledgers/gcf/projects.json"
+    assert record["path"] == "external/gcf/projects.json"
     _manifest_row(record, tmp_path)
     assert (tmp_path / record["path"]).read_bytes() == body
     assert read_gcf_disbursements(tmp_path / record["path"]).height == 8
@@ -370,11 +370,10 @@ def test_gcf_downloads_make_no_request_offline(
         download(tmp_path, offline=True, client=_client(_refuse))
 
 
-def test_gcf_downloads_import_a_local_archive_even_offline(tmp_path: Path) -> None:
-    archive = LEDGERS / "gcf"
+def test_gcf_readiness_imports_a_local_archive_even_offline(tmp_path: Path) -> None:
+    (readiness,) = download_gcf_readiness(
+        tmp_path, offline=True, archive=LEDGERS / "gcf"
+    )
 
-    projects = download_gcf_projects(tmp_path, offline=True, archive=archive)
-    readiness = download_gcf_readiness(tmp_path, offline=True, archive=archive)
-
-    assert [r["method"] for r in projects + readiness] == ["manual", "manual"]
+    assert readiness["method"] == "manual"
     assert read_gcf_readiness(tmp_path / "ledgers" / "gcf" / "readiness.json").height

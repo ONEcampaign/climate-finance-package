@@ -12,19 +12,39 @@ returns that manifest unchanged.
 from __future__ import annotations
 
 import shutil
+from collections.abc import Collection
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict
+from typing import TYPE_CHECKING, Literal
 
 import httpx
 import polars as pl
 
 from climate_finance.build.errors import StageInputMissingError
+from climate_finance.build.readers.ledgers.finances_one import (
+    PUBLISHERS as FINANCES_ONE_PUBLISHERS,
+)
+from climate_finance.build.readers.ledgers.finances_one import snapshot_years
+from climate_finance.build.readers.ledgers.gcf import (
+    PUBLISHER as GCF_PUBLISHER,
+)
+from climate_finance.build.readers.ledgers.gcf import (
+    READINESS_PUBLISHER,
+)
+from climate_finance.build.sources import finances_one, iati
+from climate_finance.build.sources.files import LEDGER_DIR, RawFile
+from climate_finance.build.sources.gcf import (
+    PROJECTS_FILE,
+    READINESS_FILE,
+    READINESS_SOURCE,
+    download_gcf_projects,
+    download_gcf_readiness,
+)
 from climate_finance.errors import SourceUnavailableError
 from climate_finance.schema import RAW_MANIFEST, sha256_file
 
 if TYPE_CHECKING:
-    from climate_finance.build.config import BuildConfig, LocalFile
+    from climate_finance.build.config import BuildConfig, Ledgers, LocalFile
     from climate_finance.build.stages import StageContext, StageOutput
 
 CRS_FILE = Path("oecd/CRS.parquet")
@@ -37,27 +57,13 @@ CRDF_FILES: dict[Perspective, Path] = {
 MULTISYSTEM_FILE = Path("oecd/multisystem.parquet")
 IMPUTED_SHARES_NAME = "Imputed_multilateral_shares.xlsx"
 IMPUTED_SHARES_FILE = Path("oecd") / IMPUTED_SHARES_NAME
-GCF_FILE = Path("external/gcf/projects.json")
+GCF_FILE = PROJECTS_FILE
 IATI_DIR = Path("external/iati")
 DAC_EXCHANGE_FILE = Path("dac_exchange.parquet")
 ADAPTATION_LABELS_FILE = Path("labels/adaptation_labels.csv")
 
 CRDF_URL = "https://webfs.oecd.org/climate/"
-GCF_URL = "https://api.gcfund.org/v1/projects"
 _TIMEOUT = httpx.Timeout(30.0, read=300.0)
-
-
-class RawFile(TypedDict):
-    """One fetched file: a `raw_manifest` row."""
-
-    source: str
-    url: str | None
-    path: str
-    sha256: str
-    etag: str | None
-    version: str | None
-    fetched_at: datetime
-    method: str
 
 
 def run_fetch(context: StageContext) -> StageOutput:
@@ -99,7 +105,7 @@ def fetch_sources(
     """Fetch every source into `raw` and describe each file written.
 
     The bulk CRS comes first, so a challenge stops the fetch before the long
-    downloads.
+    downloads. The ledgers `config` names come last.
 
     Raises:
         SourceUnavailableError: when a source cannot be fetched.
@@ -130,7 +136,7 @@ def fetch_sources(
         *crdf,
         _download_multisystem(raw, years=config.years.crdf),
         _download_imputed_shares(raw),
-        _download_gcf(raw, client=client),
+        *download_gcf_projects(raw, offline=False, client=client),
         _download_dac_exchange(raw),
         *_copy_iati(
             raw, archive=sources.iati_archive, publishers=sources.iati_publishers
@@ -147,6 +153,11 @@ def fetch_sources(
             if (labels := _pinned_files(config).get("adaptation_labels"))
             else []
         ),
+        *(
+            _fetch_ledgers(raw, ledgers=sources.ledgers, client=client)
+            if sources.ledgers is not None
+            else []
+        ),
     ]
 
 
@@ -161,6 +172,11 @@ def expected_sources(config: BuildConfig) -> list[str]:
         "dac_exchange",
         *(f"iati_{publisher}" for publisher in config.sources.iati_publishers),
         *(["adaptation_labels"] if config.jev_labels else []),
+        *(
+            _ledger_sources(config.sources.ledgers)
+            if config.sources.ledgers is not None
+            else []
+        ),
     ]
 
 
@@ -175,6 +191,14 @@ def _pinned_files(config: BuildConfig) -> dict[str, LocalFile]:
     if config.jev_labels:
         pinned["adaptation_labels"] = sources.adaptation_labels
     return {source: local for source, local in pinned.items() if local is not None}
+
+
+def iati_ledger_publishers(publishers: Collection[str]) -> list[str]:
+    """The ledger publishers read from IATI files, which are the rest of
+    `publishers` once World Bank Finances One and the GCF's own files are set
+    aside."""
+    own = {*FINANCES_ONE_PUBLISHERS, GCF_PUBLISHER, READINESS_PUBLISHER}
+    return [publisher for publisher in publishers if publisher not in own]
 
 
 def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> None:
@@ -387,34 +411,6 @@ def _download_imputed_shares(raw: Path) -> RawFile:
     )
 
 
-def _download_gcf(raw: Path, *, client: httpx.Client) -> RawFile:
-    """Save the GCF projects API response as served.
-
-    Raises:
-        SourceUnavailableError: when the request fails or the response is not a
-            JSON list of projects.
-    """
-    try:
-        response = client.get(GCF_URL)
-        response.raise_for_status()
-        projects = response.json()
-    except (httpx.HTTPError, ValueError) as error:
-        raise SourceUnavailableError(
-            f"{GCF_URL} could not be fetched: {error}"
-        ) from error
-    if not isinstance(projects, list):
-        raise SourceUnavailableError(f"{GCF_URL} did not return a list of projects.")
-    _target(raw, GCF_FILE).write_bytes(response.content)
-    return _record(
-        raw,
-        GCF_FILE,
-        source="gcf_projects",
-        method="http",
-        url=GCF_URL,
-        etag=response.headers.get("etag"),
-    )
-
-
 def _download_dac_exchange(raw: Path) -> RawFile:
     """Write pydeflate's DAC annual exchange rates in local currency per US dollar.
 
@@ -451,3 +447,68 @@ def _copy_iati(
                 _record(raw, relative, source=f"iati_{publisher}", method="manual")
             )
     return files
+
+
+def _fetch_ledgers(
+    raw: Path, *, ledgers: Ledgers, client: httpx.Client
+) -> list[RawFile]:
+    """Put the ledgers `ledgers` names under `ledgers/`, from its archive if it has
+    one. The GCF ledger reads the projects file, which every fetch writes.
+
+    Raises:
+        SourceUnavailableError: when a download fails or the archive lacks a file.
+    """
+    first, last = ledgers.years
+    archive = ledgers.archive
+
+    def archived(folder: Path) -> Path | None:
+        return None if archive is None else archive / folder.relative_to(LEDGER_DIR)
+
+    files: list[RawFile] = []
+    if datasets := _finances_one_datasets(ledgers):
+        files += finances_one.download_finances_one(
+            raw,
+            years=range(first, last + 1),
+            datasets=datasets,
+            offline=False,
+            archive=archived(finances_one.FOLDER),
+            client=client,
+        )
+    if publishers := iati_ledger_publishers(ledgers.publishers):
+        files += iati.download_iati_ledgers(
+            raw,
+            publishers=publishers,
+            offline=False,
+            archive=archived(iati.FOLDER),
+            client=client,
+        )
+    if READINESS_PUBLISHER in ledgers.publishers:
+        files += download_gcf_readiness(
+            raw, offline=False, archive=archived(READINESS_FILE.parent), client=client
+        )
+    return files
+
+
+def _ledger_sources(ledgers: Ledgers) -> list[str]:
+    first, last = ledgers.years
+    year_ends = snapshot_years(range(first, last + 1))
+    return [
+        *(
+            finances_one.source_name(dataset, year)
+            for dataset in _finances_one_datasets(ledgers)
+            for year in year_ends
+        ),
+        *(
+            iati.source_name(publisher)
+            for publisher in iati_ledger_publishers(ledgers.publishers)
+        ),
+        *([READINESS_SOURCE] if READINESS_PUBLISHER in ledgers.publishers else []),
+    ]
+
+
+def _finances_one_datasets(ledgers: Ledgers) -> list[finances_one.Dataset]:
+    return [
+        FINANCES_ONE_PUBLISHERS[publisher]
+        for publisher in ledgers.publishers
+        if publisher in FINANCES_ONE_PUBLISHERS
+    ]

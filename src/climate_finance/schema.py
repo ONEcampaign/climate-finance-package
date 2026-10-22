@@ -304,13 +304,14 @@ EXTERNAL = _table(
 # Bank and bilateral ledgers, as the ledger readers return them: one row per
 # transaction, or per World Bank loan and year. `key` is the id the CRS project number
 # carries, so a ledger row and a CRS row join on it; `activity_id` is the id as
-# published. Amounts are as published, in `currency`; `amount_usd` is filled for USD
-# rows only. A World Bank row is the December-to-December flow of a loan, dated 31
-# December. A GEF disbursement is the rise of its running peak, since GEF declares its
-# figures cumulative. `disbursed_to_date` is a GCF readiness grant's disbursed amount,
-# which the list does not date: its `date` and `year` are null and no calendar-year
-# check can use it. `other_ids` lists the activity's other identifiers, which the
-# bilateral id matching reads.
+# published. Amounts are as published, in `currency`; the readers fill `amount_usd` for
+# USD rows, and normalise converts the rest at DAC annual rates where the DAC publishes
+# one for the currency. A World Bank row is the December-to-December flow of a loan,
+# dated 31 December. A GEF disbursement is the rise of its running peak, since GEF
+# declares its figures cumulative. `disbursed_to_date` is a GCF readiness grant's
+# disbursed amount, which the list does not date: its `date` and `year` are null and no
+# calendar-year check can use it. `other_ids` lists the activity's other identifiers,
+# which the bilateral id matching reads.
 LEDGER = _table(
     "ledger",
     ("publisher", "key", "transaction_type", "date", "currency", "amount"),
@@ -811,7 +812,7 @@ def _by_name(*tables: TableSchema) -> Mapping[str, TableSchema]:
 STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
     "fetch": _by_name(RAW_MANIFEST),
     "normalise": _by_name(
-        CRDF, CRS, CORE_CONTRIBUTIONS, IMPUTED_SHARES, EXTERNAL, BTR, ORGS
+        CRDF, CRS, CORE_CONTRIBUTIONS, IMPUTED_SHARES, EXTERNAL, BTR, ORGS, LEDGER
     ),
     "link": _by_name(
         LINKS, UNITS, ID_PRACTICE, PROGRAMME_STEMS, CANDIDATES, PROVIDER_PROFILE
@@ -826,14 +827,15 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
     "assemble": RELEASE_TABLES,
 }
 # Tables a stage may leave out. A stage that reads one that was not written raises
-# StageInputMissingError. `orgs` is written when recoveries are on, `btr` when the
-# build config names an ingested BTR table. `provider_profile` is written by the
-# link stage's scoring step, and the other link steps write their tables without it.
-# `bank_year_overlap` is written by the bank-ledger gap fill, and `review_queue` and
-# `pair_labels` by the review queue. With their switches off the two stages pass the
-# tables they carry forward through unchanged.
+# StageInputMissingError. `orgs` is written when recoveries are on, `btr` when the build
+# config names an ingested BTR table, `ledger` when it names ledger sources.
+# `provider_profile` is written by the link stage's scoring step, and the other link
+# steps write their tables without it. `bank_year_overlap` is written by the bank-ledger
+# gap fill, `review_queue` by the review queue and `pair_labels` by the ledger check.
+# With their switches off the two stages pass the tables they carry forward through
+# unchanged.
 OPTIONAL_STAGE_TABLES: Mapping[str, frozenset[str]] = {
-    "normalise": frozenset({"btr", "orgs"}),
+    "normalise": frozenset({"btr", "orgs", "ledger"}),
     "link": frozenset({"provider_profile"}),
     "fill": frozenset({"bank_year_overlap"}),
     "review": frozenset({"review_queue", "pair_labels"}),

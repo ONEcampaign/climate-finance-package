@@ -19,6 +19,7 @@ from climate_finance.build.normalise.aggregates import rebuild_aggregates
 from climate_finance.build.normalise.crdf import normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs
 from climate_finance.build.normalise.external import normalise_external
+from climate_finance.build.normalise.ledgers import normalise_ledgers
 from climate_finance.build.normalise.orgs import org_names, resolve_orgs
 from climate_finance.build.normalise.vintages import mark_repeats
 from climate_finance.build.readers.gcf import read_gcf_projects
@@ -38,6 +39,8 @@ def run_normalise(context: StageContext) -> StageOutput:
     child rows for the bilateral aggregate rows the bulk records rebuild
     (`parent_row_id`). `orgs` resolves the CRS's and CRDF's provider, agency and
     channel names to DAC codes, and is written only when recoveries are on.
+    `ledger` holds the bank ledgers, and is written only when the build config names
+    them.
     """
     raw = context.raw_dir
     raw_crdf = {
@@ -68,6 +71,8 @@ def run_normalise(context: StageContext) -> StageOutput:
         "imputed_shares": read_imputed_shares(raw / IMPUTED_SHARES_FILE),
         "external": external,
     }
+    if (ledgers := context.config.sources.ledgers) is not None:
+        tables["ledger"] = normalise_ledgers(raw, ledgers=ledgers, exchange=exchange)
     if context.config.recoveries:
         in_years = raw_crs.filter(pl.col("year").is_between(first, last))
         tables["orgs"] = resolve_orgs(

@@ -29,6 +29,10 @@ DATASETS: dict[Dataset, _Columns] = {
     "DS00975": _Columns("ibrd", "loan_number", "disbursed_amount", "project_name_"),
     "DS00976": _Columns("ida", "credit_number", "disbursed_amount_us_", "project_name"),
 }
+# The dataset of each publisher name the ledger frame carries.
+PUBLISHERS: dict[str, Dataset] = {
+    columns.publisher: dataset for dataset, columns in DATASETS.items()
+}
 
 
 def snapshot_file(dataset: Dataset, year: int) -> str:

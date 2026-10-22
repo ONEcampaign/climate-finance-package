@@ -18,6 +18,7 @@ from climate_finance.build.sources.files import (
 from climate_finance.errors import SourceUnavailableError
 
 SOURCE = "ledger_iati"
+FOLDER = Path(LEDGER_DIR) / "iati"
 INDEX = "https://bulk-data.iatistandard.org/datasets-minimal"
 
 
@@ -34,7 +35,8 @@ def download_iati_ledgers(
 
     The service lists each publisher's files in its dataset index; each file is
     fetched from the service's cache a pause apart. Files land in
-    `<raw_dir>/ledgers/iati/<publisher>/`, the directory `read_iati_ledger` takes.
+    `<raw_dir>/ledgers/iati/<publisher>/`, the directory `read_iati_ledger` takes,
+    recorded under the publisher's source name (`source_name`).
 
     Args:
         raw_dir: The raw directory.
@@ -49,17 +51,18 @@ def download_iati_ledgers(
         SourceUnavailableError: when offline without an archive, or when a publisher
             has no file in the index or the archive.
     """
-    folder = Path(LEDGER_DIR) / "iati"
     if archive is not None:
-        return import_archive(
-            {
-                folder / publisher / file.name: file
-                for publisher in publishers
-                for file in sorted((archive / publisher).glob("*.xml"))
-            },
-            raw_dir=raw_dir,
-            source=SOURCE,
-        )
+        records = []
+        for publisher in publishers:
+            records += import_archive(
+                {
+                    FOLDER / publisher / file.name: file
+                    for file in sorted((archive / publisher).glob("*.xml"))
+                },
+                raw_dir=raw_dir,
+                source=source_name(publisher),
+            )
+        return records
     require_online(SOURCE, offline=offline)
     records = []
     with http_client(client) as session:
@@ -84,10 +87,15 @@ def download_iati_ledgers(
                     save(
                         response.content,
                         raw_dir=raw_dir,
-                        relative=folder / publisher / url.rsplit("/", 1)[-1],
-                        source=SOURCE,
+                        relative=FOLDER / publisher / url.rsplit("/", 1)[-1],
+                        source=source_name(publisher),
                         url=url,
                         etag=response.headers.get("etag"),
                     )
                 )
     return records
+
+
+def source_name(publisher: str) -> str:
+    """The `raw_manifest` source of `publisher`'s activity files."""
+    return f"{SOURCE}_{publisher}"
