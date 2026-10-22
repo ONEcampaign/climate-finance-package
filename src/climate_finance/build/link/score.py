@@ -8,14 +8,28 @@ group's labelled pairs, scores the eligible pairs of its other agencies. Provide
 without that truth are scored by Splink, alone or, below `SPLINK_MIN_COMMITMENTS`
 open commitments or `SPLINK_MIN_PAIRS` eligible pairs, pooled.
 
+Some agencies number a project's lines inside its crs id and renumber them from year
+to year: Canada's ids are a ten-character project root and a four-digit line, a line
+can pass to another recipient, and a later year can report the same recipient under a
+line no record commits. Where a project's later records contradict its ids this way
+(see `contradicted_commitments`), the project number and recipient take the id's
+place for lines the id cannot follow (see `id_truth`). Where the project committed
+two lines to one recipient in a year, a new line of that recipient continues one of
+them and nothing says which: those pairs are `unlabelled`, and neither train nor
+measure the classifier.
+
 Labelled pairs split into halves by the md5 of their commitment's donor and crs id
 (the unit id where it has none). The classifier trains on one half, with five folds
 grouped by the same key, and the other half measures it. The out-of-fold scores fit
 an isotonic map: the provider's own where it has at least `MIN_CALIBRATION_PAIRS`
 true and as many false training pairs, else the pooled one. The link threshold
 maximises F1 on out-of-fold scores calibrated by maps fitted on the other folds, so
-no map scores the pairs it was fitted on. F1 counts as misses the true pairs
-blocking did not produce.
+no map scores the pairs it was fitted on.
+
+F1 is read on links, as `classifier_links` makes them: each disbursement unit's best
+pair (`best_commitments`) links when it reaches the threshold, and is right when it
+is true. Recall counts every disbursement unit with a true commitment in the half,
+so a true pair blocking did not produce counts as a miss.
 
 An eligible pair links when its probability reaches the threshold and it is not a
 sibling (`programme_level` 1). Each disbursement unit joins the one commitment it
@@ -61,9 +75,13 @@ PARAMS = {
 METHOD = "classifier"
 MODEL_VERSION = f"truth_hgb/scikit-learn-{sklearn.__version__}"
 # The values of a pair's `split`.
-TRAIN, HELDOUT, ELIGIBLE = "train", "heldout", "eligible"
+TRAIN, HELDOUT, ELIGIBLE, UNLABELLED = "train", "heldout", "eligible", "unlabelled"
 _SIBLING = 1
 _PAIR = ("left_id", "right_id")
+# What a later disbursement shares with the commitment it continues: the crs id, or
+# where the project contradicts its ids, the project and recipient.
+_BY_ID = ["donor_code", "crs_id"]
+_BY_PROJECT = ["donor_code", "agency_code", "project_number", "recipient_code"]
 
 
 @dataclass(frozen=True)
@@ -111,7 +129,15 @@ def score_candidates(
         id_practice: each agency's class per period.
         first_year: the first CRS year the build loads.
     """
-    pairs = with_split(candidates, units=units)
+    contradicted = contradicted_commitments(units, first_year=first_year)
+    truth = id_truth(
+        units,
+        links=links,
+        id_practice=id_practice,
+        first_year=first_year,
+        contradicted=contradicted,
+    )
+    pairs = with_split(candidates, units=units, truth=truth)
     groups = scoring_groups(pairs)
     if not (groups["scoring_group"] == "truth").any():
         columns = schema.LINKS.columns.items()
@@ -127,7 +153,6 @@ def score_candidates(
         how="semi",
     )
     features = comparison_levels(pairs, attributes=unit_attributes(compared, crs=crs))
-    truth = id_truth(units, links=links, id_practice=id_practice, first_year=first_year)
     scores = score_truth_group(features, groups=groups, truth=truth)
     return Scored(
         links=classifier_links(scores),
@@ -165,14 +190,31 @@ def id_truth(
     links: pl.DataFrame,
     id_practice: pl.DataFrame,
     first_year: int,
+    contradicted: pl.DataFrame,
 ) -> pl.DataFrame:
-    """Every (disbursement, commitment) unit pair the crs id says continues, blocked
-    or not.
+    """Every (disbursement, commitment) unit pair the ids say continues, blocked or
+    not, and the pairs whose continuation the ids leave open.
 
     A commitment counts when a `crdf_crs` link reaches it, it has a crs id, and its
     agency is `id_persistent` in its record year's period. It continues in every
-    disbursement unit of its donor and crs id from a later record year whose floor
-    year is not before `first_year`.
+    disbursement unit from a later record year whose floor year is not before
+    `first_year` and that has its donor and crs id.
+
+    Where `contradicted` names the commitment, its own id continues in such a unit
+    unless the unit's recipient is one another line of the project committed to in
+    the commitment's year: the line passed to that recipient. The commitment also
+    continues in every such unit of its donor, agency, project number and recipient
+    under a new line: a crs id that never committed to the unit's recipient in or
+    before the unit's record year, and that commits elsewhere or is first recorded
+    after the commitment's year. Where the commitment is ambiguous, those new-line
+    pairs are `ambiguous`: they continue one of the recipient's lines, and nothing
+    says which.
+
+    Args:
+        contradicted: `contradicted_commitments`.
+
+    Returns:
+        left_id, right_id, donor_code and ambiguous, sorted by pair.
     """
     persistent = id_practice.filter(id_class="id_persistent").select(
         "donor_code", "agency_code", "period"
@@ -186,46 +228,215 @@ def id_truth(
         .drop_nulls("crs_id")
         .with_columns(period=period_of(pl.col("year")))
         .join(persistent, on=["donor_code", "agency_code", "period"], how="semi")
+        .join(contradicted, on="unit_id", how="left")
     )
-    disbursements = units.filter(
-        pl.col("disbursement_usd") > 0,
-        pl.col("floor_year").is_null() | (pl.col("floor_year") >= first_year),
-    )
-    return (
-        commitments.select("unit_id", "donor_code", "crs_id", "year")
+    disbursements = _later_lines(units, first_year=first_year)
+    later = pl.col("year_left") > pl.col("year")
+    by_id = (
+        commitments.select("unit_id", "year", "ambiguous", *_BY_PROJECT, "crs_id")
         .join(
-            disbursements.select("unit_id", "donor_code", "crs_id", "year"),
-            on=["donor_code", "crs_id"],
+            disbursements.select("unit_id", "year", "recipient_code", *_BY_ID),
+            on=_BY_ID,
             suffix="_left",
         )
-        .filter(pl.col("year_left") > pl.col("year"))
-        .select(left_id="unit_id_left", right_id="unit_id", donor_code="donor_code")
+        .filter(later)
+    )
+    project = ["donor_code", "agency_code", "project_number", "year"]
+    passed = (
+        by_id.filter(
+            pl.col("ambiguous").is_not_null(),
+            pl.col("recipient_code_left") != pl.col("recipient_code"),
+        )
+        .join(
+            units.filter(pl.col("commitment_usd") > 0).select(
+                *project, "crs_id", recipient_code_left="recipient_code"
+            ),
+            on=[*project, "recipient_code_left"],
+            suffix="_sibling",
+        )
+        .filter(pl.col("crs_id_sibling") != pl.col("crs_id"))
+        .unique(["unit_id", "unit_id_left"])
+    )
+    new_line = ~pl.col("anchored") & (
+        pl.col("committed") | (pl.col("seen_year") > pl.col("year"))
+    )
+    by_project = (
+        commitments.drop_nulls("ambiguous")
+        .select("unit_id", "year", "crs_id", "ambiguous", *_BY_PROJECT)
+        .join(
+            disbursements.select(
+                "unit_id",
+                "year",
+                "crs_id",
+                "anchored",
+                "committed",
+                "seen_year",
+                *_BY_PROJECT,
+            ),
+            on=_BY_PROJECT,
+            suffix="_left",
+        )
+        .filter(
+            later,
+            pl.col("crs_id_left") != pl.col("crs_id"),
+            new_line.fill_null(value=False),
+        )
+    )
+    return pl.concat(
+        [
+            by_id.join(passed, on=["unit_id", "unit_id_left"], how="anti").select(
+                left_id="unit_id_left",
+                right_id="unit_id",
+                donor_code="donor_code",
+                ambiguous=pl.lit(value=False),
+            ),
+            by_project.select(
+                left_id="unit_id_left",
+                right_id="unit_id",
+                donor_code="donor_code",
+                ambiguous="ambiguous",
+            ),
+        ]
+    ).sort(*_PAIR)
+
+
+def _later_lines(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
+    """The disbursement units a commitment can continue in: those whose floor year
+    is not before `first_year`, each with what its crs id says of it.
+
+    `anchored` holds when the id committed to the unit's recipient in or before the
+    unit's record year, `committed` when the id commits anywhere, and `seen_year` is
+    the id's first record year.
+    """
+    commitments = units.filter(pl.col("commitment_usd") > 0).drop_nulls("crs_id")
+    line = ["donor_code", "crs_id"]
+    anchors = commitments.group_by(*line, "recipient_code").agg(
+        anchor_year=pl.col("year").min()
+    )
+    committed = commitments.select(*line).unique().with_columns(committed=True)
+    seen = units.drop_nulls("crs_id").group_by(line).agg(seen_year=pl.col("year").min())
+    return (
+        units.filter(
+            pl.col("disbursement_usd") > 0,
+            pl.col("floor_year").is_null() | (pl.col("floor_year") >= first_year),
+        )
+        .join(anchors, on=[*line, "recipient_code"], how="left")
+        .join(committed, on=line, how="left")
+        .join(seen, on=line, how="left")
+        .with_columns(
+            anchored=(pl.col("anchor_year") <= pl.col("year")).fill_null(value=False),
+            committed=pl.col("committed").fill_null(value=False),
+        )
     )
 
 
-def with_split(candidates: pl.DataFrame, *, units: pl.DataFrame) -> pl.DataFrame:
-    """`candidates` with `split`, and the commitment's `split_key` and
+def contradicted_commitments(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
+    """The commitment units whose crs id the project's later records contradict.
+
+    Within one (donor, agency, project number), a commitment of record year Y is
+    contradicted by a disbursement unit of a later record year, whose floor year is
+    not before `first_year`, that either
+    - has the commitment's recipient and a crs id the donor never commits and first
+      records after Y: the line was renumbered, or
+    - has the commitment's crs id and the recipient another crs id of the project
+      committed in Y: the lines passed between recipients.
+
+    Every commitment of a contradicted (donor, agency, project number, Y) is returned,
+    since its siblings' labels are wrong too.
+
+    Returns:
+        unit_id, sorted, and `ambiguous`: whether the project committed more than one
+        crs id to the commitment's recipient in Y, so that the project number and
+        recipient cannot say which line a later record continues.
+    """
+    project = ["donor_code", "agency_code", "project_number"]
+    commitments = units.filter(pl.col("commitment_usd") > 0)
+    lines = (
+        commitments.drop_nulls(["crs_id", "project_number"])
+        .select(*project, "year", "crs_id", "recipient_code")
+        .unique()
+    )
+    disbursed = (
+        _later_lines(units, first_year=first_year)
+        .drop_nulls(["crs_id", "project_number"])
+        .select(
+            *project,
+            "crs_id",
+            "recipient_code",
+            "committed",
+            "seen_year",
+            year_later="year",
+        )
+        .unique()
+    )
+    later = pl.col("year_later") > pl.col("year")
+    renumbered = lines.join(
+        disbursed.filter(~pl.col("committed")), on=[*project, "recipient_code"]
+    ).filter(later, pl.col("seen_year") > pl.col("year"))
+    siblings = lines.select(
+        *project, "year", sibling_id="crs_id", recipient_later="recipient_code"
+    )
+    moved = (
+        lines.join(
+            disbursed.rename({"recipient_code": "recipient_later"}),
+            on=[*project, "crs_id"],
+        )
+        .filter(later, pl.col("recipient_later") != pl.col("recipient_code"))
+        .join(siblings, on=[*project, "year", "recipient_later"])
+        .filter(pl.col("sibling_id") != pl.col("crs_id"))
+    )
+    contradicted = pl.concat(
+        [frame.select(*project, "year") for frame in (renumbered, moved)]
+    ).unique()
+    ambiguous = (
+        pl.col("crs_id")
+        .drop_nulls()
+        .n_unique()
+        .over(*project, "recipient_code", "year")
+        > 1
+    )
+    return (
+        commitments.join(contradicted, on=[*project, "year"], how="semi")
+        .select("unit_id", ambiguous=ambiguous)
+        .sort("unit_id")
+    )
+
+
+def with_split(
+    candidates: pl.DataFrame,
+    *,
+    units: pl.DataFrame,
+    truth: pl.DataFrame,
+) -> pl.DataFrame:
+    """`candidates` with `split`, `true_pair`, and the commitment's `split_key` and
     `placed_year`.
 
-    A labelled pair (`id_persistent`) is `train` or `heldout` by its split key; any
-    other is `eligible`.
+    A labelled pair (`id_persistent`) is `unlabelled` when `truth` (`id_truth`)
+    holds it as ambiguous, else `train` or `heldout` by its split key; any other
+    pair is `eligible`. `true_pair` says whether `truth` holds the pair and not as
+    ambiguous.
     """
     commitments = units.select(
         right_id="unit_id",
         split_key=split_key(pl.col("donor_code"), pl.col("crs_id"), pl.col("unit_id")),
         placed_year="placed_year",
     )
-    pairs = candidates.join(
-        commitments, on="right_id", how="left", maintain_order="left"
+    held = truth.select(*_PAIR, "ambiguous")
+    pairs = (
+        candidates.join(commitments, on="right_id", how="left", maintain_order="left")
+        .join(held, on=_PAIR, how="left", maintain_order="left")
+        .with_columns(true_pair=pl.col("ambiguous").not_().fill_null(value=False))
     )
     heldout = is_heldout(pairs["split_key"])
     return pairs.with_columns(
         split=pl.when(~pl.col("id_persistent"))
         .then(pl.lit(ELIGIBLE))
+        .when(pl.col("ambiguous").fill_null(value=False))
+        .then(pl.lit(UNLABELLED))
         .when(heldout)
         .then(pl.lit(HELDOUT))
         .otherwise(pl.lit(TRAIN))
-    )
+    ).drop("ambiguous")
 
 
 def scoring_groups(pairs: pl.DataFrame) -> pl.DataFrame:
@@ -241,7 +452,7 @@ def scoring_groups(pairs: pl.DataFrame) -> pl.DataFrame:
     """
     eligible = pl.col("split") == ELIGIBLE
     counts = pairs.group_by(provider_code="donor_code").agg(
-        true_pairs=((pl.col("split") == TRAIN) & pl.col("same_crs_id")).sum(),
+        true_pairs=((pl.col("split") == TRAIN) & pl.col("true_pair")).sum(),
         commitments=pl.col("right_id").filter(eligible).n_unique(),
         pairs=eligible.sum(),
     )
@@ -276,7 +487,7 @@ def score_truth_group(
         pl.col("donor_code").is_in(members["provider_code"].implode())
     ).sort(*_PAIR)
     train = pairs.filter(split=TRAIN)
-    x, y = _matrix(train), train["same_crs_id"].to_numpy()
+    x, y = _matrix(train), train["true_pair"].to_numpy()
     donors = train["donor_code"].to_numpy()
     folds = list(GroupKFold(n_splits=FOLDS).split(x, y, train["split_key"].to_numpy()))
     raw = np.empty(len(y))
@@ -286,8 +497,12 @@ def score_truth_group(
     for fit_rows, score_rows in folds:
         fold_maps = _isotonic_maps(raw[fit_rows], y[fit_rows], donors[fit_rows])
         crossed[score_rows] = _calibrate(fold_maps, raw[score_rows], donors[score_rows])
-    n_true = truth.join(train.select("right_id").unique(), on="right_id", how="semi")
-    threshold = _best_threshold(crossed, y, n_true=n_true.height)
+    best = best_commitments(train.with_columns(p_model=pl.Series(crossed)))
+    threshold = _best_threshold(
+        best["p_model"].to_numpy(),
+        best["true_pair"].to_numpy(),
+        n_true=true_disbursements(truth, commitments=train["right_id"]),
+    )
 
     model = _fit(x, y)
     maps = _isotonic_maps(raw, y, donors)
@@ -309,20 +524,41 @@ def score_truth_group(
     return TruthScores(pairs=scored, threshold=threshold, calibration=calibration)
 
 
+def best_commitments(pairs: pl.DataFrame) -> pl.DataFrame:
+    """Each disbursement unit's best pair among `pairs` that are not siblings: the
+    highest `p_model`, ties to the earlier placed year, then the smaller commitment
+    unit id."""
+    return (
+        pairs.filter(pl.col("programme_level") != _SIBLING)
+        .sort(
+            "left_id",
+            "p_model",
+            "placed_year",
+            "right_id",
+            descending=[False, True, False, False],
+        )
+        .unique("left_id", keep="first", maintain_order=True)
+    )
+
+
+def true_disbursements(truth: pl.DataFrame, *, commitments: pl.Series) -> int:
+    """How many disbursement units `truth` (`id_truth`) says continue one of
+    `commitments`, ambiguous pairs aside: the links a perfect classifier makes."""
+    return (
+        truth.filter(~pl.col("ambiguous"))
+        .join(commitments.unique().to_frame("right_id"), on="right_id", how="semi")[
+            "left_id"
+        ]
+        .n_unique()
+    )
+
+
 def classifier_links(scores: TruthScores) -> pl.DataFrame:
     """The classifier's `trace` links, in the `links` schema."""
     taken = scores.pairs.filter(
-        pl.col("split") == ELIGIBLE,
-        pl.col("programme_level") != _SIBLING,
-        pl.col("p_model") >= scores.threshold,
+        pl.col("split") == ELIGIBLE, pl.col("p_model") >= scores.threshold
     )
-    best = taken.sort(
-        "left_id",
-        "p_model",
-        "placed_year",
-        "right_id",
-        descending=[False, True, False, False],
-    ).unique("left_id", keep="first", maintain_order=True)
+    best = best_commitments(taken)
     given = {
         "task": pl.lit("trace"),
         "left_id": pl.col("left_id"),
@@ -425,8 +661,8 @@ def _calibrate(
 
 
 def _best_threshold(p: np.ndarray, y: np.ndarray, *, n_true: int) -> float:
-    """The grid threshold of highest F1, the lowest on ties, against `n_true` true
-    pairs in all."""
+    """The grid threshold of highest F1, the lowest on ties, of links with
+    probabilities `p` and correctness `y`, against `n_true` right links in all."""
     true = y.astype(bool)
     f1 = [
         2 * int((p[true] >= t).sum()) / (int((p >= t).sum()) + n_true)

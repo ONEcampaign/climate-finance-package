@@ -1,5 +1,6 @@
 """The truth-group classifier, its links and the provider profile."""
 
+import datetime as dt
 from collections.abc import Iterator
 
 import polars as pl
@@ -16,8 +17,11 @@ from climate_finance.build.link.score import (
     SPLINK_MIN_COMMITMENTS,
     SPLINK_MIN_PAIRS,
     TRAIN,
+    UNLABELLED,
     TruthScores,
+    best_commitments,
     classifier_links,
+    contradicted_commitments,
     id_truth,
     is_heldout,
     provider_profile,
@@ -35,6 +39,7 @@ _PAIRS_SCHEMA = {
     "year_gap": pl.Int16,
     "programme_level": pl.Int8,
     "same_crs_id": pl.Boolean,
+    "true_pair": pl.Boolean,
     "id_persistent": pl.Boolean,
     "eligible": pl.Boolean,
     "split_key": pl.String,
@@ -79,6 +84,7 @@ def _pair(
         "year_gap": 2,
         "programme_level": programme_level,
         "same_crs_id": same,
+        "true_pair": same,
         "id_persistent": split != ELIGIBLE,
         "eligible": split == ELIGIBLE,
         "split_key": f"{donor}|{right}",
@@ -137,16 +143,29 @@ _ELIGIBLE = [
     _pair("e2", "o2", donor=1, split=ELIGIBLE, same=False, levels=_OTHER),
     _pair("e3", "o3", donor=3, split=ELIGIBLE, same=False, levels=_SAME),
 ]
+# Pairs whose labels the project contradicts: true ones that look false and false
+# ones that look true.
+_UNLABELLED = [
+    _pair(f"u{index}", "cu", donor=1, split=UNLABELLED, same=same, levels=levels)
+    for index, (same, levels) in enumerate([(True, _OTHER), (False, _SAME)] * 20)
+]
 _FEATURES = _frame(
     [
         *_labelled(1, 400, false_pairs=4),
         *_labelled(2, 2 * MIN_TRUE_PAIRS + 10, false_pairs=0),
+        *_UNLABELLED,
         *_ELIGIBLE,
     ]
 )
-_NO_MISSED_TRUTH = pl.DataFrame(
-    schema={"left_id": pl.String, "right_id": pl.String, "donor_code": pl.Int32}
+_NONE_CONTRADICTED = pl.DataFrame(
+    schema={"unit_id": pl.String, "ambiguous": pl.Boolean}
 )
+_TRUTH_SCHEMA = {
+    "left_id": pl.String,
+    "right_id": pl.String,
+    "donor_code": pl.Int32,
+    "ambiguous": pl.Boolean,
+}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -165,7 +184,9 @@ def scores() -> TruthScores:
 
 
 def _truth(pairs: pl.DataFrame) -> pl.DataFrame:
-    return pairs.filter("same_crs_id").select("left_id", "right_id", "donor_code")
+    return pairs.filter("true_pair").select(
+        "left_id", "right_id", "donor_code", ambiguous=pl.lit(value=False)
+    )
 
 
 def _p(scores: TruthScores, left: str) -> float:
@@ -190,10 +211,10 @@ def test_the_split_key_is_donor_and_crs_id_else_the_unit() -> None:
 def test_with_split_halves_labelled_pairs_by_their_commitment() -> None:
     units = pl.DataFrame(
         {
-            "unit_id": ["c1", "c2"],
-            "donor_code": [5, 5],
-            "crs_id": ["ABC", "ABD"],
-            "placed_year": [2019, 2020],
+            "unit_id": ["c1", "c2", "c3"],
+            "donor_code": [5, 5, 5],
+            "crs_id": ["ABC", "ABD", "ABE"],
+            "placed_year": [2019, 2020, 2021],
         },
         schema={
             "unit_id": pl.String,
@@ -204,14 +225,23 @@ def test_with_split_halves_labelled_pairs_by_their_commitment() -> None:
     )
     candidates = pl.DataFrame(
         {
-            "left_id": ["d1", "d2", "d3"],
-            "right_id": ["c1", "c2", "c1"],
-            "id_persistent": [True, True, False],
+            "left_id": ["d1", "d2", "d3", "d4", "d5"],
+            "right_id": ["c1", "c2", "c1", "c3", "c3"],
+            "id_persistent": [True, True, False, True, False],
         }
     )
-    pairs = with_split(candidates, units=units)
-    assert pairs["split"].to_list() == [HELDOUT, TRAIN, ELIGIBLE]
-    assert pairs["placed_year"].to_list() == [2019, 2020, 2019]
+    truth = pl.DataFrame(
+        {
+            "left_id": ["d2", "d4"],
+            "right_id": ["c2", "c3"],
+            "donor_code": [5, 5],
+            "ambiguous": [False, True],
+        }
+    )
+    pairs = with_split(candidates, units=units, truth=truth)
+    assert pairs["split"].to_list() == [HELDOUT, TRAIN, ELIGIBLE, UNLABELLED, ELIGIBLE]
+    assert pairs["true_pair"].to_list() == [False, True, False, False, False]
+    assert pairs["placed_year"].to_list() == [2019, 2020, 2019, 2021, 2021]
 
 
 @pytest.mark.parametrize(
@@ -230,9 +260,10 @@ def test_scoring_groups(
         _pair(f"t{index}", f"c{index}", donor=7, split=TRAIN, same=True, levels={})
         for index in range(true_pairs)
     ]
-    # A held-out true pair and a false training pair add no truth.
+    # Held-out and unlabelled true pairs and a false training pair add no truth.
     rows += [
         _pair("h", "ch", donor=7, split=HELDOUT, same=True, levels={}),
+        _pair("u", "cu", donor=7, split=UNLABELLED, same=True, levels={}),
         _pair("f", "cf", donor=7, split=TRAIN, same=False, levels={}),
     ]
     rows += [
@@ -312,8 +343,206 @@ def test_id_truth_follows_the_crs_id_into_later_disbursements() -> None:
             "id_class": pl.String,
         },
     )
-    truth = id_truth(units, links=links, id_practice=id_practice, first_year=2010)
+    truth = id_truth(
+        units,
+        links=links,
+        id_practice=id_practice,
+        first_year=2010,
+        contradicted=_NONE_CONTRADICTED,
+    )
     assert truth.select("left_id", "right_id").rows() == [(unit["d"], unit["c"])]
+
+
+_CRS_SCHEMA = {
+    "record_id": pl.String,
+    "donor_code": pl.Int32,
+    "agency_code": pl.Int32,
+    "crs_id": pl.String,
+    "project_number": pl.String,
+    "recipient_code": pl.Int32,
+    "purpose_code": pl.Int32,
+    "year": pl.Int16,
+    "commitment_date": pl.Date,
+    "commitment_usd": pl.Float64,
+    "disbursement_usd": pl.Float64,
+}
+
+
+def _line(
+    record_id: str,
+    crs_id: str,
+    *,
+    recipient: int,
+    year: int,
+    committed: bool,
+    project: str = "P1",
+    commitment_date: dt.date | None = None,
+) -> dict[str, object]:
+    """A record of one line of a project of donor 301."""
+    return {
+        "record_id": record_id,
+        "donor_code": 301,
+        "agency_code": 3,
+        "crs_id": crs_id,
+        "project_number": project,
+        "recipient_code": recipient,
+        "purpose_code": 23240,
+        "year": year,
+        "commitment_date": commitment_date,
+        "commitment_usd": 10.0 if committed else None,
+        "disbursement_usd": None if committed else 4.0,
+    }
+
+
+# Project P1 commits two lines in 2018, one per recipient.
+_P1 = [
+    _line("a", "20182009630001", recipient=358, year=2018, committed=True),
+    _line("b", "20182009630002", recipient=489, year=2018, committed=True),
+]
+
+
+@pytest.mark.parametrize(
+    ("later", "contradicted"),
+    [
+        # Each line disburses later under its own id and recipient.
+        (
+            [
+                _line("c", "20182009630001", recipient=358, year=2020, committed=False),
+                _line("d", "20182009630002", recipient=489, year=2021, committed=False),
+            ],
+            False,
+        ),
+        # A recipient's money later runs under a line no record commits.
+        (
+            [_line("c", "20182009631", recipient=358, year=2019, committed=False)],
+            True,
+        ),
+        # A line passes to the other line's recipient.
+        (
+            [_line("c", "20182009630001", recipient=489, year=2021, committed=False)],
+            True,
+        ),
+        # A line passes to a recipient no line of the project committed to.
+        (
+            [_line("c", "20182009630001", recipient=389, year=2021, committed=False)],
+            False,
+        ),
+        # An uncommitted line of another recipient, of the same year, of another
+        # project, or committed before the first year says nothing.
+        (
+            [
+                _line("c", "20182009635", recipient=389, year=2019, committed=False),
+                _line("d", "20182009636", recipient=358, year=2018, committed=False),
+                _line(
+                    "e",
+                    "20182009637",
+                    recipient=358,
+                    year=2019,
+                    committed=False,
+                    project="P2",
+                ),
+                _line(
+                    "f",
+                    "20182009638",
+                    recipient=358,
+                    year=2019,
+                    committed=False,
+                    commitment_date=dt.date(2009, 5, 1),
+                ),
+            ],
+            False,
+        ),
+        # A later tranche under its own committed id is no contradiction.
+        (
+            [
+                _line("c", "20192009630001", recipient=358, year=2019, committed=True),
+                _line("d", "20192009630001", recipient=358, year=2020, committed=False),
+            ],
+            False,
+        ),
+    ],
+)
+def test_a_project_whose_lines_move_contradicts_its_ids(
+    later: list[dict[str, object]], contradicted: bool
+) -> None:
+    units = build_units(pl.LazyFrame([*_P1, *later], schema=_CRS_SCHEMA)).collect()
+    p1_2018 = units.filter(pl.col("year") == 2018, pl.col("commitment_usd") > 0)
+    found = contradicted_commitments(units, first_year=2010)
+    # Both lines of the project lose their labels, or neither does.
+    assert found["unit_id"].to_list() == (
+        sorted(p1_2018["unit_id"]) if contradicted else []
+    )
+    assert not found["ambiguous"].any()
+
+
+# Line 0001 passes to recipient 489, and 358 continues under an unpadded id.
+_PASSED = _line("c", "20182009630001", recipient=489, year=2021, committed=False)
+_UNPADDED = _line("d", "20182009631", recipient=358, year=2019, committed=False)
+
+
+@pytest.mark.parametrize(
+    ("later", "expected"),
+    [
+        (
+            [_PASSED, _UNPADDED],
+            {("c", "b", False), ("d", "a", False)},
+        ),
+        # A second line committed to 358 in 2018 leaves 358's new line ambiguous.
+        (
+            [
+                _PASSED,
+                _UNPADDED,
+                _line("e", "20182009630003", recipient=358, year=2018, committed=True),
+            ],
+            {("c", "b", False), ("d", "a", True), ("d", "e", True)},
+        ),
+        # A line that committed to 358 before it disburses there names its own
+        # commitment, and so does a line recorded before the project committed.
+        (
+            [
+                _UNPADDED,
+                _line("f", "20182009630003", recipient=358, year=2019, committed=True),
+                _line("g", "20182009630003", recipient=358, year=2020, committed=False),
+                _line("h", "20172009639", recipient=358, year=2017, committed=False),
+                _line("i", "20172009639", recipient=358, year=2019, committed=False),
+            ],
+            {("d", "a", False)},
+        ),
+    ],
+)
+def test_a_contradicted_project_continues_by_project_and_recipient(
+    later: list[dict[str, object]], expected: set[tuple[str, str, bool]]
+) -> None:
+    units = build_units(pl.LazyFrame([*_P1, *later], schema=_CRS_SCHEMA)).collect()
+    unit = {
+        ids[0]: unit_id
+        for unit_id, ids in units.select("unit_id", "record_ids").iter_rows()
+    }
+    truth = id_truth(
+        units,
+        links=units.filter(pl.col("commitment_usd") > 0).select(
+            task=pl.lit("crdf_crs"), right_id="unit_id"
+        ),
+        id_practice=pl.DataFrame(
+            {
+                "donor_code": [301],
+                "agency_code": [3],
+                "period": ["2015-2018"],
+                "id_class": ["id_persistent"],
+            },
+            schema={
+                "donor_code": pl.Int32,
+                "agency_code": pl.Int32,
+                "period": pl.String,
+                "id_class": pl.String,
+            },
+        ),
+        first_year=2010,
+        contradicted=contradicted_commitments(units, first_year=2010),
+    )
+    assert set(truth.select("left_id", "right_id", "ambiguous").iter_rows()) == {
+        (unit[left], unit[right], ambiguous) for left, right, ambiguous in expected
+    }
 
 
 def test_the_classifier_scores_only_the_truth_group(scores: TruthScores) -> None:
@@ -327,11 +556,13 @@ def test_a_provider_with_enough_labels_takes_its_own_map(scores: TruthScores) ->
     assert dict(scores.calibration.iter_rows()) == {1: "own", 2: "pooled"}
 
 
-def test_held_out_labels_never_reach_the_model(scores: TruthScores) -> None:
+def test_held_out_and_unlabelled_labels_never_reach_the_model(
+    scores: TruthScores,
+) -> None:
     flipped = _FEATURES.with_columns(
-        same_crs_id=pl.when(pl.col("split") == HELDOUT)
-        .then(~pl.col("same_crs_id"))
-        .otherwise(pl.col("same_crs_id"))
+        true_pair=pl.when(pl.col("split").is_in([HELDOUT, UNLABELLED]))
+        .then(~pl.col("true_pair"))
+        .otherwise(pl.col("true_pair"))
     )
     again = score_truth_group(
         flipped, groups=scoring_groups(flipped), truth=_truth(_FEATURES)
@@ -348,12 +579,53 @@ def test_missed_truth_counts_against_recall(scores: TruthScores) -> None:
             "left_id": [f"m{index}" for index in range(20_000)],
             "right_id": ["c1-1"] * 20_000,
             "donor_code": [1] * 20_000,
+            "ambiguous": [False] * 20_000,
         },
-        schema=_NO_MISSED_TRUTH.schema,
+        schema=_TRUTH_SCHEMA,
     )
     truth = pl.concat([_truth(_FEATURES), missed])
     again = score_truth_group(_FEATURES, groups=scoring_groups(_FEATURES), truth=truth)
     assert again.threshold < scores.threshold
+
+
+def test_recall_counts_disbursements_not_pairs(scores: TruthScores) -> None:
+    # A disbursement links one commitment, so more true commitments for the
+    # disbursements that already count, or ambiguous ones, leave the threshold.
+    train = _truth(_FEATURES.filter(split=TRAIN, donor_code=1))
+    commitments = train["right_id"].unique().sort()
+    extra = train.join(commitments.head(20).to_frame("other"), how="cross").select(
+        "left_id", right_id="other", donor_code="donor_code", ambiguous="ambiguous"
+    )
+    open_pairs = pl.DataFrame(
+        {
+            "left_id": [f"a{index}" for index in range(20_000)],
+            "right_id": ["c1-1"] * 20_000,
+            "donor_code": [1] * 20_000,
+            "ambiguous": [True] * 20_000,
+        },
+        schema=_TRUTH_SCHEMA,
+    )
+    truth = pl.concat([_truth(_FEATURES), extra, open_pairs]).unique()
+    again = score_truth_group(_FEATURES, groups=scoring_groups(_FEATURES), truth=truth)
+    assert again.threshold == scores.threshold
+
+
+def test_best_commitments_follow_the_link_rule() -> None:
+    best = best_commitments(
+        _scores(
+            _eligible("d1", "c1", 0.6),
+            _eligible("d1", "c2", 0.8),
+            _eligible("d2", "c3", 0.7, placed_year=2019),
+            _eligible("d2", "c4", 0.7, placed_year=2018),
+            _eligible("d3", "c5", 0.99, programme_level=1),
+            _eligible("d3", "c6", 0.1),
+        ).pairs
+    )
+    assert best.select("left_id", "right_id").rows() == [
+        ("d1", "c2"),
+        ("d2", "c4"),
+        ("d3", "c6"),
+    ]
 
 
 def _scores(*rows: dict[str, object], threshold: float = 0.5) -> TruthScores:

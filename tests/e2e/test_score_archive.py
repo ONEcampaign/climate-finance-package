@@ -1,12 +1,13 @@
 """The truth-group classifier on the archived OECD files.
 
 The archive builds through link with key repair and recoveries on, as in
-`build.toml`. The classifier is measured on the held-out half of the labelled pairs:
-F1, precision and recall at the link threshold count as misses the true pairs
-blocking never produced, and the expected calibration error reads ten equal bins of
-probability over the pairs scored at 0.05 or more. Provider classes are the CRDF
-provider types of the commitment's (provider, agency), DAC and non-DAC members
-counting as bilateral.
+`build.toml`. The classifier is measured on the held-out half of the labelled pairs.
+F1, precision and recall are read on links: each disbursement unit's best pair links
+at the threshold and is right when true, and recall counts every disbursement unit
+with a true commitment in the half, blocked or not. The expected calibration error
+reads ten equal bins of probability over the pairs scored at 0.05 or more. Provider
+classes are the CRDF provider types of the commitment's (provider, agency), DAC and
+non-DAC members counting as bilateral.
 """
 
 import os
@@ -20,12 +21,14 @@ from archive_build import archive_config, seed_release
 from climate_finance import schema
 from climate_finance.build import Stage, build
 from climate_finance.build.allocate import run_allocate
-from climate_finance.build.link.id_practice import period_of
 from climate_finance.build.link.score import (
     HELDOUT,
     METHOD,
     Scored,
     TruthScores,
+    best_commitments,
+    contradicted_commitments,
+    id_truth,
     score_candidates,
 )
 from climate_finance.build.normalise.crs import trace_population
@@ -100,38 +103,19 @@ def _scores(scored: Scored) -> TruthScores:
 
 @pytest.fixture(scope="module")
 def heldout(
-    release_dir: Path, scored: Scored, archive: Path
+    release_dir: Path, scored: Scored, keyed_links: pl.DataFrame, archive: Path
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Held-out pairs, and every id-truth pair of their commitments, blocked or
-    not, each with the commitment's record year and provider class."""
+    """Held-out pairs, and every true pair of their commitments, blocked or not,
+    each with the commitment's record year and provider class."""
     pairs = _scores(scored).pairs.filter(split=HELDOUT)
     units = _read(release_dir, "link", "units")
-    persistent = (
-        _read(release_dir, "link", "id_practice")
-        .filter(id_class="id_persistent")
-        .select("donor_code", "agency_code", "period")
-    )
-    commitments = (
-        units.join(pairs.select(unit_id="right_id").unique(), on="unit_id", how="semi")
-        .drop_nulls("crs_id")
-        .with_columns(period=period_of(pl.col("year")))
-        .join(persistent, on=["donor_code", "agency_code", "period"], how="semi")
-    )
-    later = units.filter(
-        pl.col("disbursement_usd") > 0,
-        pl.col("floor_year").is_null() | (pl.col("floor_year") >= FIRST_YEAR),
-    )
-    truth = (
-        commitments.select(
-            right_id="unit_id", donor_code="donor_code", crs_id="crs_id", year="year"
-        )
-        .join(
-            later.select("donor_code", "crs_id", year_left="year"),
-            on=["donor_code", "crs_id"],
-        )
-        .filter(pl.col("year_left") > pl.col("year"))
-        .select("right_id")
-    )
+    truth = id_truth(
+        units,
+        links=keyed_links,
+        id_practice=_read(release_dir, "link", "id_practice"),
+        first_year=FIRST_YEAR,
+        contradicted=contradicted_commitments(units, first_year=FIRST_YEAR),
+    ).join(pairs.select("right_id").unique(), on="right_id", how="semi")
     categories = (
         pl.scan_parquet(archive / "oecd" / "crdf_recipient.parquet")
         .select(
@@ -166,15 +150,16 @@ def _ece(p: np.ndarray, y: np.ndarray) -> float:
 def _measure(
     pairs: pl.DataFrame, truth: pl.DataFrame, *, threshold: float
 ) -> dict[str, float]:
+    links = best_commitments(pairs).filter(pl.col("p_model") >= threshold)
+    hits = int(links["true_pair"].sum())
+    true = truth.filter(~pl.col("ambiguous"))["left_id"].n_unique()
     p = pairs["p_model"].to_numpy()
-    y = pairs["same_crs_id"].to_numpy().astype(float)
-    linked = p >= threshold
-    hits = int((linked & (y == 1)).sum())
+    y = pairs["true_pair"].to_numpy().astype(float)
     scored = p >= ECE_FLOOR
     return {
-        "precision": hits / int(linked.sum()),
-        "recall": hits / truth.height,
-        "f1": 2 * hits / (int(linked.sum()) + truth.height),
+        "precision": hits / links.height,
+        "recall": hits / true,
+        "f1": 2 * hits / (links.height + true),
         "ece": _ece(p[scored], y[scored]),
     }
 
@@ -191,6 +176,9 @@ def test_the_classifier_meets_its_targets_on_the_prototype_years(
         pairs.filter(crdf_years), truth.filter(crdf_years), threshold=threshold
     )
 
+    canada = pl.col("provider_code") == 301  # S13C-PIN
+    print("S13C-PIN threshold", threshold, "prototype", prototype, "every_year", every_year)  # S13C-PIN
+    print("S13C-PIN canada", _measure(pairs.filter(crdf_years & canada), truth.filter(crdf_years & canada), threshold=threshold))  # S13C-PIN
     assert threshold == 0.34
     assert prototype["f1"] >= F1_TARGET
     assert every_year["ece"] <= ECE_TARGET
@@ -220,6 +208,7 @@ def test_held_out_figures_by_provider_class(
         )
         for category in ("bilateral", "private", "banks", "other_multilateral")
     }
+    print("S13C-PIN classes", measured)  # S13C-PIN
     assert measured == {
         "bilateral": pytest.approx(
             {"precision": 0.85827, "recall": 0.86883, "f1": 0.86352, "ece": 0.01314},
@@ -247,6 +236,7 @@ def test_the_link_stage_writes_the_classifier_links_and_profile(
     profile = _read(release_dir, "link", "provider_profile")
     schema.validate(schema.PROVIDER_PROFILE, profile)
 
+    print("S13C-PIN links", written.height, written["left_id"].n_unique(), written["right_id"].n_unique(), dict(profile.group_by("scoring_group").len().iter_rows()))  # S13C-PIN
     assert written.equals(scored.links)
     scoring = profile.drop_nulls("scoring_group").select(scored.profile.columns)
     assert scoring.equals(scored.profile)
@@ -301,6 +291,7 @@ def test_classifier_links_move_statuses(
         status: linked.get(status, 0.0) - keyed.get(status, 0.0)
         for status in schema.STATUSES
     }
+    print("S13C-PIN keyed", keyed, "moved", moved)  # S13C-PIN
     assert sum(moved.values()) == pytest.approx(0.0, abs=1e-9)
     assert moved == pytest.approx(
         {
