@@ -92,6 +92,7 @@ def scored(release_dir: Path, keyed_links: pl.DataFrame) -> Scored:
         crs=trace_population(crs),
         links=keyed_links,
         id_practice=_read(release_dir, "link", "id_practice"),
+        stems=_read(release_dir, "link", "programme_stems"),
         first_year=FIRST_YEAR,
     )
 

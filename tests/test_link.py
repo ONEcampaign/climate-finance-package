@@ -529,6 +529,7 @@ def test_run_link_writes_the_deterministic_tables(tmp_path: Path) -> None:
         "id_practice",
         "programme_stems",
         "candidates",
+        "pair_scores",
         "provider_profile",
     }
     links = pl.read_parquet(table_path(tmp_path, "link", "links"))

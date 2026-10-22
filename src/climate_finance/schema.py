@@ -63,6 +63,7 @@ REVIEW_REASONS = (
     "rule_disagreement",
     "over_face",
     "ledger_contradicted",
+    "calibration",
 )
 LEDGER_TRANSACTION_TYPES = (
     "commitment",
@@ -490,6 +491,27 @@ CANDIDATES = _table(
     eligible=_bool(),
 )
 
+# Model scores for eligible candidate pairs. `model` names the model and its
+# version, `match_weight` is its final weight and `p_raw` a Splink model's EM
+# probability, which is evidence only. `probability` is calibrated, and null for a
+# model that has no calibration labels yet. `label_set` counts the labels that
+# calibrated it by source. `review_reason` is `calibration` on the pairs people
+# should label to calibrate the model.
+PAIR_SCORES = _table(
+    "pair_scores",
+    ("left_id", "right_id"),
+    left_id=_str(),
+    right_id=_str(),
+    donor_code=_code(),
+    model=_str(),
+    match_weight=_f64(),
+    p_raw=_f64(nullable=True),
+    probability=_f64(nullable=True),
+    levels=Column(COMPARISON_LEVELS),
+    label_set=_str(nullable=True),
+    review_reason=_str(nullable=True, values=REVIEW_REASONS),
+)
+
 # One row per provider: the climate value of its counted CRDF commitments and, for a
 # provider with a crosswalk (`link.crosswalks`), the part whose commitment a crosswalk
 # link reaches, null for the others and for every provider when recoveries are off.
@@ -834,7 +856,13 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
         LEDGER,
     ),
     "link": _by_name(
-        LINKS, UNITS, ID_PRACTICE, PROGRAMME_STEMS, CANDIDATES, PROVIDER_PROFILE
+        LINKS,
+        UNITS,
+        ID_PRACTICE,
+        PROGRAMME_STEMS,
+        CANDIDATES,
+        PAIR_SCORES,
+        PROVIDER_PROFILE,
     ),
     "allocate": _by_name(
         ALLOCATIONS, COMMITMENT_STATUS, CANCELLATIONS, YEARS_SINCE_COMMITMENT

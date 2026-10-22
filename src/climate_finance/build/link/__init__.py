@@ -21,6 +21,10 @@ from climate_finance.build.link.id_practice import classify_id_practice
 from climate_finance.build.link.key_repair import repair_keys
 from climate_finance.build.link.keys import build_units, link_by_keys
 from climate_finance.build.link.score import provider_profile, score_candidates
+from climate_finance.build.link.splink_models import (
+    read_human_labels,
+    score_with_splink,
+)
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.readers.iati import read_related_activities
 
@@ -42,7 +46,9 @@ def run_link(context: StageContext) -> StageOutput:
     blocking pairs the units the key, repair and crosswalk links left for scoring.
     The provider profile measures each provider's climate value and what its
     crosswalk reaches, and sorts providers into scoring groups; the truth group's
-    classifier links what it scores at or above its threshold.
+    classifier links what it scores at or above its threshold. Splink scores the
+    other groups' pairs into `pair_scores`, calibrated by people's recorded
+    decisions and Jev.
     """
     config = context.config
     crs = context.read("normalise", "crs")
@@ -96,7 +102,17 @@ def run_link(context: StageContext) -> StageOutput:
         crs=population,
         links=links,
         id_practice=id_practice,
+        stems=stems,
         first_year=config.years.crs[0],
+    )
+    splink = score_with_splink(
+        candidates,
+        units=units,
+        crs=population,
+        stems=stems,
+        provider_profile=scored.profile,
+        labels=read_human_labels(config.sources.review_decisions),
+        client=context.jev,
     )
     return {
         "links": pl.concat([links, scored.links]),
@@ -104,6 +120,7 @@ def run_link(context: StageContext) -> StageOutput:
         "id_practice": id_practice,
         "programme_stems": stems,
         "candidates": candidates,
+        "pair_scores": splink.scores,
         "provider_profile": provider_profile(
             crosswalk_profile(
                 crdf,

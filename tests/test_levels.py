@@ -49,17 +49,24 @@ _SCHEMA = {
     "commitment_usd": pl.Float64,
     "disbursement_usd": pl.Float64,
 }
+_STEMS = pl.DataFrame(
+    schema={
+        name: column.dtype for name, column in schema.PROGRAMME_STEMS.columns.items()
+    }
+)
 
 
 def _levels(
     commitment: dict[str, object],
     disbursement: dict[str, object],
     *extra: dict[str, object],
+    programme: str | None = None,
 ) -> dict[str, object]:
     """The levels and features of the pair (disbursement `d`, commitment `c`).
 
     `c` is a 2020 commitment of 10, `d` a 2022 disbursement of 6, each with
-    `_RECORD`'s fields; `extra` records join units by their own fields.
+    `_RECORD`'s fields; `extra` records join units by their own fields. With
+    `programme`, every unit falls under that programme key.
     """
     records = [
         {**_RECORD, "record_id": "c", "year": 2020, "commitment_usd": 10.0}
@@ -76,7 +83,10 @@ def _levels(
         for record_id in ids
     }
     pairs = pl.DataFrame({"left_id": [unit["d"]], "right_id": [unit["c"]]})
-    levels = comparison_levels(pairs, attributes=unit_attributes(units, crs=crs))
+    attributes = unit_attributes(units, crs=crs, stems=_STEMS)
+    if programme is not None:
+        attributes = attributes.with_columns(prog=pl.lit(programme))
+    levels = comparison_levels(pairs, attributes=attributes)
     return levels.row(0, named=True)
 
 
@@ -89,6 +99,9 @@ def _levels(
         ("AB-123", "ab-123", 3),
         ("AB-123", "AB123", 2),
         ("0AB-123", "AB123", 2),
+        ("12345.0", "12345", 3),
+        # A number a spreadsheet rounded names no project.
+        ("2.0002E+12", "2.0002E+12", -1),
         ("ABC12345", "ABC12346", 1),
         ("ABC12345", "XYZ98765", 0),
     ],
@@ -97,6 +110,21 @@ def test_project_number_level(
     commitment: str, disbursement: str | None, level: int
 ) -> None:
     pair = _levels({"project_number": commitment}, {"project_number": disbursement})
+    assert pair["gamma_project_number"] == level
+
+
+@pytest.mark.parametrize(
+    ("disbursement", "level"),
+    [("AB-124", 4), ("12", 4), ("AB-123", 3), (None, -1)],
+)
+def test_other_numbers_under_one_programme_are_siblings(
+    disbursement: str | None, level: int
+) -> None:
+    pair = _levels(
+        {"project_number": "AB-123"},
+        {"project_number": disbursement},
+        programme="AB",
+    )
     assert pair["gamma_project_number"] == level
 
 
@@ -208,7 +236,9 @@ def test_later_commitment_level(
     assert pair["later_commit"] == later_commit
 
 
-@pytest.mark.parametrize(("year", "level"), [(2021, 2), (2022, 1), (2023, 0)])
+@pytest.mark.parametrize(
+    ("year", "level"), [(2021, 3), (2022, 2), (2023, 1), (2019, 0)]
+)
 def test_year_gap_level(year: int, level: int) -> None:
     assert _levels({}, {"year": year})["gamma_year_gap"] == level
 

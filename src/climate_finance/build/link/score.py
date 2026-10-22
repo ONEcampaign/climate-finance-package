@@ -117,6 +117,7 @@ def score_candidates(
     crs: pl.LazyFrame,
     links: pl.DataFrame,
     id_practice: pl.DataFrame,
+    stems: pl.DataFrame,
     first_year: int,
 ) -> Scored:
     """Sort providers into scoring groups and link what the truth group scores.
@@ -127,6 +128,7 @@ def score_candidates(
         crs: the CRS records the units sum.
         links: the `trace` and `crdf_crs` links of the steps before scoring.
         id_practice: each agency's class per period.
+        stems: the programme stem rules.
         first_year: the first CRS year the build loads.
     """
     contradicted = contradicted_commitments(units, first_year=first_year)
@@ -152,7 +154,9 @@ def score_candidates(
         on="unit_id",
         how="semi",
     )
-    features = comparison_levels(pairs, attributes=unit_attributes(compared, crs=crs))
+    features = comparison_levels(
+        pairs, attributes=unit_attributes(compared, crs=crs, stems=stems)
+    )
     scores = score_truth_group(features, groups=groups, truth=truth)
     return Scored(
         links=classifier_links(scores),
