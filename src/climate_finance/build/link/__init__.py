@@ -56,7 +56,7 @@ def run_link(context: StageContext) -> StageOutput:
     population = trace_population(crs)
     units = build_units(population).collect()
     id_practice = classify_id_practice(units)
-    trace = link_by_keys(units, id_practice=id_practice, first_year=config.years.crs[0])
+    trace = link_by_keys(units, first_year=config.years.crs[0])
     crdf_crs = link_within_year(crdf, units=units.lazy()).collect()
     if config.recoveries:
         crdf_crs = recover(

@@ -5,8 +5,9 @@ unit takes the first tier in `TIERS` whose key reaches an eligible commitment un
 meaning one placed at or before the disbursement's record year and, outside the
 parent-id tier, at or after its floor year. The parent-id tier ignores the floor, since
 an EU contract record carries the contract's own date, which falls on or after its
-decision's commitment. A disbursement whose floor precedes the first CRS year continues
-a commitment the build cannot see, and links to nothing.
+decision's commitment, and a lettered record (`parent_id`) its own. A disbursement
+whose floor precedes the first CRS year continues a commitment the build cannot see,
+and links to nothing.
 
 The World Bank tier comes first. IBRD and IDA crs ids name projects, and a project
 holds several loans and credits, so a tier on the crs id lets allocation spend one
@@ -14,10 +15,11 @@ loan's disbursement on another loan's commitment. The loan or credit number in t
 project number (`loan_number`) keeps it on its own loan, and reaches additional
 financing booked under the parent project's number.
 
-The project-number tiers are off for an agency whose ids persist in the period of the
-record year (see `id_practice`). They link only where (donor, agency, project number,
-recipient) maps to one crs id on the commitment side, since shared framework numbers
-are right 43% of the time and unique keys 84.5%.
+The project-number tiers come last, so they see only what the crs-id tiers left, and
+they link only where (donor, agency, project number, recipient) maps to one crs id on
+the commitment side, since shared framework numbers are right 43% of the time and
+unique keys 84.5%. They hold for every agency: one whose ids mostly persist, such as
+Korea's EDCF or KfW, still files some projects under a new crs id each year.
 """
 
 from dataclasses import dataclass
@@ -25,12 +27,7 @@ from dataclasses import dataclass
 import polars as pl
 
 from climate_finance import schema
-from climate_finance.build.link.id_practice import (
-    ID_PERSISTENT_CLASSES,
-    PN_KEY,
-    parent_id,
-    period_of,
-)
+from climate_finance.build.link.id_practice import PN_KEY, parent_id
 from climate_finance.build.normalise.ids import content_id
 
 UNIT_KEY = (
@@ -71,8 +68,8 @@ WORLD_BANK_DONORS = (901, 905)
 @dataclass(frozen=True)
 class Tier:
     """A key tier. It holds the commitment key, the disbursement key it must equal,
-    whether it is a project-number tier that id practice turns off, and whether it
-    holds to the disbursement's floor."""
+    whether it is a project-number tier, which reaches only unique project-number
+    keys (`_unique_pn`), and whether it holds to the disbursement's floor."""
 
     name: str
     commitment_key: tuple[str, ...]
@@ -88,7 +85,7 @@ TIERS = (
         ("donor_code", "crs_id", "purpose_code", "recipient_code"),
         ("donor_code", "crs_id", "purpose_code", "recipient_code"),
     ),
-    Tier("crs_id", ("donor_code", "crs_id"), ("donor_code", "crs_id")),
+    Tier("crs_id", ("donor_code", "crs_key"), ("donor_code", "crs_key")),
     Tier(
         "crs_id_parent",
         ("donor_code", "crs_id"),
@@ -197,9 +194,7 @@ def build_units(crs: pl.LazyFrame) -> pl.LazyFrame:
     )
 
 
-def link_by_keys(
-    units: pl.DataFrame, *, id_practice: pl.DataFrame, first_year: int
-) -> pl.DataFrame:
+def link_by_keys(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
     """Trace links from each disbursement unit to every eligible commitment unit
     under its first matching tier, as `links` rows.
 
@@ -207,23 +202,13 @@ def link_by_keys(
     and its key, so the disbursement units of one group reach the same commitments,
     less those their own record year or floor rules out.
     """
-    blocked = id_practice.filter(pl.col("id_class").is_in(ID_PERSISTENT_CLASSES))
-    remaining = (
-        units.filter(
-            pl.col("disbursement_usd") > 0,
-            pl.col("floor_year").is_null() | (pl.col("floor_year") >= first_year),
-        )
-        .with_columns(
-            crs_parent=parent_id(pl.col("crs_id")),
-            loan=loan_number(pl.col("donor_code"), pl.col("project_number")),
-            period=period_of(pl.col("year")),
-        )
-        .join(
-            blocked.select("donor_code", "agency_code", "period", pn_blocked=True),
-            on=["donor_code", "agency_code", "period"],
-            how="left",
-        )
-        .with_columns(pl.col("pn_blocked").fill_null(value=False))
+    units = units.with_columns(crs_key=crs_key(units))
+    remaining = units.filter(
+        pl.col("disbursement_usd") > 0,
+        pl.col("floor_year").is_null() | (pl.col("floor_year") >= first_year),
+    ).with_columns(
+        crs_parent=parent_id(pl.col("donor_code"), pl.col("crs_id")),
+        loan=loan_number(pl.col("donor_code"), pl.col("project_number")),
     )
     commitments = units.filter(pl.col("commitment_usd") > 0).with_columns(
         loan=loan_number(pl.col("donor_code"), pl.col("project_number"))
@@ -232,17 +217,32 @@ def link_by_keys(
 
     pairs = []
     for tier in TIERS:
-        candidates = remaining.drop_nulls(tier.unit_key)
-        if tier.project_number:
-            candidates = candidates.filter(~pl.col("pn_blocked"))
         tier_pairs = _eligible_pairs(
-            candidates, unique_pn if tier.project_number else commitments, tier=tier
+            remaining.drop_nulls(tier.unit_key),
+            unique_pn if tier.project_number else commitments,
+            tier=tier,
         )
         pairs.append(tier_pairs)
         remaining = remaining.join(
             tier_pairs.select(unit_id="left_id"), on="unit_id", how="anti"
         )
     return as_exact_links(pl.concat(pairs).lazy(), task="trace").collect()
+
+
+def crs_key(units: pl.DataFrame) -> pl.Series:
+    """Each unit's crs id, with its recipient code where the (donor, crs id) names
+    several projects: units in more than one recipient under more than one project
+    number. The AsDB, the IDB and the GEF reuse an id this way, as for the AsDB's
+    `LN3375-IND` in India and `TA9143-NAU` in Nauru."""
+    several = (
+        (pl.col("recipient_code").n_unique() > 1)
+        & (pl.col("project_number").drop_nulls().n_unique() > 1)
+    ).over("donor_code", "crs_id")
+    return units.select(
+        pl.when(several)
+        .then(pl.concat_str("crs_id", "recipient_code", separator="|"))
+        .otherwise(pl.col("crs_id"))
+    ).to_series()
 
 
 def _unique_pn(commitments: pl.DataFrame) -> pl.DataFrame:

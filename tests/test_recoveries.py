@@ -299,7 +299,7 @@ def test_a_taken_over_commitment_allocates_to_the_earliest_row() -> None:
     crs = crs_records(*records).lazy()
     units = build_units(crs).collect()
     id_practice = classify_id_practice(units)
-    trace = link_by_keys(units, id_practice=id_practice, first_year=2010)
+    trace = link_by_keys(units, first_year=2010)
     recovered = recover(
         crdf,
         within_year=link_within_year(crdf, units=units.lazy()).collect(),

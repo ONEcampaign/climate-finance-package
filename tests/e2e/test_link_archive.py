@@ -112,14 +112,14 @@ def test_id_practice_reproduces_the_three_period_reference(
 
 
 def test_key_tiers_link_the_reference_disbursements(
-    data: Path, units: pl.DataFrame, id_practice: pl.DataFrame
+    data: Path, units: pl.DataFrame
 ) -> None:
     metrics = json.loads(
         (
             data / "prototypes" / "a1-reference" / "dated_pnuniq" / "trace_metrics.json"
         ).read_text()
     )
-    links = link_by_keys(units, id_practice=id_practice, first_year=2010)
+    links = link_by_keys(units, first_year=2010)
     schema.validate(schema.LINKS, links)
     tiers = links.select("left_id", "link_method").unique()
     assert tiers["left_id"].is_unique().all()

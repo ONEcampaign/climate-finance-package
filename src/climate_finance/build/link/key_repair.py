@@ -11,6 +11,14 @@ links is left out of the later ones:
 - `repair_new_crs_id`: the same (donor, agency, project number).
 - `repair_pn_variant`: project numbers equal once separators, a `CRSn` suffix and
   leading zeros are dropped (`project_core`).
+
+  In both, a number the commitments place in more than one country names a
+  programme or an account, as the US `35_80` (PEPFAR operations) does in 55
+  recipients, so it links only within the disbursement's recipient and purpose
+  (`_programmes`). Under one such number the US files unrelated activities of one
+  recipient, as `76_51689` holds "USAID Pay and Benefits" (91010) and a customs
+  project (33120); a link across purposes there has a title that disagrees 22
+  times as often, by value, as one within a purpose.
 - `repair_afdb_scientific`: a long numeric project number that a spreadsheet
   rounded, as `2.10015E+12` or `2100150000000`, keeps its leading digits and its
   length (`rounded_digits`). It links to a commitment of the same agency and
@@ -20,10 +28,11 @@ links is left out of the later ones:
   order (`title_words`), where those words name one crs id among all the agency's
   commitments in the recipient and one project among the disbursements that match
   them. A project here has at most one project number, and the shared title names
-  it where the number is missing.
+  it where the number is missing. A rounded number counts as the full number it
+  can stand for, or else as a number of its own.
 
-Both guards count projects, not crs ids, since a donor such as the AfDB files each
-year's disbursements of one project under a new crs id.
+The last two guards count projects, not crs ids, since a donor such as the AfDB
+files each year's disbursements of one project under a new crs id.
 
 A pair links only when the commitment is placed no later than the record year and
 no earlier than the record's floor year.
@@ -38,6 +47,8 @@ commitment unit falls in one group of a rule by its key.
 """
 
 from collections.abc import Callable
+from functools import cache
+from importlib.resources import files
 
 import numpy as np
 import polars as pl
@@ -127,6 +138,7 @@ def repair_keys(
     facts = _unit_facts(units, crs=crs)
     commitments = facts.filter(pl.col("commitment_usd") > 0)
     unique_titles = _unique_titles(commitments)
+    programmes = {key: _programmes(commitments, key=key) for key in (_PN, _CORE)}
     disbursements = facts.filter(
         pl.col("disbursement_usd") > 0,
         pl.col("floor_year").is_null() | (pl.col("floor_year") >= first_year),
@@ -135,8 +147,12 @@ def repair_keys(
         links.select(unit_id="right_id"), on="unit_id", how="anti"
     )
     rules: dict[str, Rule] = {
-        "repair_new_crs_id": lambda d, c: _candidates(d, c, on=_PN, key=_PN),
-        "repair_pn_variant": lambda d, c: _candidates(d, c, on=_CORE, key=_CORE),
+        "repair_new_crs_id": lambda d, c: _same_number(
+            d, c, key=_PN, programmes=programmes[_PN]
+        ),
+        "repair_pn_variant": lambda d, c: _same_number(
+            d, c, key=_CORE, programmes=programmes[_CORE]
+        ),
         "repair_afdb_scientific": _rounded_numbers,
         "repair_title_recipient": lambda d, c: _same_title(
             d, c.join(unique_titles, on=_TITLE_KEY)
@@ -200,6 +216,101 @@ def _unique_titles(commitments: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def _programmes(commitments: pl.DataFrame, *, key: tuple[str, ...]) -> pl.DataFrame:
+    """The values of the number `key` whose commitment units name more than one
+    country. Regional and unspecified recipients name none."""
+    country = ~pl.col("recipient_code").is_in(_regional_codes())
+    return (
+        commitments.drop_nulls(key)
+        .group_by(key)
+        .agg(countries=pl.col("recipient_code").filter(country).n_unique())
+        .filter(pl.col("countries") > 1)
+        .select(key)
+    )
+
+
+@cache
+def _regional_codes() -> tuple[int, ...]:
+    """The DAC recipient codes of regions and of unspecified recipients."""
+    recipients = pl.read_csv(
+        (files("climate_finance") / "data" / "recipients.csv").read_bytes(),
+        schema_overrides={"code": pl.Int32},
+    )
+    return tuple(
+        recipients.filter(pl.col("name").str.contains("regional|unspecified"))["code"]
+    )
+
+
+def _same_number(
+    disbursements: pl.DataFrame,
+    commitments: pl.DataFrame,
+    *,
+    key: tuple[str, ...],
+    programmes: pl.DataFrame,
+) -> pl.DataFrame:
+    """Pairs equal on the number `key`, grouped by it, and for a programme number
+    also on the recipient and purpose, grouped by those too.
+
+    A unit falls in one group here, and `_settle` keeps or drops a group whole, so
+    a unit whose group holds more than `MAX_COMMITMENTS` eligible commitments
+    links to none. Such units are left out before the join (`_within_cap`), since
+    a programme or account number pairs thousands of units with each other."""
+    within = (*key, "recipient_code", "purpose_code")
+    found = []
+    for number, on in (
+        (commitments.join(programmes, on=key, how="anti"), key),
+        (commitments.join(programmes, on=key, how="semi"), within),
+    ):
+        number = number.select(_columns(on, "placed_year"))
+        found.append(
+            _candidates(
+                _within_cap(
+                    disbursements.select(
+                        _columns(on, "placed_year", "year", "floor_year")
+                    ),
+                    number,
+                    on=on,
+                ),
+                number,
+                on=on,
+                key=on,
+            ).select(_PAIR)
+        )
+    return pl.concat(found)
+
+
+def _columns(on: tuple[str, ...], *dates: str) -> list[str]:
+    """What `_candidates` and `_settle` read of one side of a number rule."""
+    return list(
+        dict.fromkeys(("unit_id", "crs_id", "recipient_code", "title", *on, *dates))
+    )
+
+
+def _within_cap(
+    disbursements: pl.DataFrame, commitments: pl.DataFrame, *, on: tuple[str, ...]
+) -> pl.DataFrame:
+    """`disbursements` less those that reach more than `MAX_COMMITMENTS`
+    commitments equal on `on`, placed no later than the record year and no
+    earlier than its floor year. Counted by placement year, without pairing."""
+    when = [*on, "year", "floor_year"]
+    placed = commitments.drop_nulls(on).group_by(*on, "placed_year").len("placed")
+    over = (
+        disbursements.drop_nulls(on)
+        .select(when)
+        .unique()
+        .join(placed, on=list(on))
+        .filter(
+            pl.col("placed_year") <= pl.col("year"),
+            pl.col("floor_year").is_null()
+            | (pl.col("placed_year") >= pl.col("floor_year")),
+        )
+        .group_by(when)
+        .agg(pl.col("placed").sum())
+        .filter(pl.col("placed") > MAX_COMMITMENTS)
+    )
+    return disbursements.join(over, on=when, how="anti", nulls_equal=True)
+
+
 def _candidates(
     disbursements: pl.DataFrame,
     commitments: pl.DataFrame,
@@ -254,11 +365,40 @@ def _rounded_numbers(
 def _same_title(disbursements: pl.DataFrame, commitments: pl.DataFrame) -> pl.DataFrame:
     """Pairs equal on place and title words, where each commitment is matched by
     one project: at most one project number among the units, which share the
-    title. Grouped by the place and the words."""
-    numbers = pl.col("project_number").drop_nulls().n_unique()
-    return _candidates(
-        disbursements, commitments, on=_TITLE_KEY, key=_TITLE_KEY
-    ).filter(numbers.over("right_id") <= 1)
+    title. Grouped by the place and the words.
+
+    A rounded number is no `project_number`, so it counts apart: as the full number
+    of the units that it can stand for, else as its own number, two spellings of
+    one rounded number (`2.0002E+12`, `2000200000000`) counting once."""
+    pairs = _candidates(disbursements, commitments, on=_TITLE_KEY, key=_TITLE_KEY)
+    full = pairs.select("right_id", "project_number").drop_nulls().unique()
+    rounded = (
+        pairs.select("right_id", "rounded")
+        .drop_nulls()
+        .unnest("rounded")
+        .with_columns(number=pl.col("prefix").str.pad_end(pl.col("digits"), "0"))
+        .unique(["right_id", "number"])
+    )
+    matched = (
+        rounded.join(full, on="right_id")
+        .filter(
+            pl.col("project_number").str.len_chars() == pl.col("digits"),
+            pl.col("project_number").str.starts_with(pl.col("prefix")),
+        )
+        .select("right_id", "number")
+    )
+    numbers = pl.concat(
+        [
+            full.select("right_id", number="project_number"),
+            rounded.join(matched, on=["right_id", "number"], how="anti").select(
+                "right_id", "number"
+            ),
+        ]
+    )
+    ambiguous = (
+        numbers.group_by("right_id").len().filter(pl.col("len") > 1).select("right_id")
+    )
+    return pairs.join(ambiguous, on="right_id", how="anti")
 
 
 def _with_title_ratio(pairs: pl.DataFrame) -> pl.DataFrame:

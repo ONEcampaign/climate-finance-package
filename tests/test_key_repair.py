@@ -71,13 +71,7 @@ def _links(
     """Units, exact links plus key-repair links, and the CRS records."""
     crs = _crs(records)
     units = build_units(crs).collect()
-    exact = link_by_keys(
-        units,
-        id_practice=pl.DataFrame(
-            schema={name: c.dtype for name, c in schema.ID_PRACTICE.columns.items()}
-        ),
-        first_year=FIRST_YEAR,
-    )
+    exact = link_by_keys(units, first_year=FIRST_YEAR)
     repaired = repair_keys(units, crs=crs, links=exact, first_year=FIRST_YEAR)
     schema.validate(schema.LINKS, repaired)
     return units, pl.concat([exact, repaired]), crs
@@ -183,6 +177,26 @@ def test_a_unit_stays_out_of_a_group_holding_its_own_crs_id() -> None:
     assert repaired == {}
 
 
+def test_a_programme_number_links_only_within_the_disbursements_recipient() -> None:
+    # The number commits in two countries, so it names a programme, as the US
+    # `35_80` does: the Kenyan disbursement reaches the Kenyan commitments of its
+    # purpose, and the Malawian one reaches none. Two Kenyan crs ids keep the
+    # exact tiers off.
+    programme = {"donor_code": 302, "project_number": "35_80", "title": "Operations"}
+    kenya = {**programme, "recipient_code": 248}
+    repaired = _repaired(
+        {
+            "c_eth": _commitment(**programme, crs_id="A"),
+            "c_ken": _commitment(**kenya, crs_id="B"),
+            "c_ken2": _commitment(**kenya, crs_id="B2", year=2020),
+            "c_ken_other": _commitment(**kenya, crs_id="B3", purpose_code=91010),
+            "d_ken": _disbursement(**kenya, crs_id="C"),
+            "d_mwi": _disbursement(**programme, crs_id="D", recipient_code=253),
+        }
+    )
+    assert repaired == {"d_ken": {"repair_new_crs_id": ["c_ken", "c_ken2"]}}
+
+
 def test_a_disbursement_before_the_first_year_links_to_nothing() -> None:
     repaired = _repaired(
         {
@@ -240,8 +254,20 @@ def test_a_unit_reaches_at_most_max_commitments(n: int, linked: bool) -> None:
     commitments = {
         f"c{i}": _commitment(crs_id=f"A{i}", project_number="G-1") for i in range(n)
     }
+    # Commitments placed after the record year or before its floor count for
+    # nothing.
+    ineligible = {
+        "later": _commitment(crs_id="L1", project_number="G-1", year=2022),
+        "earlier": _commitment(crs_id="L2", project_number="G-1", year=2016),
+    }
     repaired = _repaired(
-        {**commitments, "d": _disbursement(crs_id="B", project_number="G-1")}
+        {
+            **commitments,
+            **ineligible,
+            "d": _disbursement(
+                crs_id="B", project_number="G-1", commitment_date=date(2018, 3, 1)
+            ),
+        }
     )
     assert repaired == (
         {"d": {"repair_new_crs_id": sorted(commitments)}} if linked else {}
@@ -401,6 +427,46 @@ def test_the_title_rule_needs_a_title_that_names_one_project(
         }
     )
     assert ("d" in repaired) is linked
+
+
+@pytest.mark.parametrize(
+    ("rounded", "linked"),
+    [
+        # A rounded number the full number can stand for is one project.
+        ("2.10016E+12", True),
+        # One that it cannot is another project.
+        ("2.0002E+12", False),
+    ],
+)
+def test_the_title_rule_counts_a_rounded_number_apart_from_a_full_one(
+    rounded: str, linked: bool
+) -> None:
+    title = "Rural water supply"
+    repaired = _repaired(
+        {
+            "c": _commitment(crs_id="A", title=title),
+            "d": _disbursement(crs_id="B", project_number="2100160000123", title=title),
+            "d2": _disbursement(crs_id="C", project_number=rounded, title=title),
+        }
+    )
+    assert ("d" in repaired) is linked
+
+
+def test_the_title_rule_counts_two_spellings_of_one_rounded_number_once() -> None:
+    title = "Rural water supply"
+    repaired = _repaired(
+        {
+            "c": _commitment(crs_id="A", title=title),
+            "d": _disbursement(crs_id="B", project_number="2.0002E+12", title=title),
+            "d2": _disbursement(
+                crs_id="C", project_number="2000200000000", title=title
+            ),
+        }
+    )
+    assert repaired == {
+        "d": {"repair_title_recipient": ["c"]},
+        "d2": {"repair_title_recipient": ["c"]},
+    }
 
 
 def test_the_title_rule_ignores_short_titles() -> None:

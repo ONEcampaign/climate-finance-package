@@ -107,13 +107,7 @@ def _links(
     """Units, exact plus crosswalk links, and the CRS records."""
     crs = _crs(records)
     units = build_units(crs).collect()
-    exact = link_by_keys(
-        units,
-        id_practice=pl.DataFrame(
-            schema={name: c.dtype for name, c in schema.ID_PRACTICE.columns.items()}
-        ),
-        first_year=FIRST_YEAR,
-    )
+    exact = link_by_keys(units, first_year=FIRST_YEAR)
     crosswalk = gef_crosswalk(
         _related(*(related or [("5078", "XM-DAC-41114-OUTPUT-90420")]))
     )

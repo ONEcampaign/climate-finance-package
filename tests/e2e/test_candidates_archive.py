@@ -81,7 +81,7 @@ def links(
         perspective="recipient",
         crs=normalised.lazy(),
     )
-    trace = link_by_keys(units, id_practice=id_practice, first_year=FIRST_YEAR)
+    trace = link_by_keys(units, first_year=FIRST_YEAR)
     return pl.concat(
         [
             trace,
