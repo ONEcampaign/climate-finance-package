@@ -39,7 +39,7 @@ _BILATERAL = 1
 _PART_TOLERANCE = 0.001
 _CELL_TOLERANCE = 0.01
 _SINGLE_TOLERANCE = 0.01
-# The CRDF prints the bulk CRS `category` as its flow code: ODA 10, OOF 21, private
+# The CRDF prints the bulk CRS `category` as its flow category: ODA 10, OOF 21, private
 # flows 30 and private development finance 60. The bulk flow codes map onto them.
 FLOW_CATEGORY = {11: 10, 13: 10, 19: 10, 14: 21, 30: 30, 60: 60}
 # DAC regional recipient codes for each continent, and the recipient code ranges of
@@ -51,7 +51,7 @@ _CONTINENTS = (
     (798, ((500, 799),)),
     (889, ((800, 899), (1033, 1035))),
 )
-_CELL = ["provider_code", "year", "flow_code", "m", "a"]
+_CELL = ["provider_code", "year", "flow_category", "m", "a"]
 _AMOUNTS = (
     "face_usd",
     "climate_usd",
@@ -68,7 +68,7 @@ _RECORD_KEY = (
     "project_number",
     "recipient_code",
     "purpose_code",
-    "flow_code",
+    "flow_category",
     "m",
     "a",
 )
@@ -149,7 +149,7 @@ def _pool(
         .join(scope.lazy(), on=["donor_code", "year"], how="semi")
         .join(carried.lazy(), on=["donor_code", "crs_id", "year"], how="anti")
         .with_columns(
-            flow_code=pl.col("flow_code").replace_strict(
+            flow_category=pl.col("flow_code").replace_strict(
                 FLOW_CATEGORY, return_dtype=pl.Int32
             ),
             m=pl.col("rio_mitigation").fill_null(0),

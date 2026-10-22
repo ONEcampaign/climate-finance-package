@@ -148,11 +148,7 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
 
 
 def release_commitments(crdf: pl.LazyFrame, *, status: pl.LazyFrame) -> pl.LazyFrame:
-    """The CRDF rows allocation follows, with their status and disbursed amounts.
-
-    The CRDF stage's `flow_code` holds the flow category the CRDF publishes (10 for
-    ODA), so the release names it `flow_category`.
-    """
+    """The CRDF rows allocation follows, with their status and disbursed amounts."""
     return (
         counted_rows(crdf)
         .join(
@@ -168,7 +164,6 @@ def release_commitments(crdf: pl.LazyFrame, *, status: pl.LazyFrame) -> pl.LazyF
             how="left",
             validate="1:1",
         )
-        .rename({"flow_code": "flow_category"})
         .select(list(COMMITMENTS.columns))
     )
 
@@ -226,10 +221,10 @@ def fill_disbursements(fills: pl.LazyFrame, *, crdf: pl.LazyFrame) -> pl.LazyFra
     """Bank-ledger and IATI fills as disbursements rows.
 
     A fill has no CRS record, so it takes provider, agency, recipient, channel,
-    Bi_Multi, purpose, flow, project number, title, markers and climate share from
-    the commitment it fills. Its record is the fill's key and year
-    (`ledger:<publisher>:<key>:<year>` or `iati:...`), whose disbursement is what
-    the fill gives every commitment on it; there is no grant equivalent. Markers
+    Bi_Multi, purpose, project number, title, markers and climate share from the
+    commitment it fills, and its flow code is null. Its record is the fill's key and
+    year (`ledger:<publisher>:<key>:<year>` or `iati:...`), whose disbursement is
+    what the fill gives every commitment on it; there is no grant equivalent. Markers
     come from the commitment (`components` where it has a climate share), and the
     method, probability and ledger check are null.
     """
@@ -240,7 +235,6 @@ def fill_disbursements(fills: pl.LazyFrame, *, crdf: pl.LazyFrame) -> pl.LazyFra
         "channel_code",
         "bi_multi",
         "purpose_code",
-        "flow_code",
         "project_number",
         "title",
         "climate_share",
@@ -255,6 +249,7 @@ def fill_disbursements(fills: pl.LazyFrame, *, crdf: pl.LazyFrame) -> pl.LazyFra
         fills.join(commitment, on="row_id", how="left", validate="m:1")
         .join(records, on="record_id", how="left", validate="m:1")
         .with_columns(
+            flow_code=pl.lit(None, pl.Int32),
             record_grant_equiv_usd=pl.lit(None, pl.Float64),
             record_rio_adaptation=pl.lit(None, pl.Int8),
             record_rio_mitigation=pl.lit(None, pl.Int8),

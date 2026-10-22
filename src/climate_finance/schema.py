@@ -205,7 +205,9 @@ CRDF = _table(
     channel_code=_code(nullable=True),
     bi_multi=_bi_multi(),
     purpose_code=_code(nullable=True),
-    flow_code=_code(nullable=True),
+    # The CRS flow category the CRDF publishes: 10 ODA, 21 other official flows,
+    # 22, 30 private grants and 60 private market flows.
+    flow_category=_code(nullable=True),
     # Provider-perspective imputed multilateral contribution rows carry a climate
     # total only, so their objective is `climate`.
     objective=_str(values=SHARE_OBJECTIVES),
@@ -697,8 +699,9 @@ COMMITMENTS = _table(
     bi_multi=_bi_multi(),
     purpose_code=_code(nullable=True),
     # The CRS flow category the CRDF publishes: 10 ODA, 21 other official flows,
-    # 22, 30 private grants and 60 private market flows. Disbursements carry the CRS
-    # record's flow code (11 ODA grants, 13 ODA loans, 19 equity) instead.
+    # 22, 30 private grants and 60 private market flows. A disbursement carries its
+    # CRS record's flow code (11 ODA grants, 13 ODA loans, 19 equity) instead, and a
+    # fill, which has no CRS record, a null one.
     flow_category=_code(nullable=True),
     crs_id=_str(nullable=True),
     project_number=_str(nullable=True),
@@ -995,7 +998,6 @@ _FILL_FACTS = (
     "channel_code",
     "bi_multi",
     "purpose_code",
-    "flow_code",
     "project_number",
 )
 
@@ -1014,11 +1016,11 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     `record_disbursement_usd`. Amounts compare within `INVARIANT_TOLERANCE_USD`, and
     none of them is null. Every disbursements row from the CRS names the link that
     carried it, and every fill (a bank-ledger or IATI row) carries its commitment's
-    provider, agency, recipient, channel, Bi_Multi, purpose, flow and project
-    number. No disbursements row names a commitment that repeats an
-    earlier vintage, as allocate moves a repeat's allocations to its first row. No
-    commitment is another's `parent_row_id`, and no table in `tables` holds the
-    bulk CRS's `CRS_UNSPECIFIED_RECIPIENT`. A channel, year and source of
+    provider, agency, recipient, channel, Bi_Multi, purpose and project number. No
+    disbursements row names a commitment that repeats an earlier vintage, as
+    allocate moves a repeat's allocations to its first row. No commitment is
+    another's `parent_row_id`, and no table in `tables` holds the bulk CRS's
+    `CRS_UNSPECIFIED_RECIPIENT`. A channel, year and source of
     `agency_shares` holds either split rows or one `climate` row, all of one
     `share_source`. Each commitment's
     value under the OECD method equals its published `climate_usd`, and no channel

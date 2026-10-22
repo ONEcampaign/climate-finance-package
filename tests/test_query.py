@@ -11,7 +11,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-from make_fixture import FIXTURE_DIR
+from make_fixture import FIXTURE_DIR, LEDGER_RECORD
 from polars.testing import assert_frame_equal
 from releases import copy_release
 
@@ -348,11 +348,15 @@ def test_oda_only_counts_commitments_of_the_oda_flow_category() -> None:
     assert rows["value"].sum() == pytest.approx(oda["climate_usd"].sum())
 
 
-def test_oda_only_counts_disbursements_of_oda_flow_codes() -> None:
+def test_oda_only_counts_disbursements_by_flow_code_and_fills_by_category() -> None:
     result = SNAP.spending(oda_only=True)
+    rows = result.rows()
+    fills = rows.filter(pl.col("flow_code").is_null())
 
-    assert result.rows().height
-    assert set(result.rows()["flow_code"]) <= {11, 13, 19}
+    assert set(rows["flow_code"].drop_nulls()) <= {11, 13, 19}
+    # A bank-ledger fill has no CRS flow code, and counts by its commitment's.
+    assert fills["record_id"].to_list() == [LEDGER_RECORD]
+    assert fills["flow_category"].to_list() == [10]
     assert result.modelled.to_polars().is_empty()
 
 

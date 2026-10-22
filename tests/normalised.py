@@ -18,7 +18,7 @@ _CRDF_DEFAULTS: dict[str, object] = {
     "channel_code": None,
     "bi_multi": 1,
     "purpose_code": 23210,
-    "flow_code": 10,
+    "flow_category": 10,
     "objective": "mitigation",
     "rio_adaptation": 0,
     "rio_mitigation": 2,

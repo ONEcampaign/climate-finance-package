@@ -54,8 +54,9 @@ if TYPE_CHECKING:
 BILATERAL = (1, 3, 7, 8)
 MULTILATERAL_OUTFLOW = 4
 CORE_CONTRIBUTION = 2
-# A commitment's ODA test reads the CRDF's flow category, a disbursement's the CRS
-# record's flow code: grants (11), loans (13) and equity (19) form category 10.
+# A disbursement's ODA test reads its CRS record's flow code, and a row with no CRS
+# record (a commitment or a fill) its commitment's CRDF flow category: grants (11),
+# loans (13) and equity (19) form category 10.
 ODA_FLOW_CATEGORY = 10
 ODA_FLOW_CODES = (11, 13, 19)
 EU_INSTITUTIONS = 918
@@ -135,8 +136,9 @@ def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
     if spec.oda_only:
         conditions.append(
             pl.any_horizontal(
-                pl.col("flow_category") == ODA_FLOW_CATEGORY,
-                pl.col("flow_code").is_in(ODA_FLOW_CODES),
+                pl.when(pl.col("flow_code").is_not_null())
+                .then(pl.col("flow_code").is_in(ODA_FLOW_CODES))
+                .otherwise(pl.col("flow_category") == ODA_FLOW_CATEGORY),
                 pl.col("origin") == "attribution",
             )
         )
@@ -349,6 +351,7 @@ def _base_rows(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
 
     commitments = _counted_commitments(snapshot).select(
         "row_id",
+        "flow_category",
         "status",
         "face_usd",
         "climate_usd",

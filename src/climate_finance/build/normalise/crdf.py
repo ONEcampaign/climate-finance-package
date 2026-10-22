@@ -148,7 +148,7 @@ def normalise_crdf(
         channel_code=pl.col("channel_code").cast(pl.Int32),
         bi_multi="bi_multi",
         purpose_code=pl.col("purpose_code").cast(pl.Int32),
-        flow_code=pl.col("flow_type_code").cast(pl.Int32),
+        flow_category=pl.col("flow_type_code").cast(pl.Int32),
         objective="objective",
         rio_adaptation="rio_adaptation",
         rio_mitigation="rio_mitigation",

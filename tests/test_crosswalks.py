@@ -443,6 +443,7 @@ def test_run_link_writes_the_provider_profile_with_recoveries(tmp_path: Path) ->
         "id_practice",
         "programme_stems",
         "candidates",
+        "pair_scores",
         "provider_profile",
     }
     profile = pl.read_parquet(table_path(tmp_path, "link", "provider_profile"))

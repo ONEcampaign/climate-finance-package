@@ -195,8 +195,9 @@ def test_a_fill_takes_its_commitments_facts_and_its_records_total() -> None:
     rows = release.fill_disbursements(fills, crdf=CRDF.lazy()).collect().sort("row_id")
 
     expected = CRDF.filter(pl.col("row_id").is_in(["C", "R1"])).sort("row_id")
-    for column in ("provider_code", "recipient_code", "bi_multi", "flow_code"):
+    for column in ("provider_code", "recipient_code", "bi_multi"):
         assert rows[column].to_list() == expected[column].to_list(), column
+    assert rows["flow_code"].is_null().all()
     assert rows["record_disbursement_usd"].to_list() == [10.0, 10.0]
     assert rows["record_grant_equiv_usd"].is_null().all()
     assert rows["link_method"].is_null().all()

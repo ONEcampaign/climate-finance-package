@@ -194,8 +194,8 @@ def _allocation(
 
     `record_disbursement` and `record_grant_equiv` are the whole CRS record's.
     Unlinked rows (a bank-ledger fill) count in full in the low bound. A fill has no
-    CRS record, so it carries its commitment's facts and no record markers, as
-    `release.fill_disbursements` builds it.
+    CRS record, so it carries its commitment's facts, no flow code and no record
+    markers, as `release.fill_disbursements` builds it.
     """
     certain = link_probability is None or link_probability >= CERTAIN_PROBABILITY
     fill = disbursement_source != "crs"
@@ -221,7 +221,7 @@ def _allocation(
         if fill
         else RECORD_BI_MULTI.get(str(commitment["row_id"]), commitment["bi_multi"]),
         "purpose_code": commitment["purpose_code"] if fill else 41010,
-        "flow_code": commitment["flow_code"] if fill else _flow_code(commitment),
+        "flow_code": None if fill else _flow_code(commitment),
         "project_number": commitment["project_number"]
         if fill
         else f"PN-{commitment['row_id']}",
