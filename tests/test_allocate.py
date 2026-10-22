@@ -146,7 +146,7 @@ def link(
     crs = crs_frame(records)
     rows = counted_rows(crdf_frame(crdf))
     units = build_units(crs).collect()
-    trace = link_by_keys(units, id_practice=no_classes(), first_year=FIRST_YEAR)
+    trace = link_by_keys(units, first_year=FIRST_YEAR)
     within = link_within_year(rows, units=units.lazy()).collect()
     return crs, rows, units.lazy(), pl.concat([trace, within]).lazy()
 
@@ -303,16 +303,23 @@ def test_an_undated_donor_keeps_fifo_for_a_same_year_record() -> None:
 def test_parent_id_links_ignore_the_records_date() -> None:
     # An EU contract record carries the contract's date, not the decision's, so a
     # parent-id link neither floors it nor reads it as a dated donor's year.
+    eu = 918
     contract = record(
-        "d21", 2021, disburse=50.0, dated=2021, crs_id="2019000001001", purpose=999
+        "d21",
+        2021,
+        disburse=50.0,
+        donor=eu,
+        dated=2021,
+        crs_id="2019000001001",
+        purpose=999,
     )
     pairs = run(
         [
-            record("c19", 2019, commit=100.0, dated=2019),
-            record("c21", 2021, commit=100.0, dated=2021),
+            record("c19", 2019, commit=100.0, donor=eu, dated=2019),
+            record("c21", 2021, commit=100.0, donor=eu, dated=2021),
             contract,
         ],
-        dated=(1,),
+        dated=(eu,),
     )
     assert by_commitment(pairs) == pytest.approx({"c19": 50.0})
 
