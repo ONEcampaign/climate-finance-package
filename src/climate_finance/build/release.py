@@ -33,6 +33,7 @@ from climate_finance.schema import (
     CORE_CONTRIBUTIONS,
     DISBURSEMENT_PROFILE,
     DISBURSEMENTS,
+    LINK_METHODS,
     PROVIDER_COEFFICIENTS,
     QUALITY,
     RELEASE_TABLES,
@@ -221,10 +222,12 @@ def carrying_links(
 ) -> pl.LazyFrame:
     """Per allocation's (row_id, record_id), the link that carried it.
 
-    That is the most probable `trace` link from the record's unit to a commitment
-    unit of a `crdf_crs` group of the row or of a row that repeats it, the lowest
-    unit id among equals. Allocate moves a repeat's allocations to its first row
-    (`repeat_of`), so the link can sit in the repeat's group.
+    That is the `trace` link from the record's unit to a commitment unit of a
+    `crdf_crs` group of the row or of a row that repeats it whose method comes
+    first in `LINK_METHODS`, since allocation runs that method's pass first; then
+    the most probable, then the lowest unit id. Allocate moves a repeat's
+    allocations to its first row (`repeat_of`), so the link can sit in the
+    repeat's group.
     """
     record_units = units.select(d_unit="unit_id", record_id="record_ids").explode(
         "record_id"
@@ -246,6 +249,10 @@ def carrying_links(
     trace = links.filter(pl.col("task") == "trace").select(
         "link_method",
         "ledger_check",
+        method_rank=pl.col("link_method").replace_strict(
+            {method: rank for rank, method in enumerate(LINK_METHODS)},
+            return_dtype=pl.Int16,
+        ),
         d_unit="left_id",
         c_unit="right_id",
         link_probability="probability",
@@ -259,9 +266,10 @@ def carrying_links(
         .sort(
             "row_id",
             "record_id",
+            "method_rank",
             "link_probability",
             "c_unit",
-            descending=[False, False, True, False],
+            descending=[False, False, False, True, False],
         )
         .group_by("row_id", "record_id", maintain_order=True)
         .agg(pl.col("link_method", "link_probability", "ledger_check").first())

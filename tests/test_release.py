@@ -202,6 +202,30 @@ def test_an_allocation_moved_from_a_repeat_keeps_the_repeats_link() -> None:
     ]
 
 
+def test_a_pair_under_two_methods_is_carried_by_the_one_allocation_runs_first() -> None:
+    # Key repair runs before the crosswalk, so it carries the pair even where the
+    # crosswalk's link is the more probable.
+    links = pl.LazyFrame(
+        {
+            "task": ["crdf_crs", "trace", "trace"],
+            "left_id": ["R1", "u-d20", "u-d20"],
+            "right_id": ["u-c19", "u-c19", "u-c19"],
+            "group_id": ["g", "crosswalk|1|1", "repair|1"],
+            "probability": [1.0, 1.0, 0.9],
+            "link_method": ["within_year", "crosswalk", "repair_title_recipient"],
+            "ledger_check": [None, None, None],
+        }
+    )
+    units = pl.LazyFrame({"unit_id": ["u-d20"], "record_ids": [["d20"]]})
+    allocated = pl.LazyFrame({"row_id": ["R1"], "record_id": ["d20"]})
+
+    carried = release.carrying_links(
+        allocated, crdf=CRDF.lazy(), units=units, links=links
+    ).collect()
+
+    assert carried["link_method"].to_list() == ["repair_title_recipient"]
+
+
 def test_quality_counts_repeats_on_their_own_line(release_dir: Path) -> None:
     quality = _read(release_dir, "quality").row(0, named=True)
 

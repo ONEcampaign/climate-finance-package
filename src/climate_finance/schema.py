@@ -479,16 +479,17 @@ CANDIDATES = _table(
     eligible=_bool(),
 )
 
+# One row per provider of the counted CRDF commitments: their climate value and, for
+# a provider with a crosswalk (`link.crosswalks`), the part whose commitment a
+# crosswalk link reaches, null for the others. Scoring columns join on
+# `provider_code`.
 PROVIDER_PROFILE = _table(
     "provider_profile",
     ("provider_code",),
     provider_code=_code(),
-    scoring_group=_str(values=SCORING_GROUPS),
-    true_pairs=_count(),
-    commitments=_count(),
-    pairs=_count(),
-    calibration_labels=_count(),
-    key_link_share=_f64(nullable=True),
+    climate_usd=_usd(),
+    crosswalk_usd=_usd(nullable=True),
+    crosswalk_share=_f64(nullable=True),
 )
 
 # A CRS record's disbursement at face value, split over CRDF commitments (`row_id`).
@@ -829,11 +830,10 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
 # Tables a stage may leave out. A stage that reads one that was not written raises
 # StageInputMissingError. `orgs` is written when recoveries are on, `btr` when the build
 # config names an ingested BTR table, `ledger` when it names ledger sources.
-# `provider_profile` is written by the link stage's scoring step, and the other link
-# steps write their tables without it. `bank_year_overlap` is written by the bank-ledger
-# gap fill, `review_queue` by the review queue and `pair_labels` by the ledger check.
-# With their switches off the two stages pass the tables they carry forward through
-# unchanged.
+# `provider_profile` is written when recoveries are on, and the other link steps write
+# their tables without it. `bank_year_overlap` is written by the bank-ledger gap fill,
+# `review_queue` by the review queue and `pair_labels` by the ledger check. With their
+# switches off the two stages pass the tables they carry forward through unchanged.
 OPTIONAL_STAGE_TABLES: Mapping[str, frozenset[str]] = {
     "normalise": frozenset({"btr", "orgs", "ledger"}),
     "link": frozenset({"provider_profile"}),

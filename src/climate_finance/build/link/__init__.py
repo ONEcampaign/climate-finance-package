@@ -6,16 +6,22 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from climate_finance.build.fetch import DAC_EXCHANGE_FILE
+from climate_finance.build.fetch import DAC_EXCHANGE_FILE, IATI_DIR
 from climate_finance.build.link.candidates import (
     generate_candidates,
     learn_programme_stems,
 )
 from climate_finance.build.link.crdf_crs import link_within_year, recover
+from climate_finance.build.link.crosswalks import (
+    crosswalk_profile,
+    gef_crosswalk,
+    link_by_crosswalk,
+)
 from climate_finance.build.link.id_practice import classify_id_practice
 from climate_finance.build.link.key_repair import repair_keys
 from climate_finance.build.link.keys import build_units, link_by_keys
 from climate_finance.build.normalise.crs import trace_population
+from climate_finance.build.readers.iati import read_related_activities
 
 if TYPE_CHECKING:
     from climate_finance.build.stages import StageContext, StageOutput
@@ -29,9 +35,11 @@ def run_link(context: StageContext) -> StageOutput:
     through the exact key tiers under each agency's id practice. Key repair runs when
     `key_repair` is on. When `recoveries` is on, the EIB recovery routes link the
     EIB rows the within-year join leaves out, reading the `external` table and the
-    DAC exchange rates fetch wrote, except the routes `skip_eib_routes` names.
-    Programme stems are learned from the trace population, and blocking pairs the
-    units the keys left for scoring.
+    DAC exchange rates fetch wrote, except the routes `skip_eib_routes` names, and
+    GEF disbursements link to GEF commitments through the GEF IATI file's crosswalk
+    to agency ids, which `provider_profile` measures. Programme stems are learned
+    from the trace population, and blocking pairs the units the keys left for
+    scoring.
     """
     config = context.config
     crs = context.read("normalise", "crs")
@@ -51,10 +59,23 @@ def run_link(context: StageContext) -> StageOutput:
             exchange=pl.read_parquet(context.raw_dir / DAC_EXCHANGE_FILE),
             skip=config.skip_eib_routes,
         )
-    found = [trace, crdf_crs]
+    keyed = [trace]
     if config.key_repair:
-        found.append(
+        keyed.append(
             repair_keys(units, crs=crs, links=trace, first_year=config.years.crs[0])
+        )
+    found = [*keyed, crdf_crs]
+    if config.recoveries:
+        crosswalk = gef_crosswalk(
+            read_related_activities(context.raw_dir / IATI_DIR / "gef")
+        )
+        found.append(
+            link_by_crosswalk(
+                units,
+                crosswalk=crosswalk,
+                earlier=pl.concat(keyed),
+                first_year=config.years.crs[0],
+            )
         )
     links = pl.concat(found)
     stems = learn_programme_stems(population).collect()
@@ -66,10 +87,15 @@ def run_link(context: StageContext) -> StageOutput:
         stems=stems,
         first_year=config.years.crs[0],
     )
-    return {
+    tables = {
         "links": links,
         "units": units,
         "id_practice": id_practice,
         "programme_stems": stems,
         "candidates": candidates,
     }
+    if config.recoveries:
+        tables["provider_profile"] = crosswalk_profile(
+            crdf, links=links, units=units, us_awards=None
+        )
+    return tables

@@ -25,6 +25,10 @@ STEP_ONE_BN = {
     "no_disbursement_record": 34.1908,
     "not_traceable": 32.5254,
 }
+# The target's prototype has no GEF crosswalk (`link.crosswalks`). Its links give
+# five GEF rows worth USD 0.0042 bn a disbursement, so they move from not traceable
+# to partly disbursed.
+GEF_CROSSWALK_BN = {"partly_disbursed": 0.0042, "not_traceable": -0.0042}
 TOLERANCE_BN = 0.001
 
 
@@ -100,10 +104,14 @@ def _step_one(release_dir: Path) -> dict[str, float]:
     return dict(totals.iter_rows())
 
 
-def test_step_one_matches_the_target_without_the_crosswalk(
+def test_step_one_matches_the_target_plus_the_gef_crosswalk(
     without_crosswalk: Path,
 ) -> None:
-    assert _step_one(without_crosswalk) == pytest.approx(STEP_ONE_BN, abs=TOLERANCE_BN)
+    expected = {
+        status: value + GEF_CROSSWALK_BN.get(status, 0.0)
+        for status, value in STEP_ONE_BN.items()
+    }
+    assert _step_one(without_crosswalk) == pytest.approx(expected, abs=TOLERANCE_BN)
 
 
 def _build_release(out: Path, *, archive: Path, manifest: Path | None) -> BuildManifest:
