@@ -24,6 +24,7 @@ STATUSES = (
     "pending_review",
 )
 KEY_TIERS = (
+    "wb_loan",
     "crs_id_purpose",
     "crs_id",
     "crs_id_parent",
@@ -33,7 +34,6 @@ KEY_TIERS = (
 KEY_REPAIR_METHODS = (
     "repair_new_crs_id",
     "repair_pn_variant",
-    "repair_wb_parent",
     "repair_afdb_scientific",
     "repair_title_recipient",
 )

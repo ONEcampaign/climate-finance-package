@@ -11,9 +11,6 @@ links is left out of the later ones:
 - `repair_new_crs_id`: the same (donor, agency, project number).
 - `repair_pn_variant`: project numbers equal once separators, a `CRSn` suffix and
   leading zeros are dropped (`project_core`).
-- `repair_wb_parent`: the same World Bank loan or credit number inside project
-  numbers of the form `P<project>.<loan>.CRS<n>`, as when additional financing is
-  booked under the parent project.
 - `repair_afdb_scientific`: a long numeric project number that a spreadsheet
   rounded, as `2.10015E+12` or `2100150000000`, keeps its leading digits and its
   length (`rounded_digits`). It links to a commitment of the same agency and
@@ -63,10 +60,8 @@ CORE_MIN_CHARS = 4
 
 _LONG_NUMBER = rf"^\d{{{ROUNDED_MIN_DIGITS},}}$"
 _SCIENTIFIC = r"^(\d)\.(\d+)E\+(\d+)$"
-_WB_LOAN = r"^P\d+\.([A-Z]+[A-Z0-9]*\d)\.CRS\d+$"
 _PN = ("donor_code", "agency_code", "project_number")
 _CORE = ("donor_code", "agency_code", "core")
-_LOAN = ("donor_code", "loan")
 _PLACE = ("donor_code", "agency_code", "recipient_code")
 _TITLE_KEY = (*_PLACE, "title_words")
 # What `_settle` reads of a rule's candidate pairs. Commitment columns end in `_c`.
@@ -93,12 +88,6 @@ def project_core(project_number: pl.Expr) -> pl.Expr:
         .str.replace_all("(^|[A-Z])0+([0-9])", "${1}${2}")
     )
     return pl.when(core.str.len_chars() >= CORE_MIN_CHARS).then(core)
-
-
-def wb_loan(project_number: pl.Expr) -> pl.Expr:
-    """The loan or credit number in a World Bank `P<project>.<loan>.CRS<n>` project
-    number, or null for other numbers."""
-    return project_number.str.to_uppercase().str.extract(_WB_LOAN, 1)
 
 
 def rounded_digits(project_number: pl.Expr) -> pl.Expr:
@@ -170,7 +159,6 @@ def repair_keys(
     rules: dict[str, Rule] = {
         "repair_new_crs_id": lambda d, c: _candidates(d, c, on=_PN, key=_PN),
         "repair_pn_variant": lambda d, c: _candidates(d, c, on=_CORE, key=_CORE),
-        "repair_wb_parent": lambda d, c: _candidates(d, c, on=_LOAN, key=_LOAN),
         "repair_afdb_scientific": _rounded_numbers,
         "repair_title_recipient": lambda d, c: _same_title(
             d, c.join(unique_titles, on=_TITLE_KEY)
@@ -209,7 +197,6 @@ def _unit_facts(units: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
         .with_columns(
             title_words=title_words(pl.col("title")),
             core=project_core(pn),
-            loan=wb_loan(pn),
             rounded=rounded_digits(pn),
         )
     )

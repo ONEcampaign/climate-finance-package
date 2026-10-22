@@ -7,11 +7,10 @@ recorded under the key, summed over the trace units that carry it, with the ledg
 disbursement transactions for the key in US dollars. They agree when the CRS is
 within `TOLERANCE` of the ledger. The CRS stays the disbursement record.
 
-The CRS records are compared, not the dollars allocation gives each link. The World
-Bank's crs ids name projects, so the key tiers link at project level and allocation
-spreads a project's disbursement over its loans: allocated dollars agree with the
-ledger for 67% to 94% of World Bank loan-years in 2021 and 2022, the CRS records for
-99.7% to 100% of those the ledger lists.
+The check compares CRS records, which agree with the ledger for 99.7% to 100% of the
+World Bank loan-years it lists in 2021 and 2022. The dollars allocation gives each
+link agree for 96% to 99.7%, since the `wb_loan` key tier keeps a loan's disbursement
+on its own loan but excess and cross-year timing still differ from the ledger.
 """
 
 from __future__ import annotations

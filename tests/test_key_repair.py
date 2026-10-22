@@ -18,7 +18,6 @@ from climate_finance.build.link.key_repair import (
     rounded_digits,
     title_tokens,
     title_words,
-    wb_loan,
 )
 from climate_finance.build.link.keys import build_units, link_by_keys
 from climate_finance.build.normalise.crdf import normalise_crdf
@@ -131,12 +130,6 @@ def _disbursement(**fields: object) -> dict[str, object]:
             {"crs_id": "A", "project_number": "KFW-0012345", "title": "Roads"},
             {"crs_id": "B", "project_number": "KFW12345.CRS2", "title": "Health"},
             "repair_pn_variant",
-        ),
-        # Additional financing booked under the parent project's number.
-        (
-            {"crs_id": "A", "project_number": "P179981.IDA72500.CRS4"},
-            {"crs_id": "B", "project_number": "P170000.IDA72500.CRS1"},
-            "repair_wb_parent",
         ),
         (
             {"crs_id": "A", "project_number": "2100150000123", "title": "Eggsp II"},
@@ -468,20 +461,6 @@ def test_allocation_fills_only_the_commitments_each_unit_links_to() -> None:
 def test_project_core(published: str | None, core: str | None) -> None:
     frame = pl.DataFrame({"pn": [published]}, schema={"pn": pl.String})
     assert frame.select(project_core(pl.col("pn"))).item() == core
-
-
-@pytest.mark.parametrize(
-    ("published", "loan"),
-    [
-        ("P179981.IDA72500.CRS4", "IDA72500"),
-        ("P123.TF0B1234.CRS1", "TF0B1234"),
-        ("P179981", None),
-        ("P179981.IDA72500", None),
-    ],
-)
-def test_wb_loan(published: str, loan: str | None) -> None:
-    frame = pl.DataFrame({"pn": [published]})
-    assert frame.select(wb_loan(pl.col("pn"))).item() == loan
 
 
 @pytest.mark.parametrize(

@@ -8,6 +8,12 @@ an EU contract record carries the contract's own date, which falls on or after i
 decision's commitment. A disbursement whose floor precedes the first CRS year continues
 a commitment the build cannot see, and links to nothing.
 
+The World Bank tier comes first. IBRD and IDA crs ids name projects, and a project
+holds several loans and credits, so a tier on the crs id lets allocation spend one
+loan's disbursement on another loan's commitment. The loan or credit number in the
+project number (`loan_number`) keeps it on its own loan, and reaches additional
+financing booked under the parent project's number.
+
 The project-number tiers are off for an agency whose ids persist in the period of the
 record year (see `id_practice`). They link only where (donor, agency, project number,
 recipient) maps to one crs id on the commitment side, since shared framework numbers
@@ -54,13 +60,15 @@ PLACEHOLDER_PNS = (
     "..",
     "X",
 )
+# IBRD and IDA, whose project numbers carry the loan or credit number.
+WORLD_BANK_DONORS = (901, 905)
 
 
 @dataclass(frozen=True)
 class Tier:
     """A key tier. It holds the commitment key, the disbursement key it must equal,
-    whether it reads project numbers, and whether it holds to the disbursement's
-    floor."""
+    whether it is a project-number tier that id practice turns off, and whether it
+    holds to the disbursement's floor."""
 
     name: str
     commitment_key: tuple[str, ...]
@@ -70,6 +78,7 @@ class Tier:
 
 
 TIERS = (
+    Tier("wb_loan", ("donor_code", "loan"), ("donor_code", "loan")),
     Tier(
         "crs_id_purpose",
         ("donor_code", "crs_id", "purpose_code", "recipient_code"),
@@ -109,6 +118,14 @@ def normalise_pn(project_number: pl.Expr) -> pl.Expr:
         & (pn.str.len_chars() >= 2)
     )
     return pl.when(usable).then(pn)
+
+
+def loan_number(donor_code: pl.Expr, project_number: pl.Expr) -> pl.Expr:
+    """The loan or credit number an IBRD or IDA project number carries after its
+    project id (`P163452.IDA61960.CRS3`), or null for other donors."""
+    return pl.when(donor_code.is_in(WORLD_BANK_DONORS)).then(
+        project_number.str.split(".").list.get(1, null_on_oob=True)
+    )
 
 
 def build_units(crs: pl.LazyFrame) -> pl.LazyFrame:
@@ -160,6 +177,7 @@ def link_by_keys(
         )
         .with_columns(
             crs_parent=parent_id(pl.col("crs_id")),
+            loan=loan_number(pl.col("donor_code"), pl.col("project_number")),
             period=period_of(pl.col("year")),
         )
         .join(
@@ -169,7 +187,9 @@ def link_by_keys(
         )
         .with_columns(pl.col("pn_blocked").fill_null(value=False))
     )
-    commitments = units.filter(pl.col("commitment_usd") > 0)
+    commitments = units.filter(pl.col("commitment_usd") > 0).with_columns(
+        loan=loan_number(pl.col("donor_code"), pl.col("project_number"))
+    )
     unique_pn = _unique_pn(commitments)
 
     pairs = []

@@ -29,6 +29,15 @@ STEP_ONE_BN = {
 # five GEF rows worth USD 0.0042 bn a disbursement, so they move from not traceable
 # to partly disbursed.
 GEF_CROSSWALK_BN = {"partly_disbursed": 0.0042, "not_traceable": -0.0042}
+# The target keys World Bank disbursements on their crs ids, which name projects. The
+# build's `wb_loan` tier keys them on their loan or credit numbers, which moves IBRD
+# and IDA value and no other provider's.
+LOAN_TIER_MOVED_BN = {
+    "disbursed": 1.5995,
+    "partly_disbursed": 1.1822,
+    "no_disbursement_record": -2.7817,
+    "not_traceable": 0.0,
+}
 TOLERANCE_BN = 0.001
 
 
@@ -108,8 +117,8 @@ def test_step_one_matches_the_target_plus_the_gef_crosswalk(
     without_crosswalk: Path,
 ) -> None:
     expected = {
-        status: value + GEF_CROSSWALK_BN.get(status, 0.0)
-        for status, value in STEP_ONE_BN.items()
+        status: usd_bn + LOAN_TIER_MOVED_BN[status] + GEF_CROSSWALK_BN.get(status, 0.0)
+        for status, usd_bn in STEP_ONE_BN.items()
     }
     assert _step_one(without_crosswalk) == pytest.approx(expected, abs=TOLERANCE_BN)
 

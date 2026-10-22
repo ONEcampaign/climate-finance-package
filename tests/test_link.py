@@ -196,6 +196,27 @@ def test_each_tier_links_what_the_tiers_before_it_miss(
     assert traced == {"d": (tier, ["c"])}
 
 
+@pytest.mark.parametrize(
+    ("donor_code", "traced"),
+    [
+        (905, {"d": ("wb_loan", ["c_loan2"])}),
+        (901, {"d": ("wb_loan", ["c_loan2"])}),
+        # Other donors' numbers carry no loan, so the crs id holds the project.
+        (5, {"d": ("crs_id_purpose", ["c_loan1", "c_loan2"])}),
+    ],
+)
+def test_a_world_bank_disbursement_stays_on_its_own_loan(
+    donor_code: int, traced: dict[str, tuple[str, list[str]]]
+) -> None:
+    project = {"donor_code": donor_code, "crs_id": "A"}
+    records = {
+        "c_loan1": _commitment(**project, project_number="P1.IDA1.CRS1"),
+        "c_loan2": _commitment(**project, project_number="P1.IDA2.CRS1"),
+        "d": _disbursement(**project, project_number="P1.IDA2.CRS3"),
+    }
+    assert _trace(records) == traced
+
+
 def test_a_disbursement_reaches_every_eligible_commitment_of_its_group() -> None:
     traced = _trace(
         {

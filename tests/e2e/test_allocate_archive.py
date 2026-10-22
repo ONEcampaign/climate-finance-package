@@ -45,16 +45,26 @@ FIRST_ROWS_MOVED_BN = {
     "no_disbursement_record": 0.0,
     "not_traceable": -0.94,
 }
+# The reference keys World Bank disbursements on their crs ids, which name projects;
+# the build's `wb_loan` tier keys them on their loan or credit numbers.
+LOAN_TIER_MOVED_BN = {
+    "disbursed": 1.60,
+    "partly_disbursed": 1.18,
+    "no_disbursement_record": -2.78,
+    "not_traceable": 0.0,
+}
 # With aggregate children counted and their parents left out (the release rule).
 RELEASE_RULE_BN = {
-    "disbursed": 54.77,
-    "partly_disbursed": 104.83,
-    "no_disbursement_record": 34.86,
+    "disbursed": 56.37,
+    "partly_disbursed": 106.01,
+    "no_disbursement_record": 32.07,
     "not_traceable": 35.12,
 }
 # No-record value the key-repair rules move to partly or fully disbursed, counted
-# as the reference counts, by provider category (USD bn).
-REPAIR_MOVED_BN = {"bilateral": 0.96, "banks": 4.54}
+# as the reference counts, by provider category (USD bn). The `wb_loan` tier already
+# reaches the World Bank commitments the rules would, so the rules move no IBRD or
+# IDA value.
+REPAIR_MOVED_BN = {"bilateral": 0.96, "banks": 2.02}
 REPAIR_TOLERANCE_BN = 0.05
 _CATEGORY = {
     "DAC member": "bilateral",
@@ -195,7 +205,7 @@ def test_statuses_reproduce_the_reference_without_recoveries(
     built = _by_status(_prototype_count(_rows(base)))
     assert set(built) == set(reference["status"])
     for status, usd_bn in reference.select("status", "usd_bn").iter_rows():
-        moved = FIRST_ROWS_MOVED_BN[status]
+        moved = FIRST_ROWS_MOVED_BN[status] + LOAN_TIER_MOVED_BN[status]
         assert built[status] == pytest.approx(usd_bn + moved, abs=TOLERANCE_BN), status
 
 
