@@ -219,3 +219,25 @@ def test_gcf_readiness_gives_the_approval_and_the_amount_disbursed_to_date() -> 
     assert readiness.filter(key="ZZC-RS-001")["transaction_type"].to_list() == [
         "commitment"
     ]
+
+
+def test_gcf_co_financing_commitments_are_left_out(tmp_path: Path) -> None:
+    transaction = (
+        '<transaction><transaction-type code="2" />'
+        '<transaction-date iso-date="2019-05-01" /><value currency="USD">{amount}'
+        "</value><description><narrative>{text}</narrative></description>"
+        "</transaction>"
+    )
+    (tmp_path / "gcf.xml").write_text(
+        '<iati-activities version="2.03"><iati-activity default-currency="USD">'
+        "<iati-identifier>XM-DAC-41317-FP901</iati-identifier>"
+        + transaction.format(amount=10, text="GCF financing commitment")
+        + transaction.format(amount=25, text="Co-financing commitment")
+        + "</iati-activity></iati-activities>"
+    )
+
+    gcf = read_iati_ledger(tmp_path, publisher="gcf")
+
+    assert gcf.select("key", "transaction_type", "amount").rows() == [
+        ("FP901", "commitment", 10.0)
+    ]

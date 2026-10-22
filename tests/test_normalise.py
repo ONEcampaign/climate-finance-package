@@ -318,10 +318,20 @@ def test_run_normalise_writes_every_table_from_raw(
     if ledgers:
         ledger = pl.read_parquet(table_path(tmp_path, "normalise", "ledger"))
         assert set(ledger["publisher"]) == {"ibrd", "ida", "ebrd", "afdb", "gcf"}
-        # EBRD's euros convert at the euro's DAC rate; the DAC publishes no XDR rate.
+        # EBRD's euros convert at the euro's DAC rate. The DAC publishes no XDR
+        # rate, so the AfDB's SDR amounts convert at the IMF's, which the fixture
+        # gives as 1.25 US dollars in 2020 and not at all for 2019.
         ebrd = ledger.filter(publisher="ebrd")
         assert (ebrd["amount_usd"] == ebrd["amount"] / 0.8).all()
-        assert ledger.filter(currency="XDR")["amount_usd"].is_null().all()
+        xdr = ledger.filter(currency="XDR")
+        assert set(xdr["year"]) == {2019, 2020}
+        assert (
+            xdr.filter(year=2020)
+            .select(pl.col("amount") * 1.25 - pl.col("amount_usd"))
+            .to_series()
+            == 0
+        ).all()
+        assert xdr.filter(year=2019)["amount_usd"].is_null().all()
     if recoveries:
         orgs = pl.read_parquet(table_path(tmp_path, "normalise", "orgs"))
         eib = orgs.filter(role="agency", source_name="European Investment Bank")

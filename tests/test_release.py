@@ -176,6 +176,33 @@ def test_disbursements_carry_the_record_and_its_link_and_leave_out_excess(
     assert rows["provider_code"].to_list() == [NOR, NOR]
 
 
+def test_a_fill_takes_its_commitments_facts_and_its_records_total() -> None:
+    # One ledger key and year fills R1 and C, which have no CRS record behind them.
+    fills = pl.LazyFrame(
+        {
+            "row_id": ["R1", "C"],
+            "record_id": ["ledger:ida:IDA1:2021"] * 2,
+            "year": [2021, 2021],
+            "allocated_usd": [6.0, 4.0],
+            "allocated_low_usd": [6.0, 4.0],
+            "allocated_high_usd": [6.0, 4.0],
+            "rule": ["bank_ledger"] * 2,
+            "disbursement_source": ["bank_ledger"] * 2,
+        },
+        schema_overrides={"year": pl.Int16},
+    )
+
+    rows = release.fill_disbursements(fills, crdf=CRDF.lazy()).collect().sort("row_id")
+
+    expected = CRDF.filter(pl.col("row_id").is_in(["C", "R1"])).sort("row_id")
+    for column in ("provider_code", "recipient_code", "bi_multi", "flow_code"):
+        assert rows[column].to_list() == expected[column].to_list(), column
+    assert rows["record_disbursement_usd"].to_list() == [10.0, 10.0]
+    assert rows["record_grant_equiv_usd"].is_null().all()
+    assert rows["link_method"].is_null().all()
+    assert rows.columns == list(schema.DISBURSEMENTS.columns)
+
+
 def test_an_allocation_moved_from_a_repeat_keeps_the_repeats_link() -> None:
     # R2 repeats R1 and sits in the crdf_crs group that traced record d20; allocate
     # moved d20's allocation from R2 to R1, which has no group of its own.
@@ -335,16 +362,16 @@ def test_a_failing_assemble_leaves_the_last_good_release(
 
 
 @pytest.mark.parametrize(
-    ("stage", "switch", "carried", "unbuilt"),
+    ("stage", "switch", "carried", "refused"),
     [
+        # The gap fill and the review stage's ledger check need ledger sources,
+        # which the config leaves out.
         (
             Stage.FILL,
             "gap_fill",
             {"allocations": "allocate", "commitments": "allocate"},
-            NotImplementedError,
+            ConfigError,
         ),
-        # The review stage's ledger check needs ledger sources, which the config
-        # leaves out.
         (Stage.REVIEW, "review", {"links": "link", "commitments": "fill"}, ConfigError),
     ],
 )
@@ -354,7 +381,7 @@ def test_fill_and_review_pass_through_with_their_switch_off(
     stage: Stage,
     switch: str,
     carried: dict[str, str],
-    unbuilt: type[Exception],
+    refused: type[Exception],
 ) -> None:
     run = next(entry.run for entry in REGISTRY if entry.name == stage)
 
@@ -370,7 +397,7 @@ def test_fill_and_review_pass_through_with_their_switch_off(
     for table, source in carried.items():
         written = pl.read_parquet(table_path(release_dir, source, table))
         assert output[table].lazy().collect().equals(written)
-    with pytest.raises(unbuilt):
+    with pytest.raises(refused):
         run(context(on=True))
 
 

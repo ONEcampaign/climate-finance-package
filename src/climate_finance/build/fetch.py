@@ -31,7 +31,7 @@ from climate_finance.build.readers.ledgers.gcf import (
 from climate_finance.build.readers.ledgers.gcf import (
     READINESS_PUBLISHER,
 )
-from climate_finance.build.sources import finances_one, iati
+from climate_finance.build.sources import finances_one, iati, imf
 from climate_finance.build.sources.files import LEDGER_DIR, RawFile
 from climate_finance.build.sources.gcf import (
     PROJECTS_FILE,
@@ -453,7 +453,8 @@ def _fetch_ledgers(
     raw: Path, *, ledgers: Ledgers, client: httpx.Client
 ) -> list[RawFile]:
     """Put the ledgers `ledgers` names under `ledgers/`, from its archive if it has
-    one. The GCF ledger reads the projects file, which every fetch writes.
+    one. The GCF ledger reads the projects file, which every fetch writes. With the
+    AfDB, whose ledger is in SDR, the IMF's US dollar rate of the SDR comes too.
 
     Raises:
         SourceUnavailableError: when a download fails or the archive lacks a file.
@@ -486,6 +487,10 @@ def _fetch_ledgers(
         files += download_gcf_readiness(
             raw, offline=False, archive=archived(READINESS_FILE.parent), client=client
         )
+    if imf.XDR_PUBLISHERS & set(ledgers.publishers):
+        files += imf.download_sdr_rates(
+            raw, offline=False, archive=archived(imf.FOLDER), client=client
+        )
     return files
 
 
@@ -503,6 +508,7 @@ def _ledger_sources(ledgers: Ledgers) -> list[str]:
             for publisher in iati_ledger_publishers(ledgers.publishers)
         ),
         *([READINESS_SOURCE] if READINESS_PUBLISHER in ledgers.publishers else []),
+        *([imf.SOURCE] if imf.XDR_PUBLISHERS & set(ledgers.publishers) else []),
     ]
 
 

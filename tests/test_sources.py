@@ -17,6 +17,7 @@ from climate_finance.build.readers.ledgers.gcf import (
     read_gcf_readiness,
 )
 from climate_finance.build.readers.ledgers.iati import read_iati_ledger
+from climate_finance.build.readers.ledgers.imf import read_sdr_rates
 from climate_finance.build.sources import files
 from climate_finance.build.sources.finances_one import API, download_finances_one
 from climate_finance.build.sources.gcf import (
@@ -26,6 +27,8 @@ from climate_finance.build.sources.gcf import (
     download_gcf_readiness,
 )
 from climate_finance.build.sources.iati import INDEX, download_iati_ledgers
+from climate_finance.build.sources.imf import URL as IMF_URL
+from climate_finance.build.sources.imf import download_sdr_rates
 from climate_finance.errors import SourceUnavailableError
 
 LEDGERS = Path(__file__).parent / "fixtures" / "raw" / "ledgers"
@@ -377,3 +380,50 @@ def test_gcf_readiness_imports_a_local_archive_even_offline(tmp_path: Path) -> N
 
     assert readiness["method"] == "manual"
     assert read_gcf_readiness(tmp_path / "ledgers" / "gcf" / "readiness.json").height
+
+
+# IMF ----------------------------------------------------------------------------
+
+
+def test_sdr_rates_are_saved_as_served_and_feed_the_reader(tmp_path: Path) -> None:
+    body = (LEDGERS / "imf" / "sdr_usd.xml").read_bytes()
+
+    def api(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == IMF_URL
+        return httpx.Response(200, content=body)
+
+    (record,) = download_sdr_rates(
+        tmp_path, offline=False, client=_client(api), pause_seconds=0
+    )
+
+    assert record["path"] == "ledgers/imf/sdr_usd.xml"
+    _manifest_row(record, tmp_path)
+    # The 2023 observation carries no value.
+    assert read_sdr_rates(tmp_path / record["path"]).rows() == [
+        (2020, 1.25),
+        (2021, 1.5),
+        (2022, 2.0),
+    ]
+
+
+def test_sdr_rates_refuse_a_reply_without_observations(tmp_path: Path) -> None:
+    with pytest.raises(SourceUnavailableError, match="no observations"):
+        download_sdr_rates(
+            tmp_path,
+            offline=False,
+            client=_client(lambda r: httpx.Response(200, text="<html></html>")),
+            pause_seconds=0,
+        )
+
+
+def test_sdr_rates_make_no_request_offline_but_import_an_archive(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(SourceUnavailableError, match="offline"):
+        download_sdr_rates(tmp_path, offline=True, client=_client(_refuse))
+
+    (record,) = download_sdr_rates(
+        tmp_path, offline=True, archive=LEDGERS / "imf", client=_client(_refuse)
+    )
+
+    assert record["method"] == "manual"

@@ -226,6 +226,14 @@ def _unlink_an_allocation(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.with_columns(link_method=pl.when(~is_row).then(pl.col("link_method")))
 
 
+def _move_a_fill_to_another_recipient(frame: pl.DataFrame) -> pl.DataFrame:
+    # The bank-ledger fill on AFDB-1 has no CRS record; its facts are AFDB-1's.
+    is_fill = pl.col("disbursement_source") == "bank_ledger"
+    return frame.with_columns(
+        recipient_code=pl.when(is_fill).then(1).otherwise(pl.col("recipient_code"))
+    )
+
+
 def _repeat_an_allocated_row(frame: pl.DataFrame) -> pl.DataFrame:
     # DEU-1 holds allocations; as a repeat of DEU-2 its money drops out of totals.
     return frame.with_columns(
@@ -243,6 +251,7 @@ def _repeat_an_allocated_row(frame: pl.DataFrame) -> pl.DataFrame:
         ("disbursements", _null_allocation_bound, "DEU-1"),
         ("disbursements", _null_record_disbursement, "JPN-SPLIT"),
         ("disbursements", _unlink_an_allocation, "DEU-1"),
+        ("disbursements", _move_a_fill_to_another_recipient, "AFDB-1"),
         ("commitments", _repeat_an_allocated_row, "DEU-1"),
         ("commitments", _break_disbursed_sum, "DEU-1"),
         ("commitments", _break_face_cap, "DEU-1"),

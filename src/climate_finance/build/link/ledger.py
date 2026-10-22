@@ -53,7 +53,9 @@ def ledger_key(publisher: pl.Expr, project_number: pl.Expr) -> pl.Expr:
     World Bank numbers carry the loan or credit number after the project id
     (`P163452.IDA61960.CRS3`), the ADB's the loan, grant or TA number before the
     first dash, the IDB's the operation number before `&`, and the GCF's a funded
-    activity number (`FP001`, `SAP001`). The other banks' numbers are the key.
+    activity number (`FP001`, `SAP001`) or a readiness grant's agreement reference
+    (`MLI-RS-001`), the key of the GCF readiness list. The other banks' numbers are
+    the key.
     """
     return (
         pl.when(publisher.is_in(["ibrd", "ida"]))
@@ -63,7 +65,12 @@ def ledger_key(publisher: pl.Expr, project_number: pl.Expr) -> pl.Expr:
         .when(publisher == "iadb")
         .then(project_number.str.split("&").list.first())
         .when(publisher == "gcf")
-        .then(project_number.str.extract(r"\b((?:FP|SAP)\d{3})\b"))
+        .then(
+            pl.coalesce(
+                project_number.str.extract(r"\b((?:FP|SAP)\d{3})\b"),
+                project_number.str.extract(r"\b([A-Z]{3}-RS-\d{3})\b"),
+            )
+        )
         .otherwise(project_number)
     )
 

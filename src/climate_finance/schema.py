@@ -71,8 +71,8 @@ LEDGER_TRANSACTION_TYPES = (
     "disbursed_to_date",
 )
 LEDGER_CHECKS = ("confirmed", "contradicted", "none", "confirmed_undisbursed")
-DISBURSEMENT_SOURCES = ("crs", "bank_ledger", "none")
-ALLOCATION_RULES = ("fifo", "dated", "window", "excess", "bank_ledger")
+DISBURSEMENT_SOURCES = ("crs", "bank_ledger", "iati", "none")
+ALLOCATION_RULES = ("fifo", "dated", "window", "excess", "bank_ledger", "iati")
 OBJECTIVES = ("adaptation", "mitigation", "cross_cutting")
 # An agency share's objective: one of OBJECTIVES, or `climate` for a total climate
 # share with no split by objective, as the OECD gives before 2021.
@@ -576,6 +576,7 @@ BANK_YEAR_OVERLAP = _table(
     ledger_usd=_usd(),
     crs_usd=_usd(),
     share_keys_within_10pct=_f64(),
+    unkeyed_share=_f64(),
     passed=_bool(),
 )
 
@@ -947,6 +948,19 @@ def _exceeds(smaller: str, larger: str) -> pl.Expr:
     return amount(smaller) - amount(larger) > INVARIANT_TOLERANCE_USD
 
 
+# The commitment facts a fill copies, since it has no CRS record of its own.
+_FILL_FACTS = (
+    "provider_code",
+    "agency_code",
+    "recipient_code",
+    "channel_code",
+    "bi_multi",
+    "purpose_code",
+    "flow_code",
+    "project_number",
+)
+
+
 def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     """Problems with a release's `commitments`, `disbursements`, `agency_shares` and
     `core_contributions`.
@@ -959,8 +973,10 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     rows share one `record_disbursement_usd` and one `record_grant_equiv_usd` (all
     null or all set), and its allocated amounts sum to at most
     `record_disbursement_usd`. Amounts compare within `INVARIANT_TOLERANCE_USD`, and
-    none of them is null. Every disbursements row but a bank-ledger fill names the
-    link that carried it. No disbursements row names a commitment that repeats an
+    none of them is null. Every disbursements row from the CRS names the link that
+    carried it, and every fill (a bank-ledger or IATI row) carries its commitment's
+    provider, agency, recipient, channel, Bi_Multi, purpose, flow and project
+    number. No disbursements row names a commitment that repeats an
     earlier vintage, as allocate moves a repeat's allocations to its first row. No
     commitment is another's `parent_row_id`, and no table in `tables` holds the
     bulk CRS's `CRS_UNSPECIFIED_RECIPIENT`. A channel, year and source of
@@ -995,12 +1011,24 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
             for row in failing.iter_rows(named=True)
         )
     unlinked = disbursements.filter(
-        pl.col("link_method").is_null(), pl.col("rule") != "bank_ledger"
+        pl.col("link_method").is_null(), pl.col("disbursement_source") == "crs"
     )
     problems.extend(
         f"disbursements {_row_label(row)}: no link carried it"
         for row in unlinked.iter_rows(named=True)
     )
+    fills = disbursements.filter(pl.col("disbursement_source") != "crs").join(
+        commitments.select("row_id", *_FILL_FACTS), on="row_id", suffix="_commitment"
+    )
+    for column in _FILL_FACTS:
+        differs = fills.filter(
+            ~pl.col(column).eq_missing(pl.col(f"{column}_commitment"))
+        )
+        problems.extend(
+            f"disbursements {_row_label(row)}: a fill whose {column} is not its "
+            "commitment's"
+            for row in differs.iter_rows(named=True)
+        )
     on_repeats = disbursements.join(
         commitments.filter(pl.col("repeat_of").is_not_null()), on="row_id", how="semi"
     )

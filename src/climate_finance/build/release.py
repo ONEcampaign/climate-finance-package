@@ -183,14 +183,14 @@ def release_disbursements(
 ) -> pl.LazyFrame:
     """Allocations to CRDF commitments, with their CRS record and link.
 
-    Each row carries the record's own facts, the markers it inherits from the
-    commitment (`label.inherit_markers`), and the link that carried it (see
-    `carrying_links`). A row no trace link carried, such as a bank-ledger fill, has
-    a null method and probability.
+    A CRS allocation carries the record's own facts, the markers it inherits from
+    the commitment (`label.inherit_markers`), and the link that carried it (see
+    `carrying_links`). A fill (`fill_disbursements`) has no CRS record or link.
     """
     allocated = allocations.filter(
         pl.col("row_id").is_not_null(), pl.col("rule") != "excess"
     )
+    from_crs = allocated.filter(pl.col("disbursement_source") == "crs")
     record = crs.select(
         "record_id",
         "agency_code",
@@ -205,14 +205,65 @@ def release_disbursements(
         record_disbursement_usd="disbursement_usd",
         record_grant_equiv_usd="grant_equiv_usd",
     )
-    return (
-        inherit_markers(allocated, commitments=crdf, crs=crs)
+    traced = (
+        inherit_markers(from_crs, commitments=crdf, crs=crs)
         .join(record, on="record_id", how="left", validate="m:1")
         .join(
-            carrying_links(allocated, crdf=crdf, units=units, links=links),
+            carrying_links(from_crs, crdf=crdf, units=units, links=links),
             on=["row_id", "record_id"],
             how="left",
             validate="m:1",
+        )
+        .select(list(DISBURSEMENTS.columns))
+    )
+    filled = fill_disbursements(
+        allocated.filter(pl.col("disbursement_source") != "crs"), crdf=crdf
+    )
+    return pl.concat([traced, filled])
+
+
+def fill_disbursements(fills: pl.LazyFrame, *, crdf: pl.LazyFrame) -> pl.LazyFrame:
+    """Bank-ledger and IATI fills as disbursements rows.
+
+    A fill has no CRS record, so it takes provider, agency, recipient, channel,
+    Bi_Multi, purpose, flow, project number, title, markers and climate share from
+    the commitment it fills. Its record is the fill's key and year
+    (`ledger:<publisher>:<key>:<year>` or `iati:...`), whose disbursement is what
+    the fill gives every commitment on it; there is no grant equivalent. Markers
+    come from the commitment (`components` where it has a climate share), and the
+    method, probability and ledger check are null.
+    """
+    commitment = crdf.select(
+        "row_id",
+        "agency_code",
+        "recipient_code",
+        "channel_code",
+        "bi_multi",
+        "purpose_code",
+        "flow_code",
+        "project_number",
+        "title",
+        "climate_share",
+        provider_code="provider_code",
+        inherited_rio_adaptation="rio_adaptation",
+        inherited_rio_mitigation="rio_mitigation",
+    )
+    records = fills.group_by("record_id").agg(
+        record_disbursement_usd=ordered_sum(pl.col("allocated_usd"))
+    )
+    return (
+        fills.join(commitment, on="row_id", how="left", validate="m:1")
+        .join(records, on="record_id", how="left", validate="m:1")
+        .with_columns(
+            record_grant_equiv_usd=pl.lit(None, pl.Float64),
+            record_rio_adaptation=pl.lit(None, pl.Int8),
+            record_rio_mitigation=pl.lit(None, pl.Int8),
+            marker_source=pl.when(pl.col("climate_share").is_not_null())
+            .then(pl.lit("components"))
+            .otherwise(pl.lit("commitment")),
+            link_method=pl.lit(None, pl.String),
+            link_probability=pl.lit(None, pl.Float64),
+            ledger_check=pl.lit(None, pl.String),
         )
         .select(list(DISBURSEMENTS.columns))
     )

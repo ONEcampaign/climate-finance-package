@@ -313,6 +313,23 @@ def test_online_fetch_downloads_ledgers_without_an_archive(
     assert sources.names().count("gcf_readiness") == 1
 
 
+def test_the_afdb_ledger_brings_the_imf_sdr_rate(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    ledgers = LEDGERS.model_copy(update={"publishers": ("afdb",)})
+
+    release = _fetch(_config(crs_file=crs_file, ledgers=ledgers), tmp_path / "out")
+
+    manifest = pl.read_parquet(release / MANIFEST).filter(
+        pl.col("path").str.starts_with("ledgers/")
+    )
+    # The AfDB's ledger is in SDR, which the DAC gives no rate for.
+    assert sorted(manifest.select("source", "path").rows()) == [
+        ("ledger_iati_afdb", "ledgers/iati/afdb/afdb-sample.xml"),
+        ("ledger_imf_sdr", "ledgers/imf/sdr_usd.xml"),
+    ]
+
+
 @pytest.mark.parametrize(
     ("fetched", "offline", "named"),
     [
@@ -328,8 +345,13 @@ def test_online_fetch_downloads_ledgers_without_an_archive(
             LEDGERS.model_copy(update={"years": (2021, 2023)}),
             "ledger_finances_one_DS00975_2023",
         ),
+        (
+            LEDGERS,
+            LEDGERS.model_copy(update={"publishers": (*LEDGERS.publishers, "afdb")}),
+            "ledger_imf_sdr",
+        ),
     ],
-    ids=["added", "dropped", "fewer-publishers", "more-years"],
+    ids=["added", "dropped", "fewer-publishers", "more-years", "sdr"],
 )
 def test_offline_fetch_refuses_a_manifest_for_other_ledgers(
     sources: FakeSources,

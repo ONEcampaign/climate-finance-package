@@ -28,6 +28,8 @@ _ID_PREFIXES = {
     "iadb": "XI-IATI-IADB-",
     "isdb": "XM-DAC-46025-",
 }
+# The GCF lists its co-financiers' commitments as its own, by this description.
+_CO_FINANCING = re.compile(r"co-financ", re.IGNORECASE)
 # ADB's CRS project numbers carry the loan or grant number at the end of the identifier.
 _ADB_KEY = re.compile(r"-([A-Z]+\d+)$")
 # AfDB's CRS project numbers carry the finance-type id its transactions are tagged with.
@@ -59,7 +61,9 @@ def read_iati_ledger(path: Path, *, publisher: str) -> pl.DataFrame:
     `key` is the id the CRS project number carries for that publisher, upper case and
     without spaces; `other_ids` lists the activity's other identifiers.
 
-    A transaction repeated exactly within an activity is counted once: 186 IDB
+    A commitment whose description names co-financing is left out: the GCF lists
+    its co-financiers' commitments under its own activities, USD 57.7bn of its
+    77.8bn. A transaction repeated exactly within an activity is counted once: 186 IDB
     activities repeat transactions, which would add 4.8% to IDB's 2023 disbursements.
     GEF declares its disbursements cumulative, but the figures fall as well as rise.
     For an activity that declares it, each disbursement row becomes the rise in the
@@ -165,6 +169,9 @@ def _transactions(
         )
         if kind is None:
             continue
+        if kind == "commitment" and _co_financing(transaction):
+            skipped["co-financing commitment"] += 1
+            continue
         value = transaction.find("value")
         currency = (
             (
@@ -203,6 +210,13 @@ def _transactions(
             "other_ids": other_ids,
             "cumulative": cumulative,
         }
+
+
+def _co_financing(transaction: ET.Element) -> bool:
+    return any(
+        _CO_FINANCING.search("".join(narrative.itertext()))
+        for narrative in transaction.iterfind("description/narrative")
+    )
 
 
 def _key(publisher: str, activity_id: str, transaction: ET.Element) -> str | None:

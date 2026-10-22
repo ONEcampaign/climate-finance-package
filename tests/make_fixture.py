@@ -193,16 +193,19 @@ def _allocation(
     """A disbursements row allocating `allocated` of `record_id` to `commitment`.
 
     `record_disbursement` and `record_grant_equiv` are the whole CRS record's.
-    Unlinked rows (a bank-ledger fill) count in full in the low bound.
+    Unlinked rows (a bank-ledger fill) count in full in the low bound. A fill has no
+    CRS record, so it carries its commitment's facts and no record markers, as
+    `release.fill_disbursements` builds it.
     """
     certain = link_probability is None or link_probability >= CERTAIN_PROBABILITY
+    fill = disbursement_source != "crs"
     first = record_id.endswith("-R0")
     rio_a, rio_m = commitment["rio_adaptation"], commitment["rio_mitigation"]
-    record_rio_a = None if first else rio_a
+    record_rio_a = None if first or fill else rio_a
     # As label.inherit_markers sets it.
     if commitment["climate_share"] is not None:
         marker_source = "components"
-    elif record_rio_a == rio_a:
+    elif fill or record_rio_a == rio_a:
         marker_source = "commitment"
     else:
         marker_source = "record_differs"
@@ -214,12 +217,14 @@ def _allocation(
         "agency_code": commitment["agency_code"],
         "recipient_code": commitment["recipient_code"],
         "channel_code": commitment["channel_code"],
-        "bi_multi": RECORD_BI_MULTI.get(
-            str(commitment["row_id"]), commitment["bi_multi"]
-        ),
-        "purpose_code": 41010,
-        "flow_code": _flow_code(commitment),
-        "project_number": f"PN-{commitment['row_id']}",
+        "bi_multi": commitment["bi_multi"]
+        if fill
+        else RECORD_BI_MULTI.get(str(commitment["row_id"]), commitment["bi_multi"]),
+        "purpose_code": commitment["purpose_code"] if fill else 41010,
+        "flow_code": commitment["flow_code"] if fill else _flow_code(commitment),
+        "project_number": commitment["project_number"]
+        if fill
+        else f"PN-{commitment['row_id']}",
         "title": f"Climate project {commitment['row_id']}",
         "allocated_usd": allocated,
         "allocated_low_usd": allocated if certain else 0.0,
@@ -229,7 +234,7 @@ def _allocation(
         "inherited_rio_adaptation": rio_a,
         "inherited_rio_mitigation": rio_m,
         "record_rio_adaptation": record_rio_a,
-        "record_rio_mitigation": rio_m,
+        "record_rio_mitigation": None if fill else rio_m,
         "marker_source": marker_source,
         "climate_share": commitment["climate_share"],
         "link_method": link_method,
