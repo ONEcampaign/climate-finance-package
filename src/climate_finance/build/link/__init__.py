@@ -20,6 +20,7 @@ from climate_finance.build.link.crosswalks import (
 from climate_finance.build.link.id_practice import classify_id_practice
 from climate_finance.build.link.key_repair import repair_keys
 from climate_finance.build.link.keys import build_units, link_by_keys
+from climate_finance.build.link.score import provider_profile, score_candidates
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.readers.iati import read_related_activities
 
@@ -37,9 +38,11 @@ def run_link(context: StageContext) -> StageOutput:
     EIB rows the within-year join leaves out, reading the `external` table and the
     DAC exchange rates fetch wrote, except the routes `skip_eib_routes` names, and
     GEF disbursements link to GEF commitments through the GEF IATI file's crosswalk
-    to agency ids, which `provider_profile` measures. Programme stems are learned
-    from the trace population, and blocking pairs the units the keys left for
-    scoring.
+    to agency ids. Programme stems are learned from the trace population, and
+    blocking pairs the units the key, repair and crosswalk links left for scoring.
+    The provider profile measures each provider's climate value and what its
+    crosswalk reaches, and sorts providers into scoring groups; the truth group's
+    classifier links what it scores at or above its threshold.
     """
     config = context.config
     crs = context.read("normalise", "crs")
@@ -87,15 +90,28 @@ def run_link(context: StageContext) -> StageOutput:
         stems=stems,
         first_year=config.years.crs[0],
     )
-    tables = {
-        "links": links,
+    scored = score_candidates(
+        candidates,
+        units=units,
+        crs=population,
+        links=links,
+        id_practice=id_practice,
+        first_year=config.years.crs[0],
+    )
+    return {
+        "links": pl.concat([links, scored.links]),
         "units": units,
         "id_practice": id_practice,
         "programme_stems": stems,
         "candidates": candidates,
+        "provider_profile": provider_profile(
+            crosswalk_profile(
+                crdf,
+                links=links,
+                units=units,
+                us_awards=None,
+                crosswalks=config.recoveries,
+            ),
+            scoring=scored.profile,
+        ),
     }
-    if config.recoveries:
-        tables["provider_profile"] = crosswalk_profile(
-            crdf, links=links, units=units, us_awards=None
-        )
-    return tables

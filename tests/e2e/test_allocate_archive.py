@@ -53,6 +53,21 @@ LOAN_TIER_MOVED_BN = {
     "no_disbursement_record": -2.78,
     "not_traceable": 0.0,
 }
+# The reference links by key alone. The truth-group classifier (`link.score`) links
+# disbursements the keys left to commitments, which moves value out of no record,
+# under the reference's counting and under the release rule.
+CLASSIFIER_MOVED_BN = {
+    "disbursed": 0.17,
+    "partly_disbursed": -0.02,
+    "no_disbursement_record": -0.15,
+    "not_traceable": 0.0,
+}
+CLASSIFIER_RELEASE_MOVED_BN = {
+    "disbursed": 0.17,
+    "partly_disbursed": -0.02,
+    "no_disbursement_record": -0.15,
+    "not_traceable": 0.0,
+}
 # With aggregate children counted and their parents left out (the release rule).
 RELEASE_RULE_BN = {
     "disbursed": 56.37,
@@ -63,8 +78,10 @@ RELEASE_RULE_BN = {
 # No-record value the key-repair rules move to partly or fully disbursed, counted
 # as the reference counts, by provider category (USD bn). The `wb_loan` tier already
 # reaches the World Bank commitments the rules would, so the rules move no IBRD or
-# IDA value.
-REPAIR_MOVED_BN = {"bilateral": 0.96, "banks": 2.02}
+# IDA value. Both builds carry classifier links. In the build without the rules, the
+# classifier already lifts USD 0.097 bn of bilateral rows out of no record through
+# commitments the rules reach, so the rules move that much less.
+REPAIR_MOVED_BN = {"bilateral": 0.87, "banks": 2.02}
 REPAIR_TOLERANCE_BN = 0.05
 _CATEGORY = {
     "DAC member": "bilateral",
@@ -204,9 +221,14 @@ def test_statuses_reproduce_the_reference_without_recoveries(
     )
     built = _by_status(_prototype_count(_rows(base)))
     assert set(built) == set(reference["status"])
-    for status, usd_bn in reference.select("status", "usd_bn").iter_rows():
-        moved = FIRST_ROWS_MOVED_BN[status] + LOAN_TIER_MOVED_BN[status]
-        assert built[status] == pytest.approx(usd_bn + moved, abs=TOLERANCE_BN), status
+    expected = {
+        status: usd_bn
+        + FIRST_ROWS_MOVED_BN[status]
+        + LOAN_TIER_MOVED_BN[status]
+        + CLASSIFIER_MOVED_BN[status]
+        for status, usd_bn in reference.select("status", "usd_bn").iter_rows()
+    }
+    assert built == pytest.approx(expected, abs=TOLERANCE_BN)
 
 
 def test_statuses_under_the_release_rule(base: Path) -> None:
@@ -218,7 +240,11 @@ def test_statuses_under_the_release_rule(base: Path) -> None:
         .all()
     )
     built = _by_status(rows.drop_nulls("status"))
-    assert built == pytest.approx(RELEASE_RULE_BN, abs=TOLERANCE_BN)
+    expected = {
+        status: usd_bn + CLASSIFIER_RELEASE_MOVED_BN[status]
+        for status, usd_bn in RELEASE_RULE_BN.items()
+    }
+    assert built == pytest.approx(expected, abs=TOLERANCE_BN)
 
 
 @pytest.mark.parametrize("build_name", ["base", "repaired"])

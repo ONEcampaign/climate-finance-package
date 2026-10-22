@@ -57,7 +57,9 @@ def test_the_gef_crosswalk_reaches_little_of_2021_and_2022(linked: Path) -> None
     )
     links = pl.read_parquet(table_path(linked, "link", "links"))
     units = pl.read_parquet(table_path(linked, "link", "units"))
-    profile = crosswalk_profile(crdf, links=links, units=units, us_awards=None)
+    profile = crosswalk_profile(
+        crdf, links=links, units=units, us_awards=None, crosswalks=True
+    )
     climate, crosswalk, share = _gef(profile)
     assert climate == pytest.approx(780.55e6, rel=1e-4)
     assert crosswalk == pytest.approx(4.2e6, rel=1e-4)
@@ -87,7 +89,9 @@ def test_the_us_crosswalk_keys_half_of_2021_and_2022_and_its_ledger_a_quarter(
     units = pl.read_parquet(table_path(linked, "link", "units"))
 
     def us(us_awards: pl.DataFrame) -> tuple[float, float, float]:
-        profile = crosswalk_profile(crdf, links=links, units=units, us_awards=us_awards)
+        profile = crosswalk_profile(
+            crdf, links=links, units=units, us_awards=us_awards, crosswalks=True
+        )
         row = profile.filter(provider_code=US_DONOR)
         return row.select("climate_usd", "crosswalk_usd", "crosswalk_share").row(0)
 

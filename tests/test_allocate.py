@@ -428,6 +428,27 @@ def test_the_remainder_passes_through_the_repair_rules_in_order() -> None:
     assert by_commitment(pairs) == pytest.approx({"cB": 30.0, "cC": 20.0})
 
 
+def test_classifier_links_take_what_the_key_rules_left() -> None:
+    records = [
+        record("cB", 2018, commit=30.0, crs_id="B"),
+        record("cE", 2016, commit=30.0, crs_id="E"),
+        record("d", 2020, disburse=40.0, crs_id="D"),
+    ]
+    crs, _, units, links = link(records)
+    d = unit_of(units, "d")
+    pairs = allocate(
+        units,
+        crs=crs,
+        links=with_links(
+            links,
+            (d, unit_of(units, "cE"), "classifier|x", "classifier"),
+            (d, unit_of(units, "cB"), "pn|x", "repair_new_crs_id"),
+        ),
+    )
+    # cE is older, but the classifier passes after the repair rule.
+    assert by_commitment(pairs) == pytest.approx({"cB": 30.0, "cE": 10.0})
+
+
 def test_two_groups_of_one_method_on_a_unit_are_refused() -> None:
     crs, _, units, links = link(CASCADE)
     d20, cb = unit_of(units, "d20"), unit_of(units, "cB")

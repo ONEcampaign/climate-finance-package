@@ -34,7 +34,6 @@ from pathlib import Path
 
 import polars as pl
 
-from climate_finance import schema
 from climate_finance.build.link.keys import as_exact_links
 from climate_finance.build.sums import ordered_sum
 
@@ -188,17 +187,18 @@ def crosswalk_profile(
     links: pl.DataFrame,
     units: pl.DataFrame,
     us_awards: pl.DataFrame | None,
+    crosswalks: bool,
 ) -> pl.DataFrame:
-    """`provider_profile`: each provider's counted climate value, and for a provider
-    with a crosswalk the part that links by key through it.
+    """The crosswalk columns of `provider_profile`: each provider's counted climate
+    value, and for a provider with a crosswalk the part that links by key through it.
 
     The rows counted are those `measure.counted_commitments` counts: recipient
     perspective, no repeat of an earlier vintage, and no aggregate parent whose
     rebuilt children stand in for it. A row links by key when a `crdf_crs` link
     takes it to a commitment unit that a `crosswalk` trace link fills (GEF), or to a
     US commitment unit whose project number names an award (`read_us_crosswalk`).
-    The crosswalk columns are null for every other provider, and for the US when
-    `us_awards` is None.
+    The crosswalk columns are null for every other provider, for the US when
+    `us_awards` is None, and for every provider when `crosswalks` is False.
 
     Args:
         crdf: The normalise stage's `crdf`.
@@ -206,12 +206,13 @@ def crosswalk_profile(
         units: The link stage's `units`.
         us_awards: `read_us_crosswalk` output, or None where the build has no US
             crosswalk.
+        crosswalks: whether the build ran the crosswalks (recoveries on).
     """
     reached = links.filter(
         pl.col("task") == "trace", pl.col("link_method") == METHOD
     ).select(unit_id="right_id")
-    measured = [GEF_DONOR]
-    if us_awards is not None:
+    measured = [GEF_DONOR] if crosswalks else []
+    if crosswalks and us_awards is not None:
         awarded = units.filter(pl.col("donor_code") == US_DONOR).join(
             us_awards, on="project_number", how="semi"
         )
@@ -245,7 +246,7 @@ def crosswalk_profile(
                 pl.col("crosswalk_usd") / climate
             ),
         )
-        .select(list(schema.PROVIDER_PROFILE.columns))
+        .select("provider_code", "climate_usd", "crosswalk_usd", "crosswalk_share")
         .collect()
     )
 

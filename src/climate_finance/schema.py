@@ -479,10 +479,14 @@ CANDIDATES = _table(
     eligible=_bool(),
 )
 
-# One row per provider of the counted CRDF commitments: their climate value and, for
-# a provider with a crosswalk (`link.crosswalks`), the part whose commitment a
-# crosswalk link reaches, null for the others. Scoring columns join on
-# `provider_code`.
+# One row per provider: the climate value of its counted CRDF commitments and, for a
+# provider with a crosswalk (`link.crosswalks`), the part whose commitment a crosswalk
+# link reaches, null for the others and for every provider when recoveries are off.
+# The scoring columns (`link.score`) are null for a provider with no candidate pairs:
+# `scoring_group` from the counts beside it, `true_pairs` counting true training
+# pairs, `commitments` and `pairs` the commitments and pairs open to scoring, and for
+# the truth group the isotonic map its pairs took (`calibration`) and the
+# classifier's link `threshold`.
 PROVIDER_PROFILE = _table(
     "provider_profile",
     ("provider_code",),
@@ -490,6 +494,12 @@ PROVIDER_PROFILE = _table(
     climate_usd=_usd(),
     crosswalk_usd=_usd(nullable=True),
     crosswalk_share=_f64(nullable=True),
+    scoring_group=_str(nullable=True, values=SCORING_GROUPS),
+    true_pairs=Column(pl.Int32(), nullable=True),
+    commitments=Column(pl.Int32(), nullable=True),
+    pairs=Column(pl.Int32(), nullable=True),
+    calibration=_str(nullable=True, values=("own", "pooled")),
+    threshold=_f64(nullable=True),
 )
 
 # A CRS record's disbursement at face value, split over CRDF commitments (`row_id`).
@@ -830,13 +840,11 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
 # Tables a stage may leave out. A stage that reads one that was not written raises
 # StageInputMissingError. `orgs` is written when recoveries are on, `btr` when the build
 # config names an ingested BTR table, `ledger` when it names ledger sources.
-# `provider_profile` is written when recoveries are on, and the other link steps write
-# their tables without it. `bank_year_overlap` is written by the bank-ledger gap fill,
-# `review_queue` by the review queue and `pair_labels` by the ledger check. With their
-# switches off the two stages pass the tables they carry forward through unchanged.
+# `bank_year_overlap` is written by the bank-ledger gap fill, `review_queue` by the
+# review queue and `pair_labels` by the ledger check. With their switches off the two
+# stages pass the tables they carry forward through unchanged.
 OPTIONAL_STAGE_TABLES: Mapping[str, frozenset[str]] = {
     "normalise": frozenset({"btr", "orgs", "ledger"}),
-    "link": frozenset({"provider_profile"}),
     "fill": frozenset({"bank_year_overlap"}),
     "review": frozenset({"review_queue", "pair_labels"}),
 }

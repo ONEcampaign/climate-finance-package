@@ -38,6 +38,15 @@ LOAN_TIER_MOVED_BN = {
     "no_disbursement_record": -2.7817,
     "not_traceable": 0.0,
 }
+# The target links by key alone. The truth-group classifier (`link.score`) links
+# disbursements the keys left to commitments, which moves value out of no record and
+# not traceable into disbursed and partly disbursed.
+CLASSIFIER_MOVED_BN = {
+    "disbursed": 0.1684,
+    "partly_disbursed": 0.0158,
+    "no_disbursement_record": -0.1836,
+    "not_traceable": -0.0007,
+}
 TOLERANCE_BN = 0.001
 
 
@@ -117,7 +126,10 @@ def test_step_one_matches_the_target_plus_the_gef_crosswalk(
     without_crosswalk: Path,
 ) -> None:
     expected = {
-        status: usd_bn + LOAN_TIER_MOVED_BN[status] + GEF_CROSSWALK_BN.get(status, 0.0)
+        status: usd_bn
+        + LOAN_TIER_MOVED_BN[status]
+        + GEF_CROSSWALK_BN.get(status, 0.0)
+        + CLASSIFIER_MOVED_BN[status]
         for status, usd_bn in STEP_ONE_BN.items()
     }
     assert _step_one(without_crosswalk) == pytest.approx(expected, abs=TOLERANCE_BN)

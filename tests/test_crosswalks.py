@@ -335,18 +335,30 @@ def test_crosswalk_profile_measures_the_climate_value_a_crosswalk_reaches() -> N
     )
     awards = pl.DataFrame({"project_number": ["76_1"], "award": ["AID-1"]})
 
-    profile = crosswalk_profile(crdf, links=links, units=units, us_awards=awards)
+    profile = crosswalk_profile(
+        crdf, links=links, units=units, us_awards=awards, crosswalks=True
+    )
 
-    schema.validate(schema.PROVIDER_PROFILE, profile)
     assert profile.sort("provider_code").rows() == [
         (US_DONOR, 8.0, 2.0, 2.0 / 8.0),
         (GEF_DONOR, 8.0, 3.0, 3.0 / 8.0),
         (918, 2.0, None, None),
     ]
     # Without the US crosswalk the US is not measured.
-    unmeasured = crosswalk_profile(crdf, links=links, units=units, us_awards=None)
+    unmeasured = crosswalk_profile(
+        crdf, links=links, units=units, us_awards=None, crosswalks=True
+    )
     assert unmeasured.filter(provider_code=US_DONOR).rows() == [
         (US_DONOR, 8.0, None, None)
+    ]
+    # Without recoveries no provider is measured, though climate value is.
+    off = crosswalk_profile(
+        crdf, links=links, units=units, us_awards=awards, crosswalks=False
+    )
+    assert off.sort("provider_code").rows() == [
+        (US_DONOR, 8.0, None, None),
+        (GEF_DONOR, 8.0, None, None),
+        (918, 2.0, None, None),
     ]
 
 
