@@ -45,7 +45,14 @@ import splink.comparison_level_library as cll
 import splink.comparison_library as cl
 from splink.internals.comparison_level_creator import ComparisonLevelCreator
 
-from climate_finance.build.link.candidates import STOPWORDS, with_programme
+from climate_finance.build.link.candidates import with_programme
+from climate_finance.build.link.text import (
+    NO_TEXT,
+    normalise_text,
+    representative,
+    title_norm,
+    words,
+)
 from climate_finance.schema import COMPARISON_LEVELS
 
 LEVELS = tuple(COMPARISON_LEVELS.to_schema())
@@ -53,9 +60,8 @@ LEVELS = tuple(COMPARISON_LEVELS.to_schema())
 DESCRIPTION_WORDS = 80
 # Pairs compared at once, which bounds the memory a batch takes.
 BATCH_PAIRS = 500_000
-# Project numbers and texts that name nothing once lower-cased and stripped.
+# Project numbers that name nothing once lower-cased and stripped.
 _NO_PN = ("notapplicable", "na", "none", "nan", "null", "0", "")
-_NO_TEXT = ("not applicable", "na", "none", "n a", "nan", "null")
 _RATIO = "disbursement_usd_r / commitment_usd_l"
 # The date features, each as SQL over a pair; a comparison with a null date is null.
 _DATE_SQL = {
@@ -99,21 +105,21 @@ def unit_attributes(
         .str.replace_all("[^a-z0-9]", "")
         .str.strip_chars_start("0")
     )
-    description = _normalise_text(pl.col("rep_long_description"))
-    title_toks = _words(pl.col("title_norm"))
+    description = normalise_text(pl.col("rep_long_description"))
+    title_toks = words(pl.col("title_norm"))
     return (
         with_programme(units.lazy().drop("record_ids"), stems=stems.lazy())
-        .join(_representative(units, crs=crs, fields=fields), on="unit_id", how="left")
+        .join(representative(units, crs=crs, fields=fields), on="unit_id", how="left")
         .with_columns(
             pn_norm=pl.when(
                 ~pn_digits.is_in(_NO_PN) & (pn_digits.str.len_chars() >= 3)
             ).then(pn_digits),
-            title_norm=_title_norm(),
-            desc_norm=pl.when(~description.is_in(_NO_TEXT)).then(description),
+            title_norm=title_norm(),
+            desc_norm=pl.when(~description.is_in(NO_TEXT)).then(description),
         )
         .with_columns(
             title_toks=title_toks,
-            desc_toks=_words(pl.col("desc_norm"), first=DESCRIPTION_WORDS),
+            desc_toks=words(pl.col("desc_norm"), first=DESCRIPTION_WORDS),
             title_key=pl.when(title_toks.list.len() >= 2).then(
                 title_toks.list.head(2).list.join(" ")
             ),
@@ -150,24 +156,6 @@ def unit_attributes(
         .sort("unique_id")
         .collect()
     )
-
-
-def title_words(units: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
-    """Each unit's title words (`title_toks`), as `unit_attributes` reads them:
-    unit_id and title_toks, null where the unit has no title."""
-    fields = ("title", "short_description")
-    return (
-        _representative(units, crs=crs, fields=fields)
-        .select("unit_id", title_toks=_words(_title_norm()))
-        .collect()
-    )
-
-
-def word_share(left: pl.Expr, right: pl.Expr) -> pl.Expr:
-    """The Jaccard similarity of two word lists, null where either is null or both
-    are empty."""
-    union = left.list.set_union(right).list.len()
-    return pl.when(union > 0).then(left.list.set_intersection(right).list.len() / union)
 
 
 def comparisons() -> list[cl.CustomComparison | cl.ExactMatch]:
@@ -372,56 +360,6 @@ def _level_cases() -> list[str]:
             f"case {whens} end::tinyint as gamma_{comparison.output_column_name}"
         )
     return cases
-
-
-def _representative(
-    units: pl.DataFrame, *, crs: pl.LazyFrame, fields: tuple[str, ...]
-) -> pl.LazyFrame:
-    """`fields` of each unit's largest record by commitment plus disbursement,
-    ties to the smaller record id, as `rep_` columns."""
-    size = pl.col("commitment_usd").abs().fill_null(0) + pl.col(
-        "disbursement_usd"
-    ).abs().fill_null(0)
-    return (
-        units.lazy()
-        .select("unit_id", record_id="record_ids")
-        .explode("record_id")
-        .join(
-            crs.select("record_id", "commitment_usd", "disbursement_usd", *fields),
-            on="record_id",
-        )
-        .sort(size, "record_id", descending=[True, False])
-        .unique("unit_id", keep="first")
-        .select("unit_id", *(pl.col(name).alias(f"rep_{name}") for name in fields))
-    )
-
-
-def _title_norm() -> pl.Expr:
-    """The representative record's normalised title, else short description."""
-    title = _normalise_text(pl.coalesce("rep_title", "rep_short_description"))
-    return pl.when(~title.is_in(_NO_TEXT)).then(title)
-
-
-def _normalise_text(text: pl.Expr) -> pl.Expr:
-    """`text` lower-cased, each run of characters other than a to z and digits one
-    space, trimmed; null when nothing is left."""
-    cleaned = (
-        text.str.to_lowercase().str.replace_all("[^a-z0-9]+", " ").str.strip_chars()
-    )
-    return pl.when(cleaned != "").then(cleaned)
-
-
-def _words(text: pl.Expr, *, first: int | None = None) -> pl.Expr:
-    """The distinct words of normalised `text`, or of its first `first` words, that
-    have three letters or more and are not in `STOPWORDS`."""
-    words = text.str.split(" ")
-    if first is not None:
-        words = words.list.head(first)
-    return words.list.eval(
-        pl.element().filter(
-            (pl.element().str.len_chars() >= 3) & ~pl.element().is_in(STOPWORDS)
-        )
-    ).list.unique(maintain_order=True)
 
 
 def _jaccard(column: str) -> str:

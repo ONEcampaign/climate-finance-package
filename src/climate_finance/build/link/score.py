@@ -91,10 +91,9 @@ from climate_finance.build.link.levels import (
     LEVELS,
     comparison_levels,
     levels_struct,
-    title_words,
     unit_attributes,
-    word_share,
 )
+from climate_finance.build.link.text import title_words, word_share
 
 if TYPE_CHECKING:
     from climate_finance.build.link.jev import JevBand
