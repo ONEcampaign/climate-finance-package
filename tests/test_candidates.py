@@ -574,22 +574,37 @@ def _at(cosine: float) -> list[float]:
 
 
 @pytest.mark.parametrize(
-    ("disbursement", "cosine", "paired"),
+    ("commitment", "disbursement", "cosine", "paired"),
     [
-        ({}, 0.95, True),
-        ({}, 0.85, False),
-        ({"year": 2020}, 1.0, False),
-        ({"donor_code": 6}, 1.0, False),
+        ({}, {}, 0.95, True),
+        ({}, {}, 0.85, False),
+        ({}, {"year": 2020}, 1.0, False),
+        ({}, {"donor_code": 6}, 1.0, False),
+        # Another country's line never continues the commitment; a regional
+        # commitment's line in a country can.
+        ({}, {"recipient_code": 248}, 1.0, False),
+        ({"recipient_code": 289}, {}, 0.95, True),
     ],
-    ids=["close", "far", "same_year", "other_donor"],
+    ids=[
+        "close",
+        "far",
+        "same_year",
+        "other_donor",
+        "other_recipient",
+        "regional_commitment",
+    ],
 )
 def test_embedding_neighbours_pair_close_texts(
-    disbursement: dict[str, object], cosine: float, *, paired: bool
+    commitment: dict[str, object],
+    disbursement: dict[str, object],
+    cosine: float,
+    *,
+    paired: bool,
 ) -> None:
-    # No other rule pairs the two: they share no recipient, number or title.
+    # No other rule pairs the two: they share no purpose, number or title.
     records = {
-        "c": _commitment(title="solar mini grids kenya"),
-        "d": _disbursement(title="wind farm", **disbursement),
+        "c": _commitment(title="solar mini grids kenya", **commitment),
+        "d": _disbursement(recipient_code=238, title="wind farm") | disbursement,
         # Keeps donor 6's disbursements in the pool.
         "other": _commitment(donor_code=6, recipient_code=1, title="tree nursery"),
     }
@@ -607,18 +622,19 @@ def test_embedding_neighbours_pair_close_texts(
 
 
 def test_embedding_neighbours_rank_either_side_ties_to_the_lower_unit() -> None:
-    # Every text has the same vector. Each commitment ranks the three disbursement
-    # units of smallest unit id first, and each disbursement the three such
-    # commitment units, so only the largest of each misses the other.
+    # Every text has the same vector, and every unit the same recipient and its own
+    # project number. Each commitment ranks the three disbursement units of
+    # smallest unit id first, and each disbursement the three such commitment
+    # units, so only the largest of each misses the other.
     count = NEIGHBOURS + 1
     commitments = tuple(f"c{i}" for i in range(count))
     disbursements = tuple(f"d{i}" for i in range(count))
     records = {
-        name: _commitment(recipient_code=100 + i, title=name)
-        for i, name in enumerate(commitments)
+        name: _commitment(project_number=f"P-{name}", title=name)
+        for name in commitments
     } | {
-        name: _disbursement(recipient_code=200 + i, title=name)
-        for i, name in enumerate(disbursements)
+        name: _disbursement(recipient_code=238, project_number=f"P-{name}", title=name)
+        for name in disbursements
     }
     embedder = _embedder({name: [1.0] for name in records})
     pairs = _candidates(records, commitments=commitments, embedder=embedder)
