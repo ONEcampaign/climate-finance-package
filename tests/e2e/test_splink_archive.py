@@ -85,13 +85,17 @@ def test_without_decisions_splink_only_asks_for_calibration_labels(
     queued = scores.filter(review_reason=CALIBRATION_REASON).group_by("model").len()
     assert set(queued["len"]) == {CALIBRATION_LABELS}
     assert set(scores["review_reason"].drop_nulls()) == {CALIBRATION_REASON}
-    # The archive build: 41 providers outside the truth group and seven usable
-    # models (USA, five more providers of their own and the pooled model). The pairs
-    # are those providers' eligible candidates, blocked on trimmed ids and on project
-    # numbers with rounded ones null.
+    # The archive build: 41 providers outside the truth group and six usable models
+    # (USA, four more providers of their own and the pooled model). The pairs are
+    # those providers' eligible candidates, blocked on trimmed ids and on project
+    # numbers with rounded ones null, less the disbursements the key tiers link. The
+    # GEF reuses a crs id across projects, so `crs_key` leaves most of its
+    # disbursements to scoring; its own model then completes one EM session, its
+    # project numbers block one pair and EM drives a recipient-and-purpose m to zero,
+    # so it joins the pooled model.
     assert len(providers) == 41
-    assert scores.height == 1_829_473
-    assert queued.height == 7
+    assert scores.height == 1_836_362
+    assert queued.height == 6
 
 
 def test_two_runs_give_the_same_scores(tables: LinkTables, tmp_path: Path) -> None:
@@ -217,10 +221,12 @@ def test_calibrated_splink_against_id_truth(tables: LinkTables) -> None:
         )
         for row in measured.filter(pl.col("p_0.5_links") > 0).iter_rows(named=True)
     }
-    # The pooled model's providers (68, 1624, 76) link nothing at 0.5.
+    # The pooled model's providers (68, 1624, 76) link nothing at 0.5. France's
+    # calibration labels include Jev's answers for 22 pairs that entered its sample
+    # after `SIMULATION_CACHE` was first written; they set its figures.
     assert at_half == {
         1: (1633, 0.662, 0.791),
         3: (842, 0.632, 0.447),
-        4: (1908, 0.955, 0.852),
+        4: (1964, 0.954, 0.854),
         820: (1170, 0.740, 0.665),
     }

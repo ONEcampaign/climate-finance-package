@@ -26,6 +26,7 @@ from archive_build import archive_config, seed_release
 from climate_finance import schema
 from climate_finance.build import Stage, build
 from climate_finance.build.allocate import run_allocate
+from climate_finance.build.link.disagreement import flag_disagreement
 from climate_finance.build.link.score import (
     HELDOUT,
     METHOD,
@@ -214,19 +215,21 @@ def test_the_classifier_meets_its_targets_on_the_prototype_years(
         heldout, where=pl.col("year").is_between(*CRDF_YEARS), threshold=threshold
     )
 
-    # `carried_continuations` labels the UK's and the Adaptation Fund's new lines
-    # true and leaves 1,641 of Canada's pairs unlabelled, which refits the threshold.
-    assert threshold == 0.43
+    # Id truth follows a line through its forms of id (`line_id`), Canada's
+    # disbursements continue the commitments of their own purpose (`purpose_lines`),
+    # and the classifier reads start and completion dates and no commitment date,
+    # which refits the threshold.
+    assert threshold == 0.40
     assert prototype["f1"] >= F1_TARGET
     assert every_year["ece"] <= ECE_TARGET
-    # Canada renumbers its lines from year to year, so it carries 771 of the 1,957
-    # held-out misses over the build's CRDF years and 0.014 of the ECE.
+    # Canada renumbers its lines from year to year, so it carries 574 of the 1,603
+    # held-out misses over the build's CRDF years; without it the ECE is 0.0056.
     assert every_year == pytest.approx(
-        {"precision": 0.91520, "recall": 0.89329, "f1": 0.90411, "ece": 0.01973},
+        {"precision": 0.92436, "recall": 0.91446, "f1": 0.91938, "ece": 0.00868},
         abs=1e-5,
     )
     assert prototype == pytest.approx(
-        {"precision": 0.94641, "recall": 0.92607, "f1": 0.93613, "ece": 0.02921},
+        {"precision": 0.93564, "recall": 0.93475, "f1": 0.93520, "ece": 0.02554},
         abs=1e-5,
     )
 
@@ -243,26 +246,27 @@ def test_held_out_figures_by_provider_class(
         for category in ("bilateral", "private", "banks", "other_multilateral")
     }
     assert measured == {
-        # The UK's `-c` copies of its committed ids now count as true.
+        # The UK's lettered copies carry their line's id (`line_id`) and count as
+        # true.
         "bilateral": pytest.approx(
-            {"precision": 0.91635, "recall": 0.88705, "f1": 0.90146, "ece": 0.02009},
+            {"precision": 0.92087, "recall": 0.91010, "f1": 0.91545, "ece": 0.00869},
             abs=1e-5,
         ),
-        # Private donors and banks gain no labels; their figures move with the refit.
+        # Private donors write a line suffix with and without zero padding, which
+        # `line_id` reads as one line.
         "private": pytest.approx(
-            {"precision": 0.93237, "recall": 0.98772, "f1": 0.95924, "ece": 0.04474},
+            {"precision": 0.98256, "recall": 0.98256, "f1": 0.98256, "ece": 0.02520},
             abs=1e-5,
         ),
         "banks": pytest.approx(
-            {"precision": 0.97414, "recall": 0.98261, "f1": 0.97835, "ece": 0.02833},
+            {"precision": 0.93220, "recall": 0.95652, "f1": 0.94421, "ece": 0.03812},
             abs=1e-5,
         ),
-        # The class's held-out pairs are the Adaptation Fund's, and all 46 of its
-        # true disbursement units link. 52 of its 98 links are false: most continue
-        # a commitment under a new crs id and project number at once, with no record
-        # that bridges the two, so no label reaches them.
+        # The class's held-out pairs are the Adaptation Fund's. Truth follows its
+        # renumbered projects by title (`carried_continuations`), so 88 of its 95
+        # true disbursement units link and 8 of its 96 links are false.
         "other_multilateral": pytest.approx(
-            {"precision": 0.46939, "recall": 1.0, "f1": 0.63889, "ece": 0.13720},
+            {"precision": 0.91667, "recall": 0.92632, "f1": 0.92147, "ece": 0.07621},
             abs=1e-5,
         ),
     }
@@ -274,11 +278,14 @@ def test_the_link_stage_writes_the_classifier_links_and_profile(
     written = _read(release_dir, "link", "links").filter(link_method=METHOD)
     profile = _read(release_dir, "link", "provider_profile")
     schema.validate(schema.PROVIDER_PROFILE, profile)
+    units = _read(release_dir, "link", "units")
 
-    assert written.equals(scored.links)
+    # The link stage flags the classifier's links whose records disagree after
+    # scoring them (`flag_disagreement`).
+    assert written.equals(flag_disagreement(scored.links, units=units))
     scoring = profile.drop_nulls("scoring_group").select(scored.profile.columns)
     assert scoring.equals(scored.profile)
-    assert written.height == 6_522
+    assert written.height == 3_539
     assert dict(scoring.group_by("scoring_group").len().iter_rows()) == {
         "truth": 25,
         "splink": 6,
@@ -332,9 +339,9 @@ def test_classifier_links_move_statuses(
     assert sum(moved.values()) == pytest.approx(0.0, abs=1e-9)
     assert moved == pytest.approx(
         {
-            "disbursed": 0.18125,
-            "partly_disbursed": -0.14055,
-            "no_disbursement_record": -0.04070,
+            "disbursed": 0.16610,
+            "partly_disbursed": -0.12230,
+            "no_disbursement_record": -0.04380,
             "not_traceable": 0.0,
             "pending_review": 0.0,
         },

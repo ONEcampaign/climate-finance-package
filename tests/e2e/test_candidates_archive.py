@@ -201,7 +201,7 @@ def test_candidates_hold_eligible_and_training_pairs(
 ) -> None:
     schema.validate(schema.CANDIDATES, candidates)
     counts = dict(candidates.group_by("eligible").len().iter_rows())
-    assert counts == {True: 1_695_751, False: 6_067_017}
+    assert counts == {True: 1_680_440, False: 6_067_830}
     assert (candidates["eligible"] != candidates["id_persistent"]).all()
 
 
@@ -216,14 +216,14 @@ def test_blocking_recall_on_id_truth(truth: pl.DataFrame) -> None:
     assert truth.filter("blocked")["same_crs_id"].all()
     assert prototype_years.height == 14_605
     assert prototype_years["blocked"].mean() >= RECALL_TARGET
-    # Over the build's CRDF years recall falls short of the target: five crs ids
-    # spread over many recipients and purposes hold 441 of the 930 missed pairs.
-    assert crdf_years.height == 57_795
-    assert crdf_years["blocked"].mean() == pytest.approx(0.98391, abs=1e-5)
+    # Over the build's CRDF years recall falls just short of the target: five crs
+    # ids, four of them Canada's, hold 360 of the 888 missed pairs.
+    assert crdf_years.height == 57_870
+    assert crdf_years["blocked"].mean() == pytest.approx(0.98466, abs=1e-5)
     assert by_category == pytest.approx(
         {
-            "bilateral": 0.98403,
-            "other_multilateral": 0.90948,
+            "bilateral": 0.98405,
+            "other_multilateral": 1.0,
             "private": 1.0,
             "banks": 1.0,
         },

@@ -54,19 +54,36 @@ LOAN_TIER_MOVED_BN = {
     "no_disbursement_record": -2.78,
     "not_traceable": 0.0,
 }
+# The build's key tiers link more than the reference's: the project-number tiers
+# run for every agency, the crs-id tiers key an id that names several projects or
+# countries by recipient (`crs_key`) and compare unpadded line suffixes
+# (`canonical_crs_id`), and the project-number tiers compare numbers without `-` and
+# `_` (`pn_key`). That moves value from partly disbursed to disbursed, under the
+# reference's counting and under the release rule.
+KEY_TIERS_MOVED_BN = {
+    "disbursed": 0.30,
+    "partly_disbursed": -0.28,
+    "no_disbursement_record": -0.02,
+    "not_traceable": 0.0,
+}
+KEY_TIERS_RELEASE_MOVED_BN = {
+    "disbursed": 0.30,
+    "partly_disbursed": -0.30,
+    "no_disbursement_record": 0.0,
+    "not_traceable": 0.0,
+}
 # The reference links by key alone. The truth-group classifier (`link.score`) links
-# disbursements the keys left to commitments, which moves value out of no record,
-# under the reference's counting and under the release rule.
+# disbursements the keys left to commitments, which moves value out of no record.
 CLASSIFIER_MOVED_BN = {
-    "disbursed": 0.17,
-    "partly_disbursed": -0.02,
-    "no_disbursement_record": -0.15,
+    "disbursed": 0.16,
+    "partly_disbursed": 0.03,
+    "no_disbursement_record": -0.19,
     "not_traceable": 0.0,
 }
 CLASSIFIER_RELEASE_MOVED_BN = {
-    "disbursed": 0.17,
-    "partly_disbursed": -0.02,
-    "no_disbursement_record": -0.15,
+    "disbursed": 0.16,
+    "partly_disbursed": 0.04,
+    "no_disbursement_record": -0.19,
     "not_traceable": 0.0,
 }
 # With aggregate children counted and their parents left out (the release rule).
@@ -80,11 +97,15 @@ RELEASE_RULE_BN = {
 # as the reference counts, by provider category (USD bn). The `wb_loan` tier already
 # reaches the World Bank commitments the rules would, so the rules move no IBRD or
 # IDA value. Both builds carry classifier links. In the build without the rules, the
-# classifier already lifts USD 0.097 bn of bilateral rows out of no record through
-# commitments the rules reach, so the rules move that much less. Rounded AfDB project
+# classifier already lifts USD 0.12 bn of bilateral rows out of no record through
+# commitments the rules reach, so the rules move that much less. A number committed
+# in several countries links within the disbursement's recipient and purpose
+# (`_programmes`); on the number alone a disbursement would reach more than
+# `MAX_COMMITMENTS` commitments and link to none. US numbers of that kind carry
+# USD 0.57 bn of the bilateral figure. Rounded AfDB project
 # numbers are null, so `repair_title_recipient` also takes AfDB commitments whose
 # disbursement units spell one rounded number two ways (USD 0.11 bn).
-REPAIR_MOVED_BN = {"bilateral": 0.87, "banks": 2.16}
+REPAIR_MOVED_BN = {"bilateral": 1.18, "banks": 2.16}
 REPAIR_TOLERANCE_BN = 0.05
 _CATEGORY = {
     "DAC member": "bilateral",
@@ -229,6 +250,7 @@ def test_statuses_reproduce_the_reference_without_recoveries(
         status: usd_bn
         + FIRST_ROWS_MOVED_BN[status]
         + LOAN_TIER_MOVED_BN[status]
+        + KEY_TIERS_MOVED_BN[status]
         + CLASSIFIER_MOVED_BN[status]
         for status, usd_bn in reference.select("status", "usd_bn").iter_rows()
     }
@@ -245,7 +267,9 @@ def test_statuses_under_the_release_rule(base: Path) -> None:
     )
     built = _by_status(rows.drop_nulls("status"))
     expected = {
-        status: usd_bn + CLASSIFIER_RELEASE_MOVED_BN[status]
+        status: usd_bn
+        + KEY_TIERS_RELEASE_MOVED_BN[status]
+        + CLASSIFIER_RELEASE_MOVED_BN[status]
         for status, usd_bn in RELEASE_RULE_BN.items()
     }
     assert built == pytest.approx(expected, abs=TOLERANCE_BN)
