@@ -216,8 +216,9 @@ def score_with_splink(
         stems: the programme stem rules.
         provider_profile: each provider's `scoring_group`. A `splink` provider
             gets its own model and a `pooled_splink` provider the pooled model.
-        labels: pair labels in the `pair_labels` schema; the `human` labels of task
-            `trace` calibrate.
+        labels: pair labels in the `pair_labels` schema with `stratified`, as
+            `read_human_labels` gives them; the `human` labels of task `trace`
+            calibrate.
         client: the build's Jev client.
 
     Returns:
@@ -239,7 +240,9 @@ def score_with_splink(
     )
     human = (
         labels.filter(task="trace", pair_label_source="human")
-        .select("left_id", "right_id", y=pl.col("is_match").cast(pl.Float64))
+        .select(
+            "left_id", "right_id", "stratified", y=pl.col("is_match").cast(pl.Float64)
+        )
         .unique(["left_id", "right_id"], keep="last", maintain_order=True)
     )
     own = groups.filter(scoring_group="splink")["provider_code"].to_list()
@@ -282,15 +285,21 @@ def score_with_splink(
 
 
 def read_human_labels(path: Path) -> pl.DataFrame:
-    """People's decisions at `path` as `pair_labels` rows with source `human`, the
-    latest decision on each pair; none when no decision has been recorded yet."""
+    """People's queue decisions at `path` as `pair_labels` rows with source `human`,
+    the latest decision on each pair; none when no decision has been recorded yet.
+
+    A blind-sample decision (one with a `sample_id`) measures precision, so it never
+    becomes a label. `stratified` marks the decisions on calibration pairs, which
+    `stratified_sample` drew, so only they take inverse-probability weights.
+    """
     columns = {
         name: column.dtype for name, column in schema.PAIR_LABELS.columns.items()
-    }
+    } | {"stratified": pl.Boolean()}
     if not path.exists():
         return pl.DataFrame(schema=columns)
     return (
         pl.read_parquet(path)
+        .filter(pl.col("sample_id").is_null())
         .drop_nulls("right_id")
         .sort("decided_at")
         .unique(["task", "left_id", "right_id"], keep="last")
@@ -301,6 +310,7 @@ def read_human_labels(path: Path) -> pl.DataFrame:
             "right_id",
             is_match=pl.col("decision") == "accept",
             pair_label_source=pl.lit("human"),
+            stratified=pl.col("review_reason") == CALIBRATION_REASON,
         )
         .cast(columns)  # ty: ignore[invalid-argument-type]
     )
@@ -624,11 +634,13 @@ def _labels(
 
     People's labels stand. With both outcomes among them, Jev answers the
     stratified sample and every labelled pair, and its answers on pairs people did
-    not label become labels through Jev's scale.
+    not label become labels through Jev's scale. `stratified` marks the labels
+    `stratified_sample` drew: people's on calibration pairs and all of Jev's.
     """
     outcomes = human["y"].sum()
+    columns = ["left_id", "right_id", "y", "stratified"]
     if min(outcomes, human.height - outcomes) < MIN_JEV_SCALE_OUTCOMES:
-        return human.select("left_id", "right_id", "y"), f"human:{human.height}"
+        return human.select(columns), f"human:{human.height}"
     asked = pl.concat(
         [
             stratified_sample(scores, n=JEV_SAMPLE).select("left_id", "right_id"),
@@ -640,21 +652,28 @@ def _labels(
     )
     scale = jev_scale(human.join(answers, on=["left_id", "right_id"]))
     jev = answers.join(human, on=["left_id", "right_id"], how="anti").select(
-        "left_id", "right_id", y=scale(pl.col("jev"))
+        "left_id", "right_id", y=scale(pl.col("jev")), stratified=pl.lit(True)
     )
     report.jev_labels = jev.height
-    labels = pl.concat([human.select("left_id", "right_id", "y"), jev])
+    labels = pl.concat([human.select(columns), jev])
     return labels, f"human:{human.height},jev:{jev.height}"
 
 
 def _band_weights(scores: pl.DataFrame, labels: pl.DataFrame) -> pl.DataFrame:
-    """`labels` with their comparison levels and inverse-probability weights: the
-    pairs of their EM-weight band over the labelled pairs of that band."""
+    """`labels` with their comparison levels and weights. A `stratified` label's
+    inverse-probability weight is the pairs of its EM-weight band over the
+    stratified labels of that band. Any other label, chosen for review rather than
+    drawn, weighs 1."""
+    stratified = pl.col("stratified")
     return (
         scores.with_columns(band=_band())
         .with_columns(band_pairs=pl.len().over("band"))
         .join(labels, on=["left_id", "right_id"])
-        .with_columns(weight=pl.col("band_pairs") / pl.len().over("band"))
+        .with_columns(
+            weight=pl.when(stratified)
+            .then(pl.col("band_pairs") / stratified.sum().over("band"))
+            .otherwise(1.0)
+        )
         .select("left_id", "right_id", "levels", "y", "weight")
         .sort("left_id", "right_id")
     )

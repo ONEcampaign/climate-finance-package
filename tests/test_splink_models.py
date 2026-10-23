@@ -44,7 +44,7 @@ _WORDS = (
 _UNIT_SCHEMA = {name: column.dtype for name, column in schema.UNITS.columns.items()}
 _LABEL_SCHEMA = {
     name: column.dtype for name, column in schema.PAIR_LABELS.columns.items()
-}
+} | {"stratified": pl.Boolean()}
 _STEMS = pl.DataFrame(
     schema={
         name: column.dtype for name, column in schema.PROGRAMME_STEMS.columns.items()
@@ -196,13 +196,14 @@ def _responses(request: httpx.Request) -> httpx.Response:
 
 
 def _labels(pairs: pl.DataFrame) -> pl.DataFrame:
-    """Human labels from the truth `y` of `pairs`."""
+    """Human labels from the truth `y` of `pairs`, drawn by `stratified_sample`."""
     return pairs.select(
         task=pl.lit("trace"),
         left_id="left_id",
         right_id="right_id",
         is_match="y",
         pair_label_source=pl.lit("human"),
+        stratified=pl.lit(True),
     ).cast(_LABEL_SCHEMA)  # ty: ignore[invalid-argument-type]
 
 
@@ -367,17 +368,23 @@ def test_people_s_decisions_are_human_labels(tmp_path: Path) -> None:
     assert read_human_labels(path).is_empty()
     pl.DataFrame(
         {
-            "task": ["trace", "trace", "trace", "crdf_crs"],
-            "left_id": ["b", "a", "b", "c"],
-            "right_id": ["y", "x", "y", None],
-            "decision": ["reject", "accept", "accept", "reject"],
-            "decided_at": [datetime(2026, 11, d, tzinfo=UTC) for d in (2, 1, 1, 1)],
+            "task": ["trace", "trace", "trace", "crdf_crs", "trace"],
+            "left_id": ["b", "a", "b", "c", "a"],
+            "right_id": ["y", "x", "y", None, "x"],
+            "decision": ["reject", "accept", "accept", "reject", "reject"],
+            "review_reason": ["band", "calibration", "band", "over_face", None],
+            "sample_id": [None, None, None, None, "s1"],
+            "decided_at": [datetime(2026, 11, d, tzinfo=UTC) for d in (2, 1, 1, 1, 3)],
         }
     ).write_parquet(path)
     labels = read_human_labels(path)
-    schema.validate(schema.PAIR_LABELS, labels)
-    # The later decision on b stands; c names no commitment.
-    assert labels.select("left_id", "is_match").rows() == [("a", True), ("b", False)]
+    schema.validate(schema.PAIR_LABELS, labels.drop("stratified"))
+    # The later decision on b stands; c names no commitment; the blind-sample
+    # decision on a, though later, is no label. Only a's calibration pair was drawn.
+    assert labels.select("left_id", "is_match", "stratified").rows() == [
+        ("a", True, True),
+        ("b", False, False),
+    ]
     assert set(labels["pair_label_source"]) == {"human"}
 
 
@@ -407,6 +414,33 @@ def test_stratified_sample_spreads_over_the_bands() -> None:
     assert sample.sort("left_id").equals(
         stratified_sample(scores.reverse(), n=100).sort("left_id")
     )
+
+
+def test_only_drawn_labels_take_inverse_probability_weights() -> None:
+    # One band of ten pairs: two labels the stratified sample drew stand for all
+    # ten, and a label chosen for review stands for itself.
+    scores = pl.DataFrame(
+        {
+            "left_id": [f"l{i}" for i in range(10)],
+            "right_id": "r",
+            "match_weight": 1.0,
+            "levels": None,
+        }
+    )
+    labels = pl.DataFrame(
+        {
+            "left_id": ["l0", "l1", "l2"],
+            "right_id": "r",
+            "y": [1.0, 0.0, 1.0],
+            "stratified": [True, True, False],
+        }
+    )
+    weighted = splink_models._band_weights(scores, labels)
+    assert dict(weighted.select("left_id", "weight").iter_rows()) == {
+        "l0": 5.0,
+        "l1": 5.0,
+        "l2": 1.0,
+    }
 
 
 def test_labelled_m_weights_each_label_by_its_band() -> None:

@@ -645,15 +645,21 @@ PAIR_LABELS = _table(
     pair_label_source=_str(values=PAIR_LABEL_SOURCES),
 )
 
+# People's decisions on queued pairs and blind-sample pairs, appended over time. A
+# decision carries the queue's `review_reason` or the blind sample's `sample_id`,
+# never both: queue decisions become `human` labels and link overrides, and
+# blind-sample decisions only measure precision.
 REVIEW_DECISIONS = _table(
     "review_decisions",
-    ("task", "left_id", "right_id"),
+    ("task", "left_id", "right_id", "decided_at"),
     task=_str(values=LINK_TASKS),
     left_id=_str(),
     right_id=_str(nullable=True),
     decision=_str(values=DECISIONS),
     reviewer=_str(),
     note=_str(nullable=True),
+    review_reason=_str(nullable=True, values=REVIEW_REASONS),
+    sample_id=_str(nullable=True),
     decided_at=Column(pl.Datetime("us", "UTC")),
 )
 
