@@ -27,6 +27,7 @@ import numpy as np
 import polars as pl
 
 from climate_finance.build.errors import BuildError
+from climate_finance.build.link.keys import partner_recipient
 
 logger = logging.getLogger(__name__)
 
@@ -222,86 +223,168 @@ def neighbour_pairs(
 ) -> pl.DataFrame:
     """(disbursement, commitment) unit pairs that are embedding neighbours.
 
-    Both frames hold `unit`, `unit_id`, `donor_code`, `year` and `vector`, the row
-    of the unit's text in `vectors`, null for a unit with no text.
+    Both frames hold `unit`, `unit_id`, `donor_code`, `recipient_code`, `year` and
+    `vector`, the row of the unit's text in `vectors`, null for a unit with no text.
+    A unit ranks only the units whose recipients partner its own
+    (`keys.partner_recipient`).
+
+    Units of one donor with the same text, year and recipient form a group, whose
+    units have the same cosine to every other unit and the same partners. A unit's
+    nearest units lie in the `NEIGHBOURS` groups nearest its own, ranked by cosine
+    and then by their smallest unit id, and are the first units by id of those
+    groups. So the search ranks groups and expands only those, and a text that
+    thousands of units share costs one group per year and recipient.
     """
-    columns = ("unit", "unit_id", "donor_code", "year", "vector")
+    columns = ("unit", "unit_id", "donor_code", "recipient_code", "year", "vector")
     commitments = commitments.drop_nulls("vector").select(columns)
     disbursements = disbursements.drop_nulls("vector").select(columns)
+    # Ties go to the smaller unit id, as an integer order over both sides.
+    order = (
+        pl.concat([commitments.select("unit_id"), disbursements.select("unit_id")])
+        .unique()
+        .sort("unit_id")
+        .with_row_index("order")
+    )
+    commitments = commitments.join(order, on="unit_id")
+    disbursements = disbursements.join(order, on="unit_id")
     pairs = [pl.DataFrame(schema={"left": pl.UInt32, "right": pl.UInt32})]
     for (donor,), donor_commitments in commitments.group_by("donor_code"):
         donor_disbursements = disbursements.filter(donor_code=donor)
         if donor_disbursements.is_empty():
             continue
-        close = _close_texts(
-            donor_commitments["vector"].unique().sort().to_numpy(),
-            donor_disbursements["vector"].unique().sort().to_numpy(),
-            vectors=vectors,
+        com_units, com_groups = _groups(donor_commitments)
+        dis_units, dis_groups = _groups(donor_disbursements)
+        partner = _partners(
+            donor_commitments["recipient_code"],
+            donor_disbursements["recipient_code"],
         )
-        pairs.append(_nearest(close, donor_commitments, donor_disbursements))
+        later = _nearest_groups(
+            com_groups, dis_groups, vectors=vectors, later=True, partner=partner
+        )
+        earlier = _nearest_groups(
+            dis_groups, com_groups, vectors=vectors, later=False, partner=partner.T
+        )
+        pairs.append(
+            _nearest_units(later, row_units=com_units, column_units=dis_units).select(
+                left="column_unit", right="unit"
+            )
+        )
+        pairs.append(
+            _nearest_units(earlier, row_units=dis_units, column_units=com_units).select(
+                left="unit", right="column_unit"
+            )
+        )
     return pl.concat(pairs).unique()
 
 
-def _close_texts(
-    commitment_rows: np.ndarray, disbursement_rows: np.ndarray, *, vectors: np.ndarray
-) -> pl.DataFrame:
-    """Pairs of distinct texts, as rows of `vectors`, whose cosine is at least
-    `MIN_COSINE`: vector, vector_disbursement and cosine."""
-    right = vectors[disbursement_rows].T
-    step = max(1, MAX_PRODUCT // len(disbursement_rows))
-    close = [
-        pl.DataFrame(
-            schema={
-                "vector": pl.UInt32,
-                "vector_disbursement": pl.UInt32,
-                "cosine": pl.Float32,
-            }
-        )
-    ]
-    for start in range(0, len(commitment_rows), step):
-        rows = commitment_rows[start : start + step]
-        cosine = vectors[rows] @ right
-        i, j = np.nonzero(cosine >= MIN_COSINE)
-        close.append(
-            pl.DataFrame(
-                {
-                    "vector": rows[i],
-                    "vector_disbursement": disbursement_rows[j],
-                    "cosine": cosine[i, j],
-                },
-                schema=close[0].schema,
+def _groups(units: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """`units` with their `group`, and the groups: group, vector, year,
+    `recipient`, the recipient's place among the sorted distinct recipients of
+    `units`, and `first`, the smallest order of its units."""
+    key = ["vector", "year", "recipient_code"]
+    groups = (
+        units.group_by(key)
+        .agg(first=pl.col("order").min())
+        .with_columns(recipient=pl.col("recipient_code").rank("dense") - 1)
+        .sort("first")
+        .with_row_index("group")
+    )
+    return units.join(groups.select(*key, "group"), on=key), groups
+
+
+def _partners(commitments: pl.Series, disbursements: pl.Series) -> np.ndarray:
+    """partner[i, j]: whether a line to the j-th distinct recipient of
+    `disbursements` can continue a commitment to the i-th of `commitments`, both
+    sorted (`keys.partner_recipient`)."""
+    left = commitments.unique().sort()
+    right = disbursements.unique().sort()
+    partner = (
+        pl.DataFrame({"commitment": left})
+        .join(pl.DataFrame({"disbursement": right}), how="cross")
+        .select(
+            partner_recipient(
+                commitment=pl.col("commitment"),
+                disbursement=pl.col("disbursement"),
             )
         )
-    return pl.concat(close)
-
-
-def _nearest(
-    close: pl.DataFrame, commitments: pl.DataFrame, disbursements: pl.DataFrame
-) -> pl.DataFrame:
-    """The unit pairs of `close` texts, the disbursement of a later year, that rank
-    among the `NEIGHBOURS` nearest of either unit."""
-    rank = pl.int_range(pl.len())
-    return (
-        close.join(
-            commitments.select("vector", "year", "unit_id", right="unit"), on="vector"
-        )
-        .join(
-            disbursements.select(
-                "unit_id",
-                vector_disbursement="vector",
-                year_disbursement="year",
-                left="unit",
-            ),
-            on="vector_disbursement",
-            suffix="_disbursement",
-        )
-        .filter(pl.col("year_disbursement") > pl.col("year"))
-        .sort(
-            "cosine",
-            "unit_id_disbursement",
-            "unit_id",
-            descending=[True, False, False],
-        )
-        .filter((rank.over("right") < NEIGHBOURS) | (rank.over("left") < NEIGHBOURS))
-        .select("left", "right")
+        .to_series()
     )
+    return partner.to_numpy().reshape(left.len(), right.len())
+
+
+def _nearest_groups(
+    rows: pl.DataFrame,
+    columns: pl.DataFrame,
+    *,
+    vectors: np.ndarray,
+    later: bool,
+    partner: np.ndarray,
+) -> pl.DataFrame:
+    """Each row group's `NEIGHBOURS` nearest column groups of a later year (`later`)
+    or an earlier one, whose recipient `partner` allows (`_partners`, indexed by
+    the row's and the column's `recipient`), at a cosine of at least `MIN_COSINE`,
+    ties to the smaller `first`: row, column and cosine.
+
+    Cosines are computed once per pair of distinct texts and then spread over the
+    groups, so groups of equal texts tie exactly.
+    """
+    row_texts, row_text = np.unique(rows["vector"].to_numpy(), return_inverse=True)
+    column_texts, column_text = np.unique(
+        columns["vector"].to_numpy(), return_inverse=True
+    )
+    right = vectors[column_texts].T
+    row_year = rows["year"].to_numpy()
+    column_year = columns["year"].to_numpy()
+    row_recipient = rows["recipient"].to_numpy()
+    column_recipient = columns["recipient"].to_numpy()
+    step = max(1, MAX_PRODUCT // len(columns))
+    found = []
+    for start in range(0, len(rows), step):
+        stop = min(start + step, len(rows))
+        texts, text = np.unique(row_text[start:stop], return_inverse=True)
+        cosine = (vectors[row_texts[texts]] @ right)[text][:, column_text]
+        years = row_year[start:stop, None]
+        allowed = column_year[None, :] > years if later else column_year < years
+        allowed &= partner[row_recipient[start:stop]][:, column_recipient]
+        cosine[~allowed | (cosine < MIN_COSINE)] = -np.inf
+        # Every column at or above each row's NEIGHBOURS-th largest cosine, so ties
+        # at the boundary are all kept and resolved by `first` below.
+        if cosine.shape[1] > NEIGHBOURS:
+            kth = np.partition(cosine, -NEIGHBOURS, axis=1)[:, -NEIGHBOURS]
+            keep = (cosine >= kth[:, None]) & np.isfinite(cosine)
+        else:
+            keep = np.isfinite(cosine)
+        i, j = np.nonzero(keep)
+        found.append(
+            pl.DataFrame(
+                {"row": i + start, "column": j, "cosine": cosine[i, j]},
+                schema={"row": pl.UInt32, "column": pl.UInt32, "cosine": pl.Float32},
+            )
+        )
+    return (
+        pl.concat(found)
+        .join(columns.select(column="group", first="first"), on="column")
+        .sort("cosine", "first", descending=[True, False])
+        .filter(pl.int_range(pl.len()).over("row") < NEIGHBOURS)
+        .select("row", "column", "cosine")
+    )
+
+
+def _nearest_units(
+    nearest: pl.DataFrame, *, row_units: pl.DataFrame, column_units: pl.DataFrame
+) -> pl.DataFrame:
+    """Each row unit with its `NEIGHBOURS` nearest column units, from the nearest
+    groups of its group: unit and column_unit."""
+    rank = pl.int_range(pl.len())
+    firsts = (
+        column_units.sort("order")
+        .filter(rank.over("group") < NEIGHBOURS)
+        .select(column="group", column_unit="unit", column_order="order")
+    )
+    chosen = (
+        nearest.join(firsts, on="column")
+        .sort("cosine", "column_order", descending=[True, False])
+        .filter(rank.over("row") < NEIGHBOURS)
+        .select("row", "column_unit")
+    )
+    return row_units.select("unit", row="group").join(chosen, on="row").drop("row")
