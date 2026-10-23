@@ -28,8 +28,8 @@ NUMBER_FREE = ("crs_id_purpose", "crs_id", "classifier")
 
 def flag_disagreement(links: pl.DataFrame, *, units: pl.DataFrame) -> pl.DataFrame:
     """`links` with `records_disagree` set on its `trace` links, true for every link
-    of a disbursement unit and method whose records disagree. Other tasks keep
-    theirs.
+    of a disbursement unit and method whose records disagree other than the unit's
+    link to itself. Other tasks keep theirs.
 
     Args:
         links: `links` rows.
@@ -67,7 +67,10 @@ def flag_disagreement(links: pl.DataFrame, *, units: pl.DataFrame) -> pl.DataFra
         links.join(disagree, on=group, how="left", maintain_order="left")
         .with_columns(
             records_disagree=pl.when(trace)
-            .then(pl.col("disagree").fill_null(value=False))
+            .then(
+                pl.col("disagree").fill_null(value=False)
+                & (pl.col("left_id") != pl.col("right_id"))
+            )
             .otherwise(pl.col("records_disagree"))
         )
         .select(links.columns)

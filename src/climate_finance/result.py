@@ -319,8 +319,8 @@ _FLOWS = {
     "disbursements": "Flow: disbursements allocated to climate commitments, weighted "
     "by the commitment's markers; low counts the disbursements linked by the "
     "donor's CRS id or World Bank loan number where the linked records agree, and "
-    "bank-ledger and IATI fills, whose publisher's own key names the commitment; "
-    "high counts every linked disbursement. "
+    "bank-ledger and IATI fills in full, since they match on the publisher's own "
+    "id; high counts every linked disbursement. "
     "Attributed finance counts core contributions disbursed. The modelled table "
     "holds a disbursement range for commitments whose disbursements no source "
     "reports.",

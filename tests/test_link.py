@@ -483,30 +483,38 @@ def test_a_line_passed_to_another_country_links_by_project_number() -> None:
 
 
 @pytest.mark.parametrize(
-    ("commitment", "disbursement", "disagree"),
+    ("commitment", "disbursement", "flags"),
     [
         # The number agrees though the purpose line differs.
-        ({"project_number": "PRJ-001"}, {"project_number": "prj 1"}, False),
+        ({"project_number": "PRJ-001"}, {"project_number": "prj 1"}, {"c": False}),
         # A crs id shared by two agreements.
-        ({"project_number": "PRJ-001"}, {"project_number": "AGR-002"}, True),
+        ({"project_number": "PRJ-001"}, {"project_number": "AGR-002"}, {"c": True}),
+        # The same, where the disbursement unit also commits and links to itself.
+        (
+            {"project_number": "PRJ-001"},
+            {"project_number": "AGR-002", "purpose_code": 23210, "commitment_usd": 1.0},
+            {"c": True, "d": False},
+        ),
         # No number on one side.
-        ({"project_number": "PRJ-001"}, {}, False),
+        ({"project_number": "PRJ-001"}, {}, {"c": False}),
         # An umbrella decision in another country.
         (
             {"donor_code": 918, "crs_id": "2019000001", "recipient_code": 279},
             {"donor_code": 918, "crs_id": "2019000001042", "recipient_code": 235},
-            True,
+            {"c": True},
         ),
         # A regional decision.
         (
             {"donor_code": 918, "crs_id": "2019000001", "recipient_code": 289},
             {"donor_code": 918, "crs_id": "2019000001042", "recipient_code": 235},
-            False,
+            {"c": False},
         ),
     ],
 )
 def test_a_trace_link_records_whether_its_records_disagree(
-    commitment: dict[str, object], disbursement: dict[str, object], disagree: bool
+    commitment: dict[str, object],
+    disbursement: dict[str, object],
+    flags: dict[str, bool],
 ) -> None:
     units = _units(
         {
@@ -533,9 +541,15 @@ def test_a_trace_link_records_whether_its_records_disagree(
 
     schema.validate(schema.LINKS, flagged)
     assert {
-        names.get(row["left_id"], row["left_id"]): row["records_disagree"]
+        (names.get(row["left_id"], row["left_id"]), names[row["right_id"]]): row[
+            "records_disagree"
+        ]
         for row in flagged.iter_rows(named=True)
-    } == {"d": disagree, "cd": False, "row": None}
+    } == {
+        **{("d", right): flag for right, flag in flags.items()},
+        ("cd", "cd"): False,
+        ("row", names[units["unit_id"][0]]): None,
+    }
 
 
 @pytest.mark.parametrize(

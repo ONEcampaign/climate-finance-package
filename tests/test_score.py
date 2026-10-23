@@ -852,6 +852,8 @@ _FUND = [
     _fund("b", "2017000003", year=2020),
 ]
 _NEW_LINE = _fund("n", "2021000032", year=2021)
+# Another of the fund's projects under the same title template.
+_PALAU = "Enhancing climate resilience of coastal communities in Palau"
 
 
 @pytest.mark.parametrize(
@@ -919,6 +921,59 @@ _NEW_LINE = _fund("n", "2021000032", year=2021)
                 ),
             ],
             {("b", "c", False), ("r", "c", False)},
+        ),
+        # A line its own id already continues takes nothing from a similar title.
+        (
+            [
+                _fund(
+                    "c3",
+                    "2018000007",
+                    year=2018,
+                    committed=True,
+                    project="AF00000200",
+                    title=_PALAU,
+                ),
+                _fund(
+                    "b3",
+                    "2018000007",
+                    year=2020,
+                    project="AF00000200",
+                    title=_PALAU,
+                ),
+            ],
+            {("b", "c", False), ("b3", "c3", False)},
+        ),
+        # A similar title carries another country's commitment only where that
+        # commitment is regional.
+        (
+            [
+                _fund(
+                    "p",
+                    "2022000013",
+                    year=2022,
+                    project="AF00000302",
+                    recipient=861,
+                    title=_PALAU,
+                ),
+                _fund(
+                    "g",
+                    "2017000002",
+                    year=2017,
+                    committed=True,
+                    project="AFR/MIE/WATER/2015/1",
+                    recipient=289,
+                    title="Adapting to climate change in Lake Victoria Basin",
+                ),
+                _fund(
+                    "k",
+                    "2022000015",
+                    year=2022,
+                    project="AF00000081",
+                    recipient=248,
+                    title="Adapting to climate change in Lake Victoria Basin",
+                ),
+            ],
+            {("b", "c", False), ("k", "g", False)},
         ),
     ],
 )

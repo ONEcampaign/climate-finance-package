@@ -74,7 +74,7 @@ from climate_finance.build.link.id_practice import (
     line_id,
     period_of,
 )
-from climate_finance.build.link.keys import separator_free_pn
+from climate_finance.build.link.keys import regional_codes, separator_free_pn
 from climate_finance.build.link.levels import (
     DATE_FEATURES,
     LEVELS,
@@ -465,10 +465,14 @@ def carried_continuations(
     recipients.
 
     Where no record bridges the change, a disbursement unit of a
-    `RENUMBERED_DONORS` donor continues each of `commitments` of its donor from an
-    earlier record year under another crs id and another project number whose title
-    shares at least `RENUMBERED_TITLE_SHARE` of its words (`word_share`). Two of the
-    fund's projects that shared one project number have dissimilar titles.
+    `RENUMBERED_DONORS` donor that no pair of `continuations` holds continues each
+    of `commitments` of its donor from an earlier record year under another crs id
+    and another project number whose title shares at least `RENUMBERED_TITLE_SHARE`
+    of its words (`word_share`), and whose recipient is the unit's or one that
+    `regional_codes` names. Two of the fund's projects that shared one project number
+    have dissimilar titles. The fund's titles follow a template, so two countries'
+    projects can share most of their words, and a regional project disburses to
+    its countries.
 
     Where a unit's carried commitments have more than one crs id, the unit
     continues one of the lines and nothing says which: its pairs are `ambiguous`.
@@ -515,14 +519,22 @@ def carried_continuations(
         )
         .select("unit_id", "donor_code", "right_id", "line")
     )
+    fields = [
+        "unit_id",
+        "donor_code",
+        "year",
+        "crs_id",
+        "project_number",
+        "recipient_code",
+    ]
     renumbered = (
         _with_title_share(
             commitments.filter(pl.col("donor_code").is_in(RENUMBERED_DONORS))
-            .select("unit_id", "donor_code", "year", "crs_id", "project_number")
+            .select(fields)
             .join(
-                disbursements.select(
-                    "unit_id", "donor_code", "year", "crs_id", "project_number"
-                ),
+                disbursements.join(
+                    continuations, left_on="unit_id", right_on="left_id", how="anti"
+                ).select(fields),
                 on="donor_code",
                 suffix="_left",
             )
@@ -530,6 +542,8 @@ def carried_continuations(
                 pl.col("year_left") > pl.col("year"),
                 pl.col("crs_id_left") != pl.col("crs_id"),
                 pl.col("project_number_left") != pl.col("project_number"),
+                (pl.col("recipient_code_left") == pl.col("recipient_code"))
+                | pl.col("recipient_code").is_in(regional_codes()),
             ),
             titles=titles,
         )
