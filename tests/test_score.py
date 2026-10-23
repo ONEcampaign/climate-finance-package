@@ -22,6 +22,7 @@ from climate_finance.build.link.score import (
     best_commitments,
     classifier_links,
     contradicted_commitments,
+    heldout_links,
     id_truth,
     is_heldout,
     provider_profile,
@@ -319,6 +320,8 @@ def test_id_truth_follows_the_crs_id_into_later_disbursements() -> None:
             "commitment_date": pl.Date,
             "commitment_usd": pl.Float64,
             "disbursement_usd": pl.Float64,
+            "title": pl.String,
+            "short_description": pl.String,
         },
     )
     units = build_units(crs).collect()
@@ -345,6 +348,7 @@ def test_id_truth_follows_the_crs_id_into_later_disbursements() -> None:
     )
     truth = id_truth(
         units,
+        crs=crs,
         links=links,
         id_practice=id_practice,
         first_year=2010,
@@ -365,7 +369,182 @@ _CRS_SCHEMA = {
     "commitment_date": pl.Date,
     "commitment_usd": pl.Float64,
     "disbursement_usd": pl.Float64,
+    "title": pl.String,
+    "short_description": pl.String,
 }
+
+
+def _persistent(*agencies: tuple[int, int]) -> pl.DataFrame:
+    """An `id_practice` table with each (donor, agency) `id_persistent` throughout."""
+    periods = ("2010-2014", "2015-2018", "2019-2022")
+    rows = [(donor, agency, period) for donor, agency in agencies for period in periods]
+    return pl.DataFrame(
+        [(*row, "id_persistent") for row in rows],
+        schema={
+            "donor_code": pl.Int32,
+            "agency_code": pl.Int32,
+            "period": pl.String,
+            "id_class": pl.String,
+        },
+        orient="row",
+    )
+
+
+def _truth_of(records: list[dict[str, object]]) -> set[tuple[str, str, bool]]:
+    """`id_truth` of `records` as (disbursement, commitment, ambiguous) record ids,
+    every commitment reached by `crdf_crs` and every agency `id_persistent`."""
+    crs = pl.LazyFrame(records, schema=_CRS_SCHEMA)
+    units = build_units(crs).collect()
+    record = {
+        unit_id: ids[0]
+        for unit_id, ids in units.select("unit_id", "record_ids").iter_rows()
+    }
+    truth = id_truth(
+        units,
+        crs=crs,
+        links=units.filter(pl.col("commitment_usd") > 0).select(
+            task=pl.lit("crdf_crs"), right_id="unit_id"
+        ),
+        id_practice=_persistent(
+            *units.select("donor_code", "agency_code").unique().iter_rows()
+        ),
+        first_year=2010,
+        contradicted=contradicted_commitments(units, first_year=2010),
+    )
+    return {
+        (record[left], record[right], ambiguous)
+        for left, right, ambiguous in truth.select(
+            "left_id", "right_id", "ambiguous"
+        ).iter_rows()
+    }
+
+
+def _record(
+    record_id: str,
+    crs_id: str,
+    *,
+    donor: int,
+    year: int,
+    committed: bool,
+    project: str = "P1",
+    title: str | None = "Rural water supply in Lusaka",
+) -> dict[str, object]:
+    """A record of a project of `donor` in one recipient."""
+    return {
+        "record_id": record_id,
+        "donor_code": donor,
+        "agency_code": 1,
+        "crs_id": crs_id,
+        "project_number": project,
+        "recipient_code": 238,
+        "purpose_code": 14030,
+        "year": year,
+        "commitment_usd": 10.0 if committed else None,
+        "disbursement_usd": None if committed else 4.0,
+        "title": title,
+    }
+
+
+@pytest.mark.parametrize(
+    ("committed", "later", "continues"),
+    [
+        # The UK's lettered copies of a line, and a copy of a copy, are the line,
+        # here under a project number that does not reach it.
+        (
+            _record("c", "2020000488", donor=12, year=2019, committed=True),
+            _record(
+                "d", "2020000488-c", donor=12, year=2021, committed=False, project="P2"
+            ),
+            True,
+        ),
+        (
+            _record("c", "2020000488a", donor=12, year=2020, committed=True),
+            _record(
+                "d", "2020000488-c", donor=12, year=2021, committed=False, project="P2"
+            ),
+            True,
+        ),
+        # Germany's letters can name another line.
+        (
+            _record("c", "2016123138", donor=5, year=2019, committed=True),
+            _record(
+                "d", "2016123138a", donor=5, year=2021, committed=False, project="P2"
+            ),
+            False,
+        ),
+        # A zero-padded line suffix is the unpadded one.
+        (
+            _record("c", "2021015528_06", donor=1601, year=2021, committed=True),
+            _record(
+                "d",
+                "2021015528_6",
+                donor=1601,
+                year=2022,
+                committed=False,
+                project="P2",
+            ),
+            True,
+        ),
+        # A crs id under another project number and an unrelated title names
+        # another project; a related title, the same number or no title keeps it.
+        (
+            _record("c", "2015001315", donor=5, year=2016, committed=True),
+            _record(
+                "d",
+                "2015001315",
+                donor=5,
+                year=2018,
+                committed=False,
+                project="P2",
+                title="Teacher training programme",
+            ),
+            False,
+        ),
+        (
+            _record("c", "2015001315", donor=5, year=2016, committed=True),
+            _record(
+                "d",
+                "2015001315",
+                donor=5,
+                year=2018,
+                committed=False,
+                project="P2",
+                title="Rural water supply, Lusaka phase two",
+            ),
+            True,
+        ),
+        (
+            _record("c", "2015001315", donor=5, year=2016, committed=True),
+            _record(
+                "d",
+                "2015001315",
+                donor=5,
+                year=2018,
+                committed=False,
+                title="Teacher training programme",
+            ),
+            True,
+        ),
+        (
+            _record("c", "2015001315", donor=5, year=2016, committed=True),
+            _record(
+                "d",
+                "2015001315",
+                donor=5,
+                year=2018,
+                committed=False,
+                project="P2",
+                title=None,
+            ),
+            True,
+        ),
+    ],
+)
+def test_id_truth_follows_one_line_under_its_forms_of_id(
+    committed: dict[str, object], later: dict[str, object], continues: bool
+) -> None:
+    expected = {("d", "c", False)} if continues else set()
+    assert _truth_of([committed, later]) == expected
 
 
 def _line(
@@ -376,6 +555,7 @@ def _line(
     year: int,
     committed: bool,
     project: str = "P1",
+    purpose: int = 23240,
     commitment_date: dt.date | None = None,
 ) -> dict[str, object]:
     """A record of one line of a project of donor 301."""
@@ -386,7 +566,7 @@ def _line(
         "crs_id": crs_id,
         "project_number": project,
         "recipient_code": recipient,
-        "purpose_code": 23240,
+        "purpose_code": purpose,
         "year": year,
         "commitment_date": commitment_date,
         "commitment_usd": 10.0 if committed else None,
@@ -508,18 +688,43 @@ _UNPADDED = _line("d", "20182009631", recipient=358, year=2019, committed=False)
             ],
             {("d", "a", False)},
         ),
+        # Lines of one recipient differ by purpose: a line disbursed under another
+        # purpose continues the project's line of that purpose.
+        (
+            [
+                _line(
+                    "e",
+                    "20182009630003",
+                    recipient=358,
+                    year=2018,
+                    committed=True,
+                    purpose=15110,
+                ),
+                _line(
+                    "x",
+                    "20182009630001",
+                    recipient=358,
+                    year=2020,
+                    committed=False,
+                    purpose=15110,
+                ),
+            ],
+            {("x", "e", False)},
+        ),
     ],
 )
 def test_a_contradicted_project_continues_by_project_and_recipient(
     later: list[dict[str, object]], expected: set[tuple[str, str, bool]]
 ) -> None:
-    units = build_units(pl.LazyFrame([*_P1, *later], schema=_CRS_SCHEMA)).collect()
+    crs = pl.LazyFrame([*_P1, *later], schema=_CRS_SCHEMA)
+    units = build_units(crs).collect()
     unit = {
         ids[0]: unit_id
         for unit_id, ids in units.select("unit_id", "record_ids").iter_rows()
     }
     truth = id_truth(
         units,
+        crs=crs,
         links=units.filter(pl.col("commitment_usd") > 0).select(
             task=pl.lit("crdf_crs"), right_id="unit_id"
         ),
@@ -554,6 +759,7 @@ def _fund(
     project: str = "AF00000107",
     agency: int = 1,
     recipient: int = 860,
+    title: str | None = None,
 ) -> dict[str, object]:
     """A record of an Adaptation Fund project."""
     return {
@@ -568,13 +774,21 @@ def _fund(
         "commitment_date": None,
         "commitment_usd": 10.0 if committed else None,
         "disbursement_usd": None if committed else 4.0,
+        "title": title,
     }
 
 
 # The fund commits under one project number, and the id's later records carry
 # another.
 _FUND = [
-    _fund("c", "2017000003", year=2017, committed=True, project="FSM/RIE/2015/1"),
+    _fund(
+        "c",
+        "2017000003",
+        year=2017,
+        committed=True,
+        project="FSM/RIE/2015/1",
+        title="Enhancing climate resilience of coastal communities",
+    ),
     _fund("b", "2017000003", year=2020),
 ]
 _NEW_LINE = _fund("n", "2021000032", year=2021)
@@ -625,18 +839,41 @@ _NEW_LINE = _fund("n", "2021000032", year=2021)
             ],
             {("b", "c", False), ("x", "c", False), ("v", "m", False)},
         ),
+        # Under a new id and project number with no bridge, a line continues the
+        # commitment whose title it shares.
+        (
+            [
+                _fund(
+                    "r",
+                    "2022000011",
+                    year=2022,
+                    project="AF00000300",
+                    title="Enhancing the climate resilience of coastal communities",
+                ),
+                _fund(
+                    "s",
+                    "2022000012",
+                    year=2022,
+                    project="AF00000301",
+                    title="Water security in highland villages",
+                ),
+            ],
+            {("b", "c", False), ("r", "c", False)},
+        ),
     ],
 )
 def test_a_new_line_continues_what_its_bridged_project_continues(
     later: list[dict[str, object]], expected: set[tuple[str, str, bool]]
 ) -> None:
-    units = build_units(pl.LazyFrame([*_FUND, *later], schema=_CRS_SCHEMA)).collect()
+    crs = pl.LazyFrame([*_FUND, *later], schema=_CRS_SCHEMA)
+    units = build_units(crs).collect()
     unit = {
         ids[0]: unit_id
         for unit_id, ids in units.select("unit_id", "record_ids").iter_rows()
     }
     truth = id_truth(
         units,
+        crs=crs,
         links=units.filter(pl.col("commitment_usd") > 0).select(
             task=pl.lit("crdf_crs"), right_id="unit_id"
         ),
@@ -725,6 +962,27 @@ def test_recall_counts_disbursements_not_pairs(scores: TruthScores) -> None:
     truth = pl.concat([_truth(_FEATURES), extra, open_pairs]).unique()
     again = score_truth_group(_FEATURES, groups=scoring_groups(_FEATURES), truth=truth)
     assert again.threshold == scores.threshold
+
+
+def test_held_out_links_take_the_best_pair_of_both_halves() -> None:
+    def scored(left: str, right: str, p: float, *, split: str, same: bool) -> dict:
+        return _pair(left, right, donor=1, split=split, same=same, levels={}) | {"p": p}
+
+    links = heldout_links(
+        _scores(
+            # The true commitment in the training half outscores a held-out one.
+            scored("d1", "c1", 0.6, split=HELDOUT, same=False),
+            scored("d1", "c2", 0.8, split=TRAIN, same=True),
+            # A false training pair outscores the true held-out one.
+            scored("d2", "c3", 0.7, split=HELDOUT, same=True),
+            scored("d2", "c4", 0.9, split=TRAIN, same=False),
+            # Eligible pairs and units without a held-out pair take no part.
+            scored("d3", "c5", 0.5, split=HELDOUT, same=True),
+            scored("d3", "c6", 0.9, split=ELIGIBLE, same=False),
+            scored("d4", "c7", 0.9, split=TRAIN, same=True),
+        ).pairs
+    )
+    assert links.select("left_id", "right_id").rows() == [("d2", "c4"), ("d3", "c5")]
 
 
 def test_best_commitments_follow_the_link_rule() -> None:

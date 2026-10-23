@@ -159,6 +159,12 @@ def _disbursement(**fields: object) -> dict[str, object]:
     ("commitment", "disbursement", "tier"),
     [
         ({"crs_id": "A"}, {"crs_id": "A"}, "crs_id_purpose"),
+        # A line suffix with and without zero padding.
+        (
+            {"donor_code": 1601, "crs_id": "2021015528_06"},
+            {"donor_code": 1601, "crs_id": "2021015528_6"},
+            "crs_id_purpose",
+        ),
         # Another purpose under the same crs id.
         ({"crs_id": "A"}, {"crs_id": "A", "purpose_code": 41010}, "crs_id"),
         # An EU contract under its decision id, on another purpose.

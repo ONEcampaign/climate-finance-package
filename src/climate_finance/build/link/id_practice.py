@@ -44,6 +44,14 @@ _DECISION_ID_LENGTH = 10
 # numbers, Sweden and New Zealand letters that start a new agreement.
 LETTER_SUFFIX_DONORS = (3, 5, 12, 302, 915)
 _LETTER_SUFFIX = r"^(\d{10})[-/]?[A-Za-z]{1,3}$"
+# The UK's lettered ids are copies of the line: a recommitment (`2020000488a`) or a
+# later report (`2019000146-c`) of the same activity under the same project number.
+# Germany's letters can name another line of the project.
+COPY_DONORS = (12,)
+# A line suffix with and without zero padding (`2021015528_06`, `2021015528_6`)
+# names one line: the Gates Foundation and two other private donors write both
+# forms of 2,396 ids, each pair under one project number.
+_PADDED_LINE = r"_0+(\d+)$"
 _AGENCY = ("donor_code", "agency_code")
 # The project-number key: one project of one agency in one recipient.
 PN_KEY = ("donor_code", "agency_code", "project_number", "recipient_code")
@@ -62,6 +70,22 @@ def parent_id(donor_code: pl.Expr, crs_id: pl.Expr) -> pl.Expr:
         .then(crs_id.str.slice(0, _DECISION_ID_LENGTH))
         .when(donor_code.is_in(LETTER_SUFFIX_DONORS))
         .then(crs_id.str.extract(_LETTER_SUFFIX, 1))
+    )
+
+
+def canonical_crs_id(crs_id: pl.Expr) -> pl.Expr:
+    """`crs_id` with the zero padding of its line suffix dropped."""
+    return crs_id.str.replace(_PADDED_LINE, "_${1}")
+
+
+def line_id(donor_code: pl.Expr, crs_id: pl.Expr) -> pl.Expr:
+    """The crs id every record of one line carries: `canonical_crs_id`, and for
+    `COPY_DONORS` the `parent_id` a copy adds letters to."""
+    canonical = canonical_crs_id(crs_id)
+    return (
+        pl.when(donor_code.is_in(COPY_DONORS))
+        .then(pl.coalesce(parent_id(donor_code, canonical), canonical))
+        .otherwise(canonical)
     )
 
 

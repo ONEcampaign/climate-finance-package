@@ -27,7 +27,11 @@ from dataclasses import dataclass
 import polars as pl
 
 from climate_finance import schema
-from climate_finance.build.link.id_practice import PN_KEY, parent_id
+from climate_finance.build.link.id_practice import (
+    PN_KEY,
+    canonical_crs_id,
+    parent_id,
+)
 from climate_finance.build.normalise.ids import content_id
 
 UNIT_KEY = (
@@ -198,10 +202,12 @@ def link_by_keys(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
     """Trace links from each disbursement unit to every eligible commitment unit
     under its first matching tier, as `links` rows.
 
-    `first_year` is the first CRS year the build loads. `group_id` names the tier
-    and its key, so the disbursement units of one group reach the same commitments,
-    less those their own record year or floor rules out.
+    `first_year` is the first CRS year the build loads. The crs-id tiers compare
+    `canonical_crs_id`s. `group_id` names the tier and its key, so the disbursement
+    units of one group reach the same commitments, less those their own record
+    year or floor rules out.
     """
+    units = units.with_columns(crs_id=canonical_crs_id(pl.col("crs_id")))
     units = units.with_columns(crs_key=crs_key(units))
     remaining = units.filter(
         pl.col("disbursement_usd") > 0,

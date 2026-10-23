@@ -2,9 +2,10 @@
 
 The archive builds through link with key repair and recoveries on, as in
 `build.toml`. The classifier is measured on the held-out half of the labelled pairs.
-F1, precision and recall are read on links: each disbursement unit's best pair links
-at the threshold and is right when true, and recall counts every disbursement unit
-with a true commitment in the half, blocked or not. The expected calibration error
+F1, precision and recall are read on links (`heldout_links`): each held-out
+disbursement unit's best pair over both halves links at the threshold and is right
+when true, and recall counts every disbursement unit with a true commitment in the
+half, blocked or not. The expected calibration error
 reads ten equal bins of probability over the pairs scored at 0.05 or more. Provider
 classes are the CRDF provider types of the commitment's (provider, agency), DAC and
 non-DAC members counting as bilateral.
@@ -26,8 +27,8 @@ from climate_finance.build.link.score import (
     METHOD,
     Scored,
     TruthScores,
-    best_commitments,
     contradicted_commitments,
+    heldout_links,
     id_truth,
     score_candidates,
 )
@@ -83,13 +84,19 @@ def keyed_links(release_dir: Path) -> pl.DataFrame:
 
 
 @pytest.fixture(scope="module")
-def scored(release_dir: Path, keyed_links: pl.DataFrame) -> Scored:
+def crs(release_dir: Path) -> pl.LazyFrame:
+    return trace_population(
+        pl.scan_parquet(table_path(release_dir, "normalise", "crs"))
+    )
+
+
+@pytest.fixture(scope="module")
+def scored(release_dir: Path, keyed_links: pl.DataFrame, crs: pl.LazyFrame) -> Scored:
     # Slow: scores the archive's candidates again, as the link stage did.
-    crs = pl.scan_parquet(table_path(release_dir, "normalise", "crs"))
     return score_candidates(
         _read(release_dir, "link", "candidates"),
         units=_read(release_dir, "link", "units"),
-        crs=trace_population(crs),
+        crs=crs,
         links=keyed_links,
         id_practice=_read(release_dir, "link", "id_practice"),
         stems=_read(release_dir, "link", "programme_stems"),
@@ -104,14 +111,21 @@ def _scores(scored: Scored) -> TruthScores:
 
 @pytest.fixture(scope="module")
 def heldout(
-    release_dir: Path, scored: Scored, keyed_links: pl.DataFrame, archive: Path
-) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Held-out pairs, and every true pair of their commitments, blocked or not,
-    each with the commitment's record year and provider class."""
+    release_dir: Path,
+    scored: Scored,
+    keyed_links: pl.DataFrame,
+    crs: pl.LazyFrame,
+    archive: Path,
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Held-out pairs, their links (`heldout_links`), and every true pair of their
+    commitments, blocked or not, each with the commitment's record year and
+    provider class."""
     pairs = _scores(scored).pairs.filter(split=HELDOUT)
+    links = heldout_links(_scores(scored).pairs)
     units = _read(release_dir, "link", "units")
     truth = id_truth(
         units,
+        crs=crs,
         links=keyed_links,
         id_practice=_read(release_dir, "link", "id_practice"),
         first_year=FIRST_YEAR,
@@ -134,6 +148,7 @@ def heldout(
     ).join(categories, on=["provider_code", "agency_code"], how="left")
     return (
         pairs.join(about, on="right_id", how="left"),
+        links.join(about, on="right_id", how="left"),
         truth.join(about, on="right_id", how="left"),
     )
 
@@ -149,9 +164,13 @@ def _ece(p: np.ndarray, y: np.ndarray) -> float:
 
 
 def _measure(
-    pairs: pl.DataFrame, truth: pl.DataFrame, *, threshold: float
+    pairs: pl.DataFrame,
+    links: pl.DataFrame,
+    truth: pl.DataFrame,
+    *,
+    threshold: float,
 ) -> dict[str, float]:
-    links = best_commitments(pairs).filter(pl.col("p_model") >= threshold)
+    links = links.filter(pl.col("p_model") >= threshold)
     hits = int(links["true_pair"].sum())
     true = truth.filter(~pl.col("ambiguous"))["left_id"].n_unique()
     p = pairs["p_model"].to_numpy()
@@ -166,15 +185,16 @@ def _measure(
 
 
 def test_the_classifier_meets_its_targets_on_the_prototype_years(
-    scored: Scored, heldout: tuple[pl.DataFrame, pl.DataFrame]
+    scored: Scored, heldout: tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]
 ) -> None:
-    pairs, truth = heldout
     threshold = _scores(scored).threshold
     years = pl.col("year").is_between(*PROTOTYPE_YEARS)
-    prototype = _measure(pairs.filter(years), truth.filter(years), threshold=threshold)
+    prototype = _measure(
+        *(frame.filter(years) for frame in heldout), threshold=threshold
+    )
     crdf_years = pl.col("year").is_between(*CRDF_YEARS)
     every_year = _measure(
-        pairs.filter(crdf_years), truth.filter(crdf_years), threshold=threshold
+        *(frame.filter(crdf_years) for frame in heldout), threshold=threshold
     )
 
     # `carried_continuations` labels the UK's and the Adaptation Fund's new lines
@@ -195,14 +215,12 @@ def test_the_classifier_meets_its_targets_on_the_prototype_years(
 
 
 def test_held_out_figures_by_provider_class(
-    scored: Scored, heldout: tuple[pl.DataFrame, pl.DataFrame]
+    scored: Scored, heldout: tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]
 ) -> None:
-    pairs, truth = heldout
     threshold = _scores(scored).threshold
     measured = {
         category: _measure(
-            pairs.filter(category=category),
-            truth.filter(category=category),
+            *(frame.filter(category=category) for frame in heldout),
             threshold=threshold,
         )
         for category in ("bilateral", "private", "banks", "other_multilateral")

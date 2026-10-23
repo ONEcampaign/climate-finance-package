@@ -1,12 +1,15 @@
 """The truth-group classifier and the provider profile.
 
 Where an agency's ids persist, a later record continues a commitment exactly when it
-carries the commitment's crs id, so those agencies' candidate pairs are labelled
-truth. A provider with at least `MIN_TRUE_PAIRS` true pairs among its training
-pairs is in the truth group: one gradient-boosted classifier, trained on the truth
-group's labelled pairs, scores the eligible pairs of its other agencies. Providers
-without that truth are scored by Splink, alone or, below `SPLINK_MIN_COMMITMENTS`
-open commitments or `SPLINK_MIN_PAIRS` eligible pairs, pooled.
+carries the commitment's line id (`line_id`: the crs id, with a zero-padded line
+suffix unpadded and a UK copy's letters dropped), so those agencies' candidate pairs
+are labelled truth. A crs id that a later record files under another project number
+and an unrelated title names another project. A provider with at least
+`MIN_TRUE_PAIRS` true pairs among its training pairs is in the truth group: one
+gradient-boosted classifier, trained on the truth group's labelled pairs, scores the
+eligible pairs of its other agencies. Providers without that truth are scored by
+Splink, alone or, below `SPLINK_MIN_COMMITMENTS` open commitments or
+`SPLINK_MIN_PAIRS` eligible pairs, pooled.
 
 Some agencies number a project's lines inside its crs id and renumber them from year
 to year: Canada's ids are a ten-character project root and a four-digit line, a line
@@ -16,11 +19,14 @@ line no record commits. Where a project's later records contradict its ids this 
 place for lines the id cannot follow (see `id_truth`). Where the project committed
 two lines to one recipient in a year, a new line of that recipient continues one of
 them and nothing says which: those pairs are `unlabelled`, and neither train nor
-measure the classifier. Where a donor changes a project's number or agency and then
-issues a new crs id, the new line continues what the records that bridge the change
-continue (see `carried_continuations`).
+measure the classifier. Canada also tells lines apart by purpose, so a Canadian
+disbursement continues the commitments of its own project, recipient and purpose
+where there are any (see `purpose_lines`). Where a donor changes a project's number
+or agency and then issues a new crs id, the new line continues what the records that
+bridge the change continue, and at the Adaptation Fund, which leaves no bridge, what
+its title continues (see `carried_continuations`).
 
-Labelled pairs split into halves by the md5 of their commitment's donor and crs id
+Labelled pairs split into halves by the md5 of their commitment's donor and line id
 (the unit id where it has none). The classifier trains on one half, with five folds
 grouped by the same key, and the other half measures it. The out-of-fold scores fit
 an isotonic map: the provider's own where it has at least `MIN_CALIBRATION_PAIRS`
@@ -30,8 +36,10 @@ no map scores the pairs it was fitted on.
 
 F1 is read on links, as `classifier_links` makes them: each disbursement unit's best
 pair (`best_commitments`) links when it reaches the threshold, and is right when it
-is true. Recall counts every disbursement unit with a true commitment in the half,
-so a true pair blocking did not produce counts as a miss.
+is true. A held-out unit's best pair is taken over both halves (`heldout_links`),
+since the build weighs every pair of a unit. Recall counts every disbursement unit
+with a true commitment in the half, so a true pair blocking did not produce counts as
+a miss.
 
 An eligible pair links when its probability reaches the threshold and it is not a
 sibling (`programme_level` 1). Each disbursement unit joins the one commitment it
@@ -50,12 +58,14 @@ from sklearn.isotonic import IsotonicRegression
 from sklearn.model_selection import GroupKFold
 
 from climate_finance import schema
-from climate_finance.build.link.id_practice import period_of
+from climate_finance.build.link.id_practice import line_id, period_of
 from climate_finance.build.link.levels import (
     LEVELS,
     comparison_levels,
     levels_struct,
+    title_words,
     unit_attributes,
+    word_share,
 )
 
 MIN_TRUE_PAIRS = 30
@@ -80,8 +90,21 @@ MODEL_VERSION = f"truth_hgb/scikit-learn-{sklearn.__version__}"
 TRAIN, HELDOUT, ELIGIBLE, UNLABELLED = "train", "heldout", "eligible", "unlabelled"
 _SIBLING = 1
 _PAIR = ("left_id", "right_id")
-# What a later disbursement shares with the commitment it continues: the crs id, or
-# where the project contradicts its ids, the project and recipient.
+# Canada tells a project's lines apart by purpose as well as recipient: from 2018
+# it reports several lines under one crs id split by purpose, and in 2016 it
+# rotated purposes among a project's crs ids.
+PURPOSE_LINE_DONORS = (301,)
+# The Adaptation Fund moved its projects to new project numbers and later to new
+# crs ids, with no record that carries both.
+RENUMBERED_DONORS = (1012,)
+# The title word share (`word_share`) from which a renumbered disbursement
+# continues a commitment.
+RENUMBERED_TITLE_SHARE = 0.5
+# The title word share below which a crs id under another project number names
+# another project.
+REUSED_TITLE_SHARE = 0.2
+# What a later disbursement shares with the commitment it continues: the line id,
+# or where the project contradicts its ids, the project and recipient.
 _BY_ID = ["donor_code", "crs_id"]
 _BY_PROJECT = ["donor_code", "agency_code", "project_number", "recipient_code"]
 
@@ -136,6 +159,7 @@ def score_candidates(
     contradicted = contradicted_commitments(units, first_year=first_year)
     truth = id_truth(
         units,
+        crs=crs,
         links=links,
         id_practice=id_practice,
         first_year=first_year,
@@ -193,6 +217,7 @@ def is_heldout(keys: pl.Series) -> pl.Series:
 def id_truth(
     units: pl.DataFrame,
     *,
+    crs: pl.LazyFrame,
     links: pl.DataFrame,
     id_practice: pl.DataFrame,
     first_year: int,
@@ -201,10 +226,15 @@ def id_truth(
     """Every (disbursement, commitment) unit pair the ids say continues, blocked or
     not, and the pairs whose continuation the ids leave open.
 
+    Ids are compared as `line_id`s, so a UK copy and a zero-padded line suffix
+    carry their line's id.
+
     A commitment counts when a `crdf_crs` link reaches it, it has a crs id, and its
     agency is `id_persistent` in its record year's period. It continues in every
     disbursement unit from a later record year whose floor year is not before
-    `first_year` and that has its donor and crs id.
+    `first_year` and that has its donor and line id, unless the two units have
+    different project numbers and titles that share under `REUSED_TITLE_SHARE` of
+    their words (`word_share`): the donor reused the id for another project.
 
     Where `contradicted` names the commitment, its own id continues in such a unit
     unless the unit's recipient is one another line of the project committed to in
@@ -217,15 +247,19 @@ def id_truth(
     says which.
 
     A new line that neither the id nor the commitment's project number reaches
-    continues what its own project's earlier records continue (see
-    `carried_continuations`).
+    continues what its own project's earlier records continue, and at
+    `RENUMBERED_DONORS` what its title continues (see `carried_continuations`).
+    A `PURPOSE_LINE_DONORS` unit that continues commitments of its own project,
+    recipient and purpose continues those alone (see `purpose_lines`).
 
     Args:
+        crs: the CRS records the units sum, for their titles.
         contradicted: `contradicted_commitments`.
 
     Returns:
         left_id, right_id, donor_code and ambiguous, sorted by pair.
     """
+    units = _with_lines(units)
     persistent = id_practice.filter(id_class="id_persistent").select(
         "donor_code", "agency_code", "period"
     )
@@ -245,12 +279,30 @@ def id_truth(
     by_id = (
         commitments.select("unit_id", "year", "ambiguous", *_BY_PROJECT, "crs_id")
         .join(
-            disbursements.select("unit_id", "year", "recipient_code", *_BY_ID),
+            disbursements.select(
+                "unit_id", "year", "project_number", "recipient_code", *_BY_ID
+            ),
             on=_BY_ID,
             suffix="_left",
         )
         .filter(later)
     )
+    renumbering = units.filter(pl.col("donor_code").is_in(RENUMBERED_DONORS))
+    other_project = by_id.filter(
+        pl.col("project_number_left").ne_missing(pl.col("project_number"))
+    )
+    titled = pl.concat(
+        [
+            other_project.select("unit_id"),
+            other_project.select(unit_id="unit_id_left"),
+            renumbering.select("unit_id"),
+        ]
+    ).unique()
+    titles = title_words(units.join(titled, on="unit_id", how="semi"), crs=crs)
+    reused = _with_title_share(other_project, titles=titles).filter(
+        pl.col("title_share") < REUSED_TITLE_SHARE
+    )
+    by_id = by_id.join(reused, on=["unit_id", "unit_id_left"], how="anti")
     project = ["donor_code", "agency_code", "project_number", "year"]
     passed = (
         by_id.filter(
@@ -308,23 +360,41 @@ def id_truth(
             ),
         ]
     )
-    carried = carried_continuations(units, continuations=found, first_year=first_year)
-    return pl.concat([found, carried]).sort(*_PAIR)
+    carried = carried_continuations(
+        units,
+        continuations=found,
+        commitments=commitments,
+        titles=titles,
+        first_year=first_year,
+    )
+    lines = purpose_lines(units, commitments=commitments, first_year=first_year)
+    return (
+        pl.concat([found, carried])
+        .join(lines, on="left_id", how="anti")
+        .vstack(lines)
+        .sort(*_PAIR)
+    )
 
 
 def carried_continuations(
-    units: pl.DataFrame, *, continuations: pl.DataFrame, first_year: int
+    units: pl.DataFrame,
+    *,
+    continuations: pl.DataFrame,
+    commitments: pl.DataFrame,
+    titles: pl.DataFrame,
+    first_year: int,
 ) -> pl.DataFrame:
-    """The commitments a new line continues, read from its project's earlier records.
+    """The commitments a new line continues, read from its project's earlier records
+    or, at `RENUMBERED_DONORS`, from its title.
 
     A donor can change the project number or agency it reports a project under and
     then issue a new crs id, so that neither the commitment's id nor its project
     number reaches the new line. The Adaptation Fund commits crs id 2017000003 under
     project number `FSM/RIE/COASTAL/2015/1`, reports that id under `AF00000107` in
     2020, and from 2021 reports `AF00000107` under crs id 2021000032; the UK commits
-    crs id 2019000029 under DFID (agency 1), and from 2021 reports it, and a `-c`
-    copy of it, under FCDO (agency 17). The records that bridge the change carry the
-    new (donor, agency, project number, recipient) and continue the commitment.
+    crs id 2019000029 under DFID (agency 1), and from 2021 reports it under FCDO
+    (agency 17). The records that bridge the change carry the new (donor, agency,
+    project number, recipient) and continue the commitment.
 
     A disbursement unit no pair of `continuations` holds, whose floor year is not
     before `first_year` and whose crs id the donor never commits, continues each
@@ -332,13 +402,24 @@ def carried_continuations(
     of its donor, agency, project number and recipient in or before its record year,
     where the commitment's record year is before its crs id's first. A bridge from
     another recipient's commitment says nothing, since a line can pass between
-    recipients. Where those commitments
-    have more than one crs id, the unit continues one of the lines and nothing says
-    which: its pairs are `ambiguous`.
+    recipients.
+
+    Where no record bridges the change, a disbursement unit of a
+    `RENUMBERED_DONORS` donor continues each of `commitments` of its donor from an
+    earlier record year under another crs id and another project number whose title
+    shares at least `RENUMBERED_TITLE_SHARE` of its words (`word_share`). Two of the
+    fund's projects that shared one project number have dissimilar titles.
+
+    Where a unit's carried commitments have more than one crs id, the unit
+    continues one of the lines and nothing says which: its pairs are `ambiguous`.
 
     Args:
+        units: the units, with `_with_lines` ids.
         continuations: left_id, right_id and ambiguous of the pairs known to
             continue; ambiguous pairs carry nothing.
+        commitments: the commitment units truth follows.
+        titles: unit_id and title_toks (`title_words`) of at least the
+            `RENUMBERED_DONORS` units.
 
     Returns:
         left_id, right_id, donor_code and ambiguous.
@@ -363,7 +444,7 @@ def carried_continuations(
         )
         .select(*_BY_PROJECT, "year_held", "right_id", "year_right", "line")
     )
-    return (
+    bridged = (
         disbursements.filter(~pl.col("committed"))
         .join(continuations, left_on="unit_id", right_on="left_id", how="anti")
         .select(*_BY_PROJECT, "unit_id", "year", "seen_year")
@@ -372,6 +453,31 @@ def carried_continuations(
             pl.col("year_held") <= pl.col("year"),
             pl.col("year_right") < pl.col("seen_year"),
         )
+        .select("unit_id", "donor_code", "right_id", "line")
+    )
+    renumbered = (
+        _with_title_share(
+            commitments.filter(pl.col("donor_code").is_in(RENUMBERED_DONORS))
+            .select("unit_id", "donor_code", "year", "crs_id", "project_number")
+            .join(
+                disbursements.select(
+                    "unit_id", "donor_code", "year", "crs_id", "project_number"
+                ),
+                on="donor_code",
+                suffix="_left",
+            )
+            .filter(
+                pl.col("year_left") > pl.col("year"),
+                pl.col("crs_id_left") != pl.col("crs_id"),
+                pl.col("project_number_left") != pl.col("project_number"),
+            ),
+            titles=titles,
+        )
+        .filter(pl.col("title_share") >= RENUMBERED_TITLE_SHARE)
+        .select("donor_code", unit_id="unit_id_left", right_id="unit_id", line="crs_id")
+    )
+    return (
+        pl.concat([bridged, renumbered.select(bridged.columns)])
         .unique(["unit_id", "right_id"])
         .select(
             left_id="unit_id",
@@ -379,6 +485,92 @@ def carried_continuations(
             donor_code="donor_code",
             ambiguous=pl.col("line").n_unique().over("unit_id") > 1,
         )
+    )
+
+
+def purpose_lines(
+    units: pl.DataFrame, *, commitments: pl.DataFrame, first_year: int
+) -> pl.DataFrame:
+    """The commitments a `PURPOSE_LINE_DONORS` disbursement unit continues on its
+    own line: its project, recipient and purpose.
+
+    Canada tells a project's lines apart by purpose as well as recipient: from 2018
+    it reports several lines under one crs id split by purpose, and in 2016 it
+    rotated purposes among a project's crs ids while the disbursements kept to the
+    purposes. A disbursement unit as `_later_lines` finds them continues each of
+    `commitments` of its donor, agency, project number, recipient and purpose from
+    an earlier record year that carries its crs id, where that id committed to its
+    recipient and purpose in or before its record year, and otherwise each that
+    carries another crs id, where its own id commits elsewhere or is first recorded
+    after the commitment's year. Where the commitments of one record year have more
+    than one crs id, the unit continues one of them and nothing says which: those
+    pairs are `ambiguous`.
+
+    Args:
+        units: the units, with `line_id`s.
+        commitments: the commitment units truth follows.
+
+    Returns:
+        left_id, right_id, donor_code and ambiguous.
+    """
+    line = [*_BY_PROJECT, "purpose_code"]
+    place = ["donor_code", "crs_id", "recipient_code", "purpose_code"]
+    units = units.filter(pl.col("donor_code").is_in(PURPOSE_LINE_DONORS))
+    anchors = (
+        units.filter(pl.col("commitment_usd") > 0)
+        .drop_nulls("crs_id")
+        .group_by(place)
+        .agg(placed=pl.col("year").min())
+    )
+    disbursements = (
+        _later_lines(units, first_year=first_year)
+        .join(anchors, on=place, how="left")
+        .select(
+            "unit_id",
+            "year",
+            "crs_id",
+            "committed",
+            "seen_year",
+            *line,
+            own=(pl.col("placed") <= pl.col("year")).fill_null(value=False),
+        )
+    )
+    same_id = pl.col("crs_id_left") == pl.col("crs_id")
+    new_line = pl.col("committed") | (pl.col("seen_year") > pl.col("year"))
+    return (
+        commitments.join(units, on="unit_id", how="semi")
+        .select("unit_id", "year", "crs_id", *line)
+        .join(disbursements, on=line, suffix="_left")
+        .filter(
+            pl.col("year_left") > pl.col("year"),
+            pl.when("own").then(same_id).otherwise(~same_id & new_line),
+        )
+        .select(
+            left_id="unit_id_left",
+            right_id="unit_id",
+            donor_code="donor_code",
+            ambiguous=pl.col("crs_id").n_unique().over("unit_id_left", "year") > 1,
+        )
+    )
+
+
+def _with_lines(units: pl.DataFrame) -> pl.DataFrame:
+    """`units` with each crs id as its `line_id`."""
+    return units.with_columns(crs_id=line_id(pl.col("donor_code"), pl.col("crs_id")))
+
+
+def _with_title_share(pairs: pl.DataFrame, *, titles: pl.DataFrame) -> pl.DataFrame:
+    """`pairs` of `unit_id_left` and `unit_id` with the `word_share` of their titles
+    as `title_share`, null where either has none."""
+    return (
+        pairs.join(
+            titles.rename({"unit_id": "unit_id_left", "title_toks": "toks_left"}),
+            on="unit_id_left",
+            how="left",
+        )
+        .join(titles, on="unit_id", how="left")
+        .with_columns(title_share=word_share(pl.col("toks_left"), pl.col("title_toks")))
+        .drop("toks_left", "title_toks")
     )
 
 
@@ -415,9 +607,9 @@ def _later_lines(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
 def contradicted_commitments(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
     """The commitment units whose crs id the project's later records contradict.
 
-    Within one (donor, agency, project number), a commitment of record year Y is
-    contradicted by a disbursement unit of a later record year, whose floor year is
-    not before `first_year`, that either
+    Ids are compared as `line_id`s. Within one (donor, agency, project number), a
+    commitment of record year Y is contradicted by a disbursement unit of a later
+    record year, whose floor year is not before `first_year`, that either
     - has the commitment's recipient and a crs id the donor never commits and first
       records after Y: the line was renumbered, or
     - has the commitment's crs id and the recipient another crs id of the project
@@ -431,6 +623,7 @@ def contradicted_commitments(units: pl.DataFrame, *, first_year: int) -> pl.Data
         crs id to the commitment's recipient in Y, so that the project number and
         recipient cannot say which line a later record continues.
     """
+    units = _with_lines(units)
     project = ["donor_code", "agency_code", "project_number"]
     commitments = units.filter(pl.col("commitment_usd") > 0)
     lines = (
@@ -490,17 +683,18 @@ def with_split(
     units: pl.DataFrame,
     truth: pl.DataFrame,
 ) -> pl.DataFrame:
-    """`candidates` with `split`, `true_pair`, and the commitment's `split_key` and
-    `placed_year`.
+    """`candidates` with `split`, `true_pair`, and the commitment's `split_key` (of
+    its `line_id`) and `placed_year`.
 
     A labelled pair (`id_persistent`) is `unlabelled` when `truth` (`id_truth`)
     holds it as ambiguous, else `train` or `heldout` by its split key; any other
     pair is `eligible`. `true_pair` says whether `truth` holds the pair and not as
     ambiguous.
     """
+    line = line_id(pl.col("donor_code"), pl.col("crs_id"))
     commitments = units.select(
         right_id="unit_id",
-        split_key=split_key(pl.col("donor_code"), pl.col("crs_id"), pl.col("unit_id")),
+        split_key=split_key(pl.col("donor_code"), line, pl.col("unit_id")),
         placed_year="placed_year",
     )
     held = truth.select(*_PAIR, "ambiguous")
@@ -621,6 +815,22 @@ def best_commitments(pairs: pl.DataFrame) -> pl.DataFrame:
         )
         .unique("left_id", keep="first", maintain_order=True)
     )
+
+
+def heldout_links(pairs: pl.DataFrame) -> pl.DataFrame:
+    """The held-out half's links: each disbursement unit with a held-out pair takes
+    its best pair (`best_commitments`) among its labelled pairs of both halves, as
+    the build weighs every pair of a unit. A best pair that is true and in the
+    training half continues a commitment of that half and is dropped; a false one
+    is the unit's link, wrong whichever half holds it.
+
+    Args:
+        pairs: `TruthScores.pairs`.
+    """
+    labelled = pairs.filter(pl.col("split").is_in([TRAIN, HELDOUT]))
+    measured = labelled.filter(split=HELDOUT).select("left_id").unique()
+    best = best_commitments(labelled.join(measured, on="left_id", how="semi"))
+    return best.filter((pl.col("split") == HELDOUT) | ~pl.col("true_pair"))
 
 
 def true_disbursements(truth: pl.DataFrame, *, commitments: pl.Series) -> int:
