@@ -441,6 +441,28 @@ def test_low_bounds_keep_only_what_certain_links_carried(disagree: bool) -> None
     )
 
 
+def test_certain_links_fill_before_estimated_links_of_earlier_years() -> None:
+    # d22 reaches c20 by crs id, a certain link; e21, a year earlier, only by a
+    # repair link. The certain record fills c20 first, and e21 takes the rest.
+    crs, _, units, links = link(
+        [
+            record("c20", 2020, commit=10.0),
+            record("d22", 2022, disburse=8.0),
+            record("e21", 2021, disburse=8.0, crs_id="E"),
+        ]
+    )
+    repair = (
+        unit_of(units, "e21"),
+        unit_of(units, "c20"),
+        "repair|x",
+        "repair_new_crs_id",
+    )
+    pairs = allocate(units, crs=crs, links=with_links(links, repair))
+    assert pair(pairs, "c20", "d22") == pytest.approx(8.0)
+    assert pair(pairs, "c20", "e21") == pytest.approx(2.0)
+    assert excess_of(pairs) == pytest.approx({"e21": 6.0})
+
+
 def test_a_record_with_nothing_left_gives_later_groups_nothing() -> None:
     records = [*CASCADE[:2], record("d20", 2020, disburse=60.0)]
     crs, _, units, links = link(records)

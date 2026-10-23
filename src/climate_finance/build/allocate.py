@@ -15,13 +15,16 @@ with a positive commitment in a commitment unit is a commitment at the unit's
 disbursement. Negative commitments are cancellations. They leave a commitment's
 headroom unchanged and are reported by provider and year.
 
-Passes run by record year, then link method in `LINK_METHODS` order, then class:
-records with a date floor first, oldest floor first, then a dated donor's records
-dated in their own year, then the rest. Within a pass a group pools its records'
+Passes run certain groups first, then by record year, then link method in
+`LINK_METHODS` order, then class: records with a date floor first, oldest floor
+first, then a dated donor's records dated in their own year, then the rest. A
+group's pass is certain when every link of it is, so certain links fill a
+commitment before estimated links of any year, and an estimated link of an earlier
+year takes only what they left. Within a pass a group pools its records'
 disbursement and fills its commitments oldest `placed_year` first, pro rata to
 headroom within a year, capped at face value. A record whose unit carries groups of
-several methods enters one pass per group, in `LINK_METHODS` order, and each later
-pass receives only what the earlier ones left: the exact key tiers first, then the
+several methods enters one pass per group, in that order, and each later pass
+receives only what the earlier ones left: the exact key tiers first, then the
 key-repair rules. What the last pass leaves is excess.
 
 Two per-donor switches change the order. A dated donor's record dated in its own
@@ -362,15 +365,19 @@ def _trace_pairs(
             .otherwise(pl.lit("fifo")),
         )
     )
+    key = ["estimated", "year", "rank", "class_year"]
+    # A group's pass is certain when all its links are, since the pass pools the
+    # group's disbursement over all its commitments.
+    unit_pairs = unit_pairs.with_columns(
+        estimated=~pl.col("certain").all().over("group_id", *key[1:])
+    )
     passes = (
-        unit_pairs.select("year", "rank", "class_year")
+        unit_pairs.select(key)
         .unique()
-        .sort("year", "rank", "class_year", nulls_last=True)
+        .sort(key, nulls_last=True)
         .with_row_index("pass")
     )
-    unit_pairs = unit_pairs.join(
-        passes, on=["year", "rank", "class_year"], nulls_equal=True
-    )
+    unit_pairs = unit_pairs.join(passes, on=key, nulls_equal=True)
     _check_pooling(unit_pairs)
     commitments = (
         _commitment_records(units, crs=crs).sort("record_id").with_row_index("c_idx")
