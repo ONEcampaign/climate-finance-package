@@ -234,6 +234,24 @@ def _move_a_fill_to_another_recipient(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def _ship_a_gcf_fill(frame: pl.DataFrame) -> pl.DataFrame:
+    # The bank-ledger fill on AFDB-1 becomes a GCF record, which releases leave out.
+    return frame.with_columns(
+        record_id=pl.when(pl.col("disbursement_source") == "bank_ledger")
+        .then(pl.lit("ledger:gcf:FP001:2021"))
+        .otherwise(pl.col("record_id"))
+    )
+
+
+def _withhold_a_shipped_fill(frame: pl.DataFrame) -> pl.DataFrame:
+    # AFDB-1 states its shipped bank-ledger fill as withheld too, so counts it twice.
+    return frame.with_columns(
+        withheld_usd=pl.when(pl.col("row_id") == "AFDB-1")
+        .then(pl.col("disbursed_usd"))
+        .otherwise(pl.col("withheld_usd"))
+    )
+
+
 def _repeat_an_allocated_row(frame: pl.DataFrame) -> pl.DataFrame:
     # DEU-1 holds allocations; as a repeat of DEU-2 its money drops out of totals.
     return frame.with_columns(
@@ -259,6 +277,8 @@ def _repeat_an_allocated_row(frame: pl.DataFrame) -> pl.DataFrame:
         ("disbursements", _orphan_allocation, "NONE-1"),
         ("commitments", _keep_a_parent_beside_its_child, "DEU-1"),
         ("disbursements", _code_unspecified_as_the_bulk_crs_does, "disbursements"),
+        ("disbursements", _ship_a_gcf_fill, "disbursements"),
+        ("commitments", _withhold_a_shipped_fill, "AFDB-1"),
         ("disbursements", _break_record_grant_equiv, "JPN-SPLIT"),
         ("disbursements", _break_record_disbursement, "JPN-SPLIT"),
         ("disbursements", _overdraw_record, "JPN-SPLIT"),

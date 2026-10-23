@@ -80,6 +80,12 @@ LEDGER_TRANSACTION_TYPES = (
 LEDGER_CHECKS = ("confirmed", "contradicted", "none", "confirmed_undisbursed")
 DISBURSEMENT_SOURCES = ("crs", "bank_ledger", "iati", "none")
 ALLOCATION_RULES = ("fifo", "dated", "window", "excess", "bank_ledger", "iati")
+# Fill records the release leaves out, by the start of their `record_id`
+# (`ledger:<publisher>:<key>:<year>`): the Green Climate Fund's projects API and
+# readiness list, whose terms bar redistribution and derivative works without
+# consent. Its IATI files are CC0 on the IATI Registry, so `iati:gcf:` fills ship.
+# A commitment's `withheld_usd` holds what the withheld records disbursed to it.
+WITHHELD_RECORD_PREFIXES = ("ledger:gcf:", "ledger:gcf_readiness:")
 OBJECTIVES = ("adaptation", "mitigation", "cross_cutting")
 # An agency share's objective: one of OBJECTIVES, or `climate` for a total climate
 # share with no split by objective, as the OECD gives before 2021.
@@ -741,6 +747,10 @@ COMMITMENTS = _table(
     disbursed_usd=_usd(),
     disbursed_low_usd=_usd(),
     disbursed_high_usd=_usd(),
+    # The part of each disbursed amount from fill records the release leaves out
+    # (`WITHHELD_RECORD_PREFIXES`), which no `disbursements` row carries. A fill
+    # counts in full in both bounds, so it is the same part of all three.
+    withheld_usd=_usd(),
     project_disbursing=_bool(),
     repeat_of=_str(nullable=True),
     # The published CRDF aggregate row this child was rebuilt from. The release
@@ -983,9 +993,17 @@ _DISBURSED_SUMS = {
 # The amounts the checks compare, by table. A null among them fails no comparison,
 # so each null is a problem of its own.
 _COMPARED_AMOUNTS = {
-    "commitments": ("face_usd", *_DISBURSED_SUMS),
+    "commitments": ("face_usd", *_DISBURSED_SUMS, "withheld_usd"),
     "disbursements": (*_DISBURSED_SUMS.values(), "record_disbursement_usd"),
 }
+
+
+def withheld_record(record_id: pl.Expr) -> pl.Expr:
+    """True where `record_id` names a fill record the release leaves out
+    (`WITHHELD_RECORD_PREFIXES`)."""
+    return pl.any_horizontal(
+        record_id.str.starts_with(prefix) for prefix in WITHHELD_RECORD_PREFIXES
+    ).fill_null(False)
 
 
 def aggregate_channels(frame: pl.LazyFrame) -> pl.LazyFrame:
@@ -1034,9 +1052,10 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
 
     Every disbursements row holds 0 <= allocated_low <= allocated <= allocated_high
     and names a commitment. Per commitment, its rows' allocated, allocated_low and
-    allocated_high sum to disbursed, disbursed_low and disbursed_high, and
-    0 <= disbursed_low <= disbursed <= disbursed_high <= face, where a face of zero
-    or below (a published downward revision) allows nothing disbursed. A record's
+    allocated_high, each plus `withheld_usd`, sum to disbursed, disbursed_low and
+    disbursed_high, and 0 <= disbursed_low <= disbursed <= disbursed_high <= face,
+    where a face of zero or below (a published downward revision) allows nothing
+    disbursed. A record's
     rows share one `record_disbursement_usd` and one `record_grant_equiv_usd` (all
     null or all set), and its allocated amounts sum to at most
     `record_disbursement_usd`. Amounts compare within `INVARIANT_TOLERANCE_USD`, and
@@ -1045,7 +1064,8 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     provider, agency, recipient, channel, Bi_Multi, purpose and project number. No
     disbursements row names a commitment that repeats an earlier vintage, as
     allocate moves a repeat's allocations to its first row. No commitment is
-    another's `parent_row_id`, and no table in `tables` holds the bulk CRS's
+    another's `parent_row_id`, no table in `tables` holds a row of a fill record
+    the release leaves out (`withheld_record`) or the bulk CRS's
     `CRS_UNSPECIFIED_RECIPIENT`. A channel, year and source of
     `agency_shares` holds either split rows or one `climate` row, all of one
     `share_source`. Each commitment's
@@ -1113,7 +1133,8 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
         pl.col(part).sum().alias(f"_{part}") for part in _DISBURSED_SUMS.values()
     )
     totals = commitments.join(sums, on="row_id", how="left").with_columns(
-        pl.col(f"_{part}").fill_null(0.0) for part in _DISBURSED_SUMS.values()
+        (pl.col(f"_{part}").fill_null(0.0) + pl.col("withheld_usd")).alias(f"_{part}")
+        for part in _DISBURSED_SUMS.values()
     )
     for total, part in _DISBURSED_SUMS.items():
         failing = totals.filter(
@@ -1121,7 +1142,7 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
         )
         problems.extend(
             f"commitments {row['row_id']}: {total} {row[total]!r} differs from the "
-            f"sum of {part} {row[f'_{part}']!r}"
+            f"sum of {part} plus withheld_usd {row[f'_{part}']!r}"
             for row in failing.iter_rows(named=True)
         )
     for smaller, larger in _DISBURSED_ORDER:
@@ -1146,6 +1167,12 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
         for code in aggregate_channels(tables["core_contributions"].lazy())
         .collect()["channel_code"]
         .sort()
+    )
+    problems.extend(
+        f"{name}: {count} rows of a fill record the release leaves out"
+        for name, frame in tables.items()
+        if "record_id" in frame.columns
+        and (count := frame.filter(withheld_record(pl.col("record_id"))).height)
     )
     problems.extend(
         f"{name}: {count} rows with recipient_code {CRS_UNSPECIFIED_RECIPIENT}, "

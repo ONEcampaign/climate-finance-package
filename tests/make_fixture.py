@@ -516,7 +516,7 @@ def _commitments(
     return (
         pl.from_dicts(rows, infer_schema_length=None)
         .join(disbursed, on="row_id", how="left")
-        .with_columns(pl.col("^disbursed_.*$").fill_null(0.0))
+        .with_columns(pl.col("^disbursed_.*$").fill_null(0.0), withheld_usd=0.0)
         .select(
             pl.col(name).cast(dtype)
             for name, dtype in _polars_schema("commitments").items()
