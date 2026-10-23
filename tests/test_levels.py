@@ -259,37 +259,31 @@ _DATES = {
     "expected_start_date": date(2020, 4, 1),
     "completion_date": date(2024, 12, 31),
 }
-_OWN_DATES = {
-    "commitment_date": date(2022, 12, 31),
-    "expected_start_date": date(2023, 1, 1),
-    "completion_date": date(2023, 12, 31),
-}
 
 
 @pytest.mark.parametrize(
     ("disbursement", "features"),
     [
-        (_DATES, (1, 0, 1, 0, 1, 1)),
-        (_OWN_DATES, (0, 1035, 0, 2, 0, 0)),
-        ({}, (None, None, None, None, None, None)),
+        (_DATES, (1, 1)),
+        # A continuation that carries its own commitment date.
+        ({**_DATES, "commitment_date": date(2022, 12, 31)}, (1, 1)),
+        (
+            {
+                "commitment_date": date(2022, 12, 31),
+                "expected_start_date": date(2023, 1, 1),
+                "completion_date": date(2023, 12, 31),
+            },
+            (0, 0),
+        ),
+        ({}, (None, None)),
     ],
 )
-def test_date_features_compare_the_commitments_dates(
+def test_date_features_compare_the_start_and_completion_dates(
     disbursement: dict[str, object], features: tuple[int | None, ...]
 ) -> None:
     pair = _levels(_DATES, disbursement)
-    assert tuple(pair[name] for name in DATE_FEATURES) == features
-
-
-def test_a_commitment_without_a_date_falls_back_to_its_record_year() -> None:
-    pair = _levels({}, {"commitment_date": date(2021, 6, 1)})
-    assert tuple(pair[name] for name in DATE_FEATURES) == (
-        None,
-        None,
-        0,
-        1,
-        None,
-        None,
+    assert {name: pair[name] for name in DATE_FEATURES} == dict(
+        zip(("same_start", "same_completion"), features, strict=True)
     )
 
 

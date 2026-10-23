@@ -58,7 +58,11 @@ from sklearn.isotonic import IsotonicRegression
 from sklearn.model_selection import GroupKFold
 
 from climate_finance import schema
-from climate_finance.build.link.id_practice import line_id, period_of
+from climate_finance.build.link.id_practice import (
+    RENUMBERED_DONORS,
+    line_id,
+    period_of,
+)
 from climate_finance.build.link.levels import (
     DATE_FEATURES,
     LEVELS,
@@ -102,9 +106,6 @@ _PAIR = ("left_id", "right_id")
 # it reports several lines under one crs id split by purpose, and in 2016 it
 # rotated purposes among a project's crs ids.
 PURPOSE_LINE_DONORS = (301,)
-# The Adaptation Fund moved its projects to new project numbers and later to new
-# crs ids, with no record that carries both.
-RENUMBERED_DONORS = (1012,)
 # The title word share (`word_share`) from which a renumbered disbursement
 # continues a commitment.
 RENUMBERED_TITLE_SHARE = 0.5

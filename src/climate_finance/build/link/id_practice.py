@@ -48,6 +48,10 @@ _LETTER_SUFFIX = r"^(\d{10})[-/]?[A-Za-z]{1,3}$"
 # later report (`2019000146-c`) of the same activity under the same project number.
 # Germany's letters can name another line of the project.
 COPY_DONORS = (12,)
+# The Adaptation Fund moved its projects to new project numbers and later to new
+# crs ids, with no record that carries both. A record under the old crs id carries
+# the new number.
+RENUMBERED_DONORS = (1012,)
 # A line suffix with and without zero padding (`2021015528_06`, `2021015528_6`)
 # names one line: the Gates Foundation and two other private donors write both
 # forms of 2,396 ids, each pair under one project number.

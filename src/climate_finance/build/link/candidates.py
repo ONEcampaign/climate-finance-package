@@ -5,7 +5,12 @@ unit a CRDF row reaches (right) of the same donor and an earlier record year, wh
 one of four blocking rules holds: the same recipient and purpose; the same project
 number, held by at most `MAX_PN_UNITS` of the donor's disbursement units from years
 after the commitment's; the same title, held by at most `MAX_TITLE_UNITS` of them; or
-the same recipient and the same first two title words.
+the same recipient and the same first two title words. At `RENUMBERED_DONORS` a
+fifth rule follows a project number to the crs ids it shares a record with: a
+disbursement pairs with the commitments of each such crs id's line (`line_id`),
+under the project-number rule's cap. A renumbered project's records under its old
+crs id carry its new number, so a later disbursement under a new crs id and the new
+number reaches the commitment that carries neither.
 
 A pair is eligible for scoring when the keys left both units unlinked: no exact tier
 or key-repair rule took the disbursement, no disbursement of a later record year
@@ -34,7 +39,12 @@ numbers and the same programme key are siblings (`programme_level` 1).
 
 import polars as pl
 
-from climate_finance.build.link.id_practice import ID_PERSISTENT_CLASSES, period_of
+from climate_finance.build.link.id_practice import (
+    ID_PERSISTENT_CLASSES,
+    RENUMBERED_DONORS,
+    line_id,
+    period_of,
+)
 from climate_finance.build.link.keys import normalise_pn
 
 MAX_PN_UNITS = 300
@@ -270,13 +280,18 @@ def generate_candidates(
     )
     commitments = sides.join(commitments.select("unit"), on="unit", how="semi")
     disbursements = sides.join(disbursements.select("unit"), on="unit", how="semi")
+    renumbered = _renumbered_lines(units)
     truth = _block(
-        commitments.filter("id_persistent"), disbursements, reference=disbursements
+        commitments.filter("id_persistent"),
+        disbursements,
+        reference=disbursements,
+        renumbered=renumbered,
     )
     open_pairs = _block(
         commitments.filter(~pl.col("keyed_later"), ~pl.col("ids_persist")),
         disbursements.filter(~pl.col("taken"), ~pl.col("ids_persist")),
         reference=disbursements,
+        renumbered=renumbered,
     )
     pairs = pl.concat(
         [truth.with_columns(eligible=False), open_pairs.with_columns(eligible=True)]
@@ -367,12 +382,6 @@ def _sides(
         .get_column("right_id")
     )
     title = _clean(pl.col("title")).str.replace_all(" +", " ")
-    pn = (
-        pl.col("project_number")
-        .str.to_lowercase()
-        .str.replace_all("[^a-z0-9]", "")
-        .str.strip_chars_start("0")
-    )
     words = title_words(pl.col("title"))
     return (
         with_programme(
@@ -392,7 +401,7 @@ def _sides(
         )
         .join(titles, on="unit", how="left")
         .with_columns(
-            pn_block=pl.when(~pn.is_in(_NO_PN) & (pn.str.len_chars() >= 3)).then(pn),
+            pn_block=_pn_block(pl.col("project_number")),
             title_block=pl.when(~title.is_in(_NO_TITLE)).then(title),
             title_head=pl.when(words.list.len() >= 2).then(
                 words.list.head(2).list.join(" ")
@@ -400,6 +409,7 @@ def _sides(
             taken=pl.col("unit_id").is_in(trace["left_id"].implode()),
             keyed_later=pl.col("unit_id").is_in(keyed_later.implode()),
             period=period_of(pl.col("year")),
+            line=_renumbered_line(),
         )
         .join(classes, on=[*_AGENCY, "period"], how="left")
         .with_columns(pl.col("ids_persist", "id_persistent").fill_null(value=False))
@@ -408,23 +418,51 @@ def _sides(
     )
 
 
+def _renumbered_lines(units: pl.DataFrame) -> pl.DataFrame:
+    """Each `RENUMBERED_DONORS` project number's `pn_block` with the line of every
+    crs id a unit files under it: donor_code, pn_block and line."""
+    return (
+        units.filter(pl.col("donor_code").is_in(RENUMBERED_DONORS))
+        .select(
+            "donor_code",
+            pn_block=_pn_block(pl.col("project_number")),
+            line=_renumbered_line(),
+        )
+        .drop_nulls()
+        .unique()
+    )
+
+
 def _block(
     commitments: pl.DataFrame,
     disbursements: pl.DataFrame,
     *,
     reference: pl.DataFrame,
+    renumbered: pl.DataFrame,
 ) -> pl.DataFrame:
     """(disbursement, commitment) unit pairs of one donor, the disbursement of a
     later record year, under any blocking rule.
 
     Under a capped rule a commitment pairs only when its key holds at most the cap of
     the `reference` disbursement units of later years, so a common project number or
-    title adds no pairs.
+    title adds no pairs. A commitment of a `renumbered` line (`_renumbered_lines`)
+    also takes each project number its line is filed under as its `pn_block`.
     """
+    rules = [(commitments, rule, cap) for rule, cap in BLOCKING_RULES]
+    bridged = commitments.drop_nulls("line").select(
+        "unit", "year", "donor_code", "line"
+    )
+    rules.append(
+        (
+            bridged.join(renumbered, on=["donor_code", "line"]),
+            ("pn_block",),
+            MAX_PN_UNITS,
+        )
+    )
     blocked = []
-    for rule, cap in BLOCKING_RULES:
+    for blocking, rule, cap in rules:
         key = ["donor_code", *rule]
-        left = commitments.drop_nulls(rule).select("unit", "year", *key)
+        left = blocking.drop_nulls(rule).select("unit", "year", *key)
         if cap is not None:
             narrow = _narrow_keys(left, reference.drop_nulls(rule), key=key, cap=cap)
             left = left.join(narrow, on=[*key, "year"], how="semi")
@@ -458,6 +496,26 @@ def _narrow_keys(
         .agg(pl.col("units").sum())
     )
     return later.filter(pl.col("units") <= cap).select(*key, year="year_commitment")
+
+
+def _pn_block(project_number: pl.Expr) -> pl.Expr:
+    """`project_number` lower-cased, with every character other than a to z and
+    digits and leading zeros dropped; null when it names no project or keeps under
+    three characters."""
+    pn = (
+        project_number.str.to_lowercase()
+        .str.replace_all("[^a-z0-9]", "")
+        .str.strip_chars_start("0")
+    )
+    return pl.when(~pn.is_in(_NO_PN) & (pn.str.len_chars() >= 3)).then(pn)
+
+
+def _renumbered_line() -> pl.Expr:
+    """The unit's `line_id` at `RENUMBERED_DONORS`, else null."""
+    donor = pl.col("donor_code")
+    return pl.when(donor.is_in(RENUMBERED_DONORS)).then(
+        line_id(donor, pl.col("crs_id"))
+    )
 
 
 def _largest_title() -> pl.Expr:

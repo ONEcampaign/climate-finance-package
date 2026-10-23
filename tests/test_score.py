@@ -49,10 +49,6 @@ _PAIRS_SCHEMA = {
     **dict.fromkeys(LEVELS, pl.Int8),
     "log_ratio": pl.Float64,
     "later_commit": pl.Int8,
-    "same_commitment_date": pl.Int8,
-    "commitment_date_days": pl.Int32,
-    "same_commitment_year": pl.Int8,
-    "commitment_year_gap": pl.Int16,
     "same_start": pl.Int8,
     "same_completion": pl.Int8,
 }
@@ -73,21 +69,27 @@ _OTHER = {
 }
 # Date features of a disbursement that repeats its commitment's dates, and of one
 # that carries its own.
-_REPEATS = {
+_REPEATS = {"same_start": 1, "same_completion": 1}
+_OWN_DATES = {"same_start": 0, "same_completion": 0}
+# Commitment-date comparisons of a disbursement that repeats its commitment's date,
+# and of one that carries its own, as columns of their own.
+_SAME_COMMITMENT_DATE = {
     "same_commitment_date": 1,
     "commitment_date_days": 0,
     "same_commitment_year": 1,
     "commitment_year_gap": 0,
-    "same_start": 1,
-    "same_completion": 1,
 }
-_OWN_DATES = {
+_OWN_COMMITMENT_DATE = {
     "same_commitment_date": 0,
     "commitment_date_days": 730,
     "same_commitment_year": 0,
     "commitment_year_gap": 2,
-    "same_start": 0,
-    "same_completion": 0,
+}
+_COMMITMENT_DATE_SCHEMA = {
+    "same_commitment_date": pl.Int8,
+    "commitment_date_days": pl.Int32,
+    "same_commitment_year": pl.Int8,
+    "commitment_year_gap": pl.Int16,
 }
 
 
@@ -930,20 +932,36 @@ def test_the_classifier_scores_only_the_truth_group(scores: TruthScores) -> None
     assert _p(scores, "e1") >= scores.threshold > _p(scores, "e2")
 
 
-def test_a_disbursement_repeating_its_commitments_dates_scores_higher() -> None:
+@pytest.mark.parametrize(
+    ("repeats", "own", "higher"),
+    [
+        (_REPEATS, _OWN_DATES, True),
+        # Where ids persist, a disbursement record repeats its line's commitment
+        # date, so the date restates the label. The classifier leaves it out.
+        (
+            _REPEATS | _SAME_COMMITMENT_DATE,
+            _REPEATS | _OWN_COMMITMENT_DATE,
+            False,
+        ),
+    ],
+)
+def test_a_disbursement_repeating_its_start_and_completion_scores_higher(
+    repeats: dict[str, int], own: dict[str, int], *, higher: bool
+) -> None:
     # Levels tell true pairs from false as noisily as in `_labelled`; the dates
     # tell them apart. Two eligible pairs differ only in their dates.
     rows = [
-        row | (_REPEATS if row["true_pair"] else _OWN_DATES)
+        row | (repeats if row["true_pair"] else own)
         for row in _labelled(1, 200, false_pairs=2)
     ]
     rows += [
         _pair(left, "o1", donor=1, split=ELIGIBLE, same=False, levels=_SAME) | dates
-        for left, dates in (("repeats", _REPEATS), ("own", _OWN_DATES))
+        for left, dates in (("repeats", repeats), ("own", own))
     ]
-    pairs = _frame(rows)
+    pairs = pl.DataFrame(rows, schema=_PAIRS_SCHEMA | _COMMITMENT_DATE_SCHEMA)
     scored = score_truth_group(pairs, groups=scoring_groups(pairs), truth=_truth(pairs))
-    assert _p(scored, "repeats") > _p(scored, "own")
+    gap = _p(scored, "repeats") - _p(scored, "own")
+    assert gap > 0 if higher else gap == 0
 
 
 def test_a_provider_with_enough_labels_takes_its_own_map(scores: TruthScores) -> None:

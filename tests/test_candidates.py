@@ -17,6 +17,7 @@ from climate_finance.build.link.candidates import (
     strip_segments,
     with_programme,
 )
+from climate_finance.build.link.id_practice import RENUMBERED_DONORS
 from climate_finance.build.link.keys import build_units
 
 FIRST_YEAR = 2010
@@ -309,6 +310,28 @@ def test_each_blocking_rule_pairs_a_later_disbursement(
         "d": _disbursement(**disbursement),
     }
     assert set(_candidates(records)) == {("d", "c")}
+
+
+@pytest.mark.parametrize(
+    ("donor", "paired"), [(RENUMBERED_DONORS[0], True), (5, False)]
+)
+def test_a_renumbered_project_number_reaches_its_old_crs_ids_commitment(
+    donor: int, *, paired: bool
+) -> None:
+    # A later record under the commitment's crs id carries the project's new
+    # number, which a disbursement under a new crs id repeats.
+    records = {
+        "c": _commitment(
+            donor_code=donor, crs_id="2017000002", project_number="AFR/WATER/2015/1"
+        ),
+        "bridge": _disbursement(
+            donor_code=donor, crs_id="2017000002", project_number="AF00000081"
+        ),
+        "d": _disbursement(
+            donor_code=donor, crs_id="2022000015a", project_number="AF00000081"
+        ),
+    }
+    assert (("d", "c") in _candidates(records)) is paired
 
 
 def test_no_rule_no_pair() -> None:

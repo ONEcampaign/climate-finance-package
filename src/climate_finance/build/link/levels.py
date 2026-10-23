@@ -32,9 +32,11 @@ commitment plus disbursement, ties to the smaller record id. The levels:
 
 The features beside the levels are the year gap (a `candidates` column), log10 of
 the disbursement over the commitment, whether the disbursement unit also commits,
-and how its dates agree with the commitment's. A CRS record that continues a
-commitment usually repeats its commitment and completion dates, and a new activity
-carries its own.
+and whether its start and completion dates equal the commitment's. A record that
+continues a project usually repeats them, and a new activity carries its own. The
+commitment date is left out: where an agency's ids persist, a disbursement record
+repeats its line's commitment date, so on the training pairs an equal date restates
+the crs-id label and misleads the model on the pairs it links.
 """
 
 import duckdb
@@ -55,13 +57,8 @@ BATCH_PAIRS = 500_000
 _NO_PN = ("notapplicable", "na", "none", "nan", "null", "0", "")
 _NO_TEXT = ("not applicable", "na", "none", "n a", "nan", "null")
 _RATIO = "disbursement_usd_r / commitment_usd_l"
-_COMMITMENT_YEAR = "coalesce(commitment_year_l, record_year_l)"
 # The date features, each as SQL over a pair; a comparison with a null date is null.
 _DATE_SQL = {
-    "same_commitment_date": "(commitment_date_r = commitment_date_l)::tinyint",
-    "commitment_date_days": "abs(commitment_date_r - commitment_date_l)::integer",
-    "same_commitment_year": f"(commitment_year_r = {_COMMITMENT_YEAR})::tinyint",
-    "commitment_year_gap": f"(commitment_year_r - {_COMMITMENT_YEAR})::smallint",
     "same_start": "(expected_start_date_r = expected_start_date_l)::tinyint",
     "same_completion": "(completion_date_r = completion_date_l)::tinyint",
 }
@@ -93,7 +90,6 @@ def unit_attributes(
         "channel_code",
         "flow_code",
         "finance_t",
-        "commitment_date",
         "expected_start_date",
         "completion_date",
     )
@@ -134,8 +130,6 @@ def unit_attributes(
             finance_type_code="rep_finance_t",
             year="year",
             record_year="year",
-            commitment_year="commitment_year",
-            commitment_date="rep_commitment_date",
             expected_start_date="rep_expected_start_date",
             completion_date="rep_completion_date",
             commitment_usd="commitment_usd",
@@ -312,12 +306,8 @@ def comparison_levels(pairs: pl.DataFrame, *, attributes: pl.DataFrame) -> pl.Da
     Each level is the first of its comparison's conditions in `comparisons()` that
     holds, numbered as Splink numbers it. The year gap, a feature too, is a
     `candidates` column. The date features compare the two units' representative
-    records and are null where either date is missing: `same_commitment_date`,
-    `same_start` and `same_completion` are 1 when the dates match, else 0, and
-    `commitment_date_days` is the days between the commitment dates.
-    `same_commitment_year` and `commitment_year_gap` (the disbursement's year less
-    the commitment's) read each unit's commitment-date year, the commitment's
-    falling back to its record year.
+    records: `same_start` and `same_completion` are 1 when the dates match, else 0,
+    and null where either date is missing.
 
     Args:
         pairs: rows with `left_id` (a disbursement unit) and `right_id` (a
