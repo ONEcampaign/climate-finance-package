@@ -82,7 +82,8 @@ def import_labels(
     """Append the decisions of a labels CSV to the review-decisions table.
 
     The CSV holds `LABEL_COLUMNS`: the packet's pair number, `match` or `no_match`,
-    the decider's confidence that the pair matches, from 0 to 1, and the reason. It
+    the decider's confidence that the pair matches, from 0 to 1 and on the label's
+    side of 0.5, and the reason. It
     must answer exactly the pairs of `packet`, and the packet must be the one its
     pairs file was written with.
 
@@ -102,7 +103,8 @@ def import_labels(
     Raises:
         ReviewDecisionsError: when the packet changed since its pairs were written,
             the CSV's pairs differ from the packet's, a label or confidence is out of
-            range, or the provenance arguments do not fit `label_source`.
+            range or the two disagree, or the provenance arguments do not fit
+            `label_source`.
     """
     if label_source not in schema.DECIDERS:
         raise ReviewDecisionsError(f"label_source must be one of {schema.DECIDERS}")
@@ -139,15 +141,21 @@ def import_labels(
             f"{len(set(answered) - expected - {None})} pairs the packet lacks"
         )
     confidence = pl.col("confidence")
+    label = pl.col("label")
+    contradicts = ((label == "match") & (confidence < 0.5)) | (
+        (label == "no_match") & (confidence > 0.5)
+    )
     bad = given.filter(
-        ~pl.col("label").is_in(list(LABELS))
+        ~label.is_in(list(LABELS))
         | (confidence.is_null() if agent else pl.lit(value=False))
         | ~confidence.is_between(0.0, 1.0).fill_null(value=not agent)
+        | contradicts.fill_null(value=False)
     )
     if bad.height:
         raise ReviewDecisionsError(
             f"{bad.height} rows of {labels_csv} need a label of match or no_match and "
-            f"a confidence from 0 to 1, such as pairs {bad['pair'].head(3).to_list()}"
+            "a confidence from 0 to 1 that agrees with it (match at 0.5 or more, "
+            f"no_match at 0.5 or less), such as pairs {bad['pair'].head(3).to_list()}"
         )
     columns = {
         name: column.dtype for name, column in schema.REVIEW_DECISIONS.columns.items()

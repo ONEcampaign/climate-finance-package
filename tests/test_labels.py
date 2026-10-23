@@ -8,7 +8,7 @@ import polars as pl
 import pytest
 
 from climate_finance import schema
-from climate_finance.build.errors import ReviewDecisionsError
+from climate_finance.build.errors import LabelPacketError, ReviewDecisionsError
 from climate_finance.build.link.decisions import import_labels, override_links
 from climate_finance.build.link.keys import as_exact_links, build_units
 from climate_finance.build.link.packet import (
@@ -133,6 +133,20 @@ def test_a_packet_shows_ids_only_when_asked(tmp_path: Path, show_ids: bool) -> N
     assert "| Similar commitments | 1 | 1 |" in text
 
 
+def test_a_packet_that_would_name_a_hidden_id_is_refused(tmp_path: Path) -> None:
+    case = Case(tmp_path)
+    # Redaction blanks crs ids and project numbers; a unit id in a CRS row's title
+    # gets past it and must stop the packet.
+    case.crs = case.crs.with_columns(
+        title=pl.when(record_id="d21")
+        .then(pl.lit(f"Solar grid {case.unit('d21')}"))
+        .otherwise("title")
+    )
+
+    with pytest.raises(LabelPacketError):
+        case.packet(show_ids=False)
+
+
 def test_an_agent_csv_round_trips_to_agent_labels_and_overrides(tmp_path: Path) -> None:
     case = Case(tmp_path)
     packet = case.packet(show_ids=False)
@@ -177,8 +191,18 @@ def test_an_agent_csv_round_trips_to_agent_labels_and_overrides(tmp_path: Path) 
         [(1, "match", 0.9), (1, "no_match", 0.1), (2, "match", 0.9)],
         [(1, "match", 0.9), (2, "maybe", 0.5)],
         [(1, "match", 1.5), (2, "match", 0.9)],
+        [(1, "match", 0.3), (2, "match", 0.9)],
+        [(1, "no_match", 0.7), (2, "match", 0.9)],
     ],
-    ids=["missing", "extra", "repeated", "bad-label", "bad-confidence"],
+    ids=[
+        "missing",
+        "extra",
+        "repeated",
+        "bad-label",
+        "bad-confidence",
+        "match-below-half",
+        "no-match-above-half",
+    ],
 )
 def test_a_csv_that_does_not_answer_its_packet_is_refused(
     tmp_path: Path, rows: list[tuple[int, str, float]]
