@@ -292,7 +292,9 @@ def test_the_link_stage_writes_the_classifier_links_and_profile(
     # `repair_new_crs_id` (623 Canada's, 183 Germany's), 75 by
     # `repair_title_recipient` and 41 by `repair_pn_variant`. 49 pairs drop out of
     # blocking because repair reaches their commitment from a later year.
-    assert written.height == 1_114
+    # `repair_stray_country` links 2 more German pairs itself, each between two
+    # regional recipient codes.
+    assert written.height == 1_112
     # The AsDB (915) sat at `SPLINK_MIN_COMMITMENTS`, with 300 commitments in
     # eligible pairs. Key repair now links 40 of them, lines whose spare commitment
     # is open to it, and the disbursements that reach them, so 265 remain and the

@@ -74,6 +74,15 @@ CLASSIFIER_MOVED_BN = {
     "no_disbursement_record": -0.1522,
     "not_traceable": 0.0,
 }
+# Certain links fill a commitment before estimated links of any year. Five rows
+# change status: four Icelandic, Slovenian and Czech rows leave disbursed and one
+# Canadian row leaves partly disbursed.
+CERTAIN_FIRST_MOVED_BN = {
+    "disbursed": -0.0011,
+    "partly_disbursed": 0.0007,
+    "no_disbursement_record": 0.0004,
+    "not_traceable": 0.0,
+}
 TOLERANCE_BN = 0.001
 
 
@@ -160,6 +169,7 @@ def test_step_one_matches_the_target_plus_the_gef_crosswalk(
         + UNIQUE_BY_MOVED_BN[status]
         + DATE_TIER_MOVED_BN[status]
         + CLASSIFIER_MOVED_BN[status]
+        + CERTAIN_FIRST_MOVED_BN[status]
         for status, usd_bn in STEP_ONE_BN.items()
     }
     assert _step_one(without_crosswalk) == pytest.approx(expected, abs=TOLERANCE_BN)

@@ -129,7 +129,8 @@ RELEASE_RULE_BN = {
 # takes AfDB commitments that the rounded numbers reach, which carry USD 0.18 bn of
 # the banks figure. A rounded AfDB number that also fits a spare line stands for two
 # full numbers, so `repair_afdb_scientific` links it to none (USD 0.05 bn).
-REPAIR_MOVED_BN = {"bilateral": 0.84, "banks": 2.12}
+# `repair_stray_country` moves USD 0.01 bn of Canadian and Danish rows.
+REPAIR_MOVED_BN = {"bilateral": 0.85, "banks": 2.12}
 REPAIR_TOLERANCE_BN = 0.05
 _CATEGORY = {
     "DAC member": "bilateral",

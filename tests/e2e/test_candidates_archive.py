@@ -201,7 +201,9 @@ def test_candidates_hold_eligible_and_training_pairs(
 ) -> None:
     schema.validate(schema.CANDIDATES, candidates)
     counts = dict(candidates.group_by("eligible").len().iter_rows())
-    assert counts == {True: 1_360_142, False: 6_067_830}
+    # `repair_stray_country` takes 6,784 eligible pairs, 6,777 of them Canada's: in
+    # 6,724 it links the commitment, in 60 only the disbursement.
+    assert counts == {True: 1_353_358, False: 6_067_830}
     assert (candidates["eligible"] != candidates["id_persistent"]).all()
 
 
