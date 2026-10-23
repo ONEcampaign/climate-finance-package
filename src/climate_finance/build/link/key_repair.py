@@ -12,13 +12,17 @@ links is left out of the later ones:
 - `repair_pn_variant`: project numbers equal once separators, a `CRSn` suffix and
   leading zeros are dropped (`project_core`).
 
-  In both, a number the commitments place in more than one country names a
-  programme or an account, as the US `35_80` (PEPFAR operations) does in 55
-  recipients, so it links only within the disbursement's recipient and purpose
-  (`_programmes`). Under one such number the US files unrelated activities of one
-  recipient, as `76_51689` holds "USAID Pay and Benefits" (91010) and a customs
-  project (33120); a link across purposes there has a title that disagrees 22
-  times as often, by value, as one within a purpose.
+  In both, a number names a programme or an account when its commitments sit in
+  more than one country, as the US `35_80` (PEPFAR operations) does in 55
+  recipients, or its units, disbursements included, in at least
+  `PROGRAMME_COUNTRIES`, as US element numbers whose commitments sit in one
+  country and disbursements in many. Such a number links only within the
+  disbursement's recipient and purpose (`_programmes`). Under one such number the
+  US files unrelated activities of one recipient, as `76_51689` holds "USAID Pay
+  and Benefits" (91010) and a customs project (33120); a link across purposes
+  there has a title that disagrees 22 times as often, by value, as one within a
+  purpose. A number committed in one country whose units sit in two is one loan
+  under a stray recipient code, as at the IDB, and links across them.
 - `repair_afdb_scientific`: a long numeric project number that a spreadsheet
   rounded, as `2.10015E+12` or `2100150000000`, keeps its leading digits and its
   length (`rounded_digits`). It links to a commitment of the same agency and
@@ -47,8 +51,6 @@ commitment unit falls in one group of a rule by its key.
 """
 
 from collections.abc import Callable
-from functools import cache
-from importlib.resources import files
 
 import numpy as np
 import polars as pl
@@ -59,6 +61,7 @@ from climate_finance import schema
 from climate_finance.build.link.keys import (
     ROUNDED_MIN_DIGITS,
     as_exact_links,
+    regional_codes,
     rounded_digits,
 )
 
@@ -70,6 +73,8 @@ TITLE_AGREES = 80
 TITLE_MIN_CHARS = 15
 # The shortest project core that still names a project.
 CORE_MIN_CHARS = 4
+# A number whose units sit in this many countries names a programme.
+PROGRAMME_COUNTRIES = 3
 
 _LONG_NUMBER = rf"^\d{{{ROUNDED_MIN_DIGITS},}}$"
 _PN = ("donor_code", "agency_code", "project_number")
@@ -138,7 +143,7 @@ def repair_keys(
     facts = _unit_facts(units, crs=crs)
     commitments = facts.filter(pl.col("commitment_usd") > 0)
     unique_titles = _unique_titles(commitments)
-    programmes = {key: _programmes(commitments, key=key) for key in (_PN, _CORE)}
+    programmes = {key: _programmes(facts, key=key) for key in (_PN, _CORE)}
     disbursements = facts.filter(
         pl.col("disbursement_usd") > 0,
         pl.col("floor_year").is_null() | (pl.col("floor_year") >= first_year),
@@ -216,28 +221,23 @@ def _unique_titles(commitments: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def _programmes(commitments: pl.DataFrame, *, key: tuple[str, ...]) -> pl.DataFrame:
+def _programmes(units: pl.DataFrame, *, key: tuple[str, ...]) -> pl.DataFrame:
     """The values of the number `key` whose commitment units name more than one
-    country. Regional and unspecified recipients name none."""
-    country = ~pl.col("recipient_code").is_in(_regional_codes())
+    country, or whose units name at least `PROGRAMME_COUNTRIES`. Regional and
+    unspecified recipients name none."""
+    country = ~pl.col("recipient_code").is_in(regional_codes())
+    committed = country & (pl.col("commitment_usd") > 0)
     return (
-        commitments.drop_nulls(key)
+        units.drop_nulls(key)
         .group_by(key)
-        .agg(countries=pl.col("recipient_code").filter(country).n_unique())
-        .filter(pl.col("countries") > 1)
+        .agg(
+            committed=pl.col("recipient_code").filter(committed).n_unique(),
+            countries=pl.col("recipient_code").filter(country).n_unique(),
+        )
+        .filter(
+            (pl.col("committed") > 1) | (pl.col("countries") >= PROGRAMME_COUNTRIES)
+        )
         .select(key)
-    )
-
-
-@cache
-def _regional_codes() -> tuple[int, ...]:
-    """The DAC recipient codes of regions and of unspecified recipients."""
-    recipients = pl.read_csv(
-        (files("climate_finance") / "data" / "recipients.csv").read_bytes(),
-        schema_overrides={"code": pl.Int32},
-    )
-    return tuple(
-        recipients.filter(pl.col("name").str.contains("regional|unspecified"))["code"]
     )
 
 

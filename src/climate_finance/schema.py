@@ -417,6 +417,9 @@ LINKS = _table(
     jev_model=_str(nullable=True),
     label_set=_str(nullable=True),
     ledger_check=_str(nullable=True, values=LEDGER_CHECKS),
+    # On a trace link, whether its records disagree on recipient or project number
+    # (`flag_disagreement`); null on other tasks.
+    records_disagree=Column(pl.Boolean(), nullable=True),
     review=_bool(),
     review_reason=_str(nullable=True, values=REVIEW_REASONS),
 )

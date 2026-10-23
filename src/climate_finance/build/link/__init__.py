@@ -17,6 +17,7 @@ from climate_finance.build.link.crosswalks import (
     gef_crosswalk,
     link_by_crosswalk,
 )
+from climate_finance.build.link.disagreement import flag_disagreement
 from climate_finance.build.link.id_practice import classify_id_practice
 from climate_finance.build.link.key_repair import repair_keys
 from climate_finance.build.link.keys import build_units, link_by_keys
@@ -48,7 +49,8 @@ def run_link(context: StageContext) -> StageOutput:
     crosswalk reaches, and sorts providers into scoring groups; the truth group's
     classifier links what it scores at or above its threshold. Splink scores the
     other groups' pairs into `pair_scores`, calibrated by people's recorded
-    decisions and Jev.
+    decisions and Jev. Each trace link records whether its two sides disagree on
+    recipient or project number (`flag_disagreement`).
     """
     config = context.config
     crs = context.read("normalise", "crs")
@@ -115,7 +117,7 @@ def run_link(context: StageContext) -> StageOutput:
         client=context.jev,
     )
     return {
-        "links": pl.concat([links, scored.links]),
+        "links": flag_disagreement(pl.concat([links, scored.links]), units=units),
         "units": units,
         "id_practice": id_practice,
         "programme_stems": stems,

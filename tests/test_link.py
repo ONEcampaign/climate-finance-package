@@ -13,12 +13,18 @@ from climate_finance.build.config import load_config
 from climate_finance.build.errors import StageInputMissingError
 from climate_finance.build.link import run_link
 from climate_finance.build.link.crdf_crs import link_within_year
+from climate_finance.build.link.disagreement import flag_disagreement
 from climate_finance.build.link.id_practice import (
     classify_id_practice,
     parent_id,
     period_of,
 )
-from climate_finance.build.link.keys import build_units, link_by_keys, normalise_pn
+from climate_finance.build.link.keys import (
+    as_exact_links,
+    build_units,
+    link_by_keys,
+    normalise_pn,
+)
 from climate_finance.build.normalise.crdf import normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs
 from climate_finance.build.stages import REGISTRY, StageContext, table_path
@@ -339,20 +345,24 @@ def test_parent_id(donor_code: int, crs_id: str, parent: str | None) -> None:
 
 
 @pytest.mark.parametrize(
-    ("other_number", "traced"),
+    ("other_number", "recipient_code", "traced"),
     [
         # The AsDB files an Indian loan under the crs id of a Nauru grant.
-        ("TA9143-NAU", {}),
-        # One project with lines in two recipients.
-        ("LN3375-IND", {"d": ("crs_id", ["c"])}),
+        ("TA9143-NAU", 880, {}),
+        # One project with lines in two countries: each line is its own.
+        ("LN3375-IND", 880, {}),
+        # A regional line of the project.
+        ("LN3375-IND", 798, {"d": ("crs_id", ["c"])}),
     ],
 )
-def test_the_crs_id_tier_keeps_an_id_that_names_several_projects_in_its_recipient(
-    other_number: str, traced: dict[str, tuple[str, list[str]]]
+def test_the_crs_id_tier_keeps_an_id_that_spans_countries_in_its_recipient(
+    other_number: str, recipient_code: int, traced: dict[str, tuple[str, list[str]]]
 ) -> None:
     project = {"donor_code": 915, "crs_id": "2018000001"}
     records = {
-        "c": _commitment(**project, project_number=other_number, recipient_code=880),
+        "c": _commitment(
+            **project, project_number=other_number, recipient_code=recipient_code
+        ),
         "d": _disbursement(
             **project,
             project_number="LN3375-IND",
@@ -361,6 +371,76 @@ def test_the_crs_id_tier_keeps_an_id_that_names_several_projects_in_its_recipien
         ),
     }
     assert _trace(records) == traced
+
+
+def test_a_line_passed_to_another_country_links_by_project_number() -> None:
+    # Canada files Tanzania under line 7 in 2019 and Guinea under it in 2021, when
+    # Guinea's line is 3.
+    project = {"donor_code": 301, "project_number": "P007307001"}
+    traced = _trace(
+        {
+            "c_tza": _commitment(**project, crs_id="P-0007", recipient_code=282),
+            "c_gin": _commitment(**project, crs_id="P-0003", recipient_code=243),
+            "d": _disbursement(**project, crs_id="P-0007", recipient_code=243),
+        }
+    )
+    assert traced == {"d": ("pn_recipient_purpose", ["c_gin"])}
+
+
+@pytest.mark.parametrize(
+    ("commitment", "disbursement", "disagree"),
+    [
+        # The number agrees though the purpose line differs.
+        ({"project_number": "PRJ-001"}, {"project_number": "prj 1"}, False),
+        # A crs id shared by two agreements.
+        ({"project_number": "PRJ-001"}, {"project_number": "AGR-002"}, True),
+        # No number on one side.
+        ({"project_number": "PRJ-001"}, {}, False),
+        # An umbrella decision in another country.
+        (
+            {"donor_code": 918, "crs_id": "2019000001", "recipient_code": 279},
+            {"donor_code": 918, "crs_id": "2019000001042", "recipient_code": 235},
+            True,
+        ),
+        # A regional decision.
+        (
+            {"donor_code": 918, "crs_id": "2019000001", "recipient_code": 289},
+            {"donor_code": 918, "crs_id": "2019000001042", "recipient_code": 235},
+            False,
+        ),
+    ],
+)
+def test_a_trace_link_records_whether_its_records_disagree(
+    commitment: dict[str, object], disbursement: dict[str, object], disagree: bool
+) -> None:
+    units = _units(
+        {
+            "c": _commitment(**{"crs_id": "A", **commitment}),
+            "d": _disbursement(
+                **{"crs_id": "A", "purpose_code": 41010, **disbursement}
+            ),
+            # A unit linked to itself disagrees with nothing.
+            "cd": _commitment(crs_id="S", project_number="X-1", disbursement_usd=1.0),
+        }
+    )
+    names = dict(zip(units["unit_id"], units["record_ids"].list.first(), strict=True))
+    crdf = pl.DataFrame(
+        {"left_id": ["row"], "right_id": [units["unit_id"][0]]}
+    ).with_columns(link_method=pl.lit("within_year"))
+    links = pl.concat(
+        [
+            link_by_keys(units, first_year=FIRST_YEAR),
+            as_exact_links(crdf.lazy(), task="crdf_crs").collect(),
+        ]
+    )
+
+    flagged = flag_disagreement(links, units=units)
+
+    schema.validate(schema.LINKS, flagged)
+    assert {
+        names.get(row["left_id"], row["left_id"]): row["records_disagree"]
+        for row in flagged.iter_rows(named=True)
+    } == {"d": disagree, "cd": False, "row": None}
 
 
 @pytest.mark.parametrize(

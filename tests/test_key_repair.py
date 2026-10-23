@@ -177,24 +177,54 @@ def test_a_unit_stays_out_of_a_group_holding_its_own_crs_id() -> None:
     assert repaired == {}
 
 
-def test_a_programme_number_links_only_within_the_disbursements_recipient() -> None:
-    # The number commits in two countries, so it names a programme, as the US
-    # `35_80` does: the Kenyan disbursement reaches the Kenyan commitments of its
-    # purpose, and the Malawian one reaches none. Two Kenyan crs ids keep the
-    # exact tiers off.
-    programme = {"donor_code": 302, "project_number": "35_80", "title": "Operations"}
-    kenya = {**programme, "recipient_code": 248}
-    repaired = _repaired(
-        {
-            "c_eth": _commitment(**programme, crs_id="A"),
-            "c_ken": _commitment(**kenya, crs_id="B"),
-            "c_ken2": _commitment(**kenya, crs_id="B2", year=2020),
-            "c_ken_other": _commitment(**kenya, crs_id="B3", purpose_code=91010),
-            "d_ken": _disbursement(**kenya, crs_id="C"),
-            "d_mwi": _disbursement(**programme, crs_id="D", recipient_code=253),
-        }
-    )
-    assert repaired == {"d_ken": {"repair_new_crs_id": ["c_ken", "c_ken2"]}}
+_PROGRAMME = {"donor_code": 302, "project_number": "35_80", "title": "Operations"}
+_KENYA = {**_PROGRAMME, "recipient_code": 248}
+
+
+@pytest.mark.parametrize(
+    ("others", "repaired"),
+    [
+        # Commitments in two countries, as the US `35_80` has: the Kenyan
+        # disbursement reaches the Kenyan commitments of its purpose, and the
+        # Malawian one reaches none.
+        (
+            {
+                "c_eth": _commitment(**_PROGRAMME, crs_id="A"),
+                "d_mwi": _disbursement(**_PROGRAMME, crs_id="D", recipient_code=253),
+            },
+            {"d_ken": {"repair_new_crs_id": ["c_ken", "c_ken2"]}},
+        ),
+        # Commitments in one country and disbursements in three, as a US element
+        # number has.
+        (
+            {
+                "d_mwi": _disbursement(**_PROGRAMME, crs_id="D", recipient_code=253),
+                "d_tza": _disbursement(**_PROGRAMME, crs_id="E", recipient_code=282),
+            },
+            {"d_ken": {"repair_new_crs_id": ["c_ken", "c_ken2"]}},
+        ),
+        # One loan under a stray recipient code, as at the IDB, links across it.
+        (
+            {"d_mwi": _disbursement(**_PROGRAMME, crs_id="D", recipient_code=253)},
+            {
+                name: {"repair_new_crs_id": ["c_ken", "c_ken2", "c_ken_other"]}
+                for name in ("d_ken", "d_mwi")
+            },
+        ),
+    ],
+)
+def test_a_programme_number_links_only_within_the_disbursements_recipient(
+    others: dict[str, dict[str, object]], repaired: dict[str, dict[str, list[str]]]
+) -> None:
+    # Two Kenyan crs ids keep the exact tiers off.
+    records = {
+        "c_ken": _commitment(**_KENYA, crs_id="B"),
+        "c_ken2": _commitment(**_KENYA, crs_id="B2", year=2020),
+        "c_ken_other": _commitment(**_KENYA, crs_id="B3", purpose_code=91010),
+        "d_ken": _disbursement(**_KENYA, crs_id="C"),
+        **others,
+    }
+    assert _repaired(records) == repaired
 
 
 def test_a_disbursement_before_the_first_year_links_to_nothing() -> None:

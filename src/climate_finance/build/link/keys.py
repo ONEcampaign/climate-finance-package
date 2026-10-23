@@ -23,6 +23,8 @@ Korea's EDCF or KfW, still files some projects under a new crs id each year.
 """
 
 from dataclasses import dataclass
+from functools import cache
+from importlib.resources import files
 
 import polars as pl
 
@@ -237,18 +239,41 @@ def link_by_keys(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
 
 def crs_key(units: pl.DataFrame) -> pl.Series:
     """Each unit's crs id, with its recipient code where the (donor, crs id) names
-    several projects: units in more than one recipient under more than one project
-    number. The AsDB, the IDB and the GEF reuse an id this way, as for the AsDB's
-    `LN3375-IND` in India and `TA9143-NAU` in Nauru."""
+    several lines: units in more than one country, or in more than one recipient
+    under more than one project number.
+
+    Canada numbers a project's lines inside the crs id and gives a line to another
+    country from one year to the next, so `P007307001` files Tanzania under
+    `20202000510007` in 2020 and Guinea in 2023, when Guinea's line is `...0003`.
+    The AsDB, the IDB and the GEF reuse an id across projects, as for the AsDB's
+    `LN3375-IND` in India and `TA9143-NAU` in Nauru. An id that holds one country
+    and regional or unspecified recipients (`regional_codes`) names one project, and
+    keeps its regional lines."""
+    country = ~pl.col("recipient_code").is_in(regional_codes())
     several = (
-        (pl.col("recipient_code").n_unique() > 1)
-        & (pl.col("project_number").drop_nulls().n_unique() > 1)
+        (pl.col("recipient_code").filter(country).n_unique() > 1)
+        | (
+            (pl.col("recipient_code").n_unique() > 1)
+            & (pl.col("project_number").drop_nulls().n_unique() > 1)
+        )
     ).over("donor_code", "crs_id")
     return units.select(
         pl.when(several)
         .then(pl.concat_str("crs_id", "recipient_code", separator="|"))
         .otherwise(pl.col("crs_id"))
     ).to_series()
+
+
+@cache
+def regional_codes() -> tuple[int, ...]:
+    """The DAC recipient codes of regions and of unspecified recipients."""
+    recipients = pl.read_csv(
+        (files("climate_finance") / "data" / "recipients.csv").read_bytes(),
+        schema_overrides={"code": pl.Int32},
+    )
+    return tuple(
+        recipients.filter(pl.col("name").str.contains("regional|unspecified"))["code"]
+    )
 
 
 def _unique_pn(commitments: pl.DataFrame) -> pl.DataFrame:
