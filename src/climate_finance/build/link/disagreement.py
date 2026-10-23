@@ -22,8 +22,9 @@ from climate_finance.build.link.keys import regional_codes
 # Methods whose key leaves the project number free though both sides should carry
 # one. The other key tiers and rules match on it, or link records whose numbers
 # differ by design: an EU contract and its decision, a World Bank loan and its
-# project, and the title and crosswalk links.
-NUMBER_FREE = ("crs_id_purpose", "crs_id", "classifier")
+# project, and the title and crosswalk links. The model links compare the numbers
+# among other fields and match on none.
+NUMBER_FREE = ("crs_id_purpose", "crs_id", "classifier", "classifier_jev", "splink_jev")
 
 
 def flag_disagreement(links: pl.DataFrame, *, units: pl.DataFrame) -> pl.DataFrame:

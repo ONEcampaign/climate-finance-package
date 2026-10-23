@@ -128,6 +128,9 @@ class BuildConfig(_Section):
     `recoveries` is on. A release builds with none; an end-to-end test sets one to
     measure what that route adds. `jev_labels` has the label stage ask Jev about
     linked records and fit its adaptation cut on `sources.adaptation_labels`.
+    `jev_links` has the link stage ask Jev about the classifier's pairs in
+    `jev.band` and about each Splink model's calibration sample, and link what the
+    calibrated Splink models score.
     """
 
     offline: bool = False
@@ -137,6 +140,7 @@ class BuildConfig(_Section):
     gap_fill: bool = False
     review: bool = False
     jev_labels: bool = False
+    jev_links: bool = False
     years: Years
     sources: Sources
     jev: Jev

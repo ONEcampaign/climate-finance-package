@@ -5,6 +5,7 @@ share a project number.
 """
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,16 +19,18 @@ import splink
 from climate_finance import schema
 from climate_finance.build.jev_client import JevClient
 from climate_finance.build.link import splink_models
+from climate_finance.build.link.jev import CalibrationAnswers, Logistic, jev_answers
 from climate_finance.build.link.score import ELIGIBLE, scoring_groups
 from climate_finance.build.link.splink_models import (
     CALIBRATION_LABELS,
     CALIBRATION_REASON,
     JEV_SAMPLE,
+    LINK_THRESHOLD,
     SplinkResult,
     isotonic_map,
-    pair_request,
     read_human_labels,
     score_with_splink,
+    splink_links,
     stratified_sample,
     with_labelled_m,
 )
@@ -218,9 +221,11 @@ def _run(
     cache_dir: Path,
     labels: pl.DataFrame | None = None,
     providers: tuple[int, ...] = (DONOR, OTHER_DONOR),
+    answer: Callable[[JevClient], CalibrationAnswers] | None = None,
 ) -> Run:
-    """Score both donors, with Jev answering through `_responses`. `scores` adds
-    each pair's truth `y`."""
+    """Score both donors, with Jev answering through `_responses` and `answer`,
+    given the client, answering calibration samples. `scores` adds each pair's
+    truth `y`."""
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv("TYPESAFE_API_KEY", "test")
         client = JevClient(
@@ -240,6 +245,7 @@ def _run(
             ),
             labels=pl.DataFrame(schema=_LABEL_SCHEMA) if labels is None else labels,
             client=client,
+            answer=None if answer is None else answer(client),
         )
     scores = result.scores.join(
         world["candidates"].select("left_id", "right_id", "y"),
@@ -329,6 +335,71 @@ def test_a_provider_without_calibration_labels_stays_in_the_queue(
     # Its ten labelled pairs leave the calibration sample, and others take their place.
     assert queued.join(calibration_labels, on=["left_id", "right_id"]).is_empty()
     assert queued.height == CALIBRATION_LABELS
+
+
+def test_jev_answers_the_calibration_samples_and_the_models_link(
+    world: dict[str, pl.DataFrame], tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    # Slow: one more run, about 5 s. Jev's answer is its label, unscaled.
+    scale = Logistic(coefs=(1.0,), intercept=0.0)
+    run = _run(
+        world,
+        tmp_path_factory.mktemp("jev"),
+        answer=lambda client: jev_answers(client=client, scale=scale),
+    )
+    reports = run.result.models
+    assert all(report.calibrated for report in reports)
+    assert {report.jev_labels for report in reports} == {CALIBRATION_LABELS}
+    assert {report.human_labels for report in reports} == {0}
+    # Jev read each model's calibration sample and nothing else.
+    assert run.client.live_calls == CALIBRATION_LABELS * len(reports)
+    scores = run.scores
+    assert scores["probability"].null_count() == 0
+    assert scores["review_reason"].null_count() == scores.height
+    assert set(scores["label_set"]) == {f"human:0,jev:{CALIBRATION_LABELS}"}
+
+    links = splink_links(
+        run.result.scores,
+        candidates=world["candidates"].with_columns(
+            programme_level=pl.lit(0, dtype=pl.Int8)
+        ),
+        units=world["units"],
+        jev_model=MODEL,
+    )
+    schema.validate(schema.LINKS, links)
+    assert links["left_id"].is_unique().all()
+    assert (links["probability"] >= LINK_THRESHOLD).all()
+    assert set(links["link_method"]) == {"splink_jev"}
+    assert (links["group_id"] == "splink_jev|" + links["right_id"]).all()
+    right = links.join(world["candidates"], on=["left_id", "right_id"])["y"]
+    assert links.height > 100
+    assert right.mean() > 0.9
+
+
+def test_an_answer_for_people_calibrates_as_their_recorded_labels(
+    uncalibrated: Run,
+    world: dict[str, pl.DataFrame],
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    # Slow: two more runs, about 10 s. Id truth answers each calibration sample in
+    # the build, as `simulate` in the Splink e2e test does, and gives what people's
+    # decisions on the same pairs give.
+    def truth(client: JevClient) -> CalibrationAnswers:
+        def answer(pairs: pl.DataFrame, attributes: pl.DataFrame) -> pl.DataFrame:
+            return pairs.join(world["candidates"], on=["left_id", "right_id"]).select(
+                "left_id",
+                "right_id",
+                y=pl.col("y").cast(pl.Float64),
+                pair_label_source=pl.lit("human"),
+            )
+
+        return answer
+
+    answered = _run(world, tmp_path_factory.mktemp("jev"), answer=truth)
+    sample = uncalibrated.scores.filter(review_reason=CALIBRATION_REASON)
+    recorded = _run(world, tmp_path_factory.mktemp("jev"), _labels(sample))
+    assert all(report.calibrated for report in answered.result.models)
+    assert answered.scores.equals(recorded.scores)
 
 
 def test_without_both_outcomes_people_s_labels_alone_calibrate(
@@ -459,31 +530,3 @@ def test_isotonic_map_is_monotone() -> None:
     assert (np.diff(mapped) >= 0).all()
     assert mapped.min() >= 0
     assert mapped.max() <= 1
-
-
-def test_pair_request_states_the_derived_facts() -> None:
-    earlier = {
-        "year": 2018, "donor_code": 901, "recipient_code": 1, "purpose_code": 23210,
-        "channel_code": None, "flow_code": 11, "finance_type_code": 110,
-        "project_number": "P1", "title": "Solar Grid", "short_description": None,
-        "long_description": "x " * 400, "commitment_usd": 2e6, "disbursement_usd": 0.0,
-    }  # fmt: skip
-    later = earlier | {
-        "year": 2021, "title": "solar grid", "commitment_usd": None,
-        "disbursement_usd": 5e5, "purpose_code": 23220,
-    }  # fmt: skip
-    request = pair_request(earlier, later)
-    facts = request["state"]["derived_facts"]  # ty: ignore[not-subscriptable]
-    assert facts == {
-        "years_between_records": 3,
-        "same_provider": True,
-        "same_project_number": True,
-        "same_title": True,
-        "same_recipient": True,
-        "same_purpose_code": False,
-        "later_disbursement_as_share_of_earlier_commitment": 0.25,
-        "later_record_also_has_its_own_commitment": False,
-    }
-    record = request["state"]["earlier_record"]  # ty: ignore[not-subscriptable]
-    assert len(record["long_description"]) == splink_models.JEV_TEXT_CHARS + 3
-    assert set(request["questions"]) == {"relation", "disbursement", "sibling"}  # ty: ignore[invalid-argument-type]

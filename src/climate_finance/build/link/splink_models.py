@@ -28,13 +28,24 @@ weight gives the probability: the model's own map when its labelled pairs hold
 `MIN_ISOTONIC_OUTCOMES` matches and as many non-matches, else a map pooled over the
 calibrated models. When people's labels hold under `MIN_JEV_SCALE_OUTCOMES` of either
 outcome, Jev's scale cannot be fitted, and their labels alone set m and the map.
+
+With `jev_links` on, a model with fewer than `CALIBRATION_LABELS` people's labels
+has its calibration sample answered instead (`jev.jev_answers`): Jev reads each pair,
+and a scale fitted on id truth turns its answer into a label. Those labels, with any
+of people's, set m and the map directly, since there are not enough people's labels
+to set Jev's scale for the model. Only labels of source `human` are read from
+`labels`. Ledger-check labels never calibrate: they sit on key-linked pairs, whose
+disbursements no model scores, and they hold no negatives.
+
+`splink_links` links each disbursement unit to its best calibrated pair at or above
+`LINK_THRESHOLD`, as `splink_jev`.
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,7 +58,6 @@ import splink
 import splink.comparison_level_library as cll
 import splink.comparison_library as cl
 from sklearn.isotonic import IsotonicRegression
-from sklearn.linear_model import LogisticRegression
 from splink import DuckDBAPI, Linker, SettingsCreator
 
 # Splink's own reading of a comparison gives each level's number and the m it
@@ -55,6 +65,7 @@ from splink import DuckDBAPI, Linker, SettingsCreator
 from splink.internals.comparison import Comparison
 
 from climate_finance import schema
+from climate_finance.build.link.jev import CalibrationAnswers, ask_jev, fit_logistic
 from climate_finance.build.link.levels import (
     LEVELS,
     comparison_levels,
@@ -62,6 +73,7 @@ from climate_finance.build.link.levels import (
     levels_struct,
     unit_attributes,
 )
+from climate_finance.build.link.score import best_commitments
 from climate_finance.build.normalise.ids import content_id
 
 if TYPE_CHECKING:
@@ -108,49 +120,12 @@ MIN_ISOTONIC_OUTCOMES = 30
 # Weight of EM's m in the labelled estimate, as in Splink's estimate from labels.
 M_PRIOR_WEIGHT = 1.0
 CALIBRATION_REASON = "calibration"
+# A calibrated pair links at this probability or more: more likely right than wrong.
+LINK_THRESHOLD = 0.5
+LINK_METHOD = "splink_jev"
+_PAIR = ["left_id", "right_id"]
 # The ten comparisons labels re-estimate; `donor` and `provider` keep EM's m.
 LEVEL_NAMES = tuple(name.removeprefix("gamma_") for name in LEVELS)
-
-# Jev's pair questions, wording v1, as the prototypes asked them.
-RELATION_QUESTION = (
-    "Each record is one yearly line of a donor's aid database (OECD CRS). The earlier "
-    "record carries a commitment; the later record is from a later year. How do the "
-    "two records relate as aid activities? Judge from the titles, descriptions, "
-    "project numbers, recipients and purposes; use derived_facts for dates and "
-    "amounts."
-)
-RELATION_LEVELS = (
-    "Different activities: the later record belongs to another project, programme or "
-    "component, even if the donor, country or sector is the same.",
-    "Related, and possibly the same: the records share a programme or theme, but the "
-    "later record may be a separate component, phase, new grant or sibling of the "
-    "earlier one.",
-    "Same activity: the later record is the same project or grant as the earlier "
-    "record, reported again in a later year.",
-)
-DISBURSEMENT_QUESTION = (
-    "Is the later record a disbursement of the same activity that the earlier record "
-    "committed funds to? Answer yes when it is the same project or grant continuing "
-    "in a later year (a later payment or a repeat of the same record). Answer no when "
-    "it is a different project, a new commitment for a new phase, or a separate "
-    "component."
-)
-SIBLING_QUESTION = (
-    "Is the later record a sibling sub-activity of the same umbrella programme as the "
-    "earlier record, that is, a separate numbered component, phase or grant under one "
-    "programme, rather than the same activity itself?"
-)
-PAIR_QUESTIONS: dict[str, object] = {
-    "relation": {
-        "type": "score",
-        "instructions": RELATION_QUESTION,
-        "criteria": list(RELATION_LEVELS),
-    },
-    "disbursement": {"type": "noul", "instructions": DISBURSEMENT_QUESTION},
-    "sibling": {"type": "noul", "instructions": SIBLING_QUESTION},
-}
-# Characters of each text field Jev reads.
-JEV_TEXT_CHARS = 450
 
 SPLINK_SCORES = {
     name: column.dtype for name, column in schema.PAIR_SCORES.columns.items()
@@ -205,6 +180,7 @@ def score_with_splink(
     provider_profile: pl.DataFrame,
     labels: pl.DataFrame,
     client: JevClient,
+    answer: CalibrationAnswers | None = None,
 ) -> SplinkResult:
     """Splink scores for the eligible candidate pairs of the providers in the
     `splink` and `pooled_splink` scoring groups.
@@ -219,6 +195,9 @@ def score_with_splink(
         labels: pair labels in the `pair_labels` schema; the `human` labels of task
             `trace` calibrate.
         client: the build's Jev client.
+        answer: what answers the calibration sample of a model with fewer than
+            `CALIBRATION_LABELS` people's labels (`jev.jev_answers`); None leaves
+            the sample to people.
 
     Returns:
         One row per eligible pair that a usable model scores.
@@ -256,6 +235,7 @@ def score_with_splink(
                 attributes=attributes,
                 human=human,
                 client=client,
+                answer=answer,
             )
             models.append(model)
             if not model.report.usable:
@@ -270,6 +250,7 @@ def score_with_splink(
                     attributes=attributes,
                     human=human,
                     client=client,
+                    answer=answer,
                     pooled=True,
                 )
             )
@@ -355,6 +336,7 @@ def _model(
     attributes: pl.DataFrame,
     human: pl.DataFrame,
     client: JevClient,
+    answer: CalibrationAnswers | None,
     pooled: bool = False,
 ) -> _Model:
     """Fit the model for `donors`, score their pairs and calibrate it."""
@@ -386,19 +368,35 @@ def _model(
         fitted - started,
         time.perf_counter() - fitted,
     )
-    labelled = scores.join(human, on=["left_id", "right_id"])
-    report.human_labels = labelled.height
+    labelled = scores.join(human, on=_PAIR)
+    answered = pl.DataFrame(
+        schema={"left_id": pl.String, "right_id": pl.String, "y": pl.Float64}
+    )
     if labelled.height < CALIBRATION_LABELS:
         sample = stratified_sample(
-            scores.join(labelled, on=["left_id", "right_id"], how="anti"),
-            n=CALIBRATION_LABELS,
-        ).select("left_id", "right_id", review_reason=pl.lit(CALIBRATION_REASON))
-        scores = scores.join(sample, on=["left_id", "right_id"], how="left")
-        return _Model(report=report, scores=scores)
-
+            scores.join(labelled, on=_PAIR, how="anti"), n=CALIBRATION_LABELS
+        ).select(*_PAIR)
+        if answer is None:
+            report.human_labels = labelled.height
+            queued = sample.with_columns(review_reason=pl.lit(CALIBRATION_REASON))
+            scores = scores.join(queued, on=_PAIR, how="left")
+            return _Model(report=report, scores=scores)
+        # Answers that stand in for people's join their labels; Jev's stay apart.
+        given = answer(sample.sort(_PAIR), attributes)
+        by_people = given.filter(pair_label_source="human").select(*_PAIR, "y")
+        labelled = pl.concat(
+            [labelled.select(*_PAIR, "y"), by_people], how="vertical_relaxed"
+        ).sort(_PAIR)
+        answered = given.filter(pair_label_source="jev").select(*_PAIR, "y")
+    report.human_labels = labelled.height
     report.calibrated = True
     labels, label_set = _labels(
-        scores, human=labelled, attributes=attributes, client=client, report=report
+        scores,
+        human=labelled,
+        answered=answered,
+        attributes=attributes,
+        client=client,
+        report=report,
     )
     weighted = _band_weights(scores, labels)
     rescored = _predict(
@@ -616,16 +614,22 @@ def _labels(
     scores: pl.DataFrame,
     *,
     human: pl.DataFrame,
+    answered: pl.DataFrame,
     attributes: pl.DataFrame,
     client: JevClient,
     report: ModelReport,
 ) -> tuple[pl.DataFrame, str]:
     """The labels that calibrate a model, `y` per pair, and what they hold.
 
-    People's labels stand. With both outcomes among them, Jev answers the
-    stratified sample and every labelled pair, and its answers on pairs people did
-    not label become labels through Jev's scale.
+    People's labels stand. Where Jev `answered` the calibration sample, its labels
+    join them as they are. Otherwise, with both outcomes among people's labels, Jev
+    answers the stratified sample and every labelled pair, and its answers on pairs
+    people did not label become labels through Jev's scale.
     """
+    if answered.height:
+        report.jev_labels = answered.height
+        labels = pl.concat([human.select(*_PAIR, "y"), answered])
+        return labels, f"human:{human.height},jev:{answered.height}"
     outcomes = human["y"].sum()
     if min(outcomes, human.height - outcomes) < MIN_JEV_SCALE_OUTCOMES:
         return human.select("left_id", "right_id", "y"), f"human:{human.height}"
@@ -638,7 +642,9 @@ def _labels(
     answers = asked.with_columns(
         jev=ask_jev(asked, attributes=attributes, client=client)
     )
-    scale = jev_scale(human.join(answers, on=["left_id", "right_id"]))
+    scale = fit_logistic(
+        human.join(answers, on=["left_id", "right_id"]), inputs=["jev"], y="y"
+    )
     jev = answers.join(human, on=["left_id", "right_id"], how="anti").select(
         "left_id", "right_id", y=scale(pl.col("jev"))
     )
@@ -694,27 +700,6 @@ def with_labelled_m(model: dict[str, Any], labelled: pl.DataFrame) -> dict[str, 
     return out
 
 
-def jev_scale(labelled: pl.DataFrame) -> Callable[[pl.Expr], pl.Expr]:
-    """The chance a pair matches given Jev's p(same activity) `jev`, fitted on
-    people's labels `y`: a logistic on the logit of Jev's answer."""
-    fit = LogisticRegression(C=1e6).fit(
-        _logit(labelled["jev"].to_numpy())[:, None], labelled["y"].to_numpy()
-    )
-    slope, intercept = float(fit.coef_[0][0]), float(fit.intercept_[0])
-
-    def scale(jev: pl.Expr) -> pl.Expr:
-        clipped = jev.clip(1e-3, 1 - 1e-3)
-        z = slope * (clipped / (1 - clipped)).log() + intercept
-        return 1 / (1 + (-z).exp())
-
-    return scale
-
-
-def _logit(p: np.ndarray) -> np.ndarray:
-    clipped = np.clip(p, 1e-3, 1 - 1e-3)
-    return np.log(clipped / (1 - clipped))
-
-
 def isotonic_map(labelled: pl.DataFrame) -> IsotonicRegression:
     """A non-decreasing map from match weight to the labels' match rate, each label
     weighted by its inverse inclusion probability."""
@@ -759,83 +744,48 @@ def _apply_maps(models: list[_Model]) -> pl.DataFrame:
     return pl.concat(frames)
 
 
-def pair_request(
-    earlier: Mapping[str, Any], later: Mapping[str, Any]
-) -> dict[str, object]:
-    """Jev's request about a commitment unit and a later unit, wording v1.
+def splink_links(
+    scores: pl.DataFrame,
+    *,
+    candidates: pl.DataFrame,
+    units: pl.DataFrame,
+    jev_model: str,
+) -> pl.DataFrame:
+    """The calibrated Splink models' `trace` links, in the `links` schema.
 
-    Each record gives its unit's fields, texts cut to `JEV_TEXT_CHARS`, and
-    `derived_facts` states the comparisons of dates and amounts.
+    Each disbursement unit joins the commitment of its highest-probability pair at
+    or above `LINK_THRESHOLD` that is not a sibling, ties to the earlier placed
+    year, then the smaller unit id (`score.best_commitments`). A commitment's
+    links form one group.
+
+    Args:
+        scores: `pair_scores` (`score_with_splink`).
+        candidates: the link stage's candidates, for each pair's programme level.
+        units: the link stage's units, for each commitment's placed year.
+        jev_model: the Jev model behind the calibration labels.
     """
-    first, second = _jev_record(earlier), _jev_record(later)
-    commitment = first["commitment_usd"]
-    share = (
-        None
-        if commitment <= 0
-        else float(f"{second['disbursement_usd'] / commitment:.3g}")
+    taken = (
+        scores.filter(pl.col("probability") >= LINK_THRESHOLD)
+        .join(candidates.select(*_PAIR, "programme_level"), on=_PAIR)
+        .join(units.select("placed_year", right_id="unit_id"), on="right_id")
     )
-    facts = {
-        "years_between_records": second["year"] - first["year"],
-        "same_provider": first["provider"] == second["provider"],
-        "same_project_number": bool(
-            first["project_number"]
-            and first["project_number"] == second["project_number"]
-        ),
-        "same_title": first["title"].lower() == second["title"].lower(),
-        "same_recipient": first["recipient"] == second["recipient"],
-        "same_purpose_code": first["purpose_code"] == second["purpose_code"],
-        "later_disbursement_as_share_of_earlier_commitment": share,
-        "later_record_also_has_its_own_commitment": second["commitment_usd"] > 0,
+    best = best_commitments(taken, probability="probability")
+    given = {
+        "task": pl.lit("trace"),
+        "left_id": pl.col("left_id"),
+        "right_id": pl.col("right_id"),
+        "group_id": pl.concat_str(pl.lit(LINK_METHOD), "right_id", separator="|"),
+        "probability": pl.col("probability"),
+        "link_method": pl.lit(LINK_METHOD),
+        "p_model": pl.col("probability"),
+        "programme_level": pl.col("programme_level"),
+        "levels": pl.col("levels"),
+        "model_version": pl.col("model"),
+        "jev_model": pl.lit(jev_model),
+        "label_set": pl.col("label_set"),
+        "review": pl.lit(value=False),
     }
-    return {
-        "state": {
-            "earlier_record": first,
-            "later_record": second,
-            "derived_facts": facts,
-        },
-        "questions": PAIR_QUESTIONS,
-    }
-
-
-def _jev_record(unit: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        "year": unit["year"],
-        "provider": unit["donor_code"],
-        "recipient": unit["recipient_code"],
-        "purpose_code": unit["purpose_code"],
-        "channel_code": unit["channel_code"],
-        "flow_code": unit["flow_code"],
-        "finance_type_code": unit["finance_type_code"],
-        "project_number": _jev_text(unit["project_number"]) or None,
-        "title": _jev_text(unit["title"]),
-        "short_description": _jev_text(unit["short_description"]),
-        "long_description": _jev_text(unit["long_description"]),
-        "commitment_usd": round(unit["commitment_usd"] or 0),
-        "disbursement_usd": round(unit["disbursement_usd"] or 0),
-    }
-
-
-def _jev_text(text: str | None) -> str:
-    cleaned = " ".join((text or "").split())
-    return cleaned[:JEV_TEXT_CHARS] + ("..." if len(cleaned) > JEV_TEXT_CHARS else "")
-
-
-def ask_jev(
-    pairs: pl.DataFrame, *, attributes: pl.DataFrame, client: JevClient
-) -> pl.Series:
-    """Jev's p(same activity) for each (`left_id`, `right_id`) pair, in order: the
-    commitment (right) is the earlier record."""
-    by_id = {row["unique_id"]: row for row in attributes.iter_rows(named=True)}
-    responses = client.score(
-        [
-            pair_request(by_id[right], by_id[left])
-            for left, right in pairs.select("left_id", "right_id").iter_rows()
-        ]
-    )
-    return pl.Series(
-        [_same_activity(response) for response in responses], dtype=pl.Float64
-    )
-
-
-def _same_activity(response: Mapping[str, Any]) -> float:
-    return float(response["answers"]["relation"]["probabilities"]["2"])
+    return best.select(
+        given.get(name, pl.lit(None)).cast(column.dtype).alias(name)
+        for name, column in schema.LINKS.columns.items()
+    ).sort(*_PAIR)
