@@ -101,8 +101,9 @@ def describe(method: Method | MethodRange) -> str:
     if isinstance(method, MethodRange):
         names = " / ".join(label(member) for member in method.methods)
         return (
-            f"Methods {names}, reported together; low and high are the lowest and "
-            "highest value across them."
+            f"Methods {names}, reported together; low is the lowest of their lows, "
+            "which count only what certain links carried, and high the highest value "
+            "across them."
         )
     rule = (
         "each activity counts once, under its higher Rio marker, with equal "

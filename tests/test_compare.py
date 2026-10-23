@@ -137,6 +137,7 @@ def test_methods_print_as_models_and_render_their_description() -> None:
         "view, and quality() reports the EU rows left out."
     )
     assert RANGE._repr_markdown_() == (
-        "Methods ONE / OECD / PROVIDER, reported together; low and high are the "
-        "lowest and highest value across them."
+        "Methods ONE / OECD / PROVIDER, reported together; low is the lowest of "
+        "their lows, which count only what certain links carried, and high the "
+        "highest value across them."
     )
