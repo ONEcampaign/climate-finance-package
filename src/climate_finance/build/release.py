@@ -15,15 +15,28 @@ amounts; `quality` and `disbursement_profile` leave them out of their totals, an
 from __future__ import annotations
 
 import hashlib
+import io
+import json
+import shutil
+import tarfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
+import httpx
 import polars as pl
+import pyarrow as pa
 
 from climate_finance import __version__
+from climate_finance import build as build_package
+from climate_finance.build import gate
 from climate_finance.build.allocate import counted_rows, years_since_commitment
-from climate_finance.build.errors import ReleaseInvariantError, StageInputMissingError
+from climate_finance.build.errors import (
+    BuildError,
+    ReleaseInvariantError,
+    StageInputMissingError,
+)
 from climate_finance.build.label import inherit_markers
 from climate_finance.build.sums import ordered_sum
 from climate_finance.query import BILATERAL, MULTILATERAL_OUTFLOW
@@ -43,7 +56,9 @@ from climate_finance.schema import (
     TableSchema,
     aggregate_channels,
     release_invariants,
+    sha256_file,
 )
+from climate_finance.snapshot import IndexEntry, ReleaseIndex, release_dirname
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -59,6 +74,43 @@ PROFILE_GROUPS = {
     "bilateral": BILATERAL,
     "multilateral": (MULTILATERAL_OUTFLOW,),
 }
+# The terms each source's data comes under, by `raw_manifest` source name or the
+# start of one. The longest matching start wins.
+_OECD = (
+    "OECD Terms and Conditions; dataset terms in each dataset's metadata, "
+    "https://www.oecd.org/en/about/terms-conditions.html"
+)
+_WORLD_BANK = (
+    "World Bank Data Catalog licence (CC BY 4.0 by default; per dataset), "
+    "https://datacatalog.worldbank.org/public-licenses"
+)
+_IATI = "the publisher's licence in the IATI Registry, https://iatiregistry.org"
+_GCF = (
+    "Green Climate Fund terms: no commercial redistribution or derivative works "
+    "without written consent, https://www.greenclimate.fund/terms-and-conditions"
+)
+SOURCE_LICENCES = {
+    "crs": _OECD,
+    "crdf": _OECD,
+    "multisystem": _OECD,
+    "imputed_shares": _OECD,
+    "dac_exchange": _OECD,
+    "gcf_projects": _GCF,
+    "ledger_gcf": _GCF,
+    "iati": _IATI,
+    "ledger_iati": _IATI,
+    "ledger_finances_one": _WORLD_BANK,
+    "ledger_imf": "IMF copyright and terms: derivative works with attribution; "
+    "commercial use and automated bulk download need permission, "
+    "https://www.imf.org/en/About/copyright-and-terms",
+    "foreignassistance": "US Government work, free of copyright, "
+    "https://foreignassistance.gov/about",
+    "adaptation_labels": "Weikmans et al.; fits the adaptation cut, no rows ship",
+    "btr": "UNFCCC terms of use: public domain with source acknowledged, "
+    "https://unfccc.int/this-site/terms-of-use",
+}
+# The file in a pack that lists each source with its version, URLs and licence.
+SOURCES_FILE = "sources.json"
 # The CRS amount column behind each flow of `total_flows`.
 _FLOW_AMOUNTS = {
     "commitments": "commitment_usd",
@@ -535,17 +587,148 @@ def _empty(table: TableSchema) -> pl.DataFrame:
 
 
 def pack_release(release_dir: Path, *, out_path: Path) -> Path:
-    """Pack a release as `.tar.zst` with its sources and licences file."""
-    raise NotImplementedError("slice S10b")
+    """Pack the release built in `release_dir` as `out_path`, a `.tar.zst`.
+
+    The pack holds one directory, `climate-finance-<release>/`, with the release
+    tables, `release.json` and `sources.json`. `sources.json` lists every source the
+    fetch stage recorded, and `btr` when the release holds BTR rows, each with its
+    version, URLs and licence. Members go in name order with fixed owners and the
+    release's creation time, so one release packs to the same bytes.
+
+    Raises:
+        BuildError: when a source has no entry in `SOURCE_LICENCES`.
+    """
+    assembled = release_dir / "assemble"
+    manifest = ReleaseManifest.model_validate_json(
+        (assembled / "release.json").read_text()
+    )
+    sources = release_sources(
+        pl.read_parquet(release_dir / "fetch" / "raw_manifest.parquet"),
+        versions=manifest.source_versions,
+        btr_rows=manifest.tables[BTR.name].rows,
+    )
+    root = release_dirname(manifest.release)
+    mtime = int(manifest.created_at.timestamp())
+    partial = out_path.with_name(f"{out_path.name}.part")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with (
+        pa.output_stream(str(partial), compression="zstd") as stream,
+        tarfile.open(fileobj=stream, mode="w|", format=tarfile.PAX_FORMAT) as tar,
+    ):
+        for path in sorted(assembled.iterdir()):
+            with path.open("rb") as handle:
+                tar.addfile(
+                    _member(f"{root}/{path.name}", path.stat().st_size, mtime), handle
+                )
+        body = (json.dumps(sources, indent=2) + "\n").encode()
+        tar.addfile(
+            _member(f"{root}/{SOURCES_FILE}", len(body), mtime), io.BytesIO(body)
+        )
+    partial.replace(out_path)
+    return out_path
+
+
+def release_sources(
+    raw_manifest: pl.DataFrame, *, versions: Mapping[str, str], btr_rows: int
+) -> list[dict[str, object]]:
+    """Each source in `raw_manifest`, and `btr` when `btr_rows` is positive, with its
+    version from `versions`, its URLs and its licence.
+
+    Raises:
+        BuildError: when a source has no entry in `SOURCE_LICENCES`.
+    """
+    urls = {
+        str(source): sorted(set(frame["url"].drop_nulls()))
+        for (source,), frame in raw_manifest.group_by("source")
+    }
+    if btr_rows:
+        urls["btr"] = []
+    if unlicensed := sorted(source for source in urls if _licence(source) is None):
+        raise BuildError(f"Sources without a licence in SOURCE_LICENCES: {unlicensed}")
+    return [
+        {
+            "source": source,
+            "version": versions.get(source),
+            "urls": urls[source],
+            "licence": _licence(source),
+        }
+        for source in sorted(urls)
+    ]
+
+
+def _licence(source: str) -> str | None:
+    starts = [start for start in SOURCE_LICENCES if source.startswith(start)]
+    return SOURCE_LICENCES[max(starts, key=len)] if starts else None
+
+
+def _member(name: str, size: int, mtime: int) -> tarfile.TarInfo:
+    member = tarfile.TarInfo(name)
+    member.size = size
+    member.mtime = mtime
+    member.mode = 0o644
+    return member
 
 
 def cut_release(
     release: str, *, config: Path, out_dir: Path, waive_precision: bool = False
 ) -> Path:
-    """Build, gate and pack `release`; record a precision waiver in release.json."""
-    raise NotImplementedError("slice S10b")
+    """Build `release`, run the gates, record their results and pack it.
+
+    The gate results and `waive_precision` go into `release.json`; the pack is
+    `<out_dir>/climate-finance-<release>.tar.zst`.
+
+    Raises:
+        BuildError: when a gate fails; `waive_precision` lets the precision gate
+            fail.
+    """
+    build_package.build(release, config=config, out_dir=out_dir)
+    release_dir = out_dir / release
+    results = gate.run_gates(release_dir, waive_precision=waive_precision)
+    manifest_path = release_dir / "assemble" / "release.json"
+    manifest = ReleaseManifest.model_validate_json(manifest_path.read_text())
+    gated = manifest.model_copy(
+        update={
+            "gates": {"results": json.loads(results.write_json())},
+            "precision_gate_waived": waive_precision,
+        }
+    )
+    manifest_path.write_text(gated.model_dump_json(indent=2) + "\n")
+    return pack_release(
+        release_dir, out_path=out_dir / f"{release_dirname(release)}.tar.zst"
+    )
 
 
 def upload_release(pack: Path, *, target: str) -> str:
-    """Upload a packed release to `target`; return its URL."""
-    raise NotImplementedError("slice S10b")
+    """Upload a packed release to `target`; return its URL.
+
+    `target` is a directory, or an http(s) URL that takes the pack by PUT at
+    `<target>/<pack name>`.
+
+    Raises:
+        httpx.HTTPStatusError: when the server refuses the upload.
+    """
+    if not target.startswith(("http://", "https://")):
+        directory = Path(target)
+        directory.mkdir(parents=True, exist_ok=True)
+        copy = directory / pack.name
+        shutil.copy2(pack, copy)
+        return copy.resolve().as_uri()
+    url = f"{target.rstrip('/')}/{quote(pack.name)}"
+    with pack.open("rb") as body:
+        httpx.put(url, content=body, timeout=None).raise_for_status()
+    return url
+
+
+def add_to_index(
+    index: ReleaseIndex, *, release: str, pack: Path, url: str
+) -> ReleaseIndex:
+    """`index` with `release` published at `url` as its newest release."""
+    return index.model_copy(
+        update={
+            "latest": release,
+            "releases": {
+                **index.releases,
+                release: IndexEntry(url=url, sha256=sha256_file(pack)),
+            },
+        }
+    )
