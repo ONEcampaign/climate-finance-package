@@ -94,7 +94,7 @@ def test_without_decisions_splink_only_asks_for_calibration_labels(
     # project numbers block one pair and EM drives a recipient-and-purpose m to zero,
     # so it joins the pooled model.
     assert len(providers) == 41
-    assert scores.height == 1_836_362
+    assert scores.height == 1_645_421
     assert queued.height == 6
 
 

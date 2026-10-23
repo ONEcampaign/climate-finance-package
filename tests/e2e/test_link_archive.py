@@ -49,6 +49,14 @@ KEY_RULES_LINKED_USD = {
     "canonical_crs_id": 0.242025595e9,
     # The project-number tiers compare numbers without `-` and `_` (`pn_key`).
     "pn_key": 1.711175508e9,
+    # Each project-number tier asks for one crs id over its own key
+    # (`Tier.unique_by`), so the purpose tier links a number filed under several
+    # crs ids across purposes in one recipient: AsDB loans, US awards, Canadian
+    # lines.
+    "unique_by": 25.000660969e9,
+    # `pn_recipient_date` links a disbursement to the one commitment unit under its
+    # number and recipient whose commitment date it repeats.
+    "pn_recipient_date": 9.642897127e9,
 }
 _PERIOD_KEY = ["donor_code", "agency_code", "period"]
 

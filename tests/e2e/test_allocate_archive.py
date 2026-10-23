@@ -72,18 +72,35 @@ KEY_TIERS_RELEASE_MOVED_BN = {
     "no_disbursement_record": 0.0,
     "not_traceable": 0.0,
 }
+# Each project-number tier asks for one crs id over its own key (`Tier.unique_by`),
+# which links US awards and other donors' lines out of no record. The rows it moves
+# count the same under both rules.
+UNIQUE_BY_MOVED_BN = {
+    "disbursed": 0.14,
+    "partly_disbursed": 0.17,
+    "no_disbursement_record": -0.31,
+    "not_traceable": 0.0,
+}
+# `pn_recipient_date` puts German disbursements on the line whose commitment date
+# they repeat.
+DATE_TIER_MOVED_BN = {
+    "disbursed": 0.12,
+    "partly_disbursed": -0.08,
+    "no_disbursement_record": -0.04,
+    "not_traceable": 0.0,
+}
 # The reference links by key alone. The truth-group classifier (`link.score`) links
 # disbursements the keys left to commitments, which moves value out of no record.
 CLASSIFIER_MOVED_BN = {
-    "disbursed": 0.16,
-    "partly_disbursed": 0.03,
-    "no_disbursement_record": -0.19,
+    "disbursed": 0.03,
+    "partly_disbursed": 0.11,
+    "no_disbursement_record": -0.15,
     "not_traceable": 0.0,
 }
 CLASSIFIER_RELEASE_MOVED_BN = {
-    "disbursed": 0.16,
-    "partly_disbursed": 0.04,
-    "no_disbursement_record": -0.19,
+    "disbursed": 0.03,
+    "partly_disbursed": 0.12,
+    "no_disbursement_record": -0.15,
     "not_traceable": 0.0,
 }
 # With aggregate children counted and their parents left out (the release rule).
@@ -97,15 +114,17 @@ RELEASE_RULE_BN = {
 # as the reference counts, by provider category (USD bn). The `wb_loan` tier already
 # reaches the World Bank commitments the rules would, so the rules move no IBRD or
 # IDA value. Both builds carry classifier links. In the build without the rules, the
-# classifier already lifts USD 0.12 bn of bilateral rows out of no record through
+# classifier already lifts USD 0.08 bn of bilateral rows out of no record through
 # commitments the rules reach, so the rules move that much less. A number committed
 # in several countries links within the disbursement's recipient and purpose
 # (`_programmes`); on the number alone a disbursement would reach more than
 # `MAX_COMMITMENTS` commitments and link to none. US numbers of that kind carry
-# USD 0.57 bn of the bilateral figure. Rounded AfDB project
+# USD 0.44 bn of the bilateral figure; the purpose tier's own guard
+# (`Tier.unique_by`) already links USD 0.20 bn more US value in the build without
+# the rules. Rounded AfDB project
 # numbers are null, so `repair_title_recipient` also takes AfDB commitments whose
 # disbursement units spell one rounded number two ways (USD 0.11 bn).
-REPAIR_MOVED_BN = {"bilateral": 1.18, "banks": 2.16}
+REPAIR_MOVED_BN = {"bilateral": 0.91, "banks": 2.16}
 REPAIR_TOLERANCE_BN = 0.05
 _CATEGORY = {
     "DAC member": "bilateral",
@@ -251,6 +270,8 @@ def test_statuses_reproduce_the_reference_without_recoveries(
         + FIRST_ROWS_MOVED_BN[status]
         + LOAN_TIER_MOVED_BN[status]
         + KEY_TIERS_MOVED_BN[status]
+        + UNIQUE_BY_MOVED_BN[status]
+        + DATE_TIER_MOVED_BN[status]
         + CLASSIFIER_MOVED_BN[status]
         for status, usd_bn in reference.select("status", "usd_bn").iter_rows()
     }
@@ -269,6 +290,8 @@ def test_statuses_under_the_release_rule(base: Path) -> None:
     expected = {
         status: usd_bn
         + KEY_TIERS_RELEASE_MOVED_BN[status]
+        + UNIQUE_BY_MOVED_BN[status]
+        + DATE_TIER_MOVED_BN[status]
         + CLASSIFIER_RELEASE_MOVED_BN[status]
         for status, usd_bn in RELEASE_RULE_BN.items()
     }

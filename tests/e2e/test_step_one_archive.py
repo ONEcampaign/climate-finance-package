@@ -49,14 +49,30 @@ KEY_TIERS_MOVED_BN = {
     "no_disbursement_record": -0.0185,
     "not_traceable": -0.0041,
 }
-# The target links by key alone. The truth-group classifier (`link.score`) links
-# disbursements the keys left to commitments, which moves value out of no record and
-# not traceable into disbursed and partly disbursed.
-CLASSIFIER_MOVED_BN = {
-    "disbursed": 0.1704,
-    "partly_disbursed": 0.0230,
-    "no_disbursement_record": -0.1928,
+# Each project-number tier asks for one crs id over its own key (`Tier.unique_by`),
+# which links US awards and other lines out of no record.
+UNIQUE_BY_MOVED_BN = {
+    "disbursed": 0.1426,
+    "partly_disbursed": 0.1663,
+    "no_disbursement_record": -0.3080,
+    "not_traceable": -0.0009,
+}
+# `pn_recipient_date` puts German disbursements on the line whose commitment date
+# they repeat.
+DATE_TIER_MOVED_BN = {
+    "disbursed": 0.1248,
+    "partly_disbursed": -0.0817,
+    "no_disbursement_record": -0.0424,
     "not_traceable": -0.0007,
+}
+# The target links by key alone. The truth-group classifier (`link.score`) links
+# disbursements the keys left to commitments, which moves value out of no record
+# into disbursed and partly disbursed.
+CLASSIFIER_MOVED_BN = {
+    "disbursed": 0.0393,
+    "partly_disbursed": 0.1129,
+    "no_disbursement_record": -0.1522,
+    "not_traceable": 0.0,
 }
 TOLERANCE_BN = 0.001
 
@@ -141,6 +157,8 @@ def test_step_one_matches_the_target_plus_the_gef_crosswalk(
         + LOAN_TIER_MOVED_BN[status]
         + GEF_CROSSWALK_BN.get(status, 0.0)
         + KEY_TIERS_MOVED_BN[status]
+        + UNIQUE_BY_MOVED_BN[status]
+        + DATE_TIER_MOVED_BN[status]
         + CLASSIFIER_MOVED_BN[status]
         for status, usd_bn in STEP_ONE_BN.items()
     }
