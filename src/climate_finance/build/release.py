@@ -10,6 +10,12 @@ with an aggregate parent left out where its rebuilt children stand in for it. Ro
 that repeat an earlier vintage (`repeat_of`) stay in `commitments` with their
 amounts; `quality` and `disbursement_profile` leave them out of their totals, and
 `quality.repeat_climate_usd` reports them as their own line.
+
+The release leaves out the Green Climate Fund's own records, whose terms bar
+redistribution: `disbursements` drops its fill rows (`schema.withheld_record`), and
+each commitment they reached states their amount as `withheld_usd`, so its
+disbursed amounts and `quality` keep them. `sources.json` notes the sources whose
+rows stay out (`WITHHELD_SOURCES`).
 """
 
 from __future__ import annotations
@@ -57,6 +63,7 @@ from climate_finance.schema import (
     aggregate_channels,
     release_invariants,
     sha256_file,
+    withheld_record,
 )
 from climate_finance.snapshot import IndexEntry, ReleaseIndex, release_dirname
 
@@ -109,6 +116,14 @@ SOURCE_LICENCES = {
     "btr": "UNFCCC terms of use: public domain with source acknowledged, "
     "https://unfccc.int/this-site/terms-of-use",
 }
+# Sources whose rows the release leaves out (`schema.WITHHELD_RECORD_PREFIXES`), by
+# `raw_manifest` source name or the start of one, and the note `sources.json` gives
+# them.
+WITHHELD_SOURCES = ("gcf_projects", "ledger_gcf")
+WITHHELD_NOTE = (
+    "Green Climate Fund rows are left out of the release, as its terms bar "
+    "redistribution; `cf-build` rebuilds them from the GCF's API."
+)
 # The file in a pack that lists each source with its version, URLs and licence.
 SOURCES_FILE = "sources.json"
 # The CRS amount column behind each flow of `total_flows`.
@@ -163,7 +178,6 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
     status = context.read("review", "commitments")
     objectives = context.read("label", "objectives")
 
-    commitments = release_commitments(crdf, status=status).collect()
     disbursements = release_disbursements(
         allocations,
         crdf=crdf,
@@ -171,9 +185,13 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         units=context.read("link", "units"),
         links=links,
     ).collect()
+    withheld = withheld_record(pl.col("record_id"))
+    commitments = release_commitments(
+        crdf, status=status, withheld=disbursements.lazy().filter(withheld)
+    ).collect()
     return {
         "commitments": commitments,
-        "disbursements": disbursements,
+        "disbursements": disbursements.filter(~withheld),
         "objectives": objectives.collect(),
         "agency_shares": context.read("measure", "agency_shares").collect(),
         "modelled": context.read("measure", "modelled").collect(),
@@ -199,8 +217,14 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
     }
 
 
-def release_commitments(crdf: pl.LazyFrame, *, status: pl.LazyFrame) -> pl.LazyFrame:
-    """The CRDF rows allocation follows, with their status and disbursed amounts."""
+def release_commitments(
+    crdf: pl.LazyFrame, *, status: pl.LazyFrame, withheld: pl.LazyFrame
+) -> pl.LazyFrame:
+    """The CRDF rows allocation follows, with their status and disbursed amounts, and
+    as `withheld_usd` the sum of their `withheld` disbursements rows."""
+    withheld_usd = withheld.group_by("row_id").agg(
+        withheld_usd=ordered_sum(pl.col("allocated_usd"))
+    )
     return (
         counted_rows(crdf)
         .join(
@@ -216,6 +240,8 @@ def release_commitments(crdf: pl.LazyFrame, *, status: pl.LazyFrame) -> pl.LazyF
             how="left",
             validate="1:1",
         )
+        .join(withheld_usd, on="row_id", how="left", validate="1:1")
+        .with_columns(pl.col("withheld_usd").fill_null(0.0))
         .select(list(COMMITMENTS.columns))
     )
 
@@ -592,7 +618,8 @@ def pack_release(release_dir: Path, *, out_path: Path) -> Path:
     The pack holds one directory, `climate-finance-<release>/`, with the release
     tables, `release.json` and `sources.json`. `sources.json` lists every source the
     fetch stage recorded, and `btr` when the release holds BTR rows, each with its
-    version, URLs and licence. Members go in name order with fixed owners and the
+    version, URLs and licence, and a note on each source whose rows the release
+    leaves out. Members go in name order with fixed owners and the
     release's creation time, so one release packs to the same bytes.
 
     Raises:
@@ -632,7 +659,8 @@ def release_sources(
     raw_manifest: pl.DataFrame, *, versions: Mapping[str, str], btr_rows: int
 ) -> list[dict[str, object]]:
     """Each source in `raw_manifest`, and `btr` when `btr_rows` is positive, with its
-    version from `versions`, its URLs and its licence.
+    version from `versions`, its URLs and its licence, and `WITHHELD_NOTE` as `note`
+    for a source in `WITHHELD_SOURCES`.
 
     Raises:
         BuildError: when a source has no entry in `SOURCE_LICENCES`.
@@ -651,6 +679,7 @@ def release_sources(
             "version": versions.get(source),
             "urls": urls[source],
             "licence": _licence(source),
+            **({"note": WITHHELD_NOTE} if source.startswith(WITHHELD_SOURCES) else {}),
         }
         for source in sorted(urls)
     ]

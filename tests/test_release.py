@@ -1,13 +1,16 @@
 """The assemble stage on hand-built normalised tables, run through the stage runner
 from link to assemble, and the fill and review pass-through."""
 
+import json
 import shutil
+import tarfile
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
 import polars as pl
+import pyarrow as pa
 import pytest
 from normalised import crdf_rows, crs_records
 
@@ -73,6 +76,8 @@ CORE = pl.DataFrame(
     schema={name: c.dtype for name, c in schema.CORE_CONTRIBUTIONS.columns.items()},
 )
 LATER_STAGES = ("link", "allocate", "fill", "review", "label", "assemble")
+_DISBURSED = ("disbursed_usd", "disbursed_low_usd", "disbursed_high_usd")
+SOURCES = release.SOURCES_FILE
 
 
 def _empty(table: schema.TableSchema) -> pl.DataFrame:
@@ -281,6 +286,94 @@ def test_quality_counts_repeats_on_their_own_line(release_dir: Path) -> None:
     assert rebuilt.select("disbursed_climate_usd", "certain_disbursed_climate_usd").row(
         0
     ) == pytest.approx((40.0, 24.0))
+
+
+def test_the_release_leaves_out_gcf_rows_and_keeps_what_they_disbursed(
+    release_dir: Path, config: BuildConfig, tmp_path: Path
+) -> None:
+    # In 2021 the GCF's ledger fills C with 10 and its CC0 IATI files with 5.
+    fills = pl.DataFrame(
+        {
+            "row_id": ["C", "C"],
+            "record_id": ["ledger:gcf:FP001:2021", "iati:gcf:FP001:2021"],
+            "year": [2021, 2021],
+            "allocated_usd": [10.0, 5.0],
+            "allocated_low_usd": [10.0, 5.0],
+            "allocated_high_usd": [10.0, 5.0],
+            "rule": ["bank_ledger", "iati"],
+            "disbursement_source": ["bank_ledger", "iati"],
+        },
+        schema_overrides={"year": pl.Int16},
+    )
+    allocations = pl.read_parquet(table_path(release_dir, "fill", "allocations"))
+    _write(release_dir, "fill", {"allocations": pl.concat([allocations, fills])})
+    is_c = pl.col("row_id") == "C"
+    status = pl.read_parquet(table_path(release_dir, "review", "commitments"))
+    _write(
+        release_dir,
+        "review",
+        {
+            "commitments": status.with_columns(
+                status=pl.when(is_c)
+                .then(pl.lit("partly_disbursed"))
+                .otherwise("status"),
+                **{
+                    column: pl.when(is_c).then(15.0).otherwise(column)
+                    for column in _DISBURSED
+                },
+            )
+        },
+    )
+    manifest = pl.read_parquet(table_path(release_dir, "fetch", "raw_manifest"))
+    _write(
+        release_dir,
+        "fetch",
+        {
+            "raw_manifest": pl.concat(
+                [
+                    manifest,
+                    *(
+                        manifest.with_columns(source=pl.lit(source))
+                        for source in ("gcf_projects", "iati_gcf")
+                    ),
+                ]
+            )
+        },
+    )
+
+    run_stages(
+        REGISTRY, release="r", release_dir=release_dir, config=config,
+        stages=["assemble"],
+    )  # fmt: skip
+    pack = release.pack_release(release_dir, out_path=tmp_path / "r.tar.zst")
+
+    with (
+        pa.input_stream(str(pack), compression="zstd") as stream,
+        tarfile.open(fileobj=stream, mode="r|") as tar,
+    ):
+        packed = {Path(m.name).name: tar.extractfile(m).read() for m in tar}
+    disbursements = pl.read_parquet(packed["disbursements.parquet"])
+    assert disbursements.filter(is_c)["record_id"].to_list() == ["iati:gcf:FP001:2021"]
+    c = pl.read_parquet(packed["commitments.parquet"]).row(
+        by_predicate=is_c, named=True
+    )
+    assert (c["status"], c["disbursed_usd"], c["withheld_usd"]) == (
+        "partly_disbursed",
+        15.0,
+        10.0,
+    )
+    # Disbursements rows conserve against the commitment once its withheld part adds.
+    shipped = disbursements.filter(is_c)["allocated_usd"].sum()
+    assert shipped + c["withheld_usd"] == c["disbursed_usd"]
+    # Quality keeps the GCF fill: C's 15 of 25 is all climate, beside R1's 40.
+    quality = pl.read_parquet(packed["quality.parquet"])
+    assert quality["disbursed_climate_usd"].sum() == 55.0
+    notes = {row["source"]: row.get("note") for row in json.loads(packed[SOURCES])}
+    assert notes == {
+        "crs": None,
+        "gcf_projects": release.WITHHELD_NOTE,
+        "iati_gcf": None,
+    }
 
 
 def test_core_contributions_count_disbursements_as_grant_equivalent(
