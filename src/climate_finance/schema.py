@@ -87,7 +87,12 @@ SHARE_OBJECTIVES = (*OBJECTIVES, "climate")
 LABEL_SOURCES = ("crdf", "marker", "jev")
 # How a disbursement's own Rio markers relate to the ones it inherits.
 MARKER_SOURCES = ("components", "commitment", "record_differs")
-PAIR_LABEL_SOURCES = ("key", "rule", "jev", "human", "ledger")
+PAIR_LABEL_SOURCES = ("key", "rule", "jev", "human", "agent", "ledger")
+# Who decides a review pair: a person, or an agent reading a labelling packet.
+DECIDERS = ("human", "agent")
+# An agent's labelling rounds: the first label, a second label for a pair whose
+# first label is unsure, and an adjudication with ids visible.
+LABEL_ROUNDS = ("label", "second", "adjudicate")
 ID_PRACTICE_CLASSES = (
     "id_persistent",
     "parent_id_persistent",
@@ -645,10 +650,13 @@ PAIR_LABELS = _table(
     pair_label_source=_str(values=PAIR_LABEL_SOURCES),
 )
 
-# People's decisions on queued pairs and blind-sample pairs, appended over time. A
-# decision carries the queue's `review_reason` or the blind sample's `sample_id`,
-# never both: queue decisions become `human` labels and link overrides, and
-# blind-sample decisions only measure precision.
+# Decisions on queued pairs and blind-sample pairs, appended over time. A decision
+# carries the queue's `review_reason` or the blind sample's `sample_id`, never both:
+# queue decisions become pair labels and link overrides, and blind-sample decisions
+# only measure precision. `label_source` says whether a person or an agent decided;
+# an agent's decision names its `model`, its `confidence` that the pair matches, and
+# its labelling `round`. `reviewer` names the person or the agent run, and `note`
+# holds the stated reason.
 REVIEW_DECISIONS = _table(
     "review_decisions",
     ("task", "left_id", "right_id", "decided_at"),
@@ -656,7 +664,11 @@ REVIEW_DECISIONS = _table(
     left_id=_str(),
     right_id=_str(nullable=True),
     decision=_str(values=DECISIONS),
+    label_source=_str(values=DECIDERS),
     reviewer=_str(),
+    model=_str(nullable=True),
+    confidence=_f64(nullable=True),
+    round=_str(nullable=True, values=LABEL_ROUNDS),
     note=_str(nullable=True),
     review_reason=_str(nullable=True, values=REVIEW_REASONS),
     sample_id=_str(nullable=True),

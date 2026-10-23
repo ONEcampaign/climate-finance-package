@@ -26,7 +26,7 @@ from climate_finance.build.link.splink_models import (
     SplinkResult,
     isotonic_map,
     pair_request,
-    read_human_labels,
+    read_decision_labels,
     score_with_splink,
     stratified_sample,
     with_labelled_m,
@@ -365,19 +365,21 @@ def test_a_model_too_small_to_fit_scores_nothing(tmp_path: Path) -> None:
 
 def test_people_s_decisions_are_human_labels(tmp_path: Path) -> None:
     path = tmp_path / "review_decisions.parquet"
-    assert read_human_labels(path).is_empty()
+    assert read_decision_labels(path).is_empty()
     pl.DataFrame(
         {
             "task": ["trace", "trace", "trace", "crdf_crs", "trace"],
             "left_id": ["b", "a", "b", "c", "a"],
             "right_id": ["y", "x", "y", None, "x"],
             "decision": ["reject", "accept", "accept", "reject", "reject"],
+            "label_source": "human",
+            "round": pl.Series([None] * 5, dtype=pl.String),
             "review_reason": ["band", "calibration", "band", "over_face", None],
             "sample_id": [None, None, None, None, "s1"],
             "decided_at": [datetime(2026, 11, d, tzinfo=UTC) for d in (2, 1, 1, 1, 3)],
         }
     ).write_parquet(path)
-    labels = read_human_labels(path)
+    labels = read_decision_labels(path)
     schema.validate(schema.PAIR_LABELS, labels.drop("stratified"))
     # The later decision on b stands; c names no commitment; the blind-sample
     # decision on a, though later, is no label. Only a's calibration pair was drawn.

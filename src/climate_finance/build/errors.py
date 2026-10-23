@@ -50,7 +50,12 @@ class LinkInputError(BuildError):
 
 
 class ReviewDecisionsError(BuildError):
-    """A reviewed CSV whose decided rows cannot be recorded."""
+    """Decisions that cannot be recorded, such as a labels CSV whose pairs do not
+    match the packet it answers."""
+
+
+class LabelPacketError(BuildError):
+    """A labelling packet that cannot be rendered as asked."""
 
 
 class ReleaseInvariantError(BuildError):

@@ -25,7 +25,7 @@ from climate_finance.build.link.key_repair import repair_keys
 from climate_finance.build.link.keys import build_units, link_by_keys
 from climate_finance.build.link.score import provider_profile, score_candidates
 from climate_finance.build.link.splink_models import (
-    read_human_labels,
+    read_decision_labels,
     score_with_splink,
 )
 from climate_finance.build.normalise.crs import trace_population
@@ -53,11 +53,11 @@ def run_link(context: StageContext) -> StageOutput:
     classifier links what it scores at or above its threshold. Splink scores the
     other groups' pairs into `pair_scores`, calibrated by people's recorded
     decisions and Jev. Each trace link records whether its two sides disagree on
-    recipient or project number (`flag_disagreement`). People's queue decisions
-    then override the links they decided (`override_links`).
+    recipient or project number (`flag_disagreement`). People's and agents'
+    queue decisions then override the links they decided (`override_links`).
     """
     config = context.config
-    human = read_human_labels(config.sources.review_decisions)
+    decided = read_decision_labels(config.sources.review_decisions)
     crs = context.read("normalise", "crs")
     crdf = context.read("normalise", "crdf").filter(perspective="recipient")
     population = trace_population(crs)
@@ -129,13 +129,13 @@ def run_link(context: StageContext) -> StageOutput:
         crs=population,
         stems=stems,
         provider_profile=scored.profile,
-        labels=human,
+        labels=decided,
         client=context.jev,
     )
     return {
         "links": override_links(
             flag_disagreement(pl.concat([links, scored.links]), units=units),
-            labels=human,
+            labels=decided,
         ),
         "units": units,
         "id_practice": id_practice,
