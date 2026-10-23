@@ -222,9 +222,11 @@ def test_jev_adjudicates_the_band_and_the_combination_links(
     rows = _rows()
     client = _client(tmp_path, monkeypatch)
     band = _adjudicate(rows, client)
-    # Donor 1's 46 training band pairs and the two eligible band pairs; not the
-    # out-of-band, held-out, sibling or donor 2's pairs.
-    assert client.live_calls == 48
+    # Donor 1's 47 training pairs (the band's 46 and, for the Splink scale, the
+    # out-of-band one) and the two eligible band pairs; not the eligible pairs out
+    # of the band, the held-out or sibling pairs, or donor 2's, which is not
+    # single-id.
+    assert client.live_calls == 49
     assert band.answers["left_id"].to_list() == ["d061", "d062"]
     assert band.answers["p_jev"].to_list() == [0.9, 0.1]
     expected = band.answers.join(
@@ -264,7 +266,7 @@ def test_an_offline_build_refuses_a_cache_miss(
     client = _client(tmp_path, monkeypatch, offline=True, respond=_refuse)
     with pytest.raises(JevCacheMissError) as error:
         _adjudicate(_rows(), client)
-    assert error.value.misses == 48
+    assert error.value.misses == 49
 
 
 def test_the_cost_cap_refuses_the_whole_band(

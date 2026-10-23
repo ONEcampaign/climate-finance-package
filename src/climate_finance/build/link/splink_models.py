@@ -65,7 +65,12 @@ from splink import DuckDBAPI, Linker, SettingsCreator
 from splink.internals.comparison import Comparison
 
 from climate_finance import schema
-from climate_finance.build.link.jev import CalibrationAnswers, ask_jev, fit_logistic
+from climate_finance.build.link.jev import (
+    CalibrationAnswers,
+    ask_jev,
+    fit_logistic,
+    spread_sample,
+)
 from climate_finance.build.link.levels import (
     LEVELS,
     comparison_levels,
@@ -74,7 +79,6 @@ from climate_finance.build.link.levels import (
     unit_attributes,
 )
 from climate_finance.build.link.score import best_commitments
-from climate_finance.build.normalise.ids import content_id
 
 if TYPE_CHECKING:
     from climate_finance.build.jev_client import JevClient
@@ -616,16 +620,9 @@ def stratified_sample(scores: pl.DataFrame, *, n: int) -> pl.DataFrame:
     its share gives all its pairs and the others make up the rest.
 
     Within a band, pairs are taken in the order of a digest of their ids, so every
-    build draws the same pairs from the same scores.
+    build draws the same pairs from the same scores (`jev.spread_sample`).
     """
-    order = content_id(["left_id", "right_id"], order_by=["left_id", "right_id"])
-    return (
-        scores.with_columns(band=_band(), order=order)
-        .with_columns(rank=pl.col("order").rank("ordinal").over("band"))
-        .sort("rank", "band")
-        .head(n)
-        .drop("band", "order", "rank")
-    )
+    return spread_sample(scores, band=_band(), n=n)
 
 
 def _band() -> pl.Expr:

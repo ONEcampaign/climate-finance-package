@@ -8,16 +8,23 @@ request is built from the canonical bulk fields of `levels.unit_attributes`, and
 client's cache keys on its canonical text.
 
 `adjudicate_band` asks Jev about the truth-group classifier's eligible pairs whose
-calibrated probability lies in `jev.band`, `[low, high)`, and about the training
-half's band pairs of single-id donors (`single_id_donors`). On those training pairs,
-labelled by id truth, it fits two logistic regressions: one on logit(model) and
-logit(Jev), which gives an eligible band pair its final probability, and one on
-logit(Jev) alone, the scale that turns Jev's answers on a Splink model's calibration
-sample into labels (`jev_answers`). A band pair links when its final probability
-reaches the threshold that maximises F1 on the training pairs. Every request goes
-to the client in one batch, so the cost cap refuses all of it or none.
+calibrated probability lies in `jev.band`, `[low, high)`, and about two sets of
+training-half pairs of single-id donors (`single_id_donors`), labelled by id truth:
 
-Siblings (`programme_level` 1) never link, so Jev is not asked about them.
+- the band pairs, on which a logistic regression of the label on logit(model) and
+  logit(Jev) gives an eligible band pair its final probability. A band pair links
+  when that probability reaches the threshold that maximises F1 on these pairs.
+- `SCALE_SAMPLE` pairs spread over the bands of the classifier's probability
+  (`SCALE_BANDS`), on which a logistic regression of the label on logit(Jev) alone
+  is the scale that turns Jev's answers on a Splink model's calibration sample into
+  labels (`jev_answers`). A Splink calibration sample spreads over EM match weight,
+  from pairs that share nothing to pairs that share everything, so the scale is
+  fitted on pairs spread the same way. Fitted on band pairs alone, where Jev
+  separates weakly, its slope was 0.31 and no Splink probability reached 0.9.
+
+Every request goes to the client in one batch, so the cost cap refuses all of it or
+none. Siblings (`programme_level` 1) never link, so Jev is not asked about band
+siblings; the scale sample keeps them, as a Splink calibration sample does.
 """
 
 from __future__ import annotations
@@ -38,6 +45,7 @@ from climate_finance.build.link.score import (
     TruthScores,
     best_threshold,
 )
+from climate_finance.build.normalise.ids import content_id
 
 if TYPE_CHECKING:
     from climate_finance.build.jev_client import JevClient
@@ -89,8 +97,12 @@ LOGIT_CLIP = 1e-3
 # calls pairs that Jev rightly reads as one activity different, and those donors
 # stay out of the fit.
 SINGLE_ID_SHARE = 0.5
-# The fewest training band pairs of each outcome the fit needs.
+# The fewest training pairs of each outcome either fit needs.
 MIN_FIT_OUTCOMES = 5
+# Training pairs Jev answers for the Splink scale, spread over the classifier's
+# probability in the bands these edges bound.
+SCALE_SAMPLE = 1_000
+SCALE_BANDS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 # The project number level of two units under the same number (`levels`).
 _SAME_PN = 3
 _SIBLING = 1
@@ -142,7 +154,8 @@ class JevBand:
 
     `answers` holds each eligible band pair's `p_jev` and final `p_combined`, which
     links when it reaches `threshold`. `scale` maps Jev's answer alone to a
-    probability, and `model` names the Jev model that answered.
+    probability, fitted on the scale sample, and `model` names the Jev model that
+    answered.
     """
 
     answers: pl.DataFrame
@@ -172,8 +185,8 @@ def adjudicate_band(
         client: the build's Jev client.
 
     Raises:
-        JevFitError: when the training band pairs of single-id donors hold fewer
-            than `MIN_FIT_OUTCOMES` of either outcome.
+        JevFitError: when the training band pairs or the scale sample of single-id
+            donors hold fewer than `MIN_FIT_OUTCOMES` of either outcome.
         CostCapExceededError: when the uncached requests' estimate exceeds the cap.
         JevCacheMissError: when the build is offline and a request is not cached.
     """
@@ -182,21 +195,29 @@ def adjudicate_band(
     in_band = pl.col("p_model").is_between(low, high, closed="left") & (
         pl.col("programme_level") != _SIBLING
     )
-    fit_on = pairs.filter(
-        in_band,
+    labelled = pairs.filter(
         pl.col("split") == TRAIN,
         pl.col("donor_code").is_in(single_id_donors(pairs).implode()),
-    ).select(*_PAIR, "p_model", y="true_pair")
-    outcomes = int(fit_on["y"].sum())
-    if min(outcomes, fit_on.height - outcomes) < MIN_FIT_OUTCOMES:
-        raise JevFitError(
-            f"{fit_on.height} training band pairs of single-id donors, {outcomes} "
-            f"true: Jev's scale needs {MIN_FIT_OUTCOMES} of each outcome."
-        )
+    ).select(*_PAIR, "p_model", "programme_level", y="true_pair")
+    fit_on = labelled.filter(in_band).drop("programme_level")
+    scale_on = spread_sample(
+        labelled, band=probability_band(pl.col("p_model")), n=SCALE_SAMPLE
+    ).select(*_PAIR, "p_model", "y")
+    for name, frame in (("training band pairs", fit_on), ("scale pairs", scale_on)):
+        outcomes = int(frame["y"].sum())
+        if min(outcomes, frame.height - outcomes) < MIN_FIT_OUTCOMES:
+            raise JevFitError(
+                f"{frame.height} {name} of single-id donors, {outcomes} true: the "
+                f"fit needs {MIN_FIT_OUTCOMES} of each outcome."
+            )
     eligible = pairs.filter(in_band, pl.col("split") == ELIGIBLE).select(
         *_PAIR, "p_model"
     )
-    asked = pl.concat([eligible, fit_on.drop("y")]).sort(_PAIR)
+    asked = (
+        pl.concat([eligible, fit_on.drop("y"), scale_on.drop("y")])
+        .unique(_PAIR)
+        .sort(_PAIR)
+    )
     ids = pl.concat([asked["left_id"], asked["right_id"]]).unique()
     attributes = unit_attributes(
         units.filter(pl.col("unit_id").is_in(ids.implode())), crs=crs, stems=stems
@@ -216,9 +237,34 @@ def adjudicate_band(
         .sort(_PAIR),
         combined=combined,
         threshold=best_threshold(p_fitted.to_numpy(), y, n_true=int(y.sum())),
-        scale=fit_logistic(fitted, inputs=["p_jev"], y="y"),
+        scale=fit_logistic(
+            scale_on.join(answered, on=_PAIR).sort(_PAIR), inputs=["p_jev"], y="y"
+        ),
         model=client.model,
     )
+
+
+def spread_sample(frame: pl.DataFrame, *, band: pl.Expr, n: int) -> pl.DataFrame:
+    """`n` rows of `frame` spread evenly over the values of `band`: the first pair
+    of every band, then the second, and so on, so a band smaller than its share
+    gives all its pairs and the others make up the rest.
+
+    Within a band, pairs are taken in the order of a digest of their ids, so every
+    build draws the same pairs from the same frame.
+    """
+    order = content_id(_PAIR, order_by=_PAIR)
+    return (
+        frame.with_columns(_band=band, _order=order)
+        .with_columns(_rank=pl.col("_order").rank("ordinal").over("_band"))
+        .sort("_rank", "_band")
+        .head(n)
+        .drop("_band", "_order", "_rank")
+    )
+
+
+def probability_band(p: pl.Expr) -> pl.Expr:
+    """The band of `SCALE_BANDS` a probability falls in, from 0."""
+    return pl.sum_horizontal(p >= edge for edge in SCALE_BANDS)
 
 
 def single_id_donors(pairs: pl.DataFrame) -> pl.Series:

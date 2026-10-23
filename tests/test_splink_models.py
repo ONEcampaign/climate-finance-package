@@ -215,6 +215,8 @@ class Run:
     result: SplinkResult
     scores: pl.DataFrame
     client: JevClient
+    # The labels each calibrated model weighed (`_band_weights`), concatenated.
+    weighed: pl.DataFrame
 
 
 def _run(
@@ -227,8 +229,16 @@ def _run(
     """Score both donors, with Jev answering through `_responses` and `answer`,
     given the client, answering calibration samples. `scores` adds each pair's
     truth `y`."""
+    weighed = []
+    band_weights = splink_models._band_weights
+
+    def record(scores: pl.DataFrame, labels: pl.DataFrame) -> pl.DataFrame:
+        weighed.append(labels)
+        return band_weights(scores, labels)
+
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv("TYPESAFE_API_KEY", "test")
+        patch.setattr(splink_models, "_band_weights", record)
         client = JevClient(
             model=MODEL,
             cost_cap_usd=10.0,
@@ -252,7 +262,12 @@ def _run(
         world["candidates"].select("left_id", "right_id", "y"),
         on=["left_id", "right_id"],
     )
-    return Run(result=result, scores=scores, client=client)
+    return Run(
+        result=result,
+        scores=scores,
+        client=client,
+        weighed=pl.concat(weighed) if weighed else pl.DataFrame(),
+    )
 
 
 # Slow: each run fits two Splink models, about 5 s on an idle machine.
@@ -358,6 +373,10 @@ def test_jev_answers_the_calibration_samples_and_the_models_link(
     assert scores["probability"].null_count() == 0
     assert scores["review_reason"].null_count() == scores.height
     assert set(scores["label_set"]) == {f"human:0,jev:{CALIBRATION_LABELS}"}
+    # `stratified_sample` drew every label Jev gave, so each takes its band's
+    # inverse-probability weight.
+    assert run.weighed.height == CALIBRATION_LABELS * len(reports)
+    assert run.weighed["stratified"].all()
 
     links = splink_links(
         run.result.scores,
