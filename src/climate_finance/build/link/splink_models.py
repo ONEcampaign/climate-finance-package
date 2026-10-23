@@ -202,8 +202,8 @@ def score_with_splink(
         provider_profile: each provider's `scoring_group`. A `splink` provider
             gets its own model and a `pooled_splink` provider the pooled model.
         labels: pair labels in the `pair_labels` schema with `stratified`, as
-            `read_human_labels` gives them; the `human` labels of task `trace`
-            calibrate.
+            `read_decision_labels` gives them; the `human` and `agent` labels of
+            task `trace` calibrate.
         client: the build's Jev client.
         answer: what answers the calibration sample of a model with fewer than
             `CALIBRATION_LABELS` people's labels (`jev.jev_answers`); None leaves
@@ -227,7 +227,9 @@ def score_with_splink(
         units.filter(pl.col("unit_id").is_in(unit_ids.implode())), crs=crs, stems=stems
     )
     human = (
-        labels.filter(task="trace", pair_label_source="human")
+        labels.filter(
+            pl.col("pair_label_source").is_in(["human", "agent"]), task="trace"
+        )
         .select(
             "left_id", "right_id", "stratified", y=pl.col("is_match").cast(pl.Float64)
         )
@@ -274,10 +276,13 @@ def score_with_splink(
     )
 
 
-def read_human_labels(path: Path) -> pl.DataFrame:
-    """People's queue decisions at `path` as `pair_labels` rows with source `human`,
-    the latest decision on each pair; none when no decision has been recorded yet.
+def read_decision_labels(path: Path) -> pl.DataFrame:
+    """People's and agents' queue decisions at `path` as `pair_labels` rows with
+    source `human` or `agent`, one per pair; none when nothing has been decided yet.
 
+    Of an agent's decisions on a pair, the latest round stands (`LABEL_ROUNDS`
+    order), then the latest decided. A person's decision stands over an agent's
+    standing decision made before it, and the latest decision stands among people.
     A blind-sample decision (one with a `sample_id`) measures precision, so it never
     becomes a label. `stratified` marks the decisions on calibration pairs, which
     `stratified_sample` drew, so only they take inverse-probability weights.
@@ -287,19 +292,31 @@ def read_human_labels(path: Path) -> pl.DataFrame:
     } | {"stratified": pl.Boolean()}
     if not path.exists():
         return pl.DataFrame(schema=columns)
-    return (
+    pair = ["task", "left_id", "right_id"]
+    rounds = {name: rank for rank, name in enumerate(schema.LABEL_ROUNDS)}
+    decided = (
         pl.read_parquet(path)
         .filter(pl.col("sample_id").is_null())
         .drop_nulls("right_id")
-        .sort("decided_at")
-        .unique(["task", "left_id", "right_id"], keep="last")
-        .sort("task", "left_id", "right_id")
+        .with_columns(
+            rank=pl.col("round").replace_strict(rounds, default=0, return_dtype=pl.Int8)
+        )
+    )
+    agent = (
+        decided.filter(label_source="agent")
+        .sort("rank", "decided_at", maintain_order=True)
+        .unique(pair, keep="last", maintain_order=True)
+    )
+    human = decided.filter(label_source="human")
+    return (
+        pl.concat([agent, human])
+        .sort("decided_at", maintain_order=True)
+        .unique(pair, keep="last")
+        .sort(pair)
         .select(
-            "task",
-            "left_id",
-            "right_id",
+            *pair,
             is_match=pl.col("decision") == "accept",
-            pair_label_source=pl.lit("human"),
+            pair_label_source="label_source",
             stratified=pl.col("review_reason") == CALIBRATION_REASON,
         )
         .cast(columns)  # ty: ignore[invalid-argument-type]
@@ -405,14 +422,14 @@ def _model(
             queued = sample.with_columns(review_reason=pl.lit(CALIBRATION_REASON))
             scores = scores.join(queued, on=_PAIR, how="left")
             return _Model(report=report, scores=scores)
-        # Answers that stand in for people's join their labels; Jev's stay apart.
+        # People's and agents' answers join the labels; Jev's stay apart.
         # `stratified_sample` drew both.
         given = answer(sample.sort(_PAIR), attributes).with_columns(
             stratified=pl.lit(True)
         )
-        by_people = given.filter(pair_label_source="human").select(
-            *_PAIR, "y", "stratified"
-        )
+        by_people = given.filter(
+            pl.col("pair_label_source").is_in(["human", "agent"])
+        ).select(*_PAIR, "y", "stratified")
         labelled = pl.concat(
             [labelled.select(*_PAIR, "y", "stratified"), by_people],
             how="vertical_relaxed",

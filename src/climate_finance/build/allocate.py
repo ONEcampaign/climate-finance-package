@@ -27,6 +27,15 @@ several methods enters one pass per group, in that order, and each later pass
 receives only what the earlier ones left: the exact key tiers first, then the
 key-repair rules. What the last pass leaves is excess.
 
+A disbursement record's own commitment in a group fills before the rest of the
+group (`_own_commitments`): the record itself where it also commits, else the one
+commitment record of the group whose real commitment date it carries and whose
+title shares at least `OWN_TITLE_SHARE` of its words. Each own commitment runs as a
+group of its own, in a pass just before the group's, so a donor that files a new
+module or phase under an old crs id keeps the new module's money on the new
+commitment, and the old module keeps its headroom. What the own commitment cannot
+take enters the group's pass.
+
 Two per-donor switches change the order. A dated donor's record dated in its own
 year fills that year's commitments first. A window donor's other records fill first
 the commitments whose expected start to completion window, plus `WINDOW_GRACE`
@@ -51,6 +60,8 @@ import polars as pl
 
 from climate_finance.build.errors import AllocationInputError
 from climate_finance.build.link.id_practice import period_of
+from climate_finance.build.link.keys import line_date
+from climate_finance.build.link.levels import title_words, word_share
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
 from climate_finance.schema import CERTAIN_METHODS, LINK_METHODS
@@ -75,6 +86,9 @@ DISBURSED_RATIO = 0.9
 NO_FLOOR_METHODS = ("crs_id_parent",)
 # Order offset that puts a commitment after every commitment-year order.
 _LATE = 10_000
+# A disbursement record's commitment record of the same real date is its own when
+# their titles share at least this word share.
+OWN_TITLE_SHARE = 0.5
 
 _PAIRS_SCHEMA = pl.Schema(
     {
@@ -365,20 +379,6 @@ def _trace_pairs(
             .otherwise(pl.lit("fifo")),
         )
     )
-    key = ["estimated", "year", "rank", "class_year"]
-    # A group's pass is certain when all its links are, since the pass pools the
-    # group's disbursement over all its commitments.
-    unit_pairs = unit_pairs.with_columns(
-        estimated=~pl.col("certain").all().over("group_id", *key[1:])
-    )
-    passes = (
-        unit_pairs.select(key)
-        .unique()
-        .sort(key, nulls_last=True)
-        .with_row_index("pass")
-    )
-    unit_pairs = unit_pairs.join(passes, on=key, nulls_equal=True)
-    _check_pooling(unit_pairs)
     commitments = (
         _commitment_records(units, crs=crs).sort("record_id").with_row_index("c_idx")
     )
@@ -389,25 +389,96 @@ def _trace_pairs(
         .select(d_unit="unit_id", record_id="record_id", amount="disbursement_usd")
         .collect()
     )
-    pairs = (
-        unit_pairs.join(records, on="d_unit")
-        .join(
-            commitments.select("c_idx", c_unit="unit_id"),
-            on="c_unit",
-        )
-        .select(
-            "pass",
-            "group_id",
-            "record_id",
-            "year",
-            "amount",
-            "c_idx",
-            "order",
-            "rule",
-            "certain",
-        )
+    pairs = unit_pairs.join(records, on="d_unit").join(
+        commitments.select("c_idx", c_unit="unit_id"), on="c_unit"
+    )
+    own = _own_commitments(pairs, commitments=commitments, crs=crs)
+    # Each own commitment is a group of its own, holding the records whose own it
+    # is, so it shares no commitment with another group of its pass, and it runs
+    # before the group's pass (`later`).
+    pairs = pl.concat(
+        [
+            pairs.join(own, on=["group_id", "record_id", "c_idx"]).with_columns(
+                group_id=pl.concat_str(
+                    [pl.col("group_id"), pl.lit("own"), pl.col("c_idx")],
+                    separator="|",
+                ),
+                later=pl.lit(value=False),
+            ),
+            pairs.with_columns(later=pl.lit(value=True)),
+        ]
+    )
+    key = ["estimated", "year", "rank", "class_year", "later"]
+    # A group's pass is certain when all its links are, since the pass pools the
+    # group's disbursement over all its commitments.
+    pairs = pairs.with_columns(
+        estimated=~pl.col("certain").all().over("group_id", *key[1:])
+    )
+    passes = (
+        pairs.select(key).unique().sort(key, nulls_last=True).with_row_index("pass")
+    )
+    pairs = pairs.join(passes, on=key, nulls_equal=True)
+    _check_pooling(
+        pairs.filter("later").select("pass", "group_id", "d_unit", "c_unit").unique()
+    )
+    pairs = pairs.select(
+        "pass",
+        "group_id",
+        "record_id",
+        "year",
+        "amount",
+        "c_idx",
+        "order",
+        "rule",
+        "certain",
     )
     return pairs, commitments
+
+
+def _own_commitments(
+    pairs: pl.DataFrame, *, commitments: pl.DataFrame, crs: pl.LazyFrame
+) -> pl.DataFrame:
+    """Each disbursement record's own commitment record in a group, as (group_id,
+    record_id, c_idx): the record itself where it also commits, else the one
+    commitment record of the group whose real commitment date (`line_date`) it
+    carries and whose title shares at least `OWN_TITLE_SHARE` of its words
+    (`word_share`). A record with two such commitments in a group has none there."""
+    reached = (
+        pairs.select("group_id", "record_id", "c_idx")
+        .unique()
+        .join(commitments.select("c_idx", c_record="record_id"), on="c_idx")
+    )
+    same = reached.filter(pl.col("record_id") == pl.col("c_record"))
+    rest = reached.join(same, on=["group_id", "record_id"], how="anti")
+    ids = pl.concat([rest["record_id"], rest["c_record"]]).unique().implode()
+    dates = (
+        crs.filter(pl.col("record_id").is_in(ids))
+        .select("record_id", date=line_date(pl.col("commitment_date")))
+        .drop_nulls("date")
+        .collect()
+    )
+    dated = rest.join(dates, on="record_id").join(
+        dates.rename({"record_id": "c_record"}), on=["c_record", "date"]
+    )
+    columns = ["group_id", "record_id", "c_idx"]
+    if dated.is_empty():
+        return same.select(columns)
+    # Each record read as a unit of its own, for its title words.
+    involved = pl.concat([dated["record_id"], dated["c_record"]]).unique()
+    words = title_words(
+        involved.to_frame("unit_id").with_columns(record_ids=pl.concat_list("unit_id")),
+        crs=crs,
+    )
+    agrees = word_share(pl.col("d_words"), pl.col("c_words")) >= OWN_TITLE_SHARE
+    matched = (
+        dated.join(
+            words.select(record_id="unit_id", d_words="title_toks"), on="record_id"
+        )
+        .join(words.select(c_record="unit_id", c_words="title_toks"), on="c_record")
+        .filter(agrees.fill_null(value=False))
+        .filter(pl.len().over("group_id", "record_id") == 1)
+    )
+    return pl.concat([same.select(columns), matched.select(columns)])
 
 
 def _check_pooling(unit_pairs: pl.DataFrame) -> None:

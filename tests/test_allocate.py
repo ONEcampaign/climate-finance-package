@@ -42,6 +42,8 @@ CRS_COLUMNS = {
     "agency_code": pl.Int32,
     "crs_id": pl.String,
     "project_number": pl.String,
+    "title": pl.String,
+    "short_description": pl.String,
     "recipient_code": pl.Int32,
     "purpose_code": pl.Int32,
     "bi_multi": pl.Int8,
@@ -81,6 +83,7 @@ def record(
     dated: int | None = None,
     start: int | None = None,
     end: int | None = None,
+    title: str | None = None,
 ) -> dict[str, object]:
     """One CRS record; `dated` is its commitment-date year."""
     return {
@@ -90,6 +93,8 @@ def record(
         "agency_code": 10,
         "crs_id": crs_id,
         "project_number": None,
+        "title": title,
+        "short_description": None,
         "recipient_code": 289,
         "purpose_code": purpose,
         "bi_multi": 1,
@@ -284,7 +289,8 @@ def test_methods_run_in_link_method_order_within_a_year() -> None:
 # A record dated its own year belongs to that year's commitment, not the older one.
 DATED_SAME = [
     record("c19", 2019, commit=100.0, dated=2019),
-    record("c21", 2021, commit=100.0, disburse=50.0, dated=2021),
+    record("c21", 2021, commit=100.0, dated=2021),
+    record("d21", 2021, disburse=50.0, dated=2021),
 ]
 
 
@@ -298,6 +304,33 @@ def test_an_undated_donor_keeps_fifo_for_a_same_year_record() -> None:
     pairs = run(DATED_SAME)
     assert by_commitment(pairs) == pytest.approx({"c19": 50.0})
     assert set(pairs["rule"]) == {"fifo"}
+
+
+# One crs id reused for a second module, each with its own commitment.
+MODULES = [
+    record("m1", 2021, commit=100.0, dated=2021, title="Module one: rural water"),
+    record("m2", 2022, commit=100.0, dated=2022, title="Module two: feeder roads"),
+]
+
+
+def test_a_record_that_commits_and_disburses_fills_its_own_commitment_first() -> None:
+    pairs = run([MODULES[0], {**MODULES[1], "disbursement_usd": 60.0}])
+    assert by_commitment(pairs) == pytest.approx({"m2": 60.0})
+
+
+@pytest.mark.parametrize(
+    ("title", "filled"),
+    [
+        ("Feeder roads, module two", {"m2": 60.0}),
+        ("Teacher training", {"m1": 60.0}),
+    ],
+)
+def test_a_disbursement_fills_the_commitment_whose_date_and_title_it_repeats(
+    title: str, filled: dict[str, float]
+) -> None:
+    # d22 carries m2's date; it is m2's own when the titles share half their words.
+    pairs = run([*MODULES, record("d22", 2022, disburse=60.0, dated=2022, title=title)])
+    assert by_commitment(pairs) == pytest.approx(filled)
 
 
 def test_parent_id_links_ignore_the_records_date() -> None:
@@ -1170,8 +1203,10 @@ def test_allocated_plus_undisbursed_equals_climate_value(
 
 @pytest.mark.parametrize("seed", SEEDS)
 def test_fifo_fills_an_older_commitment_before_a_newer_one(seed: int) -> None:
-    # Whenever a record reached a commitment, every older commitment it could
-    # also fill ended full.
+    # Whenever a record reached a commitment other than its own, every older
+    # commitment it could also fill ended full. A record that commits and
+    # disburses fills itself first; the random titles are empty, so no other
+    # commitment is a record's own.
     case = _scenario(seed, reorder=False)
     received = (
         case["pairs"]
@@ -1199,7 +1234,9 @@ def test_fifo_fills_an_older_commitment_before_a_newer_one(seed: int) -> None:
     reached = (
         case["pairs"]
         .drop_nulls("commitment_id")
-        .filter(pl.col("allocated_usd") > 0)
+        .filter(
+            pl.col("allocated_usd") > 0, pl.col("commitment_id") != pl.col("record_id")
+        )
         .join(left.select("commitment_id", reached_year="cyear"), on="commitment_id")
         .select("record_id", "reached_year")
     )

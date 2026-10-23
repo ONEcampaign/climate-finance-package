@@ -30,7 +30,7 @@ from climate_finance.build.link.score import (
     score_candidates,
 )
 from climate_finance.build.link.splink_models import (
-    read_human_labels,
+    read_decision_labels,
     score_with_splink,
     splink_links,
 )
@@ -61,15 +61,15 @@ def run_link(context: StageContext) -> StageOutput:
     decisions and Jev. With `jev_links` on, Jev adjudicates the classifier's band,
     answers each Splink model that people have not calibrated, and the calibrated
     Splink models link. Each trace link records whether its two sides disagree on
-    recipient or project number (`flag_disagreement`). People's queue decisions
-    then override the links they decided (`override_links`).
+    recipient or project number (`flag_disagreement`). People's and agents'
+    queue decisions then override the links they decided (`override_links`).
 
     Raises:
         JevFitError: when `jev_links` is on and the build has no truth group to
             set Jev's scale.
     """
     config = context.config
-    human = read_human_labels(config.sources.review_decisions)
+    decided = read_decision_labels(config.sources.review_decisions)
     crs = context.read("normalise", "crs")
     crdf = context.read("normalise", "crdf").filter(perspective="recipient")
     population = trace_population(crs)
@@ -156,7 +156,7 @@ def run_link(context: StageContext) -> StageOutput:
         crs=population,
         stems=stems,
         provider_profile=scored.profile,
-        labels=human,
+        labels=decided,
         client=context.jev,
         answer=answer,
     )
@@ -173,7 +173,7 @@ def run_link(context: StageContext) -> StageOutput:
     return {
         "links": override_links(
             flag_disagreement(pl.concat([links, *scored_links]), units=units),
-            labels=human,
+            labels=decided,
         ),
         "units": units,
         "id_practice": id_practice,

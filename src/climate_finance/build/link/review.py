@@ -8,6 +8,8 @@ queue also holds the Splink calibration pairs and every commitment row allocated
 more than `OVER_FACE` times its face. A pair someone has decided stays out, and an
 over-face row returns in every build while it stays over face.
 
+`write_queue_packet` renders the queue for people and agents to decide.
+
 A queued link keeps its allocation, so money stays in totals. A commitment row is
 `pending_review` when rejecting the queued links into its commitment group would
 change its status (`pending_rows`).
@@ -15,7 +17,6 @@ change its status (`pending_rows`).
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -33,10 +34,10 @@ from climate_finance.build.allocate import (
     dated_donors,
     window_donors,
 )
-from climate_finance.build.errors import ReviewDecisionsError
 from climate_finance.build.link.decisions import PAIR, drop_pairs
 from climate_finance.build.link.ledger import run_ledger_check
-from climate_finance.build.link.splink_models import read_human_labels
+from climate_finance.build.link.packet import code_names, write_packet
+from climate_finance.build.link.splink_models import read_decision_labels
 from climate_finance.build.normalise.crs import trace_population
 
 if TYPE_CHECKING:
@@ -46,18 +47,6 @@ if TYPE_CHECKING:
 CLASSIFIER_METHODS = ("classifier", "classifier_jev", "weak_classifier")
 JEV_REVIEW_BAND = (0.5, 0.9)
 OVER_FACE = 1.1
-# What the queue CSV shows of each record of a pair.
-SIDE_COLUMNS = (
-    "donor_code",
-    "crs_id",
-    "project_number",
-    "recipient_code",
-    "purpose_code",
-    "year",
-    "usd",
-    "title",
-)
-_DECISION_COLUMNS = ("decision", "reviewer", "note")
 
 
 def run_review(context: StageContext) -> StageOutput:
@@ -74,8 +63,8 @@ def run_review(context: StageContext) -> StageOutput:
             "commitments": context.read("fill", "commitments"),
         }
     checked, pair_labels = run_ledger_check(context)
-    human = read_human_labels(context.config.sources.review_decisions)
-    links = flag_review(checked.collect(), labels=human, band=context.config.jev.band)
+    decided = read_decision_labels(context.config.sources.review_decisions)
+    links = flag_review(checked.collect(), labels=decided, band=context.config.jev.band)
     commitments = context.read("fill", "commitments").collect()
     allocations = context.read("fill", "allocations").collect()
     pending = pending_rows(
@@ -93,7 +82,7 @@ def run_review(context: StageContext) -> StageOutput:
             links,
             commitments=commitments,
             pair_scores=context.read("link", "pair_scores").collect(),
-            labels=human,
+            labels=decided,
         ),
         "commitments": compute_status(
             commitments=commitments, allocations=allocations, pending=pending
@@ -109,7 +98,8 @@ def flag_review(
 
     Args:
         links: `links` rows, with the ledger check's `ledger_check`.
-        labels: `read_human_labels`; a pair people decided is not queued.
+        labels: `read_decision_labels`; a pair people or agents decided is not
+            queued.
         band: the classifier probabilities queued, low inclusive.
     """
     reason = (
@@ -149,7 +139,7 @@ def review_queue(
     """The `review_queue` table: the links `flag_review` flagged, the Splink
     calibration pairs that are not links, and the commitment rows allocated over
     `OVER_FACE` times face, as `crdf_crs` rows with no right side, less the pairs
-    `labels` (`read_human_labels`) holds.
+    `labels` (`read_decision_labels`) holds.
 
     `field_weights` holds a scored pair's comparison levels as JSON.
     """
@@ -357,145 +347,48 @@ def _components(links: pl.DataFrame, *, rows: pl.DataFrame) -> pl.DataFrame:
     return nodes.select("kind", "id", component=pl.Series(labels, dtype=pl.Int64))
 
 
-def write_queue_csv(*, release_dir: Path, out_path: Path) -> Path:
-    """Write the review queue as a CSV with empty decision columns.
+def write_queue_packet(*, release_dir: Path, out: Path, show_ids: bool = True) -> Path:
+    """Write the review queue's pairs, the Splink calibration pairs among them, as a
+    labelling packet (`packet.write_packet`), with the commitment rows allocated
+    over `OVER_FACE` times face in a table after the pairs.
 
-    Each row sets its two records side by side, as `left_` and `right_` columns of
-    `SIDE_COLUMNS`. A unit shows its keys, year and amount (its commitment for a
-    commitment unit, else its disbursement) with its largest record's title, and a
-    CRDF row its own fields and face.
+    Names of agencies, purposes, channels and flows come from the bulk CRS file
+    fetch wrote, when the release still holds it.
     """
     # The stage registry imports this module, so read its paths at call time.
-    from climate_finance.build.stages import table_path
+    from climate_finance.build.fetch import CRS_FILE
+    from climate_finance.build.stages import raw_dir, table_path
 
     queue = pl.read_parquet(table_path(release_dir, "review", "review_queue"))
-    units = _unit_sides(
-        pl.scan_parquet(table_path(release_dir, "link", "units")),
-        crs=pl.scan_parquet(table_path(release_dir, "normalise", "crs")),
-        ids=pl.concat([queue["left_id"], queue["right_id"]]).drop_nulls().unique(),
-    )
-    rows = (
-        pl.scan_parquet(table_path(release_dir, "normalise", "crdf"))
-        .join(queue.lazy().select(row_id="left_id"), on="row_id", how="semi")
-        .select(
-            id="row_id",
-            donor_code="provider_code",
-            crs_id="crs_id",
-            project_number="project_number",
-            recipient_code="recipient_code",
-            purpose_code="purpose_code",
-            year="year",
-            usd="face_usd",
-            title="title",
-        )
-        .collect()
-    )
-    left = pl.concat(
-        [
-            queue.filter(task="trace").join(units, left_on="left_id", right_on="id"),
-            queue.filter(task="crdf_crs").join(rows, left_on="left_id", right_on="id"),
-        ],
-        how="diagonal_relaxed",
-    ).rename({name: f"left_{name}" for name in SIDE_COLUMNS})
-    right = units.rename({name: f"right_{name}" for name in SIDE_COLUMNS})
-    head = [
-        name for name in schema.REVIEW_QUEUE.columns if name not in _DECISION_COLUMNS
-    ]
-    left.join(right, left_on="right_id", right_on="id", how="left").sort(
-        PAIR, nulls_last=True
-    ).select(
-        *head,
-        *(f"left_{name}" for name in SIDE_COLUMNS),
-        *(f"right_{name}" for name in SIDE_COLUMNS),
-        *_DECISION_COLUMNS,
-    ).write_csv(out_path)
-    return out_path
-
-
-def _unit_sides(
-    units: pl.LazyFrame, *, crs: pl.LazyFrame, ids: pl.Series
-) -> pl.DataFrame:
-    """`SIDE_COLUMNS` of the units `ids` names, under `id`."""
-    wanted = units.join(ids.to_frame("unit_id").lazy(), on="unit_id", how="semi")
-    size = pl.max_horizontal(
-        pl.col("commitment_usd").abs(), pl.col("disbursement_usd").abs()
-    ).fill_null(0.0)
-    titles = (
-        wanted.select("unit_id", record_id="record_ids")
-        .explode("record_id")
+    over_face = (
+        queue.filter(review_reason="over_face")
+        .select(row_id="left_id")
         .join(
-            crs.select("record_id", "title", "commitment_usd", "disbursement_usd"),
-            on="record_id",
+            pl.read_parquet(table_path(release_dir, "review", "commitments")),
+            on="row_id",
         )
-        .sort("unit_id", size, "record_id", descending=[False, True, False])
-        .group_by("unit_id", maintain_order=True)
-        .agg(pl.col("title").first())
+        .sort("row_id")
     )
-    return (
-        wanted.join(titles, on="unit_id", how="left")
-        .select(
-            id="unit_id",
-            donor_code="donor_code",
-            crs_id="crs_id",
-            project_number="project_number",
-            recipient_code="recipient_code",
-            purpose_code="purpose_code",
-            year="year",
-            usd=pl.when(pl.col("commitment_usd") > 0)
-            .then("commitment_usd")
-            .otherwise("disbursement_usd"),
-            title="title",
-        )
-        .collect()
+    appendix = [
+        f"## Commitments allocated over {OVER_FACE} times face",
+        "",
+        "| CRDF row | Face | Disbursed |",
+        "| --- | --- | --- |",
+        *(
+            f"| {row_id} | USD {face:,.0f} | USD {disbursed:,.0f} |"
+            for row_id, face, disbursed in over_face.select(
+                "row_id", "face_usd", "disbursed_usd"
+            ).iter_rows()
+        ),
+    ]
+    raw_crs = raw_dir(release_dir) / CRS_FILE
+    return write_packet(
+        queue.filter(task="trace").drop_nulls("right_id").sort(PAIR),
+        units=pl.scan_parquet(table_path(release_dir, "link", "units")),
+        crs=pl.scan_parquet(table_path(release_dir, "normalise", "crs")),
+        out=out,
+        title="Review queue",
+        show_ids=show_ids,
+        names=code_names(raw_crs) if raw_crs.exists() else None,
+        appendix="\n".join(appendix) if over_face.height else None,
     )
-
-
-def apply_decisions(*, csv_path: Path, decisions_path: Path) -> Path:
-    """Append the decided rows of a reviewed CSV to the review-decisions parquet.
-
-    A row is decided when its `decision` is filled. It must name its `reviewer` and
-    carry either the queue's `review_reason` or a blind sample's `sample_id`, which
-    `read_human_labels` reads to keep blind-sample decisions out of the build.
-
-    Raises:
-        ReviewDecisionsError: naming decided rows whose decision is not `accept` or
-            `reject`, that name no reviewer, or that carry neither or both of
-            `review_reason` and `sample_id`.
-    """
-    columns = {
-        name: column.dtype for name, column in schema.REVIEW_DECISIONS.columns.items()
-    }
-    given = [name for name in columns if name != "decided_at"]
-    reviewed = pl.read_csv(csv_path, infer_schema=False)
-    decided = (
-        reviewed.with_columns(
-            pl.lit(None, dtype=pl.String).alias(name)
-            for name in given
-            if name not in reviewed.columns
-        )
-        .select(pl.col(given).str.strip_chars().replace("", None))
-        .filter(pl.col("decision").is_not_null())
-    )
-    tags = pl.sum_horizontal(
-        pl.col("review_reason").is_not_null(), pl.col("sample_id").is_not_null()
-    )
-    bad = decided.filter(
-        ~pl.col("decision").is_in(schema.DECISIONS)
-        | pl.col("reviewer").is_null()
-        | (tags != 1)
-    )
-    if bad.height:
-        raise ReviewDecisionsError(
-            f"{bad.height} decided rows of {csv_path} need a decision of accept or "
-            "reject, a reviewer, and one of review_reason or sample_id, such as "
-            f"{bad.select(PAIR).head(3).rows()}"
-        )
-    new = decided.with_columns(decided_at=pl.lit(datetime.now(UTC))).select(
-        pl.col(name).cast(dtype) for name, dtype in columns.items()
-    )
-    schema.validate(schema.REVIEW_DECISIONS, new)
-    if decisions_path.exists():
-        new = pl.concat([pl.read_parquet(decisions_path), new])
-    decisions_path.parent.mkdir(parents=True, exist_ok=True)
-    new.write_parquet(decisions_path)
-    return decisions_path
