@@ -83,6 +83,15 @@ CERTAIN_FIRST_MOVED_BN = {
     "no_disbursement_record": 0.0004,
     "not_traceable": 0.0,
 }
+# A disbursement whose floor precedes the first CRS year links where its key reaches
+# a commitment placed no later than the floor (`floor_seen`), which takes two rows
+# out of no record.
+FLOOR_SEEN_MOVED_BN = {
+    "disbursed": 0.0010,
+    "partly_disbursed": 0.0,
+    "no_disbursement_record": -0.0010,
+    "not_traceable": 0.0,
+}
 TOLERANCE_BN = 0.001
 
 
@@ -170,6 +179,7 @@ def test_step_one_matches_the_target_plus_the_gef_crosswalk(
         + DATE_TIER_MOVED_BN[status]
         + CLASSIFIER_MOVED_BN[status]
         + CERTAIN_FIRST_MOVED_BN[status]
+        + FLOOR_SEEN_MOVED_BN[status]
         for status, usd_bn in STEP_ONE_BN.items()
     }
     assert _step_one(without_crosswalk) == pytest.approx(expected, abs=TOLERANCE_BN)
