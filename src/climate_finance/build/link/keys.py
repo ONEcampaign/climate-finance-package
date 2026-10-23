@@ -18,8 +18,9 @@ financing booked under the parent project's number.
 The project-number tiers come last, so they see only what the crs-id tiers left, and
 they link only where (donor, agency, project number, recipient) maps to one crs id on
 the commitment side, since shared framework numbers are right 43% of the time and
-unique keys 84.5%. They hold for every agency: one whose ids mostly persist, such as
-Korea's EDCF or KfW, still files some projects under a new crs id each year.
+unique keys 84.5%. They compare project numbers without `-` and `_` (`pn_key`).
+They hold for every agency: one whose ids mostly persist, such as Korea's EDCF or
+KfW, still files some projects under a new crs id each year.
 """
 
 from dataclasses import dataclass
@@ -30,7 +31,6 @@ import polars as pl
 
 from climate_finance import schema
 from climate_finance.build.link.id_practice import (
-    PN_KEY,
     canonical_crs_id,
     parent_id,
 )
@@ -69,6 +69,8 @@ _LONG_NUMBER = rf"^\d{{{ROUNDED_MIN_DIGITS},}}$"
 _SCIENTIFIC = r"^(\d)\.(\d+)E\+(\d+)$"
 # IBRD and IDA, whose project numbers carry the loan or credit number.
 WORLD_BANK_DONORS = (901, 905)
+# The project-number tiers' key, on `separator_free_pn`.
+PN_TIER_KEY = ("donor_code", "agency_code", "pn_key", "recipient_code")
 
 
 @dataclass(frozen=True)
@@ -100,11 +102,11 @@ TIERS = (
     ),
     Tier(
         "pn_recipient_purpose",
-        (*PN_KEY, "purpose_code"),
-        (*PN_KEY, "purpose_code"),
+        (*PN_TIER_KEY, "purpose_code"),
+        (*PN_TIER_KEY, "purpose_code"),
         project_number=True,
     ),
-    Tier("pn_recipient", PN_KEY, PN_KEY, project_number=True),
+    Tier("pn_recipient", PN_TIER_KEY, PN_TIER_KEY, project_number=True),
 )
 if tuple(tier.name for tier in TIERS) != schema.KEY_TIERS:
     raise RuntimeError("TIERS must follow schema.KEY_TIERS")
@@ -125,6 +127,14 @@ def normalise_pn(project_number: pl.Expr) -> pl.Expr:
         & rounded_digits(pn).is_null()
     )
     return pl.when(usable).then(pn)
+
+
+def separator_free_pn(project_number: pl.Expr) -> pl.Expr:
+    """A normalised project number without `-` and `_`, or null where fewer than
+    two characters remain. Donors write one number with and without them, as
+    Germany's `01LE1907A1_L` and `01LE1907A1L`."""
+    stripped = project_number.str.replace_all(r"[-_]", "")
+    return pl.when(stripped.str.len_chars() >= 2).then(stripped)
 
 
 def rounded_digits(project_number: pl.Expr) -> pl.Expr:
@@ -205,7 +215,8 @@ def link_by_keys(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
     under its first matching tier, as `links` rows.
 
     `first_year` is the first CRS year the build loads. The crs-id tiers compare
-    `canonical_crs_id`s. `group_id` names the tier and its key, so the disbursement
+    `canonical_crs_id`s and the project-number tiers `pn_key`s (`_with_pn_key`).
+    `group_id` names the tier and its key, so the disbursement
     units of one group reach the same commitments, less those their own record
     year or floor rules out.
     """
@@ -221,6 +232,7 @@ def link_by_keys(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
     commitments = units.filter(pl.col("commitment_usd") > 0).with_columns(
         loan=loan_number(pl.col("donor_code"), pl.col("project_number"))
     )
+    remaining, commitments = _with_pn_key(remaining, commitments)
     unique_pn = _unique_pn(commitments)
 
     pairs = []
@@ -276,11 +288,43 @@ def regional_codes() -> tuple[int, ...]:
     )
 
 
+def _with_pn_key(
+    disbursements: pl.DataFrame, commitments: pl.DataFrame
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Both frames with `pn_key`: the `separator_free_pn`, or the project number as
+    written where the separator-free key holds commitments under more than one crs
+    id. Dropping separators can merge two numbers into one key, as Denmark's
+    `403.KOSOVO.1-1-01` and `403.KOSOVO.1-10-1`, which `_unique_pn` would then
+    refuse though each number names one project."""
+    pn_key = separator_free_pn(pl.col("project_number"))
+    shared = (
+        commitments.with_columns(pn_key=pn_key)
+        .drop_nulls(PN_TIER_KEY)
+        .group_by(PN_TIER_KEY)
+        .agg(shared=pl.col("crs_id").n_unique() > 1)
+        .filter("shared")
+    )
+
+    def keyed(frame: pl.DataFrame) -> pl.DataFrame:
+        return (
+            frame.with_columns(pn_key=pn_key)
+            .join(shared, on=PN_TIER_KEY, how="left", maintain_order="left")
+            .with_columns(
+                pn_key=pl.when("shared")
+                .then(pl.col("project_number"))
+                .otherwise(pl.col("pn_key"))
+            )
+            .drop("shared")
+        )
+
+    return keyed(disbursements), keyed(commitments)
+
+
 def _unique_pn(commitments: pl.DataFrame) -> pl.DataFrame:
-    """Commitments whose (donor, agency, project number, recipient) maps to one crs
-    id, a null crs id counting as one."""
-    return commitments.drop_nulls(PN_KEY).filter(
-        pl.col("crs_id").n_unique().over(PN_KEY) == 1
+    """Commitments whose (donor, agency, `pn_key`, recipient) maps to one crs id, a
+    null crs id counting as one."""
+    return commitments.drop_nulls(PN_TIER_KEY).filter(
+        pl.col("crs_id").n_unique().over(PN_TIER_KEY) == 1
     )
 
 

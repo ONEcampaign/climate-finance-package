@@ -196,6 +196,12 @@ def _disbursement(**fields: object) -> dict[str, object]:
             {"crs_id": "B", "project_number": "P-1", "purpose_code": 41010},
             "pn_recipient",
         ),
+        # The same project number written with and without separators.
+        (
+            {"crs_id": "A", "project_number": "01AB1907A1_L"},
+            {"crs_id": "B", "project_number": "01-AB1907A1L"},
+            "pn_recipient_purpose",
+        ),
     ],
 )
 def test_each_tier_links_what_the_tiers_before_it_miss(
@@ -308,6 +314,20 @@ def test_a_shared_project_number_does_not_link() -> None:
         }
     )
     assert traced == {"d3": ("pn_recipient_purpose", ["c3"])}
+
+
+def test_numbers_that_merge_without_separators_keep_their_own_keys() -> None:
+    # `X.1-1-01` and `X.1-10-1` both read `X.1101` without separators, under two
+    # crs ids, so each number keys on itself as written.
+    traced = _trace(
+        {
+            "c1": _commitment(crs_id="A", project_number="X.1-1-01"),
+            "c2": _commitment(crs_id="B", project_number="X.1-10-1"),
+            "d1": _disbursement(crs_id="C", project_number="X.1-1-01"),
+            "d": _disbursement(crs_id="D", project_number="X.1101"),
+        }
+    )
+    assert traced == {"d1": ("pn_recipient_purpose", ["c1"])}
 
 
 def test_project_number_tiers_hold_for_an_agency_whose_ids_persist() -> None:
