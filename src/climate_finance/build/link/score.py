@@ -60,6 +60,7 @@ from sklearn.model_selection import GroupKFold
 from climate_finance import schema
 from climate_finance.build.link.id_practice import line_id, period_of
 from climate_finance.build.link.levels import (
+    DATE_FEATURES,
     LEVELS,
     comparison_levels,
     levels_struct,
@@ -74,7 +75,14 @@ SPLINK_MIN_COMMITMENTS = 300
 SPLINK_MIN_PAIRS = 2_000
 FOLDS = 5
 THRESHOLDS = np.round(np.arange(0.01, 1.0, 0.01), 2)
-FEATURES = (*LEVELS, "year_gap", "log_ratio", "later_commit", "programme_level")
+FEATURES = (
+    *LEVELS,
+    "year_gap",
+    "log_ratio",
+    "later_commit",
+    "programme_level",
+    *DATE_FEATURES,
+)
 PARAMS = {
     "max_iter": 400,
     "learning_rate": 0.05,
@@ -907,13 +915,20 @@ def provider_profile(crosswalk: pl.DataFrame, *, scoring: pl.DataFrame) -> pl.Da
 
 def _matrix(pairs: pl.DataFrame) -> np.ndarray:
     """The features as floats: levels shifted by one so missing is category 0, and
-    a missing log ratio NaN."""
+    a missing log ratio or date feature NaN."""
     shifted = [pl.col(level) + 1 for level in LEVELS]
     others = FEATURES[len(LEVELS) :]
     return pairs.select(*shifted, *others).to_numpy().astype(np.float64)
 
 
 def _fit(x: np.ndarray, y: np.ndarray) -> HistGradientBoostingClassifier:
+    """A gradient-boosting model of `y` on `x`. A feature missing on every row, such
+    as a date no record carries, is fitted as a constant 0, since scikit-learn
+    cannot bin a column with no values."""
+    empty = np.isnan(x).all(axis=0)
+    if empty.any():
+        x = x.copy()
+        x[:, empty] = 0.0
     model = HistGradientBoostingClassifier(
         categorical_features=list(range(len(LEVELS))), **PARAMS
     )

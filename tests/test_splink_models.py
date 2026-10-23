@@ -139,6 +139,9 @@ def _world(*donors: tuple[int, int, int, int]) -> dict[str, pl.DataFrame]:
         channel_code=pl.lit(None, dtype=pl.Int32),
         flow_code=pl.lit(11, dtype=pl.Int32),
         finance_t=pl.lit(110, dtype=pl.Int32),
+        commitment_date=pl.lit(None, dtype=pl.Date),
+        expected_start_date=pl.lit(None, dtype=pl.Date),
+        completion_date=pl.lit(None, dtype=pl.Date),
         commitment_usd="commitment_usd",
         disbursement_usd="disbursement_usd",
     )

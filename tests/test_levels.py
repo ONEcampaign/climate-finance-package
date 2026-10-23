@@ -1,11 +1,14 @@
 """Comparison levels between a disbursement unit and a commitment unit."""
 
+from datetime import date
+
 import polars as pl
 import pytest
 
 from climate_finance import schema
 from climate_finance.build.link.keys import build_units
 from climate_finance.build.link.levels import (
+    DATE_FEATURES,
     DESCRIPTION_WORDS,
     LEVELS,
     comparison_levels,
@@ -27,6 +30,8 @@ _RECORD = {
     "flow_code": 11,
     "finance_t": 110,
     "commitment_date": None,
+    "expected_start_date": None,
+    "completion_date": None,
     "commitment_usd": None,
     "disbursement_usd": None,
 }
@@ -46,6 +51,8 @@ _SCHEMA = {
     "finance_t": pl.Int32,
     "year": pl.Int16,
     "commitment_date": pl.Date,
+    "expected_start_date": pl.Date,
+    "completion_date": pl.Date,
     "commitment_usd": pl.Float64,
     "disbursement_usd": pl.Float64,
 }
@@ -245,6 +252,45 @@ def test_year_gap_level(year: int, level: int) -> None:
 
 def test_log_ratio_is_the_disbursement_over_the_commitment() -> None:
     assert _levels({}, {"disbursement_usd": 100.0})["log_ratio"] == pytest.approx(1.0)
+
+
+_DATES = {
+    "commitment_date": date(2020, 3, 1),
+    "expected_start_date": date(2020, 4, 1),
+    "completion_date": date(2024, 12, 31),
+}
+_OWN_DATES = {
+    "commitment_date": date(2022, 12, 31),
+    "expected_start_date": date(2023, 1, 1),
+    "completion_date": date(2023, 12, 31),
+}
+
+
+@pytest.mark.parametrize(
+    ("disbursement", "features"),
+    [
+        (_DATES, (1, 0, 1, 0, 1, 1)),
+        (_OWN_DATES, (0, 1035, 0, 2, 0, 0)),
+        ({}, (None, None, None, None, None, None)),
+    ],
+)
+def test_date_features_compare_the_commitments_dates(
+    disbursement: dict[str, object], features: tuple[int | None, ...]
+) -> None:
+    pair = _levels(_DATES, disbursement)
+    assert tuple(pair[name] for name in DATE_FEATURES) == features
+
+
+def test_a_commitment_without_a_date_falls_back_to_its_record_year() -> None:
+    pair = _levels({}, {"commitment_date": date(2021, 6, 1)})
+    assert tuple(pair[name] for name in DATE_FEATURES) == (
+        None,
+        None,
+        0,
+        1,
+        None,
+        None,
+    )
 
 
 def test_levels_pack_into_the_links_struct() -> None:

@@ -31,7 +31,10 @@ commitment plus disbursement, ties to the smaller record id. The levels:
 - year gap: 3 one year, 2 two years, 1 three or more, else 0.
 
 The features beside the levels are the year gap (a `candidates` column), log10 of
-the disbursement over the commitment, and whether the disbursement unit also commits.
+the disbursement over the commitment, whether the disbursement unit also commits,
+and how its dates agree with the commitment's. A CRS record that continues a
+commitment usually repeats its commitment and completion dates, and a new activity
+carries its own.
 """
 
 import duckdb
@@ -52,6 +55,17 @@ BATCH_PAIRS = 500_000
 _NO_PN = ("notapplicable", "na", "none", "nan", "null", "0", "")
 _NO_TEXT = ("not applicable", "na", "none", "n a", "nan", "null")
 _RATIO = "disbursement_usd_r / commitment_usd_l"
+_COMMITMENT_YEAR = "coalesce(commitment_year_l, record_year_l)"
+# The date features, each as SQL over a pair; a comparison with a null date is null.
+_DATE_SQL = {
+    "same_commitment_date": "(commitment_date_r = commitment_date_l)::tinyint",
+    "commitment_date_days": "abs(commitment_date_r - commitment_date_l)::integer",
+    "same_commitment_year": f"(commitment_year_r = {_COMMITMENT_YEAR})::tinyint",
+    "commitment_year_gap": f"(commitment_year_r - {_COMMITMENT_YEAR})::smallint",
+    "same_start": "(expected_start_date_r = expected_start_date_l)::tinyint",
+    "same_completion": "(completion_date_r = completion_date_l)::tinyint",
+}
+DATE_FEATURES = tuple(_DATE_SQL)
 
 
 def unit_attributes(
@@ -79,6 +93,9 @@ def unit_attributes(
         "channel_code",
         "flow_code",
         "finance_t",
+        "commitment_date",
+        "expected_start_date",
+        "completion_date",
     )
     pn_digits = (
         pl.col("project_number")
@@ -117,6 +134,10 @@ def unit_attributes(
             finance_type_code="rep_finance_t",
             year="year",
             record_year="year",
+            commitment_year="commitment_year",
+            commitment_date="rep_commitment_date",
+            expected_start_date="rep_expected_start_date",
+            completion_date="rep_completion_date",
             commitment_usd="commitment_usd",
             disbursement_usd="disbursement_usd",
             pn="project_number",
@@ -285,11 +306,18 @@ def comparisons() -> list[cl.CustomComparison | cl.ExactMatch]:
 
 
 def comparison_levels(pairs: pl.DataFrame, *, attributes: pl.DataFrame) -> pl.DataFrame:
-    """`pairs` with the ten Int8 levels, `log_ratio` and `later_commit`.
+    """`pairs` with the ten Int8 levels, `log_ratio`, `later_commit` and the date
+    features.
 
     Each level is the first of its comparison's conditions in `comparisons()` that
     holds, numbered as Splink numbers it. The year gap, a feature too, is a
-    `candidates` column.
+    `candidates` column. The date features compare the two units' representative
+    records and are null where either date is missing: `same_commitment_date`,
+    `same_start` and `same_completion` are 1 when the dates match, else 0, and
+    `commitment_date_days` is the days between the commitment dates.
+    `same_commitment_year` and `commitment_year_gap` (the disbursement's year less
+    the commitment's) read each unit's commitment-date year, the commitment's
+    falling back to its record year.
 
     Args:
         pairs: rows with `left_id` (a disbursement unit) and `right_id` (a
@@ -305,7 +333,8 @@ def comparison_levels(pairs: pl.DataFrame, *, attributes: pl.DataFrame) -> pl.Da
             {", ".join(_level_cases())},
             case when commitment_usd_l > 0 and disbursement_usd_r > 0
                 then log10(disbursement_usd_r / commitment_usd_l) end as log_ratio,
-            (commitment_usd_r > 0)::tinyint as later_commit
+            (commitment_usd_r > 0)::tinyint as later_commit,
+            {", ".join(f"{sql} as {name}" for name, sql in _DATE_SQL.items())}
         from _pairs p
         left join _commitments on unique_id_l = p.right_id
         left join _disbursements on unique_id_r = p.left_id
@@ -323,7 +352,12 @@ def comparison_levels(pairs: pl.DataFrame, *, attributes: pl.DataFrame) -> pl.Da
             levels.append(con.sql(query).pl())
             con.unregister("_pairs")
     return pl.concat(
-        [pairs, pl.concat(levels).select(*LEVELS, "log_ratio", "later_commit")],
+        [
+            pairs,
+            pl.concat(levels).select(
+                *LEVELS, "log_ratio", "later_commit", *DATE_FEATURES
+            ),
+        ],
         how="horizontal",
     )
 
