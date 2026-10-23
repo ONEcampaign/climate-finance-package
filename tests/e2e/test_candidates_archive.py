@@ -201,7 +201,7 @@ def test_candidates_hold_eligible_and_training_pairs(
 ) -> None:
     schema.validate(schema.CANDIDATES, candidates)
     counts = dict(candidates.group_by("eligible").len().iter_rows())
-    assert counts == {True: 1_565_577, False: 6_067_830}
+    assert counts == {True: 1_360_142, False: 6_067_830}
     assert (candidates["eligible"] != candidates["id_persistent"]).all()
 
 

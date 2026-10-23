@@ -119,12 +119,17 @@ RELEASE_RULE_BN = {
 # in several countries links within the disbursement's recipient and purpose
 # (`_programmes`); on the number alone a disbursement would reach more than
 # `MAX_COMMITMENTS` commitments and link to none. US numbers of that kind carry
-# USD 0.44 bn of the bilateral figure; the purpose tier's own guard
+# USD 0.40 bn of the bilateral figure; the purpose tier's own guard
 # (`Tier.unique_by`) already links USD 0.20 bn more US value in the build without
-# the rules. Rounded AfDB project
-# numbers are null, so `repair_title_recipient` also takes AfDB commitments whose
-# disbursement units spell one rounded number two ways (USD 0.11 bn).
-REPAIR_MOVED_BN = {"bilateral": 0.91, "banks": 2.16}
+# the rules. A unit that disbursed no more than its own commitment is no
+# disbursement unit to the rules, and a line's spare commitment (`_spare_lines`)
+# joins the commitments a number reaches, so some US numbers now reach more than
+# `MAX_COMMITMENTS`. Between them the two take USD 0.07 bn of US rows out of the
+# figure. Rounded AfDB project numbers are null, so `repair_title_recipient` also
+# takes AfDB commitments that the rounded numbers reach, which carry USD 0.18 bn of
+# the banks figure. A rounded AfDB number that also fits a spare line stands for two
+# full numbers, so `repair_afdb_scientific` links it to none (USD 0.05 bn).
+REPAIR_MOVED_BN = {"bilateral": 0.84, "banks": 2.12}
 REPAIR_TOLERANCE_BN = 0.05
 _CATEGORY = {
     "DAC member": "bilateral",

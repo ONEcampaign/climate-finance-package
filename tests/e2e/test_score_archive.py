@@ -285,14 +285,22 @@ def test_the_link_stage_writes_the_classifier_links_and_profile(
     assert written.equals(flag_disagreement(scored.links, units=units))
     scoring = profile.drop_nulls("scoring_group").select(scored.profile.columns)
     assert scoring.equals(scored.profile)
-    # The key tiers take 1,428 units the classifier linked: the date tier 1,225 of
-    # Germany's, the purpose tier's own guard 203, mostly Canada's. The private-donor
-    # rule (`confirmable_pairs`) drops 34 of donor 1624's.
-    assert written.height == 2_080
+    # The key tiers take 1,428 units the classifier would link: the date tier 1,225
+    # of Germany's, the purpose tier's own guard 203, mostly Canada's. The
+    # private-donor rule (`confirmable_pairs`) drops 34 of donor 1624's. Key repair
+    # takes 936 more, since a line's spare commitment is open to it: 820 by
+    # `repair_new_crs_id` (623 Canada's, 183 Germany's), 75 by
+    # `repair_title_recipient` and 41 by `repair_pn_variant`. 49 pairs drop out of
+    # blocking because repair reaches their commitment from a later year.
+    assert written.height == 1_114
+    # The AsDB (915) sat at `SPLINK_MIN_COMMITMENTS`, with 300 commitments in
+    # eligible pairs. Key repair now links 40 of them, lines whose spare commitment
+    # is open to it, and the disbursements that reach them, so 265 remain and the
+    # AsDB scores with the pooled model.
     assert dict(scoring.group_by("scoring_group").len().iter_rows()) == {
         "truth": 25,
-        "splink": 6,
-        "pooled_splink": 36,
+        "splink": 5,
+        "pooled_splink": 37,
     }
 
 
@@ -342,8 +350,8 @@ def test_classifier_links_move_statuses(
     assert sum(moved.values()) == pytest.approx(0.0, abs=1e-9)
     assert moved == pytest.approx(
         {
-            "disbursed": 0.03513,
-            "partly_disbursed": 0.00867,
+            "disbursed": 0.01915,
+            "partly_disbursed": 0.02465,
             "no_disbursement_record": -0.04380,
             "not_traceable": 0.0,
             "pending_review": 0.0,
