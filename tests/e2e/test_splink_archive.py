@@ -34,10 +34,12 @@ pytestmark = pytest.mark.slow
 
 MODEL = "jev-1.14.0"
 SIMULATION_CACHE = Path("jev-cache/splink-simulation")
-# Truth-group providers of several sizes: four with their own model (Belgium,
+# Truth-group providers of several sizes: four with their own model (New Zealand,
 # Austria, France, Denmark) and three small enough to share the pooled model.
 SIMULATED = (820, 1, 4, 3, 68, 1624, 76)
-_LABELS = {name: column.dtype for name, column in schema.PAIR_LABELS.columns.items()}
+_LABELS = {
+    name: column.dtype for name, column in schema.PAIR_LABELS.columns.items()
+} | {"stratified": pl.Boolean()}
 
 
 @dataclass(frozen=True)
@@ -85,17 +87,20 @@ def test_without_decisions_splink_only_asks_for_calibration_labels(
     queued = scores.filter(review_reason=CALIBRATION_REASON).group_by("model").len()
     assert set(queued["len"]) == {CALIBRATION_LABELS}
     assert set(scores["review_reason"].drop_nulls()) == {CALIBRATION_REASON}
-    # The archive build: 41 providers outside the truth group and six usable models
-    # (USA, four more providers of their own and the pooled model). The pairs are
+    # The archive build: 39 providers outside the truth group and five usable models
+    # (USA, three more providers of their own and the pooled model). The pairs are
     # those providers' eligible candidates, blocked on trimmed ids and on project
     # numbers with rounded ones null, less the disbursements the key tiers link. The
     # GEF reuses a crs id across projects, so `crs_key` leaves most of its
     # disbursements to scoring; its own model then completes one EM session, its
     # project numbers block one pair and EM drives a recipient-and-purpose m to zero,
-    # so it joins the pooled model.
-    assert len(providers) == 41
-    assert scores.height == 1_645_421
-    assert queued.height == 6
+    # so it joins the pooled model. `template_lines` takes every pair of the
+    # Development Bank of Latin America and the New Development Bank, and the EBRD's
+    # "aggregated disbursements" lines leave it 292 open commitments, under the
+    # `SPLINK_MIN_COMMITMENTS` of its own model.
+    assert len(providers) == 39
+    assert scores.height == 1_640_847
+    assert queued.height == 5
 
 
 def test_two_runs_give_the_same_scores(tables: LinkTables, tmp_path: Path) -> None:
@@ -218,12 +223,14 @@ def test_calibrated_splink_against_id_truth(tables: LinkTables) -> None:
         )
         for row in measured.filter(pl.col("p_0.5_links") > 0).iter_rows(named=True)
     }
-    # The pooled model's providers (68, 1624, 76) link nothing at 0.5. France's
-    # calibration labels include Jev's answers for 22 pairs that entered its sample
-    # after `SIMULATION_CACHE` was first written; they set its figures.
+    # The pooled model's providers (68, 1624, 76) link nothing at 0.5. The
+    # `short_description` fallback adds 172 New Zealand pairs (21 true) and 15
+    # Danish ones to the pool, and `template_lines` takes 2,908 French and 548
+    # Danish ones out, so the calibration samples of New Zealand, Denmark and France
+    # changed; `SIMULATION_CACHE` holds Jev's answers for every pair they now draw.
     assert at_half == {
         1: (1633, 0.662, 0.791),
-        3: (842, 0.632, 0.447),
-        4: (1964, 0.954, 0.854),
-        820: (1170, 0.740, 0.665),
+        3: (886, 0.613, 0.457),
+        4: (1971, 0.953, 0.856),
+        820: (1641, 0.645, 0.801),
     }

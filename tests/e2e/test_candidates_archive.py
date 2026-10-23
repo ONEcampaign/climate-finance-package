@@ -204,8 +204,11 @@ def test_candidates_hold_eligible_and_training_pairs(
     # `repair_stray_country` takes 6,784 eligible pairs, 6,777 of them Canada's: in
     # 6,724 it links the commitment, in 60 only the disbursement. `floor_seen` gives
     # pre-2010-floor commitments their self links, which closes them to key repair,
-    # so 5 British and German disbursements lose repair links and add 9 pairs.
-    assert counts == {True: 1_353_367, False: 6_067_830}
+    # so 5 British and German disbursements lose repair links and add 9 pairs. The
+    # `short_description` fallback titles untitled units, which raises training pairs
+    # to 7,198,372; `template_lines` then takes 5,826,943 of them, almost all Japan's
+    # "TC aggregated activities", and the two leave 4,774 fewer eligible pairs.
+    assert counts == {True: 1_348_593, False: 1_371_429}
     assert (candidates["eligible"] != candidates["id_persistent"]).all()
 
 
@@ -220,13 +223,14 @@ def test_blocking_recall_on_id_truth(truth: pl.DataFrame) -> None:
     assert truth.filter("blocked")["same_crs_id"].all()
     assert prototype_years.height == 14_605
     assert prototype_years["blocked"].mean() >= RECALL_TARGET
-    # Over the build's CRDF years recall falls just short of the target: five crs
-    # ids, four of them Canada's, hold 360 of the 888 missed pairs.
+    # Over the build's CRDF years recall just meets the target: five crs ids, four
+    # of them Canada's, hold 360 of the 867 missed pairs. The `short_description`
+    # fallback blocks 21 more, New Zealand pairs with an untitled side.
     assert crdf_years.height == 57_870
-    assert crdf_years["blocked"].mean() == pytest.approx(0.98466, abs=1e-5)
+    assert crdf_years["blocked"].mean() == pytest.approx(0.98502, abs=1e-5)
     assert by_category == pytest.approx(
         {
-            "bilateral": 0.98405,
+            "bilateral": 0.98443,
             "other_multilateral": 1.0,
             "private": 1.0,
             "banks": 1.0,

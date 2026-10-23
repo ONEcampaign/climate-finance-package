@@ -67,11 +67,12 @@ DATE_TIER_MOVED_BN = {
 }
 # The target links by key alone. The truth-group classifier (`link.score`) links
 # disbursements the keys left to commitments, which moves value out of no record
-# into disbursed and partly disbursed.
+# into disbursed and partly disbursed. It trains on no template line
+# (`template_lines`) and gives this build 7,153 links.
 CLASSIFIER_MOVED_BN = {
-    "disbursed": 0.0393,
-    "partly_disbursed": 0.1129,
-    "no_disbursement_record": -0.1522,
+    "disbursed": 0.0366,
+    "partly_disbursed": 0.1053,
+    "no_disbursement_record": -0.1419,
     "not_traceable": 0.0,
 }
 # Certain links fill a commitment before estimated links of any year. Five rows
@@ -90,6 +91,16 @@ FLOOR_SEEN_MOVED_BN = {
     "disbursed": 0.0010,
     "partly_disbursed": 0.0,
     "no_disbursement_record": -0.0010,
+    "not_traceable": 0.0,
+}
+# A record's own commitment fills before older commitments of its key group
+# (`_own_commitments`), so where a donor files a new module or yearly grant under a
+# reused crs id, the new record's money no longer fills the older module's headroom.
+# 470 rows change status, mostly Dutch and British rows that leave disbursed.
+OWN_FIRST_MOVED_BN = {
+    "disbursed": -0.4945,
+    "partly_disbursed": 0.6296,
+    "no_disbursement_record": -0.1351,
     "not_traceable": 0.0,
 }
 TOLERANCE_BN = 0.001
@@ -180,6 +191,7 @@ def test_step_one_matches_the_target_plus_the_gef_crosswalk(
         + CLASSIFIER_MOVED_BN[status]
         + CERTAIN_FIRST_MOVED_BN[status]
         + FLOOR_SEEN_MOVED_BN[status]
+        + OWN_FIRST_MOVED_BN[status]
         for status, usd_bn in STEP_ONE_BN.items()
     }
     assert _step_one(without_crosswalk) == pytest.approx(expected, abs=TOLERANCE_BN)
