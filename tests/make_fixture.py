@@ -158,6 +158,17 @@ CORE_CONTRIBUTIONS = (
     (NOR, IDA_CH, 15e6, (2021, 2022)),
 )
 CORE_FLOW_FACTOR = {"commitments": 1.2, "disbursements": 1.0, "grant_equivalent": 1.0}
+BTR_LINK_COLUMNS = (
+    "row_id", "record_id", "link_method", "probability", "provider_code", "year",
+    "project_number", "commitment_usd", "disbursement_usd",
+)  # fmt: skip
+# BTR rows' links to CRS records: Germany's 2021 programme reaches two components,
+# Norway's 2021 row links by the model, and the 2022 rows stay UNFCCC only.
+BTR_LINKS = (
+    ("BTR-DEU-2021", "DEU-B-R1", "btr_id", 1.0, DEU, 2021, "300123-101", 15e6, 5e6),
+    ("BTR-DEU-2021", "DEU-B-R2", "btr_id", 1.0, DEU, 2021, "300123-105", 7e6, 2e6),
+    ("BTR-NOR-2021", "NOR-B-R1", "btr_splink", 0.93, NOR, 2021, None, None, 15e6),
+)
 # Germany's coefficient is confirmed. Japan's is not, so PROVIDER gives Japan 0.4.
 PROVIDER_COEFFICIENTS = ((DEU, 0.5, True), (JPN, 0.6, False))
 
@@ -454,6 +465,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
             {
                 "row_id": f"BTR-{party}-{year}",
                 "party": party,
+                "provider_code": provider,
                 "year": year,
                 "recipient": "Kenya",
                 "recipient_code": KEN,
@@ -472,11 +484,20 @@ def build_tables() -> dict[str, pl.DataFrame]:
                 "is_aggregate": False,
                 "source_file": f"{party}-BTR1.xlsx",
             }
-            for party, currency, rate, amount in (
-                ("DEU", "EUR", 1.1, 20e6),
-                ("NOR", "NOK", 0.1, 150e6),
+            for party, provider, currency, rate, amount in (
+                ("DEU", DEU, "EUR", 1.1, 20e6),
+                ("NOR", NOR, "NOK", 0.1, 150e6),
             )
             for year in (2021, 2022)
+        ],
+        "btr_links": [
+            dict(zip(BTR_LINK_COLUMNS, link, strict=True))
+            | {
+                "recipient_code": KEN,
+                "title": f"Adaptation programme {link[1]}",
+                "rio_marker": 2,
+            }
+            for link in BTR_LINKS
         ],
         "disbursement_profile": [
             {
@@ -537,9 +558,17 @@ def _total_flows(
     """All CRS flows: four times the climate rows' amounts (0.9 of that for grant
     equivalent), plus 1.5 times each flow's core contributions to unspecified
     recipients, so every climate figure has a larger total."""
-    keys = ["provider_code", "recipient_code", "year", "bi_multi"]
-    committed = commitments.select(*keys, amount_usd=pl.col("face_usd") * 4)
-    disbursed = disbursements.select(*keys, amount_usd=pl.col("allocated_usd") * 4)
+    keys = ["provider_code", "recipient_code", "year", "bi_multi", "rio_marker"]
+    committed = commitments.select(
+        *keys[:-1],
+        rio_marker=_rio_marker("rio_adaptation", "rio_mitigation"),
+        amount_usd=pl.col("face_usd") * 4,
+    )
+    disbursed = disbursements.select(
+        *keys[:-1],
+        rio_marker=_rio_marker("inherited_rio_adaptation", "inherited_rio_mitigation"),
+        amount_usd=pl.col("allocated_usd") * 4,
+    )
     climate = {
         "commitments": committed,
         "disbursements": disbursed,
@@ -550,6 +579,7 @@ def _total_flows(
         recipient_code=pl.lit(UNS, pl.Int32),
         year="year",
         bi_multi=pl.lit(2, pl.Int8),
+        rio_marker=pl.lit(0, pl.Int8),
         flow="flow",
         amount_usd=pl.col("contribution_usd") * 1.5,
     )
@@ -560,6 +590,10 @@ def _total_flows(
         .with_columns(flow=pl.lit(flow))
         for flow, frame in climate.items()
     ).select(list(RELEASE_TABLES["total_flows"].columns))
+
+
+def _rio_marker(adaptation: str, mitigation: str) -> pl.Expr:
+    return pl.max_horizontal(adaptation, mitigation).fill_null(0).cast(pl.Int8)
 
 
 # Statuses of commitments that trace to at least one CRS record.

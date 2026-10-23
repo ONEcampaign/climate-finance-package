@@ -45,8 +45,23 @@ import polars as pl
 from climate_finance import catalogue
 from climate_finance.convert import convert
 from climate_finance.errors import SchemaError
-from climate_finance.methods import OECD, ONE, Method, face_shares, label, weights
-from climate_finance.result import AMOUNTS, Meta, Quality, Result, Table
+from climate_finance.methods import (
+    OECD,
+    ONE,
+    Method,
+    MethodRange,
+    face_shares,
+    label,
+    weights,
+)
+from climate_finance.result import (
+    AMOUNTS,
+    Meta,
+    Quality,
+    Reconciliation,
+    Result,
+    Table,
+)
 from climate_finance.schema import FLOWS, SHARE_ORIGINS
 from climate_finance.spec import Spec, View
 
@@ -263,6 +278,196 @@ def _precision(
     )
     conditions = _conditions(providers=providers, recipients=None, years=None)
     return frame.filter(*conditions) if conditions else frame
+
+
+# The OECD figures a party's BTR face value is set against, in `reconcile`'s order.
+COMPARATORS = (
+    "crdf_at_party_weight",
+    "crdf_at_100",
+    "traced_climate_value",
+    "crs_disbursed_at_party_weight",
+)
+# The marker rule the CRDF comparators weight by, with the party's coefficient or 1.0
+# for Significant.
+_PARTY_RULE = Method(significant=1.0, principal=1.0, highest_marker=True)
+_PARTY_YEAR = ("party", "year")
+
+
+def reconcile(
+    snapshot: Snapshot,
+    *,
+    parties: Sequence[str] | None,
+    years: Iterable[int],
+    method: Method | MethodRange,
+) -> Reconciliation:
+    """Each party's BTR Table III.1 total against OECD figures for its bilateral
+    finance, one row per party, year and method.
+
+    A party-year is compared on its main status, the one carrying the most face
+    value: Denmark reports each activity both committed and disbursed. A party
+    whose rows carry no status is compared on all of them, with a null status.
+    `btr_face` and `btr_grant_equivalent` sum that status's rows, and
+    `unfccc_only_usd` the face value of those rows no CRS record links to.
+
+    The comparators sum the party's bilateral rows (`BILATERAL`) of the year, and of
+    the CRDF its Rio-marked rows only: a party weight applies to markers, and a
+    party's BTR leaves out the climate components its development bank publishes,
+    as the EU's leaves out the EIB's. `crdf_at_party_weight` and `crdf_at_100` are
+    its CRDF commitments with Significant
+    at the party's weight (`provider_coefficients`, confirmed or not, as
+    `weight_confirmed` says) and at 100%; `traced_climate_value` the climate value
+    `method` gives what those commitments disbursed; `crs_disbursed_at_party_weight`
+    the year's CRS disbursements on Rio-marked records, Significant at the party's
+    weight. A party that reports commitments reads against the first three, one that
+    reports disbursements against the last. A party without a weight has null
+    weighted comparators, and one without a DAC provider code null comparators.
+    Each `btr_over_<comparator>` divides `btr_face` by it.
+    """
+    years = tuple(years)
+    btr = snapshot.table("btr").filter(pl.col("year").is_in(years))
+    if parties is not None:
+        btr = btr.filter(pl.col("party").is_in(list(parties)))
+    links = snapshot.table("btr_links")
+    face = pl.col("face_usd")
+    main = (
+        btr.filter(pl.col("status").is_not_null())
+        .group_by(*_PARTY_YEAR, "status")
+        .agg(face=face.sum())
+        .sort("face", "status", descending=[True, False])
+        .group_by(_PARTY_YEAR)
+        .agg(main=pl.col("status").first())
+    )
+    linked = links.select("row_id").unique().with_columns(linked=pl.lit(value=True))
+    reported = (
+        btr.join(main, on=_PARTY_YEAR, how="left")
+        .filter(pl.col("status").eq_missing(pl.col("main")))
+        .join(linked, on="row_id", how="left")
+        .group_by(*_PARTY_YEAR, "provider_code", "status")
+        .agg(
+            btr_face=face.sum(),
+            btr_grant_equivalent=pl.col("grant_equiv_usd").sum(),
+            unfccc_only_usd=face.filter(pl.col("linked").is_null()).sum(),
+        )
+        .join(
+            snapshot.table("provider_coefficients").select(
+                "provider_code",
+                party_weight="significant",
+                weight_confirmed="confirmed",
+            ),
+            on="provider_code",
+            how="left",
+        )
+    )
+    weight = pl.col("party_weight")
+    bilateral = (pl.col("bi_multi").is_in(BILATERAL), pl.col("year").is_in(years))
+    commitments = (
+        _counted_commitments(snapshot)
+        .filter(*bilateral, pl.col("climate_share").is_null())
+        # Jev labels CRS records, not commitments, so a Jev method reads markers.
+        .with_columns(**face_shares(), jev_level=pl.lit(None, pl.Int8))
+        .join(
+            reported.select("provider_code", "party_weight").unique(),
+            on="provider_code",
+        )
+    )
+
+    def crdf_at(significant: pl.Expr) -> pl.Expr:
+        fractions = weights(
+            _PARTY_RULE, significant=significant, published=pl.col("share_climate")
+        )
+        return (pl.col("face_usd") * fractions["climate"]).sum()
+
+    crdf = commitments.group_by("provider_code", "year").agg(
+        crdf_at_party_weight=crdf_at(weight),
+        crdf_at_100=crdf_at(pl.lit(1.0)),
+    )
+    marker = pl.col("rio_marker")
+    crs = (
+        snapshot.table("total_flows")
+        .filter(pl.col("flow") == "disbursements", *bilateral)
+        .join(
+            reported.select("provider_code", "party_weight").unique(),
+            on="provider_code",
+        )
+        .group_by("provider_code", "year")
+        .agg(
+            crs_disbursed_at_party_weight=(
+                pl.col("amount_usd")
+                * pl.when(marker == 2)
+                .then(1.0)
+                .when(marker == 1)
+                .then(weight)
+                .otherwise(0.0)
+            ).sum()
+        )
+    )
+    frames = []
+    for each in method.methods if isinstance(method, MethodRange) else (method,):
+        weighted = _coefficients(snapshot, commitments, method=each)
+        fractions = weights(
+            each, significant=pl.col("significant"), published=pl.col("share_climate")
+        )
+        traced = weighted.group_by("provider_code", "year").agg(
+            traced_climate_value=(pl.col("disbursed_usd") * fractions["climate"]).sum()
+        )
+        frames.append(
+            reported.join(crdf, on=["provider_code", "year"], how="left")
+            .join(traced, on=["provider_code", "year"], how="left")
+            .join(crs, on=["provider_code", "year"], how="left")
+            .with_columns(method=pl.lit(label(each)))
+        )
+    weighted_comparators = ("crdf_at_party_weight", "crs_disbursed_at_party_weight")
+    table = (
+        pl.concat(frames)
+        .with_columns(
+            pl.when(weight.is_not_null()).then(pl.col(name)).alias(name)
+            for name in weighted_comparators
+        )
+        .with_columns(
+            (pl.col("btr_face") / pl.col(name)).alias(f"btr_over_{name}")
+            for name in COMPARATORS
+        )
+        .select(
+            "party",
+            "provider_code",
+            "year",
+            "status",
+            "method",
+            "party_weight",
+            "weight_confirmed",
+            "btr_face",
+            "btr_grant_equivalent",
+            "unfccc_only_usd",
+            *COMPARATORS,
+            *(f"btr_over_{name}" for name in COMPARATORS),
+        )
+        .sort("party", "year", "method")
+    )
+    rows = (
+        btr.join(links, on="row_id", how="left", suffix="_crs")
+        .select(
+            "party",
+            "year",
+            "row_id",
+            "status",
+            "recipient",
+            "title",
+            "face_usd",
+            "grant_equiv_usd",
+            "record_id",
+            "link_method",
+            "probability",
+            crs_recipient_code="recipient_code_crs",
+            crs_project_number="project_number",
+            crs_title="title_crs",
+            crs_commitment_usd="commitment_usd",
+            crs_disbursement_usd="disbursement_usd",
+            crs_rio_marker="rio_marker",
+            unfccc_only=pl.col("record_id").is_null(),
+        )
+        .sort("party", "year", "row_id", "record_id", nulls_last=True)
+    )
+    return Reconciliation(table=Table(table), rows=rows)
 
 
 def _attribution(

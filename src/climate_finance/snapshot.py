@@ -133,8 +133,17 @@ class Snapshot:
         years: Iterable[int] = range(2015, 2023),
         method: Method | MethodRange = ONE,
     ) -> Reconciliation:
-        """Compare each party's BTR figures with OECD data."""
-        raise NotImplementedError("slice S19b")
+        """Compare each party's BTR figures with OECD data (`query.reconcile`).
+
+        `parties` are ISO 3 codes as the `btr` table holds them, such as "NOR" and
+        "EUU"; None compares every party.
+        """
+        return query.reconcile(
+            self,
+            parties=(parties,) if isinstance(parties, str) else parties,
+            years=years,
+            method=method,
+        )
 
     def disbursement_profile(self) -> pl.DataFrame:
         """Cumulative disbursed share of traceable climate value by years since

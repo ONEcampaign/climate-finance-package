@@ -33,6 +33,7 @@ from urllib.parse import quote
 import httpx
 import polars as pl
 import pyarrow as pa
+import yaml
 
 from climate_finance import __version__
 from climate_finance import build as build_package
@@ -45,10 +46,12 @@ from climate_finance.build.errors import (
     StageInputMissingError,
 )
 from climate_finance.build.label import inherit_markers
+from climate_finance.build.readers.btr import party_provider
 from climate_finance.build.sums import ordered_sum
 from climate_finance.query import BILATERAL, MULTILATERAL_OUTFLOW
 from climate_finance.schema import (
     BTR,
+    BTR_LINKS,
     COMMITMENTS,
     CORE_CONTRIBUTIONS,
     DISBURSEMENT_PROFILE,
@@ -97,6 +100,10 @@ _GCF = (
     "Green Climate Fund terms: no commercial redistribution or derivative works "
     "without written consent, https://www.greenclimate.fund/terms-and-conditions"
 )
+_UNFCCC = (
+    "UNFCCC terms of use: public domain with source acknowledged, "
+    "https://unfccc.int/this-site/terms-of-use"
+)
 SOURCE_LICENCES = {
     "crs": _OECD,
     "crdf": _OECD,
@@ -114,8 +121,8 @@ SOURCE_LICENCES = {
     "foreignassistance": "US Government work, free of copyright, "
     "https://foreignassistance.gov/about",
     "adaptation_labels": "Weikmans et al.; fits the adaptation cut, no rows ship",
-    "btr": "UNFCCC terms of use: public domain with source acknowledged, "
-    "https://unfccc.int/this-site/terms-of-use",
+    "btr": _UNFCCC,
+    "unfccc": _UNFCCC,
 }
 # Sources whose rows the release leaves out (`schema.WITHHELD_RECORD_PREFIXES`), by
 # `raw_manifest` source name or the start of one, and the note `sources.json` gives
@@ -125,6 +132,10 @@ WITHHELD_NOTE = (
     "Green Climate Fund rows are left out of the release, as its terms bar "
     "redistribution; `cf-build` rebuilds them from the GCF's API."
 )
+# Each BTR party's weight on Significant activities, estimated from its linked pairs
+# (`readers.btr.write_party_weights`) and confirmed by a reviewer.
+PARTY_WEIGHTS = Path(__file__).with_name("unfccc_party_weights.yaml")
+PARTY_WEIGHT_BASIS = "btr_crs_ratio"
 # The file in a pack that lists each source with its version, URLs and licence.
 SOURCES_FILE = "sources.json"
 # The CRS amount column behind each flow of `total_flows`.
@@ -175,6 +186,7 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
     crdf = context.read("normalise", "crdf")
     crs = context.read("normalise", "crs")
     links = context.read("review", "links")
+    btr = _optional(context, "normalise", BTR)
     allocations = context.read("fill", "allocations")
     status = context.read("review", "commitments")
     objectives = context.read("label", "objectives")
@@ -199,7 +211,8 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         "core_contributions": core_contributions(
             context.read("normalise", "core_contributions")
         ).collect(),
-        "btr": _optional(context, "normalise", BTR),
+        "btr": btr,
+        "btr_links": btr_links(links, crs=crs).collect(),
         "disbursement_profile": disbursement_profile(
             commitments.lazy(),
             status=status,
@@ -213,8 +226,11 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
             links=links,
         ).collect(),
         "total_flows": total_flows(crs).collect(),
-        # Provider coefficients come from the BTR link, which is not implemented.
-        "provider_coefficients": _empty(PROVIDER_COEFFICIENTS),
+        "provider_coefficients": provider_coefficients(
+            yaml.safe_load(PARTY_WEIGHTS.read_text(encoding="utf-8"))
+        )
+        if not btr.is_empty()
+        else _empty(PROVIDER_COEFFICIENTS),
     }
 
 
@@ -429,17 +445,19 @@ def core_contributions(stage: pl.LazyFrame) -> pl.LazyFrame:
 
 
 def total_flows(crs: pl.LazyFrame) -> pl.LazyFrame:
-    """Every CRS record's amounts by provider, recipient, year, Bi_Multi and flow.
+    """Every CRS record's amounts by provider, recipient, year, Bi_Multi, flow and
+    the record's higher Rio marker (0 for none).
 
     A key and flow with no reported amount has no row.
     """
-    keys = ["provider_code", "recipient_code", "year", "bi_multi"]
+    keys = ["provider_code", "recipient_code", "year", "bi_multi", "rio_marker"]
     return (
         crs.select(
             "recipient_code",
             "year",
             "bi_multi",
             provider_code="donor_code",
+            rio_marker=_rio_marker(),
             **_FLOW_AMOUNTS,
         )
         .unpivot(
@@ -449,6 +467,60 @@ def total_flows(crs: pl.LazyFrame) -> pl.LazyFrame:
         .group_by(*keys, "flow")
         .agg(amount_usd=ordered_sum(pl.col("usd")))
         .select(list(TOTAL_FLOWS.columns))
+    )
+
+
+def btr_links(links: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame:
+    """The `btr_crs` links with their CRS record's facts."""
+    return (
+        links.filter(pl.col("task") == "btr_crs")
+        .select("link_method", "probability", row_id="left_id", record_id="right_id")
+        .join(
+            crs.select(
+                "record_id",
+                "year",
+                "recipient_code",
+                "project_number",
+                "title",
+                "commitment_usd",
+                "disbursement_usd",
+                provider_code="donor_code",
+                rio_marker=_rio_marker(),
+            ),
+            on="record_id",
+            how="inner",
+            validate="m:1",
+        )
+        .select(list(BTR_LINKS.columns))
+    )
+
+
+def provider_coefficients(weights: Mapping[str, Mapping[str, object]]) -> pl.DataFrame:
+    """One row per party in `weights` (the party-weights file) with an estimated
+    weight and a DAC provider code, confirmed as the file says."""
+    rows = [
+        {
+            "provider_code": code,
+            "significant": entry["significant"],
+            "basis": PARTY_WEIGHT_BASIS,
+            "confirmed": entry["confirmed"],
+        }
+        for party, entry in weights.items()
+        if entry["significant"] is not None
+        and (code := party_provider(party)) is not None
+    ]
+    return pl.DataFrame(
+        rows,
+        schema={
+            name: column.dtype for name, column in PROVIDER_COEFFICIENTS.columns.items()
+        },
+    )
+
+
+def _rio_marker() -> pl.Expr:
+    """A CRS record's higher Rio marker, 0 for none."""
+    return (
+        pl.max_horizontal("rio_adaptation", "rio_mitigation").fill_null(0).cast(pl.Int8)
     )
 
 

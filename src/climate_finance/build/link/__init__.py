@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from climate_finance.build.fetch import DAC_EXCHANGE_FILE, IATI_DIR
+from climate_finance.build.link.btr import link_btr
 from climate_finance.build.link.candidates import (
     generate_candidates,
     learn_programme_stems,
@@ -54,7 +55,8 @@ def run_link(context: StageContext) -> StageOutput:
     other groups' pairs into `pair_scores`, calibrated by people's recorded
     decisions and Jev. Each trace link records whether its two sides disagree on
     recipient or project number (`flag_disagreement`). People's queue decisions
-    then override the links they decided (`override_links`).
+    then override the links they decided (`override_links`). When the build has
+    BTR rows, each links to the same-year CRS records of its party (`link_btr`).
     """
     config = context.config
     human = read_human_labels(config.sources.review_decisions)
@@ -132,11 +134,11 @@ def run_link(context: StageContext) -> StageOutput:
         labels=human,
         client=context.jev,
     )
+    linked = [flag_disagreement(pl.concat([links, scored.links]), units=units)]
+    if config.sources.btr_archive is not None:
+        linked.append(link_btr(context.read("normalise", "btr"), crs=crs))
     return {
-        "links": override_links(
-            flag_disagreement(pl.concat([links, scored.links]), units=units),
-            labels=human,
-        ),
+        "links": override_links(pl.concat(linked), labels=human),
         "units": units,
         "id_practice": id_practice,
         "programme_stems": stems,

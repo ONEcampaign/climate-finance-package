@@ -108,8 +108,14 @@ def release_dir(tmp_path: Path) -> Path:
             "modelled": _empty(schema.MODELLED),
         },
     )
-    config = load_config(BUILD_TOML).model_copy(
-        update={"key_repair": False, "recoveries": False}
+    config = load_config(BUILD_TOML)
+    # The hand-written normalise tables hold no BTR rows.
+    config = config.model_copy(
+        update={
+            "key_repair": False,
+            "recoveries": False,
+            "sources": config.sources.model_copy(update={"btr_archive": None}),
+        }
     )
     run_stages(
         REGISTRY,

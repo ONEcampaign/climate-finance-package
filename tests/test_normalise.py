@@ -1,5 +1,6 @@
 """The normalise stage on hand-built OECD raw files."""
 
+import json
 import shutil
 from datetime import date
 from pathlib import Path
@@ -11,6 +12,7 @@ from climate_finance import schema
 from climate_finance.build import write_stage
 from climate_finance.build.config import Ledgers, load_config
 from climate_finance.build.fetch import (
+    BTR_DIR,
     CRDF_FILES,
     CRDF_SPAN_FILE,
     CRS_FILE,
@@ -347,17 +349,33 @@ def test_run_normalise_writes_every_table_from_raw(
     shutil.copytree(
         fixtures / "ledgers", raw / "ledgers", ignore=shutil.ignore_patterns("*.md")
     )
+    (raw / BTR_DIR).mkdir(parents=True)
+    shutil.copy(fixtures / "btr" / "NLD-table-1.xlsx", raw / BTR_DIR / "NLD.xlsx")
+    (raw / BTR_DIR / "manifest.json").write_text(
+        json.dumps(
+            [
+                {
+                    "party": "Netherlands",
+                    "name": "NLD.xlsx",
+                    "ok": True,
+                    "bytes": (raw / BTR_DIR / "NLD.xlsx").stat().st_size,
+                }
+            ]
+        )
+    )
     pl.DataFrame(
         {"iso_code": ["EUI"] * 12, "year": range(2015, 2027), "exchange_rate": 0.8}
     ).write_parquet(raw / DAC_EXCHANGE_FILE)
     config = load_config(Path(__file__).parents[1] / "build.toml")
+    # The optional sources, the ledgers and the BTR archive, are named together.
     sources = config.sources.model_copy(
         update={
             "ledgers": Ledgers(
                 years=(2021, 2022), publishers=("ibrd", "ida", "ebrd", "afdb", "gcf")
             )
             if ledgers
-            else None
+            else None,
+            "btr_archive": tmp_path / "archive" if ledgers else None,
         }
     )
     context = StageContext(
@@ -370,14 +388,18 @@ def test_run_normalise_writes_every_table_from_raw(
 
     hashes = write_stage(normalise, run_normalise(context), tmp_path)
 
-    # `btr` waits for an ingested BTR table; `orgs` is written with recoveries and
-    # `ledger` when the config names ledgers.
+    # `orgs` is written with recoveries, and `ledger` and `btr` when the config
+    # names ledgers and a BTR archive.
     expected = set(schema.STAGE_TABLES["normalise"]) - {"btr", "orgs", "ledger"}
     assert set(hashes) == (
         expected
         | ({"orgs"} if recoveries else set())
-        | ({"ledger"} if ledgers else set())
+        | ({"ledger", "btr"} if ledgers else set())
     )
+    if ledgers:
+        btr = pl.read_parquet(table_path(tmp_path, "normalise", "btr"))
+        assert set(btr["party"]) == {"NLD"}
+        assert set(btr["provider_code"]) == {7}
     if ledgers:
         ledger = pl.read_parquet(table_path(tmp_path, "normalise", "ledger"))
         assert set(ledger["publisher"]) == {"ibrd", "ida", "ebrd", "afdb", "gcf"}

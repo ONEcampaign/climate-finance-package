@@ -42,7 +42,13 @@ CRS = crs_records(
         "disbursement_usd": 70.0,
         "grant_equiv_usd": 35.0,
     },
-    {"record_id": "core", "year": 2021, "bi_multi": 2, "disbursement_usd": 9.0},
+    {
+        "record_id": "core",
+        "year": 2021,
+        "bi_multi": 2,
+        "disbursement_usd": 9.0,
+        "rio_mitigation": 0,
+    },
 )
 # R1 is the commitment; R2 repeats it in a later vintage; P is an aggregate row
 # rebuilt into child C; N is a published downward revision.
@@ -92,8 +98,13 @@ def _write(release_dir: Path, stage: str, frames: dict[str, pl.DataFrame]) -> No
 
 @pytest.fixture
 def config() -> BuildConfig:
-    return load_config(BUILD_TOML).model_copy(
-        update={"key_repair": False, "recoveries": False}
+    base = load_config(BUILD_TOML)
+    return base.model_copy(
+        update={
+            "key_repair": False,
+            "recoveries": False,
+            "sources": base.sources.model_copy(update={"btr_archive": None}),
+        }
     )
 
 
@@ -407,15 +418,56 @@ def test_core_contributions_keep_leaf_channels_only() -> None:
     assert core.filter(flow="disbursements")["contribution_usd"].sum() == 15.0
 
 
-def test_total_flows_sum_every_crs_record(release_dir: Path) -> None:
+def test_total_flows_sum_every_crs_record_by_its_higher_marker(
+    release_dir: Path,
+) -> None:
     totals = _read(release_dir, "total_flows")
 
-    assert sorted(totals.select("year", "bi_multi", "flow", "amount_usd").rows()) == [
-        (2019, 1, "commitments", 100.0),
-        (2020, 1, "disbursements", 60.0),
-        (2021, 1, "disbursements", 70.0),
-        (2021, 1, "grant_equivalent", 35.0),
-        (2021, 2, "disbursements", 9.0),
+    columns = ("year", "bi_multi", "flow", "rio_marker", "amount_usd")
+    assert sorted(totals.select(columns).rows()) == [
+        (2019, 1, "commitments", 2, 100.0),
+        (2020, 1, "disbursements", 2, 60.0),
+        (2021, 1, "disbursements", 2, 70.0),
+        (2021, 1, "grant_equivalent", 2, 35.0),
+        (2021, 2, "disbursements", 0, 9.0),
+    ]
+
+
+def test_btr_links_carry_their_crs_records_facts() -> None:
+    links = pl.DataFrame(
+        {
+            "task": ["btr_crs", "btr_crs", "trace"],
+            "left_id": ["BTR-NOR-2021-00001", "BTR-NOR-2021-00002", "d21"],
+            "right_id": ["d21", "gone", "c19"],
+            "link_method": ["btr_id", "btr_splink", "crs_id"],
+            "probability": [1.0, 0.8, 1.0],
+        }
+    )
+
+    built = release.btr_links(links.lazy(), crs=CRS.lazy()).collect()
+
+    schema.validate(schema.BTR_LINKS, built)
+    # Only BTR links, and only to records the build holds.
+    assert built.select("row_id", "record_id", "year", "rio_marker").rows() == [
+        ("BTR-NOR-2021-00001", "d21", 2021, 2)
+    ]
+    assert built["disbursement_usd"].to_list() == [70.0]
+
+
+def test_provider_coefficients_come_from_the_party_weights() -> None:
+    weights = {
+        "NOR": {"significant": 0.4, "confirmed": True},
+        "EUU": {"significant": 0.4, "confirmed": False},
+        "AUS": {"significant": None, "confirmed": False},
+    }
+
+    coefficients = release.provider_coefficients(weights)
+
+    schema.validate(schema.PROVIDER_COEFFICIENTS, coefficients)
+    # Australia has no estimate, and the EU's code comes from the party map.
+    assert coefficients.select("provider_code", "confirmed").rows() == [
+        (NOR, True),
+        (918, False),
     ]
 
 
@@ -533,9 +585,12 @@ def _rerun_total_flows() -> pl.LazyFrame:
             "commitment_usd": _amounts(1),
             "disbursement_usd": _amounts(2),
             "grant_equiv_usd": _amounts(3),
+            "rio_adaptation": np.arange(RERUN_ROWS) % 3,
+            "rio_mitigation": 0,
         },
         schema_overrides={"donor_code": pl.Int32, "recipient_code": pl.Int32,
-                          "year": pl.Int16, "bi_multi": pl.Int8},
+                          "year": pl.Int16, "bi_multi": pl.Int8,
+                          "rio_adaptation": pl.Int8, "rio_mitigation": pl.Int8},
     )  # fmt: skip
     return release.total_flows(crs)
 
