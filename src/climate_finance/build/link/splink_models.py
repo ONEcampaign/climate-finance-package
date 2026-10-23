@@ -124,8 +124,13 @@ MIN_ISOTONIC_OUTCOMES = 30
 # Weight of EM's m in the labelled estimate, as in Splink's estimate from labels.
 M_PRIOR_WEIGHT = 1.0
 CALIBRATION_REASON = "calibration"
-# A calibrated pair links at this probability or more: more likely right than wrong.
-LINK_THRESHOLD = 0.5
+# A calibrated pair links at this probability or more; the rest go to the review
+# queue. With each truth-group provider's ids hidden in turn on the archive, the two
+# models that reach 0.7 linked at precision 0.954 (France, 1,789 links) and 0.698
+# (Denmark, 620) against id truth; at 0.5 they fell to 0.739 and 0.391, and the
+# pooled model linked at 0.442. Denmark's cut sits on one step of an isotonic map
+# fitted on 100 Jev labels: a draw that put the step at 0.69 gave 243 links at 0.905.
+LINK_THRESHOLD = 0.7
 LINK_METHOD = "splink_jev"
 _PAIR = ["left_id", "right_id"]
 # The ten comparisons labels re-estimate; `donor` and `provider` keep EM's m.

@@ -87,8 +87,9 @@ def _write(release_dir: Path, stage: str, frames: dict[str, pl.DataFrame]) -> No
 
 @pytest.fixture
 def config() -> BuildConfig:
+    # The hand-written tables hold no truth group to set Jev's scale.
     return load_config(BUILD_TOML).model_copy(
-        update={"key_repair": False, "recoveries": False}
+        update={"key_repair": False, "recoveries": False, "jev_links": False}
     )
 
 

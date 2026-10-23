@@ -769,11 +769,13 @@ def _normalised(release_dir: Path) -> None:
 
 
 def _context(release_dir: Path, **switches: bool) -> StageContext:
+    # The fixture has no truth group to set Jev's scale, so the Jev step is off
+    # unless a test turns it on.
     config = load_config(Path(__file__).parents[1] / "build.toml")
     return StageContext(
         release="test",
         release_dir=release_dir,
-        config=config.model_copy(update=switches),
+        config=config.model_copy(update={"jev_links": False} | switches),
         offline=True,
     )
 

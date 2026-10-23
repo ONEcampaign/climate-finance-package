@@ -16,7 +16,7 @@ review = false
 jev_labels = false
 # Jev on the classifier's band ([jev] band), Jev labels on each Splink model's
 # calibration sample, and Splink links. Off leaves the link stage's tables unchanged.
-jev_links = false
+jev_links = true
 # Embedding neighbours as a further blocking rule. Needs the `embed` extra unless the
 # embedding cache holds every vector the build asks for.
 embed = false
