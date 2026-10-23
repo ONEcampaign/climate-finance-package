@@ -443,23 +443,43 @@ def test_a_pair_is_eligible_only_where_the_keys_left_both_units(
         assert pairs["d", "c"]["eligible"]
 
 
+_PERSISTENT = _classes((1, "id_persistent"))
+
+
 @pytest.mark.parametrize(
-    ("others", "project_number", "kept"),
+    ("others", "project_number", "crs_ids", "classes", "kept"),
     [
         # The title, with no project number, reaches three recipients.
-        ((2, 3), None, True),
+        ((2, 3), None, (None, None), None, True),
         # Four recipients in three years: a template line on both sides.
-        ((2, 3, 4), None, False),
+        ((2, 3, 4), None, (None, None), None, False),
         # The other lines carry project numbers, so the title names projects.
-        ((2, 3, 4), "P", True),
+        ((2, 3, 4), "P", (None, None), None, True),
+        # A template line pairs with nothing to train on either.
+        ((2, 3, 4), None, (None, None), _PERSISTENT, False),
+        # Two of its five lines continue crs id A under persistent ids, so the
+        # title names an activity per country.
+        ((2, 3, 4), None, ("A", "A"), _PERSISTENT, True),
+        # No line continues a crs id.
+        ((2, 3, 4), None, ("A", "B"), _PERSISTENT, False),
     ],
 )
-def test_a_template_line_is_never_eligible(
-    others: tuple[int, ...], project_number: str | None, kept: bool
+def test_a_template_line_pairs_with_nothing(
+    others: tuple[int, ...],
+    project_number: str | None,
+    crs_ids: tuple[str | None, str | None],
+    classes: pl.DataFrame | None,
+    kept: bool,
 ) -> None:
+    commitment_crs_id, disbursement_crs_id = crs_ids
     records = {
-        "c": _commitment(title="Aggregate"),
-        "d": _disbursement(title="Aggregate", recipient_code=238, purpose_code=23210),
+        "c": _commitment(title="Aggregate", crs_id=commitment_crs_id),
+        "d": _disbursement(
+            title="Aggregate",
+            crs_id=disbursement_crs_id,
+            recipient_code=238,
+            purpose_code=23210,
+        ),
         **{
             f"other_{recipient}": _disbursement(
                 year=2021,
@@ -470,7 +490,7 @@ def test_a_template_line_is_never_eligible(
             for recipient in others
         },
     }
-    assert (("d", "c") in _candidates(records)) is kept
+    assert (("d", "c") in _candidates(records, classes=classes)) is kept
 
 
 @pytest.mark.parametrize(("commitment_year", "kept"), [(2019, False), (2020, True)])

@@ -25,17 +25,24 @@ commitments carry the id truth instead: a pair is a true continuation when the t
 units share a crs id. The table keeps eligible pairs and the pairs of commitments
 whose agency is `id_persistent`, which train and test the truth-group classifier.
 
-A template line is never eligible (`template_lines`): a unit with no project number
-whose title its donor gives, with no project number, to units of at least
-`TEMPLATE_RECIPIENTS` recipients in at least `TEMPLATE_YEARS` record years. Such a
-title names a reporting category, not an activity: the New Development Bank's
-"Aggregate" line per country and year, which sums every project the bank funds
-there, a credit-line or "aggregated disbursements" line, a sector or purpose name.
-An aggregate sums several activities, so no link to one commitment is right, and a
-category title says nothing of which activity a line continues. Key tiers and
-repair rules run before candidates and keep any link they give such a line. On the
-archive, 33 such titles of 8 providers leave 5,972 of 1,345,352 eligible pairs out;
-three recipients would also catch regional road corridors.
+A template line enters no candidate pair, eligible or training (`template_lines`):
+a unit with no project number whose title its donor gives, with no project number,
+to units of at least `TEMPLATE_RECIPIENTS` recipients in at least `TEMPLATE_YEARS`
+record years. Such a title names a reporting category, not an activity: the New
+Development Bank's "Aggregate" line per country and year, which sums every project
+the bank funds there, a credit-line or "aggregated disbursements" line, a sector or
+purpose name. An aggregate sums several activities, so no link to one commitment is
+right, and a category title says nothing of which activity a line continues. A title
+whose lines carry identity is no template: when at least `TEMPLATE_IDENTITY_UNITS`
+of its units, and `TEMPLATE_IDENTITY_SHARE` of them, are id-persistent units whose
+crs id an id-persistent unit of the donor carries in another record year, the title
+names one activity per country, as Japan's "The Economic and Social Development
+Programme" does. Key tiers and repair rules run before candidates and keep any link
+they give such a line. On the archive, 701 template titles hold 244,740 units. They
+leave out 5,972 of 1,345,361 eligible pairs, from 33 titles of 8 providers, and
+5,827,107 of 7,213,658 training pairs, none of them true and 5,813,108 of them
+Japan's "TC aggregated activities". Three recipients would also catch regional road
+corridors.
 
 A programme stem maps a component's project number to its programme's. A project
 number's shape replaces each digit run by 9 and each letter run by A, so
@@ -72,6 +79,11 @@ MAX_TITLE_UNITS = 100
 # recipients in at least this many record years is a template (`template_lines`).
 TEMPLATE_RECIPIENTS = 4
 TEMPLATE_YEARS = 2
+# A title is no template when at least this many of its units, and this share of
+# them, continue a crs id across record years under persistent ids. On the archive
+# any share from 0.01 to 0.25 keeps every id-truth pair; 0.3 loses 49.
+TEMPLATE_IDENTITY_UNITS = 2
+TEMPLATE_IDENTITY_SHARE = 0.1
 STEM_SEGMENTS = (1, 2)
 MIN_PAIRS = 20
 MAX_ERROR = 0.10
@@ -322,21 +334,23 @@ def generate_candidates(
         sides = sides.join(rows, on="text", how="left", maintain_order="left").drop(
             "text"
         )
-    commitments = sides.join(commitments.select("unit"), on="unit", how="semi")
-    disbursements = sides.join(disbursements.select("unit"), on="unit", how="semi")
+    # The blocking caps count every disbursement, template lines included.
+    reference = sides.join(disbursements.select("unit"), on="unit", how="semi")
+    lines = sides.filter(~pl.col("unit").is_in(template_lines(sides).implode()))
+    commitments = lines.join(commitments.select("unit"), on="unit", how="semi")
+    disbursements = lines.join(disbursements.select("unit"), on="unit", how="semi")
     renumbered = _renumbered_lines(units)
     truth = _block(
         commitments.filter("id_persistent"),
         disbursements,
-        reference=disbursements,
+        reference=reference,
         renumbered=renumbered,
         vectors=vectors,
     )
-    template = pl.col("unit").is_in(template_lines(sides).implode())
     open_pairs = _block(
-        commitments.filter(~pl.col("keyed_later"), ~pl.col("ids_persist"), ~template),
-        disbursements.filter(~pl.col("taken"), ~pl.col("ids_persist"), ~template),
-        reference=disbursements,
+        commitments.filter(~pl.col("keyed_later"), ~pl.col("ids_persist")),
+        disbursements.filter(~pl.col("taken"), ~pl.col("ids_persist")),
+        reference=reference,
         renumbered=renumbered,
         vectors=vectors,
     )
@@ -390,19 +404,36 @@ def generate_candidates(
 def template_lines(sides: pl.DataFrame) -> pl.Series:
     """The `unit`s of `sides` (`_sides`) that are template lines: no project number,
     and a title their donor gives to units with no project number in at least
-    `TEMPLATE_RECIPIENTS` recipients and `TEMPLATE_YEARS` record years."""
+    `TEMPLATE_RECIPIENTS` recipients and `TEMPLATE_YEARS` record years, unless at
+    least `TEMPLATE_IDENTITY_UNITS` and `TEMPLATE_IDENTITY_SHARE` of the title's
+    units continue a crs id: the unit's ids persist, and an id-persistent unit of the
+    donor carries its crs id in another record year."""
     bare = sides.filter(
         pl.col("project_number").is_null(), pl.col("title_block").is_not_null()
     )
+    continued = (
+        sides.filter("id_persistent")
+        .drop_nulls("crs_id")
+        .group_by("donor_code", "crs_id")
+        .agg(years=pl.col("year").n_unique())
+        .filter(pl.col("years") >= 2)
+        .select("donor_code", "crs_id", continues=pl.lit(value=True))
+    )
+    continues = pl.col("id_persistent") & pl.col("continues").fill_null(value=False)
     templates = (
-        bare.group_by("donor_code", "title_block")
+        bare.join(continued, on=["donor_code", "crs_id"], how="left")
+        .group_by("donor_code", "title_block")
         .agg(
             recipients=pl.col("recipient_code").n_unique(),
             years=pl.col("year").n_unique(),
+            continuing=continues.sum(),
+            share=continues.mean(),
         )
         .filter(
             pl.col("recipients") >= TEMPLATE_RECIPIENTS,
             pl.col("years") >= TEMPLATE_YEARS,
+            (pl.col("continuing") < TEMPLATE_IDENTITY_UNITS)
+            | (pl.col("share") < TEMPLATE_IDENTITY_SHARE),
         )
     )
     return bare.join(templates, on=["donor_code", "title_block"], how="semi")["unit"]
