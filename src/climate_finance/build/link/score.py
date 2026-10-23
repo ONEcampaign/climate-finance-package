@@ -74,7 +74,11 @@ from climate_finance.build.link.id_practice import (
     line_id,
     period_of,
 )
-from climate_finance.build.link.keys import regional_codes, separator_free_pn
+from climate_finance.build.link.keys import (
+    floor_loaded,
+    regional_codes,
+    separator_free_pn,
+)
 from climate_finance.build.link.levels import (
     DATE_FEATURES,
     LEVELS,
@@ -666,7 +670,7 @@ def _later_lines(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
     return (
         units.filter(
             pl.col("disbursement_usd") > 0,
-            pl.col("floor_year").is_null() | (pl.col("floor_year") >= first_year),
+            floor_loaded(first_year=first_year),
         )
         .join(anchors, on=[*line, "recipient_code"], how="left")
         .join(committed, on=line, how="left")

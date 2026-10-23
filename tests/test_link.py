@@ -296,18 +296,59 @@ def test_a_floor_with_no_commitment_on_or_after_it_falls_through() -> None:
     assert traced == {"d": ("pn_recipient", ["renewed"])}
 
 
-def test_a_disbursement_dated_before_the_first_year_links_to_nothing() -> None:
-    traced = _trace(
-        {
-            "c": _commitment(donor_code=918, crs_id="2010000001", year=2010),
-            "d": _disbursement(
-                donor_code=918,
-                crs_id="2010000001003",
-                commitment_date=date(FIRST_YEAR - 1, 6, 1),
-            ),
-        }
+@pytest.mark.parametrize(
+    ("commitments", "traced"),
+    [
+        # Only later commitments: its own lies before the data.
+        (
+            {
+                "c": _commitment(crs_id="A", year=FIRST_YEAR),
+                "eu_c": _commitment(
+                    donor_code=918, crs_id="2008000001", year=FIRST_YEAR
+                ),
+            },
+            {},
+        ),
+        # A later record carries the commitment's date, so the build sees it, and
+        # the disbursement reaches it and the lines placed after it.
+        (
+            {
+                "c": _commitment(crs_id="A", year=FIRST_YEAR),
+                "c_dated": _commitment(
+                    crs_id="A",
+                    year=FIRST_YEAR,
+                    purpose_code=41010,
+                    commitment_date=date(FIRST_YEAR - 1, 3, 1),
+                ),
+                "eu_c": _commitment(
+                    donor_code=918,
+                    crs_id="2008000001",
+                    year=FIRST_YEAR,
+                    commitment_date=date(FIRST_YEAR - 2, 3, 1),
+                ),
+            },
+            {
+                "d": ("crs_id", ["c", "c_dated"]),
+                "eu_d": ("crs_id_parent", ["eu_c"]),
+            },
+        ),
+    ],
+)
+def test_a_floor_before_the_first_year_links_where_the_build_holds_its_commitment(
+    commitments: dict[str, dict[str, object]],
+    traced: dict[str, tuple[str, list[str]]],
+) -> None:
+    floor = {"commitment_date": date(FIRST_YEAR - 1, 6, 1), "purpose_code": 15110}
+    assert (
+        _trace(
+            {
+                **commitments,
+                "d": _disbursement(crs_id="A", **floor),
+                "eu_d": _disbursement(donor_code=918, crs_id="2008000001003", **floor),
+            }
+        )
+        == traced
     )
-    assert traced == {}
 
 
 def test_a_shared_project_number_does_not_link() -> None:

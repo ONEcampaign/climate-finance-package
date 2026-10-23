@@ -6,8 +6,9 @@ meaning one placed at or before the disbursement's record year and, outside the
 parent-id tier, at or after its floor year. The parent-id tier ignores the floor, since
 an EU contract record carries the contract's own date, which falls on or after its
 decision's commitment, and a lettered record (`parent_id`) its own. A disbursement
-whose floor precedes the first CRS year continues a commitment the build cannot see,
-and links to nothing.
+whose floor precedes the first CRS year continues a commitment the build sees only
+where a later record carries that commitment's date, so a tier links it only where
+its key reaches a commitment placed no later than the floor (`floor_seen`).
 
 The World Bank tier comes first. IBRD and IDA crs ids name projects, and a project
 holds several loans and credits, so a tier on the crs id lets allocation spend one
@@ -256,10 +257,7 @@ def link_by_keys(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
         line_date=line_date(pl.col("commitment_date")),
     )
     units = units.with_columns(crs_key=crs_key(units))
-    remaining = units.filter(
-        pl.col("disbursement_usd") > 0,
-        pl.col("floor_year").is_null() | (pl.col("floor_year") >= first_year),
-    ).with_columns(
+    remaining = units.filter(pl.col("disbursement_usd") > 0).with_columns(
         crs_parent=parent_id(pl.col("donor_code"), pl.col("crs_id")),
         loan=loan_number(pl.col("donor_code"), pl.col("project_number")),
     )
@@ -276,12 +274,34 @@ def link_by_keys(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
             if tier.project_number
             else commitments,
             tier=tier,
+            first_year=first_year,
         )
         pairs.append(tier_pairs)
         remaining = remaining.join(
             tier_pairs.select(unit_id="left_id"), on="unit_id", how="anti"
         )
     return as_exact_links(pl.concat(pairs).lazy(), task="trace").collect()
+
+
+def floor_loaded(*, first_year: int) -> pl.Expr:
+    """Whether a unit's floor year is null or not before `first_year`, so that the
+    build loads the year its commitment was made in."""
+    floor = pl.col("floor_year")
+    return floor.is_null() | (floor >= first_year)
+
+
+def floor_seen(placed_year: pl.Expr, *, first_year: int, over: list[str]) -> pl.Expr:
+    """Whether a pair's disbursement continues a commitment the build holds: its
+    floor is loaded (`floor_loaded`), or a pair of the same `over` places its
+    commitment no later than the floor year.
+
+    The build loads no record before `first_year`, so a commitment from before it
+    is placed there only by a later record that carries its date. Where the pairs
+    reach only commitments placed after the floor, the disbursement continues a
+    commitment the build cannot see."""
+    return floor_loaded(first_year=first_year) | (
+        (placed_year <= pl.col("floor_year")).any().over(over)
+    )
 
 
 def line_date(commitment_date: pl.Expr) -> pl.Expr:
@@ -369,11 +389,16 @@ def _unique_pn(
 
 
 def _eligible_pairs(
-    disbursements: pl.DataFrame, commitments: pl.DataFrame, *, tier: Tier
+    disbursements: pl.DataFrame,
+    commitments: pl.DataFrame,
+    *,
+    tier: Tier,
+    first_year: int,
 ) -> pl.DataFrame:
     """(disbursement, commitment) unit pairs equal on the tier's key, the commitment
     placed no later than the record year and, in a floored tier, no earlier than
-    the disbursement's floor year."""
+    the disbursement's floor year, for disbursements whose floor the tier sees
+    (`floor_seen`)."""
     eligible = pl.col("placed_year") <= pl.col("year")
     if tier.floored:
         eligible &= pl.col("floor_year").is_null() | (
@@ -390,6 +415,9 @@ def _eligible_pairs(
             suffix="_commitment",
         )
         .filter(eligible)
+        .filter(
+            floor_seen(pl.col("placed_year"), first_year=first_year, over=["unit_id"])
+        )
         .select(
             left_id="unit_id",
             right_id="unit_id_commitment",

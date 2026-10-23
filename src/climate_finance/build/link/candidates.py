@@ -45,7 +45,7 @@ from climate_finance.build.link.id_practice import (
     line_id,
     period_of,
 )
-from climate_finance.build.link.keys import normalise_pn
+from climate_finance.build.link.keys import floor_loaded, normalise_pn
 
 MAX_PN_UNITS = 300
 MAX_TITLE_UNITS = 100
@@ -261,14 +261,16 @@ def generate_candidates(
         id_practice: each agency's class per period.
         stems: the programme stem rules.
         first_year: the first CRS year the build loads. A disbursement whose floor
-            precedes it continues a commitment the build cannot see.
+            precedes it is left out (`floor_loaded`), and the blocking caps count
+            only the disbursements left in. The key tiers link one where a later
+            record carries its commitment's date (`floor_seen`).
     """
     indexed = units.with_row_index("unit")
     reached = links.filter(task="crdf_crs").select(unit_id="right_id")
     commitments = indexed.join(reached, on="unit_id", how="semi")
     disbursements = indexed.filter(
         pl.col("disbursement_usd") > 0,
-        pl.col("floor_year").is_null() | (pl.col("floor_year") >= first_year),
+        floor_loaded(first_year=first_year),
         pl.col("donor_code").is_in(commitments["donor_code"].unique().implode()),
     )
     sides = _sides(

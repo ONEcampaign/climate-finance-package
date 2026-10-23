@@ -58,7 +58,9 @@ The last two guards count projects, not crs ids, since a donor such as the AfDB
 files each year's disbursements of one project under a new crs id.
 
 A pair links only when the commitment is placed no later than the record year and
-no earlier than the record's floor year.
+no earlier than the record's floor year. A record whose floor precedes the first CRS
+year links into a group only where the group holds a commitment placed in its floor
+year (`floor_seen`).
 
 Allocation pools the disbursement of a group and fills every commitment of the
 group that the record's year and floor allow, so a rule keeps or drops a
@@ -82,6 +84,7 @@ from climate_finance.build.link.id_practice import canonical_crs_id
 from climate_finance.build.link.keys import (
     ROUNDED_MIN_DIGITS,
     as_exact_links,
+    floor_seen,
     regional_codes,
     rounded_digits,
     separator_free_pn,
@@ -113,6 +116,8 @@ _PAIR = (
     "recipient_code_c",
     "title",
     "title_c",
+    "placed_year_c",
+    "floor_year",
 )
 
 type Rule = Callable[[pl.DataFrame, pl.DataFrame], pl.DataFrame]
@@ -163,7 +168,8 @@ def repair_keys(
         links: the exact tiers' `trace` links, whose commitments are left to them
             except those of `_spare_lines`.
         first_year: the first CRS year the build loads. A disbursement whose floor
-            precedes it links to nothing, as in the exact tiers.
+            precedes it links only into a group that sees its floor, as in the
+            exact tiers.
 
     Returns:
         One row per (disbursement unit, commitment unit) pair, `group_id` naming
@@ -176,7 +182,6 @@ def repair_keys(
     disbursements = facts.filter(
         pl.col("disbursement_usd") > 0,
         pl.col("disbursement_usd") > pl.col("commitment_usd"),
-        pl.col("floor_year").is_null() | (pl.col("floor_year") >= first_year),
     ).with_columns(reached=pl.col("unit_id").is_in(links["left_id"].implode()))
     closed = links.select(unit_id="right_id").join(
         _spare_lines(facts, links=links), on="unit_id", how="anti"
@@ -199,10 +204,13 @@ def repair_keys(
     if tuple(rules) != schema.KEY_REPAIR_METHODS:
         raise RuntimeError("The rules must follow schema.KEY_REPAIR_METHODS")
 
+    seen = floor_seen(
+        pl.col("placed_year_c"), first_year=first_year, over=["left_id", "key"]
+    )
     found = []
     for method, rule in rules.items():
         pairs = _settle(
-            rule(disbursements, commitments),
+            rule(disbursements, commitments).filter(seen),
             method=method,
             agrees=agreements.get(method, _AGREES),
         )

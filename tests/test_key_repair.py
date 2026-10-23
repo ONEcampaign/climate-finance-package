@@ -311,23 +311,40 @@ def test_a_programme_number_links_only_within_the_disbursements_recipient(
     assert _repaired(records) == repaired
 
 
-def test_a_disbursement_before_the_first_year_links_to_nothing() -> None:
-    repaired = _repaired(
-        {
-            "c": _commitment(
-                crs_id="A",
-                project_number="G-1",
-                year=FIRST_YEAR,
-                commitment_date=date(FIRST_YEAR - 2, 5, 1),
-            ),
-            "d": _disbursement(
-                crs_id="B",
-                project_number="G-1",
-                commitment_date=date(FIRST_YEAR - 2, 5, 1),
-            ),
-        }
-    )
-    assert repaired == {}
+@pytest.mark.parametrize(
+    ("placed", "repaired"),
+    [
+        # Committed after the floor: the disbursement's own commitment lies
+        # before the data.
+        ({}, {}),
+        # A later record carries the floor year's commitment date.
+        (
+            {"commitment_date": date(FIRST_YEAR - 2, 5, 1)},
+            {"d": {"repair_new_crs_id": ["c"]}},
+        ),
+    ],
+)
+def test_a_floor_before_the_first_year_links_where_the_group_holds_its_commitment(
+    placed: dict[str, object], repaired: dict[str, dict[str, list[str]]]
+) -> None:
+    # Another recipient keeps the exact tiers off.
+    records = {
+        "c": _commitment(
+            crs_id="A",
+            project_number="G-1",
+            title="Water supply",
+            year=FIRST_YEAR,
+            **placed,
+        ),
+        "d": _disbursement(
+            crs_id="B",
+            project_number="G-1",
+            title="Water supply",
+            recipient_code=289,
+            commitment_date=date(FIRST_YEAR - 2, 5, 1),
+        ),
+    }
+    assert _repaired(records) == repaired
 
 
 def test_a_unit_links_only_where_title_or_recipient_agrees_with_its_whole_group() -> (

@@ -230,6 +230,29 @@ def test_a_disbursement_before_its_floor_links_to_nothing() -> None:
     assert _crosswalked(records) == {}
 
 
+@pytest.mark.parametrize(
+    ("commitment", "crosswalked"),
+    [
+        # Committed after the floor: the disbursement's own commitment lies
+        # before the data.
+        ({"year": FIRST_YEAR}, {}),
+        # A later record carries the floor year's commitment date.
+        (
+            {"year": FIRST_YEAR, "commitment_date": date(FIRST_YEAR - 1, 3, 1)},
+            {"d": ["c"]},
+        ),
+    ],
+)
+def test_a_floor_before_the_first_year_links_where_the_component_holds_it(
+    commitment: dict[str, object], crosswalked: dict[str, list[str]]
+) -> None:
+    records = {
+        "c": _commitment(**commitment),
+        "d": _disbursement(commitment_date=date(FIRST_YEAR - 1, 6, 1)),
+    }
+    assert _crosswalked(records) == crosswalked
+
+
 def test_allocation_pools_a_group_over_the_projects_it_connects() -> None:
     # One UNDP output carries GEF projects 5078 and 5079, and another carries 5079,
     # so both disbursements reach both projects.

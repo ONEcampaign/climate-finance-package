@@ -34,7 +34,7 @@ from pathlib import Path
 
 import polars as pl
 
-from climate_finance.build.link.keys import as_exact_links
+from climate_finance.build.link.keys import as_exact_links, floor_seen
 from climate_finance.build.sums import ordered_sum
 
 GEF_DONOR = 811
@@ -97,7 +97,8 @@ def link_by_crosswalk(
             which allocation runs first. A disbursement unit they link is left to
             them, so no unit pair carries two methods.
         first_year: The first CRS year the build loads. A disbursement whose floor
-            precedes it links to nothing, as in the exact tiers.
+            precedes it links only into a component that sees its floor
+            (`floor_seen`), as in the exact tiers.
 
     Returns:
         `links` rows, `group_id` naming the method, the crosswalk component and the
@@ -105,10 +106,7 @@ def link_by_crosswalk(
     """
     gef = units.filter(pl.col("donor_code") == GEF_DONOR)
     disbursements = (
-        gef.filter(
-            pl.col("disbursement_usd") > 0,
-            pl.col("floor_year").is_null() | (pl.col("floor_year") >= first_year),
-        )
+        gef.filter(pl.col("disbursement_usd") > 0)
         .join(earlier.select(unit_id="left_id"), on="unit_id", how="anti")
         .select(
             "unit_id",
@@ -135,6 +133,9 @@ def link_by_crosswalk(
         .join(projects, on="component")
         .join(commitments, on=["gef_id", "recipient_code"])
         .filter(eligible)
+        .filter(
+            floor_seen(pl.col("placed_year"), first_year=first_year, over=["unit_id"])
+        )
         .select(
             left_id="unit_id",
             right_id="commitment",
