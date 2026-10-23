@@ -123,47 +123,44 @@ def simulate(
     """Calibrate the `SIMULATED` providers' models on id truth.
 
     The pool is every blocked pair of the providers' id-persistent commitments,
-    labelled by `same_crs_id`. A first run draws each model's calibration sample;
-    its truth becomes people's labels for the second, calibrated run. Returns the
-    second run and its scores with `y` and `labelled`.
+    labelled by `same_crs_id`. Id truth answers each model's calibration sample in
+    the build (`score_with_splink`'s `answer`), standing in for people's labels.
+    Returns the run and its scores with `y` and `labelled`.
     """
     pool = candidates.filter(
         "id_persistent", pl.col("donor_code").is_in(SIMULATED)
     ).with_columns(eligible=pl.lit(value=True))
     truth = pool.select("left_id", "right_id", y="same_crs_id")
+    asked: list[pl.DataFrame] = []
 
-    def run(labels: pl.DataFrame) -> SplinkResult:
-        return score_with_splink(
-            pool,
-            units=units,
-            crs=crs,
-            stems=stems,
-            # With their ids hidden, the providers fall outside the truth group.
-            provider_profile=scoring_groups(
-                pool.with_columns(split=pl.lit(ELIGIBLE), true_pair=pl.lit(value=False))
-            ),
-            labels=labels,
-            client=client,
+    def answer(pairs: pl.DataFrame, attributes: pl.DataFrame) -> pl.DataFrame:
+        asked.append(pairs.select("left_id", "right_id"))
+        return pairs.join(truth, on=["left_id", "right_id"]).select(
+            "left_id",
+            "right_id",
+            y=pl.col("y").cast(pl.Float64),
+            pair_label_source=pl.lit("human"),
         )
 
-    first = run(pl.DataFrame(schema=_LABELS))
-    sample = first.scores.filter(review_reason=CALIBRATION_REASON).join(
-        truth, on=["left_id", "right_id"]
+    result = score_with_splink(
+        pool,
+        units=units,
+        crs=crs,
+        stems=stems,
+        # With their ids hidden, the providers fall outside the truth group.
+        provider_profile=scoring_groups(
+            pool.with_columns(split=pl.lit(ELIGIBLE), true_pair=pl.lit(value=False))
+        ),
+        labels=pl.DataFrame(schema=_LABELS),
+        client=client,
+        answer=answer,
     )
-    labels = sample.select(
-        task=pl.lit("trace"),
-        left_id="left_id",
-        right_id="right_id",
-        is_match="y",
-        pair_label_source=pl.lit("human"),
-    ).cast(_LABELS)  # ty: ignore[invalid-argument-type]
-    second = run(labels)
-    scores = second.scores.join(truth, on=["left_id", "right_id"]).join(
-        sample.select("left_id", "right_id", labelled=pl.lit(value=True)),
+    scores = result.scores.join(truth, on=["left_id", "right_id"]).join(
+        pl.concat(asked).with_columns(labelled=pl.lit(value=True)),
         on=["left_id", "right_id"],
         how="left",
     )
-    return second, scores.with_columns(pl.col("labelled").fill_null(value=False))
+    return result, scores.with_columns(pl.col("labelled").fill_null(value=False))
 
 
 def precision_recall(scores: pl.DataFrame) -> pl.DataFrame:

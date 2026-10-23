@@ -16,7 +16,11 @@ from climate_finance import schema
 from climate_finance.build import load_config, run_stages, write_table
 from climate_finance.build.cli import app
 from climate_finance.build.errors import GateFailedError
-from climate_finance.build.evaluate import design_path, draw_blind_sample
+from climate_finance.build.evaluate import (
+    batch_packet_path,
+    design_path,
+    draw_blind_sample,
+)
 from climate_finance.build.gate import (
     GATES,
     Drift,
@@ -25,7 +29,8 @@ from climate_finance.build.gate import (
     load_gates,
     run_gates,
 )
-from climate_finance.build.link.review import apply_decisions
+from climate_finance.build.link.decisions import import_labels
+from climate_finance.build.link.packet import MATCH_DEFINITION, packet_pairs_path
 from climate_finance.build.stages import REGISTRY, table_path
 from climate_finance.schema import STAGE_TABLES, ReleaseManifest
 
@@ -109,11 +114,13 @@ def release_dir(tmp_path: Path) -> Path:
         },
     )
     config = load_config(BUILD_TOML)
-    # The hand-written normalise tables hold no BTR rows.
+    # The hand-written normalise tables hold no BTR rows and no truth group to set
+    # Jev's scale.
     config = config.model_copy(
         update={
             "key_repair": False,
             "recoveries": False,
+            "jev_links": False,
             "sources": config.sources.model_copy(update={"btr_archive": None}),
         }
     )
@@ -174,14 +181,17 @@ def test_a_failed_gate_raises_naming_the_provider_and_the_missing_previous_relea
     assert "first_release" in raised.value.failures[1]
 
 
-def _label(release_dir: Path, *, rejected: set[str]) -> Path:
-    """Draw the blind sample, decide it, rejecting pairs whose disbursement unit
-    holds a record in `rejected`, and record the decisions; return the design."""
-    csv = release_dir.parent / "sample.csv"
+def _label(
+    release_dir: Path, *, rejected: set[str], label_source: str = "human"
+) -> Path:
+    """Draw the blind sample, decide its packets as `label_source`, rejecting pairs
+    whose disbursement unit holds a record in `rejected`, and record the decisions;
+    return the design."""
+    out = release_dir.parent / "sample"
     decisions = release_dir.parent / "decisions.parquet"
     draw_blind_sample(
         release_dir=release_dir,
-        out_path=csv,
+        out_dir=out,
         decisions=decisions,
         rule=GATES_CONFIG.precision,
     )
@@ -189,46 +199,71 @@ def _label(release_dir: Path, *, rejected: set[str]) -> Path:
         "record_ids"
     )
     rejected_units = units.filter(pl.col("record_ids").is_in(rejected))["unit_id"]
-    sample = pl.read_csv(csv, infer_schema=False)
-    sample.with_columns(
-        decision=pl.when(pl.col("left_id").is_in(rejected_units))
-        .then(pl.lit("reject"))
-        .otherwise(pl.lit("accept")),
-        reviewer=pl.lit("analyst"),
-    ).write_csv(csv)
-    apply_decisions(csv_path=csv, decisions_path=decisions)
-    return design_path(csv)
+    agent = label_source == "agent"
+    for packet in sorted(out.glob("*/batch-*.md")):
+        labels = packet.with_suffix(".labels.csv")
+        right = ~pl.col("left_id").is_in(rejected_units)
+        pl.read_parquet(packet_pairs_path(packet)).select(
+            "pair",
+            label=pl.when(right).then(pl.lit("match")).otherwise(pl.lit("no_match")),
+            confidence=pl.when(right).then(0.9).otherwise(0.1),
+            reason=pl.lit("read both units"),
+        ).write_csv(labels)
+        import_labels(
+            packet=packet,
+            labels_csv=labels,
+            decisions_path=decisions,
+            label_source=label_source,
+            reviewer="agent-run" if agent else "analyst",
+            model="claude-opus-5-5" if agent else None,
+        )
+    return design_path(out)
 
 
 def test_the_blind_sample_hides_the_score_and_lists_each_pair_once(
     release_dir: Path,
 ) -> None:
-    csv = release_dir.parent / "sample.csv"
+    out = release_dir.parent / "sample"
     draw_blind_sample(
         release_dir=release_dir,
-        out_path=csv,
+        out_dir=out,
         decisions=release_dir.parent / "decisions.parquet",
         rule=GATES_CONFIG.precision,
     )
-    sample = pl.read_csv(csv)
+    packet = batch_packet_path(out, provider=NOR, batch=1)
+    sample = pl.read_parquet(packet_pairs_path(packet))
+    text = packet.read_text()
 
-    # Two pairs, under the census below 60 pairs.
+    # Two pairs, under the census below 60 pairs, in one packet.
+    assert sorted(out.glob("*/*.md")) == [packet]
     assert sample.height == 2
     assert sample["sample_id"].n_unique() == 2
     assert not {"probability", "link_method", "stratum", "weight_usd"} & set(
         sample.columns
     )
-    assert {"left_title", "right_usd", "decision", "batch"} <= set(sample.columns)
+    assert "probability" not in text.lower()
+    # Ids show, since reviewers see every field.
+    assert MATCH_DEFINITION in text
+    assert "X1" in text
 
 
 @pytest.mark.parametrize(
-    ("rejected", "estimate", "passed"),
-    [(set(), 1.0, True), ({"d20"}, 0.4, False)],
+    ("rejected", "label_source", "estimate", "passed"),
+    [
+        (set(), "human", 1.0, True),
+        ({"d20"}, "human", 0.4, False),
+        # An agent's blind decisions count as a person's, and the share shows.
+        ({"d20"}, "agent", 0.4, False),
+    ],
 )
 def test_precision_reads_the_blind_sample_by_allocated_value(
-    release_dir: Path, rejected: set[str], estimate: float, passed: bool
+    release_dir: Path,
+    rejected: set[str],
+    label_source: str,
+    estimate: float,
+    passed: bool,
 ) -> None:
-    design = _label(release_dir, rejected=rejected)
+    design = _label(release_dir, rejected=rejected, label_source=label_source)
 
     row = (
         _report(release_dir, sample=design).filter(gate="precision").row(0, named=True)
@@ -238,6 +273,7 @@ def test_precision_reads_the_blind_sample_by_allocated_value(
     assert row["value"] == pytest.approx(estimate)
     assert row["lower"] == row["upper"] == row["value"]
     assert row["passed"] is passed
+    assert ("100% decided by agents" in row["detail"]) is (label_source == "agent")
 
 
 def test_a_waiver_lets_a_failed_precision_gate_through(release_dir: Path) -> None:
@@ -483,10 +519,10 @@ def test_the_sample_and_gate_commands_pass_their_options_through(
 ) -> None:
     runner = CliRunner()
     decisions = str(release_dir.parent / "decisions.parquet")
-    csv = release_dir.parent / "sample.csv"
+    out = release_dir.parent / "sample"
 
     drawn = runner.invoke(
-        app, ["sample", str(release_dir), "--out", str(csv), "--decisions", decisions]
+        app, ["sample", str(release_dir), "--out", str(out), "--decisions", decisions]
     )
     gate = [
         "gate",
@@ -494,13 +530,13 @@ def test_the_sample_and_gate_commands_pass_their_options_through(
         "--decisions",
         decisions,
         "--sample",
-        str(design_path(csv)),
+        str(design_path(out)),
     ]
     reported = runner.invoke(app, [*gate, "--first-release", "--report"])
     refused = runner.invoke(app, gate)
 
     assert drawn.exit_code == 0, drawn.output
-    assert pl.read_csv(csv).height == 2
+    assert pl.read_parquet(design_path(out)).height == 2
     assert reported.exit_code == 0, reported.output
     assert f"precision {NOR}: FAIL; continue after 0 labels (census)" in (
         reported.output

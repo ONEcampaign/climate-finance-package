@@ -5,6 +5,7 @@ share a project number.
 """
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,16 +19,18 @@ import splink
 from climate_finance import schema
 from climate_finance.build.jev_client import JevClient
 from climate_finance.build.link import splink_models
+from climate_finance.build.link.jev import CalibrationAnswers, Logistic, jev_answers
 from climate_finance.build.link.score import ELIGIBLE, scoring_groups
 from climate_finance.build.link.splink_models import (
     CALIBRATION_LABELS,
     CALIBRATION_REASON,
     JEV_SAMPLE,
+    LINK_THRESHOLD,
     SplinkResult,
     isotonic_map,
-    pair_request,
-    read_human_labels,
+    read_decision_labels,
     score_with_splink,
+    splink_links,
     stratified_sample,
     with_labelled_m,
 )
@@ -212,6 +215,8 @@ class Run:
     result: SplinkResult
     scores: pl.DataFrame
     client: JevClient
+    # The labels each calibrated model weighed (`_band_weights`), concatenated.
+    weighed: pl.DataFrame
 
 
 def _run(
@@ -219,11 +224,21 @@ def _run(
     cache_dir: Path,
     labels: pl.DataFrame | None = None,
     providers: tuple[int, ...] = (DONOR, OTHER_DONOR),
+    answer: Callable[[JevClient], CalibrationAnswers] | None = None,
 ) -> Run:
-    """Score both donors, with Jev answering through `_responses`. `scores` adds
-    each pair's truth `y`."""
+    """Score both donors, with Jev answering through `_responses` and `answer`,
+    given the client, answering calibration samples. `scores` adds each pair's
+    truth `y`."""
+    weighed = []
+    band_weights = splink_models._band_weights
+
+    def record(scores: pl.DataFrame, labels: pl.DataFrame) -> pl.DataFrame:
+        weighed.append(labels)
+        return band_weights(scores, labels)
+
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv("TYPESAFE_API_KEY", "test")
+        patch.setattr(splink_models, "_band_weights", record)
         client = JevClient(
             model=MODEL,
             cost_cap_usd=10.0,
@@ -241,12 +256,18 @@ def _run(
             ),
             labels=pl.DataFrame(schema=_LABEL_SCHEMA) if labels is None else labels,
             client=client,
+            answer=None if answer is None else answer(client),
         )
     scores = result.scores.join(
         world["candidates"].select("left_id", "right_id", "y"),
         on=["left_id", "right_id"],
     )
-    return Run(result=result, scores=scores, client=client)
+    return Run(
+        result=result,
+        scores=scores,
+        client=client,
+        weighed=pl.concat(weighed) if weighed else pl.DataFrame(),
+    )
 
 
 # Slow: each run fits two Splink models, about 5 s on an idle machine.
@@ -332,6 +353,75 @@ def test_a_provider_without_calibration_labels_stays_in_the_queue(
     assert queued.height == CALIBRATION_LABELS
 
 
+def test_jev_answers_the_calibration_samples_and_the_models_link(
+    world: dict[str, pl.DataFrame], tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    # Slow: one more run, about 5 s. Jev's answer is its label, unscaled.
+    scale = Logistic(coefs=(1.0,), intercept=0.0)
+    run = _run(
+        world,
+        tmp_path_factory.mktemp("jev"),
+        answer=lambda client: jev_answers(client=client, scale=scale),
+    )
+    reports = run.result.models
+    assert all(report.calibrated for report in reports)
+    assert {report.jev_labels for report in reports} == {CALIBRATION_LABELS}
+    assert {report.human_labels for report in reports} == {0}
+    # Jev read each model's calibration sample and nothing else.
+    assert run.client.live_calls == CALIBRATION_LABELS * len(reports)
+    scores = run.scores
+    assert scores["probability"].null_count() == 0
+    assert scores["review_reason"].null_count() == scores.height
+    assert set(scores["label_set"]) == {f"human:0,jev:{CALIBRATION_LABELS}"}
+    # `stratified_sample` drew every label Jev gave, so each takes its band's
+    # inverse-probability weight.
+    assert run.weighed.height == CALIBRATION_LABELS * len(reports)
+    assert run.weighed["stratified"].all()
+
+    links = splink_links(
+        run.result.scores,
+        candidates=world["candidates"].with_columns(
+            programme_level=pl.lit(0, dtype=pl.Int8)
+        ),
+        units=world["units"],
+        jev_model=MODEL,
+    )
+    schema.validate(schema.LINKS, links)
+    assert links["left_id"].is_unique().all()
+    assert (links["probability"] >= LINK_THRESHOLD).all()
+    assert set(links["link_method"]) == {"splink_jev"}
+    assert (links["group_id"] == "splink_jev|" + links["right_id"]).all()
+    right = links.join(world["candidates"], on=["left_id", "right_id"])["y"]
+    assert links.height > 100
+    assert right.mean() > 0.9
+
+
+def test_an_answer_for_people_calibrates_as_their_recorded_labels(
+    uncalibrated: Run,
+    world: dict[str, pl.DataFrame],
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    # Slow: two more runs, about 10 s. Id truth answers each calibration sample in
+    # the build, as `simulate` in the Splink e2e test does, and gives what people's
+    # decisions on the same pairs give.
+    def truth(client: JevClient) -> CalibrationAnswers:
+        def answer(pairs: pl.DataFrame, attributes: pl.DataFrame) -> pl.DataFrame:
+            return pairs.join(world["candidates"], on=["left_id", "right_id"]).select(
+                "left_id",
+                "right_id",
+                y=pl.col("y").cast(pl.Float64),
+                pair_label_source=pl.lit("human"),
+            )
+
+        return answer
+
+    answered = _run(world, tmp_path_factory.mktemp("jev"), answer=truth)
+    sample = uncalibrated.scores.filter(review_reason=CALIBRATION_REASON)
+    recorded = _run(world, tmp_path_factory.mktemp("jev"), _labels(sample))
+    assert all(report.calibrated for report in answered.result.models)
+    assert answered.scores.equals(recorded.scores)
+
+
 def test_without_both_outcomes_people_s_labels_alone_calibrate(
     uncalibrated: Run,
     world: dict[str, pl.DataFrame],
@@ -365,19 +455,21 @@ def test_a_model_too_small_to_fit_scores_nothing(tmp_path: Path) -> None:
 
 def test_people_s_decisions_are_human_labels(tmp_path: Path) -> None:
     path = tmp_path / "review_decisions.parquet"
-    assert read_human_labels(path).is_empty()
+    assert read_decision_labels(path).is_empty()
     pl.DataFrame(
         {
             "task": ["trace", "trace", "trace", "crdf_crs", "trace"],
             "left_id": ["b", "a", "b", "c", "a"],
             "right_id": ["y", "x", "y", None, "x"],
             "decision": ["reject", "accept", "accept", "reject", "reject"],
+            "label_source": "human",
+            "round": pl.Series([None] * 5, dtype=pl.String),
             "review_reason": ["band", "calibration", "band", "over_face", None],
             "sample_id": [None, None, None, None, "s1"],
             "decided_at": [datetime(2026, 11, d, tzinfo=UTC) for d in (2, 1, 1, 1, 3)],
         }
     ).write_parquet(path)
-    labels = read_human_labels(path)
+    labels = read_decision_labels(path)
     schema.validate(schema.PAIR_LABELS, labels.drop("stratified"))
     # The later decision on b stands; c names no commitment; the blind-sample
     # decision on a, though later, is no label. Only a's calibration pair was drawn.
@@ -493,31 +585,3 @@ def test_isotonic_map_is_monotone() -> None:
     assert (np.diff(mapped) >= 0).all()
     assert mapped.min() >= 0
     assert mapped.max() <= 1
-
-
-def test_pair_request_states_the_derived_facts() -> None:
-    earlier = {
-        "year": 2018, "donor_code": 901, "recipient_code": 1, "purpose_code": 23210,
-        "channel_code": None, "flow_code": 11, "finance_type_code": 110,
-        "project_number": "P1", "title": "Solar Grid", "short_description": None,
-        "long_description": "x " * 400, "commitment_usd": 2e6, "disbursement_usd": 0.0,
-    }  # fmt: skip
-    later = earlier | {
-        "year": 2021, "title": "solar grid", "commitment_usd": None,
-        "disbursement_usd": 5e5, "purpose_code": 23220,
-    }  # fmt: skip
-    request = pair_request(earlier, later)
-    facts = request["state"]["derived_facts"]  # ty: ignore[not-subscriptable]
-    assert facts == {
-        "years_between_records": 3,
-        "same_provider": True,
-        "same_project_number": True,
-        "same_title": True,
-        "same_recipient": True,
-        "same_purpose_code": False,
-        "later_disbursement_as_share_of_earlier_commitment": 0.25,
-        "later_record_also_has_its_own_commitment": False,
-    }
-    record = request["state"]["earlier_record"]  # ty: ignore[not-subscriptable]
-    assert len(record["long_description"]) == splink_models.JEV_TEXT_CHARS + 3
-    assert set(request["questions"]) == {"relation", "disbursement", "sibling"}  # ty: ignore[invalid-argument-type]

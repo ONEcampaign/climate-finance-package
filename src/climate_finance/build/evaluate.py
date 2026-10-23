@@ -4,7 +4,8 @@ The sample measures precision on allocated pairs: the `trace` links that carried
 allocation to a published commitment row, each with the face value it carried.
 Within a provider, pairs fall into four strata (`STRATA`): ledger-confirmed links,
 key-tier links without a ledger confirmation, every other link method (models,
-key-repair and recovery rules), and links people accepted in the review queue.
+key-repair and recovery rules), and links people or agents accepted in the review
+queue.
 
 A provider with fewer than `census_below` pairs is labelled in full. Otherwise the
 sample is an ordered sequence of `cap` draws: the first draw of each stratum comes
@@ -13,6 +14,12 @@ value. Within a stratum a draw picks a pair with probability proportional to its
 allocated value, with replacement, so a pair can be drawn more than once and is
 labelled once. Each draw's weight is its stratum's allocated value over the
 stratum's draws, so a provider's weights sum to its allocated value.
+
+People or agents decide the sample from labelling packets (`packet.write_packet`),
+one per provider and batch, which show both units' ids and fields and no score,
+link method or stratum. Their decisions carry a `sample_id`, so they measure
+precision and never become pair labels or link overrides. The estimate counts an
+agent's decision as it counts a person's and reports the share agents decided.
 
 The estimate is the share of allocated value whose pair is right: per stratum the
 weighted mean of the draws' decisions, combined by stratum value. Labelling runs in
@@ -38,17 +45,17 @@ from pydantic import BaseModel, ConfigDict
 # `release` imports the gates, which import this module, so it is read at call time.
 from climate_finance.build import release
 from climate_finance.build.link.decisions import PAIR
-from climate_finance.build.link.review import _unit_sides
-from climate_finance.build.link.splink_models import read_human_labels
+from climate_finance.build.link.packet import code_names, write_packet
+from climate_finance.build.link.splink_models import read_decision_labels
 from climate_finance.build.sums import ordered_sum
-from climate_finance.schema import KEY_TIERS
+from climate_finance.schema import KEY_TIERS, LABEL_ROUNDS
 
 STRATA = ("ledger", "key", "model", "reviewed")
 DESIGNS = ("census", "pps")
 DECISIONS = ("pass", "fail", "continue")
 # The ledger checks that confirm a link.
 CONFIRMED = ("confirmed", "confirmed_undisbursed")
-# One row per draw of a blind sample: the design file beside the labelling CSV.
+# One row per draw of a blind sample: the design file beside its packets.
 DESIGN_SCHEMA = pl.Schema(
     {
         "sample_id": pl.String(),
@@ -73,18 +80,8 @@ ESTIMATE_SCHEMA = pl.Schema(
         "lower": pl.Float64(),
         "upper": pl.Float64(),
         "decision": pl.String(),
+        "agent_share": pl.Float64(),
     }
-)
-# What the labelling CSV shows of each record of a pair.
-_SIDE_COLUMNS = (
-    "donor_code",
-    "crs_id",
-    "project_number",
-    "recipient_code",
-    "purpose_code",
-    "year",
-    "usd",
-    "title",
 )
 
 
@@ -102,9 +99,14 @@ class PrecisionRule(BaseModel):
     seed: int
 
 
-def design_path(out_path: Path) -> Path:
-    """Where `draw_blind_sample` writes the design of the sample at `out_path`."""
-    return out_path.with_suffix(".parquet")
+def design_path(out_dir: Path) -> Path:
+    """Where `draw_blind_sample` writes the design of the sample in `out_dir`."""
+    return out_dir / "design.parquet"
+
+
+def batch_packet_path(out_dir: Path, *, provider: int, batch: int) -> Path:
+    """Where `draw_blind_sample` writes one provider's packet for one batch."""
+    return out_dir / str(provider) / f"batch-{batch:02d}.md"
 
 
 def allocated_pairs(release_dir: Path, *, decisions: Path) -> pl.DataFrame:
@@ -112,8 +114,8 @@ def allocated_pairs(release_dir: Path, *, decisions: Path) -> pl.DataFrame:
 
     Columns: `provider_code` (the disbursing unit's donor), the pair (`task`,
     `left_id`, `right_id`), `allocated_usd` (face value summed over the pair's
-    allocations) and `stratum`. A link people accepted in the review queue, read
-    from `decisions`, is `reviewed` whatever its method.
+    allocations) and `stratum`. A link people or agents accepted in the review
+    queue, read from `decisions`, is `reviewed` whatever its method.
     """
     from climate_finance.build.stages import table_path
 
@@ -133,7 +135,7 @@ def allocated_pairs(release_dir: Path, *, decisions: Path) -> pl.DataFrame:
         links=scan("review", "links"),
     )
     accepted = (
-        read_human_labels(decisions)
+        read_decision_labels(decisions)
         .filter("is_match")
         .select(*PAIR, reviewed=pl.lit(value=True))
         .lazy()
@@ -170,54 +172,53 @@ def allocated_pairs(release_dir: Path, *, decisions: Path) -> pl.DataFrame:
 
 
 def draw_blind_sample(
-    *, release_dir: Path, out_path: Path, decisions: Path, rule: PrecisionRule
+    *, release_dir: Path, out_dir: Path, decisions: Path, rule: PrecisionRule
 ) -> Path:
-    """Draw the blind sample of `release_dir`'s allocated pairs; return the CSV path.
+    """Draw the blind sample of `release_dir`'s allocated pairs into `out_dir`.
 
-    The CSV at `out_path` lists each drawn pair once, in draw order, with its
-    `sample_id`, its labelling `batch`, both records side by side and empty
-    `decision`, `reviewer` and `note` columns for `cf-build apply-decisions`. It
-    shows no score, link method or stratum. The design, one row per draw with its
-    stratum and weight, goes to `design_path(out_path)`, which the precision gate
-    reads.
+    Each provider's pairs go into one labelling packet per batch
+    (`batch_packet_path`), each pair once, in the batch of its first draw and in
+    draw order. A packet shows both units' ids and fields and no score, link
+    method or stratum, and its pairs file carries each pair's `sample_id`, which
+    `decisions.import_labels` records with the decisions. The design, one row per
+    draw with its stratum and weight, goes to `design_path(out_dir)`, which the
+    precision gate reads.
+
+    Returns:
+        `out_dir`.
     """
-    from climate_finance.build.stages import table_path
+    from climate_finance.build.fetch import CRS_FILE
+    from climate_finance.build.stages import raw_dir, table_path
 
     pairs = allocated_pairs(release_dir, decisions=decisions)
     design = sample_design(pairs, rule=rule, release=release_dir.name)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    design.write_parquet(design_path(out_path))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    design.write_parquet(design_path(out_dir))
 
     shown = (
-        design.sort("draw")
+        design.sort("provider_code", "draw")
         .unique("sample_id", keep="first", maintain_order=True)
-        .select(
-            "provider_code",
-            *PAIR,
-            "sample_id",
-            batch=(pl.col("draw") - 1) // rule.batch + 1,
-        )
-        .sort("provider_code", "batch", "sample_id")
+        .with_columns(batch=(pl.col("draw") - 1) // rule.batch + 1)
     )
-    sides = _unit_sides(
-        pl.scan_parquet(table_path(release_dir, "link", "units")),
-        crs=pl.scan_parquet(table_path(release_dir, "normalise", "crs")),
-        ids=pl.concat([shown["left_id"], shown["right_id"]]).unique(),
-    )
-    for side in ("left", "right"):
-        shown = shown.join(
-            sides.rename({name: f"{side}_{name}" for name in _SIDE_COLUMNS}),
-            left_on=f"{side}_id",
-            right_on="id",
-            how="left",
-            maintain_order="left",
+    units = pl.scan_parquet(table_path(release_dir, "link", "units"))
+    crs = pl.scan_parquet(table_path(release_dir, "normalise", "crs"))
+    raw_crs = raw_dir(release_dir) / CRS_FILE
+    names = code_names(raw_crs) if raw_crs.exists() else None
+    for (provider, batch), batch_pairs in shown.partition_by(
+        "provider_code", "batch", as_dict=True, maintain_order=True
+    ).items():
+        write_packet(
+            batch_pairs.select(*PAIR, "sample_id"),
+            units=units,
+            crs=crs,
+            out=batch_packet_path(out_dir, provider=int(provider), batch=int(batch)),
+            title=(
+                f"Blind sample {release_dir.name}: provider {provider}, batch {batch}"
+            ),
+            show_ids=True,
+            names=names,
         )
-    shown.with_columns(
-        decision=pl.lit(None, pl.String),
-        reviewer=pl.lit(None, pl.String),
-        note=pl.lit(None, pl.String),
-    ).write_csv(out_path)
-    return out_path
+    return out_dir
 
 
 def sample_design(
@@ -312,17 +313,46 @@ def _stratum_sequence(shares: np.ndarray, *, draws: int) -> np.ndarray:
 
 
 def read_sample_labels(design: Path, *, decisions: Path) -> pl.DataFrame:
-    """The draws of the design at `design`, each with `correct`: whether people
-    accepted its pair, from the latest decision in `decisions` on its `sample_id`;
-    null while the pair is undecided."""
-    decided = pl.DataFrame(schema={"sample_id": pl.String(), "correct": pl.Boolean()})
+    """The draws of the design at `design`, each with `correct`, whether its pair
+    was accepted, and `label_source`, who decided it; both null while the pair is
+    undecided.
+
+    A pair's standing decision follows `splink_models.read_decision_labels`: of an
+    agent's decisions the latest round, then the latest decided, stands, and a
+    person's decision stands over an agent's made before it.
+    """
+    decided = pl.DataFrame(
+        schema={
+            "sample_id": pl.String(),
+            "correct": pl.Boolean(),
+            "label_source": pl.String(),
+        }
+    )
     if decisions.exists():
-        decided = (
+        rounds = {name: rank for rank, name in enumerate(LABEL_ROUNDS)}
+        sampled = (
             pl.read_parquet(decisions)
             .filter(pl.col("sample_id").is_not_null())
-            .sort("decided_at")
+            .with_columns(
+                rank=pl.col("round").replace_strict(
+                    rounds, default=0, return_dtype=pl.Int8
+                )
+            )
+        )
+        agent = (
+            sampled.filter(label_source="agent")
+            .sort("rank", "decided_at", maintain_order=True)
+            .unique("sample_id", keep="last", maintain_order=True)
+        )
+        decided = (
+            pl.concat([agent, sampled.filter(label_source="human")])
+            .sort("decided_at", maintain_order=True)
             .unique("sample_id", keep="last")
-            .select("sample_id", correct=pl.col("decision") == "accept")
+            .select(
+                "sample_id",
+                correct=pl.col("decision") == "accept",
+                label_source="label_source",
+            )
         )
     return pl.read_parquet(design).join(
         decided, on="sample_id", how="left", maintain_order="left"
@@ -334,15 +364,17 @@ def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataF
     decision (`pass`, `fail` or `continue`).
 
     Args:
-        labels: draws in `DESIGN_SCHEMA` with a Boolean `correct`, null while the
-            pair is undecided (`read_sample_labels`).
+        labels: draws in `DESIGN_SCHEMA` with a Boolean `correct` and the
+            `label_source` (`human` or `agent`) that decided it, both null while
+            the pair is undecided (`read_sample_labels`).
         rule: the sequential rule.
 
     Returns:
         Rows in `ESTIMATE_SCHEMA`. `labels` counts the draws the look reads, and
         `estimate`, `lower` and `upper` are null before the first look. A census
         reads every decided pair and decides once all are decided, when its
-        estimate is exact.
+        estimate is exact. `agent_share` is the share of the draws read that an
+        agent decided.
     """
     census = pl.col("design") == "census"
     known = pl.col("correct").is_not_null()
@@ -370,6 +402,7 @@ def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataF
         .agg(
             pl.col("design", "pairs", "decided", "cell_usd").first(),
             draws=pl.len(),
+            agent_draws=(pl.col("label_source") == "agent").sum(),
             weight_total=ordered_sum(weight),
             right_total=ordered_sum(weight * right),
             square_total=ordered_sum(weight * weight),
@@ -398,6 +431,7 @@ def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataF
         .agg(
             pl.col("pairs", "decided").first(),
             labels=draws.sum(),
+            agent_share=pl.col("agent_draws").sum() / draws.sum(),
             estimate=ordered_sum(cell_usd * pl.col("p_cell")) / ordered_sum(cell_usd),
             variance=ordered_sum(cell_usd**2 * pl.col("v_cell"))
             / ordered_sum(cell_usd) ** 2,

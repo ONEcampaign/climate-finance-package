@@ -22,12 +22,18 @@ from climate_finance.build.link.decisions import override_links
 from climate_finance.build.link.disagreement import flag_disagreement
 from climate_finance.build.link.embed import TextEmbedder
 from climate_finance.build.link.id_practice import classify_id_practice
+from climate_finance.build.link.jev import JevFitError, adjudicate_band, jev_answers
 from climate_finance.build.link.key_repair import repair_keys
 from climate_finance.build.link.keys import build_units, link_by_keys
-from climate_finance.build.link.score import provider_profile, score_candidates
+from climate_finance.build.link.score import (
+    classifier_links,
+    provider_profile,
+    score_candidates,
+)
 from climate_finance.build.link.splink_models import (
-    read_human_labels,
+    read_decision_labels,
     score_with_splink,
+    splink_links,
 )
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.readers.iati import read_related_activities
@@ -53,13 +59,20 @@ def run_link(context: StageContext) -> StageOutput:
     crosswalk reaches, and sorts providers into scoring groups; the truth group's
     classifier links what it scores at or above its threshold. Splink scores the
     other groups' pairs into `pair_scores`, calibrated by people's recorded
-    decisions and Jev. Each trace link records whether its two sides disagree on
-    recipient or project number (`flag_disagreement`). People's queue decisions
-    then override the links they decided (`override_links`). When the build has
-    BTR rows, each links to the same-year CRS records of its party (`link_btr`).
+    decisions and Jev. With `jev_links` on, Jev adjudicates the classifier's band,
+    answers each Splink model that people have not calibrated, and the calibrated
+    Splink models link. Each trace link records whether its two sides disagree on
+    recipient or project number (`flag_disagreement`). People's and agents'
+    queue decisions then override the links they decided (`override_links`). When the
+    build has BTR rows, each links to the same-year CRS records of its party
+    (`link_btr`).
+
+    Raises:
+        JevFitError: when `jev_links` is on and the build has no truth group to
+            set Jev's scale.
     """
     config = context.config
-    human = read_human_labels(config.sources.review_decisions)
+    decided = read_decision_labels(config.sources.review_decisions)
     crs = context.read("normalise", "crs")
     crdf = context.read("normalise", "crdf").filter(perspective="recipient")
     population = trace_population(crs)
@@ -125,20 +138,46 @@ def run_link(context: StageContext) -> StageOutput:
         stems=stems,
         first_year=config.years.crs[0],
     )
+    classifier = scored.links
+    answer = None
+    if config.jev_links:
+        if scored.scores is None:
+            raise JevFitError("jev_links needs a truth group to set Jev's scale")
+        band = adjudicate_band(
+            scored.scores,
+            units=units,
+            crs=population,
+            stems=stems,
+            band=config.jev.band,
+            client=context.jev,
+        )
+        classifier = classifier_links(scored.scores, jev=band)
+        answer = jev_answers(client=context.jev, scale=band.scale)
     splink = score_with_splink(
         candidates,
         units=units,
         crs=population,
         stems=stems,
         provider_profile=scored.profile,
-        labels=human,
+        labels=decided,
         client=context.jev,
+        answer=answer,
     )
-    linked = [flag_disagreement(pl.concat([links, scored.links]), units=units)]
+    scored_links = [classifier]
+    if config.jev_links:
+        scored_links.append(
+            splink_links(
+                splink.scores,
+                candidates=candidates,
+                units=units,
+                jev_model=context.jev.model,
+            )
+        )
+    linked = [flag_disagreement(pl.concat([links, *scored_links]), units=units)]
     if config.sources.btr_archive is not None:
         linked.append(link_btr(context.read("normalise", "btr"), crs=crs))
     return {
-        "links": override_links(pl.concat(linked), labels=human),
+        "links": override_links(pl.concat(linked), labels=decided),
         "units": units,
         "id_practice": id_practice,
         "programme_stems": stems,

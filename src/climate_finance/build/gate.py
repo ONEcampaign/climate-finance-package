@@ -284,6 +284,14 @@ def precision_gate(
                 pl.col("labels"),
                 pl.col("design"),
             )
+            + pl.when(pl.col("agent_share") > 0)
+            .then(
+                pl.format(
+                    ", {}% decided by agents",
+                    (pl.col("agent_share") * 100).round(0).cast(pl.Int32),
+                )
+            )
+            .otherwise(pl.lit(""))
         )
     )
     return rows.select(

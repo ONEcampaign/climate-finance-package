@@ -400,12 +400,18 @@ def test_only_commitments_a_crdf_row_reaches_pair() -> None:
 def test_a_common_key_pairs_only_up_to_its_cap(
     field: str, value: str, cap: int, extra_year: int | None, paired: bool
 ) -> None:
+    # Disbursements carry their own project numbers, so a shared title is not a
+    # template line (`template_lines`).
     records = {"c": _commitment(**{field: value})} | {
-        f"d{i}": _disbursement(recipient_code=1000 + i, **{field: value})
+        f"d{i}": _disbursement(
+            recipient_code=1000 + i, **({"project_number": f"D{i}"} | {field: value})
+        )
         for i in range(cap)
     }
     if extra_year is not None:
-        records["extra"] = _disbursement(year=extra_year, **{field: value})
+        records["extra"] = _disbursement(
+            year=extra_year, **({"project_number": "E"} | {field: value})
+        )
     assert bool(_candidates(records)) is paired
 
 
@@ -435,6 +441,36 @@ def test_a_pair_is_eligible_only_where_the_keys_left_both_units(
     assert (("d", "c") in pairs) is kept
     if kept:
         assert pairs["d", "c"]["eligible"]
+
+
+@pytest.mark.parametrize(
+    ("others", "project_number", "kept"),
+    [
+        # The title, with no project number, reaches three recipients.
+        ((2, 3), None, True),
+        # Four recipients in three years: a template line on both sides.
+        ((2, 3, 4), None, False),
+        # The other lines carry project numbers, so the title names projects.
+        ((2, 3, 4), "P", True),
+    ],
+)
+def test_a_template_line_is_never_eligible(
+    others: tuple[int, ...], project_number: str | None, kept: bool
+) -> None:
+    records = {
+        "c": _commitment(title="Aggregate"),
+        "d": _disbursement(title="Aggregate", recipient_code=238, purpose_code=23210),
+        **{
+            f"other_{recipient}": _disbursement(
+                year=2021,
+                title="Aggregate",
+                recipient_code=recipient,
+                project_number=project_number and f"{project_number}{recipient}",
+            )
+            for recipient in others
+        },
+    }
+    assert (("d", "c") in _candidates(records)) is kept
 
 
 @pytest.mark.parametrize(("commitment_year", "kept"), [(2019, False), (2020, True)])

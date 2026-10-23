@@ -25,6 +25,18 @@ commitments carry the id truth instead: a pair is a true continuation when the t
 units share a crs id. The table keeps eligible pairs and the pairs of commitments
 whose agency is `id_persistent`, which train and test the truth-group classifier.
 
+A template line is never eligible (`template_lines`): a unit with no project number
+whose title its donor gives, with no project number, to units of at least
+`TEMPLATE_RECIPIENTS` recipients in at least `TEMPLATE_YEARS` record years. Such a
+title names a reporting category, not an activity: the New Development Bank's
+"Aggregate" line per country and year, which sums every project the bank funds
+there, a credit-line or "aggregated disbursements" line, a sector or purpose name.
+An aggregate sums several activities, so no link to one commitment is right, and a
+category title says nothing of which activity a line continues. Key tiers and
+repair rules run before candidates and keep any link they give such a line. On the
+archive, 33 such titles of 8 providers leave 5,972 of 1,345,352 eligible pairs out;
+three recipients would also catch regional road corridors.
+
 A programme stem maps a component's project number to its programme's. A project
 number's shape replaces each digit run by 9 and each letter run by A, so
 7F-10454.01.03 has shape 9A-9.9.9. A rule says, for one (donor, agency, shape), how
@@ -56,6 +68,10 @@ from climate_finance.build.link.keys import floor_loaded, normalise_pn
 
 MAX_PN_UNITS = 300
 MAX_TITLE_UNITS = 100
+# A title its donor gives, with no project number, to units of at least this many
+# recipients in at least this many record years is a template (`template_lines`).
+TEMPLATE_RECIPIENTS = 4
+TEMPLATE_YEARS = 2
 STEM_SEGMENTS = (1, 2)
 MIN_PAIRS = 20
 MAX_ERROR = 0.10
@@ -316,9 +332,10 @@ def generate_candidates(
         renumbered=renumbered,
         vectors=vectors,
     )
+    template = pl.col("unit").is_in(template_lines(sides).implode())
     open_pairs = _block(
-        commitments.filter(~pl.col("keyed_later"), ~pl.col("ids_persist")),
-        disbursements.filter(~pl.col("taken"), ~pl.col("ids_persist")),
+        commitments.filter(~pl.col("keyed_later"), ~pl.col("ids_persist"), ~template),
+        disbursements.filter(~pl.col("taken"), ~pl.col("ids_persist"), ~template),
         reference=disbursements,
         renumbered=renumbered,
         vectors=vectors,
@@ -368,6 +385,27 @@ def generate_candidates(
             eligible="eligible",
         )
     )
+
+
+def template_lines(sides: pl.DataFrame) -> pl.Series:
+    """The `unit`s of `sides` (`_sides`) that are template lines: no project number,
+    and a title their donor gives to units with no project number in at least
+    `TEMPLATE_RECIPIENTS` recipients and `TEMPLATE_YEARS` record years."""
+    bare = sides.filter(
+        pl.col("project_number").is_null(), pl.col("title_block").is_not_null()
+    )
+    templates = (
+        bare.group_by("donor_code", "title_block")
+        .agg(
+            recipients=pl.col("recipient_code").n_unique(),
+            years=pl.col("year").n_unique(),
+        )
+        .filter(
+            pl.col("recipients") >= TEMPLATE_RECIPIENTS,
+            pl.col("years") >= TEMPLATE_YEARS,
+        )
+    )
+    return bare.join(templates, on=["donor_code", "title_block"], how="semi")["unit"]
 
 
 def _sides(

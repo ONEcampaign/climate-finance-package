@@ -19,6 +19,7 @@ from climate_finance.build.link.id_practice import (
     parent_id,
     period_of,
 )
+from climate_finance.build.link.jev import JevFitError
 from climate_finance.build.link.keys import (
     as_exact_links,
     build_units,
@@ -770,12 +771,16 @@ def _normalised(release_dir: Path) -> None:
 def _context(
     release_dir: Path, *, btr_archive: Path | None = None, **switches: bool
 ) -> StageContext:
+    # The fixture has no truth group to set Jev's scale, so the Jev step is off
+    # unless a test turns it on.
     config = load_config(Path(__file__).parents[1] / "build.toml")
     sources = config.sources.model_copy(update={"btr_archive": btr_archive})
     return StageContext(
         release="test",
         release_dir=release_dir,
-        config=config.model_copy(update={**switches, "sources": sources}),
+        config=config.model_copy(
+            update={"jev_links": False, **switches, "sources": sources}
+        ),
         offline=True,
     )
 
@@ -844,6 +849,14 @@ def test_recoveries_read_their_inputs_only_when_on(tmp_path: Path) -> None:
     run_link(_context(tmp_path, key_repair=False, recoveries=False))
     with pytest.raises(StageInputMissingError):
         run_link(_context(tmp_path, key_repair=False, recoveries=True))
+
+
+def test_the_jev_step_runs_only_when_on(tmp_path: Path) -> None:
+    # The fixture has no truth group to set Jev's scale, so the step refuses.
+    _normalised(tmp_path)
+    run_link(_context(tmp_path, key_repair=False, recoveries=False))
+    with pytest.raises(JevFitError):
+        run_link(_context(tmp_path, key_repair=False, recoveries=False, jev_links=True))
 
 
 def test_run_link_reproduces_its_tables(tmp_path: Path) -> None:

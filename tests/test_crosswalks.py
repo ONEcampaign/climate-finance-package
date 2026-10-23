@@ -448,8 +448,14 @@ def test_run_link_writes_the_provider_profile_with_recoveries(tmp_path: Path) ->
     context = StageContext(
         release="test",
         release_dir=tmp_path,
+        # The fixture has no truth group to set Jev's scale.
         config=config.model_copy(
-            update={"key_repair": False, "recoveries": True, "sources": sources}
+            update={
+                "key_repair": False,
+                "recoveries": True,
+                "jev_links": False,
+                "sources": sources,
+            }
         ),
         offline=True,
     )

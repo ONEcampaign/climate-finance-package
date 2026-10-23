@@ -758,12 +758,15 @@ def test_title_words() -> None:
 
 
 def _context(release_dir: Path, **switches: bool) -> StageContext:
+    # The fixture has no truth group to set Jev's scale.
     config = load_config(Path(__file__).parents[1] / "build.toml")
     sources = config.sources.model_copy(update={"btr_archive": None})
     return StageContext(
         release="test",
         release_dir=release_dir,
-        config=config.model_copy(update={**switches, "sources": sources}),
+        config=config.model_copy(
+            update={"jev_links": False, **switches, "sources": sources}
+        ),
         offline=True,
     )
 

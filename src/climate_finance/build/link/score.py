@@ -52,14 +52,21 @@ links under two numbers, read by hand, were right.
 
 An eligible pair links when its probability reaches the threshold and it is not a
 sibling (`programme_level` 1). Each disbursement unit joins the one commitment it
-scores highest, ties to the earlier placed year, then the smaller unit id. A
-commitment's classifier links form one group.
+scores highest, ties to the earlier placed year, then the smaller unit id
+(`best_commitments`). A commitment's links of one method form one group, so
+allocation fills it under the commitment's face cap. Splink links follow the same
+rule (`splink_models.splink_links`). With `jev_links` on, Jev adjudicates the
+eligible pairs in the band (`jev.adjudicate_band`), and those it answered link as
+`classifier_jev` on their combined probability.
 """
+
+from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
 from functools import cache
 from importlib.resources import files
+from typing import TYPE_CHECKING
 
 import numpy as np
 import polars as pl
@@ -89,6 +96,9 @@ from climate_finance.build.link.levels import (
     word_share,
 )
 
+if TYPE_CHECKING:
+    from climate_finance.build.link.jev import JevBand
+
 MIN_TRUE_PAIRS = 30
 MIN_CALIBRATION_PAIRS = 30
 SPLINK_MIN_COMMITMENTS = 300
@@ -113,6 +123,7 @@ PARAMS = {
     "random_state": 0,
 }
 METHOD = "classifier"
+JEV_METHOD = "classifier_jev"
 MODEL_VERSION = f"truth_hgb/scikit-learn-{sklearn.__version__}"
 # The values of a pair's `split`.
 TRAIN, HELDOUT, ELIGIBLE, UNLABELLED = "train", "heldout", "eligible", "unlabelled"
@@ -852,7 +863,7 @@ def score_truth_group(
         fold_maps = _isotonic_maps(raw[fit_rows], y[fit_rows], donors[fit_rows])
         crossed[score_rows] = _calibrate(fold_maps, raw[score_rows], donors[score_rows])
     best = best_commitments(train.with_columns(p_model=pl.Series(crossed)))
-    threshold = _best_threshold(
+    threshold = best_threshold(
         best["p_model"].to_numpy(),
         best["true_pair"].to_numpy(),
         n_true=true_disbursements(truth, commitments=train["right_id"]),
@@ -878,15 +889,17 @@ def score_truth_group(
     return TruthScores(pairs=scored, threshold=threshold, calibration=calibration)
 
 
-def best_commitments(pairs: pl.DataFrame) -> pl.DataFrame:
+def best_commitments(
+    pairs: pl.DataFrame, *, probability: str = "p_model"
+) -> pl.DataFrame:
     """Each disbursement unit's best pair among `pairs` that are not siblings: the
-    highest `p_model`, ties to the earlier placed year, then the smaller commitment
-    unit id."""
+    highest `probability`, ties to the earlier placed year, then the smaller
+    commitment unit id."""
     return (
         pairs.filter(pl.col("programme_level") != _SIBLING)
         .sort(
             "left_id",
-            "p_model",
+            probability,
             "placed_year",
             "right_id",
             descending=[False, True, False, False],
@@ -923,25 +936,55 @@ def true_disbursements(truth: pl.DataFrame, *, commitments: pl.Series) -> int:
     )
 
 
-def classifier_links(scores: TruthScores) -> pl.DataFrame:
-    """The classifier's `trace` links, in the `links` schema."""
-    taken = scores.pairs.filter(
-        pl.col("split") == ELIGIBLE, pl.col("p_model") >= scores.threshold
+def classifier_links(
+    scores: TruthScores, *, jev: JevBand | None = None
+) -> pl.DataFrame:
+    """The classifier's `trace` links, in the `links` schema.
+
+    With `jev` (`jev.adjudicate_band`), an eligible pair Jev answered takes its
+    combined probability and links at the combined threshold, as `classifier_jev`;
+    every other pair keeps the classifier's probability and threshold.
+    """
+    eligible = scores.pairs.filter(pl.col("split") == ELIGIBLE)
+    if jev is None:
+        taken = eligible.filter(pl.col("p_model") >= scores.threshold).with_columns(
+            probability="p_model", p_jev=pl.lit(None, dtype=pl.Float64)
+        )
+    else:
+        answered = pl.col("p_jev").is_not_null()
+        taken = (
+            eligible.join(jev.answers, on=list(_PAIR), how="left")
+            .with_columns(probability=pl.coalesce("p_combined", "p_model"))
+            .filter(
+                pl.when(answered)
+                .then(pl.col("probability") >= jev.threshold)
+                .otherwise(pl.col("p_model") >= scores.threshold)
+            )
+        )
+    best = best_commitments(taken, probability="probability")
+    method = (
+        pl.when(pl.col("p_jev").is_not_null())
+        .then(pl.lit(JEV_METHOD))
+        .otherwise(pl.lit(METHOD))
     )
-    best = best_commitments(taken)
     given = {
         "task": pl.lit("trace"),
         "left_id": pl.col("left_id"),
         "right_id": pl.col("right_id"),
-        "group_id": pl.concat_str(pl.lit(METHOD), "right_id", separator="|"),
-        "probability": pl.col("p_model"),
-        "link_method": pl.lit(METHOD),
+        "group_id": pl.concat_str(method, "right_id", separator="|"),
+        "probability": pl.col("probability"),
+        "link_method": method,
         "p_model": pl.col("p_model"),
+        "p_jev": pl.col("p_jev"),
         "programme_level": pl.col("programme_level"),
         "levels": levels_struct(),
         "model_version": pl.lit(MODEL_VERSION),
         "review": pl.lit(value=False),
     }
+    if jev is not None:
+        given["jev_model"] = pl.when(pl.col("p_jev").is_not_null()).then(
+            pl.lit(jev.model)
+        )
     return best.select(
         given.get(name, pl.lit(None)).cast(column.dtype).alias(name)
         for name, column in schema.LINKS.columns.items()
@@ -1037,7 +1080,7 @@ def _calibrate(
     return out
 
 
-def _best_threshold(p: np.ndarray, y: np.ndarray, *, n_true: int) -> float:
+def best_threshold(p: np.ndarray, y: np.ndarray, *, n_true: int) -> float:
     """The grid threshold of highest F1, the lowest on ties, of links with
     probabilities `p` and correctness `y`, against `n_true` right links in all."""
     true = y.astype(bool)

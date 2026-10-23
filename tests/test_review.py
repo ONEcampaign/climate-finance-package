@@ -2,7 +2,6 @@
 invented values, linked by the link stage's own `build_units`, `link_by_keys` and
 `link_within_year`."""
 
-import csv
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
@@ -20,18 +19,21 @@ from climate_finance.build.allocate import (
     status_basis,
 )
 from climate_finance.build.config import Ledgers, load_config
-from climate_finance.build.errors import ReviewDecisionsError
 from climate_finance.build.link.crdf_crs import link_within_year
-from climate_finance.build.link.decisions import drop_pairs, override_links
+from climate_finance.build.link.decisions import (
+    drop_pairs,
+    import_labels,
+    override_links,
+)
 from climate_finance.build.link.keys import as_exact_links, build_units, link_by_keys
+from climate_finance.build.link.packet import packet_pairs_path, write_packet
 from climate_finance.build.link.review import (
-    apply_decisions,
     flag_review,
     pending_rows,
     review_queue,
-    write_queue_csv,
+    write_queue_packet,
 )
-from climate_finance.build.link.splink_models import read_human_labels
+from climate_finance.build.link.splink_models import read_decision_labels
 from climate_finance.build.stages import REGISTRY, StageContext, table_path
 
 BUILD_TOML = Path(__file__).parents[1] / "build.toml"
@@ -55,6 +57,10 @@ CRS_COLUMNS = {
     "expected_start_date": pl.Date,
     "completion_date": pl.Date,
     "title": pl.String,
+    "short_description": pl.String,
+    "long_description": pl.String,
+    "channel_code": pl.Int32,
+    "flow_code": pl.Int32,
 }
 CRDF_COLUMNS = {
     "row_id": pl.String,
@@ -95,6 +101,10 @@ def record(
         "commitment_usd": commit,
         "disbursement_usd": disburse,
         "commitment_date": None if dated is None else date(dated, 6, 30),
+        "short_description": None,
+        "long_description": None,
+        "channel_code": None,
+        "flow_code": 11,
         "expected_start_date": None,
         "completion_date": None,
         "title": f"Project {crs_id}",
@@ -387,13 +397,16 @@ def test_dropping_a_pair_keeps_a_groups_units_reaching_the_same_commitments(
     allocate(case.units.lazy(), crs=case.crs.lazy(), links=kept.lazy())
 
 
-def _release(tmp_path: Path, case: Linked, queue: pl.DataFrame) -> Path:
+def _release(
+    tmp_path: Path, case: Linked, queue: pl.DataFrame, commitments: pl.DataFrame
+) -> Path:
     release_dir = tmp_path / "r"
     for stage, table, frame in [
         ("normalise", "crs", case.crs),
         ("normalise", "crdf", case.crdf),
         ("link", "units", case.units),
         ("review", "review_queue", queue),
+        ("review", "commitments", commitments),
     ]:
         path = table_path(release_dir, stage, table)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -401,18 +414,20 @@ def _release(tmp_path: Path, case: Linked, queue: pl.DataFrame) -> Path:
     return release_dir
 
 
-def _decide(path: Path, decisions: dict[tuple[str, str | None], str]) -> None:
-    """Fill the decision columns of the queue CSV at `path`."""
-    with path.open(newline="", encoding="utf-8") as handle:
-        rows = list(csv.DictReader(handle))
-    for row in rows:
-        decision = decisions.get((row["left_id"], row["right_id"] or None))
-        if decision is not None:
-            row.update(decision=decision, reviewer="analyst", note="checked")
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
+def _answer(packet: Path, labels: dict[tuple[str, str], str]) -> Path:
+    """A labels CSV giving `labels` by (left_id, right_id) to the packet's pairs."""
+    pairs = pl.read_parquet(packet_pairs_path(packet))
+    path = packet.with_suffix(".csv")
+    pairs.select(
+        "pair",
+        label=pl.struct("left_id", "right_id").map_elements(
+            lambda pair: labels[(pair["left_id"], pair["right_id"])],
+            return_dtype=pl.String,
+        ),
+        confidence=pl.lit(None, dtype=pl.Float64),
+        reason=pl.lit("checked"),
+    ).write_csv(path)
+    return path
 
 
 def test_decisions_round_trip_as_human_labels_and_exact_overrides(
@@ -432,47 +447,51 @@ def test_decisions_round_trip_as_human_labels_and_exact_overrides(
         pair_scores=_empty(schema.PAIR_SCORES),
         labels=no_labels(),
     )
-    release_dir = _release(tmp_path, case, queue)
-    out = write_queue_csv(release_dir=release_dir, out_path=tmp_path / "queue.csv")
-    shown = pl.read_csv(out, infer_schema=False)
-    assert shown.height == queue.height
-    side = shown.filter(left_id=unit("f21")).row(0, named=True)
-    assert (side["left_title"], side["right_title"]) == ("Project F", "Project B")
-    assert (side["right_usd"], side["left_usd"]) == ("40.0", "50.0")
+    release_dir = _release(tmp_path, case, queue, commitments)
+    packet = write_queue_packet(release_dir=release_dir, out=tmp_path / "queue.md")
+    text = packet.read_text(encoding="utf-8")
+    assert text.count("## Pair ") == queue.filter(task="trace").height == 3
+    assert "| row_h17 | USD 60 | USD 70 |" in text
 
-    _decide(
-        out,
-        {
-            (unit("e21"), unit("c19")): "accept",
-            (unit("k20"), unit("c16")): "accept",
-            (unit("f21"), unit("c18")): "reject",
-            ("row_h17", None): "accept",
-        },
-    )
     decisions_path = tmp_path / "data" / "review_decisions.parquet"
-    apply_decisions(csv_path=out, decisions_path=decisions_path)
+    import_labels(
+        packet=packet,
+        labels_csv=_answer(
+            packet,
+            {
+                (unit("e21"), unit("c19")): "match",
+                (unit("k20"), unit("c16")): "match",
+                (unit("f21"), unit("c18")): "no_match",
+            },
+        ),
+        decisions_path=decisions_path,
+        label_source="human",
+        reviewer="analyst",
+    )
     # A blind-sample decision, recorded later, on a pair the queue also decided.
-    sample = tmp_path / "sample.csv"
-    pl.DataFrame(
-        {
-            "sample_id": ["s1"],
-            "task": ["trace"],
-            "left_id": [unit("f21")],
-            "right_id": [unit("c18")],
-            "decision": ["accept"],
-            "reviewer": ["analyst"],
-        }
-    ).write_csv(sample)
-    apply_decisions(csv_path=sample, decisions_path=decisions_path)
+    sample = write_packet(
+        pl.DataFrame(
+            {"left_id": [unit("f21")], "right_id": [unit("c18")], "sample_id": ["s1"]}
+        ),
+        units=case.units.lazy(),
+        crs=case.crs.lazy(),
+        out=tmp_path / "sample.md",
+        title="Sample",
+        show_ids=False,
+    )
+    import_labels(
+        packet=sample,
+        labels_csv=_answer(sample, {(unit("f21"), unit("c18")): "match"}),
+        decisions_path=decisions_path,
+        label_source="human",
+        reviewer="analyst",
+    )
 
     recorded = pl.read_parquet(decisions_path)
     schema.validate(schema.REVIEW_DECISIONS, recorded)
-    assert recorded.height == 5
-    assert set(recorded.drop_nulls("review_reason")["review_reason"]) == {
-        "band",
-        "over_face",
-    }
-    labels = read_human_labels(decisions_path)
+    assert recorded.height == 4
+    assert set(recorded.drop_nulls("review_reason")["review_reason"]) == {"band"}
+    labels = read_decision_labels(decisions_path)
     schema.validate(schema.PAIR_LABELS, labels.drop("stratified"))
     # Queue decisions were chosen for review, not drawn by the stratified sample.
     assert not labels["stratified"].any()
@@ -513,24 +532,6 @@ def test_decisions_round_trip_as_human_labels_and_exact_overrides(
     assert (
         joined["allocated_usd"] - joined["disbursement_usd"]
     ).abs().max() < TOLERANCE
-
-
-def test_a_decided_row_without_a_reason_or_sample_id_is_refused(tmp_path: Path) -> None:
-    reviewed = tmp_path / "reviewed.csv"
-    pl.DataFrame(
-        {
-            "task": ["trace"],
-            "left_id": ["a"],
-            "right_id": ["b"],
-            "decision": ["accept"],
-            "reviewer": ["analyst"],
-        }
-    ).write_csv(reviewed)
-    decisions_path = tmp_path / "review_decisions.parquet"
-
-    with pytest.raises(ReviewDecisionsError, match="review_reason or sample_id"):
-        apply_decisions(csv_path=reviewed, decisions_path=decisions_path)
-    assert not decisions_path.exists()
 
 
 def _ledger() -> pl.DataFrame:
