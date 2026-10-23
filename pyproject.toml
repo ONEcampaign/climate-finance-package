@@ -44,6 +44,10 @@ build = [
 compat = [
     "pandas>=2.2.2",
 ]
+# The embedding model behind the blocking's embedding neighbours (`embed = true`).
+embed = [
+    "sentence-transformers>=6.2.0",
+]
 
 [project.scripts]
 cf-build = "climate_finance.build.cli:app"
@@ -80,6 +84,10 @@ ignore = ["TRY003"]
 
 [tool.ty.environment]
 python-version = "3.12"
+
+[tool.ty.analysis]
+# The `embed` extra's model library, absent from a venv without that extra.
+allowed-unresolved-imports = ["sentence_transformers"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

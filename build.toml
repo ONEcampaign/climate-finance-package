@@ -17,6 +17,9 @@ jev_labels = false
 # Jev on the classifier's band ([jev] band), Jev labels on each Splink model's
 # calibration sample, and Splink links. Off leaves the link stage's tables unchanged.
 jev_links = false
+# Embedding neighbours as a further blocking rule. Needs the `embed` extra unless the
+# embedding cache holds every vector the build asks for.
+embed = false
 
 [years]
 crdf = [2015, 2024]
@@ -56,4 +59,5 @@ cache_dir = "data/jev-cache"
 
 [embedding]
 model = "intfloat/multilingual-e5-small"
-revision = "614241f"
+revision = "614241f622f53c4eeff9890bdc4f31cfecc418b3"
+cache_dir = "data/embedding-cache"

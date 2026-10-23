@@ -49,6 +49,10 @@ class LinkInputError(BuildError):
     """Link-stage inputs that a linking route cannot use."""
 
 
+class ReviewDecisionsError(BuildError):
+    """A reviewed CSV whose decided rows cannot be recorded."""
+
+
 class ReleaseInvariantError(BuildError):
     """Release tables break `schema.release_invariants`."""
 

@@ -115,10 +115,12 @@ class Jev(_Section):
 
 
 class Embedding(_Section):
-    """The pinned embedding model, reserved for a later release."""
+    """The pinned embedding model behind the blocking's embedding neighbours, and
+    the directory that caches its vectors."""
 
     model: str
     revision: str
+    cache_dir: ConfigPath
 
 
 class BuildConfig(_Section):
@@ -131,6 +133,8 @@ class BuildConfig(_Section):
     `jev_links` has the link stage ask Jev about the classifier's pairs in
     `jev.band` and about each Splink model's calibration sample, and link what the
     calibrated Splink models score.
+    `embed` adds embedding neighbours to the link stage's blocking, which needs the
+    `embed` extra unless `embedding.cache_dir` holds every vector.
     """
 
     offline: bool = False
@@ -141,6 +145,7 @@ class BuildConfig(_Section):
     review: bool = False
     jev_labels: bool = False
     jev_links: bool = False
+    embed: bool = False
     years: Years
     sources: Sources
     jev: Jev

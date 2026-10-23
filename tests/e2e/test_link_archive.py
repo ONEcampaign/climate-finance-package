@@ -57,6 +57,9 @@ KEY_RULES_LINKED_USD = {
     # `pn_recipient_date` links a disbursement to the one commitment unit under its
     # number and recipient whose commitment date it repeats.
     "pn_recipient_date": 9.642897127e9,
+    # A disbursement whose floor precedes the first CRS year links where its key
+    # reaches a commitment placed no later than the floor (`floor_seen`).
+    "floor_seen": 5.042315754e9,
 }
 _PERIOD_KEY = ["donor_code", "agency_code", "period"]
 
