@@ -314,6 +314,10 @@ def test_party_weight_is_the_level_of_most_significant_pairs() -> None:
             _pairs("NOR", [(40, 100, 1), (81, 200, 1), (100, 100, 2), (101, 100, 2)]),
             # One Significant pair at each of 0.5 and 1.0: the lower level wins.
             _pairs("DEU", [(50, 100, 1), (100, 100, 1), (70, 100, 1), (5, 0, 1)]),
+            # No pair at 1.0, so no share of them is Principal; no Significant
+            # pair, so no share of those at a level.
+            _pairs("AUT", [(50, 100, 1)]),
+            _pairs("EST", [(100, 100, 2)]),
         ]
     )
 
@@ -326,6 +330,8 @@ def test_party_weight_is_the_level_of_most_significant_pairs() -> None:
     # A pair with no CRS amount has no ratio and is left out.
     assert weights["DEU"]["pairs"] == 3
     assert weights["DEU"]["significant_share_at"]["1.0"] == pytest.approx(1 / 3)
+    assert weights["AUT"]["principal_at_100"] is None
+    assert weights["EST"]["significant_share_at"]["1.0"] is None
 
 
 def test_party_weights_are_written_unconfirmed(tmp_path: Path) -> None:

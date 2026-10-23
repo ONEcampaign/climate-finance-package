@@ -331,15 +331,22 @@ _FLOWS = {
 
 
 class Reconciliation:
-    """A party-by-year comparison of BTR reports with OECD data."""
+    """A party-by-year comparison of BTR reports with OECD data.
+
+    `table` holds one row per party, year and method (see `query.reconcile`).
+    """
 
     def __init__(self, *, table: Table, rows: pl.LazyFrame) -> None:
         self.table = table
         self._rows = rows
 
     def rows(self, party: str, year: int) -> pl.DataFrame:
-        """The project-level link behind one party and year."""
-        raise NotImplementedError("slice S19b")
+        """The project-level link behind one party and year: each BTR row of every
+        status with each CRS record linked to it, the record's facts prefixed
+        `crs_`, and `unfccc_only` true for a row no record links to."""
+        return self._rows.filter(
+            pl.col("party") == party, pl.col("year") == year
+        ).collect()
 
 
 class Comparison:

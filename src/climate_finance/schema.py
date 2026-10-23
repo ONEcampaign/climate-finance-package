@@ -348,11 +348,14 @@ LEDGER = _table(
     other_ids=Column(pl.List(pl.String())),
 )
 
+# `party` is the ISO 3 code; `provider_code` its DAC provider code, null for a party
+# that reports no CRS.
 BTR = _table(
     "btr",
     ("row_id",),
     row_id=_str(),
     party=_str(),
+    provider_code=_code(nullable=True),
     year=_year(),
     recipient=_str(nullable=True),
     recipient_code=_code(nullable=True),
@@ -828,15 +831,38 @@ QUALITY = _table(
 )
 
 # Every CRS flow, climate or not, summed. This is the denominator of `share_of_total`.
+# `rio_marker` is the higher of a record's two Rio markers, 0 for none, so the BTR
+# reconciliation can weight same-year climate disbursements.
 TOTAL_FLOWS = _table(
     "total_flows",
-    ("provider_code", "recipient_code", "year", "bi_multi", "flow"),
+    ("provider_code", "recipient_code", "year", "bi_multi", "flow", "rio_marker"),
     provider_code=_code(),
     recipient_code=_code(),
     year=_year(),
     bi_multi=_bi_multi(),
     flow=_str(values=FLOWS),
+    rio_marker=Column(pl.Int8(), values=RIO_MARKERS),
     amount_usd=_usd(),
+)
+
+# Each BTR row's links to same-year CRS records of its party (`links` task
+# `btr_crs`), with the CRS record's facts, since the release holds no CRS records.
+# `rio_marker` is the higher of the record's two Rio markers.
+BTR_LINKS = _table(
+    "btr_links",
+    ("row_id", "record_id"),
+    row_id=_str(),
+    record_id=_str(),
+    link_method=_str(values=("btr_id", "btr_splink")),
+    probability=_f64(),
+    provider_code=_code(),
+    year=_year(),
+    recipient_code=_code(),
+    project_number=_str(nullable=True),
+    title=_str(nullable=True),
+    commitment_usd=_usd(nullable=True),
+    disbursement_usd=_usd(nullable=True),
+    rio_marker=Column(pl.Int8(), values=RIO_MARKERS),
 )
 
 # Each provider's own significant-marker coefficient, from BTR-to-CRS amount ratios.
@@ -859,6 +885,7 @@ RELEASE_TABLES: Mapping[str, TableSchema] = {
         MODELLED,
         CORE_CONTRIBUTIONS,
         BTR,
+        BTR_LINKS,
         DISBURSEMENT_PROFILE,
         QUALITY,
         TOTAL_FLOWS,

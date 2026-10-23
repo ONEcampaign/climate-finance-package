@@ -21,6 +21,7 @@ import polars as pl
 import yaml
 
 from climate_finance import schema
+from climate_finance.build.geo import provider_code
 from climate_finance.catalogue import recipients
 from climate_finance.errors import SourceUnavailableError, UnknownRecipientError
 
@@ -121,6 +122,8 @@ _PARTIES: dict[str, tuple[str, str]] = {
     "Zimbabwe": ("ZWE", "ZWL"),
 }
 _CURRENCIES = dict(_PARTIES.values())
+# The EU reports as "EUU"; the geo pack gives it no provider code.
+_PARTY_PROVIDERS = {"EUU": 918}
 
 # Parties whose Table III.1 amounts are in millions; their workbooks do not say so.
 _MILLIONS = frozenset({"GBR", "USA"})
@@ -178,13 +181,15 @@ _RATE_TOLERANCE = 0.05
 
 # Ratio levels a party's BTR amount takes of the linked CRS amount, and how close to
 # a level a pair's ratio must be to count at it.
-_LEVELS = (0.4, 0.5, 1.0)
-_LEVEL_TOLERANCE = 0.02
+WEIGHT_LEVELS = (0.4, 0.5, 1.0)
+LEVEL_TOLERANCE = 0.02
 _SIGNIFICANT = 1
 _PRINCIPAL = 2
 type _Amounts = dict[str, float | None]
 
 LINKED_PAIRS_COLUMNS = ("party", "btr_usd", "crs_usd", "rio_marker")
+# The archive's list of workbooks.
+MANIFEST = "manifest.json"
 
 
 def read_btr_workbook(path: Path, *, party: str) -> pl.DataFrame:
@@ -220,25 +225,62 @@ def read_btr_workbook(path: Path, *, party: str) -> pl.DataFrame:
 def ingest_unfccc(archive_dir: Path, *, out_path: Path) -> Path:
     """Parse every workbook listed in the archive manifest into one parquet.
 
-    The manifest (`manifest.json`) lists each file's party name, file name, size in
-    bytes and whether its download succeeded. Each party's year must come from one
-    sheet; a draft and a final copy of a workbook both giving rows stop the ingest.
-
     Beside `out_path`, `<stem>.manifest.parquet` records each workbook in the
     `raw_manifest` schema: its path, sha256 and modification time, with method
     `manual` since a person downloads the files in a browser. A later build compares
     the hashes to detect a changed workbook.
 
     Raises:
+        SourceUnavailableError: as `read_btr_archive`.
+        ValueError: as `read_btr_archive`.
+    """
+    btr = read_btr_archive(archive_dir)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    btr.sort(schema.BTR.sort_key).write_parquet(out_path)
+    manifest = _raw_manifest([path for path, _ in archive_files(archive_dir)])
+    schema.validate(schema.RAW_MANIFEST, manifest)
+    manifest.sort(schema.RAW_MANIFEST.sort_key).write_parquet(
+        out_path.with_suffix(".manifest.parquet")
+    )
+    return out_path
+
+
+def read_btr_archive(archive_dir: Path) -> pl.DataFrame:
+    """Every workbook the archive manifest lists, as one `btr` table.
+
+    Each party's year must come from one sheet; a draft and a final copy of a
+    workbook both giving rows stop the read.
+
+    Raises:
+        SourceUnavailableError: as `archive_files`.
+        ValueError: for a party's year given by more than one sheet, or a sheet
+            `read_btr_workbook` refuses.
+    """
+    btr = pl.concat(
+        read_btr_workbook(path, party=party)
+        for path, party in archive_files(archive_dir)
+    )
+    sheets = btr.group_by("party", "year").agg(pl.col("source_file").unique().sort())
+    repeated = sheets.filter(pl.col("source_file").list.len() > 1)
+    if not repeated.is_empty():
+        raise ValueError(f"Several sheets give one party's year: {repeated.rows()}")
+    schema.validate(schema.BTR, btr)
+    return btr.sort(schema.BTR.sort_key)
+
+
+def archive_files(archive_dir: Path) -> list[tuple[Path, str]]:
+    """Each workbook the archive manifest (`manifest.json`) lists, with its party's
+    ISO 3 code. The manifest gives each file's party name, file name, size in bytes
+    and whether its download succeeded.
+
+    Raises:
         SourceUnavailableError: when the manifest or a listed file is missing, a
             file's size differs from the manifest, or a download is marked failed.
-        ValueError: for an unknown party name, a party's year given by more than
-            one sheet, or a sheet `read_btr_workbook` refuses.
+        ValueError: for an unknown party name.
     """
-    manifest_path = archive_dir / "manifest.json"
+    manifest_path = archive_dir / MANIFEST
     if not manifest_path.exists():
         raise SourceUnavailableError(f"No BTR manifest at {manifest_path}")
-    frames = []
     files = []
     for entry in json.loads(manifest_path.read_text(encoding="utf-8")):
         path = archive_dir / entry["name"]
@@ -253,22 +295,8 @@ def ingest_unfccc(archive_dir: Path, *, out_path: Path) -> Path:
             )
         if entry["party"] not in _PARTIES:
             raise ValueError(f"No ISO 3 code for the party {entry['party']!r}")
-        frames.append(read_btr_workbook(path, party=_PARTIES[entry["party"]][0]))
-        files.append(path)
-    btr = pl.concat(frames)
-    sheets = btr.group_by("party", "year").agg(pl.col("source_file").unique().sort())
-    repeated = sheets.filter(pl.col("source_file").list.len() > 1)
-    if not repeated.is_empty():
-        raise ValueError(f"Several sheets give one party's year: {repeated.rows()}")
-    schema.validate(schema.BTR, btr)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    btr.sort(schema.BTR.sort_key).write_parquet(out_path)
-    manifest = _raw_manifest(files)
-    schema.validate(schema.RAW_MANIFEST, manifest)
-    manifest.sort(schema.RAW_MANIFEST.sort_key).write_parquet(
-        out_path.with_suffix(".manifest.parquet")
-    )
-    return out_path
+        files.append((path, _PARTIES[entry["party"]][0]))
+    return files
 
 
 def _raw_manifest(files: list[Path]) -> pl.DataFrame:
@@ -303,7 +331,7 @@ def estimate_party_weights(pairs: pl.DataFrame) -> pl.DataFrame:
     """Each party's weight on Significant activities, with the evidence for it.
 
     A pair's ratio is its BTR amount over the CRS amount it is set against. A ratio
-    within `_LEVEL_TOLERANCE` of 0.4, 0.5 or 1.0 counts at that level. The party's
+    within `LEVEL_TOLERANCE` of 0.4, 0.5 or 1.0 counts at that level. The party's
     significant coefficient is the level holding the most of its pairs whose CRS
     record is marked Significant, the lower level on a tie, and null when none of
     those pairs sits at a level.
@@ -316,8 +344,10 @@ def estimate_party_weights(pairs: pl.DataFrame) -> pl.DataFrame:
 
     Returns:
         One row per party: `pairs`, `share_at` and `significant_share_at` (structs
-        of the share of all pairs and of Significant pairs at each level),
-        `principal_at_100` (the share of pairs at 1.0 marked Principal) and
+        of the share of all pairs and of Significant pairs at each level, null with
+        no such pairs),
+        `principal_at_100` (the share of pairs at 1.0 marked Principal, null with
+        none at 1.0) and
         `significant`.
 
     Raises:
@@ -328,9 +358,9 @@ def estimate_party_weights(pairs: pl.DataFrame) -> pl.DataFrame:
         raise ValueError(f"Linked pairs lack the columns {missing}")
     ratio = pl.col("btr_usd") / pl.col("crs_usd")
     level = pl.lit(None, dtype=pl.Float64)
-    for value in _LEVELS:
+    for value in WEIGHT_LEVELS:
         level = (
-            pl.when((ratio / value - 1).abs() <= _LEVEL_TOLERANCE)
+            pl.when((ratio / value - 1).abs() <= LEVEL_TOLERANCE)
             .then(pl.lit(value))
             .otherwise(level)
         )
@@ -339,11 +369,10 @@ def estimate_party_weights(pairs: pl.DataFrame) -> pl.DataFrame:
 
     def shares(within: pl.Expr) -> pl.Expr:
         return pl.struct(
-            ((pl.col("level") == value) & within)
-            .sum()
-            .truediv(within.sum())
+            pl.when(within.sum() > 0)
+            .then(((pl.col("level") == value) & within).sum() / within.sum())
             .alias(f"{value:.1f}")
-            for value in _LEVELS
+            for value in WEIGHT_LEVELS
         )
 
     return (
@@ -354,8 +383,9 @@ def estimate_party_weights(pairs: pl.DataFrame) -> pl.DataFrame:
             pairs=pl.len().cast(pl.Int32),
             share_at=shares(pl.col("party").is_not_null()),
             significant_share_at=shares(significant),
-            principal_at_100=(at_100 & (pl.col("rio_marker") == _PRINCIPAL)).sum()
-            / at_100.sum(),
+            principal_at_100=pl.when(at_100.sum() > 0).then(
+                (at_100 & (pl.col("rio_marker") == _PRINCIPAL)).sum() / at_100.sum()
+            ),
             significant=pl.col("level")
             .filter(significant & pl.col("level").is_not_null())
             .mode()
@@ -724,6 +754,11 @@ def _frame(rows: list[dict[str, object]]) -> pl.DataFrame:
             pl.col("row").cast(pl.String).str.pad_start(5, "0"),
         ),
         party="party",
+        provider_code=pl.col("party").replace_strict(
+            {party: party_provider(party) for party in frame["party"].unique()},
+            default=None,
+            return_dtype=pl.Int32,
+        ),
         year="year",
         recipient="recipient",
         recipient_code=pl.col("recipient").replace_strict(
@@ -748,6 +783,11 @@ def _frame(rows: list[dict[str, object]]) -> pl.DataFrame:
         .fill_null(value=False),
         source_file="source_file",
     )
+
+
+def party_provider(party: str) -> int | None:
+    """The DAC provider code of the party with ISO 3 code `party`, or None."""
+    return _PARTY_PROVIDERS.get(party) or provider_code(party)
 
 
 def _recipient_code(name: str) -> int | None:
