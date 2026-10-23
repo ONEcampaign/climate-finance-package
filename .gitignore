@@ -144,9 +144,11 @@ climate_finance/.raw_data/*.parquet
 src/climate_finance/for_testing.py
 .reports/
 
-# Build inputs and caches: archived raw sources and the Jev response cache
+# Build inputs and caches: archived raw sources, the Jev response cache and the
+# embedding vector cache
 /data/raw
 /data/jev-cache
+/data/embedding-cache
 
 # A sample of a real release: OECD rows stay out of git.
 /tests/fixtures/real_snapshot/

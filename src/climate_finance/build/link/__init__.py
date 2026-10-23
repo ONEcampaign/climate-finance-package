@@ -18,6 +18,7 @@ from climate_finance.build.link.crosswalks import (
     link_by_crosswalk,
 )
 from climate_finance.build.link.disagreement import flag_disagreement
+from climate_finance.build.link.embed import TextEmbedder
 from climate_finance.build.link.id_practice import classify_id_practice
 from climate_finance.build.link.key_repair import repair_keys
 from climate_finance.build.link.keys import build_units, link_by_keys
@@ -44,7 +45,8 @@ def run_link(context: StageContext) -> StageOutput:
     DAC exchange rates fetch wrote, except the routes `skip_eib_routes` names, and
     GEF disbursements link to GEF commitments through the GEF IATI file's crosswalk
     to agency ids. Programme stems are learned from the trace population, and
-    blocking pairs the units the key, repair and crosswalk links left for scoring.
+    blocking pairs the units the key, repair and crosswalk links left for scoring,
+    with embedding neighbours when `embed` is on.
     The provider profile measures each provider's climate value and what its
     crosswalk reaches, and sorts providers into scoring groups; the truth group's
     classifier links what it scores at or above its threshold. Splink scores the
@@ -90,6 +92,16 @@ def run_link(context: StageContext) -> StageOutput:
         )
     links = pl.concat(found)
     stems = learn_programme_stems(population).collect()
+    embedder = (
+        TextEmbedder(
+            model=config.embedding.model,
+            revision=config.embedding.revision,
+            cache_dir=config.embedding.cache_dir,
+            offline=context.offline,
+        )
+        if config.embed
+        else None
+    )
     candidates = generate_candidates(
         units,
         crs=population,
@@ -97,6 +109,7 @@ def run_link(context: StageContext) -> StageOutput:
         id_practice=id_practice,
         stems=stems,
         first_year=config.years.crs[0],
+        embedder=embedder,
     )
     scored = score_candidates(
         candidates,

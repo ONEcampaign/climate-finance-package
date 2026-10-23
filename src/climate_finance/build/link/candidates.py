@@ -10,7 +10,10 @@ fifth rule follows a project number to the crs ids it shares a record with: a
 disbursement pairs with the commitments of each such crs id's line (`line_id`),
 under the project-number rule's cap. A renumbered project's records under its old
 crs id carry its new number, so a later disbursement under a new crs id and the new
-number reaches the commitment that carries neither.
+number reaches the commitment that carries neither. With an embedder, a disbursement
+also pairs with a commitment that is its embedding neighbour (`embed`). A unit's
+title is its largest record's title, or that record's short description where it
+has none.
 
 A pair is eligible for scoring when the keys left both units unlinked: no exact tier
 or key-repair rule took the disbursement, no disbursement of a later record year
@@ -37,8 +40,12 @@ and every pair it merges counts as inconsistent. Two units with different projec
 numbers and the same programme key are siblings (`programme_level` 1).
 """
 
+from collections.abc import Callable
+
+import numpy as np
 import polars as pl
 
+from climate_finance.build.link.embed import neighbour_pairs, record_text
 from climate_finance.build.link.id_practice import (
     ID_PERSISTENT_CLASSES,
     RENUMBERED_DONORS,
@@ -83,6 +90,8 @@ STOPWORDS = (
     "proyecto",
     "support",
 )
+# Texts to an (n, dimensions) array of their vectors, as `embed.TextEmbedder`.
+type Embedder = Callable[[list[str]], np.ndarray]
 # Blocking rules: a key the two units share, and the most later disbursement units
 # of the donor the key may hold for a commitment to pair through it.
 BLOCKING_RULES: tuple[tuple[tuple[str, ...], int | None], ...] = (
@@ -139,7 +148,7 @@ def learn_programme_stems(crs: pl.LazyFrame) -> pl.LazyFrame:
         crs.with_columns(project_number=normalise_pn(pl.col("project_number")))
         .drop_nulls(["agency_code", "project_number"])
         .group_by(*_AGENCY, "project_number", "recipient_code")
-        .agg(_largest_title())
+        .agg(_largest("title"))
         .with_columns(words=title_words(pl.col("title")))
         .drop("title")
     )
@@ -249,6 +258,7 @@ def generate_candidates(
     id_practice: pl.DataFrame,
     stems: pl.DataFrame,
     first_year: int,
+    embedder: Embedder | None = None,
 ) -> pl.DataFrame:
     """Blocked unit pairs, in the `candidates` schema.
 
@@ -264,6 +274,8 @@ def generate_candidates(
             precedes it is left out (`floor_loaded`), and the blocking caps count
             only the disbursements left in. The key tiers link one where a later
             record carries its commitment's date (`floor_seen`).
+        embedder: vectors of unit texts, which add embedding neighbours to the
+            blocking rules; none adds no neighbours.
     """
     indexed = units.with_row_index("unit")
     reached = links.filter(task="crdf_crs").select(unit_id="right_id")
@@ -279,7 +291,21 @@ def generate_candidates(
         stems=stems,
         links=links,
         id_practice=id_practice,
+        texts=embedder is not None,
     )
+    vectors = None
+    if embedder is not None:
+        texts = sides["text"].drop_nulls().unique().sort()
+        vectors = embedder(texts.to_list())
+        rows = pl.DataFrame(
+            {
+                "text": texts,
+                "vector": pl.int_range(texts.len(), dtype=pl.UInt32, eager=True),
+            }
+        )
+        sides = sides.join(rows, on="text", how="left", maintain_order="left").drop(
+            "text"
+        )
     commitments = sides.join(commitments.select("unit"), on="unit", how="semi")
     disbursements = sides.join(disbursements.select("unit"), on="unit", how="semi")
     renumbered = _renumbered_lines(units)
@@ -288,12 +314,14 @@ def generate_candidates(
         disbursements,
         reference=disbursements,
         renumbered=renumbered,
+        vectors=vectors,
     )
     open_pairs = _block(
         commitments.filter(~pl.col("keyed_later"), ~pl.col("ids_persist")),
         disbursements.filter(~pl.col("taken"), ~pl.col("ids_persist")),
         reference=disbursements,
         renumbered=renumbered,
+        vectors=vectors,
     )
     pairs = pl.concat(
         [truth.with_columns(eligible=False), open_pairs.with_columns(eligible=True)]
@@ -349,11 +377,14 @@ def _sides(
     stems: pl.DataFrame,
     links: pl.DataFrame,
     id_practice: pl.DataFrame,
+    texts: bool = False,
 ) -> pl.DataFrame:
     """Each unit's blocking keys, its programme key, and what the keys and its
     agency's id practice say of it.
 
-    A unit's title is its largest record's. `taken` marks a disbursement a key
+    A unit's title is its largest record's, or that record's short description
+    where it has no title. With `texts`, `text` holds the largest record's
+    embedding text (`record_text`). `taken` marks a disbursement a key
     linked, and `keyed_later` a commitment a key reaches from a later record year.
     `ids_persist` holds when the agency's ids persist in the record year's period,
     and `id_persistent` when its class is `id_persistent`.
@@ -363,11 +394,17 @@ def _sides(
         .explode("record_id")
         .lazy()
         .join(
-            crs.select("record_id", "title", "commitment_usd", "disbursement_usd"),
+            crs.select(
+                "record_id",
+                "commitment_usd",
+                "disbursement_usd",
+                title=pl.coalesce("title", "short_description"),
+                **({"text": record_text()} if texts else {}),
+            ),
             on="record_id",
         )
         .group_by("unit")
-        .agg(_largest_title())
+        .agg(_largest("title", "text") if texts else _largest("title"))
     )
     classes = id_practice.lazy().select(
         *_AGENCY,
@@ -441,9 +478,11 @@ def _block(
     *,
     reference: pl.DataFrame,
     renumbered: pl.DataFrame,
+    vectors: np.ndarray | None,
 ) -> pl.DataFrame:
     """(disbursement, commitment) unit pairs of one donor, the disbursement of a
-    later record year, under any blocking rule.
+    later record year, under any blocking rule, and embedding neighbours
+    (`embed.neighbour_pairs`) when `vectors` holds the units' text vectors.
 
     Under a capped rule a commitment pairs only when its key holds at most the cap of
     the `reference` disbursement units of later years, so a common project number or
@@ -477,6 +516,8 @@ def _block(
             .filter(pl.col("year_disbursement") > pl.col("year"))
             .select(left="unit_disbursement", right="unit")
         )
+    if vectors is not None:
+        blocked.append(neighbour_pairs(commitments, disbursements, vectors=vectors))
     return pl.concat(blocked).unique()
 
 
@@ -520,13 +561,13 @@ def _renumbered_line() -> pl.Expr:
     )
 
 
-def _largest_title() -> pl.Expr:
-    """The title of the group's largest record by commitment plus disbursement,
+def _largest(*columns: str) -> pl.Expr:
+    """`columns` of the group's largest record by commitment plus disbursement,
     ties to the smaller record id."""
     size = pl.col("commitment_usd").abs().fill_null(0) + pl.col(
         "disbursement_usd"
     ).abs().fill_null(0)
-    return pl.col("title").sort_by(size, "record_id", descending=[True, False]).first()
+    return pl.col(*columns).sort_by(size, "record_id", descending=[True, False]).first()
 
 
 def _clean(text: pl.Expr) -> pl.Expr:

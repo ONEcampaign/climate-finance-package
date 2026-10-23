@@ -115,10 +115,12 @@ class Jev(_Section):
 
 
 class Embedding(_Section):
-    """The pinned embedding model, reserved for a later release."""
+    """The pinned embedding model behind the blocking's embedding neighbours, and
+    the directory that caches its vectors."""
 
     model: str
     revision: str
+    cache_dir: ConfigPath
 
 
 class BuildConfig(_Section):
@@ -128,6 +130,8 @@ class BuildConfig(_Section):
     `recoveries` is on. A release builds with none; an end-to-end test sets one to
     measure what that route adds. `jev_labels` has the label stage ask Jev about
     linked records and fit its adaptation cut on `sources.adaptation_labels`.
+    `embed` adds embedding neighbours to the link stage's blocking, which needs the
+    `embed` extra unless `embedding.cache_dir` holds every vector.
     """
 
     offline: bool = False
@@ -137,6 +141,7 @@ class BuildConfig(_Section):
     gap_fill: bool = False
     review: bool = False
     jev_labels: bool = False
+    embed: bool = False
     years: Years
     sources: Sources
     jev: Jev
