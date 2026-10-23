@@ -31,6 +31,7 @@ _RECORD = {
     "crs_id": None,
     "project_number": None,
     "title": None,
+    "long_description": None,
     "recipient_code": 238,
     "purpose_code": 23210,
     "year": 2020,
@@ -47,6 +48,7 @@ _CRS_SCHEMA = {
     "crs_id": pl.String,
     "project_number": pl.String,
     "title": pl.String,
+    "long_description": pl.String,
     "recipient_code": pl.Int32,
     "purpose_code": pl.Int32,
     "year": pl.Int16,
@@ -589,6 +591,80 @@ def test_the_title_rule_ignores_short_titles() -> None:
         }
     )
     assert repaired == {}
+
+
+# A line committed in one country and disbursed in another under its crs id,
+# which `crs_key` keys by recipient. The two share the crs id, so no other rule
+# takes the pair.
+_STRAY = {"donor_code": 301, "crs_id": "S1", "project_number": "D-7307"}
+_TEXT = {
+    "title": "Maternal and child health",
+    "long_description": "Trains midwives in rural clinics",
+}
+_UNRELATED = {
+    "title": "Customs modernisation",
+    "project_number": "Q-55",
+    "long_description": "Upgrades border posts",
+}
+
+
+@pytest.mark.parametrize(
+    ("disbursement", "others", "linked"),
+    [
+        ({}, {}, True),
+        # Records that agree only on the project core, or only on the long
+        # description.
+        ({**_UNRELATED, "project_number": "D7307.CRS2"}, {}, True),
+        ({**_UNRELATED, "long_description": _TEXT["long_description"]}, {}, True),
+        ({**_UNRELATED}, {}, False),
+        # The disbursement's own country holds a commitment under its project
+        # number, filed under another agency code as Canada does, so that line
+        # is its own.
+        (
+            {"project_number": "P-7307"},
+            {
+                "own": _commitment(
+                    **{
+                        **_STRAY,
+                        "crs_id": "S2",
+                        "agency_code": 3,
+                        "project_number": "P-7307",
+                    }
+                )
+            },
+            False,
+        ),
+        # Canada disburses under a P number and commits under a D number, so the
+        # own line sits under the commitment's number.
+        (
+            {"project_number": "P-7307"},
+            {
+                "own": _commitment(
+                    **{**_UNRELATED, **_STRAY, "crs_id": "S2", "agency_code": 3}
+                )
+            },
+            False,
+        ),
+        # The own line sits under the shared crs id, committed before the
+        # disbursement's floor year, so the crs-id tier passes it by.
+        (
+            {"commitment_date": date(2019, 3, 1)},
+            {"own": _commitment(**{**_STRAY, **_UNRELATED, "year": 2018})},
+            False,
+        ),
+    ],
+)
+def test_a_crs_id_links_across_countries_where_the_records_agree(
+    disbursement: dict[str, object], others: dict[str, dict[str, object]], linked: bool
+) -> None:
+    repaired = _repaired(
+        {
+            "c": _commitment(**_STRAY, **_TEXT, recipient_code=248),
+            "d": _disbursement(**{**_STRAY, **_TEXT, **disbursement}),
+            **others,
+        }
+    )
+    assert repaired == ({"d": {"repair_stray_country": ["c"]}} if linked else {})
 
 
 def test_allocation_fills_only_the_commitments_each_unit_links_to() -> None:

@@ -42,6 +42,7 @@ KEY_REPAIR_METHODS = (
     "repair_pn_variant",
     "repair_afdb_scientific",
     "repair_title_recipient",
+    "repair_stray_country",
 )
 LINK_METHODS = (
     *KEY_TIERS,
