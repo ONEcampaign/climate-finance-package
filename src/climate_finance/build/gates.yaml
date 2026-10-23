@@ -1,0 +1,38 @@
+# Release gate thresholds, read by `cf-build gate` and `cf-build release`. ONE sets
+# these values.
+
+# The blind sample and the sequential rule that certifies a provider's precision.
+precision:
+  # A provider passes when the lower bound of its interval reaches this.
+  threshold: 0.90
+  # Draws labelled between looks.
+  batch: 50
+  # Draws per provider; the last look reads them all.
+  cap: 500
+  # Interval widths in standard errors: at looks before the cap, and at the cap.
+  interim_z: 2.5
+  final_z: 1.96
+  # A provider with fewer allocated pairs than this is labelled in full.
+  census_below: 60
+  seed: 20261021
+
+# Allocated plus unallocated equals each linked CRS record's disbursement.
+conservation:
+  tolerance_usd: 1.0e-6
+
+# No commitment row above its face value, and few linked commitments whose links
+# bring more than `raw_factor` times their face.
+over_allocation:
+  tolerance_usd: 1.0e-6
+  raw_factor: 1.1
+  max_share: 0.03
+
+# Release climate commitments by provider and year against the published CRDF.
+oecd_reconciliation:
+  tolerance: 0.01
+
+# Provider-year totals against the previous release. A move over `max_move` passes
+# only with a recorded cause naming the release, the provider and the year.
+drift:
+  max_move: 0.05
+  causes: []

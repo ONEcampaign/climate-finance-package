@@ -22,7 +22,7 @@ from make_fixture import FIXTURE_DIR
 import climate_finance as cf
 from climate_finance import snapshot
 from climate_finance.build import gate, release
-from climate_finance.build.errors import BuildError
+from climate_finance.build.errors import BuildError, GateFailedError
 from climate_finance.errors import (
     ReleaseIntegrityError,
     SourceUnavailableError,
@@ -32,6 +32,7 @@ from climate_finance.schema import ReleaseManifest, sha256_file
 from climate_finance.snapshot import IndexEntry, ReleaseIndex
 
 PACK = "climate-finance-fixture.tar.zst"
+BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 
 
 def built_release(release_dir: Path, *, sources: tuple[str, ...] = ("crs",)) -> Path:
@@ -135,38 +136,61 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, waive: bool
 ) -> None:
     calls = []
+    config = Path(shutil.copy(BUILD_TOML, tmp_path / "build.toml"))
 
     def fake_build(name: str, *, config: Path, out_dir: Path) -> None:
         built_release(out_dir / name)
 
-    def fake_gates(release_dir: Path, *, waive_precision: bool) -> pl.DataFrame:
-        calls.append((release_dir, waive_precision))
-        return pl.DataFrame({"gate": ["precision"], "passed": [waive]})
+    def fake_gates(
+        release_dir: Path,
+        *,
+        decisions: Path,
+        sample: Path | None,
+        previous: Path | None,
+        first_release: bool,
+        waive_precision: bool,
+    ) -> pl.DataFrame:
+        calls.append((release_dir, decisions, sample, previous, waive_precision))
+        return pl.DataFrame({"gate": ["precision", "drift"], "passed": [waive, True]})
 
     monkeypatch.setattr(release.build_package, "build", fake_build)
     monkeypatch.setattr(gate, "run_gates", fake_gates)
 
     pack = release.cut_release(
         "fixture",
-        config=tmp_path / "build.toml",
+        config=config,
         out_dir=tmp_path,
+        sample=tmp_path / "sample.parquet",
+        previous=FIXTURE_DIR,
         waive_precision=waive,
     )
 
     assert pack == tmp_path / PACK
-    assert calls == [(tmp_path / "fixture", waive)]
+    assert calls == [
+        (
+            tmp_path / "fixture",
+            tmp_path / "data" / "review_decisions.parquet",
+            tmp_path / "sample.parquet",
+            FIXTURE_DIR,
+            waive,
+        )
+    ]
     manifest = ReleaseManifest.model_validate_json(
         members(pack)["climate-finance-fixture/release.json"]
     )
     assert manifest.precision_gate_waived is waive
-    assert manifest.gates == {"results": [{"gate": "precision", "passed": waive}]}
+    assert manifest.gates == {
+        "precision": [{"passed": waive}],
+        "drift": [{"passed": True}],
+    }
+    assert manifest.previous_release == cf.load(path=FIXTURE_DIR).manifest.release
 
 
 def test_a_failed_gate_stops_cut_release_before_the_pack(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def failed_gates(release_dir: Path, *, waive_precision: bool) -> pl.DataFrame:
-        raise BuildError("precision gate failed")
+    def failed_gates(release_dir: Path, **options: object) -> pl.DataFrame:
+        raise GateFailedError(["precision 4: fail after 50 labels (pps)"])
 
     monkeypatch.setattr(
         release.build_package,
@@ -175,8 +199,12 @@ def test_a_failed_gate_stops_cut_release_before_the_pack(
     )
     monkeypatch.setattr(gate, "run_gates", failed_gates)
 
-    with pytest.raises(BuildError, match="precision"):
-        release.cut_release("fixture", config=tmp_path / "build.toml", out_dir=tmp_path)
+    with pytest.raises(GateFailedError, match="precision"):
+        release.cut_release(
+            "fixture",
+            config=Path(shutil.copy(BUILD_TOML, tmp_path / "build.toml")),
+            out_dir=tmp_path,
+        )
     assert not (tmp_path / PACK).exists()
 
 

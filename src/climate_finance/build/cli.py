@@ -37,24 +37,64 @@ def build_command(
         console.print(f"{stage_name}: {len(tables)} tables")
 
 
+DecisionsOption = Annotated[
+    Path, typer.Option(help="Review-decisions parquet holding the sample's labels.")
+]
+
+
 @app.command()
 def sample(
     release_dir: Path,
     out: Annotated[Path, typer.Option(help="Where to write the sample CSV.")],
+    decisions: DecisionsOption = Path("data/review_decisions.parquet"),
 ) -> None:
-    """Draw the stratified blind sample for labelling."""
-    console.print(evaluate.draw_blind_sample(release_dir=release_dir, out_path=out))
+    """Draw the stratified blind sample for labelling, and its design beside it."""
+    console.print(
+        evaluate.draw_blind_sample(
+            release_dir=release_dir,
+            out_path=out,
+            decisions=decisions,
+            rule=gate.load_gates().precision,
+        )
+    )
+
+
+SampleOption = Annotated[
+    Path | None,
+    typer.Option(help="The blind sample's design parquet, written by `sample`."),
+]
+PreviousOption = Annotated[
+    Path | None, typer.Option(help="The previous release's directory, for drift.")
+]
+FirstReleaseOption = Annotated[
+    bool, typer.Option(help="Pass the drift gate with no previous release.")
+]
 
 
 @app.command("gate")
 def gate_command(
     release_dir: Path,
+    decisions: DecisionsOption = Path("data/review_decisions.parquet"),
+    sample: SampleOption = None,
+    previous: PreviousOption = None,
+    first_release: FirstReleaseOption = False,
     report: Annotated[bool, typer.Option(help="Report failures without failing.")] = (
         False
     ),
 ) -> None:
-    """Evaluate the release gates."""
-    console.print(gate.run_gates(release_dir, report_only=report))
+    """Evaluate the release gates, one line per gate row."""
+    results = gate.run_gates(
+        release_dir,
+        decisions=decisions,
+        sample=sample,
+        previous=previous,
+        first_release=first_release,
+        report_only=report,
+    )
+    for row in results.iter_rows(named=True):
+        outcome = "pass" if row["passed"] else "waived" if row["waived"] else "FAIL"
+        name = " ".join(filter(None, (row["gate"], row["subject"])))
+        console.print(f"{name}: {outcome}; {row['detail']}", markup=False)
 
 
 @app.command()
@@ -91,6 +131,9 @@ def release_command(
     release_name: Annotated[str, typer.Argument(metavar="RELEASE")],
     config: ConfigOption = Path("build.toml"),
     out_dir: OutDirOption = Path("releases"),
+    sample: SampleOption = None,
+    previous: PreviousOption = None,
+    first_release: FirstReleaseOption = False,
     waive_precision: Annotated[
         bool, typer.Option(help="Pack despite a failed precision gate; recorded.")
     ] = False,
@@ -101,6 +144,9 @@ def release_command(
             release_name,
             config=config,
             out_dir=out_dir,
+            sample=sample,
+            previous=previous,
+            first_release=first_release,
             waive_precision=waive_precision,
         )
     )

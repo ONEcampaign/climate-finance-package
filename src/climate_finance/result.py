@@ -178,16 +178,27 @@ class Quality:
     Add it back to compare with totals that count EU Institutions as a provider.
     `attribution` holds, by provider, year and flow, the value attributed through
     core contributions, split by the agency share's source into `computed_usd`,
-    `held_usd` and `oecd_usd`.
+    `held_usd` and `oecd_usd`. `precision` holds, by provider, the share of
+    allocated value whose link a blind human sample found right (`estimate`), its
+    interval (`lower`, `upper`), whether it passed the release's precision gate,
+    whether a failure was waived, and the gate's reading; it is empty for a release
+    that was not gated.
     """
 
     def __init__(
-        self, *, table: Table, status: Table, eu_left_out: Table, attribution: Table
+        self,
+        *,
+        table: Table,
+        status: Table,
+        eu_left_out: Table,
+        attribution: Table,
+        precision: Table,
     ) -> None:
         self.table = table
         self.status = status
         self.eu_left_out = eu_left_out
         self.attribution = attribution
+        self.precision = precision
 
     def summary(self) -> pl.DataFrame:
         """Per provider: link rate, linked share above 0.8, label sources, status split.

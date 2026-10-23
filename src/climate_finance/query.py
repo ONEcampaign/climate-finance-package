@@ -44,6 +44,7 @@ import polars as pl
 
 from climate_finance import catalogue
 from climate_finance.convert import convert
+from climate_finance.errors import SchemaError
 from climate_finance.methods import OECD, ONE, Method, face_shares, label, weights
 from climate_finance.result import AMOUNTS, Meta, Quality, Result, Table
 from climate_finance.schema import FLOWS, SHARE_ORIGINS
@@ -192,7 +193,7 @@ def quality(
     years: Iterable[int] | None = None,
     method: Method = ONE,
 ) -> Quality:
-    """Coverage and status statistics.
+    """Coverage, status and precision statistics.
 
     The status split covers the commitments the trace follows: bilateral rows and
     multilateral outflows, without core contributions. `eu_left_out` holds the EU
@@ -220,7 +221,48 @@ def quality(
         attribution=Table(
             _attribution(snapshot, providers=providers, years=years, method=method)
         ),
+        precision=Table(_precision(snapshot, providers=providers)),
     )
+
+
+# A gate row in `release.json`, as `cf-build gate` writes it.
+_GATE_ROW = pl.Schema(
+    {
+        "subject": pl.String(),
+        "value": pl.Float64(),
+        "lower": pl.Float64(),
+        "upper": pl.Float64(),
+        "threshold": pl.Float64(),
+        "passed": pl.Boolean(),
+        "waived": pl.Boolean(),
+        "detail": pl.String(),
+    }
+)
+
+
+def _precision(
+    snapshot: Snapshot, *, providers: Sequence[str | int] | None
+) -> pl.LazyFrame:
+    """The precision gate's rows in `release.json`, one per provider; none when the
+    release was not gated.
+
+    Raises:
+        SchemaError: when `release.json` holds precision rows that are not a list.
+    """
+    rows = snapshot.manifest.gates.get("precision", [])
+    if not isinstance(rows, list):
+        raise SchemaError("release.json", {"gates.precision": "not a list of rows"})
+    frame = pl.LazyFrame(rows, schema=_GATE_ROW).select(
+        provider_code=pl.col("subject").cast(pl.Int32),
+        estimate="value",
+        lower="lower",
+        upper="upper",
+        passed="passed",
+        waived="waived",
+        detail="detail",
+    )
+    conditions = _conditions(providers=providers, recipients=None, years=None)
+    return frame.filter(*conditions) if conditions else frame
 
 
 def _attribution(

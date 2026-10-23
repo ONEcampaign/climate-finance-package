@@ -32,6 +32,7 @@ from climate_finance import __version__
 from climate_finance import build as build_package
 from climate_finance.build import gate
 from climate_finance.build.allocate import counted_rows, years_since_commitment
+from climate_finance.build.config import load_config
 from climate_finance.build.errors import (
     BuildError,
     ReleaseInvariantError,
@@ -58,7 +59,7 @@ from climate_finance.schema import (
     release_invariants,
     sha256_file,
 )
-from climate_finance.snapshot import IndexEntry, ReleaseIndex, release_dirname
+from climate_finance.snapshot import IndexEntry, ReleaseIndex, load, release_dirname
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -323,7 +324,9 @@ def carrying_links(
     units: pl.LazyFrame,
     links: pl.LazyFrame,
 ) -> pl.LazyFrame:
-    """Per allocation's (row_id, record_id), the link that carried it.
+    """Per allocation's (row_id, record_id), the link that carried it: its method,
+    probability and ledger check, and its disbursement (`d_unit`) and commitment
+    (`c_unit`) units.
 
     That is the `trace` link from the record's unit to a commitment unit of a
     `crdf_crs` group of the row or of a row that repeats it whose method comes
@@ -375,7 +378,11 @@ def carrying_links(
             descending=[False, False, False, True, False],
         )
         .group_by("row_id", "record_id", maintain_order=True)
-        .agg(pl.col("link_method", "link_probability", "ledger_check").first())
+        .agg(
+            pl.col(
+                "link_method", "link_probability", "ledger_check", "d_unit", "c_unit"
+            ).first()
+        )
     )
 
 
@@ -670,26 +677,46 @@ def _member(name: str, size: int, mtime: int) -> tarfile.TarInfo:
 
 
 def cut_release(
-    release: str, *, config: Path, out_dir: Path, waive_precision: bool = False
+    release: str,
+    *,
+    config: Path,
+    out_dir: Path,
+    sample: Path | None = None,
+    previous: Path | None = None,
+    first_release: bool = False,
+    waive_precision: bool = False,
 ) -> Path:
     """Build `release`, run the gates, record their results and pack it.
 
-    The gate results and `waive_precision` go into `release.json`; the pack is
+    The gates read the blind-sample labels from the config's review decisions, the
+    sample's design from `sample` and the previous release from `previous` (see
+    `gate.run_gates`). Their rows, keyed by gate name, the previous release's name
+    and `waive_precision` go into `release.json`; the pack is
     `<out_dir>/climate-finance-<release>.tar.zst`.
 
     Raises:
-        BuildError: when a gate fails; `waive_precision` lets the precision gate
-            fail.
+        GateFailedError: when a gate fails; `waive_precision` lets the precision
+            gate fail.
     """
     build_package.build(release, config=config, out_dir=out_dir)
     release_dir = out_dir / release
-    results = gate.run_gates(release_dir, waive_precision=waive_precision)
+    results = gate.run_gates(
+        release_dir,
+        decisions=load_config(config).sources.review_decisions,
+        sample=sample,
+        previous=previous,
+        first_release=first_release,
+        waive_precision=waive_precision,
+    )
     manifest_path = release_dir / "assemble" / "release.json"
     manifest = ReleaseManifest.model_validate_json(manifest_path.read_text())
     gated = manifest.model_copy(
         update={
-            "gates": {"results": json.loads(results.write_json())},
+            "gates": gate.gate_results_json(results),
             "precision_gate_waived": waive_precision,
+            "previous_release": None
+            if previous is None
+            else load(path=previous).manifest.release,
         }
     )
     manifest_path.write_text(gated.model_dump_json(indent=2) + "\n")
