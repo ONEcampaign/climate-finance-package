@@ -48,7 +48,7 @@ from climate_finance.build.link.decisions import PAIR
 from climate_finance.build.link.packet import code_names, write_packet
 from climate_finance.build.link.splink_models import read_decision_labels
 from climate_finance.build.sums import ordered_sum
-from climate_finance.schema import KEY_TIERS, LABEL_ROUNDS
+from climate_finance.schema import KEY_TIERS, LABEL_ROUNDS, scan_table
 
 STRATA = ("ledger", "key", "model", "reviewed")
 DESIGNS = ("census", "pps")
@@ -120,7 +120,7 @@ def allocated_pairs(release_dir: Path, *, decisions: Path) -> pl.DataFrame:
     from climate_finance.build.stages import table_path
 
     def scan(stage: str, table: str) -> pl.LazyFrame:
-        return pl.scan_parquet(table_path(release_dir, stage, table))
+        return scan_table(table_path(release_dir, stage, table))
 
     allocations = scan("fill", "allocations").filter(
         pl.col("row_id").is_not_null(),
@@ -200,8 +200,8 @@ def draw_blind_sample(
         .unique("sample_id", keep="first", maintain_order=True)
         .with_columns(batch=(pl.col("draw") - 1) // rule.batch + 1)
     )
-    units = pl.scan_parquet(table_path(release_dir, "link", "units"))
-    crs = pl.scan_parquet(table_path(release_dir, "normalise", "crs"))
+    units = scan_table(table_path(release_dir, "link", "units"))
+    crs = scan_table(table_path(release_dir, "normalise", "crs"))
     raw_crs = raw_dir(release_dir) / CRS_FILE
     names = code_names(raw_crs) if raw_crs.exists() else None
     for (provider, batch), batch_pairs in shown.partition_by(

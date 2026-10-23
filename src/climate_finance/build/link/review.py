@@ -384,8 +384,8 @@ def write_queue_packet(*, release_dir: Path, out: Path, show_ids: bool = True) -
     raw_crs = raw_dir(release_dir) / CRS_FILE
     return write_packet(
         queue.filter(task="trace").drop_nulls("right_id").sort(PAIR),
-        units=pl.scan_parquet(table_path(release_dir, "link", "units")),
-        crs=pl.scan_parquet(table_path(release_dir, "normalise", "crs")),
+        units=schema.scan_table(table_path(release_dir, "link", "units")),
+        crs=schema.scan_table(table_path(release_dir, "normalise", "crs")),
         out=out,
         title="Review queue",
         show_ids=show_ids,

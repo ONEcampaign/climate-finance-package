@@ -36,7 +36,7 @@ from climate_finance.build import evaluate
 from climate_finance.build.errors import GateFailedError
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
-from climate_finance.schema import ReleaseManifest, withheld_record
+from climate_finance.schema import ReleaseManifest, scan_table, withheld_record
 
 GATES_YAML = Path(__file__).with_name("gates.yaml")
 GATES = (
@@ -149,10 +149,10 @@ def run_gates(
     assembled = release_dir / "assemble"
 
     def scan(stage: str, table: str) -> pl.LazyFrame:
-        return pl.scan_parquet(table_path(release_dir, stage, table))
+        return scan_table(table_path(release_dir, stage, table))
 
     def released(table: str) -> pl.LazyFrame:
-        return pl.scan_parquet(assembled / f"{table}.parquet")
+        return scan_table(assembled / f"{table}.parquet")
 
     manifest = ReleaseManifest.model_validate_json(
         (assembled / "release.json").read_text()

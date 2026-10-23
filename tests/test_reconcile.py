@@ -111,6 +111,17 @@ def test_a_party_year_reads_on_its_main_status(tmp_path: Path) -> None:
     assert unknown["btr_face"] == pytest.approx(15e6)
 
 
+def test_a_release_with_no_btr_rows_reconciles_to_an_empty_table(
+    tmp_path: Path,
+) -> None:
+    def clear(frame: pl.DataFrame) -> pl.DataFrame:
+        return frame.clear()
+
+    release = copy_release(tmp_path / "r", edits={"btr": clear, "btr_links": clear})
+
+    assert cf.load(path=release).reconcile().table.to_polars().is_empty()
+
+
 def test_unlinked_rows_are_unfccc_only() -> None:
     reconciliation = SNAP.reconcile(parties=["DEU"])
 

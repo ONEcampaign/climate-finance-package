@@ -20,7 +20,7 @@ from climate_finance.build.errors import StageInputMissingError
 from climate_finance.build.jev_client import JevClient
 from climate_finance.build.link import gap_fill, review, run_link
 from climate_finance.build.normalise import run_normalise
-from climate_finance.schema import STAGE_TABLES, TableSchema
+from climate_finance.schema import STAGE_TABLES, TableSchema, scan_table
 
 type StageOutput = Mapping[str, pl.DataFrame | pl.LazyFrame]
 
@@ -92,7 +92,7 @@ class StageContext:
         path = table_path(self.release_dir, stage, table)
         if not path.exists():
             raise StageInputMissingError(stage=stage, table=table, path=path)
-        return pl.scan_parquet(path)
+        return scan_table(path)
 
 
 type Seal = Callable[

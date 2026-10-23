@@ -420,6 +420,21 @@ def test_core_contributions_keep_leaf_channels_only() -> None:
     assert core.filter(flow="disbursements")["contribution_usd"].sum() == 15.0
 
 
+def test_core_contributions_read_an_empty_stage_table(
+    tmp_path: Path, config: BuildConfig
+) -> None:
+    _write(
+        tmp_path, "normalise", {"core_contributions": _empty(schema.CORE_CONTRIBUTIONS)}
+    )
+    context = StageContext(
+        release="r", release_dir=tmp_path, config=config, offline=True
+    )
+
+    stage = context.read("normalise", "core_contributions")
+
+    assert release.core_contributions(stage).collect().is_empty()
+
+
 def test_total_flows_sum_every_crs_record_by_its_higher_marker(
     release_dir: Path,
 ) -> None:

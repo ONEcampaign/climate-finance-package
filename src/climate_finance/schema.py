@@ -1341,3 +1341,17 @@ def sha256_file(path: Path) -> str:
     """Hex sha256 of a file's bytes."""
     with path.open("rb") as handle:
         return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+def scan_table(path: Path) -> pl.LazyFrame:
+    """Scan the stage or release table at `path`.
+
+    An empty table is read into memory instead. Polars 2.0.0 panics ("min > max")
+    estimating the rows of a `unique` or `group_by` over a scan of a parquet file
+    with no rows once the result meets a join, and not over the same empty frame
+    held in memory.
+    """
+    scan = pl.scan_parquet(path)
+    if scan.select(pl.len()).collect().item() == 0:
+        return pl.read_parquet(path).lazy()
+    return scan
