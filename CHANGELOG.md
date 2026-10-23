@@ -1,5 +1,13 @@
 # Changes to the climate_finance package
 
+## 2.0.0
+- Replaces matching on the user's machine with versioned releases. `climate_finance.load()` opens a release, and `Snapshot.spending()` returns climate finance with `low`, `value` and `high` columns, the rows behind each figure and an explanation of the method.
+- Traces CRS disbursements to the CRDF commitments they pay, in any year, with the method of each link recorded. Certain links count in the low bound and estimated links in `value`. `Snapshot.quality()` reports link rates, commitment status and the measured precision of the links.
+- Adds the methods `ONE`, `OECD`, `PROVIDER` and `RANGE`, `Method` for custom coefficients, a provider view that attributes core contributions to multilateral agencies, `Snapshot.reconcile()` for BTR reports and `cf-build` for building and releasing data.
+- Withholds the Green Climate Fund's ledger rows from releases, as its terms bar redistribution. `commitments.withheld_usd` states their amount.
+- Requires Python 3.12 or later.
+- Deprecates `ClimateData`, `set_climate_finance_data_path` and `get_unfccc_data`, which import with a `DeprecationWarning` until 3.0. See `docs/migrating-from-1x.md` and `docs/release-notes/2.0.0.md`, which explains why totals differ from 1.x.
+
 ## 1.2.3 (2026-08-11)
 - Declares `pydeflate`, `numpy` and `python-dateutil` as direct dependencies instead of relying on them arriving transitively.
 
