@@ -1,7 +1,9 @@
 """Programme stems and the candidate pairs blocking gives the scoring stage."""
 
+from collections.abc import Mapping
 from datetime import date
 
+import numpy as np
 import polars as pl
 import pytest
 
@@ -11,12 +13,14 @@ from climate_finance.build.link.candidates import (
     MAX_PN_UNITS,
     MAX_TITLE_UNITS,
     MIN_PAIRS,
+    Embedder,
     generate_candidates,
     learn_programme_stems,
     project_shape,
     strip_segments,
     with_programme,
 )
+from climate_finance.build.link.embed import DIMENSIONS, NEIGHBOURS
 from climate_finance.build.link.id_practice import RENUMBERED_DONORS
 from climate_finance.build.link.keys import build_units
 
@@ -27,6 +31,8 @@ _RECORD = {
     "crs_id": None,
     "project_number": None,
     "title": None,
+    "short_description": None,
+    "long_description": None,
     "recipient_code": 238,
     "purpose_code": 23210,
     "year": 2020,
@@ -41,6 +47,8 @@ _CRS_SCHEMA = {
     "crs_id": pl.String,
     "project_number": pl.String,
     "title": pl.String,
+    "short_description": pl.String,
+    "long_description": pl.String,
     "recipient_code": pl.Int32,
     "purpose_code": pl.Int32,
     "year": pl.Int16,
@@ -106,6 +114,7 @@ def _candidates(
     trace: tuple[tuple[str, str], ...] = (),
     classes: pl.DataFrame | None = None,
     stems: pl.DataFrame | None = None,
+    embedder: Embedder | None = None,
 ) -> dict[tuple[str, str], dict[str, object]]:
     """Candidate rows by (disbursement, commitment) record name.
 
@@ -134,6 +143,7 @@ def _candidates(
         id_practice=_classes() if classes is None else classes,
         stems=_stems() if stems is None else stems,
         first_year=FIRST_YEAR,
+        embedder=embedder,
     )
     schema.validate(schema.CANDIDATES, candidates)
     return {
@@ -299,8 +309,15 @@ def test_a_stem_at_the_fanout_limit_is_learned() -> None:
         {"project_number": "p.123"},
         {"title": "Solar mini-grids, Kenya"},
         {"recipient_code": 238, "title": "Solar mini-grids Uganda"},
+        {"short_description": "Solar mini-grids, Kenya"},
     ],
-    ids=["recipient_purpose", "project_number", "title", "recipient_title_head"],
+    ids=[
+        "recipient_purpose",
+        "project_number",
+        "title",
+        "recipient_title_head",
+        "title_from_short_description",
+    ],
 )
 def test_each_blocking_rule_pairs_a_later_disbursement(
     disbursement: dict[str, object],
@@ -334,10 +351,19 @@ def test_a_renumbered_project_number_reaches_its_old_crs_ids_commitment(
     assert (("d", "c") in _candidates(records)) is paired
 
 
-def test_no_rule_no_pair() -> None:
+@pytest.mark.parametrize(
+    "short_description",
+    # A title is never replaced by the short description.
+    [None, "solar mini grids kenya"],
+)
+def test_no_rule_no_pair(short_description: str | None) -> None:
     records = {
         "c": _commitment(project_number="P-123", title="solar mini grids kenya"),
-        "d": _disbursement(project_number="P-124", title="wind farm"),
+        "d": _disbursement(
+            project_number="P-124",
+            title="wind farm",
+            short_description=short_description,
+        ),
     }
     assert _candidates(records) == {}
 
@@ -492,3 +518,73 @@ def test_a_unit_takes_its_largest_records_title() -> None:
     assert _candidates(records) == {}
     records["d_large"]["disbursement_usd"] = 0.5
     assert set(_candidates(records)) == {("d_large", "c")}
+
+
+def _embedder(vectors: Mapping[str, list[float]]) -> Embedder:
+    """An embedder giving each text its vector in `vectors`, padded with zeros."""
+
+    def embed(texts: list[str]) -> np.ndarray:
+        out = np.zeros((len(texts), DIMENSIONS), np.float32)
+        for i, text in enumerate(texts):
+            out[i, : len(vectors[text])] = vectors[text]
+        return out
+
+    return embed
+
+
+# Two unit vectors whose cosine is `cosine`.
+def _at(cosine: float) -> list[float]:
+    return [cosine, (1 - cosine**2) ** 0.5]
+
+
+@pytest.mark.parametrize(
+    ("disbursement", "cosine", "paired"),
+    [
+        ({}, 0.95, True),
+        ({}, 0.85, False),
+        ({"year": 2020}, 1.0, False),
+        ({"donor_code": 6}, 1.0, False),
+    ],
+    ids=["close", "far", "same_year", "other_donor"],
+)
+def test_embedding_neighbours_pair_close_texts(
+    disbursement: dict[str, object], cosine: float, *, paired: bool
+) -> None:
+    # No other rule pairs the two: they share no recipient, number or title.
+    records = {
+        "c": _commitment(title="solar mini grids kenya"),
+        "d": _disbursement(title="wind farm", **disbursement),
+        # Keeps donor 6's disbursements in the pool.
+        "other": _commitment(donor_code=6, recipient_code=1, title="tree nursery"),
+    }
+    embedder = _embedder(
+        {
+            "solar mini grids kenya": [1.0],
+            "wind farm": _at(cosine),
+            "tree nursery": [0.0, 0.0, 1.0],
+        }
+    )
+    commitments = ("c", "other")
+    pairs = _candidates(records, commitments=commitments, embedder=embedder)
+    assert set(pairs) == ({("d", "c")} if paired else set())
+    assert _candidates(records, commitments=commitments) == {}
+
+
+def test_embedding_neighbours_rank_either_side_ties_to_the_lower_unit() -> None:
+    # Every text has the same vector. Each commitment ranks the three disbursement
+    # units of smallest unit id first, and each disbursement the three such
+    # commitment units, so only the largest of each misses the other.
+    count = NEIGHBOURS + 1
+    commitments = tuple(f"c{i}" for i in range(count))
+    disbursements = tuple(f"d{i}" for i in range(count))
+    records = {
+        name: _commitment(recipient_code=100 + i, title=name)
+        for i, name in enumerate(commitments)
+    } | {
+        name: _disbursement(recipient_code=200 + i, title=name)
+        for i, name in enumerate(disbursements)
+    }
+    embedder = _embedder({name: [1.0] for name in records})
+    pairs = _candidates(records, commitments=commitments, embedder=embedder)
+    assert len(pairs) == count * count - 1
+    assert pairs == _candidates(records, commitments=commitments, embedder=embedder)

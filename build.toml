@@ -14,6 +14,9 @@ gap_fill = false
 review = false
 # Jev objective labels on linked records, and the level map behind relevance="jev".
 jev_labels = false
+# Embedding neighbours as a further blocking rule. Needs the `embed` extra unless the
+# embedding cache holds every vector the build asks for.
+embed = false
 
 [years]
 crdf = [2015, 2024]
@@ -53,4 +56,5 @@ cache_dir = "data/jev-cache"
 
 [embedding]
 model = "intfloat/multilingual-e5-small"
-revision = "614241f"
+revision = "614241f622f53c4eeff9890bdc4f31cfecc418b3"
+cache_dir = "data/embedding-cache"
