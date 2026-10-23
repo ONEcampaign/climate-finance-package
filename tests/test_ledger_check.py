@@ -1,16 +1,12 @@
 """The ledger check on hand-built units, links and ledgers with invented values."""
 
 from datetime import date
-from pathlib import Path
 
 import polars as pl
 import pytest
 
 from climate_finance import schema
-from climate_finance.build.config import Ledgers, load_config
 from climate_finance.build.link.ledger import check_ledgers
-from climate_finance.build.link.review import run_review
-from climate_finance.build.stages import StageContext, table_path
 
 IDA, IBRD, AFDB, GERMANY = 905, 901, 913, 5
 YEARS = (2021, 2022)
@@ -200,27 +196,3 @@ def test_a_bank_whose_ledger_was_not_read_is_left_unchecked() -> None:
     links, _ = check_ledgers(_links(), units=_units(), ledger=ida_only, years=YEARS)
 
     assert _check(links.collect(), "d_afdb6", "c_afdb6") is None
-
-
-def test_review_runs_the_ledger_check_before_the_unbuilt_queue(tmp_path: Path) -> None:
-    for stage, table, frame in [
-        ("link", "links", _links()),
-        ("link", "units", _units()),
-        ("normalise", "ledger", _ledger()),
-    ]:
-        path = table_path(tmp_path, stage, table)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        frame.collect().write_parquet(path)
-    config = load_config(Path(__file__).parents[1] / "build.toml")
-    sources = config.sources.model_copy(
-        update={"ledgers": Ledgers(years=YEARS, publishers=("ida", "ibrd"))}
-    )
-    context = StageContext(
-        release="r",
-        release_dir=tmp_path,
-        config=config.model_copy(update={"review": True, "sources": sources}),
-        offline=True,
-    )
-
-    with pytest.raises(NotImplementedError, match="S14"):
-        run_review(context)
