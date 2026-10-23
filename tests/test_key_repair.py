@@ -177,6 +177,88 @@ def test_a_unit_stays_out_of_a_group_holding_its_own_crs_id() -> None:
     assert repaired == {}
 
 
+# One record that commits 10 and disburses 30, and a line of the same project
+# under another crs id and purpose, each linked to itself by crs id and purpose.
+_LINE = {
+    "crs_id": "A",
+    "project_number": "G-1",
+    "year": 2020,
+    "commitment_usd": 10.0,
+    "disbursement_usd": 30.0,
+}
+_SIBLING = {**_LINE, "crs_id": "B", "purpose_code": 41010}
+_SPARE = {"commitment_usd": 50.0, "disbursement_usd": 5.0}
+
+
+@pytest.mark.parametrize(
+    ("others", "repaired"),
+    [
+        # The sibling committed more than it disbursed, so it is a commitment
+        # to the rules.
+        (
+            {"sibling": {**_SIBLING, **_SPARE}},
+            {"line": {"repair_new_crs_id": ["sibling"]}},
+        ),
+        # The sibling disbursed beyond its commitment too, so each commitment is
+        # left to its unit's link to itself and no group holds it.
+        ({"sibling": _SIBLING}, {}),
+        # A unit that committed more than it disbursed is no disbursement unit,
+        # though an open commitment shares its project number.
+        (
+            {
+                "sibling": {**_SIBLING, **_SPARE},
+                "earlier": _commitment(crs_id="C", project_number="G-1"),
+            },
+            {"line": {"repair_new_crs_id": ["earlier", "sibling"]}},
+        ),
+        # A line whose own commitment covers its disbursement has nothing left
+        # for the rules.
+        (
+            {
+                "line": {**_LINE, "disbursement_usd": 10.0},
+                "sibling": {**_SIBLING, **_SPARE},
+            },
+            {},
+        ),
+        # A line that committed more than it disbursed is no disbursement unit
+        # when a later disbursement reaches it by crs id too.
+        (
+            {
+                "line": {**_LINE, **_SPARE},
+                "later": _disbursement(crs_id="A", project_number="G-1"),
+                "earlier": _commitment(crs_id="C", project_number="G-1"),
+            },
+            {"later": {"repair_new_crs_id": ["earlier"]}},
+        ),
+    ],
+)
+def test_a_unit_takes_one_side_in_the_rules(
+    others: dict[str, dict[str, object]], repaired: dict[str, dict[str, list[str]]]
+) -> None:
+    assert _repaired({"line": _LINE, **others}) == repaired
+
+
+def test_allocation_gives_a_sibling_line_what_a_line_disbursed_beyond_its_own() -> None:
+    units, links, crs = _links({"line": _LINE, "sibling": {**_SIBLING, **_SPARE}})
+    assert not links.select("left_id", "right_id").is_duplicated().any()
+
+    pairs = allocate(units.lazy(), crs=crs, links=links.lazy())
+    filled = {
+        (record, commitment): amount
+        for record, commitment, amount in pairs.filter(
+            pl.col("commitment_id").is_not_null()
+        )
+        .select("record_id", "commitment_id", "allocated_usd")
+        .iter_rows()
+    }
+    assert filled == {
+        ("line", "line"): 10.0,
+        ("line", "sibling"): 20.0,
+        ("sibling", "sibling"): 5.0,
+    }
+    assert pairs.filter(rule="excess").is_empty()
+
+
 _PROGRAMME = {"donor_code": 302, "project_number": "35_80", "title": "Operations"}
 _KENYA = {**_PROGRAMME, "recipient_code": 248}
 

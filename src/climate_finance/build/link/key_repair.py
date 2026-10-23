@@ -5,6 +5,16 @@ A rule links a disbursement unit to a commitment unit of the same donor, under
 another crs id, that no exact tier reached. The disbursement unit may carry exact
 links too. Allocation runs its groups in `LINK_METHODS` order, so a rule receives
 only what the exact tiers and the earlier rules left of the unit's disbursement.
+
+A unit is a disbursement unit to the rules only when it disbursed more than its own
+commitment; what it disbursed up to that commitment continues the commitment. A unit
+that committed more than it disbursed, and that the exact tiers reach only by its
+link to itself, is a commitment unit to the rules (`_spare_lines`), so its headroom
+stays open to the project's other lines. A unit thus sits on one side, no group
+holds a unit's own commitment, and a line that disbursed beyond its own commitment
+reaches its sibling lines, as Canada files one line under several crs ids split by
+purpose with each record committing and disbursing.
+
 The rules run in `schema.KEY_REPAIR_METHODS` order, and a commitment unit one rule
 links is left out of the later ones:
 
@@ -132,7 +142,8 @@ def repair_keys(
     Args:
         units: the link stage's units.
         crs: the CRS records the units sum, for their titles.
-        links: the exact tiers' `trace` links, whose commitments are left to them.
+        links: the exact tiers' `trace` links, whose commitments are left to them
+            except those of `_spare_lines`.
         first_year: the first CRS year the build loads. A disbursement whose floor
             precedes it links to nothing, as in the exact tiers.
 
@@ -146,11 +157,13 @@ def repair_keys(
     programmes = {key: _programmes(facts, key=key) for key in (_PN, _CORE)}
     disbursements = facts.filter(
         pl.col("disbursement_usd") > 0,
+        pl.col("disbursement_usd") > pl.col("commitment_usd"),
         pl.col("floor_year").is_null() | (pl.col("floor_year") >= first_year),
     )
-    commitments = commitments.join(
-        links.select(unit_id="right_id"), on="unit_id", how="anti"
+    closed = links.select(unit_id="right_id").join(
+        _spare_lines(facts, links=links), on="unit_id", how="anti"
     )
+    commitments = commitments.join(closed, on="unit_id", how="anti")
     rules: dict[str, Rule] = {
         "repair_new_crs_id": lambda d, c: _same_number(
             d, c, key=_PN, programmes=programmes[_PN]
@@ -206,6 +219,20 @@ def _unit_facts(units: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
             title_words=title_words(pl.col("title")),
             core=project_core(pl.col("project_number")),
         )
+    )
+
+
+def _spare_lines(facts: pl.DataFrame, *, links: pl.DataFrame) -> pl.DataFrame:
+    """The `unit_id`s of units that committed more than they disbursed and that the
+    exact tiers reach only by their link to themselves."""
+    own = pl.col("left_id") == pl.col("right_id")
+    spare = facts.filter(pl.col("commitment_usd") > pl.col("disbursement_usd"))
+    return (
+        links.filter(own)
+        .select(unit_id="left_id")
+        .join(spare, on="unit_id", how="semi")
+        .join(links.filter(~own).select(unit_id="right_id"), on="unit_id", how="anti")
+        .unique()
     )
 
 
