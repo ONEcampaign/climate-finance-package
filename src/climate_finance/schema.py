@@ -32,6 +32,10 @@ KEY_TIERS = (
     "pn_recipient_purpose",
     "pn_recipient",
 )
+# The key tiers whose donor id names the commitment: a link of one of them whose
+# records do not disagree (`LINKS.records_disagree`) is certain, as is a unit's link
+# to itself, where one record commits and disburses. Every other link is estimated.
+CERTAIN_METHODS = ("wb_loan", "crs_id_purpose", "crs_id", "crs_id_parent")
 KEY_REPAIR_METHODS = (
     "repair_new_crs_id",
     "repair_pn_variant",
@@ -751,6 +755,9 @@ DISBURSEMENTS = _table(
     title=_str(nullable=True),
     # Face value of the record's disbursement allocated to `row_id`, with the
     # allocation's bounds: 0 <= allocated_low <= allocated <= allocated_high.
+    # allocated_low holds what certain links carried (`CERTAIN_METHODS`). A fill's
+    # bounds equal its amount, as the bank's ledger key or the fund's project number
+    # names the commitment, the test the certain links meet.
     allocated_usd=_usd(),
     allocated_low_usd=_usd(),
     allocated_high_usd=_usd(),
@@ -786,6 +793,9 @@ DISBURSEMENT_PROFILE = _table(
 # Every amount is climate value of counted commitments: all of them (`climate_usd`),
 # those that trace to at least one CRS record (`linked_usd`), those whose most
 # probable link is at least 0.8, and those labelled by a model or by a report.
+# `disbursed_climate_usd` and `certain_disbursed_climate_usd` are the climate value
+# of their disbursements in the high and low bounds (`allocated_high_usd`,
+# `allocated_low_usd`), at each commitment's climate share of face.
 # `grant_equiv_coverage` is the share of linked records with a grant equivalent.
 # `repeat_climate_usd` is the climate value of rows that repeat an earlier vintage,
 # which the counted amounts leave out.
@@ -797,6 +807,8 @@ QUALITY = _table(
     commitments=_count(),
     climate_usd=_usd(),
     linked_usd=_usd(),
+    disbursed_climate_usd=_usd(),
+    certain_disbursed_climate_usd=_usd(),
     linked_high_probability_usd=_usd(),
     model_labelled_usd=_usd(),
     report_labelled_usd=_usd(),

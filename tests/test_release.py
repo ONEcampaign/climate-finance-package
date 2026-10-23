@@ -263,6 +263,24 @@ def test_quality_counts_repeats_on_their_own_line(release_dir: Path) -> None:
     assert quality["linked_usd"] == 40.0
     assert quality["repeat_climate_usd"] == 40.0
     assert quality["grant_equiv_coverage"] == 0.5
+    # R1's 100 disbursed came through certain links, at its 40% climate share.
+    assert quality["disbursed_climate_usd"] == 40.0
+    assert quality["certain_disbursed_climate_usd"] == 40.0
+    # With d21's 40 estimated, only d20's 60 counts.
+    estimated = _read(release_dir, "disbursements").with_columns(
+        allocated_low_usd=pl.when(pl.col("record_id") == "d21")
+        .then(0.0)
+        .otherwise(pl.col("allocated_low_usd"))
+    )
+    rebuilt = release.quality(
+        _read(release_dir, "commitments").lazy(),
+        disbursements=estimated.lazy(),
+        objectives=_read(release_dir, "objectives").lazy(),
+        links=pl.scan_parquet(table_path(release_dir, "review", "links")),
+    ).collect()
+    assert rebuilt.select("disbursed_climate_usd", "certain_disbursed_climate_usd").row(
+        0
+    ) == pytest.approx((40.0, 24.0))
 
 
 def test_core_contributions_count_disbursements_as_grant_equivalent(
@@ -437,6 +455,7 @@ def _rerun_commitments() -> pl.LazyFrame:
             "provider_code": row % 2,
             "year": 2019,
             "climate_usd": _amounts(4),
+            "face_usd": _amounts(5),
             "repeat_of": [None if i % 5 else "R0" for i in row],
         },
         schema_overrides={
@@ -450,7 +469,11 @@ def _rerun_quality() -> pl.LazyFrame:
     return release.quality(
         commitments,
         disbursements=commitments.select(
-            "row_id", record_id="row_id", record_grant_equiv_usd="climate_usd"
+            "row_id",
+            record_id="row_id",
+            record_grant_equiv_usd="climate_usd",
+            allocated_low_usd="face_usd",
+            allocated_high_usd="climate_usd",
         ),
         objectives=commitments.select(
             record_id="row_id", label_source=pl.lit("jev")

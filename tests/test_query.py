@@ -262,16 +262,24 @@ def test_a_split_record_counts_its_grant_equivalent_once() -> None:
 
 
 def test_bounds_follow_each_allocation_in_its_own_year() -> None:
-    rows = SNAP.spending(flow="disbursements").rows(row_id="DEU-1").sort("year")
+    rows = SNAP.spending(flow="disbursements").rows(row_id="DEU-2").sort("year")
 
-    # DEU-1: face 40m, 95% disbursed in three equal records, a principal marker.
-    # The 2021 link is certain. The 2022 and 2023 links have probability 0.85, so
-    # they leave the low bound. Each high bound is 1.05 times the allocation.
-    allocated = 40e6 * 0.95 / 3
-    assert rows["year"].to_list() == [2021, 2022, 2023]
-    assert rows["value"].to_list() == pytest.approx([allocated] * 3)
-    assert rows["low"].to_list() == pytest.approx([allocated, 0.0, 0.0])
-    assert rows["high"].to_list() == pytest.approx([allocated * 1.05] * 3)
+    # DEU-2: face 25m, half disbursed in three equal records. The 2022 record's
+    # parent-id link is certain; the 2023 and 2024 records' project-number links
+    # are estimated, so they leave the low bound. Each high bound is 1.05 times
+    # the allocation.
+    value = rows["value"][0]
+    assert rows["year"].to_list() == [2022, 2023, 2024]
+    assert rows["value"].to_list() == pytest.approx([value] * 3)
+    assert rows["low"].to_list() == pytest.approx([value, 0.0, 0.0])
+    assert rows["high"].to_list() == pytest.approx([value * 1.05] * 3)
+    # DEU-2 is Germany's only 2022 commitment. Under OECD its disbursements' value
+    # is quality's disbursed climate value, low and high alike.
+    oecd = SNAP.spending(flow="disbursements", method=OECD).rows(row_id="DEU-2")
+    quality = SNAP.table("quality").filter(provider_code=5, year=2022).collect()
+    assert (oecd["low"].sum(), oecd["high"].sum()) == pytest.approx(
+        quality.select("certain_disbursed_climate_usd", "disbursed_climate_usd").row(0)
+    )
 
 
 def test_the_recipient_view_counts_outflows_and_no_attribution() -> None:

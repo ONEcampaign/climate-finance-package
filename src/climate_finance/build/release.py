@@ -379,9 +379,11 @@ def quality(
     A commitment is linked when a `crdf_crs` link reaches a CRS commitment, and high
     probability when its most probable such link reaches `HIGH_PROBABILITY`. It is
     model-labelled when one of its allocated records carries a Jev objective label,
-    and report-labelled otherwise. `grant_equiv_coverage` is the share of the
-    linked commitments' allocated records with a grant equivalent. Repeats count
-    only in `repeat_climate_usd`.
+    and report-labelled otherwise. `disbursed_climate_usd` is the climate value of
+    its disbursements' `allocated_high_usd`, and `certain_disbursed_climate_usd` of
+    their `allocated_low_usd`, each at the commitment's climate share of face.
+    `grant_equiv_coverage` is the share of the linked commitments' allocated records
+    with a grant equivalent. Repeats count only in `repeat_climate_usd`.
     """
     best = (
         links.filter(pl.col("task") == "crdf_crs")
@@ -408,18 +410,34 @@ def quality(
             model_labelled=pl.col("jev").any(),
         )
     )
+    disbursed = disbursements.group_by("row_id").agg(
+        high=ordered_sum(pl.col("allocated_high_usd")),
+        low=ordered_sum(pl.col("allocated_low_usd")),
+    )
     climate = pl.col("climate_usd")
+    face = pl.col("face_usd")
     counted = pl.col("repeat_of").is_null()
     linked = counted & pl.col("best_probability").is_not_null()
     model = counted & pl.col("model_labelled").fill_null(False)
     return (
         commitments.join(best, on="row_id", how="left")
         .join(by_row, on="row_id", how="left")
+        .join(disbursed, on="row_id", how="left")
         .group_by("provider_code", "year")
         .agg(
             commitments=counted.sum().cast(pl.Int32),
             climate_usd=ordered_sum(climate.filter(counted)),
             linked_usd=ordered_sum(climate.filter(linked)),
+            disbursed_climate_usd=ordered_sum(
+                (climate * pl.col("high") / face).filter(
+                    counted, face > 0, pl.col("high").is_not_null()
+                )
+            ),
+            certain_disbursed_climate_usd=ordered_sum(
+                (climate * pl.col("low") / face).filter(
+                    counted, face > 0, pl.col("low").is_not_null()
+                )
+            ),
             linked_high_probability_usd=ordered_sum(
                 climate.filter(linked, pl.col("best_probability") >= HIGH_PROBABILITY)
             ),

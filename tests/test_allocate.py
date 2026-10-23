@@ -402,6 +402,45 @@ def test_a_later_group_takes_only_what_the_earlier_one_left() -> None:
     assert excess_of(pairs) == {}
 
 
+@pytest.mark.parametrize("disagree", [False, True])
+def test_low_bounds_keep_only_what_certain_links_carried(disagree: bool) -> None:
+    # c19's crs id link is certain unless its records disagree; the repair link to
+    # cB never is. s20 commits and disburses in one record, so its link to itself
+    # stays certain when flagged.
+    crs, crdf, units, links = link(
+        [*CASCADE, record("s20", 2020, commit=30.0, disburse=30.0, crs_id="S")],
+        [
+            crdf_row("c19", 2019, 100.0),
+            crdf_row("cB", 2018, 80.0, crs_id="2018000002"),
+            crdf_row("s20", 2020, 30.0, crs_id="S"),
+        ],
+    )
+    repair = (
+        unit_of(units, "d20"),
+        unit_of(units, "cB"),
+        "repair|x",
+        "repair_new_crs_id",
+    )
+    links = with_links(links, repair).with_columns(
+        records_disagree=pl.when(pl.col("task") == "trace").then(disagree)
+    )
+    pairs = allocate(units, crs=crs, links=links)
+    rows = allocate_to_rows(pairs, crdf=crdf, units=units, crs=crs, links=links)
+    got = {
+        row: (allocated, low, high)
+        for row, allocated, low, high in rows.select(
+            "row_id", "allocated_usd", "allocated_low_usd", "allocated_high_usd"
+        ).iter_rows()
+    }
+    assert got == pytest.approx(
+        {
+            "c19": (100.0, 0.0 if disagree else 100.0, 100.0),
+            "cB": (50.0, 0.0, 50.0),
+            "s20": (30.0, 30.0, 30.0),
+        }
+    )
+
+
 def test_a_record_with_nothing_left_gives_later_groups_nothing() -> None:
     records = [*CASCADE[:2], record("d20", 2020, disburse=60.0)]
     crs, _, units, links = link(records)

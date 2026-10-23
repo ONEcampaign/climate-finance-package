@@ -33,6 +33,9 @@ A `crdf_crs` group's allocation is split over its CRDF rows by face value, over 
 larger of the group's CRS and CRDF face, so no row receives more than its face and
 no record gives more than it disbursed. Amounts stay at face value. The release
 query applies the climate share.
+
+An allocation's low bound is its amount when a certain link carried it (see
+`schema.CERTAIN_METHODS`) and 0 otherwise, and its high bound is its amount.
 """
 
 from __future__ import annotations
@@ -47,7 +50,7 @@ from climate_finance.build.errors import AllocationInputError
 from climate_finance.build.link.id_practice import period_of
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
-from climate_finance.schema import LINK_METHODS
+from climate_finance.schema import CERTAIN_METHODS, LINK_METHODS
 
 if TYPE_CHECKING:
     from climate_finance.build.stages import StageContext, StageOutput
@@ -77,6 +80,7 @@ _PAIRS_SCHEMA = pl.Schema(
         "year": pl.Int16(),
         "allocated_usd": pl.Float64(),
         "rule": pl.String(),
+        "certain": pl.Boolean(),
     }
 )
 
@@ -236,7 +240,8 @@ def window_donors(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> list[int]:
 
 
 def _trace_links(links: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataFrame:
-    """The `trace` links as (disbursement unit, commitment unit, group, method).
+    """The `trace` links as (disbursement unit, commitment unit, group, method,
+    certain).
 
     Raises:
         AllocationInputError: when a link lacks a group, a group spans two
@@ -251,6 +256,11 @@ def _trace_links(links: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataFrame:
             c_unit="right_id",
             group_id="group_id",
             method="link_method",
+            certain=(pl.col("left_id") == pl.col("right_id"))
+            | (
+                pl.col("link_method").is_in(CERTAIN_METHODS)
+                & ~pl.col("records_disagree").fill_null(value=False)
+            ),
         )
         .collect()
     )
@@ -341,6 +351,7 @@ def _trace_pairs(
             "d_unit",
             "c_unit",
             "year",
+            "certain",
             rank=rank,
             class_year=pl.coalesce(floor, pl.when(same_year).then(year)),
             order=order,
@@ -386,6 +397,7 @@ def _trace_pairs(
             "c_idx",
             "order",
             "rule",
+            "certain",
         )
     )
     return pairs, commitments
@@ -432,9 +444,10 @@ def allocate(
     Returns:
         One row per (commitment record, disbursement record) that received an
         amount: `commitment_id` (the commitment's CRS record_id), `record_id`,
-        `year` (the record's), `allocated_usd` and `rule`. It also holds a
-        `rule="excess"` row with a null `commitment_id` for each record its groups
-        could not take in full.
+        `year` (the record's), `allocated_usd`, `rule` and `certain`, whether a
+        certain link carried it. It also holds a `rule="excess"` row, not certain,
+        with a null `commitment_id` for each record its groups could not take in
+        full.
 
     Raises:
         AllocationInputError: when the links break the contract in the module
@@ -501,6 +514,7 @@ def allocate(
             filled.filter(pl.col("fill") > 0)
             .join(given, on="group_id")
             .select(
+                "pass",
                 "c_idx",
                 "record_id",
                 "year",
@@ -510,8 +524,10 @@ def allocate(
         )
 
     commitment_ids = commitments.select("c_idx", commitment_id="record_id")
+    certain = pairs.select("pass", "record_id", "c_idx", "certain")
     filled_pairs = (
         pl.concat(allocated)
+        .join(certain, on=["pass", "record_id", "c_idx"], validate="1:1")
         .join(commitment_ids, on="c_idx")
         .drop("c_idx")
         .select(_PAIRS_SCHEMA.names())
@@ -522,6 +538,7 @@ def allocate(
         year="year",
         allocated_usd=pl.Series(left),
         rule=pl.lit("excess"),
+        certain=pl.lit(value=False),
     ).filter(pl.col("allocated_usd") > 0)
     return pl.concat([filled_pairs.cast(_PAIRS_SCHEMA), excess.cast(_PAIRS_SCHEMA)])
 
@@ -662,8 +679,8 @@ def allocate_to_rows(
     (see `_commitment_groups`). The rest, and every pair whose commitment has no
     CRDF row, goes to a null `row_id`, so each record's rows sum to what `allocate`
     gave it, excess included. A repeat row's share then moves to the row it repeats
-    (see `_to_first_rows`). Bounds equal the allocation, since every key link holds
-    with probability 1.
+    (see `_to_first_rows`). `allocated_low_usd` sums the amounts certain links
+    carried, and `allocated_high_usd` equals `allocated_usd`.
     """
     weights, spread, unit_groups = _commitment_groups(
         crdf, units=units, crs=crs, links=links
@@ -680,6 +697,7 @@ def allocate_to_rows(
         "year",
         "rule",
         "commitment_id",
+        "certain",
         allocated_usd=pl.col("allocated_usd") * pl.col("weight"),
     )
     to_rows = _to_first_rows(to_rows, crdf=crdf)
@@ -689,21 +707,25 @@ def allocate_to_rows(
         year="year",
         rule="rule",
         commitment_id="commitment_id",
+        certain="certain",
         allocated_usd=pl.col("allocated_usd") * (1.0 - pl.col("spread").fill_null(0.0)),
     )
     amount = pl.col("allocated_usd")
     return (
         pl.concat([to_rows, rest])
         .filter(amount > 0)
-        .sort("row_id", "record_id", "year", "rule", "commitment_id")
+        .sort("row_id", "record_id", "year", "rule", "commitment_id", "certain")
         .group_by("row_id", "record_id", "year", "rule", maintain_order=True)
-        .agg(ordered_sum(amount))
+        .agg(
+            ordered_sum(amount),
+            allocated_low_usd=ordered_sum(amount.filter(pl.col("certain"))),
+        )
         .select(
             "row_id",
             "record_id",
             "year",
             "allocated_usd",
-            allocated_low_usd=amount,
+            "allocated_low_usd",
             allocated_high_usd=amount,
             rule="rule",
             disbursement_source=pl.lit("crs"),
@@ -731,7 +753,16 @@ def _to_first_rows(to_rows: pl.DataFrame, *, crdf: pl.LazyFrame) -> pl.DataFrame
             on="first",
             how="left",
         )
-        .sort("first", repeat, "row_id", "record_id", "year", "rule", "commitment_id")
+        .sort(
+            "first",
+            repeat,
+            "row_id",
+            "record_id",
+            "year",
+            "rule",
+            "commitment_id",
+            "certain",
+        )
         .with_columns(before=amount.cum_sum().over("first") - amount)
         .with_columns(
             kept=pl.when(repeat)
@@ -739,7 +770,7 @@ def _to_first_rows(to_rows: pl.DataFrame, *, crdf: pl.LazyFrame) -> pl.DataFrame
             .otherwise(amount)
         )
     )
-    columns = ("record_id", "year", "rule", "commitment_id")
+    columns = ("record_id", "year", "rule", "commitment_id", "certain")
     return pl.concat(
         [
             ordered.select(

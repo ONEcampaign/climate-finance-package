@@ -24,6 +24,7 @@ import polars as pl
 from climate_finance import __version__
 from climate_finance.build import write_table
 from climate_finance.schema import (
+    CERTAIN_METHODS,
     FLOWS,
     LINK_METHODS,
     RELEASE_TABLES,
@@ -106,10 +107,8 @@ DISBURSED_SHARE = {
     "no_disbursement_record": 0.0,
     "not_traceable": 0.0,
 }
-# An allocation counts in the low bound when its link is at least this probable,
-# and its high bound is this multiple of the allocation, capped so the commitment's
-# high bounds stay within its face value.
-CERTAIN_PROBABILITY = 0.9
+# An allocation's high bound is this multiple of the allocation, capped so the
+# commitment's high bounds stay within its face value.
 HIGH_FACTOR = 1.05
 # Commitments carry the CRDF's flow category: ODA (10) but for AFDB-2, an other
 # official flow (21). Records carry CRS flow codes.
@@ -193,11 +192,12 @@ def _allocation(
     """A disbursements row allocating `allocated` of `record_id` to `commitment`.
 
     `record_disbursement` and `record_grant_equiv` are the whole CRS record's.
-    Unlinked rows (a bank-ledger fill) count in full in the low bound. A fill has no
+    It counts in the low bound when a `CERTAIN_METHODS` link carried it, and a
+    bank-ledger fill counts in full. A fill has no
     CRS record, so it carries its commitment's facts, no flow code and no record
     markers, as `release.fill_disbursements` builds it.
     """
-    certain = link_probability is None or link_probability >= CERTAIN_PROBABILITY
+    certain = link_method is None or link_method in CERTAIN_METHODS
     fill = disbursement_source != "crs"
     first = record_id.endswith("-R0")
     rio_a, rio_m = commitment["rio_adaptation"], commitment["rio_mitigation"]
@@ -568,10 +568,13 @@ TRACED = ("disbursed", "partly_disbursed", "no_disbursement_record")
 
 def _quality(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataFrame:
     """Climate value by provider and commitment year (all of it, the part that
-    traces, and the part whose most probable link is at least 0.8), and the share of
-    the traced commitments' records with a grant equivalent."""
+    traces, the part whose most probable link is at least 0.8, and that of the
+    high- and low-bound disbursements), and the share of the traced commitments'
+    records with a grant equivalent."""
     links = disbursements.group_by("row_id").agg(
         best_probability=pl.col("link_probability").max(),
+        high=pl.col("allocated_high_usd").sum(),
+        low=pl.col("allocated_low_usd").sum(),
         records=pl.len(),
         with_grant_equiv=pl.col("record_grant_equiv_usd").is_not_null().sum(),
     )
@@ -584,6 +587,10 @@ def _quality(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataF
             commitments=pl.len().cast(pl.Int32),
             climate_usd=climate.sum(),
             linked_usd=climate.filter(traced).sum(),
+            disbursed_climate_usd=(climate * pl.col("high") / pl.col("face_usd")).sum(),
+            certain_disbursed_climate_usd=(
+                climate * pl.col("low") / pl.col("face_usd")
+            ).sum(),
             linked_high_probability_usd=climate.filter(
                 traced, pl.col("best_probability") >= 0.8
             ).sum(),
