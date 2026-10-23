@@ -15,8 +15,9 @@ over-allocation:
   that repeat an earlier vintage included, match the published CRDF.
 - `drift`: provider-year climate commitments and disbursements move by at most
   `max_move` from the previous release, unless a recorded cause covers the move.
-- `gcf_rows`: no release row comes from Green Climate Fund data, whose terms bar
-  redistribution.
+- `withheld_rows`: no release row comes from a source the release withholds, such
+  as the Green Climate Fund's ledger, whose terms bar redistribution
+  (`schema.withheld_record`).
 
 Every value is a largest gap or a count, and a row passes at or below its threshold,
 except precision, whose lower bound passes at or above it.
@@ -35,7 +36,7 @@ from climate_finance.build import evaluate
 from climate_finance.build.errors import GateFailedError
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
-from climate_finance.schema import ReleaseManifest
+from climate_finance.schema import ReleaseManifest, withheld_record
 
 GATES_YAML = Path(__file__).with_name("gates.yaml")
 GATES = (
@@ -44,7 +45,7 @@ GATES = (
     "over_allocation",
     "oecd_reconciliation",
     "drift",
-    "gcf_rows",
+    "withheld_rows",
 )
 RESULT_SCHEMA = pl.Schema(
     {
@@ -59,10 +60,6 @@ RESULT_SCHEMA = pl.Schema(
         "detail": pl.String(),
     }
 )
-# Where a disbursement row's record id shows Green Climate Fund data: the GCF's
-# ledger and readiness list, and its IATI file. The GCF project list
-# (`gcf_projects`) only links CRDF rows to CRS records and adds no row.
-GCF_RECORD_PREFIXES = ("ledger:gcf:", "iati:gcf:")
 # The provider-year totals the drift gate compares, from the `quality` table.
 DRIFT_MEASURES = ("climate_usd", "disbursed_climate_usd")
 # How many failing items a row's detail names.
@@ -194,7 +191,7 @@ def run_gates(
                 first_release=first_release,
                 config=gates.drift,
             ),
-            gcf_gate(released("disbursements")),
+            withheld_gate(released("disbursements")),
         ]
     ).with_columns(
         waived=(pl.col("gate") == "precision") & ~pl.col("passed") & waive_precision
@@ -479,7 +476,13 @@ def drift_gate(
     """The largest relative move of a provider-year total (`DRIFT_MEASURES`) from
     the previous release that no cause in `config` explains for `release`.
 
-    Without a previous release the gate fails, naming the `first_release` override.
+    A provider-year both releases hold moves by its change over its previous
+    total, or by 1 when that total was 0. One the previous release held and this
+    one lacks moves by 1 when its previous total was above 0, so a year or a whole
+    provider that vanishes fails unless a cause explains it. A provider-year only
+    this release holds, such as a new CRS year, is named in the detail and not
+    gated. Without a previous release the gate fails, naming the `first_release`
+    override.
     """
     if previous is None:
         return _row(
@@ -498,7 +501,8 @@ def drift_gate(
     before = cf.load(path=previous).table("quality")
     totals = [
         table.group_by(key).agg(
-            *(ordered_sum(pl.col(m)).alias(f"{m}_{side}") for m in DRIFT_MEASURES)
+            *(ordered_sum(pl.col(m)).alias(f"{m}_{side}") for m in DRIFT_MEASURES),
+            pl.lit(value=True).alias(f"in_{side}"),
         )
         for table, side in ((quality, "now"), (before, "before"))
     ]
@@ -510,60 +514,71 @@ def drift_gate(
     moves = []
     for measure in DRIFT_MEASURES:
         now = pl.col(f"{measure}_now").fill_null(0.0)
-        then = pl.col(f"{measure}_before").fill_null(0.0)
+        then = pl.col(f"{measure}_before")
         moves.append(
             pl.when(now == then)
             .then(0.0)
+            .when(then == 0)
+            .then(1.0)
             .otherwise((now - then).abs() / then.abs())
-            .alias(measure)
         )
-    unexplained = (
+    compared = (
         totals[0]
         .join(totals[1], on=key, how="full", coalesce=True)
-        .select(*key, move=pl.max_horizontal(moves))
-        .join(explained, on=key, how="left")
-        .filter(pl.col("move") > config.max_move, pl.col("explained").is_null())
-        .sort("move", *key, descending=[True, False, False])
+        .with_columns(pl.col("in_now", "in_before").fill_null(value=False))
         .collect()
     )
+    new = compared.filter(~pl.col("in_before")).sort(key)
+    unexplained = (
+        compared.filter("in_before")
+        .select(*key, "in_now", move=pl.max_horizontal(moves))
+        .join(explained.collect(), on=key, how="left")
+        .filter(pl.col("move") > config.max_move, pl.col("explained").is_null())
+        .sort("move", *key, descending=[True, False, False])
+    )
+    gone = set(compared.filter("in_before")["provider_code"].unique()) - set(
+        compared.filter("in_now")["provider_code"].unique()
+    )
     named = [
-        f"{provider}/{year}" for provider, year in unexplained.select(key).iter_rows()
+        f"{provider}/{year}" + ("" if present else " (gone)")
+        for provider, year, present in unexplained.select(*key, "in_now").iter_rows()
     ]
+    parts = [
+        f"provider-years that moved without a recorded cause: {_named(named)}"
+        if unexplained.height
+        else "no provider-year moved without a recorded cause"
+    ]
+    if gone:
+        parts.append(f"providers gone: {_named([str(code) for code in sorted(gone)])}")
+    if new.height:
+        added = [f"{provider}/{year}" for provider, year in new.select(key).iter_rows()]
+        parts.append(f"new provider-years, not compared: {_named(added)}")
     return _row(
         "drift",
         value=_largest(unexplained["move"]),
         threshold=config.max_move,
         passed=unexplained.is_empty(),
-        detail=(
-            f"provider-years that moved without a recorded cause: {_named(named)}"
-            if unexplained.height
-            else "no provider-year moved without a recorded cause"
-        ),
+        detail="; ".join(parts),
     )
 
 
-def gcf_gate(disbursements: pl.LazyFrame) -> pl.DataFrame:
-    """The number of `disbursements` rows from Green Climate Fund data
-    (`GCF_RECORD_PREFIXES`)."""
+def withheld_gate(disbursements: pl.LazyFrame) -> pl.DataFrame:
+    """The number of `disbursements` rows whose record comes from a source the
+    release withholds (`schema.withheld_record`)."""
     rows = (
-        disbursements.filter(
-            pl.any_horizontal(
-                pl.col("record_id").str.starts_with(prefix)
-                for prefix in GCF_RECORD_PREFIXES
-            )
-        )
+        disbursements.filter(withheld_record(pl.col("record_id")))
         .select("record_id")
         .collect()
     )
     records = rows["record_id"].unique().sort().to_list()
     return _row(
-        "gcf_rows",
+        "withheld_rows",
         value=float(rows.height),
         threshold=0.0,
         passed=rows.is_empty(),
         detail=(
-            f"disbursements rows from GCF records: {_named(records)}"
+            f"disbursements rows from withheld records: {_named(records)}"
             if rows.height
-            else "no release row comes from GCF data"
+            else "no release row comes from a withheld source"
         ),
     )

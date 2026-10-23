@@ -150,7 +150,7 @@ def test_a_sound_release_passes_every_gate_but_precision_without_a_sample(
         ("over_allocation", "raw_links"): True,
         ("oecd_reconciliation", None): True,
         ("drift", None): True,
-        ("gcf_rows", None): True,
+        ("withheld_rows", None): True,
     }
     assert results.filter(gate="precision")["detail"].to_list() == ["no blind sample"]
 
@@ -275,7 +275,7 @@ def _disburse_r1_above_face(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.with_columns(disbursed_usd=pl.col("face_usd") + 1.0)
 
 
-def _add_gcf_fill(frame: pl.DataFrame) -> pl.DataFrame:
+def _add_withheld_fill(frame: pl.DataFrame) -> pl.DataFrame:
     fill = frame.head(1).with_columns(
         record_id=pl.lit("ledger:gcf:FP001:2022"),
         disbursement_source=pl.lit("bank_ledger"),
@@ -302,7 +302,13 @@ def _add_gcf_fill(frame: pl.DataFrame) -> pl.DataFrame:
             ("oecd_reconciliation", None),
             f"{NOR}/2019",
         ),
-        ("assemble", "disbursements", _add_gcf_fill, ("gcf_rows", None), "FP001"),
+        (
+            "assemble",
+            "disbursements",
+            _add_withheld_fill,
+            ("withheld_rows", None),
+            "FP001",
+        ),
     ],
 )
 def test_each_gate_fails_on_a_release_doctored_to_break_it(
@@ -376,6 +382,75 @@ def test_drift_needs_a_recorded_cause_for_a_move_over_five_percent(
 
     assert row["passed"] is passed
     assert (f"{NOR}/2019" in row["detail"]) is not passed
+
+
+def _with_row(*, provider: int, year: int, scale: float) -> Callable:
+    """An edit adding a copy of the first row as `provider` and `year`, with its
+    amounts scaled by `scale`."""
+
+    def edit(frame: pl.DataFrame) -> pl.DataFrame:
+        amounts = [name for name, dtype in frame.schema.items() if dtype == pl.Float64]
+        extra = frame.head(1).with_columns(
+            pl.lit(provider, pl.Int32).alias("provider_code"),
+            pl.lit(year, pl.Int16).alias("year"),
+            *(pl.col(name) * scale for name in amounts),
+        )
+        return pl.concat([frame, extra])
+
+    return edit
+
+
+@pytest.mark.parametrize(
+    ("current", "previous", "passed", "named"),
+    [
+        # This release adds a year the previous one lacked: named, not gated.
+        (
+            _with_row(provider=NOR, year=2020, scale=1.0),
+            None,
+            True,
+            f"new provider-years, not compared: {NOR}/2020",
+        ),
+        # A year the previous release held vanishes.
+        (
+            None,
+            _with_row(provider=NOR, year=2018, scale=1.0),
+            False,
+            f"{NOR}/2018 (gone)",
+        ),
+        # So does a whole provider.
+        (None, _with_row(provider=9, year=2019, scale=1.0), False, "providers gone: 9"),
+        # A vanished year that held nothing moves nothing.
+        (
+            None,
+            _with_row(provider=NOR, year=2018, scale=0.0),
+            True,
+            "no provider-year",
+        ),
+    ],
+)
+def test_drift_compares_shared_years_and_gates_vanished_ones(
+    release_dir: Path,
+    current: Callable | None,
+    previous: Callable | None,
+    passed: bool,
+    named: str,
+) -> None:
+    before = copy_release(
+        release_dir.parent / "previous",
+        source=release_dir / "assemble",
+        edits={"quality": previous} if previous else None,
+    )
+    if current:
+        _edit(table_path(release_dir, "assemble", "quality"), current)
+
+    row = (
+        _report(release_dir, previous=before, first_release=False)
+        .filter(gate="drift")
+        .row(0, named=True)
+    )
+
+    assert row["passed"] is passed
+    assert named in row["detail"]
 
 
 def test_quality_shows_each_providers_precision_interval(
