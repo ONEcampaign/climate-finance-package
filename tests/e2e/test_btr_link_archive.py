@@ -68,7 +68,9 @@ def test_uk_programme_numbers_find_their_programme_years(
 
     years = programmes.select("programme", "year").unique().height
     found_years = found.select("programme", "year").unique().height
-    # The seven not found are programmes the CRS holds only in the other year.
+    # Six of the seven not found have CRS records only in the other year. The
+    # seventh, 300137 in 2022, has one record with no amount, which `normalise_crs`
+    # drops; the prototype's join on the raw CRS finds it, giving 285.
     assert (years, found_years) == (291, 284)
 
 

@@ -153,6 +153,7 @@ def config(data: Path) -> BuildConfig:
         update={
             "crs_file": LocalFile(path=data / "raw" / CRS_ARCHIVE, sha256=CRS_SHA256),
             "iati_archive": data / "raw" / "external" / "iati",
+            "btr_archive": None,
         }
     )
     return config.model_copy(
