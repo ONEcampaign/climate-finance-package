@@ -14,7 +14,7 @@ A donor scores each project 0, 1 (significant), or 2 (principal) for adaptation 
 
 `cf.methods.PROVIDER` is ONE with each provider's own coefficient for significant markers where the release has one. A coefficient is estimated from the ratio of a provider's BTR amounts to its CRS amounts and enters a query only after a reviewer confirms it. Providers without a confirmed coefficient take 0.4, and `result.explain()` names them.
 
-`cf.methods.RANGE` runs the three together. `low` and `high` become the lowest and highest value any of them gives for each row.
+`cf.methods.RANGE` runs the three together. For each row, `low` becomes the lowest of their `low` bounds, which count only disbursements on certain links, and `high` the highest value any of them gives.
 
 Development banks report a climate share (the climate components) for their projects. Rows from these banks use that share under every method and ignore the coefficients.
 
@@ -22,7 +22,7 @@ Development banks report a climate share (the climate components) for their proj
 
 ## Jev labels
 
-Where a release holds Jev's objective labels, `Method(relevance="jev")` reads Jev's adaptation level in place of the adaptation marker for disbursements whose CRS record Jev labelled. Jev labels only records whose commitment is marked adaptation. Mitigation, commitments, and unlabelled records keep their CRS markers. A map fitted on human-coded projects calibrates the levels.
+Where a release holds Jev's objective labels, `Method(relevance="jev")` reads Jev's adaptation level in place of the adaptation marker for disbursements whose CRS record Jev labelled. Jev labels only records whose commitment is marked adaptation. Mitigation, commitments, and unlabelled records keep their CRS markers. Jev labels a record adaptation when its answer to a lenient adaptation question passes a cut fitted on human-coded projects, at level 2 when it finds principal likelier than significant and at level 1 otherwise. A record below the cut reads level 0. The method weighs these levels at the same coefficients as donor markers.
 
 ## Attribution to providers
 

@@ -1,6 +1,6 @@
 # Low and high bounds
 
-As of 2.0, every row of a `spending()` table carries `low`, `value`, and `high`. `low` counts the disbursements whose link to a commitment is certain. `value` counts every disbursement the build allocated, estimated links included. `high` equals `value` for a single method. When a query asks for several methods, `low` is the smallest and `high` the largest value across them.
+As of 2.0, every row of a `spending()` table carries `low`, `value`, and `high`. `low` counts the disbursements whose link to a commitment is certain. `value` counts every disbursement the build allocated, estimated links included. `high` equals `value` for a single method. When a query asks for several methods, `low` is the lowest of their `low` bounds and `high` the highest of their values.
 
 ## Where the bounds come from
 
@@ -17,7 +17,7 @@ A commitment's `disbursed_low_usd`, `disbursed_usd`, and `disbursed_high_usd` su
 
 ## Under several methods
 
-`cf.methods.RANGE` computes ONE, OECD, and PROVIDER together. For each year, provider, recipient, and Bi_Multi code, `low` is the lowest and `high` the highest value any of the three gives, so the range covers marker weights as well as link certainty.
+`cf.methods.RANGE` computes ONE, OECD, and PROVIDER together. For each year, provider, recipient, and Bi_Multi code, every method's row carries the same `low` and `high`. `low` is the lowest of the three methods' `low` bounds, which count only what certain links carried. `high` is the highest value any of the three gives, because each method's `high` equals its `value`. The range covers marker weights as well as link certainty.
 
 ## How to read a wide gap
 
