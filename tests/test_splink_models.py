@@ -69,6 +69,7 @@ def _donor(donor: int, *, seed: int, projects: int, noise: int) -> list[dict]:
                 "recipient_code": int(fields.pop("recipient")),
                 "purpose_code": int(fields.pop("purpose")),
                 "commitment_year": None,
+                "commitment_date": None,
                 "floor_year": None,
                 **fields,
             }

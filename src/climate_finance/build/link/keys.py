@@ -16,11 +16,23 @@ project number (`loan_number`) keeps it on its own loan, and reaches additional
 financing booked under the parent project's number.
 
 The project-number tiers come last, so they see only what the crs-id tiers left, and
-they link only where (donor, agency, project number, recipient) maps to one crs id on
-the commitment side, since shared framework numbers are right 43% of the time and
-unique keys 84.5%. They compare project numbers without `-` and `_` (`pn_key`).
-They hold for every agency: one whose ids mostly persist, such as Korea's EDCF or
-KfW, still files some projects under a new crs id each year.
+each links only where its own key maps to one crs id on the commitment side
+(`_unique_pn`). Shared framework numbers are right 43% of the time at the (number,
+recipient) key and unique keys 84.5%. A key with the purpose or the commitment date
+is narrower, so the tiers that use one do not inherit the coarser key's refusal: the
+AsDB books one loan number under a new crs id each year, and Canada files one line
+of a recipient under several crs ids split by purpose. They compare project numbers
+without `-` and `_` (`pn_key`). They hold for every agency: one whose ids mostly
+persist, such as Korea's EDCF or KfW, still files some projects under a new crs id
+each year.
+
+The first project-number tier adds the commitment date (`line_date`). A disbursement
+record that repeats its line's commitment date continues that line, where the
+project number and recipient alone reach the project's later lines too. The tier
+links only where its key reaches one commitment unit, since a line split by purpose
+under one date is left to the purpose tier. A date on 1 January or 31 December names
+no line: donors write it as a placeholder for the year, and 38% of CRS records carry
+31 December against the 0.3% a real date would.
 """
 
 from dataclasses import dataclass
@@ -71,18 +83,22 @@ _SCIENTIFIC = r"^(\d)\.(\d+)E\+(\d+)$"
 WORLD_BANK_DONORS = (901, 905)
 # The project-number tiers' key, on `separator_free_pn`.
 PN_TIER_KEY = ("donor_code", "agency_code", "pn_key", "recipient_code")
+# The month and day of commitment dates that stand for a year (`line_date`).
+PLACEHOLDER_DAYS = ("01-01", "12-31")
 
 
 @dataclass(frozen=True)
 class Tier:
     """A key tier. It holds the commitment key, the disbursement key it must equal,
-    whether it is a project-number tier, which reaches only unique project-number
-    keys (`_unique_pn`), and whether it holds to the disbursement's floor."""
+    whether it is a project-number tier, which reaches only commitment keys that
+    hold one value of `unique_by` (`_unique_pn`), and whether it holds to the
+    disbursement's floor."""
 
     name: str
     commitment_key: tuple[str, ...]
     unit_key: tuple[str, ...]
     project_number: bool = False
+    unique_by: str = "crs_id"
     floored: bool = True
 
 
@@ -99,6 +115,13 @@ TIERS = (
         ("donor_code", "crs_id"),
         ("donor_code", "crs_parent"),
         floored=False,
+    ),
+    Tier(
+        "pn_recipient_date",
+        (*PN_TIER_KEY, "line_date"),
+        (*PN_TIER_KEY, "line_date"),
+        project_number=True,
+        unique_by="unit_id",
     ),
     Tier(
         "pn_recipient_purpose",
@@ -182,9 +205,14 @@ def loan_number(donor_code: pl.Expr, project_number: pl.Expr) -> pl.Expr:
 def build_units(crs: pl.LazyFrame) -> pl.LazyFrame:
     """Sum `crs` records into units, in the `units` schema.
 
-    Units whose commitments and disbursements both sum to zero are left out.
+    A unit's commitment date is its largest record's, by commitment plus
+    disbursement, ties to the smaller record id. Units whose commitments and
+    disbursements both sum to zero are left out.
     """
     dated = pl.col("commitment_year") < pl.col("year")
+    size = pl.col("commitment_usd").abs().fill_null(0) + pl.col(
+        "disbursement_usd"
+    ).abs().fill_null(0)
     return (
         crs.with_columns(
             project_number=normalise_pn(pl.col("project_number")),
@@ -196,6 +224,9 @@ def build_units(crs: pl.LazyFrame) -> pl.LazyFrame:
         .agg(
             pl.col("commitment_usd", "disbursement_usd").sort_by("record_id"),
             record_ids=pl.col("record_id").sort(),
+            commitment_date=pl.col("commitment_date")
+            .sort_by(size, "record_id", descending=[True, False])
+            .first(),
         )
         .with_columns(pl.col("commitment_usd", "disbursement_usd").list.sum())
         .filter((pl.col("commitment_usd") != 0) | (pl.col("disbursement_usd") != 0))
@@ -220,7 +251,10 @@ def link_by_keys(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
     units of one group reach the same commitments, less those their own record
     year or floor rules out.
     """
-    units = units.with_columns(crs_id=canonical_crs_id(pl.col("crs_id")))
+    units = units.with_columns(
+        crs_id=canonical_crs_id(pl.col("crs_id")),
+        line_date=line_date(pl.col("commitment_date")),
+    )
     units = units.with_columns(crs_key=crs_key(units))
     remaining = units.filter(
         pl.col("disbursement_usd") > 0,
@@ -233,13 +267,14 @@ def link_by_keys(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
         loan=loan_number(pl.col("donor_code"), pl.col("project_number"))
     )
     remaining, commitments = _with_pn_key(remaining, commitments)
-    unique_pn = _unique_pn(commitments)
 
     pairs = []
     for tier in TIERS:
         tier_pairs = _eligible_pairs(
             remaining.drop_nulls(tier.unit_key),
-            unique_pn if tier.project_number else commitments,
+            _unique_pn(commitments, key=tier.commitment_key, by=tier.unique_by)
+            if tier.project_number
+            else commitments,
             tier=tier,
         )
         pairs.append(tier_pairs)
@@ -247,6 +282,12 @@ def link_by_keys(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
             tier_pairs.select(unit_id="left_id"), on="unit_id", how="anti"
         )
     return as_exact_links(pl.concat(pairs).lazy(), task="trace").collect()
+
+
+def line_date(commitment_date: pl.Expr) -> pl.Expr:
+    """The commitment date, or null on a `PLACEHOLDER_DAYS` day."""
+    placeholder = commitment_date.dt.strftime("%m-%d").is_in(PLACEHOLDER_DAYS)
+    return pl.when(~placeholder).then(commitment_date)
 
 
 def crs_key(units: pl.DataFrame) -> pl.Series:
@@ -320,12 +361,11 @@ def _with_pn_key(
     return keyed(disbursements), keyed(commitments)
 
 
-def _unique_pn(commitments: pl.DataFrame) -> pl.DataFrame:
-    """Commitments whose (donor, agency, `pn_key`, recipient) maps to one crs id, a
-    null crs id counting as one."""
-    return commitments.drop_nulls(PN_TIER_KEY).filter(
-        pl.col("crs_id").n_unique().over(PN_TIER_KEY) == 1
-    )
+def _unique_pn(
+    commitments: pl.DataFrame, *, key: tuple[str, ...], by: str
+) -> pl.DataFrame:
+    """Commitments whose `key` maps to one value of `by`, a null counting as one."""
+    return commitments.drop_nulls(key).filter(pl.col(by).n_unique().over(key) == 1)
 
 
 def _eligible_pairs(

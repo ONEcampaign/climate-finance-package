@@ -29,6 +29,7 @@ KEY_TIERS = (
     "crs_id_purpose",
     "crs_id",
     "crs_id_parent",
+    "pn_recipient_date",
     "pn_recipient_purpose",
     "pn_recipient",
 )
@@ -435,6 +436,7 @@ LINKS = _table(
 # commitment is placed at `placed_year`, its commitment-date year when that precedes
 # the record year. A disbursement whose commitment date precedes its record year
 # carries that year as `floor_year`, and fills only commitments placed from then on.
+# `commitment_date` is the unit's largest record's.
 UNITS = _table(
     "units",
     ("unit_id",),
@@ -447,6 +449,7 @@ UNITS = _table(
     purpose_code=_code(nullable=True),
     year=_year(),
     commitment_year=_year(nullable=True),
+    commitment_date=Column(pl.Date(), nullable=True),
     placed_year=_year(),
     floor_year=_year(nullable=True),
     commitment_usd=_usd(),

@@ -116,8 +116,18 @@ def test_normalise_pn(published: str | None, normalised: str | None) -> None:
 def test_units_sum_records_that_share_every_key() -> None:
     units = _units(
         {
-            "b": {"crs_id": "A", "project_number": "p 1", "commitment_usd": 2.0},
-            "a": {"crs_id": "A", "project_number": "P1", "commitment_usd": 3.0},
+            "b": {
+                "crs_id": "A",
+                "project_number": "p 1",
+                "commitment_date": date(2020, 2, 1),
+                "commitment_usd": 2.0,
+            },
+            "a": {
+                "crs_id": "A",
+                "project_number": "P1",
+                "commitment_date": date(2020, 5, 1),
+                "commitment_usd": 3.0,
+            },
             # A different commitment-date year is a different unit.
             "c": {
                 "crs_id": "A",
@@ -136,6 +146,8 @@ def test_units_sum_records_that_share_every_key() -> None:
     assert summed["commitment_usd"] == 5.0
     assert summed["disbursement_usd"] == 0.0
     assert summed["project_number"] == "P1"
+    # The commitment date is the largest record's.
+    assert summed["commitment_date"] == date(2020, 5, 1)
     assert (summed["placed_year"], summed["floor_year"]) == (2020, None)
     # A record dated before its year is placed and floored at its date's year.
     dated = by_records[("c",)]
@@ -314,6 +326,69 @@ def test_a_shared_project_number_does_not_link() -> None:
         }
     )
     assert traced == {"d3": ("pn_recipient_purpose", ["c3"])}
+
+
+def test_each_project_number_tier_asks_for_one_crs_id_over_its_own_key() -> None:
+    # One number under two crs ids in one recipient, one per purpose: the purpose
+    # tier reaches each line, and a disbursement under a third purpose none.
+    traced = _trace(
+        {
+            "c1": _commitment(crs_id="A", project_number="P-1"),
+            "c2": _commitment(crs_id="B", project_number="P-1", purpose_code=41010),
+            "d1": _disbursement(crs_id="C", project_number="P-1"),
+            "d2": _disbursement(crs_id="D", project_number="P-1", purpose_code=41010),
+            "d3": _disbursement(crs_id="E", project_number="P-1", purpose_code=15110),
+        }
+    )
+    assert traced == {
+        "d1": ("pn_recipient_purpose", ["c1"]),
+        "d2": ("pn_recipient_purpose", ["c2"]),
+    }
+
+
+_LINE = {"project_number": "P-1", "commitment_usd": 10.0}
+
+
+def _line(crs_id: str, day: date, **fields: object) -> dict[str, object]:
+    return {
+        **_LINE,
+        "crs_id": crs_id,
+        "year": day.year,
+        "commitment_date": day,
+        **fields,
+    }
+
+
+@pytest.mark.parametrize(
+    ("second", "day", "traced"),
+    [
+        # The disbursement repeats the 2014 line's date and continues that line.
+        (
+            _line("B", date(2016, 3, 1)),
+            date(2014, 6, 27),
+            {"d": ("pn_recipient_date", ["c1"])},
+        ),
+        # Two lines share the date, so the date names neither.
+        (_line("B", date(2014, 6, 27)), date(2014, 6, 27), {}),
+        # One line split by purpose under the date: the purpose tier decides.
+        (
+            _line("A", date(2014, 6, 27), purpose_code=41010),
+            date(2014, 6, 27),
+            {"d": ("pn_recipient_purpose", ["c1"])},
+        ),
+        # A year-end date is a placeholder and names no line.
+        (_line("B", date(2016, 3, 1)), date(2014, 12, 31), {}),
+    ],
+)
+def test_a_disbursement_continues_the_line_whose_commitment_date_it_repeats(
+    second: dict[str, object], day: date, traced: dict[str, tuple[str, list[str]]]
+) -> None:
+    records = {
+        "c1": _line("A", day),
+        "c2": second,
+        "d": _disbursement(crs_id="C", project_number="P-1", commitment_date=day),
+    }
+    assert _trace(records) == traced
 
 
 def test_numbers_that_merge_without_separators_keep_their_own_keys() -> None:

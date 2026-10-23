@@ -21,10 +21,12 @@ from climate_finance.build.link.score import (
     TruthScores,
     best_commitments,
     classifier_links,
+    confirmable_pairs,
     contradicted_commitments,
     heldout_links,
     id_truth,
     is_heldout,
+    private_donors,
     provider_profile,
     score_truth_group,
     scoring_groups,
@@ -270,6 +272,37 @@ def test_with_split_halves_labelled_pairs_by_their_commitment() -> None:
     assert pairs["split"].to_list() == [HELDOUT, TRAIN, ELIGIBLE, UNLABELLED, ELIGIBLE]
     assert pairs["true_pair"].to_list() == [False, True, False, False, False]
     assert pairs["placed_year"].to_list() == [2019, 2020, 2019, 2021, 2021]
+
+
+def test_a_private_donor_scores_only_pairs_under_one_project_number() -> None:
+    private, bilateral = private_donors()[0], 5
+    units = pl.DataFrame(
+        {
+            "unit_id": ["c", "c_renumbered", "d", "d_no_number"],
+            "project_number": ["G-7", "2020-11", "G7", None],
+        }
+    )
+    candidates = [
+        ("d", "c", private, ELIGIBLE),
+        ("d", "c_renumbered", private, ELIGIBLE),
+        ("d_no_number", "c", private, ELIGIBLE),
+        # Labelled pairs train the classifier whatever their numbers.
+        ("d", "c_renumbered", private, TRAIN),
+        # Other donors' numbers are not asked to agree.
+        ("d", "c_renumbered", bilateral, ELIGIBLE),
+    ]
+    pairs = pl.DataFrame(
+        candidates,
+        schema={
+            "left_id": pl.String,
+            "right_id": pl.String,
+            "donor_code": pl.Int32,
+            "split": pl.String,
+        },
+        orient="row",
+    ).with_row_index()
+    kept = confirmable_pairs(pairs, units=units)
+    assert kept["index"].to_list() == [0, 3, 4]
 
 
 @pytest.mark.parametrize(

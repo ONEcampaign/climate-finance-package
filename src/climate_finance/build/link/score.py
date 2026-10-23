@@ -41,6 +41,15 @@ since the build weighs every pair of a unit. Recall counts every disbursement un
 with a true commitment in the half, so a true pair blocking did not produce counts as
 a miss.
 
+A private donor, as the OECD classes it (`private_donors`), files each grant under
+one project number, so the classifier scores its eligible pairs only where the two
+units carry the same number (`confirmable_pairs`). Its scoring group still counts
+them all. A pair under two numbers is two grants or a
+grant the donor renumbered, and neither the number nor the generic titles of
+foundation grants confirm it. The Hewlett Foundation (1624) moved from numbers such
+as `41867` to ones such as `2020-1471` in its 2021 records, and 4 of 15 of its
+links under two numbers, read by hand, were right.
+
 An eligible pair links when its probability reaches the threshold and it is not a
 sibling (`programme_level` 1). Each disbursement unit joins the one commitment it
 scores highest, ties to the earlier placed year, then the smaller unit id. A
@@ -49,6 +58,8 @@ commitment's classifier links form one group.
 
 import hashlib
 from dataclasses import dataclass
+from functools import cache
+from importlib.resources import files
 
 import numpy as np
 import polars as pl
@@ -63,6 +74,7 @@ from climate_finance.build.link.id_practice import (
     line_id,
     period_of,
 )
+from climate_finance.build.link.keys import separator_free_pn
 from climate_finance.build.link.levels import (
     DATE_FEATURES,
     LEVELS,
@@ -183,7 +195,9 @@ def score_candidates(
             links=empty, profile=scoring_profile(groups, scores=None), scores=None
         )
     members = groups.filter(scoring_group="truth")["provider_code"].implode()
-    pairs = pairs.filter(pl.col("donor_code").is_in(members))
+    pairs = confirmable_pairs(
+        pairs.filter(pl.col("donor_code").is_in(members)), units=units
+    )
     compared = units.join(
         pl.concat([pairs["left_id"], pairs["right_id"]]).to_frame("unit_id"),
         on="unit_id",
@@ -198,6 +212,43 @@ def score_candidates(
         profile=scoring_profile(groups, scores=scores),
         scores=scores,
     )
+
+
+def confirmable_pairs(pairs: pl.DataFrame, *, units: pl.DataFrame) -> pl.DataFrame:
+    """`pairs` (`with_split` candidates) less the eligible pairs of `private_donors`
+    whose two units do not carry the same project number (`separator_free_pn`)."""
+    pn = separator_free_pn(pl.col("project_number"))
+    return (
+        pairs.join(
+            units.select(left_id="unit_id", pn_left=pn),
+            on="left_id",
+            how="left",
+            maintain_order="left",
+        )
+        .join(
+            units.select(right_id="unit_id", pn_right=pn),
+            on="right_id",
+            how="left",
+            maintain_order="left",
+        )
+        .filter(
+            (pl.col("split") != ELIGIBLE)
+            | ~pl.col("donor_code").is_in(private_donors())
+            | (pl.col("pn_left") == pl.col("pn_right")).fill_null(value=False)
+        )
+        .drop("pn_left", "pn_right")
+    )
+
+
+@cache
+def private_donors() -> tuple[int, ...]:
+    """The donor codes the OECD classes as private donors."""
+    donors = pl.read_csv(
+        (files("climate_finance") / "data" / "oecd_classification.csv").read_bytes(),
+        columns=["code", "type"],
+        schema_overrides={"code": pl.Int32},
+    )
+    return tuple(donors.filter(type="Private donor")["code"])
 
 
 def split_key(donor_code: pl.Expr, crs_id: pl.Expr, unit_id: pl.Expr) -> pl.Expr:
