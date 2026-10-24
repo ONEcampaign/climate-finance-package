@@ -12,7 +12,8 @@ An agency is `unclassified` below `MIN_OPEN` open commitments, `neither` when un
 `parent_id_persistent` or `pn_persistent` when that route carries at least
 `PERSISTENT_SHARE` of the continued value (the parent class counting id and parent
 together, with parent the larger), else `mixed`. A disbursement takes the class of its
-record year's period. Later years reuse the last period.
+record year's period. Earlier years take the first period and later years the last;
+open commitments of years outside every period class no agency.
 
 `keyed_disbursement_share` is the agency's disbursement value in the period on records
 with a usable key, over all its disbursement value there: a project number the
@@ -80,7 +81,8 @@ def parent_id(donor_code: pl.Expr, crs_id: pl.Expr) -> pl.Expr:
 
 
 def period_of(year: pl.Expr) -> pl.Expr:
-    """The id-practice period a record year falls in. Later years take the last."""
+    """The id-practice period a record year falls in. Earlier years take the first
+    and later years the last."""
     (first_name, (_, first_last)), *middle, (last_name, _) = PERIODS.items()
     period = pl.when(year <= first_last).then(pl.lit(first_name))
     for name, (_, last) in middle:

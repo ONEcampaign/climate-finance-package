@@ -7,34 +7,21 @@ allocate with key repair on, and pins the no-record value the rules move.
 """
 
 import os
-from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
 import pytest
-from normalised import record_fetch
+from archive_build import CRS_ARCHIVE, CRS_SHA256, seed_raw
 
 from climate_finance.build import Stage, build
 from climate_finance.build.config import BuildConfig, LocalFile, load_config
-from climate_finance.build.fetch import (
-    CRDF_FILES,
-    CRS_FILE,
-    DAC_EXCHANGE_FILE,
-    GCF_FILE,
-    IATI_DIR,
-    IMPUTED_SHARES_FILE,
-    MULTISYSTEM_FILE,
-    YEAR_SOURCES,
-)
 from climate_finance.build.normalise.crs import trace_population
-from climate_finance.build.stages import raw_dir, table_path
+from climate_finance.build.stages import table_path
 from climate_finance.schema import KEY_REPAIR_METHODS, sha256_file
 
 pytestmark = pytest.mark.slow
 
 BUILD_TOML = Path(__file__).parents[2] / "build.toml"
-CRS_ARCHIVE = Path("oecd/CRS_v20261006.parquet")
-CRS_SHA256 = "d24840a5fad50e718da4eb5831c3e1e333e7c5ef6b46c158e3510c7497518f06"
 YEARS = (2021, 2022)
 # USD bn of 2021 to 2022 climate value per status.
 TOLERANCE_BN = 0.1
@@ -102,60 +89,13 @@ def config(data: Path) -> BuildConfig:
     )
 
 
-def _lay_out_raw(release_dir: Path, *, archive: Path, config: BuildConfig) -> None:
-    """Link the archive files into the raw layout and record them as a fetch would."""
-    places = {
-        "crs": [(CRS_ARCHIVE, CRS_FILE)],
-        **{
-            f"crdf_{perspective}": [(path, path)]
-            for perspective, path in CRDF_FILES.items()
-        },
-        "multisystem": [(MULTISYSTEM_FILE, MULTISYSTEM_FILE)],
-        "imputed_shares": [(IMPUTED_SHARES_FILE, IMPUTED_SHARES_FILE)],
-        "gcf_projects": [(Path("external/gcf_api/projects.json"), GCF_FILE)],
-        "dac_exchange": [(DAC_EXCHANGE_FILE, DAC_EXCHANGE_FILE)],
-        **{
-            f"iati_{publisher}": [
-                (origin.relative_to(archive), IATI_DIR / publisher / origin.name)
-                for origin in sorted((archive / IATI_DIR / publisher).glob("*.xml"))
-            ]
-            for publisher in config.sources.iati_publishers
-        },
-    }
-    raw = raw_dir(release_dir)
-    first, last = config.years.crdf
-    rows = []
-    for source, files in places.items():
-        for origin, relative in files:
-            target = raw / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.symlink_to(archive / origin)
-            rows.append(
-                {
-                    "source": source,
-                    "path": relative.as_posix(),
-                    "sha256": CRS_SHA256 if source == "crs" else sha256_file(target),
-                    "version": config.sources.crs_version if source == "crs" else None,
-                    "fetched_at": datetime(2026, 10, 21, tzinfo=UTC),
-                    "method": "manual",
-                    "first_year": first if source in YEAR_SOURCES else None,
-                    "last_year": last if source in YEAR_SOURCES else None,
-                }
-            )
-    manifest = pl.DataFrame(
-        rows, schema_overrides={"first_year": pl.Int16, "last_year": pl.Int16}
-    ).with_columns(url=pl.lit(None, pl.String), etag=pl.lit(None, pl.String))
-    record_fetch(release_dir, manifest, config=config)
-
-
 @pytest.fixture(scope="module")
 def base(
     tmp_path_factory: pytest.TempPathFactory, data: Path, config: BuildConfig
 ) -> Path:
-    # Slow: normalises 3.8 million CRS records and links and allocates them, about
-    # a minute.
+    # Slow: normalises 5.1 million CRS records and links and allocates them.
     out = tmp_path_factory.mktemp("allocate")
-    _lay_out_raw(out / "base", archive=data / "raw", config=config)
+    seed_raw(out / "base", archive=data / "raw", config=config)
     stages = [Stage.FETCH, Stage.NORMALISE, Stage.LINK, Stage.ALLOCATE]
     manifest = build("base", config=config, out_dir=out, stages=stages, offline=True)
     return manifest.release_dir

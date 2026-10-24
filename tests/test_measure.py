@@ -7,7 +7,7 @@ import numpy as np
 import polars as pl
 import pytest
 from normalised import crdf_rows, crs_records
-from stage_runs import run_stage, stage_context, write_inputs
+from stage_runs import run_stage, stage_context, write_fetched_years, write_inputs
 
 from climate_finance import schema
 from climate_finance.build.errors import ConfigError
@@ -72,7 +72,10 @@ def _one_shares(spending: pl.LazyFrame) -> dict[tuple[int, int, str], float]:
     }
 
 
-def test_one_shares_are_inclusive_two_year_shares_of_crs_commitments() -> None:
+@pytest.mark.parametrize("measured", [True, False])
+def test_one_shares_are_inclusive_two_year_shares_of_crs_commitments(
+    measured: bool,
+) -> None:
     crdf = crdf_rows(
         _component("a20", 2020, face=100.0, a=30.0, m=20.0, o=10.0),
         _component("a21", 2021, face=50.0, a=0.0, m=50.0, o=0.0),
@@ -86,6 +89,12 @@ def test_one_shares_are_inclusive_two_year_shares_of_crs_commitments() -> None:
         _bank("x21", 2021, provider_code=EU, agency_code=99, face_usd=1e3,
               climate_usd=1e3),
     )  # fmt: skip
+    if not measured:
+        # As normalise writes a year the CRDF measures no adaptation in.
+        crdf = crdf.with_columns(
+            pl.when(pl.col("year") == 2021).then(pl.col(name)).alias(name)
+            for name in ("adaptation_usd", "overlap_usd")
+        )
     # A record's own channel of delivery says nothing about who reports it.
     crs = crs_records(
         {"record_id": "c20", "year": 2020, "donor_code": ASDB, "commitment_usd": 400.0,
@@ -121,9 +130,15 @@ def test_one_shares_are_inclusive_two_year_shares_of_crs_commitments() -> None:
         (42004, 2021, "mitigation"): 20.0 / 80,
         (42004, 2021, "overlap"): 0.0,
     }
+    if not measured:
+        # 2020 lies in 2021's span, so its adaptation and cross-cutting shares are
+        # not measured; mitigation counts a20's whole mitigation part.
+        expected |= {
+            key: None for key in expected if key[2] in ("adaptation", "overlap")
+        }
     assert shares.keys() == expected.keys()
     for key, share in expected.items():
-        assert shares[key] == pytest.approx(share), key
+        assert shares[key] == (None if share is None else pytest.approx(share)), key
     assert (
         one_share_problems(
             spending, crdf=crdf.lazy(), crs=crs.lazy(), agencies=AGENCIES,
@@ -150,7 +165,27 @@ def test_an_agency_with_commitments_and_no_climate_rows_measures_zero() -> None:
     }
 
 
-def test_measure_refuses_spending_whose_one_shares_differ_from_the_crdf() -> None:
+@pytest.mark.parametrize(
+    ("change", "expected"),
+    [
+        (
+            pl.col("face_share") * 2,
+            ["agency_spending 47111 2021: ONE adaptation share 0.4 differs from 0.2"],
+        ),
+        (
+            pl.lit(False).alias("adaptation_measured"),
+            [
+                "agency_spending 47111 2021: ONE adaptation share None differs "
+                "from 0.2",
+                "agency_spending 47111 2021: ONE overlap share None differs from 0.0",
+            ],
+        ),
+    ],
+    ids=["share", "measured"],
+)
+def test_measure_refuses_spending_whose_one_shares_differ_from_the_crdf(
+    change: pl.Expr, expected: list[str]
+) -> None:
     crdf = crdf_rows(
         _bank("f21", 2021, provider_code=ADAPTATION_FUND, rio_adaptation=1,
               rio_mitigation=0, face_usd=10.0, climate_usd=10.0,
@@ -162,16 +197,14 @@ def test_measure_refuses_spending_whose_one_shares_differ_from_the_crdf() -> Non
     )  # fmt: skip
     spending = agency_spending(
         crdf.lazy(), crs=crs.lazy(), agencies=AGENCIES, years=(2020, 2021)
-    ).with_columns(face_share=pl.col("face_share") * 2)
+    ).with_columns(change)
 
     problems = one_share_problems(
         spending, crdf=crdf.lazy(), crs=crs.lazy(), agencies=AGENCIES,
         years=(2020, 2021),
     )  # fmt: skip
 
-    assert problems == [
-        "agency_spending 47111 2021: ONE adaptation share 0.4 differs from 0.2"
-    ]
+    assert problems == expected
 
 
 def test_oecd_shares_are_the_imputed_shares_unchanged() -> None:
@@ -449,6 +482,7 @@ def _measure(tmp_path: Path, crdf: pl.DataFrame, crs: pl.DataFrame) -> dict:
         {"crdf": crdf, "crs": crs, "imputed_shares": NO_IMPUTED.collect()},
     )
     write_inputs(release_dir, "review", {"commitments": status})
+    write_fetched_years(release_dir)
     run_stage("measure", stage_context(release_dir))
     return {
         table: pl.read_parquet(table_path(release_dir, "measure", table))

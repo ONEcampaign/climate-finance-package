@@ -136,9 +136,9 @@ REGISTRY: tuple[StageDef, ...] = (
     _entry(
         Stage.NORMALISE,
         run_normalise,
-        settings=("recoveries", "years.crdf", "years.crs"),
+        settings=("recoveries",),
     ),
-    _entry(Stage.LINK, run_link, settings=("key_repair", "recoveries", "years.crs")),
+    _entry(Stage.LINK, run_link, settings=("key_repair", "recoveries")),
     _entry(
         Stage.ALLOCATE, allocate.run_allocate, settings=("years.crs_last_complete",)
     ),
@@ -148,7 +148,7 @@ REGISTRY: tuple[StageDef, ...] = (
     _entry(
         Stage.MEASURE,
         measure.run_measure,
-        settings=("years.crdf", "years.crs_last_complete"),
+        settings=("years.crs_last_complete",),
     ),
     _entry(
         Stage.ASSEMBLE,

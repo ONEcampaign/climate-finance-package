@@ -108,10 +108,11 @@ def _frame(table: schema.TableSchema, rows: list[dict[str, object]]) -> pl.DataF
     return frame
 
 
-def write_raw(raw: Path, *, crdf_years: tuple[int, int]) -> pl.DataFrame:
+def write_raw(raw: Path, *, crdf_years: tuple[int, int] = (2015, 2024)) -> pl.DataFrame:
     """Lay the raw fixtures out under `raw` as fetch would, with a euro DAC rate
-    of 0.8, and return their `raw_manifest`, the CRDF and MULTI fetched for
-    `crdf_years`."""
+    of 0.8, and return their `raw_manifest`, which records the years an online
+    fetch of `crdf_years` resolves, with CRS years to 2025 and provider-perspective
+    CRDF years from 2013."""
     oecd = RAW_FIXTURES / "oecd"
     files = [
         ("crs", oecd / "CRS.parquet", CRS_FILE),
@@ -144,6 +145,12 @@ def write_raw(raw: Path, *, crdf_years: tuple[int, int]) -> pl.DataFrame:
     ).write_parquet(raw / DAC_EXCHANGE_FILE)
     files.append(("dac_exchange", raw / DAC_EXCHANGE_FILE, DAC_EXCHANGE_FILE))
     first, last = crdf_years
+    years = {
+        "crs": (first, 2025),
+        "crdf_recipient": crdf_years,
+        "crdf_provider": (max(first, 2013), last),
+        "multisystem": crdf_years,
+    }
     return pl.DataFrame(
         [
             {
@@ -152,8 +159,8 @@ def write_raw(raw: Path, *, crdf_years: tuple[int, int]) -> pl.DataFrame:
                 "sha256": sha256_file(raw / target),
                 "fetched_at": datetime(2026, 10, 21, tzinfo=UTC),
                 "method": "manual",
-                "first_year": first if source in YEAR_SOURCES else None,
-                "last_year": last if source in YEAR_SOURCES else None,
+                "first_year": years[source][0] if source in YEAR_SOURCES else None,
+                "last_year": years[source][1] if source in YEAR_SOURCES else None,
             }
             for source, _, target in files
         ],

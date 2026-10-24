@@ -16,7 +16,7 @@
       "rows": 13
     },
     "agency_spending": {
-      "sha256": "c087deadb5c46726afcae35f7c0cc7b07ba6d86a2c40c850fc545ee005e1a180",
+      "sha256": "19b6a206a8ebf0228be63058c2c6586b78bc649f832064fa5a7dcbae82dda66c",
       "rows": 12
     },
     "modelled": {
@@ -60,6 +60,7 @@
     "crs": "fixture",
     "crdf": "fixture"
   },
+  "years": {},
   "model_versions": {
     "jev": "jev-1.14.0"
   },

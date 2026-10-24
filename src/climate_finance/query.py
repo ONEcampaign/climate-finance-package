@@ -22,6 +22,10 @@ channels attribute nothing.
 
 Every row holds `value` = adaptation + mitigation - cross_cutting + unsplit, or
 + cross_cutting under the highest-marker rule, whose objectives are disjoint.
+Where the CRDF does not measure adaptation (commitments before 2010, and agency
+shares whose span reaches one), adaptation and cross_cutting are null and `value`
+is the mitigation value. A table row's adaptation and cross_cutting are null when
+any of its rows with an amount has them null.
 
 The release's commitments are recipient-perspective CRDF rows only, so views filter
 on Bi_Multi alone and provider attribution comes only from core contributions.
@@ -107,6 +111,7 @@ _WEIGHT_INPUTS: dict[str, pl.DataType] = {
     "amount_low": pl.Float64(),
     "amount_high": pl.Float64(),
     "significant": pl.Float64(),
+    "adaptation_measured": pl.Boolean(),
 }
 
 
@@ -162,6 +167,7 @@ def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
             release=snapshot.manifest.release,
             package_version=version("climate-finance"),
             source_versions=snapshot.manifest.source_versions,
+            years=snapshot.manifest.years,
             model_versions=snapshot.manifest.model_versions,
             conversion=provenance(currency=spec.currency, prices=spec.prices),
         ),
@@ -231,9 +237,10 @@ def _in_view(view: View) -> pl.Expr:
 
 
 def _share(part: str) -> pl.Expr:
-    """`part` as a fraction of `face_usd`, 0 for a zero face value."""
+    """`part` as a fraction of `face_usd`, 0 for a zero face value or an unmeasured
+    part, which `adaptation_measured` flags."""
     face = pl.col("face_usd")
-    return pl.when(face != 0).then(pl.col(part) / face).otherwise(0.0)
+    return pl.when(face != 0).then(pl.col(part).fill_null(0.0) / face).otherwise(0.0)
 
 
 def _base_rows(snapshot: Snapshot, *, flow: Flow, view: View) -> pl.LazyFrame:
@@ -242,6 +249,7 @@ def _base_rows(snapshot: Snapshot, *, flow: Flow, view: View) -> pl.LazyFrame:
         "share_mitigation": _share("mitigation_usd"),
         "share_overlap": _share("overlap_usd"),
         "share_unsplit": pl.lit(0.0),
+        "adaptation_measured": pl.col("adaptation_usd").is_not_null(),
     }
     if flow == "commitments":
         commitments = _counted_commitments(snapshot).filter(_in_view(view))
@@ -336,7 +344,8 @@ def _attributed_rows(snapshot: Snapshot, *, flow: Flow, method: Method) -> pl.La
     `agency_spending` measures no share, the `one` rows of `agency_shares` stand in.
     The adaptation and mitigation shares each include the cross-cutting share. A
     share with no split by objective (a `climate` row) is the unsplit share, and the
-    three objective shares are 0. An agency without a share attributes nothing, and
+    three objective shares are 0. A null adaptation share is not measured, and its
+    row counts mitigation alone. An agency without a share attributes nothing, and
     neither do the EU channels when the method counts EU Institutions as a provider.
     """
     source = "oecd" if method.replace(eu=OECD.eu) == OECD else "one"
@@ -352,6 +361,10 @@ def _attributed_rows(snapshot: Snapshot, *, flow: Flow, method: Method) -> pl.La
         snapshot.table("core_contributions")
         .filter(pl.col("flow") == flow)
         .join(shares, on=["channel_code", "year"], how="inner")
+        .with_columns(
+            pl.col("share_adaptation", "share_overlap").fill_null(0.0),
+            adaptation_measured=pl.col("share_adaptation").is_not_null(),
+        )
         .with_columns(
             origin=pl.lit("attribution"),
             bi_multi=pl.lit(CORE_CONTRIBUTION, pl.Int8),
@@ -414,7 +427,8 @@ def measured_shares(spending: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
 
     Each row weighs as a commitment of its markers or components would under
     `method`, with its `face_share` as the amount. Every measured share is split
-    by objective, so the unsplit share is 0.
+    by objective, so the unsplit share is 0. The adaptation and cross-cutting shares
+    are null where a row is not `adaptation_measured`.
     """
     face = pl.col("face_share")
 
@@ -426,6 +440,7 @@ def measured_shares(spending: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
     # The highest-marker rule takes the overlap out of adaptation and mitigation,
     # and the shares include it.
     added = overlap if method.highest_marker else pl.lit(0.0)
+    measured = pl.when(pl.col("adaptation_measured").all())
     return (
         spending.with_columns(
             climate_share=pl.col("adaptation_share")
@@ -437,9 +452,11 @@ def measured_shares(spending: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
         )
         .group_by("channel_code", "year")
         .agg(
-            share_adaptation=(face * (fractions["adaptation"] + added)).sum(),
+            share_adaptation=measured.then(
+                (face * (fractions["adaptation"] + added)).sum()
+            ),
             share_mitigation=(face * (fractions["mitigation"] + added)).sum(),
-            share_overlap=(face * overlap).sum(),
+            share_overlap=measured.then((face * overlap).sum()),
         )
         .with_columns(share_unsplit=pl.lit(0.0))
     )
@@ -481,16 +498,19 @@ def _coefficients(
 
 
 def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
-    """Weight each row's amount by objective, unsplit and in total under `method`."""
+    """Weight each row's amount by objective, unsplit and in total under `method`.
+
+    Adaptation and cross_cutting are null where adaptation is not measured."""
     amount = pl.col("amount")
     fractions = weights(method, significant=pl.col("significant"))
     unsplit = pl.col("share_unsplit")
     climate = fractions["climate"] + unsplit
+    measured = pl.col("adaptation_measured").fill_null(True)
     return frame.with_columns(
         method=pl.lit(label(method)),
-        adaptation=amount * fractions["adaptation"],
+        adaptation=pl.when(measured).then(amount * fractions["adaptation"]),
         mitigation=amount * fractions["mitigation"],
-        cross_cutting=amount * fractions["cross_cutting"],
+        cross_cutting=pl.when(measured).then(amount * fractions["cross_cutting"]),
         unsplit=amount * unsplit,
         value=amount * climate,
         low=pl.col("amount_low") * climate,
@@ -504,15 +524,30 @@ def _sum(name: str) -> pl.Expr:
     return pl.when(column.is_not_null().any()).then(ordered_sum(column))
 
 
+def _measured_sum(name: str) -> pl.Expr:
+    """`_sum(name)`, null when a row with an amount leaves `name` unmeasured."""
+    unmeasured = pl.col(name).is_null() & pl.col("amount").is_not_null()
+    return pl.when(~unmeasured.any()).then(_sum(name))
+
+
 def _aggregate(rows: pl.LazyFrame, *, methods: Sequence[str]) -> pl.LazyFrame:
     """Sum rows by `KEYS`. `low` and `high` then span every method for the same key.
+    Adaptation and cross_cutting are null where a row leaves them unmeasured.
 
     Every method in `methods` holds a row for every key any method holds, with zero
     amounts where it counts nothing, so a method that has no row for a key still
     bounds it.
     """
     summed = rows.group_by(KEYS).agg(
-        *(_sum(name).alias(name) for name in AMOUNTS), _held=pl.len()
+        *(
+            (
+                _measured_sum(name)
+                if name in ("adaptation", "cross_cutting")
+                else _sum(name)
+            ).alias(name)
+            for name in AMOUNTS
+        ),
+        _held=pl.len(),
     )
     grid = (
         summed.select(ROW_KEYS)

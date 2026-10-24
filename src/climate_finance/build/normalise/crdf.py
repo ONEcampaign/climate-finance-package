@@ -29,6 +29,16 @@ _MARKERS: dict[str, int | None] = {
     "Imputed Multilateral Contribution": None,
 }
 _IMPUTED = "Imputed Multilateral Contribution"
+# The first year the CRDF measures adaptation: the DAC introduced the adaptation
+# marker for flows from 2010. Before it the recipient CRDF holds the rows its
+# mitigation marker selects and prints "Not targeted/Not screened" as their
+# adaptation marker. The few adaptation marks before 2010 predate the marker's start
+# and count as not measured: 1 row in 2007, 2 in 2008 and 10 of 2,962 in 2009 marked
+# principal or significant, and 49 climate-component rows in 2009, against 3,922 of
+# 6,371 rows marked in 2010.
+ADAPTATION_FIRST_YEAR = 2010
+# The columns that measure adaptation, null before `ADAPTATION_FIRST_YEAR`.
+_ADAPTATION_COLUMNS = ("rio_adaptation", "adaptation_usd", "overlap_usd")
 # Text Excel writes in place of a formula it could not evaluate.
 _EXCEL_ERRORS = ("#NAME?", "#VALUE!", "#REF!", "#DIV/0!", "#N/A", "#NUM!", "#NULL!")
 # Excel read some `Donor project N°` cells (such as "1/2015" or "Aug-18") as dates,
@@ -76,7 +86,10 @@ def normalise_crdf(
     """One perspective's `download_crdf` output in the `crdf` schema.
 
     Amounts are converted to USD units at current prices. `adaptation_usd` and
-    `mitigation_usd` each include `overlap_usd`, as published. Rio-marked rows carry
+    `mitigation_usd` each include `overlap_usd`, as published. Before
+    `ADAPTATION_FIRST_YEAR` adaptation is not measured: `rio_adaptation`,
+    `adaptation_usd` and `overlap_usd` are null, and the climate value is the
+    mitigation value. Rio-marked rows carry
     the commitment's full value as `climate_usd` (IFAD's own 40% for significant
     projects aside), and component rows (development banks' climate components and
     imputed multilateral contributions) carry the climate part. `face_usd` is
@@ -120,6 +133,9 @@ def normalise_crdf(
             for name, source in _AMOUNTS.items()
         },
         published_share=_published_share(frame),
+    ).with_columns(
+        pl.when(pl.col("year") >= ADAPTATION_FIRST_YEAR).then(pl.col(name))
+        for name in _ADAPTATION_COLUMNS
     )
     frame = frame.with_columns(
         objective=_objective(),

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from climate_finance.build.fetch import DAC_EXCHANGE_FILE
+from climate_finance.build.fetch import DAC_EXCHANGE_FILE, fetched_years
 from climate_finance.build.link.crdf_crs import link_within_year, recover
 from climate_finance.build.link.id_practice import classify_id_practice
 from climate_finance.build.link.key_repair import repair_keys
@@ -28,11 +28,12 @@ def run_link(context: StageContext) -> StageOutput:
     DAC exchange rates fetch wrote.
     """
     config = context.config
+    first_year, _ = fetched_years(context)["crs"]
     crs = context.read("normalise", "crs")
     crdf = context.read("normalise", "crdf").filter(perspective="recipient")
     units = build_units(trace_population(crs)).collect()
     id_practice = classify_id_practice(units)
-    trace = link_by_keys(units, first_year=config.years.crs[0])
+    trace = link_by_keys(units, first_year=first_year)
     crdf_crs = link_within_year(crdf, units=units.lazy()).collect()
     if config.recoveries:
         crdf_crs = recover(
@@ -45,7 +46,5 @@ def run_link(context: StageContext) -> StageOutput:
         )
     links = [trace, crdf_crs]
     if config.key_repair:
-        links.append(
-            repair_keys(units, crs=crs, links=trace, first_year=config.years.crs[0])
-        )
+        links.append(repair_keys(units, crs=crs, links=trace, first_year=first_year))
     return {"links": pl.concat(links), "units": units, "id_practice": id_practice}

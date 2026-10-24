@@ -3,6 +3,7 @@ import socket
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Literal
 
 import httpx
 import oda_reader
@@ -11,11 +12,12 @@ import pandas as pd
 import polars as pl
 import pytest
 from reads import record_reads
-from stage_runs import BUILD_TOML
+from stage_runs import BUILD_TOML, stage_context, write_fetched_years
 
 import climate_finance.build
 from climate_finance.build import BuildConfig, Stage, build, fetch, load_config
 from climate_finance.build.config import LocalFile
+from climate_finance.build.errors import ConfigError
 from climate_finance.build.stages import REGISTRY, raw_dir
 from climate_finance.errors import SourceUnavailableError
 from climate_finance.schema import sha256_file
@@ -40,6 +42,7 @@ class FakeSources:
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(oda_reader, "bulk_download_crs", self.bulk_download_crs)
         monkeypatch.setattr(oda_reader.crs, "get_full_crs_parquet_url", lambda: CRS_URL)
+        monkeypatch.setattr(oda_reader, "list_crdf_files", self.list_crdf_files)
         monkeypatch.setattr(oda_reader, "download_crdf", self.download_crdf)
         monkeypatch.setattr(oda_reader, "download_multisystem", self.multisystem)
         monkeypatch.setattr(oda_reader, "download_crdf_file", self.crdf_file)
@@ -53,9 +56,22 @@ class FakeSources:
 
     def bulk_download_crs(self, *, save_to_path: Path) -> None:
         self.calls.append(("bulk_download_crs", {}))
-        pd.DataFrame({"usd_grant_equiv": [1.0]}).to_parquet(
+        pd.DataFrame({"year": [1973, 2025], "usd_grant_equiv": [1.0, 1.0]}).to_parquet(
             Path(save_to_path) / "CRS.parquet"
         )
+
+    def list_crdf_files(self) -> pd.DataFrame:
+        self.calls.append(("list_crdf_files", {}))
+        return pd.DataFrame(
+            [
+                ("CRDF-RP_2000-2009.xlsx", "recipient", 2000, 2009),
+                ("CRDF-RP_2024.xlsx", "recipient", 2024, 2024),
+                ("CRDF-PP_2013-2014.xlsx", "provider", 2013, 2014),
+                ("CRDF-PP_2024.xlsx", "provider", 2024, 2024),
+                ("Imputed_multilateral_shares.xlsx", None, None, None),
+            ],
+            columns=["name", "perspective", "start_year", "end_year"],
+        ).astype({"start_year": "Int32", "end_year": "Int32"})
 
     def download_crdf(self, perspective: str, **kwargs: object) -> pd.DataFrame:
         self.calls.append(("download_crdf", {"perspective": perspective, **kwargs}))
@@ -101,12 +117,15 @@ def sources(monkeypatch: pytest.MonkeyPatch) -> FakeSources:
 def crs_file(tmp_path: Path) -> LocalFile:
     path = tmp_path / "archive" / "CRS_v1.parquet"
     path.parent.mkdir()
-    pd.DataFrame({"usd_grant_equiv": [2.0, 3.0]}).to_parquet(path)
+    pd.DataFrame({"year": [1973, 2025], "usd_grant_equiv": [2.0, 3.0]}).to_parquet(path)
     return LocalFile(path=path, sha256=sha256_file(path))
 
 
 def _config(
-    *, crdf_years: tuple[int, int] = (2015, 2024), **sources: object
+    *,
+    crdf_years: tuple[int, int] | Literal["all"] = (2015, 2024),
+    crs_years: tuple[int, int] | None = None,
+    **sources: object,
 ) -> BuildConfig:
     config = load_config(BUILD_TOML)
     update = {
@@ -117,7 +136,9 @@ def _config(
     return config.model_copy(
         update={
             "sources": config.sources.model_copy(update=update),
-            "years": config.years.model_copy(update={"crdf": crdf_years}),
+            "years": config.years.model_copy(
+                update={"crdf": crdf_years, "crs": crs_years}
+            ),
         }
     )
 
@@ -127,13 +148,51 @@ def _fetch(config: BuildConfig, out_dir: Path, *, offline: bool = False) -> Path
     return out_dir / "r"
 
 
+@pytest.mark.parametrize(
+    ("crdf_years", "crs_years", "resolved"),
+    [
+        (
+            (2015, 2024),
+            None,
+            {
+                "crs": (2015, 2025),
+                "crdf_recipient": (2015, 2024),
+                "crdf_provider": (2015, 2024),
+                "multisystem": (2015, 2024),
+            },
+        ),
+        (
+            "all",
+            None,
+            {
+                "crs": (2000, 2025),
+                "crdf_recipient": (2000, 2024),
+                "crdf_provider": (2013, 2024),
+                "multisystem": (2000, 2024),
+            },
+        ),
+        (
+            (2010, 2024),
+            (1990, 2024),
+            {
+                "crs": (1990, 2024),
+                "crdf_recipient": (2010, 2024),
+                "crdf_provider": (2013, 2024),
+                "multisystem": (2010, 2024),
+            },
+        ),
+    ],
+)
 def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
     sources: FakeSources,
     crs_file: LocalFile,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    crdf_years: tuple[int, int] | Literal["all"],
+    crs_years: tuple[int, int] | None,
+    resolved: dict[str, tuple[int, int]],
 ) -> None:
-    config = _config(crs_file=crs_file)
+    config = _config(crs_file=crs_file, crdf_years=crdf_years, crs_years=crs_years)
     registry, reads = record_reads(monkeypatch, config, REGISTRY)
     monkeypatch.setattr(climate_finance.build, "REGISTRY", registry)
 
@@ -169,8 +228,12 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
     assert all(methods[path] == "manual" for path in iati)
     assert methods["oecd/multisystem.parquet"] == "http"
     years = manifest.filter(pl.col("first_year").is_not_null())
-    assert sorted(years["source"]) == sorted(fetch.YEAR_SOURCES)
-    assert set(years.select("first_year", "last_year").rows()) == {(2015, 2024)}
+    assert {
+        source: (first, last)
+        for source, first, last in years.select(
+            "source", "first_year", "last_year"
+        ).iter_rows()
+    } == resolved
     assert (raw / "oecd/CRS.parquet").read_bytes() == crs_file.path.read_bytes()
     assert (raw / "external/gcf/projects.json").read_bytes() == (
         FIXTURES / "gcf" / "projects.json"
@@ -179,20 +242,23 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
     assert reads[Stage.FETCH] == set(fetch.SETTINGS)
 
     assert "bulk_download_crs" not in sources.names()
-    assert (
-        "download_crdf",
-        {
-            "perspective": "recipient",
-            "start_year": 2015,
-            "end_year": 2024,
-            "pre_process": True,
-        },
-    ) in sources.calls
+    for perspective in ("recipient", "provider"):
+        first, last = resolved[f"crdf_{perspective}"]
+        assert (
+            "download_crdf",
+            {
+                "perspective": perspective,
+                "start_year": first,
+                "end_year": last,
+                "pre_process": True,
+            },
+        ) in sources.calls
+    first, last = resolved["multisystem"]
     assert (
         "download_multisystem",
         {
-            "start_year": 2015,
-            "end_year": 2024,
+            "start_year": first,
+            "end_year": last,
             "pre_process": True,
             "dotstat_codes": True,
         },
@@ -250,24 +316,68 @@ def test_a_fetch_that_fails_before_its_manifest_keeps_the_last_fetch(
 
 
 @pytest.mark.parametrize(
-    ("crdf_years", "refused"),
-    [((2015, 2024), False), ((2022, 2024), False), ((2010, 2024), True)],
+    ("crdf_years", "crs_years", "recorded"),
+    [
+        ((2015, 2024), None, (2015, 2025)),
+        ((2022, 2024), None, (2022, 2025)),
+        ((2022, 2024), (2016, 2024), (2016, 2024)),
+        ((2010, 2024), None, "crdf_recipient"),
+        ((2015, 2024), (2014, 2025), "crs"),
+        ("all", None, "years.crdf"),
+    ],
 )
-def test_offline_fetch_refuses_crdf_years_the_raw_files_lack(
+def test_offline_fetch_narrows_to_years_the_raw_files_hold_and_refuses_others(
     sources: FakeSources,
     crs_file: LocalFile,
     tmp_path: Path,
-    crdf_years: tuple[int, int],
-    refused: bool,
+    crdf_years: tuple[int, int] | Literal["all"],
+    crs_years: tuple[int, int] | None,
+    recorded: tuple[int, int] | str,
 ) -> None:
-    _fetch(_config(crs_file=crs_file), tmp_path / "out")
-    config = _config(crs_file=crs_file, crdf_years=crdf_years)
+    release = _fetch(_config(crs_file=crs_file), tmp_path / "out")
+    config = _config(crs_file=crs_file, crdf_years=crdf_years, crs_years=crs_years)
 
-    if refused:
-        with pytest.raises(SourceUnavailableError, match="crdf_provider"):
+    if isinstance(recorded, str):
+        with pytest.raises(SourceUnavailableError, match=re.escape(recorded)):
             _fetch(config, tmp_path / "out", offline=True)
-    else:
-        _fetch(config, tmp_path / "out", offline=True)
+        return
+    _fetch(config, tmp_path / "out", offline=True)
+    manifest = pl.read_parquet(release / MANIFEST).filter(
+        pl.col("first_year").is_not_null()
+    )
+    assert dict(
+        zip(
+            manifest["source"],
+            zip(manifest["first_year"], manifest["last_year"], strict=True),
+            strict=True,
+        )
+    ) == {
+        "crs": recorded,
+        "crdf_recipient": crdf_years,
+        "crdf_provider": crdf_years,
+        "multisystem": crdf_years,
+    }
+
+
+def test_an_offline_fetch_of_all_years_reads_an_earlier_fetch_of_all_years(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    config = _config(crs_file=crs_file, crdf_years="all")
+    release = _fetch(config, tmp_path / "out")
+    online = sha256_file(release / MANIFEST)
+
+    _fetch(config, tmp_path / "out", offline=True)
+
+    assert sha256_file(release / MANIFEST) == online
+
+
+def test_a_provider_perspective_without_the_crdf_years_stops_the_fetch(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    config = _config(crs_file=crs_file, crdf_years=(2005, 2009))
+
+    with pytest.raises(SourceUnavailableError, match="provider-perspective"):
+        _fetch(config, tmp_path / "out")
 
 
 @pytest.mark.parametrize("change", ["missing", "changed", "unrecorded"])
@@ -421,3 +531,19 @@ def test_crdf_workbooks_must_match_their_pinned_etags(
 
     with pytest.raises(SourceUnavailableError, match=re.escape("CRDF-PP_2024.xlsx")):
         _fetch(_config(crs_file=crs_file, crdf_etags=pins), tmp_path / "out")
+
+
+@pytest.mark.parametrize(
+    ("crs_years", "refused"), [((2010, 2024), False), ((2010, 2023), True)]
+)
+def test_later_stages_refuse_a_last_complete_year_outside_the_fetched_crs_years(
+    tmp_path: Path, crs_years: tuple[int, int], refused: bool
+) -> None:
+    write_fetched_years(tmp_path, crs=crs_years)
+    context = stage_context(tmp_path)
+
+    if refused:
+        with pytest.raises(ConfigError, match="crs_last_complete 2024"):
+            fetch.last_complete_year(context)
+    else:
+        assert fetch.last_complete_year(context) == 2024

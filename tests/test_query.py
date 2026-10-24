@@ -21,6 +21,7 @@ from climate_finance import convert as convert_module
 from climate_finance.methods import OECD, ONE, RANGE, Method, MethodRange, label
 from climate_finance.query import BILATERAL, EU_CHANNELS, EU_INSTITUTIONS, _aggregate
 from climate_finance.result import AMOUNTS, ROW_KEYS
+from climate_finance.schema import ReleaseManifest
 from climate_finance.snapshot import Snapshot
 from climate_finance.spec import Spec
 
@@ -833,3 +834,103 @@ def test_eu_own_rows_stay_in_a_year_without_eu_attribution(eu_snap: Snapshot) ->
     assert_frame_equal(
         as_channel, eu_rows(ONE_EU_AS_PROVIDER).filter(pl.col("year") == 2023)
     )
+
+
+def _unmeasured_deu_2(frame: pl.DataFrame) -> pl.DataFrame:
+    # As normalise writes a commitment of a year the CRDF measures no adaptation in.
+    unmeasured = pl.col("row_id") != "DEU-2"
+    return frame.with_columns(
+        pl.when(unmeasured).then(pl.col(name)).alias(name)
+        for name in ("rio_adaptation", "adaptation_usd", "overlap_usd")
+    )
+
+
+def _unmeasured_deu_2_markers(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(
+        inherited_rio_adaptation=pl.when(pl.col("row_id") != "DEU-2").then(
+            pl.col("inherited_rio_adaptation")
+        )
+    )
+
+
+def _unmeasured_2022_spending(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(adaptation_measured=pl.col("year") != 2022)
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+def test_unmeasured_adaptation_stays_null_and_value_counts_mitigation(
+    tmp_path: Path, flow: str
+) -> None:
+    release = copy_release(
+        tmp_path / "release",
+        edits={
+            "commitments": _unmeasured_deu_2,
+            "disbursements": _unmeasured_deu_2_markers,
+            "agency_spending": _unmeasured_2022_spending,
+        },
+    )
+    spec = Spec(providers=(5,), view="provider", flow=flow, method=ONE)
+    result = cf.load(path=release).spending(spec=spec)
+    original = SNAP.spending(spec=spec)
+
+    # DEU-2's own rows and 2022's attribution; disbursements in 2022 of DEU-1, a
+    # 2021 commitment, keep their adaptation.
+    rows = result.rows(year=2022).filter(
+        (pl.col("row_id") == "DEU-2") | (pl.col("origin") == "attribution")
+    )
+    assert set(rows["origin"]) == {"attribution"} | (
+        {"commitment"} if flow == "commitments" else {"disbursement"}
+    )
+    assert rows["adaptation"].is_null().all()
+    assert rows["cross_cutting"].is_null().all()
+    assert rows["value"].to_list() == pytest.approx(rows["mitigation"].to_list())
+    table = result.table.to_polars()
+    # The table rows these rows reach, by recipient and Bi_Multi code.
+    reached = table.join(
+        rows.select("recipient_code", "bi_multi").unique(),
+        on=["recipient_code", "bi_multi"],
+        nulls_equal=True,
+    ).filter(year=2022)
+    assert reached.height == rows.select("recipient_code", "bi_multi").n_unique()
+    assert reached.select("adaptation", "cross_cutting").null_count().row(0) == (
+        reached.height,
+        reached.height,
+    )
+    assert table.filter(year=2021).equals(original.table.to_polars().filter(year=2021))
+    years = "2022" if flow == "commitments" else "2022 to 2024"
+    assert f"not measured for rows in {years}," in result.explain()
+    assert "not measured" not in original.explain()
+
+
+@pytest.mark.parametrize(
+    ("view", "years", "named"),
+    [
+        ("provider", None, "2015 to 2020 and 2023 to 2024"),
+        ("provider", (2020, 2021), "2020"),
+        ("provider", (2021, 2022), None),
+        ("recipient", None, None),
+    ],
+)
+def test_explain_names_queried_years_without_attributed_finance(
+    tmp_path: Path, view: str, years: tuple[int, ...] | None, named: str | None
+) -> None:
+    release = copy_release(tmp_path / "release")
+    path = release / "release.json"
+    manifest = ReleaseManifest.model_validate_json(path.read_text())
+    covered = {
+        "crdf_recipient": (2015, 2024),
+        "core_contributions": (2021, 2022),
+        "agency_shares": (2020, 2022),
+    }
+    path.write_text(manifest.model_copy(update={"years": covered}).model_dump_json())
+
+    text = cf.load(path=release).spending(view=view, years=years).explain()
+
+    covers = (
+        "Attributed finance covers core contributions in 2021 to 2022 and agency "
+        "shares in 2020 to 2022; the provider view attributes none in "
+    )
+    if named is None:
+        assert "Attributed finance covers" not in text
+    else:
+        assert f"{covers}{named}." in text

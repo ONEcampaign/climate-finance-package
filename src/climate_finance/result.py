@@ -62,7 +62,8 @@ class Meta(BaseModel):
     """Where a result came from: release, package and source versions.
 
     `conversion` identifies the pydeflate version and exchange-rate or deflator factors
-    behind a converted result; it is None for USD at current prices.
+    behind a converted result; it is None for USD at current prices. `years` copies
+    the release's `years`.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -71,6 +72,7 @@ class Meta(BaseModel):
     package_version: str
     source_versions: dict[str, str]
     model_versions: dict[str, str]
+    years: dict[str, tuple[int, int]] = {}
     conversion: Conversion | None = None
 
 
@@ -152,11 +154,20 @@ class Result:
             .agg(pl.col("channel_code").unique().sort())
             .collect()
         )
+        unmeasured = (
+            self._rows.filter(
+                pl.col("adaptation").is_null(), pl.col("amount").is_not_null()
+            )
+            .select(pl.col("year").unique().sort())
+            .collect()
+        )
         return explain(
             self.spec,
             release=self.meta.release,
             fallbacks=fallbacks,
             unsplit=dict(unsplit.iter_rows()),
+            unmeasured=unmeasured["year"].to_list(),
+            years=self.meta.years,
             conversion=self.meta.conversion,
         )
 
@@ -259,6 +270,8 @@ def explain(
     release: str,
     fallbacks: Mapping[str, Sequence[int]] | None = None,
     unsplit: Mapping[str, Sequence[int]] | None = None,
+    unmeasured: Sequence[int] = (),
+    years: Mapping[str, tuple[int, int]] | None = None,
     conversion: Conversion | None = None,
 ) -> str:
     """The method, view, flow, filters and units behind `spec`, in plain language.
@@ -266,7 +279,11 @@ def explain(
     `fallbacks` maps each provider-coefficient method's label to the providers that
     have no confirmed coefficient of their own in the release. `unsplit` maps a
     method's label to the agency channel codes whose climate share has no split by
-    objective. `conversion` names the conversion factors of a converted result.
+    objective. `unmeasured` lists the years with rows whose adaptation is not
+    measured. `years` is the release's `years`; under the provider view, the queried
+    years (`spec.years`, else the recipient CRDF's) outside those of
+    `core_contributions` or `agency_shares` are named as holding no attributed
+    finance. `conversion` names the conversion factors of a converted result.
     """
     fallbacks = fallbacks or {}
     unsplit = unsplit or {}
@@ -286,7 +303,23 @@ def explain(
             )
     if len(methods) > 1:
         lines.append("low and high are the lowest and highest bound across methods.")
+    if unmeasured:
+        lines.append(
+            f"Adaptation is not measured for rows in {_runs(unmeasured)}, as the "
+            "CRDF has no adaptation marker or climate components before 2010 and an "
+            "agency share of 2010 spans 2009. Their adaptation and cross_cutting are "
+            "null, and their climate value is mitigation only."
+        )
     lines.append(_VIEWS[spec.view])
+    if spec.view == "provider" and (
+        outside := _outside_attribution(spec.years, years=years or {})
+    ):
+        lines.append(
+            f"Attributed finance covers core contributions in "
+            f"{_span(years, 'core_contributions')} and agency shares in "
+            f"{_span(years, 'agency_shares')}; the provider view attributes none "
+            f"in {_runs(outside)}."
+        )
     lines.append(_FLOWS[spec.flow])
     lines.append(
         "Commitments that repeat an earlier vintage are left out, and their "
@@ -331,10 +364,54 @@ def explain(
     return "\n".join(lines)
 
 
+def _outside_attribution(
+    queried: Sequence[int] | None, *, years: Mapping[str, tuple[int, int]]
+) -> list[int]:
+    """The queried years outside the years of `core_contributions` or
+    `agency_shares`. Without queried years, the recipient CRDF's are queried; a
+    release that records no years gives none."""
+    if not years:
+        return []
+    if queried is None:
+        if "crdf_recipient" not in years:
+            return []
+        first, last = years["crdf_recipient"]
+        queried = range(first, last + 1)
+    spans = [years.get(name) for name in ("core_contributions", "agency_shares")]
+    return sorted(
+        year
+        for year in set(queried)
+        if any(span is None or not span[0] <= year <= span[1] for span in spans)
+    )
+
+
+def _span(years: Mapping[str, tuple[int, int]] | None, name: str) -> str:
+    """`name`'s years in `years` as text, or "no year"."""
+    if years is None or name not in years:
+        return "no year"
+    first, last = years[name]
+    return f"{first} to {last}"
+
+
+def _runs(years: Sequence[int]) -> str:
+    """Sorted `years` as running text, consecutive years as a span, such as
+    "2000 to 2014 and 2025"."""
+    runs: list[list[int]] = []
+    for year in years:
+        if runs and year == runs[-1][-1] + 1:
+            runs[-1].append(year)
+        else:
+            runs.append([year])
+    *rest, last = (
+        str(run[0]) if len(run) == 1 else f"{run[0]} to {run[-1]}" for run in runs
+    )
+    return f"{', '.join(rest)} and {last}" if rest else last
+
+
 def _listing(codes: Sequence[int]) -> str:
     """`codes` as running text, such as "1, 3, 7 and 8"."""
     *rest, last = map(str, codes)
-    return f"{', '.join(rest)} and {last}"
+    return f"{', '.join(rest)} and {last}" if rest else last
 
 
 _VIEWS = {

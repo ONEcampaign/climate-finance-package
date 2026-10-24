@@ -130,7 +130,7 @@ def test_every_stage_reads_the_settings_it_declares_and_no_others(
             ),
         }
     )
-    manifest = write_raw(raw_dir(tmp_path), crdf_years=config.years.crdf)
+    manifest = write_raw(raw_dir(tmp_path))
     record_fetch(tmp_path, manifest, config=config)
     facts = measure.load_provider_facts()
     monkeypatch.setattr(
@@ -298,7 +298,13 @@ def test_config_resolves_paths_against_its_file(config: BuildConfig) -> None:
 @pytest.mark.parametrize(
     ("line", "replacement", "match"),
     [
-        ("crs_last_complete = 2024", "crs_last_complete = 2026", "crs_last_complete"),
+        (
+            'crdf = "all"',
+            "crdf = [2015, 2024]\ncrs = [2010, 2023]",
+            "crs_last_complete",
+        ),
+        ('crdf = "all"', "crdf = [2025, 2026]", "crs_last_complete"),
+        ('crdf = "all"', 'crdf = "every"', "crdf"),
         # Normalise reads only raw/, so no source names a table outside it.
         (
             'btr_archive = "data/raw/unfccc_btr1"',

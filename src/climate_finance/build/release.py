@@ -28,6 +28,7 @@ from climate_finance import __version__
 from climate_finance.build.allocate import counted_rows, years_since_commitment
 from climate_finance.build.config import RELEASE_SETTINGS
 from climate_finance.build.errors import ReleaseInvariantError, StageInputMissingError
+from climate_finance.build.fetch import fetched_years, last_complete_year
 from climate_finance.build.label import inherit_markers
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.provenance import setting_value
@@ -52,7 +53,7 @@ from climate_finance.schema import (
 from climate_finance.spec import BILATERAL, MULTILATERAL_OUTFLOW
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from climate_finance.build.stages import StageContext
 
@@ -71,6 +72,21 @@ _FLOW_AMOUNTS = {
 }
 
 
+# The release tables whose years bound the provider view's attributed finance.
+COVERAGE_TABLES = ("core_contributions", "agency_shares")
+
+
+def _table_years(
+    tables: Mapping[str, pl.DataFrame], names: Sequence[str]
+) -> dict[str, tuple[int, int]]:
+    """The first and last year of each of `names` in `tables` that holds a row."""
+    return {
+        name: tables[name].select(pl.min("year"), pl.max("year").alias("last")).row(0)
+        for name in names
+        if not tables[name].is_empty()
+    }
+
+
 def seal_release(
     context: StageContext,
     tables: Mapping[str, pl.DataFrame],
@@ -79,6 +95,9 @@ def seal_release(
 ) -> None:
     """Check the written release tables and write `release.json` beside them,
     with the `RELEASE_SETTINGS` of the build config.
+
+    Its `years` holds the years the build read from each source, and the years
+    `core_contributions` and `agency_shares` hold, which bound attributed finance.
 
     Raises:
         ReleaseInvariantError: when the tables break `schema.release_invariants`.
@@ -96,6 +115,7 @@ def seal_release(
         source_versions=source_versions(
             context.read("fetch", "raw_manifest").collect()
         ),
+        years=fetched_years(context) | _table_years(tables, COVERAGE_TABLES),
         model_versions={
             "jev": context.config.jev.model,
             "embedding": (
@@ -114,10 +134,9 @@ def seal_release(
 def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
     """Every release table, each input read from the last stage that writes it."""
     crdf = context.read("normalise", "crdf")
+    last_year = last_complete_year(context)
     # Later CRS years hold early reports, which allocate leaves out too.
-    crs = context.read("normalise", "crs").filter(
-        pl.col("year") <= context.config.years.crs_last_complete
-    )
+    crs = context.read("normalise", "crs").filter(pl.col("year") <= last_year)
     links = context.read("review", "links")
     allocations = context.read("fill", "allocations")
     status = context.read("review", "commitments")
@@ -146,7 +165,7 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
             commitments.lazy(),
             status=status,
             allocations=allocations,
-            last_year=context.config.years.crs_last_complete,
+            last_year=last_year,
         ).collect(),
         "quality": quality(
             commitments.lazy(),

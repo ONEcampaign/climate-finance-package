@@ -10,8 +10,11 @@ as reported) the banks that report climate components agree with the OECD within
 0.004 in 2021 and 2022 (IBRD 0.310 and 0.309, IDA 0.313 and 0.313, AfDB 0.399 and
 0.398, CAF 0.224 and 0.226). Shares rest on commitments. Dividing matched
 disbursements by all disbursements would leave untraced disbursement in the
-denominator and push banks the trace cannot follow to zero. The stage refuses a
-table whose ONE shares differ from those summed row by row from the CRDF.
+denominator and push banks the trace cannot follow to zero. Where the span of a
+share year holds a year the CRDF does not measure adaptation in, its rows are not
+`adaptation_measured`, and the query's adaptation and cross-cutting shares are null.
+The stage refuses a table whose ONE shares differ from those summed row by row from
+the CRDF.
 
 `agency_shares` holds the OECD's imputed shares, with source `oecd`. Adaptation and
 mitigation shares each include the cross-cutting share.
@@ -32,6 +35,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from climate_finance.build.allocate import counted_rows
 from climate_finance.build.errors import ConfigError, ReleaseInvariantError
+from climate_finance.build.fetch import fetched_years, last_complete_year
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
 from climate_finance.methods import ONE, weights
@@ -152,7 +156,7 @@ def run_measure(context: StageContext) -> StageOutput:
     facts = load_provider_facts()
     crdf = counted_commitments(context.read("normalise", "crdf"))
     crs = trace_population(context.read("normalise", "crs"))
-    years = context.config.years.crdf
+    years = fetched_years(context)["crdf_recipient"]
     spending = agency_spending(
         crdf, crs=crs, agencies=facts.agencies, years=years
     ).collect()
@@ -172,7 +176,7 @@ def run_measure(context: StageContext) -> StageOutput:
             crs=crs,
             status=context.read("review", "commitments"),
             providers=facts.modelled,
-            last_year=context.config.years.crs_last_complete,
+            last_year=last_complete_year(context),
         ),
     }
 
@@ -212,7 +216,9 @@ def agency_spending(
         agencies: the CRS reporter behind each channel.
         years: the CRDF's first and last years. Rows cover the years whose whole
             two-year span lies inside them, for channels with positive CRS
-            commitments over the span.
+            commitments over the span. They are not `adaptation_measured` where a
+            year of the span has commitments with no adaptation amount, which the
+            CRDF does not measure there.
     """
     rows = _by_channel(crdf, agencies=agencies)
     component = pl.col("climate_share").is_not_null()
@@ -240,6 +246,7 @@ def agency_spending(
     return (
         pl.concat([measured, empty], how="diagonal")
         .join(total, on=keys)
+        .join(_adaptation_unmeasured(crdf), on="year", how="left")
         .select(
             *keys,
             *_MARKERS,
@@ -248,6 +255,7 @@ def agency_spending(
                 f"{part.removesuffix('_usd')}_share": pl.col(part) / pl.col("total")
                 for part in _COMPONENTS
             },
+            adaptation_measured=pl.col("_unmeasured").is_null(),
         )
         .select(list(AGENCY_SPENDING.columns))
     )
@@ -263,7 +271,8 @@ def one_share_problems(
 ) -> list[str]:
     """Channels and years whose ONE shares weighed from `spending` by the query
     differ by more than `SHARE_TOLERANCE` from the shares summed row by row from
-    `crdf`, or that only one of the two holds. An empty list means they agree."""
+    `crdf`, or that only one of the two holds. Shares both leave unmeasured agree.
+    An empty list means they agree."""
     keys = ["channel_code", "year"]
     weighed = measured_shares(spending, method=ONE).rename(
         {f"share_{part}": part for part in _SHARE_PARTS}
@@ -281,6 +290,11 @@ def one_share_problems(
         *keys,
         *(pl.col(part).fill_null(0.0) / pl.col("total") for part in _SHARE_PARTS),
     )
+    unmeasured = summed.join(_adaptation_unmeasured(crdf), on="year", how="left")
+    summed = unmeasured.with_columns(
+        pl.when(pl.col("_unmeasured").is_null()).then(part)
+        for part in ("adaptation", "overlap")
+    ).drop("_unmeasured")
     compared = (
         weighed.join(summed, on=keys, how="full", coalesce=True, suffix="_summed")
         .sort(keys)
@@ -289,16 +303,24 @@ def one_share_problems(
     problems = []
     for row in compared.iter_rows(named=True):
         label = f"agency_spending {row['channel_code']} {row['year']}"
-        if row["unsplit"] is None or row["adaptation_summed"] is None:
+        if row["unsplit"] is None or row["unsplit_summed"] is None:
             problems.append(f"{label}: a ONE share only one route measures")
             continue
         problems.extend(
             f"{label}: ONE {part} share {row[part]!r} differs from "
             f"{row[f'{part}_summed']!r}"
             for part in _SHARE_PARTS
-            if abs(row[part] - row[f"{part}_summed"]) > SHARE_TOLERANCE
+            if _differ(row[part], row[f"{part}_summed"])
         )
     return problems
+
+
+def _differ(share: float | None, summed: float | None) -> bool:
+    """Whether two shares differ by more than `SHARE_TOLERANCE`, or only one is
+    measured."""
+    if share is None or summed is None:
+        return (share is None) != (summed is None)
+    return abs(share - summed) > SHARE_TOLERANCE
 
 
 def _crs_total(
@@ -343,6 +365,22 @@ def _by_channel(
     )
 
 
+def _adaptation_unmeasured(crdf: pl.LazyFrame) -> pl.LazyFrame:
+    """The share years whose span holds a commitment with no adaptation amount, with
+    a true `_unmeasured`."""
+    return (
+        crdf.filter(pl.col("adaptation_usd").is_null())
+        .select(
+            year=pl.int_ranges(
+                pl.col("year"), pl.col("year") + SHARE_YEARS, dtype=pl.Int16
+            )
+        )
+        .explode("year")
+        .unique()
+        .with_columns(_unmeasured=pl.lit(True))
+    )
+
+
 def _component(part: str) -> pl.Expr:
     face = pl.col("face_usd")
     return pl.when(face != 0).then(pl.col(part) / face).otherwise(0.0)
@@ -352,10 +390,12 @@ def _one_climate(crdf: pl.LazyFrame) -> pl.LazyFrame:
     """Each commitment's inclusive adaptation and mitigation value under ONE, and
     its overlap, whose objectives are disjoint before the overlap is added back to
     the other two."""
+    # An unmeasured adaptation part weighs as 0 here, and `one_share_problems` nulls
+    # the shares it would reach.
     weighted = crdf.with_columns(
-        share_adaptation=_component("adaptation_usd"),
+        share_adaptation=_component("adaptation_usd").fill_null(0.0),
         share_mitigation=_component("mitigation_usd"),
-        share_overlap=_component("overlap_usd"),
+        share_overlap=_component("overlap_usd").fill_null(0.0),
     ).with_columns(**weights(ONE))
     cross_cutting = pl.col("cross_cutting")
     return weighted.select(

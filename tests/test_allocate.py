@@ -10,7 +10,7 @@ import numpy as np
 import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
-from stage_runs import run_stage, stage_context, write_inputs
+from stage_runs import run_stage, stage_context, write_fetched_years, write_inputs
 
 from climate_finance import schema
 from climate_finance.build.allocate import (
@@ -1209,6 +1209,7 @@ def test_run_allocate_writes_tables_that_pass_their_schemas(tmp_path: Path) -> N
     crs, rows, units, links = link(records, crdf.to_dicts())
 
     release_dir = tmp_path / "r"
+    write_fetched_years(release_dir)
     write_inputs(release_dir, "normalise", {"crs": crs.collect(), "crdf": crdf})
     write_inputs(
         release_dir,

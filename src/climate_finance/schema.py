@@ -219,9 +219,10 @@ CRDF = _table(
     rio_mitigation=_rio(),
     face_usd=_usd(),
     climate_usd=_usd(),
-    adaptation_usd=_usd(),
+    # Null where the CRDF does not measure adaptation, before 2010.
+    adaptation_usd=_usd(nullable=True),
     mitigation_usd=_usd(),
-    overlap_usd=_usd(),
+    overlap_usd=_usd(nullable=True),
     climate_share=_f64(nullable=True),
     id_scheme=_str(nullable=True),
     repeat_of=_str(nullable=True),
@@ -603,7 +604,9 @@ AGENCY_SHARES = _table(
 # the face value and climate components of the commitments that report components,
 # adaptation and mitigation each including the overlap. A channel and share year
 # whose span has positive CRS commitments and no CRDF commitment holds one row at
-# markers 0 and 0 with no face value, so its share is 0.
+# markers 0 and 0 with no face value, so its share is 0. A row is not
+# `adaptation_measured` where its span reaches a year the CRDF does not measure
+# adaptation in, and the agency's adaptation and cross-cutting shares are then null.
 AGENCY_SPENDING = _table(
     "agency_spending",
     ("channel_code", "year", "rio_adaptation", "rio_mitigation"),
@@ -615,6 +618,7 @@ AGENCY_SPENDING = _table(
     adaptation_share=_f64(nullable=True),
     mitigation_share=_f64(nullable=True),
     overlap_share=_f64(nullable=True),
+    adaptation_measured=_bool(),
 )
 
 MODELLED = _table(
@@ -652,9 +656,10 @@ COMMITMENTS = _table(
     face_usd=_usd(),
     climate_usd=_usd(),
     # Adaptation and mitigation each include the overlap, so climate is a + m - overlap.
-    adaptation_usd=_usd(),
+    # Adaptation and the overlap are null where the CRDF does not measure adaptation.
+    adaptation_usd=_usd(nullable=True),
     mitigation_usd=_usd(),
-    overlap_usd=_usd(),
+    overlap_usd=_usd(nullable=True),
     status=_str(values=STATUSES),
     # Face value, as CRS records carry whole-project disbursements and FIFO caps at
     # face. The query applies the climate share. Sums of the commitment's
@@ -1194,7 +1199,11 @@ class TableEntry(BaseModel):
 
 
 class ReleaseManifest(BaseModel):
-    """The contents of `release.json`."""
+    """The contents of `release.json`.
+
+    `years` holds the first and last year the build read from each source it reads
+    a range of years from, by source name.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -1203,6 +1212,7 @@ class ReleaseManifest(BaseModel):
     package_version: str
     tables: dict[str, TableEntry]
     source_versions: dict[str, str]
+    years: dict[str, tuple[int, int]] = {}
     model_versions: dict[str, str]
     gates: dict[str, JsonValue]
     # Every build switch and year range the release was built with, by name.

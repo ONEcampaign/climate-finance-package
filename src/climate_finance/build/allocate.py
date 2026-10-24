@@ -48,6 +48,7 @@ import numpy as np
 import polars as pl
 
 from climate_finance.build.errors import AllocationInputError
+from climate_finance.build.fetch import last_complete_year
 from climate_finance.build.link.id_practice import period_of, untraceable
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
@@ -57,7 +58,8 @@ if TYPE_CHECKING:
     from climate_finance.build.stages import StageContext, StageOutput
 
 # A donor is dated when this share of its disbursement-only dollars in these record
-# years carries a commitment date before the record year.
+# years carries a commitment date before the record year. These years and
+# WINDOW_TEST_YEARS are fixed test windows, whatever years the build reads.
 DATED_SHARE = 0.6
 DATED_YEARS = (2020, 2025)
 # A donor is a window donor when this share of later same-id disbursement, over at
@@ -102,8 +104,9 @@ def run_allocate(context: StageContext) -> StageOutput:
     early reports only, so they fill no commitment, and status, disbursed amounts
     and the release tables agree on the years they cover.
     """
+    last_year = last_complete_year(context)
     crs = trace_population(context.read("normalise", "crs")).filter(
-        pl.col("year") <= context.config.years.crs_last_complete
+        pl.col("year") <= last_year
     )
     crdf = counted_rows(context.read("normalise", "crdf"))
     units = context.read("link", "units")
@@ -131,7 +134,7 @@ def run_allocate(context: StageContext) -> StageOutput:
         "commitments": compute_status(commitments=basis, allocations=allocations),
         "cancellations": cancellations(crs),
         "years_since_commitment": years_since_commitment(
-            allocations, crdf=crdf, last_year=context.config.years.crs_last_complete
+            allocations, crdf=crdf, last_year=last_year
         ),
     }
 

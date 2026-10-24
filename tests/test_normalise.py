@@ -6,11 +6,14 @@ from pathlib import Path
 import polars as pl
 import pytest
 from normalised import write_raw
-from stage_runs import BUILD_TOML, OECD, run_stage, stage_context
+from stage_runs import OECD, run_stage, stage_context, write_inputs
 
 from climate_finance import schema
-from climate_finance.build.config import load_config
-from climate_finance.build.normalise.crdf import CRDFNormaliseError, normalise_crdf
+from climate_finance.build.normalise.crdf import (
+    ADAPTATION_FIRST_YEAR,
+    CRDFNormaliseError,
+    normalise_crdf,
+)
 from climate_finance.build.normalise.crs import normalise_crs, trace_population
 from climate_finance.build.normalise.external import MULTI_COUNTRY
 from climate_finance.build.normalise.ids import content_id, with_content_id
@@ -171,6 +174,28 @@ def test_crdf_amounts_face_values_and_climate_shares(crs: pl.DataFrame) -> None:
     assert ifc["climate_share"] == 1.0
 
 
+@pytest.mark.parametrize("year", [ADAPTATION_FIRST_YEAR - 1, ADAPTATION_FIRST_YEAR])
+def test_crdf_adaptation_is_null_before_the_crdf_measures_it(
+    crs: pl.DataFrame, year: int
+) -> None:
+    # The water row, adaptation and mitigation both marked, moved to `year`.
+    raw = pl.read_parquet(OECD / "crdf_recipient.parquet").with_columns(
+        year=pl.when(pl.col("crs_id") == "2022000101")
+        .then(year)
+        .otherwise(pl.col("year"))
+    )
+    crdf = _crdf(crs, raw=raw)
+    schema.validate(schema.CRDF, crdf)
+
+    water = _row(crdf, crs_id="2022000101")
+    measured = year >= ADAPTATION_FIRST_YEAR
+    assert water["climate_usd"] == water["mitigation_usd"] == pytest.approx(2.5e6)
+    assert (water["adaptation_usd"] is not None) == measured
+    assert (water["overlap_usd"] is not None) == measured
+    assert (water["rio_adaptation"] is not None) == measured
+    assert water["objective"] == ("cross_cutting" if measured else "mitigation")
+
+
 @pytest.mark.parametrize(
     ("crs_id", "objective"),
     [
@@ -282,12 +307,12 @@ def test_crdf_vintage_is_the_workbooks_latest_year(crs: pl.DataFrame) -> None:
 
 
 @pytest.mark.parametrize(
-    ("recoveries", "crdf_years", "crdf_held", "core_held"),
+    ("recoveries", "crdf_years", "crdf_held", "core_held", "crs_held"),
     [
-        (False, (2015, 2024), {2015, 2022, 2024}, {2022, 2023}),
-        (True, (2015, 2024), {2015, 2022, 2024}, {2022, 2023}),
-        # A narrower CRDF range than the raw files hold, as an offline fetch allows.
-        (False, (2023, 2024), {2024}, {2023}),
+        (False, (2015, 2024), {2015, 2022, 2024}, {2022, 2023}, {2015, 2022, 2024}),
+        (True, (2015, 2024), {2015, 2022, 2024}, {2022, 2023}, {2015, 2022, 2024}),
+        # A narrower range than the raw files hold, as an offline fetch records.
+        (False, (2023, 2024), {2024}, {2023}, {2024}),
     ],
 )
 def test_run_normalise_writes_every_table_from_raw(
@@ -296,15 +321,11 @@ def test_run_normalise_writes_every_table_from_raw(
     crdf_years: tuple[int, int],
     crdf_held: set[int],
     core_held: set[int],
+    crs_held: set[int],
 ) -> None:
-    write_raw(raw_dir(tmp_path), crdf_years=crdf_years)
-    config = load_config(BUILD_TOML)
-    years = config.years.model_copy(update={"crdf": crdf_years})
-    context = stage_context(
-        tmp_path,
-        config=config.model_copy(update={"years": years}),
-        recoveries=recoveries,
-    )
+    manifest = write_raw(raw_dir(tmp_path), crdf_years=crdf_years)
+    write_inputs(tmp_path, "fetch", {"raw_manifest": manifest})
+    context = stage_context(tmp_path, recoveries=recoveries)
 
     hashes = run_stage("normalise", context)
 
@@ -315,6 +336,8 @@ def test_run_normalise_writes_every_table_from_raw(
     assert set(crdf["year"]) == crdf_held
     core = pl.read_parquet(table_path(tmp_path, "normalise", "core_contributions"))
     assert set(core["year"]) == core_held
+    crs = pl.read_parquet(table_path(tmp_path, "normalise", "crs"))
+    assert set(crs["year"]) == crs_held
     if recoveries:
         orgs = pl.read_parquet(table_path(tmp_path, "normalise", "orgs"))
         eib = orgs.filter(role="agency", source_name="European Investment Bank")

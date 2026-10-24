@@ -11,7 +11,7 @@ import numpy as np
 import polars as pl
 import pytest
 from normalised import crdf_rows, crs_records
-from stage_runs import BUILD_TOML, registered, stage_context
+from stage_runs import BUILD_TOML, registered, stage_context, year_rows
 
 import climate_finance as cf
 from climate_finance import schema
@@ -25,6 +25,7 @@ from climate_finance.build import (
     write_table,
 )
 from climate_finance.build.errors import ReleaseInvariantError, StaleStageError
+from climate_finance.build.fetch import YEAR_SOURCES
 from climate_finance.build.provenance import Provenance, StageRecord, record_path
 from climate_finance.build.stages import REGISTRY, Stage, StageContext, table_path
 from climate_finance.errors import SchemaError
@@ -120,7 +121,7 @@ def _write_stage(
 
 
 def _raw_manifest(version: str) -> pl.DataFrame:
-    return pl.DataFrame(
+    crs = pl.DataFrame(
         {
             "source": ["crs"],
             "url": [None],
@@ -130,11 +131,12 @@ def _raw_manifest(version: str) -> pl.DataFrame:
             "version": [version],
             "fetched_at": [datetime(2026, 10, 21, tzinfo=UTC)],
             "method": ["manual"],
-            "first_year": [None],
-            "last_year": [None],
+            "first_year": [2010],
+            "last_year": [2025],
         },
         schema=schema.RAW_MANIFEST.dtypes,
     )
+    return pl.concat([crs, year_rows().filter(pl.col("source") != "crs")])
 
 
 @pytest.fixture
@@ -188,7 +190,17 @@ def _read(release_dir: Path, table: str) -> pl.DataFrame:
 def test_the_release_opens_and_matches_release_json(release_dir: Path) -> None:
     snapshot = cf.load(path=release_dir / "assemble")
 
-    assert snapshot.manifest.source_versions == {"crs": "v20261006"}
+    assert snapshot.manifest.source_versions == {
+        source: "v20261006" if source == "crs" else "0" * 64 for source in YEAR_SOURCES
+    }
+    assert snapshot.manifest.years == {
+        "crs": (2010, 2025),
+        "crdf_recipient": (2015, 2024),
+        "crdf_provider": (2015, 2024),
+        "multisystem": (2015, 2024),
+        # The years core_contributions holds; agency_shares holds none.
+        "core_contributions": (2021, 2021),
+    }
     assert set(snapshot.manifest.tables) == set(schema.RELEASE_TABLES)
     # The config fixture turns key repair and recoveries off.
     assert snapshot.manifest.settings == {
@@ -197,8 +209,9 @@ def test_the_release_opens_and_matches_release_json(release_dir: Path) -> None:
         "recoveries": False,
         "gap_fill": False,
         "review": False,
-        "years.crdf": [2015, 2024],
-        "years.crs": [2010, 2025],
+        # The settings as configured; `years` above holds what they resolved to.
+        "years.crdf": "all",
+        "years.crs": None,
         "years.crs_last_complete": 2024,
     }
 

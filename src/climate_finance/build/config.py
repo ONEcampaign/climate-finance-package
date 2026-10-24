@@ -2,7 +2,7 @@
 
 import tomllib
 from pathlib import Path
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     AfterValidator,
@@ -33,24 +33,33 @@ class _Section(BaseModel):
 
 
 class Years(_Section):
-    """Inclusive first and last years read from each source.
+    """The years read from each source, as inclusive first and last years.
 
-    `crs_last_complete` is the last CRS year every provider has reported; the CRS
-    years after it hold early reports only. Disbursement observed over time and
-    the modelled line's CRS series end there.
+    `crdf` is a pair or `"all"`, every year the recipient-perspective CRDF holds.
+    `crs`, when unset, runs from the first CRDF year to the last year the CRS file
+    holds, since a CRS record before the first CRDF year carries no commitment of
+    the release. Fetch resolves both and records them in `raw_manifest`, and every
+    later stage reads them from there. `crs_last_complete` is the last CRS year
+    every provider has reported; the CRS years after it hold early reports only.
+    Disbursement observed over time and the modelled line's CRS series end there.
     """
 
-    crdf: tuple[int, int]
-    crs: tuple[int, int]
+    crdf: tuple[int, int] | Literal["all"]
+    crs: tuple[int, int] | None = None
     crs_last_complete: int
 
     @model_validator(mode="after")
     def _complete_year_inside_crs(self) -> Self:
-        first, last = self.crs
-        if not first <= self.crs_last_complete <= last:
+        complete = self.crs_last_complete
+        if self.crs is not None and not self.crs[0] <= complete <= self.crs[1]:
             raise ValueError(
-                f"crs_last_complete {self.crs_last_complete} lies outside the CRS "
-                f"years {first} to {last}"
+                f"crs_last_complete {complete} lies outside the CRS years "
+                f"{self.crs[0]} to {self.crs[1]}"
+            )
+        if self.crs is None and self.crdf != "all" and complete < self.crdf[0]:
+            raise ValueError(
+                f"crs_last_complete {complete} lies before the first CRDF year "
+                f"{self.crdf[0]}, where the CRS years start"
             )
         return self
 

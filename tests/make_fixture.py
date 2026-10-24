@@ -446,6 +446,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
                         strict=True,
                     )
                 ),
+                "adaptation_measured": True,
             }
             for channel, rows in AGENCY_SPENDING.items()
             for year in (2021, 2022)

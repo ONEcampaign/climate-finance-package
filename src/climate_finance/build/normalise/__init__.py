@@ -14,6 +14,7 @@ from climate_finance.build.fetch import (
     IATI_DIR,
     IMPUTED_SHARES_FILE,
     MULTISYSTEM_FILE,
+    fetched_years,
 )
 from climate_finance.build.normalise.aggregates import rebuild_aggregates
 from climate_finance.build.normalise.crdf import normalise_crdf
@@ -33,8 +34,9 @@ if TYPE_CHECKING:
 def run_normalise(context: StageContext) -> StageOutput:
     """Normalise the files fetch wrote under `raw/` into the normalise tables.
 
-    Reads only those files, and of the CRDF and MULTI only the configured CRDF
-    years, which an offline fetch may have narrowed. It writes no `btr` table, which
+    Reads only those files, and of the CRS, each CRDF perspective and MULTI only
+    the years `raw_manifest` records for it, which an offline fetch may have
+    narrowed. It writes no `btr` table, which
     the release treats as optional. `crdf` marks rows repeated across vintages
     (`repeat_of`) and gains child rows for the bilateral aggregate rows the bulk
     records rebuild (`parent_row_id`). `orgs` resolves the CRS's and CRDF's
@@ -42,14 +44,15 @@ def run_normalise(context: StageContext) -> StageOutput:
     recoveries are on.
     """
     raw = context.raw_dir
-    in_crdf_years = pl.col("year").is_between(*context.config.years.crdf)
+    years = fetched_years(context)
     raw_crdf = {
-        perspective: pl.scan_parquet(raw / path).filter(in_crdf_years)
+        perspective: pl.scan_parquet(raw / path).filter(
+            pl.col("year").is_between(*years[f"crdf_{perspective}"])
+        )
         for perspective, path in CRDF_FILES.items()
     }
     raw_crs = pl.scan_parquet(raw / CRS_FILE)
-    first, last = context.config.years.crs
-    crs = normalise_crs(raw_crs, years=(first, last)).collect()
+    crs = normalise_crs(raw_crs, years=years["crs"]).collect()
     exchange = pl.read_parquet(raw / DAC_EXCHANGE_FILE)
     crdf = pl.concat(
         normalise_crdf(frame, perspective=perspective, crs=crs.lazy())
@@ -68,13 +71,13 @@ def run_normalise(context: StageContext) -> StageOutput:
         "crdf": crdf,
         "crs": crs,
         "core_contributions": read_multisystem(raw / MULTISYSTEM_FILE).filter(
-            in_crdf_years
+            pl.col("year").is_between(*years["multisystem"])
         ),
         "imputed_shares": read_imputed_shares(raw / IMPUTED_SHARES_FILE),
         "external": external,
     }
     if context.config.recoveries:
-        in_years = raw_crs.filter(pl.col("year").is_between(first, last))
+        in_years = raw_crs.filter(pl.col("year").is_between(*years["crs"]))
         tables["orgs"] = resolve_orgs(
             org_names(crs=in_years, crdf=raw_crdf.values()),
             channels=in_years.select(
