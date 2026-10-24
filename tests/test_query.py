@@ -15,6 +15,7 @@ from polars.testing import assert_frame_equal
 from releases import copy_release
 
 import climate_finance as cf
+from climate_finance import convert as convert_module
 from climate_finance.methods import OECD, ONE, RANGE, Method, MethodRange, label
 from climate_finance.query import BILATERAL
 from climate_finance.result import AMOUNTS
@@ -322,6 +323,28 @@ def test_explain_names_the_method_view_and_units() -> None:
     assert "Method OECD" in text
     assert "Provider view" in text
     assert "USD at current prices" in text
+
+
+@pytest.mark.parametrize(
+    ("spec", "converted"),
+    [({}, False), ({"currency": "EUR"}, True), ({"prices": 2024}, True)],
+)
+def test_converted_results_carry_conversion_provenance(
+    monkeypatch: pytest.MonkeyPatch, spec: dict[str, object], converted: bool
+) -> None:
+    factors = pl.DataFrame(
+        {"entity_code": [5, 20001], "year": [2022, 2022], "factor": [0.8, 0.5]},
+        schema={"entity_code": pl.Int32, "year": pl.Int16, "factor": pl.Float64},
+    )
+    monkeypatch.setattr(convert_module, "dac_factors", lambda **_: factors)
+
+    result = SNAP.spending(years=2022, **spec)
+
+    assert (result.meta.conversion is not None) is converted
+    if converted:
+        assert result.meta.conversion.factors_sha256 in result.explain()
+    else:
+        assert "Conversion factors" not in result.explain()
 
 
 def test_share_of_total_divides_each_key_by_its_total_flows() -> None:

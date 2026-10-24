@@ -5,18 +5,38 @@ imports pandas. Every other target joins one factor per provider and year: the D
 exchange rate for current prices, or the inverse of the DAC deflator for constant
 prices. A provider without its own DAC series, such as a multilateral agency, takes
 the DAC countries' total, the same rule pydeflate applies.
+
+The factors come from pydeflate's DAC data at query time, and pydeflate refreshes that
+data every 30 days. `provenance()` gives the pydeflate version and a hash of the factors
+used, which a result carries in its metadata to identify them.
 """
 
+import hashlib
 from collections.abc import Sequence
 from functools import cache
+from importlib.metadata import version
 from typing import Literal
 
 import polars as pl
+from pydantic import BaseModel, ConfigDict
 
 from climate_finance.errors import SourceUnavailableError
 from climate_finance.spec import Currency
 
 DAC_TOTAL = 20001
+
+
+class Conversion(BaseModel):
+    """The conversion inputs behind a converted result.
+
+    `factors_sha256` hashes the sorted rows of the factor table the conversion read,
+    so two results converted with different factors differ in it.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pydeflate_version: str
+    factors_sha256: str
 
 
 @cache
@@ -47,6 +67,27 @@ def dac_factors(
             factor.cast(pl.Float64).alias("factor"),
         )
         .drop_nulls()
+    )
+
+
+def factors_hash(factors: pl.DataFrame) -> str:
+    """A SHA-256 over `factors` sorted by entity code, year and factor."""
+    ordered = factors.sort("entity_code", "year", "factor")
+    digest = hashlib.sha256()
+    for name in ordered.columns:
+        digest.update(ordered.get_column(name).to_numpy().tobytes())
+    return digest.hexdigest()
+
+
+def provenance(
+    *, currency: Currency, prices: int | Literal["current"]
+) -> Conversion | None:
+    """What `convert` reads for this target, or None for USD at current prices."""
+    if currency == "USD" and prices == "current":
+        return None
+    return Conversion(
+        pydeflate_version=version("pydeflate"),
+        factors_sha256=factors_hash(dac_factors(currency=currency, prices=prices)),
     )
 
 

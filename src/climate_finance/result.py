@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 from pydantic import BaseModel, ConfigDict
 
+from climate_finance.convert import Conversion
 from climate_finance.methods import Method, MethodRange, describe, label
 from climate_finance.schema import STATUSES
 from climate_finance.spec import Spec
@@ -48,7 +49,11 @@ class Table:
 
 
 class Meta(BaseModel):
-    """Where a result came from: release, package and source versions."""
+    """Where a result came from: release, package and source versions.
+
+    `conversion` identifies the pydeflate version and exchange-rate or deflator factors
+    behind a converted result; it is None for USD at current prices.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -56,6 +61,7 @@ class Meta(BaseModel):
     package_version: str
     source_versions: dict[str, str]
     model_versions: dict[str, str]
+    conversion: Conversion | None = None
 
 
 class Result:
@@ -126,7 +132,13 @@ class Result:
             for method in self.spec.methods
             if method.coefficients == "provider"
         }
-        return explain(self.spec, release=self.meta.release, fallbacks=fallbacks)
+        text = explain(self.spec, release=self.meta.release, fallbacks=fallbacks)
+        if conversion := self.meta.conversion:
+            text += (
+                f"\nConversion factors: pydeflate {conversion.pydeflate_version}, "
+                f"SHA-256 {conversion.factors_sha256}."
+            )
+        return text
 
     def share_of_total(self) -> Result:
         """The same result with every amount divided by all CRS flows of its key.

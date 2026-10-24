@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from climate_finance import catalogue
-from climate_finance.convert import convert
+from climate_finance.convert import convert, provenance
 from climate_finance.methods import OECD, Method, label, weights
 from climate_finance.result import AMOUNTS, Meta, Quality, Result, Table
 from climate_finance.spec import Spec, View
@@ -130,6 +130,7 @@ def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
             package_version=version("climate-finance"),
             source_versions=snapshot.manifest.source_versions,
             model_versions=snapshot.manifest.model_versions,
+            conversion=provenance(currency=spec.currency, prices=spec.prices),
         ),
     )
 
