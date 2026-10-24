@@ -176,19 +176,29 @@ def test_crdf_amounts_face_values_and_climate_shares(crs: pl.DataFrame) -> None:
 
 @pytest.mark.parametrize("year", [ADAPTATION_FIRST_YEAR - 1, ADAPTATION_FIRST_YEAR])
 def test_crdf_adaptation_is_null_before_the_crdf_measures_it(
-    crs: pl.DataFrame, year: int
+    crs: pl.DataFrame, year: int, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # The water row, adaptation and mitigation both marked, moved to `year`.
+    # The water row, adaptation and mitigation both marked, and the adaptation-only
+    # row moved to `year`.
     raw = pl.read_parquet(OECD / "crdf_recipient.parquet").with_columns(
-        year=pl.when(pl.col("crs_id") == "2022000101")
+        year=pl.when(pl.col("crs_id").is_in(["2022000101", "2022000102"]))
         .then(year)
         .otherwise(pl.col("year"))
     )
-    crdf = _crdf(crs, raw=raw)
+    with caplog.at_level("WARNING"):
+        crdf = _crdf(crs, raw=raw)
     schema.validate(schema.CRDF, crdf)
 
     water = _row(crdf, crs_id="2022000101")
     measured = year >= ADAPTATION_FIRST_YEAR
+    # A row marked for adaptation alone keeps its face value, and its climate value
+    # is its mitigation value, 0, until adaptation is measured.
+    solar = _row(crdf, crs_id="2022000102")
+    assert solar["face_usd"] == pytest.approx(4e6)
+    assert solar["climate_usd"] == pytest.approx(4e6 if measured else 0.0)
+    assert solar["objective"] == "adaptation"
+    warned = [r.args for r in caplog.records if r.funcName == "_mitigation_only"]
+    assert warned == ([] if measured else [(1, ADAPTATION_FIRST_YEAR, 4.0)])
     assert water["climate_usd"] == water["mitigation_usd"] == pytest.approx(2.5e6)
     assert (water["adaptation_usd"] is not None) == measured
     assert (water["overlap_usd"] is not None) == measured
