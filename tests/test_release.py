@@ -1,6 +1,7 @@
 """The assemble stage on hand-built normalised tables, run through the stage runner
 from link to assemble, and the fill and review pass-through."""
 
+import re
 import shutil
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -18,9 +19,11 @@ from climate_finance.build import (
     load_config,
     release,
     run_stages,
+    write_stage,
     write_table,
 )
-from climate_finance.build.errors import ReleaseInvariantError
+from climate_finance.build.errors import ReleaseInvariantError, StaleStageError
+from climate_finance.build.provenance import Provenance
 from climate_finance.build.stages import REGISTRY, Stage, StageContext, table_path
 from climate_finance.errors import SchemaError
 from climate_finance.schema import STAGE_TABLES
@@ -85,6 +88,40 @@ def _write(release_dir: Path, stage: str, frames: dict[str, pl.DataFrame]) -> No
         write_table(frame, table, table_path(release_dir, stage, name))
 
 
+def _write_stage(
+    release_dir: Path,
+    stage: str,
+    frames: dict[str, pl.DataFrame],
+    *,
+    config: BuildConfig,
+    reads: tuple[str, ...] = (),
+) -> None:
+    """Write `frames` as `stage`'s output, recording that it read `reads`."""
+    provenance = Provenance(stage=stage, release_dir=release_dir, config=config)
+    for read in reads:
+        provenance.read_stage(read)
+    entry = next(entry for entry in REGISTRY if entry.name == stage)
+    write_stage(entry, frames, release_dir, provenance=provenance)
+
+
+def _raw_manifest(version: str) -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "source": ["crs"],
+            "url": [None],
+            "path": ["oecd/CRS.parquet"],
+            "sha256": ["0" * 64],
+            "etag": [None],
+            "version": [version],
+            "fetched_at": [datetime(2026, 10, 21, tzinfo=UTC)],
+            "method": ["manual"],
+            "first_year": [None],
+            "last_year": [None],
+        },
+        schema={n: c.dtype for n, c in schema.RAW_MANIFEST.columns.items()},
+    )
+
+
 @pytest.fixture
 def config() -> BuildConfig:
     return load_config(BUILD_TOML).model_copy(
@@ -95,26 +132,13 @@ def config() -> BuildConfig:
 @pytest.fixture
 def release_dir(tmp_path: Path, config: BuildConfig) -> Path:
     """A release built from hand-written fetch, normalise and measure tables."""
-    _write(
+    _write_stage(
         tmp_path,
         "fetch",
-        {
-            "raw_manifest": pl.DataFrame(
-                {
-                    "source": ["crs"],
-                    "url": [None],
-                    "path": ["oecd/CRS.parquet"],
-                    "sha256": ["0" * 64],
-                    "etag": [None],
-                    "version": ["v20261006"],
-                    "fetched_at": [datetime(2026, 10, 21, tzinfo=UTC)],
-                    "method": ["manual"],
-                },
-                schema={n: c.dtype for n, c in schema.RAW_MANIFEST.columns.items()},
-            )
-        },
+        {"raw_manifest": _raw_manifest("v20261006")},
+        config=config,
     )
-    _write(
+    _write_stage(
         tmp_path,
         "normalise",
         {
@@ -124,14 +148,17 @@ def release_dir(tmp_path: Path, config: BuildConfig) -> Path:
             "imputed_shares": _empty(schema.IMPUTED_SHARES),
             "external": _empty(schema.EXTERNAL),
         },
+        config=config,
+        reads=("fetch",),
     )
-    _write(
+    _write_stage(
         tmp_path,
         "measure",
         {
             "agency_shares": _empty(schema.AGENCY_SHARES),
             "modelled": _empty(schema.MODELLED),
         },
+        config=config,
     )
     run_stages(
         REGISTRY, release="r", release_dir=tmp_path, config=config, stages=LATER_STAGES
@@ -289,6 +316,61 @@ def test_a_failing_assemble_leaves_the_last_good_release(
     else:
         assert not assemble.exists()
     assert not [path for path in release_dir.iterdir() if path.name.startswith(".")]
+
+
+def _refetch(release_dir: Path, config: BuildConfig) -> BuildConfig:
+    _write_stage(
+        release_dir, "fetch", {"raw_manifest": _raw_manifest("v2")}, config=config
+    )
+    return config
+
+
+def _move_last_complete_year(release_dir: Path, config: BuildConfig) -> BuildConfig:
+    return config.model_copy(
+        update={"years": config.years.model_copy(update={"crs_last_complete": 2023})}
+    )
+
+
+@pytest.mark.parametrize(
+    ("change", "stale", "reason"),
+    [
+        # Normalise read the fetch output that a new fetch replaced.
+        (_refetch, "normalise", "another 'fetch' output"),
+        # Allocate, which fill read, read the last complete CRS year.
+        (_move_last_complete_year, "allocate", "years.crs_last_complete = 2024"),
+    ],
+)
+def test_assemble_refuses_a_stage_built_from_other_inputs(
+    release_dir: Path,
+    config: BuildConfig,
+    change: Callable[[Path, BuildConfig], BuildConfig],
+    stale: str,
+    reason: str,
+) -> None:
+    sealed = (release_dir / "assemble" / "release.json").read_bytes()
+    changed = change(release_dir, config)
+
+    with pytest.raises(StaleStageError, match=re.escape(reason)) as error:
+        run_stages(
+            REGISTRY, release="r", release_dir=release_dir, config=changed,
+            stages=["assemble"],
+        )  # fmt: skip
+
+    assert error.value.stage == stale
+    assert (release_dir / "assemble" / "release.json").read_bytes() == sealed
+
+
+def test_a_stage_reruns_after_its_inputs_change(
+    release_dir: Path, config: BuildConfig
+) -> None:
+    changed = _move_last_complete_year(release_dir, config)
+
+    run_stages(
+        REGISTRY, release="r", release_dir=release_dir, config=changed,
+        stages=LATER_STAGES,
+    )  # fmt: skip
+
+    assert cf.load(path=release_dir / "assemble").manifest.release == "r"
 
 
 @pytest.mark.parametrize(

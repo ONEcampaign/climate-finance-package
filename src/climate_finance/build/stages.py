@@ -2,8 +2,9 @@
 
 A stage function takes a `StageContext` and returns its tables by name. It reads
 earlier stages' tables through `StageContext.read`, and the runner validates, sorts
-and writes what it returns to `<out_dir>/<release>/<stage>/<table>.parquet`. A
-stage's `seal` runs on the written tables before they replace the stage's directory.
+and writes what it returns to `<out_dir>/<release>/<stage>/<table>.parquet`, with
+the stage's `stage.json` (see `provenance`). A stage's `seal` runs on the written
+tables before they replace the stage's directory.
 """
 
 from collections.abc import Callable, Mapping
@@ -18,6 +19,7 @@ from climate_finance.build.config import BuildConfig
 from climate_finance.build.errors import StageInputMissingError
 from climate_finance.build.link import gap_fill, review, run_link
 from climate_finance.build.normalise import run_normalise
+from climate_finance.build.provenance import Provenance
 from climate_finance.schema import STAGE_TABLES, TableSchema
 
 type StageOutput = Mapping[str, pl.DataFrame | pl.LazyFrame]
@@ -48,22 +50,34 @@ def table_path(release_dir: Path, stage: str, table: str) -> Path:
 
 
 def raw_dir(release_dir: Path) -> Path:
-    """Where fetch writes the raw source files that normalise reads."""
-    return release_dir / "raw"
+    """Where fetch writes the raw source files that normalise reads, beside the
+    `raw_manifest` that records them."""
+    return stage_dir(release_dir, Stage.FETCH) / fetch.RAW
 
 
 @dataclass(frozen=True)
 class StageContext:
-    """What every stage function receives."""
+    """What every stage function receives.
+
+    The runner sets `provenance`, which records the stages and settings the stage
+    reads, and `config` is then `provenance.config`.
+    """
 
     release: str
     release_dir: Path
     config: BuildConfig
     offline: bool
+    provenance: Provenance | None = None
 
     @property
     def raw_dir(self) -> Path:
-        """Where fetch writes the raw source files that normalise reads."""
+        """Where fetch writes the raw source files that normalise reads.
+
+        Raises:
+            StaleStageError: when the fetch stage is stale.
+        """
+        if self.provenance is not None:
+            self.provenance.read_stage(Stage.FETCH)
         return raw_dir(self.release_dir)
 
     def read(self, stage: str, table: str) -> pl.LazyFrame:
@@ -71,10 +85,13 @@ class StageContext:
 
         Raises:
             StageInputMissingError: when the table has not been written.
+            StaleStageError: when `stage`, or a stage it was built from, is stale.
         """
         path = table_path(self.release_dir, stage, table)
         if not path.exists():
             raise StageInputMissingError(stage=stage, table=table, path=path)
+        if self.provenance is not None:
+            self.provenance.read_stage(stage)
         return pl.scan_parquet(path)
 
 
@@ -107,7 +124,7 @@ def _entry(
 
 
 REGISTRY: tuple[StageDef, ...] = (
-    _entry(Stage.FETCH, fetch.run_fetch),
+    _entry(Stage.FETCH, fetch.run_fetch, seal=fetch.seal_fetch),
     _entry(Stage.NORMALISE, run_normalise),
     _entry(Stage.LINK, run_link),
     _entry(Stage.ALLOCATE, allocate.run_allocate),

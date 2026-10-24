@@ -175,6 +175,8 @@ RAW_MANIFEST = _table(
     version=_str(nullable=True),
     fetched_at=Column(pl.Datetime("us", "UTC")),
     method=_str(values=FETCH_METHODS),
+    first_year=_year(nullable=True),
+    last_year=_year(nullable=True),
 )
 
 CRDF = _table(

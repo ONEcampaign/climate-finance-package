@@ -192,6 +192,11 @@ def test_the_provider_view_attributes_core_contributions_of_its_flow(
             cf.methods.OECD,
             (60e6 * 0.20, 60e6 * 0.25, 60e6 * 0.05, 60e6 * (0.20 + 0.25 - 0.05)),
         ),
+        # The EU setting leaves the share source alone.
+        (
+            cf.methods.OECD.replace(eu="channel"),
+            (60e6 * 0.20, 60e6 * 0.25, 60e6 * 0.05, 60e6 * (0.20 + 0.25 - 0.05)),
+        ),
     ],
 )
 def test_attribution_reads_agency_shares_as_inclusive_of_cross_cutting(

@@ -11,8 +11,10 @@ import pandas as pd
 import polars as pl
 import pytest
 
+import climate_finance.build
 from climate_finance.build import BuildConfig, Stage, build, fetch, load_config
 from climate_finance.build.config import LocalFile
+from climate_finance.build.stages import raw_dir
 from climate_finance.errors import SourceUnavailableError
 from climate_finance.schema import sha256_file
 
@@ -102,7 +104,9 @@ def crs_file(tmp_path: Path) -> LocalFile:
     return LocalFile(path=path, sha256=sha256_file(path))
 
 
-def _config(**sources: object) -> BuildConfig:
+def _config(
+    *, crdf_years: tuple[int, int] = (2015, 2024), **sources: object
+) -> BuildConfig:
     config = load_config(BUILD_TOML)
     update = {
         "iati_archive": FIXTURES / "iati",
@@ -110,7 +114,10 @@ def _config(**sources: object) -> BuildConfig:
         **sources,
     }
     return config.model_copy(
-        update={"sources": config.sources.model_copy(update=update)}
+        update={
+            "sources": config.sources.model_copy(update=update),
+            "years": config.years.model_copy(update={"crdf": crdf_years}),
+        }
     )
 
 
@@ -131,7 +138,7 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
     sources: FakeSources, crs_file: LocalFile, tmp_path: Path
 ) -> None:
     release = _fetch(_config(crs_file=crs_file), tmp_path / "out")
-    raw = release / "raw"
+    raw = raw_dir(release)
     manifest = pl.read_parquet(release / MANIFEST)
 
     iati = [
@@ -161,6 +168,9 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
     assert methods["oecd/CRS.parquet"] == "manual"
     assert all(methods[path] == "manual" for path in iati)
     assert methods["oecd/multisystem.parquet"] == "http"
+    years = manifest.filter(pl.col("first_year").is_not_null())
+    assert sorted(years["source"]) == sorted(fetch.YEAR_SOURCES)
+    assert set(years.select("first_year", "last_year").rows()) == {(2015, 2024)}
     assert (raw / "oecd/CRS.parquet").read_bytes() == crs_file.path.read_bytes()
     assert (raw / "external/gcf/projects.json").read_bytes() == (
         FIXTURES / "gcf" / "projects.json"
@@ -211,12 +221,57 @@ def test_offline_fetch_rewrites_the_manifest_with_no_network_call(
     assert sha256_file(release / MANIFEST) == online
 
 
+def test_a_fetch_that_fails_before_its_manifest_keeps_the_last_fetch(
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(crs_file=crs_file)
+    release = _fetch(config, tmp_path / "out")
+    gcf = raw_dir(release) / "external/gcf/projects.json"
+    first = gcf.read_bytes()
+    sources.gcf_response = httpx.Response(200, json=[{"ProjectsID": 2}])
+
+    def full_disk(*args: object) -> str:
+        raise OSError("No space left on device")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(climate_finance.build, "write_table", full_disk)
+        with pytest.raises(OSError, match="No space"):
+            _fetch(config, tmp_path / "out")
+
+    assert gcf.read_bytes() == first
+    _fetch(config, tmp_path / "out", offline=True)
+
+
+@pytest.mark.parametrize(
+    ("crdf_years", "refused"),
+    [((2015, 2024), False), ((2022, 2024), False), ((2010, 2024), True)],
+)
+def test_offline_fetch_refuses_crdf_years_the_raw_files_lack(
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    crdf_years: tuple[int, int],
+    refused: bool,
+) -> None:
+    _fetch(_config(crs_file=crs_file), tmp_path / "out")
+    config = _config(crs_file=crs_file, crdf_years=crdf_years)
+
+    if refused:
+        with pytest.raises(SourceUnavailableError, match="crdf_provider"):
+            _fetch(config, tmp_path / "out", offline=True)
+    else:
+        _fetch(config, tmp_path / "out", offline=True)
+
+
 @pytest.mark.parametrize("change", ["missing", "changed", "unrecorded"])
 def test_offline_fetch_refuses_raw_files_that_differ_from_the_manifest(
     sources: FakeSources, crs_file: LocalFile, tmp_path: Path, change: str
 ) -> None:
     config = _config(crs_file=crs_file)
-    raw = _fetch(config, tmp_path / "out") / "raw"
+    raw = raw_dir(_fetch(config, tmp_path / "out"))
     target = raw / "external/gcf/projects.json"
     match change:
         case "missing":
@@ -282,7 +337,7 @@ def test_without_a_local_file_the_crs_is_downloaded(
 
     assert crs["method"] == "http"
     assert crs["url"] == CRS_URL
-    assert sha256_file(release / "raw" / crs["path"]) == crs["sha256"]
+    assert sha256_file(raw_dir(release) / crs["path"]) == crs["sha256"]
 
 
 def test_a_challenged_crs_download_stops_with_the_registration_call(
@@ -299,7 +354,7 @@ def test_a_challenged_crs_download_stops_with_the_registration_call(
         _fetch(_config(crs_file=None), tmp_path / "out")
     assert isinstance(error.value.__cause__, oda_reader.BulkDownloadChallengeError)
     assert sources.calls == []
-    assert not (tmp_path / "out" / "r" / "raw").exists()
+    assert not (tmp_path / "out" / "r" / "fetch").exists()
 
 
 @pytest.mark.parametrize(

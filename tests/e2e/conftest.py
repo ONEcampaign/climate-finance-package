@@ -13,7 +13,8 @@ import pytest
 
 from climate_finance.build import build, load_config
 from climate_finance.build.config import BuildConfig, LocalFile
-from climate_finance.build.stages import raw_dir
+from climate_finance.build.fetch import YEAR_SOURCES
+from climate_finance.build.stages import raw_dir, table_path
 from climate_finance.schema import RAW_MANIFEST, sha256_file
 
 REPO = Path(__file__).parents[2]
@@ -34,7 +35,13 @@ ARCHIVE_FILES = {
 }
 
 
-def _seed_raw(raw: Path, *, archive: Path, publishers: tuple[str, ...]) -> pl.DataFrame:
+def _seed_raw(
+    raw: Path,
+    *,
+    archive: Path,
+    publishers: tuple[str, ...],
+    crdf_years: tuple[int, int],
+) -> pl.DataFrame:
     """Symlink the archived sources into `raw` and describe them as fetch would."""
     placed = [
         (archive / origin, path, source)
@@ -45,6 +52,7 @@ def _seed_raw(raw: Path, *, archive: Path, publishers: tuple[str, ...]) -> pl.Da
             (origin, f"external/iati/{publisher}/{origin.name}", f"iati_{publisher}")
             for origin in sorted((archive / "external/iati" / publisher).glob("*.xml"))
         )
+    first, last = crdf_years
     rows = []
     for origin, path, source in placed:
         target = raw / path
@@ -60,6 +68,8 @@ def _seed_raw(raw: Path, *, archive: Path, publishers: tuple[str, ...]) -> pl.Da
                 "version": "v20261006" if source == "crs" else None,
                 "fetched_at": datetime(2026, 10, 21, tzinfo=UTC),
                 "method": "manual",
+                "first_year": first if source in YEAR_SOURCES else None,
+                "last_year": last if source in YEAR_SOURCES else None,
             }
         )
     columns = {name: column.dtype for name, column in RAW_MANIFEST.columns.items()}
@@ -87,10 +97,12 @@ def release(tmp_path_factory: pytest.TempPathFactory) -> Path:
     out_dir = tmp_path_factory.mktemp("build")
     release_dir = out_dir / RELEASE
     manifest = _seed_raw(
-        raw_dir(release_dir), archive=archive, publishers=config.sources.iati_publishers
+        raw_dir(release_dir),
+        archive=archive,
+        publishers=config.sources.iati_publishers,
+        crdf_years=config.years.crdf,
     )
-    (release_dir / "fetch").mkdir()
-    manifest.write_parquet(release_dir / "fetch" / "raw_manifest.parquet")
+    manifest.write_parquet(table_path(release_dir, "fetch", "raw_manifest"))
     # Slow: runs every stage over 3.8 million CRS records.
     build(RELEASE, config=config, out_dir=out_dir, offline=True)
     return release_dir / "assemble"

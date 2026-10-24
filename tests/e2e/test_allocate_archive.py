@@ -23,6 +23,7 @@ from climate_finance.build.fetch import (
     IATI_DIR,
     IMPUTED_SHARES_FILE,
     MULTISYSTEM_FILE,
+    YEAR_SOURCES,
 )
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.stages import raw_dir, table_path
@@ -105,6 +106,7 @@ def _lay_out_raw(release_dir: Path, *, archive: Path, config: BuildConfig) -> No
         },
     }
     raw = raw_dir(release_dir)
+    first, last = config.years.crdf
     rows = []
     for source, files in places.items():
         for origin, relative in files:
@@ -119,11 +121,13 @@ def _lay_out_raw(release_dir: Path, *, archive: Path, config: BuildConfig) -> No
                     "version": config.sources.crs_version if source == "crs" else None,
                     "fetched_at": datetime(2026, 10, 21, tzinfo=UTC),
                     "method": "manual",
+                    "first_year": first if source in YEAR_SOURCES else None,
+                    "last_year": last if source in YEAR_SOURCES else None,
                 }
             )
-    manifest = pl.DataFrame(rows).with_columns(
-        url=pl.lit(None, pl.String), etag=pl.lit(None, pl.String)
-    )
+    manifest = pl.DataFrame(
+        rows, schema_overrides={"first_year": pl.Int16, "last_year": pl.Int16}
+    ).with_columns(url=pl.lit(None, pl.String), etag=pl.lit(None, pl.String))
     write_table(
         manifest, RAW_MANIFEST, table_path(release_dir, "fetch", RAW_MANIFEST.name)
     )
@@ -145,7 +149,7 @@ def base(
 @pytest.fixture(scope="module")
 def repaired(base: Path, config: BuildConfig) -> Path:
     release_dir = base.with_name("repaired")
-    for stage in ("raw", "fetch", "normalise"):
+    for stage in ("fetch", "normalise"):
         (release_dir / stage).parent.mkdir(parents=True, exist_ok=True)
         (release_dir / stage).symlink_to(base / stage, target_is_directory=True)
     build(

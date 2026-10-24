@@ -25,6 +25,15 @@ class StageInputMissingError(BuildError):
         )
 
 
+class StaleStageError(BuildError):
+    """A stage reads an earlier stage built from other inputs or other settings."""
+
+    def __init__(self, *, stage: str, reason: str) -> None:
+        self.stage = stage
+        self.reason = reason
+        super().__init__(f"Stage {stage!r} {reason}; rerun the build from {stage!r}.")
+
+
 class StageOutputError(BuildError):
     """A stage returned tables other than the ones its schema declares."""
 

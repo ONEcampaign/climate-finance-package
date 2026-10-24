@@ -5,7 +5,9 @@ then by its remaining flat columns, so two builds from the same inputs give the 
 sha256 per table. It writes a stage to a temporary directory and moves it into place
 once every table is written, so a stage that fails leaves the last good one intact. A
 build that died while moving a stage into place left `<stage>.old`, and the next
-build restores or removes it before any stage runs.
+build restores or removes it before any stage runs. Each stage directory holds a
+`stage.json` recording what the stage was built from, and a stage that reads a
+stale one refuses it (see `provenance`).
 """
 
 import shutil
@@ -28,6 +30,11 @@ import polars as pl  # noqa: E402
 
 from climate_finance.build.config import BuildConfig, load_config  # noqa: E402
 from climate_finance.build.errors import BuildError, StageOutputError  # noqa: E402
+from climate_finance.build.provenance import (  # noqa: E402
+    STAGE_RECORD,
+    Provenance,
+    StageRecord,
+)
 from climate_finance.build.stages import (  # noqa: E402
     REGISTRY,
     Stage,
@@ -75,13 +82,15 @@ def write_stage(
     *,
     seal: Callable[[Mapping[str, pl.DataFrame], Mapping[str, str], Path], None]
     | None = None,
+    provenance: Provenance | None = None,
 ) -> dict[str, str]:
     """Validate every table `stage` returned, then write them all.
 
     The tables go to a temporary directory beside the stage's own. `seal`, given
-    the tables, their sha256 and that directory, may check them and add files
-    before the directory replaces `<release_dir>/<stage>/`. Nothing replaces it
-    when validation, writing or `seal` raises.
+    the tables, their sha256 and that directory, may check them and add files.
+    Then `stage.json` records the tables and what `provenance` saw the stage read,
+    or no reads without it, and the directory replaces `<release_dir>/<stage>/`.
+    Nothing replaces it when validation, writing or `seal` raises.
 
     Raises:
         StageOutputError: when the returned tables differ from the declared ones,
@@ -110,6 +119,12 @@ def write_stage(
         }
         if seal is not None:
             seal(frames, sha256, staging)
+        record = (
+            StageRecord(stage=stage.name, tables=sha256, inputs={}, settings={})
+            if provenance is None
+            else provenance.record(sha256)
+        )
+        (staging / STAGE_RECORD).write_text(record.model_dump_json(indent=2) + "\n")
         _replace_dir(staging, stage_dir(release_dir, stage.name))
     finally:
         shutil.rmtree(staging, ignore_errors=True)
@@ -162,25 +177,35 @@ def run_stages(
 
     Raises:
         BuildError: when `stages` names a stage the registry lacks.
+        StaleStageError: when a stage reads an earlier stage built from other
+            inputs or settings than the current ones.
     """
     names = [stage.name for stage in registry]
     selected = set(names) if stages is None else set(stages)
     if unknown := sorted(selected - set(names)):
         raise BuildError(f"Unknown stages {unknown}; the stages are {names}")
     recover_stage_dirs(registry, release_dir)
-    context = StageContext(
-        release=release, release_dir=release_dir, config=config, offline=offline
-    )
-    tables = {
-        stage.name: write_stage(
+    tables = {}
+    for stage in registry:
+        if stage.name not in selected:
+            continue
+        provenance = Provenance(
+            stage=stage.name, release_dir=release_dir, config=config
+        )
+        context = StageContext(
+            release=release,
+            release_dir=release_dir,
+            config=provenance.config,
+            offline=offline,
+            provenance=provenance,
+        )
+        tables[stage.name] = write_stage(
             stage,
             stage.run(context),
             release_dir,
             seal=None if stage.seal is None else partial(stage.seal, context),
+            provenance=provenance,
         )
-        for stage in registry
-        if stage.name in selected
-    }
     return BuildManifest(release=release, release_dir=release_dir, tables=tables)
 
 

@@ -1,12 +1,16 @@
-"""The fetch stage: every source into the build's `raw/` directory, and `raw_manifest`.
+"""The fetch stage: every source into the build's raw directory, and `raw_manifest`.
 
 Fetch owns every network call of the build. It writes each source to its place in
-the raw layout under `<release_dir>/raw/` and records one `raw_manifest` row per
-file, with its sha256. Online, it fetches into `raw.partial/` and swaps that in
-whole once every source has arrived, so a failed fetch leaves the previous `raw/`
-in place. Offline, it makes no network call. It checks that `raw/` holds exactly
-the files the previous `raw_manifest` records, each with its recorded sha256, and
-returns that manifest unchanged.
+the raw layout and records one `raw_manifest` row per file, with its sha256, and
+for the CRDF and MULTI the years it asked for. The raw layout sits in the fetch
+stage's directory as `<release_dir>/fetch/raw/`, so the raw files and the manifest
+that records them replace the previous ones in one directory swap. Online, fetch
+downloads into `<release_dir>/raw.partial/`, which `seal_fetch` moves into the new
+fetch directory, so a fetch that fails at any point leaves the previous files and
+manifest in place. Offline, it makes no network call. It checks that `raw/` holds
+exactly the files the previous `raw_manifest` records, each with its recorded
+sha256, and years covering the configured CRDF years, and returns that manifest
+unchanged. Normalise reads only the configured CRDF years.
 """
 
 from __future__ import annotations
@@ -24,9 +28,13 @@ from climate_finance.errors import SourceUnavailableError
 from climate_finance.schema import RAW_MANIFEST, sha256_file
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from climate_finance.build.config import BuildConfig, LocalFile
     from climate_finance.build.stages import StageContext, StageOutput
 
+# The raw layout's directory inside the fetch stage's directory.
+RAW = "raw"
 CRS_FILE = Path("oecd/CRS.parquet")
 type Perspective = Literal["recipient", "provider"]
 
@@ -35,6 +43,8 @@ CRDF_FILES: dict[Perspective, Path] = {
     "provider": Path("oecd/crdf_provider.parquet"),
 }
 MULTISYSTEM_FILE = Path("oecd/multisystem.parquet")
+# Sources downloaded for the configured CRDF years, which record them.
+YEAR_SOURCES = (*(f"crdf_{perspective}" for perspective in CRDF_FILES), "multisystem")
 IMPUTED_SHARES_NAME = "Imputed_multilateral_shares.xlsx"
 IMPUTED_SHARES_FILE = Path("oecd") / IMPUTED_SHARES_NAME
 GCF_FILE = Path("external/gcf/projects.json")
@@ -57,10 +67,12 @@ class RawFile(TypedDict):
     version: str | None
     fetched_at: datetime
     method: str
+    first_year: int | None
+    last_year: int | None
 
 
 def run_fetch(context: StageContext) -> StageOutput:
-    """Fetch every source into the raw directory and write `raw_manifest`.
+    """Fetch every source and return `raw_manifest`; `seal_fetch` places the files.
 
     Raises:
         SourceUnavailableError: when a source cannot be fetched, including a bulk
@@ -69,7 +81,6 @@ def run_fetch(context: StageContext) -> StageOutput:
             `context.offline`, when there is no earlier `raw_manifest` or `raw/`
             does not match it.
     """
-    raw = context.raw_dir
     if context.offline:
         try:
             recorded = context.read("fetch", RAW_MANIFEST.name).collect()
@@ -79,17 +90,44 @@ def run_fetch(context: StageContext) -> StageOutput:
                 f"earlier fetch, and there is none at {error.path}; run the fetch "
                 "stage online once."
             ) from error
-        verify_raw(raw, recorded=recorded, config=context.config)
+        verify_raw(context.raw_dir, recorded=recorded, config=context.config)
         return {RAW_MANIFEST.name: recorded}
 
-    partial = raw.with_name(f"{raw.name}.partial")
+    partial = _partial_dir(context.release_dir)
     shutil.rmtree(partial, ignore_errors=True)
     with _http_client() as client:
         files = fetch_sources(partial, config=context.config, client=client)
-    shutil.rmtree(raw, ignore_errors=True)
-    partial.rename(raw)
     schema = {name: column.dtype for name, column in RAW_MANIFEST.columns.items()}
     return {RAW_MANIFEST.name: pl.DataFrame(files, schema=schema)}
+
+
+def seal_fetch(
+    context: StageContext,
+    tables: Mapping[str, pl.DataFrame],
+    sha256: Mapping[str, str],
+    out_dir: Path,
+) -> None:
+    """Put the raw files in `out_dir` beside the `raw_manifest` written there.
+
+    Online, the downloaded files move in. Offline, the current raw files are linked
+    in, each regular file as a hard link (a copy where a link is refused) and each
+    symbolic link as itself, so the current fetch directory stays whole until the
+    new one replaces it.
+    """
+    if context.offline:
+        shutil.copytree(
+            context.raw_dir,
+            out_dir / RAW,
+            symlinks=True,
+            copy_function=lambda origin, target: _place(Path(origin), Path(target)),
+        )
+    else:
+        _partial_dir(context.release_dir).rename(out_dir / RAW)
+
+
+def _partial_dir(release_dir: Path) -> Path:
+    """Where an online fetch downloads before `seal_fetch` moves the files."""
+    return release_dir / f"{RAW}.partial"
 
 
 def fetch_sources(
@@ -152,9 +190,11 @@ def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> Non
     Raises:
         SourceUnavailableError: when the sources `recorded` holds differ from those
             `config` names, in either direction, or `recorded` names a CRS file
-            other than the one `config` names, or when `raw` lacks a recorded
-            file, holds an unrecorded one, or holds one whose sha256 differs from
-            the recorded one. The message names every such source or file.
+            other than the one `config` names, or a source in `YEAR_SOURCES` was
+            fetched for years that do not cover `config.years.crdf`, or when `raw`
+            lacks a recorded file, holds an unrecorded one, or holds one whose
+            sha256 differs from the recorded one. The message names every such
+            source or file.
     """
     expected, held = set(expected_sources(config)), set(recorded["source"])
     if expected != held:
@@ -171,6 +211,7 @@ def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> Non
             f"build.toml names the CRS file {crs.path} (sha256 {crs.sha256}), and "
             "the raw_manifest records another; run the fetch stage online."
         )
+    _verify_years(recorded, years=config.years.crdf)
 
     on_disk = {
         path.relative_to(raw).as_posix() for path in raw.rglob("*") if path.is_file()
@@ -190,6 +231,33 @@ def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> Non
         )
 
 
+def _verify_years(recorded: pl.DataFrame, *, years: tuple[int, int]) -> None:
+    """Check that every source in `YEAR_SOURCES` was fetched for at least `years`.
+
+    Raises:
+        SourceUnavailableError: when one was fetched for fewer years, or `recorded`
+            has no years for it.
+    """
+    first, last = years
+    if not {"first_year", "last_year"} <= set(recorded.columns):
+        recorded = recorded.with_columns(first_year=None, last_year=None)
+    short = [
+        f"{source} ({'no years' if low is None else f'{low} to {high}'})"
+        for source, low, high in recorded.filter(pl.col("source").is_in(YEAR_SOURCES))
+        .select("source", "first_year", "last_year")
+        .unique()
+        .sort("source")
+        .iter_rows()
+        if low is None or high is None or low > first or high < last
+    ]
+    if short:
+        raise SourceUnavailableError(
+            f"build.toml asks for the CRDF years {first} to {last}, and the "
+            f"raw_manifest records fewer for {', '.join(short)}; run the fetch stage "
+            "online."
+        )
+
+
 def _http_client() -> httpx.Client:
     return httpx.Client(timeout=_TIMEOUT, follow_redirects=True)
 
@@ -204,7 +272,9 @@ def _record(
     etag: str | None = None,
     version: str | None = None,
     sha256: str | None = None,
+    years: tuple[int, int] | None = None,
 ) -> RawFile:
+    first_year, last_year = (None, None) if years is None else years
     return RawFile(
         source=source,
         url=url,
@@ -214,6 +284,8 @@ def _record(
         version=version,
         fetched_at=datetime.now(UTC),
         method=method,
+        first_year=first_year,
+        last_year=last_year,
     )
 
 
@@ -312,7 +384,12 @@ def _download_crdf(
     relative = CRDF_FILES[perspective]
     frame.to_parquet(_target(raw, relative), index=False)
     return _record(
-        raw, relative, source=f"crdf_{perspective}", method="http", url=CRDF_URL
+        raw,
+        relative,
+        source=f"crdf_{perspective}",
+        method="http",
+        url=CRDF_URL,
+        years=years,
     )
 
 
@@ -324,7 +401,9 @@ def _download_multisystem(raw: Path, *, years: tuple[int, int]) -> RawFile:
         start_year=first, end_year=last, pre_process=True, dotstat_codes=True
     )
     frame.to_parquet(_target(raw, MULTISYSTEM_FILE), index=False)
-    return _record(raw, MULTISYSTEM_FILE, source="multisystem", method="http")
+    return _record(
+        raw, MULTISYSTEM_FILE, source="multisystem", method="http", years=years
+    )
 
 
 def _download_imputed_shares(raw: Path) -> RawFile:

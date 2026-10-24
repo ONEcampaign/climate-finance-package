@@ -23,7 +23,7 @@ from climate_finance.build.normalise import run_normalise
 from climate_finance.build.normalise.crdf import CRDFNormaliseError, normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs, trace_population
 from climate_finance.build.normalise.external import MULTI_COUNTRY
-from climate_finance.build.stages import REGISTRY, StageContext, table_path
+from climate_finance.build.stages import REGISTRY, StageContext, raw_dir, table_path
 
 OECD = Path(__file__).parent / "fixtures" / "raw" / "oecd"
 YEARS = (2010, 2025)
@@ -258,11 +258,23 @@ def test_crdf_vintage_is_the_workbooks_latest_year(crs: pl.DataFrame) -> None:
     }
 
 
-@pytest.mark.parametrize("recoveries", [False, True])
+@pytest.mark.parametrize(
+    ("recoveries", "crdf_years", "crdf_held", "core_held"),
+    [
+        (False, (2015, 2024), {2015, 2022, 2024}, {2022, 2023}),
+        (True, (2015, 2024), {2015, 2022, 2024}, {2022, 2023}),
+        # A narrower CRDF range than the raw files hold, as an offline fetch allows.
+        (False, (2023, 2024), {2024}, {2023}),
+    ],
+)
 def test_run_normalise_writes_every_table_from_raw(
-    tmp_path: Path, recoveries: bool
+    tmp_path: Path,
+    recoveries: bool,
+    crdf_years: tuple[int, int],
+    crdf_held: set[int],
+    core_held: set[int],
 ) -> None:
-    raw = tmp_path / "raw"
+    raw = raw_dir(tmp_path)
     fixtures = OECD.parent
     for source, target in [
         (OECD / "CRS.parquet", CRS_FILE),
@@ -283,11 +295,15 @@ def test_run_normalise_writes_every_table_from_raw(
     pl.DataFrame(
         {"iso_code": ["EUI"] * 12, "year": range(2015, 2027), "exchange_rate": 0.8}
     ).write_parquet(raw / DAC_EXCHANGE_FILE)
+    config = load_config(Path(__file__).parents[1] / "build.toml")
     context = StageContext(
         release="test",
         release_dir=tmp_path,
-        config=load_config(Path(__file__).parents[1] / "build.toml").model_copy(
-            update={"recoveries": recoveries}
+        config=config.model_copy(
+            update={
+                "recoveries": recoveries,
+                "years": config.years.model_copy(update={"crdf": crdf_years}),
+            }
         ),
         offline=True,
     )
@@ -298,6 +314,10 @@ def test_run_normalise_writes_every_table_from_raw(
     # `btr` waits for an ingested BTR table; `orgs` is written with recoveries.
     expected = set(schema.STAGE_TABLES["normalise"]) - {"btr", "orgs"}
     assert set(hashes) == expected | ({"orgs"} if recoveries else set())
+    crdf = pl.read_parquet(table_path(tmp_path, "normalise", "crdf"))
+    assert set(crdf["year"]) == crdf_held
+    core = pl.read_parquet(table_path(tmp_path, "normalise", "core_contributions"))
+    assert set(core["year"]) == core_held
     if recoveries:
         orgs = pl.read_parquet(table_path(tmp_path, "normalise", "orgs"))
         eib = orgs.filter(role="agency", source_name="European Investment Bank")

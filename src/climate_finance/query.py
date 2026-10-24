@@ -318,14 +318,14 @@ def _labels(snapshot: Snapshot) -> pl.LazyFrame:
 def _attributed_rows(snapshot: Snapshot, *, spec: Spec, method: Method) -> pl.LazyFrame:
     """Core contributions of `spec.flow` times the agency's climate share by objective.
 
-    Under OECD the share is the OECD's imputed share. Under any other method it is
-    the agency's own climate spending. The adaptation and mitigation shares each
-    include the cross-cutting share. A share with no split by objective (a `climate`
-    row) is the unsplit share, and the three objective shares are 0. An agency
-    without a share attributes nothing, and neither do the EU channels when the
-    method counts EU Institutions as a provider.
+    Under OECD, with either EU setting, the share is the OECD's imputed share. Under
+    any other method it is the agency's own climate spending. The adaptation and
+    mitigation shares each include the cross-cutting share. A share with no split by
+    objective (a `climate` row) is the unsplit share, and the three objective shares
+    are 0. An agency without a share attributes nothing, and neither do the EU
+    channels when the method counts EU Institutions as a provider.
     """
-    source = "oecd" if method == OECD else "one"
+    source = "oecd" if method.replace(eu=OECD.eu) == OECD else "one"
     channels = snapshot.table("agency_shares").filter(pl.col("source") == source)
     if method.eu == "provider":
         channels = channels.filter(~pl.col("channel_code").is_in(EU_CHANNELS))
