@@ -10,11 +10,12 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from normalised import record_fetch
 
 from climate_finance.build import build, load_config
 from climate_finance.build.config import BuildConfig, LocalFile
 from climate_finance.build.fetch import YEAR_SOURCES
-from climate_finance.build.stages import raw_dir, table_path
+from climate_finance.build.stages import raw_dir
 from climate_finance.schema import RAW_MANIFEST, sha256_file
 
 REPO = Path(__file__).parents[2]
@@ -102,7 +103,7 @@ def release(tmp_path_factory: pytest.TempPathFactory) -> Path:
         publishers=config.sources.iati_publishers,
         crdf_years=config.years.crdf,
     )
-    manifest.write_parquet(table_path(release_dir, "fetch", "raw_manifest"))
+    record_fetch(release_dir, manifest, config=config)
     # Slow: runs every stage over 3.8 million CRS records.
     build(RELEASE, config=config, out_dir=out_dir, offline=True)
     return release_dir / "assemble"

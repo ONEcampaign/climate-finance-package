@@ -44,7 +44,7 @@ import numpy as np
 import polars as pl
 
 from climate_finance.build.errors import AllocationInputError
-from climate_finance.build.link.id_practice import period_of
+from climate_finance.build.link.id_practice import EU_DONOR, period_of
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
 from climate_finance.schema import LINK_METHODS
@@ -65,7 +65,8 @@ WINDOW_TEST_YEARS = (2015, 2021)
 WINDOW_GRACE = 1
 # Disbursed at this share of face value or more.
 DISBURSED_RATIO = 0.9
-# The method that links EU contract records to their decision, exempt from floors.
+# The method that links EU contract records to their decision, which for the EU
+# alone is exempt from floors.
 NO_FLOOR_METHODS = ("crs_id_parent",)
 # Order offset that puts a commitment after every commitment-year order.
 _LATE = 10_000
@@ -313,7 +314,9 @@ def _trace_pairs(
         .collect()
     )
     year, date_year, cyear = pl.col("year"), pl.col("date_year"), pl.col("cyear")
-    floored = ~pl.col("method").is_in(NO_FLOOR_METHODS)
+    floored = ~(
+        pl.col("method").is_in(NO_FLOOR_METHODS) & (pl.col("donor_code") == EU_DONOR)
+    )
     floor = pl.when(floored).then(pl.col("floor_year"))
     dated_record = (
         pl.col("donor_code").is_in(list(dated)) & floored & (date_year <= year)

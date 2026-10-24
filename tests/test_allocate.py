@@ -300,28 +300,33 @@ def test_an_undated_donor_keeps_fifo_for_a_same_year_record() -> None:
     assert set(pairs["rule"]) == {"fifo"}
 
 
-def test_parent_id_links_ignore_the_records_date() -> None:
-    # An EU contract record carries the contract's date, not the decision's, so a
-    # parent-id link neither floors it nor reads it as a dated donor's year.
-    eu = 918
+@pytest.mark.parametrize(
+    ("donor", "crs_id", "filled"),
+    [
+        # An EU contract record carries the contract's date, not the decision's,
+        # so a parent-id link neither floors it nor reads it as a dated donor's
+        # year.
+        (918, "2019000001001", "c19"),
+        # A German lettered record keeps its own date.
+        (5, "2019000001a", "c21"),
+    ],
+)
+def test_only_eu_parent_id_links_ignore_the_records_date(
+    donor: int, crs_id: str, filled: str
+) -> None:
     contract = record(
-        "d21",
-        2021,
-        disburse=50.0,
-        donor=eu,
-        dated=2021,
-        crs_id="2019000001001",
-        purpose=999,
+        "d21", 2021, disburse=50.0, donor=donor, dated=2021, crs_id=crs_id, purpose=999
     )
-    pairs = run(
+    crs, _, units, links = link(
         [
-            record("c19", 2019, commit=100.0, donor=eu, dated=2019),
-            record("c21", 2021, commit=100.0, donor=eu, dated=2021),
+            record("c19", 2019, commit=100.0, donor=donor, dated=2019),
+            record("c21", 2021, commit=100.0, donor=donor, dated=2021),
             contract,
-        ],
-        dated=(eu,),
+        ]
     )
-    assert by_commitment(pairs) == pytest.approx({"c19": 50.0})
+    assert set(links.collect()["link_method"]) == {"crs_id_parent"}
+    pairs = allocate(units, crs=crs, links=links, dated=(donor,), windowed=())
+    assert by_commitment(pairs) == pytest.approx({filled: 50.0})
 
 
 # A 2023 record falls in the 2022 phase's window, not the 2019 phase's.

@@ -28,12 +28,14 @@ if _missing := [name for name in _BUILD_EXTRA if find_spec(name) is None]:
 
 import polars as pl  # noqa: E402
 
+from climate_finance import __version__  # noqa: E402
 from climate_finance.build.config import BuildConfig, load_config  # noqa: E402
 from climate_finance.build.errors import BuildError, StageOutputError  # noqa: E402
 from climate_finance.build.provenance import (  # noqa: E402
     STAGE_RECORD,
     Provenance,
     StageRecord,
+    source_sha256,
 )
 from climate_finance.build.stages import (  # noqa: E402
     REGISTRY,
@@ -88,8 +90,9 @@ def write_stage(
 
     The tables go to a temporary directory beside the stage's own. `seal`, given
     the tables, their sha256 and that directory, may check them and add files.
-    Then `stage.json` records the tables and what `provenance` saw the stage read,
-    or no reads without it, and the directory replaces `<release_dir>/<stage>/`.
+    Then `stage.json` records the tables, the stages `provenance` saw the stage
+    read and the settings it declares, or no reads and no settings without it, and
+    the directory replaces `<release_dir>/<stage>/`.
     Nothing replaces it when validation, writing or `seal` raises.
 
     Raises:
@@ -120,7 +123,14 @@ def write_stage(
         if seal is not None:
             seal(frames, sha256, staging)
         record = (
-            StageRecord(stage=stage.name, tables=sha256, inputs={}, settings={})
+            StageRecord(
+                stage=stage.name,
+                package_version=__version__,
+                source_sha256=source_sha256(),
+                tables=sha256,
+                inputs={},
+                settings={},
+            )
             if provenance is None
             else provenance.record(sha256)
         )
@@ -190,12 +200,15 @@ def run_stages(
         if stage.name not in selected:
             continue
         provenance = Provenance(
-            stage=stage.name, release_dir=release_dir, config=config
+            stage=stage.name,
+            release_dir=release_dir,
+            config=config,
+            settings=stage.settings,
         )
         context = StageContext(
             release=release,
             release_dir=release_dir,
-            config=provenance.config,
+            config=config,
             offline=offline,
             provenance=provenance,
         )

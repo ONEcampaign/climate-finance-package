@@ -308,28 +308,63 @@ def test_parent_id(donor_code: int, crs_id: str, parent: str | None) -> None:
     assert pl.select(parent_id(pl.lit(donor_code), pl.lit(crs_id))).item() == parent
 
 
+_NAURU = {"donor_code": 915, "project_number": "TA9143-NAU", "recipient_code": 880}
+_INDIA = {
+    "donor_code": 915,
+    "project_number": "LN3375-IND",
+    "recipient_code": 645,
+    "purpose_code": 41010,
+}
+
+
 @pytest.mark.parametrize(
-    ("other_number", "traced"),
+    ("commitment", "disbursement", "traced"),
     [
         # The AsDB files an Indian loan under the crs id of a Nauru grant.
-        ("TA9143-NAU", {}),
+        ({**_NAURU, "crs_id": "2018000001"}, {**_INDIA, "crs_id": "2018000001"}, {}),
         # One project with lines in two recipients.
-        ("LN3375-IND", {"d": ("crs_id", ["c"])}),
+        (
+            {**_NAURU, "crs_id": "2018000001", "project_number": "LN3375-IND"},
+            {**_INDIA, "crs_id": "2018000001"},
+            {"d": ("crs_id", ["c"])},
+        ),
+        # A missing or placeholder number is no evidence of one project.
+        (
+            {**_NAURU, "crs_id": "2018000001"},
+            {**_INDIA, "crs_id": "2018000001", "project_number": None},
+            {},
+        ),
+        (
+            {**_NAURU, "crs_id": "2018000001", "project_number": "N/A"},
+            {**_INDIA, "crs_id": "2018000001"},
+            {},
+        ),
+        # A lettered record continues its parent's project in its recipient only.
+        ({**_NAURU, "crs_id": "2018000001"}, {**_INDIA, "crs_id": "2018000001a"}, {}),
+        (
+            {**_INDIA, "crs_id": "2018000001"},
+            {**_INDIA, "crs_id": "2018000001a"},
+            {"d": ("crs_id_parent", ["c"])},
+        ),
+        (
+            {**_INDIA, "crs_id": "2018000001", "project_number": "LN3376-IND"},
+            {**_INDIA, "crs_id": "2018000001a"},
+            {},
+        ),
+        # The floor holds for a lettered record.
+        (
+            {**_INDIA, "crs_id": "2018000001", "year": 2017},
+            {**_INDIA, "crs_id": "2018000001a", "commitment_date": date(2019, 1, 1)},
+            {},
+        ),
     ],
 )
-def test_the_crs_id_tier_keeps_an_id_that_names_several_projects_in_its_recipient(
-    other_number: str, traced: dict[str, tuple[str, list[str]]]
+def test_a_crs_id_links_only_within_the_project_it_names(
+    commitment: dict[str, object],
+    disbursement: dict[str, object],
+    traced: dict[str, tuple[str, list[str]]],
 ) -> None:
-    project = {"donor_code": 915, "crs_id": "2018000001"}
-    records = {
-        "c": _commitment(**project, project_number=other_number, recipient_code=880),
-        "d": _disbursement(
-            **project,
-            project_number="LN3375-IND",
-            recipient_code=645,
-            purpose_code=41010,
-        ),
-    }
+    records = {"c": _commitment(**commitment), "d": _disbursement(**disbursement)}
     assert _trace(records) == traced
 
 

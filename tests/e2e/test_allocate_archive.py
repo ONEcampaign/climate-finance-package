@@ -12,8 +12,9 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from normalised import record_fetch
 
-from climate_finance.build import Stage, build, write_table
+from climate_finance.build import Stage, build
 from climate_finance.build.config import BuildConfig, LocalFile, load_config
 from climate_finance.build.fetch import (
     CRDF_FILES,
@@ -27,7 +28,7 @@ from climate_finance.build.fetch import (
 )
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.stages import raw_dir, table_path
-from climate_finance.schema import KEY_REPAIR_METHODS, RAW_MANIFEST, sha256_file
+from climate_finance.schema import KEY_REPAIR_METHODS, sha256_file
 
 pytestmark = pytest.mark.slow
 
@@ -128,9 +129,7 @@ def _lay_out_raw(release_dir: Path, *, archive: Path, config: BuildConfig) -> No
     manifest = pl.DataFrame(
         rows, schema_overrides={"first_year": pl.Int16, "last_year": pl.Int16}
     ).with_columns(url=pl.lit(None, pl.String), etag=pl.lit(None, pl.String))
-    write_table(
-        manifest, RAW_MANIFEST, table_path(release_dir, "fetch", RAW_MANIFEST.name)
-    )
+    record_fetch(release_dir, manifest, config=config)
 
 
 @pytest.fixture(scope="module")

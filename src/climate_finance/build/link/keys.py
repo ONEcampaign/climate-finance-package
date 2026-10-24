@@ -2,10 +2,11 @@
 
 A unit sums the CRS records that share every key field (`UNIT_KEY`). Each disbursement
 unit takes the first tier in `TIERS` whose key reaches an eligible commitment unit,
-meaning one placed at or before the disbursement's record year and, outside the
-parent-id tier, at or after its floor year. The parent-id tier ignores the floor, since
-an EU contract record carries the contract's own date, which falls on or after its
-decision's commitment, and a lettered record (`parent_id`) its own. A disbursement
+meaning one placed at or before the disbursement's record year and at or after its
+floor year. An EU contract record is exempt from the floor in the parent-id tier, since
+it carries the contract's own date, which falls on or after its decision's commitment.
+A lettered record (`parent_id`) reaches its parent only in the same recipient under the
+same project number, a missing number matching only a missing one. A disbursement
 whose floor precedes the first CRS year continues a commitment the build cannot see,
 and links to nothing.
 
@@ -21,7 +22,12 @@ from dataclasses import dataclass
 import polars as pl
 
 from climate_finance import schema
-from climate_finance.build.link.id_practice import PN_KEY, parent_id
+from climate_finance.build.link.id_practice import (
+    EU_DONOR,
+    LETTER_SUFFIX_DONORS,
+    PN_KEY,
+    parent_id,
+)
 from climate_finance.build.normalise.ids import content_id
 
 UNIT_KEY = (
@@ -57,13 +63,13 @@ PLACEHOLDER_PNS = (
 class Tier:
     """A key tier. It holds the commitment key, the disbursement key it must equal,
     whether it is a project-number tier, which reaches only unique project-number
-    keys (`_unique_pn`), and whether it holds to the disbursement's floor."""
+    keys (`_unique_pn`), and the disbursement column holding the floor it keeps."""
 
     name: str
     commitment_key: tuple[str, ...]
     unit_key: tuple[str, ...]
     project_number: bool = False
-    floored: bool = True
+    floor: str = "floor_year"
 
 
 TIERS = (
@@ -75,9 +81,9 @@ TIERS = (
     Tier("crs_id", ("donor_code", "crs_key"), ("donor_code", "crs_key")),
     Tier(
         "crs_id_parent",
-        ("donor_code", "crs_id"),
+        ("donor_code", "parent_key"),
         ("donor_code", "crs_parent"),
-        floored=False,
+        floor="parent_floor_year",
     ),
     Tier(
         "pn_recipient_purpose",
@@ -147,12 +153,17 @@ def link_by_keys(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
     and its key, so the disbursement units of one group reach the same commitments,
     less those their own record year or floor rules out.
     """
-    units = units.with_columns(crs_key=crs_key(units))
+    units = units.with_columns(
+        crs_key=crs_key(units), parent_key=_parent_key(pl.col("crs_id"))
+    )
     remaining = units.filter(
         pl.col("disbursement_usd") > 0,
         pl.col("floor_year").is_null() | (pl.col("floor_year") >= first_year),
     ).with_columns(
-        crs_parent=parent_id(pl.col("donor_code"), pl.col("crs_id")),
+        crs_parent=_parent_key(parent_id(pl.col("donor_code"), pl.col("crs_id"))),
+        parent_floor_year=pl.when(pl.col("donor_code") != EU_DONOR).then(
+            pl.col("floor_year")
+        ),
     )
     commitments = units.filter(pl.col("commitment_usd") > 0)
     unique_pn = _unique_pn(commitments)
@@ -174,17 +185,35 @@ def link_by_keys(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
 def crs_key(units: pl.DataFrame) -> pl.Series:
     """Each unit's crs id, with its recipient code where the (donor, crs id) names
     several projects: units in more than one recipient under more than one project
-    number. The AsDB, the IDB and the GEF reuse an id this way, as for the AsDB's
-    `LN3375-IND` in India and `TA9143-NAU` in Nauru."""
+    number, a missing number counting as one more. The AsDB, the IDB and the GEF
+    reuse an id this way, as for the AsDB's `LN3375-IND` in India and `TA9143-NAU`
+    in Nauru."""
     several = (
         (pl.col("recipient_code").n_unique() > 1)
-        & (pl.col("project_number").drop_nulls().n_unique() > 1)
+        & (pl.col("project_number").n_unique() > 1)
     ).over("donor_code", "crs_id")
     return units.select(
         pl.when(several)
         .then(pl.concat_str("crs_id", "recipient_code", separator="|"))
         .otherwise(pl.col("crs_id"))
     ).to_series()
+
+
+def _parent_key(crs_id: pl.Expr) -> pl.Expr:
+    """`crs_id` as the parent-id tier matches it: for a `LETTER_SUFFIX_DONORS` unit
+    with its recipient and project number, a missing number matching a missing
+    one, since a lettered record continues one project in one recipient."""
+    lettered = pl.concat_str(
+        crs_id,
+        pl.col("recipient_code"),
+        pl.col("project_number").fill_null(""),
+        separator="|",
+    )
+    return (
+        pl.when(pl.col("donor_code").is_in(LETTER_SUFFIX_DONORS))
+        .then(lettered)
+        .otherwise(crs_id)
+    )
 
 
 def _unique_pn(commitments: pl.DataFrame) -> pl.DataFrame:
@@ -199,15 +228,13 @@ def _eligible_pairs(
     disbursements: pl.DataFrame, commitments: pl.DataFrame, *, tier: Tier
 ) -> pl.DataFrame:
     """(disbursement, commitment) unit pairs equal on the tier's key, the commitment
-    placed no later than the record year and, in a floored tier, no earlier than
-    the disbursement's floor year."""
-    eligible = pl.col("placed_year") <= pl.col("year")
-    if tier.floored:
-        eligible &= pl.col("floor_year").is_null() | (
-            pl.col("placed_year") >= pl.col("floor_year")
-        )
+    placed no later than the record year and no earlier than the tier's floor."""
+    floor = pl.col(tier.floor)
+    eligible = (pl.col("placed_year") <= pl.col("year")) & (
+        floor.is_null() | (pl.col("placed_year") >= floor)
+    )
     return (
-        disbursements.select("unit_id", "year", "floor_year", *tier.unit_key)
+        disbursements.select("unit_id", "year", tier.floor, *tier.unit_key)
         .join(
             commitments.select(
                 "unit_id", "placed_year", *tier.commitment_key

@@ -4,7 +4,9 @@ A stage function takes a `StageContext` and returns its tables by name. It reads
 earlier stages' tables through `StageContext.read`, and the runner validates, sorts
 and writes what it returns to `<out_dir>/<release>/<stage>/<table>.parquet`, with
 the stage's `stage.json` (see `provenance`). A stage's `seal` runs on the written
-tables before they replace the stage's directory.
+tables before they replace the stage's directory. Each entry declares the build
+settings its stage, and its `seal`, read from `StageContext.config`, as dotted
+paths, and the stage's `stage.json` records their values.
 """
 
 from collections.abc import Callable, Mapping
@@ -59,8 +61,7 @@ def raw_dir(release_dir: Path) -> Path:
 class StageContext:
     """What every stage function receives.
 
-    The runner sets `provenance`, which records the stages and settings the stage
-    reads, and `config` is then `provenance.config`.
+    The runner sets `provenance`, which records the stages the stage reads.
     """
 
     release: str
@@ -102,7 +103,8 @@ type Seal = Callable[
 
 @dataclass(frozen=True)
 class StageDef:
-    """One registry entry: a stage name, its function and the tables it writes.
+    """One registry entry: a stage name, its function, the tables it writes and
+    the build settings it reads.
 
     `seal` takes the context, the validated tables, their sha256 and the temporary
     directory they were written to. It may raise to refuse them or add files.
@@ -112,6 +114,7 @@ class StageDef:
     run: Callable[[StageContext], StageOutput]
     tables: Mapping[str, TableSchema]
     seal: Seal | None = None
+    settings: tuple[str, ...] = ()
 
 
 def _entry(
@@ -119,18 +122,43 @@ def _entry(
     run: Callable[[StageContext], StageOutput],
     *,
     seal: Seal | None = None,
+    settings: tuple[str, ...] = (),
 ) -> StageDef:
-    return StageDef(name=stage, run=run, tables=STAGE_TABLES[stage], seal=seal)
+    return StageDef(
+        name=stage, run=run, tables=STAGE_TABLES[stage], seal=seal, settings=settings
+    )
 
 
 REGISTRY: tuple[StageDef, ...] = (
-    _entry(Stage.FETCH, fetch.run_fetch, seal=fetch.seal_fetch),
-    _entry(Stage.NORMALISE, run_normalise),
-    _entry(Stage.LINK, run_link),
-    _entry(Stage.ALLOCATE, allocate.run_allocate),
-    _entry(Stage.FILL, gap_fill.run_fill),
-    _entry(Stage.REVIEW, review.run_review),
+    _entry(
+        Stage.FETCH, fetch.run_fetch, seal=fetch.seal_fetch, settings=fetch.SETTINGS
+    ),
+    _entry(
+        Stage.NORMALISE,
+        run_normalise,
+        settings=("recoveries", "years.crdf", "years.crs"),
+    ),
+    _entry(Stage.LINK, run_link, settings=("key_repair", "recoveries", "years.crs")),
+    _entry(
+        Stage.ALLOCATE, allocate.run_allocate, settings=("years.crs_last_complete",)
+    ),
+    _entry(Stage.FILL, gap_fill.run_fill, settings=("gap_fill",)),
+    _entry(Stage.REVIEW, review.run_review, settings=("review",)),
     _entry(Stage.LABEL, label.run_label),
-    _entry(Stage.MEASURE, measure.run_measure),
-    _entry(Stage.ASSEMBLE, release.assemble, seal=release.seal_release),
+    _entry(
+        Stage.MEASURE,
+        measure.run_measure,
+        settings=("years.crdf", "years.crs_last_complete"),
+    ),
+    _entry(
+        Stage.ASSEMBLE,
+        release.assemble,
+        seal=release.seal_release,
+        settings=(
+            "embedding.model",
+            "embedding.revision",
+            "jev.model",
+            "years.crs_last_complete",
+        ),
+    ),
 )

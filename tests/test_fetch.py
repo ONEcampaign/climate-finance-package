@@ -10,11 +10,12 @@ import oda_reader.crs
 import pandas as pd
 import polars as pl
 import pytest
+from reads import record_reads
 
 import climate_finance.build
 from climate_finance.build import BuildConfig, Stage, build, fetch, load_config
 from climate_finance.build.config import LocalFile
-from climate_finance.build.stages import raw_dir
+from climate_finance.build.stages import REGISTRY, raw_dir
 from climate_finance.errors import SourceUnavailableError
 from climate_finance.schema import sha256_file
 
@@ -135,9 +136,16 @@ def test_build_toml_names_the_bulk_crs_file() -> None:
 
 
 def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
-    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    release = _fetch(_config(crs_file=crs_file), tmp_path / "out")
+    config = _config(crs_file=crs_file)
+    registry, reads = record_reads(monkeypatch, config, REGISTRY)
+    monkeypatch.setattr(climate_finance.build, "REGISTRY", registry)
+
+    release = _fetch(config, tmp_path / "out")
     raw = raw_dir(release)
     manifest = pl.read_parquet(release / MANIFEST)
 
@@ -176,6 +184,7 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
         FIXTURES / "gcf" / "projects.json"
     ).read_bytes()
     assert not (release / "raw.partial").exists()
+    assert reads[Stage.FETCH] == set(fetch.SETTINGS)
 
     assert "bulk_download_crs" not in sources.names()
     assert (
@@ -198,7 +207,7 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
     ) in sources.calls
 
 
-def test_offline_fetch_rewrites_the_manifest_with_no_network_call(
+def test_offline_fetch_rewrites_its_stage_unchanged_with_no_network_call(
     sources: FakeSources,
     crs_file: LocalFile,
     tmp_path: Path,
@@ -207,6 +216,8 @@ def test_offline_fetch_rewrites_the_manifest_with_no_network_call(
     config = _config(crs_file=crs_file)
     release = _fetch(config, tmp_path / "out")
     online = sha256_file(release / MANIFEST)
+    # The fetch stage's identity, which every later stage records.
+    record = (release / "fetch" / "stage.json").read_bytes()
     calls = len(sources.calls)
 
     def refuse(*args: object, **kwargs: object) -> None:
@@ -219,6 +230,7 @@ def test_offline_fetch_rewrites_the_manifest_with_no_network_call(
 
     assert len(sources.calls) == calls
     assert sha256_file(release / MANIFEST) == online
+    assert (release / "fetch" / "stage.json").read_bytes() == record
 
 
 def test_a_fetch_that_fails_before_its_manifest_keeps_the_last_fetch(
@@ -317,6 +329,42 @@ def test_offline_fetch_refuses_a_manifest_for_another_crs_file(
 
     with pytest.raises(SourceUnavailableError, match="CRS file"):
         _fetch(_config(crs_file=other), tmp_path / "out", offline=True)
+
+
+@pytest.mark.parametrize(
+    ("setting", "value"),
+    [
+        ("crs_version", "v20270101"),
+        ("crdf_etags", {"CRDF-RP_2024.xlsx": '"other-etag"'}),
+        ("iati_archive", FIXTURES),
+    ],
+)
+def test_offline_fetch_refuses_settings_the_earlier_fetch_ran_without(
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    setting: str,
+    value: object,
+) -> None:
+    _fetch(_config(crs_file=crs_file), tmp_path / "out")
+
+    with pytest.raises(SourceUnavailableError, match=re.escape(f"sources.{setting}")):
+        _fetch(
+            _config(crs_file=crs_file, **{setting: value}),
+            tmp_path / "out",
+            offline=True,
+        )
+
+
+def test_offline_fetch_refuses_an_earlier_fetch_without_its_settings(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    config = _config(crs_file=crs_file)
+    release = _fetch(config, tmp_path / "out")
+    (release / "fetch" / "stage.json").unlink()
+
+    with pytest.raises(SourceUnavailableError, match=re.escape("stage.json")):
+        _fetch(config, tmp_path / "out", offline=True)
 
 
 def test_local_crs_file_with_another_sha256_stops_the_fetch(

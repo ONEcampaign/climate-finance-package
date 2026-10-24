@@ -1,24 +1,15 @@
 """The normalise stage on hand-built OECD raw files."""
 
-import shutil
 from datetime import date
 from pathlib import Path
 
 import polars as pl
 import pytest
+from normalised import write_raw
 
 from climate_finance import schema
 from climate_finance.build import write_stage
 from climate_finance.build.config import load_config
-from climate_finance.build.fetch import (
-    CRDF_FILES,
-    CRS_FILE,
-    DAC_EXCHANGE_FILE,
-    GCF_FILE,
-    IATI_DIR,
-    IMPUTED_SHARES_FILE,
-    MULTISYSTEM_FILE,
-)
 from climate_finance.build.normalise import run_normalise
 from climate_finance.build.normalise.crdf import CRDFNormaliseError, normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs, trace_population
@@ -274,27 +265,7 @@ def test_run_normalise_writes_every_table_from_raw(
     crdf_held: set[int],
     core_held: set[int],
 ) -> None:
-    raw = raw_dir(tmp_path)
-    fixtures = OECD.parent
-    for source, target in [
-        (OECD / "CRS.parquet", CRS_FILE),
-        (OECD / "crdf_recipient.parquet", CRDF_FILES["recipient"]),
-        (OECD / "crdf_provider.parquet", CRDF_FILES["provider"]),
-        (fixtures / "multisystem" / "multisystem_2022_2023.parquet", MULTISYSTEM_FILE),
-        (
-            fixtures / "imputed_shares" / "Imputed_multilateral_shares.xlsx",
-            IMPUTED_SHARES_FILE,
-        ),
-        (fixtures / "gcf" / "projects.json", GCF_FILE),
-    ]:
-        (raw / target).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(source, raw / target)
-    shutil.copytree(
-        fixtures / "iati", raw / IATI_DIR, ignore=shutil.ignore_patterns("*.md")
-    )
-    pl.DataFrame(
-        {"iso_code": ["EUI"] * 12, "year": range(2015, 2027), "exchange_rate": 0.8}
-    ).write_parquet(raw / DAC_EXCHANGE_FILE)
+    write_raw(raw_dir(tmp_path), crdf_years=crdf_years)
     config = load_config(Path(__file__).parents[1] / "build.toml")
     context = StageContext(
         release="test",

@@ -17,13 +17,14 @@ from climate_finance import schema
 from climate_finance.build import (
     BuildConfig,
     load_config,
+    provenance,
     release,
     run_stages,
     write_stage,
     write_table,
 )
 from climate_finance.build.errors import ReleaseInvariantError, StaleStageError
-from climate_finance.build.provenance import Provenance
+from climate_finance.build.provenance import Provenance, StageRecord, record_path
 from climate_finance.build.stages import REGISTRY, Stage, StageContext, table_path
 from climate_finance.errors import SchemaError
 from climate_finance.schema import STAGE_TABLES
@@ -97,10 +98,12 @@ def _write_stage(
     reads: tuple[str, ...] = (),
 ) -> None:
     """Write `frames` as `stage`'s output, recording that it read `reads`."""
-    provenance = Provenance(stage=stage, release_dir=release_dir, config=config)
+    entry = next(entry for entry in REGISTRY if entry.name == stage)
+    provenance = Provenance(
+        stage=stage, release_dir=release_dir, config=config, settings=entry.settings
+    )
     for read in reads:
         provenance.read_stage(read)
-    entry = next(entry for entry in REGISTRY if entry.name == stage)
     write_stage(entry, frames, release_dir, provenance=provenance)
 
 
@@ -129,6 +132,13 @@ def config() -> BuildConfig:
     )
 
 
+def _measure() -> dict[str, pl.DataFrame]:
+    return {
+        "agency_shares": _empty(schema.AGENCY_SHARES),
+        "modelled": _empty(schema.MODELLED),
+    }
+
+
 @pytest.fixture
 def release_dir(tmp_path: Path, config: BuildConfig) -> Path:
     """A release built from hand-written fetch, normalise and measure tables."""
@@ -151,15 +161,7 @@ def release_dir(tmp_path: Path, config: BuildConfig) -> Path:
         config=config,
         reads=("fetch",),
     )
-    _write_stage(
-        tmp_path,
-        "measure",
-        {
-            "agency_shares": _empty(schema.AGENCY_SHARES),
-            "modelled": _empty(schema.MODELLED),
-        },
-        config=config,
-    )
+    _write_stage(tmp_path, "measure", _measure(), config=config)
     run_stages(
         REGISTRY, release="r", release_dir=tmp_path, config=config, stages=LATER_STAGES
     )
@@ -331,6 +333,20 @@ def _move_last_complete_year(release_dir: Path, config: BuildConfig) -> BuildCon
     )
 
 
+def _drop_the_crs_file(release_dir: Path, config: BuildConfig) -> BuildConfig:
+    return config.model_copy(
+        update={"sources": config.sources.model_copy(update={"crs_file": None})}
+    )
+
+
+def _retire_a_setting(release_dir: Path, config: BuildConfig) -> BuildConfig:
+    path = record_path(release_dir, "fetch")
+    record = StageRecord.model_validate_json(path.read_text())
+    settings = {**record.settings, "sources.retired": 1}
+    path.write_text(record.model_copy(update={"settings": settings}).model_dump_json())
+    return config
+
+
 @pytest.mark.parametrize(
     ("change", "stale", "reason"),
     [
@@ -338,6 +354,9 @@ def _move_last_complete_year(release_dir: Path, config: BuildConfig) -> BuildCon
         (_refetch, "normalise", "another 'fetch' output"),
         # Allocate, which fill read, read the last complete CRS year.
         (_move_last_complete_year, "allocate", "years.crs_last_complete = 2024"),
+        # A setting that becomes None changes like any other.
+        (_drop_the_crs_file, "fetch", "and the build config sets None"),
+        (_retire_a_setting, "fetch", "sources.retired = 1, which the build config no"),
     ],
 )
 def test_assemble_refuses_a_stage_built_from_other_inputs(
@@ -360,10 +379,38 @@ def test_assemble_refuses_a_stage_built_from_other_inputs(
     assert (release_dir / "assemble" / "release.json").read_bytes() == sealed
 
 
+@pytest.mark.parametrize(
+    ("module", "name", "value"),
+    [
+        (cf, "__version__", "9.9.9"),
+        (provenance, "source_sha256", lambda: "0" * 64),
+    ],
+)
+def test_assemble_refuses_stages_another_package_built(
+    release_dir: Path,
+    config: BuildConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    module: object,
+    name: str,
+    value: object,
+) -> None:
+    monkeypatch.setattr(module, name, value)
+
+    with pytest.raises(StaleStageError, match="package files other than") as error:
+        run_stages(
+            REGISTRY, release="r", release_dir=release_dir, config=config,
+            stages=["assemble"],
+        )  # fmt: skip
+
+    assert error.value.stage == "fetch"
+
+
 def test_a_stage_reruns_after_its_inputs_change(
     release_dir: Path, config: BuildConfig
 ) -> None:
     changed = _move_last_complete_year(release_dir, config)
+    # Measure reads the last complete year too, and its tables are hand-written.
+    _write_stage(release_dir, "measure", _measure(), config=changed)
 
     run_stages(
         REGISTRY, release="r", release_dir=release_dir, config=changed,

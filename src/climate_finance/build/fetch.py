@@ -7,10 +7,13 @@ stage's directory as `<release_dir>/fetch/raw/`, so the raw files and the manife
 that records them replace the previous ones in one directory swap. Online, fetch
 downloads into `<release_dir>/raw.partial/`, which `seal_fetch` moves into the new
 fetch directory, so a fetch that fails at any point leaves the previous files and
-manifest in place. Offline, it makes no network call. It checks that `raw/` holds
-exactly the files the previous `raw_manifest` records, each with its recorded
-sha256, and years covering the configured CRDF years, and returns that manifest
-unchanged. Normalise reads only the configured CRDF years.
+manifest in place. Offline, it makes no network call. It checks that the previous
+fetch ran under the configured `SETTINGS`, other than the CRDF years, and that
+`raw/` holds exactly the files the previous `raw_manifest` records, each with its
+recorded sha256, and years covering the configured CRDF years, and returns that
+manifest unchanged. An offline fetch of unchanged settings therefore writes the
+`stage.json` the previous fetch wrote. Normalise reads only the configured CRDF
+years.
 """
 
 from __future__ import annotations
@@ -23,7 +26,8 @@ from typing import TYPE_CHECKING, Literal, TypedDict
 import httpx
 import polars as pl
 
-from climate_finance.build.errors import StageInputMissingError
+from climate_finance.build.errors import StageInputMissingError, StaleStageError
+from climate_finance.build.provenance import read_record, setting_value
 from climate_finance.errors import SourceUnavailableError
 from climate_finance.schema import RAW_MANIFEST, sha256_file
 
@@ -33,6 +37,16 @@ if TYPE_CHECKING:
     from climate_finance.build.config import BuildConfig, LocalFile
     from climate_finance.build.stages import StageContext, StageOutput
 
+# The build settings fetch reads. An offline fetch needs the previous fetch's,
+# other than `years.crdf`, which its `raw_manifest` years need only cover.
+SETTINGS = (
+    "sources.crdf_etags",
+    "sources.crs_file",
+    "sources.crs_version",
+    "sources.iati_archive",
+    "sources.iati_publishers",
+    "years.crdf",
+)
 # The raw layout's directory inside the fetch stage's directory.
 RAW = "raw"
 CRS_FILE = Path("oecd/CRS.parquet")
@@ -79,7 +93,7 @@ def run_fetch(context: StageContext) -> StageOutput:
             CRS download that Cloudflare challenges (the message carries the
             `register_bulk_file` call for a browser download); or, under
             `context.offline`, when there is no earlier `raw_manifest` or `raw/`
-            does not match it.
+            does not match it, or the earlier fetch ran under other `SETTINGS`.
     """
     if context.offline:
         try:
@@ -91,6 +105,7 @@ def run_fetch(context: StageContext) -> StageOutput:
                 "stage online once."
             ) from error
         verify_raw(context.raw_dir, recorded=recorded, config=context.config)
+        verify_settings(context.release_dir, config=context.config)
         return {RAW_MANIFEST.name: recorded}
 
     partial = _partial_dir(context.release_dir)
@@ -180,6 +195,37 @@ def expected_sources(config: BuildConfig) -> list[str]:
         "dac_exchange",
         *(f"iati_{publisher}" for publisher in config.sources.iati_publishers),
     ]
+
+
+def verify_settings(release_dir: Path, *, config: BuildConfig) -> None:
+    """Check that the earlier fetch's `stage.json` records `config`'s value of each
+    of `SETTINGS` but `years.crdf`.
+
+    Raises:
+        SourceUnavailableError: when the earlier fetch has no `stage.json` this
+            package can read, or it records another value, or none, for one of
+            them. The message names every such setting.
+    """
+    try:
+        recorded = read_record(release_dir, "fetch").settings
+    except StaleStageError as error:
+        raise SourceUnavailableError(
+            "An offline fetch checks the settings the earlier fetch ran under, and "
+            f"that fetch {error.reason}; run the fetch stage online."
+        ) from error
+    missing = object()
+    changed = [
+        f"{setting} (fetched with {recorded.get(setting, 'none recorded')}, "
+        f"build.toml sets {now})"
+        for setting in SETTINGS
+        if setting != "years.crdf"
+        and (now := setting_value(config, setting)) != recorded.get(setting, missing)
+    ]
+    if changed:
+        raise SourceUnavailableError(
+            f"build.toml changes settings the earlier fetch ran under: "
+            f"{'; '.join(changed)}; run the fetch stage online."
+        )
 
 
 def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> None:

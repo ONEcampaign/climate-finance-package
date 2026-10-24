@@ -1,32 +1,36 @@
 """What each stage output was built from, and the check that refuses a stale one.
 
-Every stage directory holds `stage.json`, a `StageRecord`: the sha256 of each table
-the stage wrote, the identity of each earlier stage it read, and the value of each
-build setting it read. A stage's identity is the sha256 of its `stage.json`, so the
-fetch stage's identity covers its `raw_manifest`, and through it the raw files.
+Every stage directory holds `stage.json`, a `StageRecord`: the package version and
+the sha256 of the installed package's files (`source_sha256`), the sha256 of each
+table the stage wrote, the identity of each earlier stage it read, and the value of
+each build setting the stage declares in the registry. A stage's identity is the
+sha256 of its `stage.json`, so the fetch stage's identity covers its
+`raw_manifest`, and through it the raw files.
 
-The runner gives each stage a `Provenance`, which records reads as they happen:
-`StageContext.read` and `StageContext.raw_dir` record the stage read, and
-`Provenance.config` records every setting read through it. A stage read must be
-current: each setting it recorded must equal the build config's, and each stage it
-read must still have the identity it recorded, and be current itself. Otherwise the
-read raises `StaleStageError` naming the stage to rerun.
+The runner gives each stage a `Provenance`, and `StageContext.read` and
+`StageContext.raw_dir` record each stage read through it. A stage read must be
+current: the stage must have been built by the installed package, each setting it
+recorded must equal the build config's, and each stage it read must still have the
+identity it recorded, and be current itself. Otherwise the read raises
+`StaleStageError` naming the stage to rerun.
 """
 
 from __future__ import annotations
 
-from functools import reduce
+import hashlib
+from functools import cache, reduce
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 from pydantic_core import to_jsonable_python
 
+import climate_finance
 from climate_finance.build.errors import StaleStageError
 from climate_finance.schema import sha256_file
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Collection, Mapping
 
     from climate_finance.build.config import BuildConfig
 
@@ -39,6 +43,8 @@ class StageRecord(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     stage: str
+    package_version: str
+    source_sha256: str
     tables: dict[str, str]
     inputs: dict[str, str]
     settings: dict[str, JsonValue]
@@ -54,22 +60,72 @@ def identity(release_dir: Path, stage: str) -> str:
     return sha256_file(record_path(release_dir, stage))
 
 
-class Provenance:
-    """The stages and settings one stage reads while it runs."""
+def read_record(release_dir: Path, stage: str) -> StageRecord:
+    """`stage`'s `stage.json`.
 
-    def __init__(self, *, stage: str, release_dir: Path, config: BuildConfig) -> None:
+    Raises:
+        StaleStageError: when it is missing or the installed package cannot read
+            it.
+    """
+    path = record_path(release_dir, stage)
+    if not path.exists():
+        raise StaleStageError(
+            stage=stage, reason=f"has no {STAGE_RECORD}, so its inputs are unknown"
+        )
+    try:
+        return StageRecord.model_validate_json(path.read_text())
+    except ValidationError as error:
+        raise StaleStageError(
+            stage=stage,
+            reason=f"has a {STAGE_RECORD} that climate-finance "
+            f"{climate_finance.__version__} cannot read",
+        ) from error
+
+
+def setting_value(config: BuildConfig, setting: str) -> JsonValue:
+    """The value of `setting`, a dotted path such as `years.crdf`, in `config`.
+
+    Raises:
+        AttributeError: when `config` has no such setting.
+    """
+    return to_jsonable_python(reduce(getattr, setting.split("."), config))
+
+
+@cache
+def source_sha256() -> str:
+    """The sha256 over the path and sha256 of every file of the installed
+    `climate_finance` package, compiled bytecode and hidden files left out."""
+    root = Path(climate_finance.__file__).parent
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root)
+        skipped = any(
+            part == "__pycache__" or part.startswith(".") for part in relative.parts
+        )
+        if path.is_file() and not skipped:
+            digest.update(f"{relative.as_posix()}\0{sha256_file(path)}\n".encode())
+    return digest.hexdigest()
+
+
+class Provenance:
+    """The stages one stage reads while it runs, and the settings it declares."""
+
+    def __init__(
+        self,
+        *,
+        stage: str,
+        release_dir: Path,
+        config: BuildConfig,
+        settings: Collection[str],
+    ) -> None:
         self.stage = stage
         self.release_dir = release_dir
         self.inputs: dict[str, str] = {}
-        self.settings: dict[str, JsonValue] = {}
+        self.settings = {
+            setting: setting_value(config, setting) for setting in sorted(settings)
+        }
         self._config = config
         self._current: set[str] = set()
-
-    @property
-    def config(self) -> BuildConfig:
-        """The build config, recording each setting read through it."""
-        # A stand-in that reads like the config and records the setting paths read.
-        return cast("BuildConfig", _Recording(self._config, "", self._setting))
 
     def read_stage(self, stage: str) -> None:
         """Record a read of `stage`'s output.
@@ -88,23 +144,17 @@ class Provenance:
         """The `stage.json` of the stage's output, with `tables` their sha256."""
         return StageRecord(
             stage=self.stage,
+            package_version=climate_finance.__version__,
+            source_sha256=source_sha256(),
             tables=dict(sorted(tables.items())),
             inputs=dict(sorted(self.inputs.items())),
-            settings=dict(sorted(self.settings.items())),
+            settings=self.settings,
         )
-
-    def _setting(self, path: str, value: JsonValue) -> None:
-        self.settings[path] = value
 
     def _check_current(self, stage: str) -> None:
         if stage in self._current:
             return
-        path = record_path(self.release_dir, stage)
-        if not path.exists():
-            raise StaleStageError(
-                stage=stage, reason=f"has no {STAGE_RECORD}, so its inputs are unknown"
-            )
-        record = StageRecord.model_validate_json(path.read_text())
+        record = read_record(self.release_dir, stage)
         # Earlier stages first, so the error names the first stage to rerun.
         for upstream, recorded in record.inputs.items():
             self._check_current(upstream)
@@ -112,8 +162,23 @@ class Provenance:
                 raise StaleStageError(
                     stage=stage, reason=f"was built from another {upstream!r} output"
                 )
+        built_by = (record.package_version, record.source_sha256)
+        if built_by != (climate_finance.__version__, source_sha256()):
+            raise StaleStageError(
+                stage=stage,
+                reason=f"was built by climate-finance {record.package_version} "
+                f"with package files other than those of the installed "
+                f"{climate_finance.__version__}",
+            )
         for setting, recorded in record.settings.items():
-            now = to_jsonable_python(reduce(getattr, setting.split("."), self._config))
+            try:
+                now = setting_value(self._config, setting)
+            except AttributeError:
+                raise StaleStageError(
+                    stage=stage,
+                    reason=f"was built with {setting} = {recorded}, which the build "
+                    "config no longer sets",
+                ) from None
             if now != recorded:
                 raise StaleStageError(
                     stage=stage,
@@ -121,36 +186,3 @@ class Provenance:
                     f"config sets {now}",
                 )
         self._current.add(stage)
-
-
-class _Recording:
-    """A read-through view of a settings model that reports each setting read.
-
-    A field holding a model gives another view; any other field reports its value.
-    Any other attribute, such as a method, reports every field of the model.
-    """
-
-    def __init__(
-        self,
-        model: BaseModel,
-        prefix: str,
-        report: Callable[[str, JsonValue], None],
-    ) -> None:
-        self._model = model
-        self._prefix = prefix
-        self._report = report
-
-    def __getattr__(self, name: str) -> object:
-        value = getattr(self._model, name)
-        fields = type(self._model).model_fields
-        if name not in fields:
-            for field in fields:
-                self._report(
-                    self._prefix + field,
-                    to_jsonable_python(getattr(self._model, field)),
-                )
-            return value
-        if isinstance(value, BaseModel):
-            return _Recording(value, f"{self._prefix}{name}.", self._report)
-        self._report(self._prefix + name, to_jsonable_python(value))
-        return value

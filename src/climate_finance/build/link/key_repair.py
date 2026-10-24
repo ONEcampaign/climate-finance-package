@@ -12,13 +12,13 @@ links is left out of the later ones:
 - `repair_pn_variant`: project numbers equal once separators, a `CRSn` suffix and
   leading zeros are dropped (`project_core`).
 
-  In both, a number the commitments place in more than one country names a
-  programme or an account, as the US `35_80` (PEPFAR operations) does in 55
-  recipients, so it links only within the disbursement's recipient and purpose
-  (`_programmes`). Under one such number the US files unrelated activities of one
-  recipient, as `76_51689` holds "USAID Pay and Benefits" (91010) and a customs
-  project (33120); a link across purposes there has a title that disagrees 22
-  times as often, by value, as one within a purpose.
+  In both, a number whose commitments and disbursements fall in more than one
+  country names a programme or an account, as the US `35_80` (PEPFAR operations)
+  does in 55 recipients, so it links only within the disbursement's recipient and
+  purpose (`_programmes`). Under one such number the US files unrelated
+  activities of one recipient, as `76_51689` holds "USAID Pay and Benefits"
+  (91010) and a customs project (33120); a link across purposes there has a title
+  that disagrees 22 times as often, by value, as one within a purpose.
 - `repair_wb_parent`: the same World Bank loan or credit number inside project
   numbers of the form `P<project>.<loan>.CRS<n>`, as when additional financing is
   booked under the parent project.
@@ -171,7 +171,7 @@ def repair_keys(
     facts = _unit_facts(units, crs=crs)
     commitments = facts.filter(pl.col("commitment_usd") > 0)
     unique_titles = _unique_titles(commitments)
-    programmes = {key: _programmes(commitments, key=key) for key in (_PN, _CORE)}
+    programmes = {key: _programmes(facts, key=key) for key in (_PN, _CORE)}
     disbursements = facts.filter(
         pl.col("disbursement_usd") > 0,
         pl.col("floor_year").is_null() | (pl.col("floor_year") >= first_year),
@@ -243,12 +243,12 @@ def _unique_titles(commitments: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def _programmes(commitments: pl.DataFrame, *, key: tuple[str, ...]) -> pl.DataFrame:
-    """The values of the number `key` whose commitment units name more than one
-    country. Regional and unspecified recipients name none."""
+def _programmes(units: pl.DataFrame, *, key: tuple[str, ...]) -> pl.DataFrame:
+    """The values of the number `key` whose units, committing or disbursing, name
+    more than one country. Regional and unspecified recipients name none."""
     country = ~pl.col("recipient_code").is_in(_regional_codes())
     return (
-        commitments.drop_nulls(key)
+        units.drop_nulls(key)
         .group_by(key)
         .agg(countries=pl.col("recipient_code").filter(country).n_unique())
         .filter(pl.col("countries") > 1)

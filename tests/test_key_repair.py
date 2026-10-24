@@ -185,8 +185,20 @@ def test_a_unit_stays_out_of_a_group_holding_its_own_crs_id() -> None:
     assert repaired == {}
 
 
-def test_a_programme_number_links_only_within_the_disbursements_recipient() -> None:
-    # The number commits in two countries, so it names a programme, as the US
+@pytest.mark.parametrize(
+    "elsewhere",
+    [
+        # Committed in Ethiopia too.
+        {"c_eth": {"crs_id": "A"}},
+        # Committed in Kenya alone: the Malawian disbursement names the second
+        # country.
+        {},
+    ],
+)
+def test_a_programme_number_links_only_within_the_disbursements_recipient(
+    elsewhere: dict[str, dict[str, object]],
+) -> None:
+    # The number falls in two countries, so it names a programme, as the US
     # `35_80` does: the Kenyan disbursement reaches the Kenyan commitments of its
     # purpose, and the Malawian one reaches none. Two Kenyan crs ids keep the
     # exact tiers off.
@@ -194,7 +206,7 @@ def test_a_programme_number_links_only_within_the_disbursements_recipient() -> N
     kenya = {**programme, "recipient_code": 248}
     repaired = _repaired(
         {
-            "c_eth": _commitment(**programme, crs_id="A"),
+            **{name: _commitment(**programme, **f) for name, f in elsewhere.items()},
             "c_ken": _commitment(**kenya, crs_id="B"),
             "c_ken2": _commitment(**kenya, crs_id="B2", year=2020),
             "c_ken_other": _commitment(**kenya, crs_id="B3", purpose_code=91010),

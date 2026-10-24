@@ -3,16 +3,30 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from normalised import IATI_PUBLISHERS, record_fetch, write_raw
+from reads import record_reads
 
 import climate_finance.build
-from climate_finance.build import BuildConfig, build, load_config, run_stages
+from climate_finance.build import (
+    BuildConfig,
+    build,
+    load_config,
+    measure,
+    run_stages,
+)
 from climate_finance.build.errors import (
     BuildError,
     ConfigError,
     StageInputMissingError,
     StageOutputError,
 )
-from climate_finance.build.stages import REGISTRY, Stage, StageContext, StageDef
+from climate_finance.build.stages import (
+    REGISTRY,
+    Stage,
+    StageContext,
+    StageDef,
+    raw_dir,
+)
 from climate_finance.schema import STAGE_TABLES, Column, TableSchema
 
 BUILD_TOML = Path(__file__).parents[1] / "build.toml"
@@ -96,6 +110,39 @@ def test_offline_reaches_every_stage(
     )
 
     assert seen == [True, True]
+
+
+@pytest.mark.parametrize("switches", [False, True])
+def test_every_stage_reads_the_settings_it_declares_and_no_others(
+    config: BuildConfig,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    switches: bool,
+) -> None:
+    # An earlier fetch laid the raw fixtures out, so the build runs offline from
+    # fetch on. Measure models no provider, since the fixtures hold too few.
+    config = config.model_copy(
+        update={
+            "key_repair": switches,
+            "recoveries": switches,
+            "sources": config.sources.model_copy(
+                update={"crs_file": None, "iati_publishers": IATI_PUBLISHERS}
+            ),
+        }
+    )
+    manifest = write_raw(raw_dir(tmp_path), crdf_years=config.years.crdf)
+    record_fetch(tmp_path, manifest, config=config)
+    facts = measure.load_provider_facts()
+    monkeypatch.setattr(
+        measure,
+        "load_provider_facts",
+        lambda: facts.model_copy(update={"modelled": ()}),
+    )
+    registry, reads = record_reads(monkeypatch, config, REGISTRY)
+
+    run_stages(registry, release="r", release_dir=tmp_path, config=config, offline=True)
+
+    assert reads == {stage.name: set(stage.settings) for stage in REGISTRY}
 
 
 def test_sorted_writes_hash_identically_whatever_the_row_order(
