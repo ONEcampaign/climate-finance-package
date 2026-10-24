@@ -7,9 +7,9 @@ import polars as pl
 
 def draw_blind_sample(*, release_dir: Path, out_path: Path) -> Path:
     """Draw pairs stratified by provider and band, scores hidden, weights stored."""
-    raise NotImplementedError("drawing the blind sample")
+    raise NotImplementedError("draw_blind_sample is not implemented")
 
 
 def estimate_precision(labels: pl.DataFrame) -> pl.DataFrame:
     """Per-provider precision with its sequential 95% interval."""
-    raise NotImplementedError("estimating precision")
+    raise NotImplementedError("estimate_precision is not implemented")

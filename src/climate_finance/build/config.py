@@ -2,7 +2,7 @@
 
 import tomllib
 from pathlib import Path
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     AfterValidator,
@@ -33,27 +33,37 @@ class _Section(BaseModel):
 
 
 class Years(_Section):
-    """Inclusive first and last years read from each source.
+    """The years read from each source, as inclusive first and last years.
 
-    Fetch also reads the recipient CRDF of the year before `crdf`, which gives the
-    first agency share year its two-year span.
+    `crdf` is a pair or `"all"`, every year the recipient-perspective CRDF holds.
+    `crs`, when unset, runs from the first CRDF year to the last year the CRS file
+    holds. Where the recipient CRDF holds the year before the first CRDF year, fetch
+    downloads that year too, which gives the first agency share year its two-year
+    span, and the CRS starts then, so the span's CRDF rows and CRS commitments cover
+    the same years. Under `"all"` there is no such year. Fetch resolves the years
+    and records them in `raw_manifest`, and every later stage reads them from there.
 
-    `crs_last_complete` is the last CRS year every provider has reported. The CRS
+    `crs_last_complete` is the last CRS year every provider has reported; the CRS
     years after it hold early reports only. Disbursement observed over time and
     the modelled line's CRS series end there.
     """
 
-    crdf: tuple[int, int]
-    crs: tuple[int, int]
+    crdf: tuple[int, int] | Literal["all"]
+    crs: tuple[int, int] | None = None
     crs_last_complete: int
 
     @model_validator(mode="after")
     def _complete_year_inside_crs(self) -> Self:
-        first, last = self.crs
-        if not first <= self.crs_last_complete <= last:
+        complete = self.crs_last_complete
+        if self.crs is not None and not self.crs[0] <= complete <= self.crs[1]:
             raise ValueError(
-                f"crs_last_complete {self.crs_last_complete} lies outside the CRS "
-                f"years {first} to {last}"
+                f"crs_last_complete {complete} lies outside the CRS years "
+                f"{self.crs[0]} to {self.crs[1]}"
+            )
+        if self.crs is None and self.crdf != "all" and complete < self.crdf[0]:
+            raise ValueError(
+                f"crs_last_complete {complete} lies before the first CRDF year "
+                f"{self.crdf[0]}"
             )
         return self
 
@@ -72,8 +82,9 @@ class Ledgers(_Section):
     Finances One, `gcf` the GCF projects file fetch always writes, `gcf_readiness`
     the GCF readiness list, and any other name the files of that publisher on the
     IATI Bulk Data Service. `years` are the first and last calendar years read and
-    checked. With `archive`, a directory laid out as `raw/ledgers/`, fetch copies the
-    files from it and downloads none.
+    checked; fetch records them on each ledger file's `raw_manifest` row, and later
+    stages read them from there (`fetch.ledger_years`). With `archive`, a directory
+    laid out as `raw/ledgers/`, fetch copies the files from it and downloads none.
     """
 
     years: tuple[int, int]
@@ -156,6 +167,19 @@ class BuildConfig(_Section):
         if self.jev_labels and self.sources.adaptation_labels is None:
             raise ValueError("jev_labels needs sources.adaptation_labels")
         return self
+
+
+# The settings `release.json` records, as dotted paths: every switch, the EIB
+# recovery routes left out, and every year range.
+RELEASE_SETTINGS = (
+    *(
+        name
+        for name, field in BuildConfig.model_fields.items()
+        if field.annotation is bool
+    ),
+    "skip_eib_routes",
+    *(f"years.{name}" for name in Years.model_fields),
+)
 
 
 def load_config(path: Path) -> BuildConfig:

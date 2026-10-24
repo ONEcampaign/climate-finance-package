@@ -32,7 +32,10 @@ links is left out of the later ones:
   and Benefits" (91010) and a customs project (33120); a link across purposes
   there has a title that disagrees 22 times as often, by value, as one within a
   purpose. A number committed in one country whose units sit in two is one loan
-  under a stray recipient code, as at the IDB, and links across them.
+  under a stray recipient code, as at the IDB, and links across them. Both rules
+  compare numbers as awards (`keys.split_components`), so under an award that
+  commits its components separately and has a unit that disburses without
+  committing, a link stays within one purpose.
 - `repair_afdb_scientific`: a long numeric project number that a spreadsheet
   rounded, as `2.10015E+12` or `2100150000000`, keeps its leading digits and its
   length (`rounded_digits`). It links to a commitment of the same agency and
@@ -82,13 +85,16 @@ from rapidfuzz.process import cpdist
 from climate_finance import schema
 from climate_finance.build.link.id_practice import canonical_crs_id
 from climate_finance.build.link.keys import (
-    ROUNDED_MIN_DIGITS,
     Decide,
     as_exact_links,
     floor_seen,
     regional_codes,
-    rounded_digits,
     separator_free_pn,
+    split_components,
+)
+from climate_finance.build.normalise.project_numbers import (
+    ROUNDED_MIN_DIGITS,
+    rounded_digits,
 )
 
 # A disbursement reaching more commitments than this sits under a shared key.
@@ -103,7 +109,7 @@ CORE_MIN_CHARS = 4
 PROGRAMME_COUNTRIES = 3
 
 _LONG_NUMBER = rf"^\d{{{ROUNDED_MIN_DIGITS},}}$"
-_PN = ("donor_code", "agency_code", "project_number")
+_PN = ("donor_code", "agency_code", "award")
 _CORE = ("donor_code", "agency_code", "core")
 _PLACE = ("donor_code", "agency_code", "recipient_code")
 _TITLE_KEY = (*_PLACE, "title_words")
@@ -223,9 +229,9 @@ def repair_keys(
                 rule(disbursements, commitments).filter(seen),
                 method=method,
                 agrees=agreements.get(method, _AGREES),
-            ).lazy(),
+            ),
             task="trace",
-        ).collect()
+        )
         if decide is not None:
             pairs = decide(pairs)
         found.append(pairs)
@@ -245,7 +251,9 @@ def _unit_facts(units: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
     tokens of their first record that has one (`_text_hash`).
 
     A rounded number is no unit key (`normalise_pn`), so `rounded` comes from the
-    first record, by record id, whose published project number is one."""
+    first record, by record id, whose published project number is one. `award`
+    and `core` are the project number and its core as awards
+    (`split_components`)."""
     records = (
         units.lazy()
         .select("unit_id", record_id="record_ids")
@@ -268,7 +276,7 @@ def _unit_facts(units: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
         )
         .collect()
     )
-    return (
+    facts = (
         units.drop("record_ids")
         .join(records, on="unit_id", how="left")
         .with_columns(title=title_tokens(pl.col("title")))
@@ -277,6 +285,10 @@ def _unit_facts(units: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
             core=project_core(pl.col("project_number")),
             line_id=canonical_crs_id(pl.col("crs_id")),
         )
+    )
+    return facts.with_columns(
+        award=split_components(facts, number="project_number"),
+        core=split_components(facts, number="core"),
     )
 
 

@@ -2,13 +2,18 @@
 
 A unit sums the CRS records that share every key field (`UNIT_KEY`). Each disbursement
 unit takes the first tier in `TIERS` whose key reaches an eligible commitment unit,
-meaning one placed at or before the disbursement's record year and, outside the
-parent-id tier, at or after its floor year. The parent-id tier ignores the floor, since
-an EU contract record carries the contract's own date, which falls on or after its
-decision's commitment, and a lettered record (`parent_id`) its own. A disbursement
-whose floor precedes the first CRS year continues a commitment the build sees only
-where a later record carries that commitment's date, so a tier links it only where
-its key reaches a commitment placed no later than the floor (`floor_seen`).
+meaning one placed at or before the disbursement's record year and at or after its floor
+year. A disbursement under the commitment's own crs id passes its floor when no
+commitment unit of that crs id or of its project number sits in its floor year, since
+the floor then names no commitment the build can see, as with KfW's 2021-dated
+disbursements under its 2020 commitment `2020142415`. An EU contract record is exempt
+from the floor in the parent-id tier, since it carries the contract's own date, which
+falls on or after its decision's commitment. A lettered record (`parent_id`) reaches its
+parent only in the same recipient under the same project number, a missing number
+matching only a missing one. A disbursement whose floor precedes the first CRS year
+continues a commitment the build sees only where a later record carries that
+commitment's date, so a tier links it only where its key reaches a commitment placed
+no later than the floor (`floor_seen`).
 
 The World Bank tier comes first. IBRD and IDA crs ids name projects, and a project
 holds several loans and credits, so a tier on the crs id lets allocation spend one
@@ -22,9 +27,12 @@ each links only where its own key maps to one crs id on the commitment side
 recipient) key and unique keys 84.5%. A key with the purpose or the commitment date is
 narrower, so the tiers that use one do not inherit the coarser key's refusal: the AsDB
 books one loan number under a new crs id each year, and Canada files one line of a
-recipient under several crs ids split by purpose. They compare project numbers without
-`-` and `_` (`pn_key`). They hold for every agency, since one whose ids mostly persist,
-such as Korea's EDCF or KfW, still files some projects under a new crs id each year.
+recipient under several crs ids split by purpose. They hold for every agency, since one
+whose ids mostly persist, such as Korea's EDCF or KfW, still files some projects under
+a new crs id each year. They compare awards (`AWARD_KEY`): the project number without
+`-` and `_` (`pn_key`), joined to the purpose code where the award commits its
+components under separate crs ids and purposes and one of its units disburses
+without committing (`split_components`).
 
 The first project-number tier adds the commitment date (`line_date`). A disbursement
 record that repeats its line's commitment date continues that line, where the
@@ -38,16 +46,19 @@ carry 31 December against the 0.3% a real date would.
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cache
-from importlib.resources import files
+from typing import overload
 
 import polars as pl
 
-from climate_finance import schema
+from climate_finance import catalogue, schema
 from climate_finance.build.link.id_practice import (
+    LETTER_SUFFIX_DONORS,
+    PN_KEY,
     canonical_crs_id,
     parent_id,
 )
 from climate_finance.build.normalise.ids import content_id
+from climate_finance.build.normalise.project_numbers import normalise_pn
 
 # Takes the review decisions to a tier's `links` rows (`decisions.drop_pairs`).
 type Decide = Callable[[pl.DataFrame], pl.DataFrame]
@@ -62,31 +73,10 @@ UNIT_KEY = (
     "year",
     "commitment_year",
 )
-# Project numbers that name no project, as `normalise_pn` leaves them.
-PLACEHOLDER_PNS = (
-    "NOTAPPLICABLE",
-    "N.A.",
-    "N.A",
-    "NA",
-    "N/A",
-    "NONE",
-    "NULL",
-    "TBD",
-    "UNKNOWN",
-    "0",
-    "-",
-    ".",
-    "..",
-    "X",
-)
-# A numeric project number at least this long can be one a spreadsheet rounded.
-ROUNDED_MIN_DIGITS = 10
-_LONG_NUMBER = rf"^\d{{{ROUNDED_MIN_DIGITS},}}$"
-_SCIENTIFIC = r"^(\d)\.(\d+)E\+(\d+)$"
 # IBRD and IDA, whose project numbers carry the loan or credit number.
 WORLD_BANK_DONORS = (901, 905)
-# The project-number tiers' key, on `separator_free_pn`.
-PN_TIER_KEY = ("donor_code", "agency_code", "pn_key", "recipient_code")
+# The project-number tiers' key: one award of one agency in one recipient.
+AWARD_KEY = ("donor_code", "agency_code", "award", "recipient_code")
 # The month and day of commitment dates that stand for a year (`line_date`).
 PLACEHOLDER_DAYS = ("01-01", "12-31")
 
@@ -95,15 +85,17 @@ PLACEHOLDER_DAYS = ("01-01", "12-31")
 class Tier:
     """A key tier. It holds the commitment key, the disbursement key it must equal,
     whether it is a project-number tier, which reaches only commitment keys that
-    hold one value of `unique_by` (`_unique_pn`), and whether it holds to the
-    disbursement's floor."""
+    hold one value of `unique_by` (`_unique_pn`), the disbursement column holding
+    the floor it keeps, and whether its key holds the crs id, so that a
+    disbursement under the commitment's own crs id may pass its floor."""
 
     name: str
     commitment_key: tuple[str, ...]
     unit_key: tuple[str, ...]
     project_number: bool = False
     unique_by: str = "crs_id"
-    floored: bool = True
+    floor: str = "floor_year"
+    same_crs_id: bool = False
 
 
 TIERS = (
@@ -112,48 +104,34 @@ TIERS = (
         "crs_id_purpose",
         ("donor_code", "crs_id", "purpose_code", "recipient_code"),
         ("donor_code", "crs_id", "purpose_code", "recipient_code"),
+        same_crs_id=True,
     ),
-    Tier("crs_id", ("donor_code", "crs_key"), ("donor_code", "crs_key")),
+    Tier(
+        "crs_id", ("donor_code", "crs_key"), ("donor_code", "crs_key"), same_crs_id=True
+    ),
     Tier(
         "crs_id_parent",
-        ("donor_code", "crs_id"),
+        ("donor_code", "parent_key"),
         ("donor_code", "crs_parent"),
-        floored=False,
+        floor="parent_floor_year",
     ),
     Tier(
         "pn_recipient_date",
-        (*PN_TIER_KEY, "line_date"),
-        (*PN_TIER_KEY, "line_date"),
+        (*AWARD_KEY, "line_date"),
+        (*AWARD_KEY, "line_date"),
         project_number=True,
         unique_by="unit_id",
     ),
     Tier(
         "pn_recipient_purpose",
-        (*PN_TIER_KEY, "purpose_code"),
-        (*PN_TIER_KEY, "purpose_code"),
+        (*AWARD_KEY, "purpose_code"),
+        (*AWARD_KEY, "purpose_code"),
         project_number=True,
     ),
-    Tier("pn_recipient", PN_TIER_KEY, PN_TIER_KEY, project_number=True),
+    Tier("pn_recipient", AWARD_KEY, AWARD_KEY, project_number=True),
 )
 if tuple(tier.name for tier in TIERS) != schema.KEY_TIERS:
     raise RuntimeError("TIERS must follow schema.KEY_TIERS")
-
-
-def normalise_pn(project_number: pl.Expr) -> pl.Expr:
-    """Upper-case, drop a float artefact `.0` and every space. Placeholders, numbers
-    a spreadsheet rounded (`rounded_digits`) and values shorter than two characters
-    or holding no letter or digit become null.
-
-    A rounded number such as the AfDB's `2.0002E+12` stands for hundreds of
-    projects across dozens of recipients, so no key may join on it."""
-    pn = _cleaned(project_number)
-    usable = (
-        ~pn.is_in(PLACEHOLDER_PNS)
-        & pn.str.contains("[A-Z0-9]")
-        & (pn.str.len_chars() >= 2)
-        & rounded_digits(pn).is_null()
-    )
-    return pl.when(usable).then(pn)
 
 
 def separator_free_pn(project_number: pl.Expr) -> pl.Expr:
@@ -162,40 +140,6 @@ def separator_free_pn(project_number: pl.Expr) -> pl.Expr:
     Germany's `01LE1907A1_L` and `01LE1907A1L`."""
     stripped = project_number.str.replace_all(r"[-_]", "")
     return pl.when(stripped.str.len_chars() >= 2).then(stripped)
-
-
-def rounded_digits(project_number: pl.Expr) -> pl.Expr:
-    """For a project number a spreadsheet rounded, as `2.10015E+12` or
-    `2100150000000`, the digits it kept (`prefix`) and the length of the number it
-    stands for (`digits`), or null for other numbers."""
-    project_number = _cleaned(project_number)
-    scientific = project_number.str.extract_groups(_SCIENTIFIC)
-    lead, rest, exponent = (scientific.struct.field(name) for name in ("1", "2", "3"))
-    zeros = project_number.str.contains(_LONG_NUMBER) & project_number.str.ends_with(
-        "0000"
-    )
-    prefix = (
-        pl.when(lead.is_not_null())
-        .then(lead + rest)
-        .when(zeros)
-        .then(project_number.str.strip_chars_end("0"))
-    )
-    digits = (
-        pl.when(lead.is_not_null())
-        .then(exponent.cast(pl.Int32) + 1)
-        .when(zeros)
-        .then(project_number.str.len_chars().cast(pl.Int32))
-    )
-    return pl.when(prefix.is_not_null()).then(pl.struct(prefix=prefix, digits=digits))
-
-
-def _cleaned(project_number: pl.Expr) -> pl.Expr:
-    return (
-        project_number.str.to_uppercase()
-        .str.strip_chars()
-        .str.replace(r"\.0$", "")
-        .str.replace_all(r"\s+", "")
-    )
 
 
 def loan_number(donor_code: pl.Expr, project_number: pl.Expr) -> pl.Expr:
@@ -252,26 +196,34 @@ def link_by_keys(
     under its first matching tier, as `links` rows.
 
     `first_year` is the first CRS year the build loads. The crs-id tiers compare
-    `canonical_crs_id`s and the project-number tiers `pn_key`s (`_with_pn_key`).
-    `group_id` names the tier and its key, so the disbursement
-    units of one group reach the same commitments, less those their own record
-    year or floor rules out. `decide` applies the review decisions to each tier's
-    links before the next tier runs, so a unit whose links a tier's decisions
-    reject all goes on to the later tiers.
+    `canonical_crs_id`s and the project-number tiers awards (`AWARD_KEY`).
+    `group_id` names the tier and its key, so the disbursement units of one group
+    reach the same commitments, less those their own record year or floor rules
+    out. `decide` applies the review decisions to each tier's links before the next
+    tier runs, so a unit whose links a tier's decisions reject all goes on to the
+    later tiers.
     """
     units = units.with_columns(
         crs_id=canonical_crs_id(pl.col("crs_id")),
         line_date=line_date(pl.col("commitment_date")),
-    )
-    units = units.with_columns(crs_key=crs_key(units))
-    remaining = units.filter(pl.col("disbursement_usd") > 0).with_columns(
-        crs_parent=parent_id(pl.col("donor_code"), pl.col("crs_id")),
         loan=loan_number(pl.col("donor_code"), pl.col("project_number")),
     )
-    commitments = units.filter(pl.col("commitment_usd") > 0).with_columns(
-        loan=loan_number(pl.col("donor_code"), pl.col("project_number"))
+    units = units.with_columns(
+        crs_key=crs_key(units),
+        parent_key=_parent_key(pl.col("crs_id")),
+        pn_key=_pn_key(units),
     )
-    remaining, commitments = _with_pn_key(remaining, commitments)
+    units = units.with_columns(award=split_components(units, number="pn_key"))
+    commitments = units.filter(pl.col("commitment_usd") > 0)
+    remaining = units.filter(pl.col("disbursement_usd") > 0).with_columns(
+        crs_parent=_parent_key(parent_id(pl.col("donor_code"), pl.col("crs_id"))),
+        parent_floor_year=pl.when(pl.col("donor_code") != schema.EU_INSTITUTIONS).then(
+            pl.col("floor_year")
+        ),
+    )
+    remaining = remaining.with_columns(
+        floor_held=_floor_held(remaining, commitments=commitments)
+    )
 
     pairs = []
     for tier in TIERS:
@@ -283,7 +235,7 @@ def link_by_keys(
             tier=tier,
             first_year=first_year,
         )
-        tier_links = as_exact_links(tier_pairs.lazy(), task="trace").collect()
+        tier_links = as_exact_links(tier_pairs, task="trace")
         if decide is not None:
             tier_links = decide(tier_links)
         pairs.append(tier_links)
@@ -323,7 +275,7 @@ def line_date(commitment_date: pl.Expr) -> pl.Expr:
 def crs_key(units: pl.DataFrame) -> pl.Series:
     """Each unit's crs id, with its recipient code where the (donor, crs id) names
     several lines: units in more than one country, or in more than one recipient
-    under more than one project number.
+    under more than one project number, a missing number counting as one more.
 
     Canada numbers a project's lines inside the crs id and gives a line to another
     country from one year to the next, so `P007307001` files Tanzania under
@@ -337,7 +289,7 @@ def crs_key(units: pl.DataFrame) -> pl.Series:
         (pl.col("recipient_code").filter(country).n_unique() > 1)
         | (
             (pl.col("recipient_code").n_unique() > 1)
-            & (pl.col("project_number").drop_nulls().n_unique() > 1)
+            & (pl.col("project_number").n_unique() > 1)
         )
     ).over("donor_code", "crs_id")
     return units.select(
@@ -357,45 +309,103 @@ def partner_recipient(*, commitment: pl.Expr, disbursement: pl.Expr) -> pl.Expr:
 @cache
 def regional_codes() -> tuple[int, ...]:
     """The DAC recipient codes of regions and of unspecified recipients."""
-    recipients = pl.read_csv(
-        (files("climate_finance") / "data" / "recipients.csv").read_bytes(),
-        schema_overrides={"code": pl.Int32},
-    )
-    return tuple(
-        recipients.filter(pl.col("name").str.contains("regional|unspecified"))["code"]
-    )
+    regions = pl.col("name").str.contains("regional|unspecified")
+    return tuple(catalogue.recipients.list().filter(regions)["code"])
 
 
-def _with_pn_key(
-    disbursements: pl.DataFrame, commitments: pl.DataFrame
-) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Both frames with `pn_key`: the `separator_free_pn`, or the project number as
-    written where the separator-free key holds commitments under more than one crs
-    id. Dropping separators can merge two numbers into one key, as Denmark's
-    `403.KOSOVO.1-1-01` and `403.KOSOVO.1-10-1`, which `_unique_pn` would then
-    refuse though each number names one project."""
-    pn_key = separator_free_pn(pl.col("project_number"))
+def _pn_key(units: pl.DataFrame) -> pl.Series:
+    """Each unit's `separator_free_pn`, or its project number as written where the
+    separator-free key holds commitments under more than one crs id. Dropping
+    separators can merge two numbers into one key, as Denmark's `403.KOSOVO.1-1-01`
+    and `403.KOSOVO.1-10-1`, which `_unique_pn` would then refuse though each
+    number names one project."""
+    key = ("donor_code", "agency_code", "pn_key", "recipient_code")
+    keyed = units.with_columns(pn_key=separator_free_pn(pl.col("project_number")))
     shared = (
-        commitments.with_columns(pn_key=pn_key)
-        .drop_nulls(PN_TIER_KEY)
-        .group_by(PN_TIER_KEY)
+        keyed.filter(pl.col("commitment_usd") > 0)
+        .drop_nulls(key)
+        .group_by(key)
         .agg(shared=pl.col("crs_id").n_unique() > 1)
         .filter("shared")
     )
-
-    def keyed(frame: pl.DataFrame) -> pl.DataFrame:
-        return (
-            frame.with_columns(pn_key=pn_key)
-            .join(shared, on=PN_TIER_KEY, how="left", maintain_order="left")
-            .with_columns(
-                pn_key=pl.when("shared")
-                .then(pl.col("project_number"))
-                .otherwise(pl.col("pn_key"))
-            )
-            .drop("shared")
+    return (
+        keyed.select(*key, "project_number")
+        .join(shared, on=key, how="left", maintain_order="left")
+        .select(
+            pl.when("shared")
+            .then(pl.col("project_number"))
+            .otherwise(pl.col("pn_key"))
+            .alias("pn_key")
         )
+        .to_series()
+    )
 
-    return keyed(disbursements), keyed(commitments)
+
+def _parent_key(crs_id: pl.Expr) -> pl.Expr:
+    """`crs_id` as the parent-id tier matches it: for a `LETTER_SUFFIX_DONORS` unit
+    with its recipient and project number, a missing number matching a missing
+    one, since a lettered record continues one project in one recipient."""
+    lettered = pl.concat_str(
+        crs_id,
+        pl.col("recipient_code"),
+        pl.col("project_number").fill_null(""),
+        separator="|",
+    )
+    return (
+        pl.when(pl.col("donor_code").is_in(LETTER_SUFFIX_DONORS))
+        .then(lettered)
+        .otherwise(crs_id)
+    )
+
+
+def split_components(units: pl.DataFrame, *, number: str) -> pl.Series:
+    """Each unit's `number`, joined to its purpose code under a component award: a
+    (donor, agency, `number`) whose commitment units of one placed year carry more
+    than one crs id and more than one purpose, and one of whose units disburses
+    without committing.
+
+    The US commits each component of an award under its own crs id and purpose, as
+    award `76_48621` commits its biosphere (41020), legislative (15152) and trade
+    policy (33110) components in Viet Nam in 2015 under three crs ids, and
+    disburses its HIV/AIDS component (13040) under a fourth. A link under the award
+    then stays within one component. The split keeps a disbursement with no
+    commitment of its own out of another purpose's commitment; where every unit
+    that disburses commits too, as Canada files one project's lines by purpose,
+    each is a line of the project, and what it disbursed beyond its own commitment
+    may go to its sibling lines.
+    """
+    award = ["donor_code", "agency_code", number]
+    committed = pl.col("commitment_usd") > 0
+    uncommitted = (
+        units.filter(pl.col("disbursement_usd") > 0, ~committed.fill_null(False))
+        .drop_nulls(award)
+        .select(award)
+        .unique()
+    )
+    components = (
+        units.filter(committed)
+        .drop_nulls(award)
+        .group_by(*award, "placed_year")
+        .agg(
+            ids=pl.col("crs_id").n_unique(), purposes=pl.col("purpose_code").n_unique()
+        )
+        .filter(pl.col("ids") > 1, pl.col("purposes") > 1)
+        .select(award)
+        .unique()
+        .join(uncommitted, on=award, how="semi")
+        .with_columns(component=pl.lit(True))
+    )
+    return (
+        units.select(*award, "purpose_code")
+        .join(components, on=award, how="left", maintain_order="left")
+        .select(
+            pl.when(pl.col("component"))
+            .then(pl.concat_str(number, "purpose_code", separator="|"))
+            .otherwise(pl.col(number))
+            .alias(number)
+        )
+        .to_series()
+    )
 
 
 def _unique_pn(
@@ -403,6 +413,25 @@ def _unique_pn(
 ) -> pl.DataFrame:
     """Commitments whose `key` maps to one value of `by`, a null counting as one."""
     return commitments.drop_nulls(key).filter(pl.col(by).n_unique().over(key) == 1)
+
+
+def _floor_held(disbursements: pl.DataFrame, *, commitments: pl.DataFrame) -> pl.Series:
+    """Whether a commitment unit sits in each disbursement's floor year under its
+    crs id or its (donor, agency, project number, recipient). The floor then names
+    a commitment the build can see, and holds in every tier."""
+    held = pl.lit(False)
+    for key in (("donor_code", "crs_id"), PN_KEY):
+        placed = (
+            commitments.select(*key, floor_year="placed_year")
+            .drop_nulls()
+            .unique()
+            .with_columns(held=pl.lit(True))
+        )
+        found = disbursements.select(*key, "floor_year").join(
+            placed, on=[*key, "floor_year"], how="left", maintain_order="left"
+        )
+        held = held | found["held"].fill_null(False)
+    return disbursements.select(held.alias("floor_held")).to_series()
 
 
 def _eligible_pairs(
@@ -413,16 +442,17 @@ def _eligible_pairs(
     first_year: int,
 ) -> pl.DataFrame:
     """(disbursement, commitment) unit pairs equal on the tier's key, the commitment
-    placed no later than the record year and, in a floored tier, no earlier than
-    the disbursement's floor year, for disbursements whose floor the tier sees
-    (`floor_seen`)."""
-    eligible = pl.col("placed_year") <= pl.col("year")
-    if tier.floored:
-        eligible &= pl.col("floor_year").is_null() | (
-            pl.col("placed_year") >= pl.col("floor_year")
-        )
+    placed no later than the record year and no earlier than the tier's floor, for
+    disbursements whose floor the tier sees (`floor_seen`). In a tier keyed on the
+    crs id, the floor holds only where it names a commitment (`_floor_held`)."""
+    floor = pl.col(tier.floor)
+    passes = floor.is_null() | (pl.col("placed_year") >= floor)
+    if tier.same_crs_id:
+        passes |= ~pl.col("floor_held")
+    eligible = (pl.col("placed_year") <= pl.col("year")) & passes
+    dates = dict.fromkeys(("year", "floor_year", tier.floor, "floor_held"))
     return (
-        disbursements.select("unit_id", "year", "floor_year", *tier.unit_key)
+        disbursements.select("unit_id", *dates, *tier.unit_key)
         .join(
             commitments.select(
                 "unit_id", "placed_year", *tier.commitment_key
@@ -447,10 +477,32 @@ def _eligible_pairs(
     )
 
 
-def as_exact_links(pairs: pl.LazyFrame, *, task: str) -> pl.LazyFrame:
-    """`pairs` (left_id, right_id, group_id, link_method) as certain `links` rows."""
+@overload
+def as_exact_links(pairs: pl.DataFrame, *, task: str) -> pl.DataFrame: ...
+@overload
+def as_exact_links(pairs: pl.LazyFrame, *, task: str) -> pl.LazyFrame: ...
+def as_exact_links(
+    pairs: pl.DataFrame | pl.LazyFrame, *, task: str
+) -> pl.DataFrame | pl.LazyFrame:
+    """`pairs` (left_id, right_id, group_id, link_method) as rule `links` rows,
+    eager or lazy as `pairs` is.
+
+    `probability` is 1.0 on a certain link: a `crdf_crs` link by a
+    `CERTAIN_ROUTES` route, a link of another task by a `CERTAIN_METHODS` tier, or
+    a unit linked to itself, whose records commit and disburse. It is null on every
+    other rule link, which no model scored. The task decides, since the GEF's
+    `crosswalk` trace links share their name with the EIB's certain route.
+    """
+    methods = schema.CERTAIN_ROUTES if task == "crdf_crs" else schema.CERTAIN_METHODS
+    certain = pl.col("link_method").is_in(methods) | (
+        pl.col("left_id") == pl.col("right_id")
+    )
     given = {name: pl.col(name) for name in pairs.collect_schema().names()}
-    fixed = {"task": pl.lit(task), "probability": pl.lit(1.0), "review": pl.lit(False)}
+    fixed = {
+        "task": pl.lit(task),
+        "probability": pl.when(certain).then(1.0),
+        "review": pl.lit(False),
+    }
     return pairs.select(
         given.get(name, fixed.get(name, pl.lit(None, dtype=column.dtype))).alias(name)
         for name, column in schema.LINKS.columns.items()

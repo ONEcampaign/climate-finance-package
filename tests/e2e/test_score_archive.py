@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import pytest
-from archive_build import archive_config, seed_release
+from archive_build import archive_config, seed_raw
 
 from climate_finance import schema
 from climate_finance.build import Stage, build
@@ -73,7 +73,7 @@ def release_dir(tmp_path_factory: pytest.TempPathFactory, archive: Path) -> Path
     # five minutes on an idle machine.
     config = archive_config(archive, key_repair=True, recoveries=True)
     out = tmp_path_factory.mktemp("score")
-    seed_release(out / "r", archive=archive, config=config)
+    seed_raw(out / "r", archive=archive, config=config)
     stages = [Stage.FETCH, Stage.NORMALISE, Stage.LINK]
     manifest = build("r", config=config, out_dir=out, stages=stages, offline=True)
     return manifest.release_dir

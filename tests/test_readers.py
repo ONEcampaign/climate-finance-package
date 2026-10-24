@@ -5,6 +5,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from polars.testing import assert_frame_equal
 
 from climate_finance import schema
 from climate_finance.build.readers.gcf import read_gcf_projects
@@ -103,6 +104,22 @@ def test_imputed_shares_average_the_agencies_that_share_a_channel_code() -> None
     idb, invest = 16.19794 / 0.70273, 264.10911 / 0.09801
     expected = (16.19794 + 264.10911) / (idb + invest)
     assert _value(frame, channel_code=46012, year=2020) == pytest.approx(expected)
+
+
+def test_imputed_shares_give_ida_s_share_to_its_debt_relief_channels() -> None:
+    frame = read_imputed_shares(
+        RAW / "imputed_shares" / "Imputed_multilateral_shares.xlsx"
+    )
+
+    # IDA (44002) also receives contributions on its HIPC (44003) and MDRI (44007)
+    # channels.
+    def ida(channel: int) -> pl.DataFrame:
+        rows = frame.filter(pl.col("channel_code") == channel).drop("channel_code")
+        return rows.sort("year", "objective")
+
+    assert ida(44002).height
+    assert_frame_equal(ida(44003), ida(44002))
+    assert_frame_equal(ida(44007), ida(44002))
 
 
 def test_imputed_shares_refuse_an_agency_without_a_channel_code(

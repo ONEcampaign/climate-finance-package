@@ -8,10 +8,11 @@ import polars as pl
 import pytest
 
 from climate_finance.build.config import Ledgers
+from climate_finance.build.fetch import DAC_EXCHANGE_FILE
 from climate_finance.build.link.ledger import check_ledgers
 from climate_finance.build.normalise.ledgers import normalise_ledgers
 from climate_finance.build.sources.finances_one import FOLDER
-from climate_finance.build.stages import table_path
+from climate_finance.build.stages import raw_dir, table_path
 
 pytestmark = pytest.mark.slow
 
@@ -33,8 +34,9 @@ def test_world_bank_loans_confirm_within_five_percent(
         (raw / FOLDER / snapshot.name).symlink_to(snapshot)
     ledger = normalise_ledgers(
         raw,
-        ledgers=LEDGERS,
-        exchange=pl.read_parquet(release_dir / "raw" / "dac_exchange.parquet"),
+        publishers=LEDGERS.publishers,
+        years=LEDGERS.years,
+        exchange=pl.read_parquet(raw_dir(release_dir) / DAC_EXCHANGE_FILE),
     )
 
     links, labels = check_ledgers(

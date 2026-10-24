@@ -8,6 +8,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from stage_runs import write_fetched_years
 
 from climate_finance import schema
 from climate_finance.build import write_stage
@@ -172,7 +173,7 @@ class Linked:
         """The allocate stage's allocations and commitments under `links`."""
         crs, rows = self.crs.lazy(), counted_rows(self.crdf.lazy())
         units = self.units.lazy()
-        pairs = allocate(units, crs=crs, links=links.lazy())
+        pairs = allocate(units, crs=crs, links=links.lazy(), crdf=rows)
         allocations = allocate_to_rows(
             pairs, crdf=rows, units=units, crs=crs, links=links.lazy()
         )
@@ -350,7 +351,12 @@ def test_a_row_is_pending_exactly_when_rejecting_its_queued_links_changes_it() -
 def test_a_build_without_decisions_passes_as_before() -> None:
     # Every group is unsplit, so the split rank leading the pass key changes no pass.
     case = linked()
-    pairs = allocate(case.units.lazy(), crs=case.crs.lazy(), links=case.links.lazy())
+    pairs = allocate(
+        case.units.lazy(),
+        crs=case.crs.lazy(),
+        links=case.links.lazy(),
+        crdf=counted_rows(case.crdf.lazy()),
+    )
     assert pairs.sort("pass", "record_id", nulls_last=True).select(
         "pass", "record_id", "commitment_id", "allocated_usd"
     ).rows() == [
@@ -410,10 +416,11 @@ def test_rejecting_queued_links_keeps_the_links_people_accepted() -> None:
 
 def _allocations(case: Linked, links: pl.DataFrame) -> pl.DataFrame:
     crs, units = case.crs.lazy(), case.units.lazy()
-    pairs = allocate(units, crs=crs, links=links.lazy())
+    rows = counted_rows(case.crdf.lazy())
+    pairs = allocate(units, crs=crs, links=links.lazy(), crdf=rows)
     return allocate_to_rows(
         pairs,
-        crdf=counted_rows(case.crdf.lazy()),
+        crdf=rows,
         units=units,
         crs=crs,
         links=links.lazy(),
@@ -499,7 +506,12 @@ def test_a_decision_keeps_a_groups_units_reaching_the_same_commitments(
 
     names = {unit(name): name for name in ("c19", "c21", "d20", "d22", "d22b")}
     assert {(names[a], names[b]) for a, b in pairs_of(kept)} == left
-    allocated = allocate(case.units.lazy(), crs=case.crs.lazy(), links=kept.lazy())
+    allocated = allocate(
+        case.units.lazy(),
+        crs=case.crs.lazy(),
+        links=kept.lazy(),
+        crdf=counted_rows(case.crdf.lazy()),
+    )
     filled = allocated.drop_nulls("commitment_id")
     by_commitment = filled.group_by("commitment_id").agg(pl.col("allocated_usd").sum())
     face = case.crs.select(commitment_id="record_id", face="commitment_usd")
@@ -550,7 +562,12 @@ def test_the_part_holding_an_accepted_link_claims_its_commitments_first(
         case.links,
         labels=human_labels(case, [(("d1", "cA"), False), (("d2", "cA"), True)]),
     )
-    allocated = allocate(case.units.lazy(), crs=case.crs.lazy(), links=kept.lazy())
+    allocated = allocate(
+        case.units.lazy(),
+        crs=case.crs.lazy(),
+        links=kept.lazy(),
+        crdf=counted_rows(case.crdf.lazy()),
+    )
     filled = allocated.drop_nulls("commitment_id").sort("pass", "commitment_id")
     assert filled.select("record_id", "commitment_id", "allocated_usd").rows() == [
         ("d2", "cA", 100.0),
@@ -603,7 +620,12 @@ def test_a_part_split_again_ranks_its_parts_inside_its_own_place() -> None:
         "e1": ("g|split|0|split|1", [0, 1]),
         "d22": ("g|split|1", [1]),
     }
-    allocated = allocate(case.units.lazy(), crs=case.crs.lazy(), links=twice.lazy())
+    allocated = allocate(
+        case.units.lazy(),
+        crs=case.crs.lazy(),
+        links=twice.lazy(),
+        crdf=counted_rows(case.crdf.lazy()),
+    )
     filled = allocated.drop_nulls("commitment_id").sort("pass", "commitment_id")
     assert filled.select(
         "pass", "record_id", "commitment_id", "allocated_usd"
@@ -830,10 +852,12 @@ def test_the_review_stage_writes_tables_that_pass_their_schemas(
         path = table_path(release_dir, stage, table)
         path.parent.mkdir(parents=True, exist_ok=True)
         frame.write_parquet(path)
+    ledgers = Ledgers(years=(2021, 2022), publishers=("ida",))
+    write_fetched_years(release_dir, ledgers=ledgers)
     config = load_config(BUILD_TOML)
     sources = config.sources.model_copy(
         update={
-            "ledgers": Ledgers(years=(2021, 2022), publishers=("ida",)),
+            "ledgers": ledgers,
             "review_decisions": tmp_path / "review_decisions.parquet",
         }
     )

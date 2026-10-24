@@ -5,11 +5,13 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from stage_runs import write_fetched_years
 
 from climate_finance import schema
 from climate_finance.build.allocate import compute_status
 from climate_finance.build.config import BuildConfig, Ledgers, load_config
 from climate_finance.build.errors import ConfigError
+from climate_finance.build.fetch import IATI_DIR
 from climate_finance.build.link.gap_fill import (
     bank_year_overlap,
     fill_from_ledgers,
@@ -18,10 +20,11 @@ from climate_finance.build.link.gap_fill import (
     route_funds,
     run_fill,
 )
-from climate_finance.build.stages import StageContext, table_path
+from climate_finance.build.stages import StageContext, raw_dir, table_path
 
 GCF, GEF, IDA, IBRD, ADB, AFDB, GERMANY = 1016, 811, 905, 901, 915, 913, 5
 YEARS = (2021, 2022)
+LEDGERS = Ledgers(years=YEARS, publishers=("ida",))
 REPO = Path(__file__).parents[1]
 FIXTURE_IATI = Path(__file__).parent / "fixtures" / "raw" / "iati"
 
@@ -510,8 +513,9 @@ def _stage_release(tmp_path: Path) -> Path:
     )
     for publisher in ("gcf", "gef"):
         shutil.copytree(
-            FIXTURE_IATI / publisher, tmp_path / "raw" / "external" / "iati" / publisher
+            FIXTURE_IATI / publisher, raw_dir(tmp_path) / IATI_DIR / publisher
         )
+    write_fetched_years(tmp_path, ledgers=LEDGERS)
     return tmp_path
 
 
@@ -520,9 +524,7 @@ def _config(**sources: object) -> BuildConfig:
     return base.model_copy(
         update={
             "gap_fill": True,
-            "sources": base.sources.model_copy(
-                update={"ledgers": Ledgers(years=YEARS, publishers=("ida",))} | sources
-            ),
+            "sources": base.sources.model_copy(update={"ledgers": LEDGERS} | sources),
         }
     )
 

@@ -13,7 +13,11 @@ Allocation runs on the CRS records inside those units (`units.record_ids`). A re
 with a positive commitment in a commitment unit is a commitment at the unit's
 `placed_year`, and a record with a positive disbursement in a linked unit is a
 disbursement. Negative commitments are cancellations. They leave a commitment's
-headroom unchanged and are reported by provider and year.
+headroom unchanged and are reported by provider and year. A record never fills a
+commitment unit whose CRDF rows report a year after the record's: a donor that
+reuses a crs id for a top-up keeps the original commitment date, so the unit is
+placed years before the CRDF row it stands for, as Denmark's IFU places its 2023
+top-up under `2017320033` in 2017.
 
 Passes run by split rank first (see below), then certain groups first, then by
 record year, then link method in `LINK_METHODS` order, then class: records with a
@@ -68,19 +72,26 @@ import numpy as np
 import polars as pl
 
 from climate_finance.build.errors import AllocationInputError
+from climate_finance.build.fetch import last_complete_year
 from climate_finance.build.link.candidates import word_share
-from climate_finance.build.link.id_practice import period_of
+from climate_finance.build.link.id_practice import period_of, untraceable
 from climate_finance.build.link.keys import line_date
 from climate_finance.build.link.levels import title_words
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
-from climate_finance.schema import CERTAIN_METHODS, CERTAIN_ROUTES, LINK_METHODS
+from climate_finance.schema import (
+    CERTAIN_METHODS,
+    CERTAIN_ROUTES,
+    EU_INSTITUTIONS,
+    LINK_METHODS,
+)
 
 if TYPE_CHECKING:
     from climate_finance.build.stages import StageContext, StageOutput
 
 # A donor is dated when this share of its disbursement-only dollars in these record
-# years carries a commitment date before the record year.
+# years carries a commitment date before the record year. These years and
+# WINDOW_TEST_YEARS are fixed test windows, whatever years the build reads.
 DATED_SHARE = 0.6
 DATED_YEARS = (2020, 2025)
 # A donor is a window donor when this share of later same-id disbursement, over at
@@ -92,7 +103,8 @@ WINDOW_TEST_YEARS = (2015, 2021)
 WINDOW_GRACE = 1
 # Disbursed at this share of face value or more.
 DISBURSED_RATIO = 0.9
-# The method that links EU contract records to their decision, exempt from floors.
+# The method that links EU contract records to their decision, which for the EU
+# alone is exempt from floors.
 NO_FLOOR_METHODS = ("crs_id_parent",)
 # Order offset that puts a commitment after every commitment-year order.
 _LATE = 10_000
@@ -100,6 +112,16 @@ _LATE = 10_000
 # their titles share at least this word share.
 OWN_TITLE_SHARE = 0.5
 
+_FILLED_SCHEMA = pl.Schema(
+    {
+        "pass": pl.UInt32(),
+        "c_idx": pl.UInt32(),
+        "record_id": pl.String(),
+        "year": pl.Int16(),
+        "allocated_usd": pl.Float64(),
+        "rule": pl.String(),
+    }
+)
 _PAIRS_SCHEMA = pl.Schema(
     {
         "commitment_id": pl.String(),
@@ -116,8 +138,16 @@ _PAIRS_SCHEMA = pl.Schema(
 
 
 def run_allocate(context: StageContext) -> StageOutput:
-    """Allocate linked CRS disbursement to commitments and set statuses."""
-    crs = trace_population(context.read("normalise", "crs"))
+    """Allocate linked CRS disbursement to commitments and set statuses.
+
+    Allocation reads CRS records up to `years.crs_last_complete`. Later years hold
+    early reports only, so they fill no commitment, and status, disbursed amounts
+    and the release tables agree on the years they cover.
+    """
+    last_year = last_complete_year(context)
+    crs = trace_population(context.read("normalise", "crs")).filter(
+        pl.col("year") <= last_year
+    )
     crdf = counted_rows(context.read("normalise", "crdf"))
     units = context.read("link", "units")
     links = context.read("link", "links")
@@ -126,6 +156,7 @@ def run_allocate(context: StageContext) -> StageOutput:
         units,
         crs=crs,
         links=links,
+        crdf=crdf,
         dated=dated_donors(units),
         windowed=window_donors(units, crs=crs),
     )
@@ -143,7 +174,7 @@ def run_allocate(context: StageContext) -> StageOutput:
         "commitments": compute_status(commitments=basis, allocations=allocations),
         "cancellations": cancellations(crs),
         "years_since_commitment": years_since_commitment(
-            allocations, crdf=crdf, last_year=context.config.years.crs_last_complete
+            allocations, crdf=crdf, last_year=last_year
         ),
     }
 
@@ -189,10 +220,12 @@ def _commitment_records(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.DataFra
     )
 
 
-def _unit_windows(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame:
-    """Each unit's earliest expected start year and latest completion year."""
+def _commitment_windows(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame:
+    """Each commitment unit's earliest expected start year and latest completion
+    year. Only commitment units have windows, which spares exploding the records of
+    the disbursement units."""
     return (
-        _unit_records(units, crs=crs)
+        _unit_records(units.filter(pl.col("commitment_usd") > 0), crs=crs)
         .group_by("unit_id")
         .agg(pl.col("start_year").min(), pl.col("end_year").max())
     )
@@ -233,7 +266,7 @@ def window_donors(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> list[int]:
     ids = ["donor_code", "crs_id"]
     tested = (
         units.filter(pl.col("commitment_usd") > 0, pl.col("crs_id").is_not_null())
-        .join(_unit_windows(units, crs=crs), on="unit_id")
+        .join(_commitment_windows(units, crs=crs), on="unit_id")
         .group_by(ids)
         .agg(
             years=pl.col("placed_year").n_unique(),
@@ -342,16 +375,43 @@ def _split_order(paths: pl.Series) -> pl.Series:
     return paths.to_frame().select(padded.rank("dense") - 1).to_series()
 
 
+def _row_years(links: pl.LazyFrame, *, crdf: pl.LazyFrame) -> pl.LazyFrame:
+    """Each commitment unit in a `crdf_crs` group with the latest year of the
+    group's CRDF rows, as (c_unit, row_year). A repeat row counts at the year of
+    the row it repeats, which takes its allocations (`_to_first_rows`)."""
+    groups = links.filter(pl.col("task") == "crdf_crs")
+    first_years = crdf.select(
+        "row_id", first_row=pl.coalesce("repeat_of", "row_id")
+    ).join(crdf.select(first_row="row_id", row_year="year"), on="first_row")
+    years = (
+        groups.select(row_id="left_id", group_id="group_id")
+        .join(first_years.select("row_id", "row_year"), on="row_id")
+        .group_by("group_id")
+        .agg(pl.col("row_year").max())
+    )
+    return (
+        groups.select(c_unit="right_id", group_id="group_id")
+        .join(years, on="group_id")
+        .group_by("c_unit")
+        .agg(pl.col("row_year").max())
+    )
+
+
 def _trace_pairs(
     units: pl.LazyFrame,
     *,
     crs: pl.LazyFrame,
     links: pl.LazyFrame,
+    crdf: pl.LazyFrame,
     dated: Collection[int],
     windowed: Collection[int],
-) -> tuple[pl.DataFrame, pl.DataFrame]:
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Every (commitment record, disbursement record) pair the links allow, with its
-    pass, order and rule, and the commitment records by `c_idx`.
+    pass, order and rule, the commitment records by `c_idx`, and every linked
+    disbursement record with its year and amount. A pair whose record year
+    precedes the commitment unit's CRDF year (`_row_years`) is left out, so no CRDF
+    row receives a record from before its own year, and a record with no pair left
+    is excess.
 
     Order, class and rule are facts of the unit pair, as a unit's records share
     their years and keys.
@@ -371,11 +431,18 @@ def _trace_pairs(
     ).collect()
     commitment_units = (
         units.select(c_unit="unit_id", cyear="placed_year")
-        .join(_unit_windows(units, crs=crs).rename({"unit_id": "c_unit"}), on="c_unit")
+        .join(
+            _commitment_windows(units, crs=crs).rename({"unit_id": "c_unit"}),
+            on="c_unit",
+        )
+        .join(_row_years(links, crdf=crdf), on="c_unit", how="left")
         .collect()
     )
     year, date_year, cyear = pl.col("year"), pl.col("date_year"), pl.col("cyear")
-    floored = ~pl.col("method").is_in(NO_FLOOR_METHODS)
+    floored = ~(
+        pl.col("method").is_in(NO_FLOOR_METHODS)
+        & (pl.col("donor_code") == EU_INSTITUTIONS)
+    )
     floor = pl.when(floored).then(pl.col("floor_year"))
     dated_record = (
         pl.col("donor_code").is_in(list(dated)) & floored & (date_year <= year)
@@ -398,6 +465,7 @@ def _trace_pairs(
     unit_pairs = (
         trace.join(disbursements, on="d_unit")
         .join(commitment_units, on="c_unit")
+        .filter(pl.col("row_year").is_null() | (year >= pl.col("row_year")))
         .select(
             "group_id",
             "d_unit",
@@ -425,11 +493,12 @@ def _trace_pairs(
         .filter(pl.col("disbursement_usd") > 0)
         .select(d_unit="unit_id", record_id="record_id", amount="disbursement_usd")
         .collect()
+        .join(disbursements.select("d_unit", "year"), on="d_unit")
     )
     # A record that commits and disburses is certain of its own commitment, whatever
     # link joined its unit to itself.
     pairs = (
-        unit_pairs.join(records, on="d_unit")
+        unit_pairs.join(records.drop("year"), on="d_unit")
         .join(
             commitments.select("c_idx", c_unit="unit_id", c_record="record_id"),
             on="c_unit",
@@ -459,11 +528,18 @@ def _trace_pairs(
     key = ["split", "estimated", *by]
     # A group's pass is certain when all its pairs are, since the pass pools the
     # group's disbursement over all its commitments.
-    pairs = pairs.with_columns(estimated=~pl.col("certain").all().over("group_id", *by))
+    pairs = pairs.with_columns(
+        estimated=(~pl.col("certain")).sum().over("group_id", *by) > 0
+    )
     passes = (
         pairs.select(key).unique().sort(key, nulls_last=True).with_row_index("pass")
     )
-    pairs = pairs.join(passes, on=key, nulls_equal=True)
+    # The join gathers `pass` alone, so it copies none of the pairs' columns.
+    pairs = pairs.with_columns(
+        pairs.select(key)
+        .join(passes, on=key, nulls_equal=True, maintain_order="left")
+        .get_column("pass")
+    )
     _check_pooling(
         pairs.filter("later").select("pass", "group_id", "d_unit", "c_unit").unique()
     )
@@ -479,7 +555,7 @@ def _trace_pairs(
         "certain",
         "method",
     )
-    return pairs, commitments
+    return pairs, commitments, records.select("record_id", "year", "amount")
 
 
 def _own_commitments(
@@ -552,6 +628,7 @@ def allocate(
     *,
     crs: pl.LazyFrame,
     links: pl.LazyFrame,
+    crdf: pl.LazyFrame,
     dated: Collection[int] = (),
     windowed: Collection[int] = (),
 ) -> pl.DataFrame:
@@ -562,7 +639,9 @@ def allocate(
         units: the link stage's `units`.
         crs: the CRS records the trace follows, with `expected_start_date` and
             `completion_date`.
-        links: `links` rows, of which the `trace` task is read.
+        links: `links` rows. The `trace` task carries disbursement to commitments,
+            and the `crdf_crs` task dates each commitment unit by its CRDF rows.
+        crdf: the counted CRDF rows (`counted_rows`).
         dated: dated donors (see `dated_donors`).
         windowed: window donors (see `window_donors`).
 
@@ -580,18 +659,11 @@ def allocate(
         AllocationInputError: when the links break the contract in the module
             docstring, including two groups of one pass sharing a commitment.
     """
-    pairs, commitments = _trace_pairs(
-        units, crs=crs, links=links, dated=dated, windowed=windowed
+    pairs, commitments, records = _trace_pairs(
+        units, crs=crs, links=links, crdf=crdf, dated=dated, windowed=windowed
     )
-    if pairs.is_empty():
-        return pl.DataFrame(schema=_PAIRS_SCHEMA)
     passes = ["pass", "group_id"]
-    records = (
-        pairs.select("record_id", "year", "amount")
-        .unique()
-        .sort("record_id")
-        .with_row_index("r_idx")
-    )
+    records = records.sort("record_id").with_row_index("r_idx")
     # A record enters one pass per group of its unit, in pass order.
     entries = (
         pairs.select(*passes, "record_id", "rule")
@@ -608,7 +680,7 @@ def allocate(
     left = records["amount"].to_numpy().astype(np.float64, copy=True)
     by_pass = candidates.partition_by("pass", as_dict=True)
     entries_by_pass = entries.partition_by("pass", as_dict=True)
-    allocated = []
+    allocated = [pl.DataFrame(schema=_FILLED_SCHEMA)]
     for key in sorted(by_pass):
         entered = entries_by_pass[key]
         entered = entered.with_columns(
@@ -979,7 +1051,8 @@ def status_basis(
     """The `compute_status` input, each CRDF row with the facts allocation fixes.
 
     `traceable` is false when the row reaches no commitment unit, or its commitment
-    unit's agency is classed `neither` in the period of the row's year.
+    unit's agency is `untraceable` in the period of the row's year: classed
+    `neither`, or keying too little of its disbursement value.
     `id_disbursing` is true when allocation gave disbursement to a commitment of the
     row's (donor, crs id) placed in a year before the row's commitment.
     `crs_face_usd` is the row's share of its linked CRS commitment's face, which
@@ -1011,9 +1084,9 @@ def status_basis(
         .join(group_facts, on="group_id", how="left")
         .with_columns(period=period_of(pl.col("year")))
     )
-    neither = (
-        id_practice.filter(pl.col("id_class") == "neither")
-        .select("donor_code", "agency_code", "period", neither=pl.lit(True))
+    untraced = (
+        id_practice.filter(untraceable())
+        .select("donor_code", "agency_code", "period", untraced=pl.lit(True))
         .collect()
     )
     disbursing_ids = (
@@ -1038,13 +1111,14 @@ def status_basis(
         .unique()
     )
     return (
-        rows.join(neither, on=["donor_code", "agency_code", "period"], how="left")
+        rows.join(untraced, on=["donor_code", "agency_code", "period"], how="left")
         .join(disbursing, on="row_id", how="left")
         .select(
             "row_id",
             "face_usd",
             "climate_usd",
-            traceable=pl.col("placed_year").is_not_null() & pl.col("neither").is_null(),
+            traceable=pl.col("placed_year").is_not_null()
+            & pl.col("untraced").is_null(),
             id_disbursing=pl.col("id_disbursing").fill_null(False),
             crs_face_usd=pl.col("crs_face_usd").fill_null(pl.col("face_usd")),
         )
@@ -1152,7 +1226,7 @@ def cancellations(crs: pl.LazyFrame) -> pl.LazyFrame:
 
 
 def years_since_commitment(
-    allocations: pl.DataFrame, *, crdf: pl.LazyFrame, last_year: int
+    allocations: pl.LazyFrame | pl.DataFrame, *, crdf: pl.LazyFrame, last_year: int
 ) -> pl.LazyFrame:
     """Cumulative allocation per commitment row by years since its CRDF year.
 
@@ -1161,8 +1235,10 @@ def years_since_commitment(
     """
     rows = crdf.select("row_id", "year")
     by_year = (
-        allocations.filter(pl.col("row_id").is_not_null(), pl.col("rule") != "excess")
-        .join(rows.collect(), on="row_id", suffix="_commitment")
+        allocations.lazy()
+        .select("row_id", "record_id", "year", "rule", "allocated_usd")
+        .filter(pl.col("row_id").is_not_null(), pl.col("rule") != "excess")
+        .join(rows, on="row_id", suffix="_commitment")
         .sort("row_id", "record_id", "year", "rule")
         .group_by(
             "row_id",
@@ -1179,7 +1255,7 @@ def years_since_commitment(
             years_since=pl.int_ranges(0, last_year - pl.col("year") + 1, dtype=pl.Int16)
         )
         .explode("years_since")
-        .join(by_year.lazy(), on=["row_id", "years_since"], how="left")
+        .join(by_year, on=["row_id", "years_since"], how="left")
         .sort("row_id", "years_since")
         .select(
             "row_id",

@@ -6,6 +6,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 from make_fixture import FIXTURE_DIR, IFC, write_fixture
+from pydantic import ValidationError
 
 from climate_finance.schema import (
     LINK_METHODS,
@@ -65,6 +66,7 @@ INVARIANT_TABLES = (
     "commitments",
     "disbursements",
     "agency_shares",
+    "agency_spending",
     "core_contributions",
 )
 
@@ -136,6 +138,14 @@ def _overdraw_record(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def _negative_record_grant_equiv(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(
+        record_grant_equiv_usd=pl.when(pl.col("record_id") == "JPN-SPLIT")
+        .then(-1.0)
+        .otherwise(pl.col("record_grant_equiv_usd"))
+    )
+
+
 def _orphan_allocation(frame: pl.DataFrame) -> pl.DataFrame:
     orphan = frame.head(1).with_columns(
         row_id=pl.lit("NONE-1"), record_id=pl.lit("NONE-1-R0")
@@ -186,16 +196,37 @@ def _keep_an_aggregate_channel(frame: pl.DataFrame) -> pl.DataFrame:
 
 
 def _mix_share_sources(frame: pl.DataFrame) -> pl.DataFrame:
-    # One of IDA's 2021 ONE objective rows is held, the others computed.
+    # One of IDA's 2021 spending rows is held, the others computed.
     first = (
         (pl.col("channel_code") == 44002)
         & (pl.col("year") == 2021)
-        & (pl.col("source") == "one")
-        & (pl.col("objective") == "adaptation")
+        & (pl.col("rio_adaptation") == 2)
+        & (pl.col("rio_mitigation") == 0)
     )
     return frame.with_columns(
         share_source=pl.when(first).then(pl.lit("held")).otherwise("share_source")
     )
+
+
+def _measure_ida_twice(frame: pl.DataFrame) -> pl.DataFrame:
+    # IDA's 2021 share is measured in agency_spending; a `one` row would count it
+    # twice.
+    one = frame.filter(channel_code=44002, year=2021, source="oecd").with_columns(
+        source=pl.lit("one")
+    )
+    return pl.concat([frame, one])
+
+
+def _give_a_marker_row_components(frame: pl.DataFrame) -> pl.DataFrame:
+    is_row = (pl.col("channel_code") == 44002) & (pl.col("year") == 2021)
+    is_row &= (pl.col("rio_adaptation") == 2) & (pl.col("rio_mitigation") == 0)
+    return frame.with_columns(
+        adaptation_share=pl.when(is_row).then(0.06).otherwise("adaptation_share")
+    )
+
+
+def _repeat_a_components_row(frame: pl.DataFrame) -> pl.DataFrame:
+    return pl.concat([frame, frame.filter(channel_code=46002, year=2022)])
 
 
 def _null_disbursed(frame: pl.DataFrame) -> pl.DataFrame:
@@ -281,11 +312,15 @@ def _zero_remainder(frame: pl.DataFrame) -> pl.DataFrame:
         ("disbursements", _break_record_grant_equiv, "JPN-SPLIT"),
         ("disbursements", _break_record_disbursement, "JPN-SPLIT"),
         ("disbursements", _overdraw_record, "JPN-SPLIT"),
+        ("disbursements", _negative_record_grant_equiv, "JPN-SPLIT"),
         ("agency_shares", _split_a_climate_only_share, "46002 2020 oecd"),
-        ("agency_shares", _mix_share_sources, "44002 2021 one"),
+        ("agency_spending", _mix_share_sources, "44002 2021"),
         ("commitments", _publish_more_climate_than_face, "DEU-1"),
         ("core_contributions", _keep_an_aggregate_channel, "44000"),
         ("core_contributions", _zero_remainder, "40000"),
+        ("agency_shares", _measure_ida_twice, "44002 2021"),
+        ("agency_spending", _give_a_marker_row_components, "44002 2021 2 0"),
+        ("agency_spending", _repeat_a_components_row, "46002 2022 None None"),
     ],
 )
 def test_release_invariants_name_the_row_that_breaks_one(
@@ -298,3 +333,54 @@ def test_release_invariants_name_the_row_that_breaks_one(
 
     assert problems
     assert all(row_id in problem for problem in problems)
+
+
+@pytest.mark.parametrize(
+    "column", ["record_grant_equiv_usd", "record_disbursement_usd"]
+)
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_release_invariants_report_a_non_finite_amount_once(
+    column: str, value: float
+) -> None:
+    # AFDB-1-R1 is a one-row record, so no row of it can differ from another.
+    tables = {name: _read(name) for name in INVARIANT_TABLES}
+    tables["disbursements"] = tables["disbursements"].with_columns(
+        pl.when(pl.col("record_id") == "AFDB-1-R1")
+        .then(value)
+        .otherwise(pl.col(column))
+        .alias(column)
+    )
+
+    problems = release_invariants(tables)
+
+    assert len(problems) == 1
+    assert "AFDB-1-R1" in problems[0]
+    assert problems[0].endswith(f"{column} is not finite")
+
+
+def test_grant_equivalent_coverage_weights_records_by_allocated_value() -> None:
+    # AFDB-1 (AfDB, 2021) allocates three records of 11.67m, the first without a
+    # grant equivalent, and a 1m ledger fill without one: half its records, but
+    # 23.3m of its 36m allocated, carry a grant equivalent.
+    rows = _read("disbursements").filter(pl.col("row_id") == "AFDB-1")
+    valued = rows.filter(pl.col("record_grant_equiv_usd").is_not_null())
+    coverage = (
+        _read("quality")
+        .filter(pl.col("provider_code") == 913, pl.col("year") == 2021)[
+            "grant_equiv_coverage"
+        ]
+        .item()
+    )
+
+    assert valued.height / rows.height == 0.5
+    assert coverage == pytest.approx(
+        valued["allocated_usd"].sum() / rows["allocated_usd"].sum()
+    )
+
+
+def test_release_json_records_the_build_settings() -> None:
+    without = MANIFEST.model_dump(exclude={"settings"})
+
+    assert MANIFEST.settings["key_repair"] is True
+    with pytest.raises(ValidationError, match="settings"):
+        ReleaseManifest.model_validate(without)

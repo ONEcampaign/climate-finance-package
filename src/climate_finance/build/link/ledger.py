@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from climate_finance.build.errors import ConfigError
+from climate_finance.build.fetch import ledger_years
 from climate_finance.build.link.keys import partner_recipient
 from climate_finance.build.sums import ordered_sum
 
@@ -89,8 +90,7 @@ def run_ledger_check(context: StageContext) -> tuple[pl.LazyFrame, pl.LazyFrame]
         ConfigError: when the build config names no ledger sources.
         StageInputMissingError: when normalise wrote no `ledger` table.
     """
-    ledgers = context.config.sources.ledgers
-    if ledgers is None:
+    if context.config.sources.ledgers is None:
         raise ConfigError(
             "The review stage checks links against bank ledgers; name them under "
             "[sources.ledgers] in build.toml."
@@ -99,7 +99,7 @@ def run_ledger_check(context: StageContext) -> tuple[pl.LazyFrame, pl.LazyFrame]
         context.read("link", "links"),
         units=context.read("link", "units"),
         ledger=context.read("normalise", "ledger"),
-        years=ledgers.years,
+        years=ledger_years(context),
     )
 
 

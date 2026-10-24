@@ -30,6 +30,10 @@ class RawFile(TypedDict):
     version: str | None
     fetched_at: datetime
     method: str
+    first_year: int | None
+    last_year: int | None
+    held_first_year: int | None
+    held_last_year: int | None
 
 
 def require_online(source: str, *, offline: bool) -> None:
@@ -139,4 +143,8 @@ def _write(
         version=None,
         fetched_at=datetime.now(UTC),
         method=method,
+        first_year=None,
+        last_year=None,
+        held_first_year=None,
+        held_last_year=None,
     )

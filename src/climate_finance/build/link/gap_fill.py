@@ -25,9 +25,14 @@ import polars as pl
 
 from climate_finance.build.allocate import compute_status, counted_rows
 from climate_finance.build.errors import ConfigError
-from climate_finance.build.fetch import IATI_DIR
-from climate_finance.build.link.keys import normalise_pn
+from climate_finance.build.fetch import (
+    IATI_DIR,
+    fetched_years,
+    last_complete_year,
+    ledger_years,
+)
 from climate_finance.build.link.ledger import LEDGER_PUBLISHERS, ledger_key
+from climate_finance.build.normalise.project_numbers import normalise_pn
 from climate_finance.build.readers.ledgers.iati import read_iati_ledger
 from climate_finance.build.sums import ordered_sum
 
@@ -79,8 +84,7 @@ def run_fill(context: StageContext) -> StageOutput:
     config = context.config
     if not config.gap_fill:
         return {"allocations": allocations, "commitments": commitments}
-    ledgers = config.sources.ledgers
-    if ledgers is None:
+    if config.sources.ledgers is None:
         raise ConfigError(
             "The fill stage fills gaps from bank ledgers; name them under "
             "[sources.ledgers] in build.toml."
@@ -101,10 +105,11 @@ def run_fill(context: StageContext) -> StageOutput:
         crdf,
         commitments=status,
         activities=fund_activities(context.raw_dir / IATI_DIR),
-        last_year=config.years.crs[1],
-        committed_before=config.years.crs_last_complete,
+        last_year=fetched_years(context)["crs"][1],
+        committed_before=last_complete_year(context),
     )
-    overlap = bank_year_overlap(units, ledger=ledger, years=ledgers.years).collect()
+    years = ledger_years(context)
+    overlap = bank_year_overlap(units, ledger=ledger, years=years).collect()
     _log_failures(overlap)
     ledger_allocations = fill_from_ledgers(
         crdf.join(fund_basis, on="row_id", how="anti"),
@@ -112,7 +117,7 @@ def run_fill(context: StageContext) -> StageOutput:
         units=units,
         ledger=ledger,
         overlap=overlap,
-        years=ledgers.years,
+        years=years,
     )
     filled = pl.concat([allocations.collect(), fund_allocations, ledger_allocations])
     return {

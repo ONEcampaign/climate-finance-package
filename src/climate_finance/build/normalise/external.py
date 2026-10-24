@@ -7,13 +7,14 @@ import polars as pl
 from resolvekit import Resolver
 from resolvekit.core.api.output_view import OutputView
 
+from climate_finance.schema import EURO_ISSUER, UNSPECIFIED_RECIPIENT
+
 logger = logging.getLogger(__name__)
 
 # The DAC code for "Developing countries, unspecified", given to a row that names
 # several countries.
-MULTI_COUNTRY = 998
-# DAC exchange rates are by country. The euro's rate is held by EU Institutions.
-_EURO = {"EUR": "EUI"}
+MULTI_COUNTRY = UNSPECIFIED_RECIPIENT
+_EURO = {"EUR": EURO_ISSUER}
 _ISO_SYSTEMS = {2: "iso2", 3: "iso3"}
 # Alpha-2 codes IATI uses that resolvekit 0.1.13 does not map to a DAC code:
 # South Sudan, and Kosovo's user-assigned code.
@@ -37,10 +38,17 @@ def normalise_external(
         external: Rows in the `external` schema, as the IATI and GCF readers give.
         exchange: DAC exchange rates with `iso_code`, `year` and `exchange_rate`.
     """
-    converted = to_usd(external, exchange=exchange).with_columns(
+    recipients = pl.DataFrame(
+        {"recipient_iso": external["recipient_iso"].drop_nulls().unique().sort()}
+    ).with_columns(
         recipient_code=pl.col("recipient_iso").map_elements(
-            _recipient_code, return_dtype=pl.Int32, skip_nulls=True
+            _recipient_code, return_dtype=pl.Int32
         )
+    )
+    converted = (
+        to_usd(external, exchange=exchange)
+        .drop("recipient_code")
+        .join(recipients, on="recipient_iso", how="left", maintain_order="left")
     )
     unconverted = converted.filter(pl.col("amount_usd").is_null())
     if unconverted.height:
@@ -48,7 +56,7 @@ def normalise_external(
             "External amounts with no DAC exchange rate, left without a USD value: %s",
             dict(unconverted.group_by("currency").len().sort("currency").iter_rows()),
         )
-    codes = external["recipient_iso"].drop_nulls().str.split(",").explode().unique()
+    codes = recipients["recipient_iso"].str.split(",").explode().unique()
     if unmapped := sorted(code for code in codes if _dac_code(code) is None):
         logger.warning("External recipient codes with no DAC code: %s", unmapped)
     return converted.select(external.columns)

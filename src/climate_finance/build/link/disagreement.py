@@ -16,6 +16,7 @@ disburses, counts for neither check.
 
 import polars as pl
 
+from climate_finance import schema
 from climate_finance.build.link.key_repair import project_core
 from climate_finance.build.link.keys import regional_codes
 
@@ -30,7 +31,9 @@ NUMBER_FREE = ("crs_id_purpose", "crs_id", "classifier", "classifier_jev", "spli
 def flag_disagreement(links: pl.DataFrame, *, units: pl.DataFrame) -> pl.DataFrame:
     """`links` with `records_disagree` set on its `trace` links, true for every link
     of a disbursement unit and method whose records disagree other than the unit's
-    link to itself. Other tasks keep theirs.
+    link to itself. Other tasks keep theirs. A `CERTAIN_METHODS` link whose records
+    disagree is not certain, so its probability turns null, as on any other rule
+    link no model scored.
 
     Args:
         links: `links` rows.
@@ -64,6 +67,7 @@ def flag_disagreement(links: pl.DataFrame, *, units: pl.DataFrame) -> pl.DataFra
         .agg(disagree=recipient | number)
     )
     trace = pl.col("task") == "trace"
+    flagged = pl.col("records_disagree").fill_null(value=False)
     return (
         links.join(disagree, on=group, how="left", maintain_order="left")
         .with_columns(
@@ -73,6 +77,13 @@ def flag_disagreement(links: pl.DataFrame, *, units: pl.DataFrame) -> pl.DataFra
                 & (pl.col("left_id") != pl.col("right_id"))
             )
             .otherwise(pl.col("records_disagree"))
+        )
+        .with_columns(
+            probability=pl.when(
+                trace & flagged & pl.col("link_method").is_in(schema.CERTAIN_METHODS)
+            )
+            .then(None)
+            .otherwise(pl.col("probability"))
         )
         .select(links.columns)
     )

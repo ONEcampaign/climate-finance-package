@@ -23,7 +23,9 @@ matches:
 
 The last two take a project whose commitments from the row's year on come within
 10% of the row's face value, in euros, pairing rows and projects closest amount
-first.
+first. A crosswalk pair within 0.01% keeps the method `crosswalk`, a certain route
+(`schema.CERTAIN_ROUTES`); a wider one takes `crosswalk_amount`, since the amount
+then only suggests the contract.
 """
 
 from collections.abc import Callable, Collection
@@ -31,23 +33,24 @@ from collections.abc import Callable, Collection
 import polars as pl
 
 from climate_finance.build.errors import LinkInputError
-from climate_finance.build.link.keys import as_exact_links, normalise_pn
+from climate_finance.build.link.keys import as_exact_links
 from climate_finance.build.normalise.crs import trace_population
-from climate_finance.build.normalise.vintages import match_eib, pair_one_to_one
+from climate_finance.build.normalise.pairing import pair_one_to_one
+from climate_finance.build.normalise.project_numbers import normalise_pn
+from climate_finance.build.normalise.vintages import match_eib
+from climate_finance.schema import EIB_AGENCY, EU_INSTITUTIONS, EURO_ISSUER
 
 # CRDF rows and CRS commitments that agree on these, the CRDF provider standing for
 # the CRS donor, are one commitment. 99.5% of such keys pair one to one.
 WITHIN_YEAR_KEY = ("donor_code", "crs_id", "year", "purpose_code")
 
-_EIB_DONOR = 918
-_EIB_AGENCY = 3
 # The EIB's IATI activity id carries its project serial, then one finance contract
 # number.
 _EIB_ACTIVITY = r"^XM-DAC-918-3-(?<serial>\d{8})-(?<contract>\d{5})$"
-# DAC exchange rates are by country, and the euro's is held by EU Institutions.
-_EURO_ISSUER = "EUI"
 # A project's commitments match a row's face value within this share, in euros.
 _AMOUNT_TOLERANCE = 0.10
+# A crosswalk pair this close is the row's own contract.
+_EXACT_TOLERANCE = 1e-4
 # The title route needs word sets that overlap this much, on a title that at most
 # this many EIB commitments carry.
 _TITLE_OVERLAP = 0.8
@@ -119,13 +122,13 @@ def recover(
         LinkInputError: when the euro has no DAC rate for a year an EIB row or bulk
             EIB commitment needs, or `skip` names a route that does not exist.
     """
-    rates = exchange.filter(pl.col("iso_code") == _EURO_ISSUER).select(
+    rates = exchange.filter(pl.col("iso_code") == EURO_ISSUER).select(
         year=pl.col("year").cast(pl.Int16), euro_per_usd=pl.col("exchange_rate")
     )
     rows = _in_euro(
         crdf.filter(
-            pl.col("provider_code") == _EIB_DONOR,
-            pl.col("agency_code") == _EIB_AGENCY,
+            pl.col("provider_code") == EU_INSTITUTIONS,
+            pl.col("agency_code") == EIB_AGENCY,
             pl.col("repeat_of").is_null(),
             pl.col("face_usd") > 0,
         ).collect(),
@@ -139,20 +142,25 @@ def recover(
             "eib_list",
             lambda left: _by_project_list(
                 left, crs=crs, exchange=exchange, records=records
-            ),
+            ).with_columns(link_method=pl.lit("eib_list")),
         ),
         ("crosswalk", lambda left: _by_crosswalk(left, records, crosswalk)),
-        ("title_recipient", lambda left: _by_title(left, records)),
+        (
+            "title_recipient",
+            lambda left: _by_title(left, records).with_columns(
+                link_method=pl.lit("title_recipient")
+            ),
+        ),
     )
-    if unknown := sorted(set(skip) - {method for method, _ in routes}):
+    if unknown := sorted(set(skip) - {name for name, _ in routes}):
         raise LinkInputError(f"Unknown EIB recovery routes to skip: {unknown}")
     repeats = crdf.select(holder="row_id", first_row="repeat_of").collect()
     links = within_year
-    for method, route in routes:
-        if method in skip:
+    for name, route in routes:
+        if name in skip:
             continue
         left = rows.join(links.select(row_id="left_id"), on="row_id", how="anti")
-        links = _settle(route(left), links=links, repeats=repeats, method=method)
+        links = _settle(route(left), links=links, repeats=repeats)
     return pl.concat([links, _by_aggregate_record(crdf, units=units)])
 
 
@@ -206,8 +214,8 @@ def _by_aggregate_record(crdf: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataF
     )
     return pl.concat(
         [
-            as_exact_links(to_records.lazy(), task="crdf_crs").collect(),
-            as_exact_links(own.lazy(), task="trace").collect(),
+            as_exact_links(to_records, task="crdf_crs"),
+            as_exact_links(own, task="trace"),
         ]
     )
 
@@ -217,7 +225,9 @@ def _eib_commitments(
 ) -> pl.DataFrame:
     """Bulk EIB commitment records with their commitment unit, amount in euros and
     normalised project number."""
-    eib = (pl.col("donor_code") == _EIB_DONOR) & (pl.col("agency_code") == _EIB_AGENCY)
+    eib = (pl.col("donor_code") == EU_INSTITUTIONS) & (
+        pl.col("agency_code") == EIB_AGENCY
+    )
     unit_of = (
         units.filter(eib, pl.col("commitment_usd") > 0)
         .select("unit_id", record_id="record_ids")
@@ -269,14 +279,23 @@ def _by_project_list(
 def _by_crosswalk(
     rows: pl.DataFrame, records: pl.DataFrame, crosswalk: pl.DataFrame
 ) -> pl.DataFrame:
-    """Projects under the row's own project number or a contract of its serial."""
+    """Projects under the row's own project number or a contract of its serial, as
+    `crosswalk` pairs within `_EXACT_TOLERANCE` and `crosswalk_amount` pairs
+    beyond it."""
     own = rows.select("row_id", project_number=normalise_pn(pl.col("project_number")))
     contracts = own.join(crosswalk, left_on="project_number", right_on="serial").select(
         "row_id", project_number="contract"
     )
     keys = pl.concat([own, contracts]).drop_nulls().unique()
-    return _pair_projects(
+    pairs = _pair_projects(
         rows.select("row_id", "year", "euro").join(keys, on="row_id"), records
+    )
+    return pairs.select(
+        "row_id",
+        "unit_id",
+        link_method=pl.when(pl.col("gap") <= _EXACT_TOLERANCE)
+        .then(pl.lit("crosswalk"))
+        .otherwise(pl.lit("crosswalk_amount")),
     )
 
 
@@ -306,14 +325,16 @@ def _by_title(rows: pl.DataFrame, records: pl.DataFrame) -> pl.DataFrame:
         .select("row_id", "year", "euro", "project_number")
         .unique()
     )
-    return _pair_projects(candidates, records)
+    return _pair_projects(candidates, records).select("row_id", "unit_id")
 
 
 def _pair_projects(candidates: pl.DataFrame, records: pl.DataFrame) -> pl.DataFrame:
-    """Pair rows with candidate projects one to one, closest amount first.
+    """Pair rows with candidate projects one to one, closest amount first, as
+    (row_id, unit_id, gap).
 
-    A project's amount is the sum of its commitments from the row's year on. Pairs
-    more than `_AMOUNT_TOLERANCE` apart are dropped first.
+    A project's amount is the sum of its commitments from the row's year on, and
+    `gap` its relative distance from the row's. Pairs more than `_AMOUNT_TOLERANCE`
+    apart are dropped first.
     """
     matched = candidates.join(
         records.select(
@@ -331,17 +352,19 @@ def _pair_projects(candidates: pl.DataFrame, records: pl.DataFrame) -> pl.DataFr
     paired = pair_one_to_one(sums, left=["row_id"], right=["project_number"])
     return (
         matched.join(
-            paired.select("row_id", "project_number"), on=["row_id", "project_number"]
+            paired.select("row_id", "project_number", "gap"),
+            on=["row_id", "project_number"],
         )
-        .select("row_id", "unit_id")
+        .select("row_id", "unit_id", "gap")
         .unique()
     )
 
 
 def _settle(
-    pairs: pl.DataFrame, *, links: pl.DataFrame, repeats: pl.DataFrame, method: str
+    pairs: pl.DataFrame, *, links: pl.DataFrame, repeats: pl.DataFrame
 ) -> pl.DataFrame:
-    """Add a route's (row_id, unit_id) pairs to `links` as `method` groups.
+    """Add a route's (row_id, unit_id, link_method) pairs to `links`, each row's
+    pairs as a `<link_method>|<row_id>` group.
 
     A row loses its pairs when another row's group holds one of its units, unless
     that holder repeats it, in which case the row takes over the holder's group.
@@ -353,24 +376,26 @@ def _settle(
     other = pl.col("first_row").is_null() | (pl.col("first_row") != pl.col("row_id"))
     blocked = claimed.filter(pl.col("holder").is_not_null() & other).select("row_id")
     claimed = claimed.join(blocked, on="row_id", how="anti")
-    taken = claimed.drop_nulls("holder").select("group_id", "row_id").unique()
-    group = pl.concat_str([pl.lit(method), pl.col("row_id")], separator="|")
-    moved = (
-        links.join(taken, on="group_id")
-        .with_columns(left_id="row_id", group_id=group, link_method=pl.lit(method))
-        .select(links.columns)
+    taken = (
+        claimed.drop_nulls("holder")
+        .select("group_id", "row_id", method="link_method")
+        .unique()
     )
-    new = as_exact_links(
-        claimed.lazy().select(
-            left_id="row_id",
-            right_id="unit_id",
-            group_id=group,
-            link_method=pl.lit(method),
+    group = pl.concat_str([pl.col("method"), pl.col("row_id")], separator="|")
+    moved = links.join(taken, on="group_id").select(
+        left_id="row_id", right_id="right_id", group_id=group, link_method="method"
+    )
+    new = claimed.select(
+        left_id="row_id",
+        right_id="unit_id",
+        group_id=pl.concat_str(
+            [pl.col("link_method"), pl.col("row_id")], separator="|"
         ),
-        task="crdf_crs",
-    ).collect()
+        link_method="link_method",
+    )
+    moved_and_new = as_exact_links(pl.concat([moved, new]), task="crdf_crs")
     return pl.concat(
-        [links.join(taken.select("group_id"), on="group_id", how="anti"), moved, new]
+        [links.join(taken.select("group_id"), on="group_id", how="anti"), moved_and_new]
     ).unique(["left_id", "right_id"], keep="first", maintain_order=True)
 
 

@@ -70,7 +70,8 @@ from climate_finance.build.link.id_practice import (
     line_id,
     period_of,
 )
-from climate_finance.build.link.keys import floor_loaded, normalise_pn
+from climate_finance.build.link.keys import floor_loaded
+from climate_finance.build.normalise.project_numbers import normalise_pn
 
 MAX_PN_UNITS = 300
 MAX_TITLE_UNITS = 100

@@ -22,8 +22,10 @@ jev_links = true
 embed = false
 
 [years]
-crdf = [2015, 2024]
-crs = [2010, 2025]
+# Every year the recipient-perspective CRDF holds, or an inclusive [first, last].
+# The CRS years follow: the first CRDF year, or the year before where the CRDF holds
+# it, to the CRS file's last, unless `crs` sets an inclusive [first, last].
+crdf = "all"
 # The last CRS year every provider has reported; later years hold early reports.
 crs_last_complete = 2024
 

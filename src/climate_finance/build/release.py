@@ -10,6 +10,9 @@ with an aggregate parent left out where its rebuilt children stand in for it. Ro
 that repeat an earlier vintage (`repeat_of`) stay in `commitments` with their
 amounts. `quality` and `disbursement_profile` leave them out of their totals, and
 `quality.repeat_climate_usd` reports them as their own line.
+
+`unallocated` reports the Rio-marked CRS disbursement `disbursements` leaves out:
+excess, allocations to commitments with no CRDF row, and records linked to nothing.
 """
 
 from __future__ import annotations
@@ -23,12 +26,16 @@ import polars as pl
 
 from climate_finance import __version__
 from climate_finance.build.allocate import counted_rows, years_since_commitment
+from climate_finance.build.config import RELEASE_SETTINGS
 from climate_finance.build.errors import ReleaseInvariantError, StageInputMissingError
+from climate_finance.build.fetch import fetched_years, last_complete_year
 from climate_finance.build.label import inherit_markers
+from climate_finance.build.normalise.crs import trace_population
+from climate_finance.build.provenance import setting_value
 from climate_finance.build.sums import ordered_sum
-from climate_finance.query import BILATERAL, MULTILATERAL_OUTFLOW
 from climate_finance.schema import (
     BTR,
+    CERTAIN_ROUTES,
     COMMITMENTS,
     CONTRIBUTION_KEY,
     CORE_CONTRIBUTIONS,
@@ -40,20 +47,20 @@ from climate_finance.schema import (
     RELEASE_TABLES,
     TOP_CHANNEL,
     TOTAL_FLOWS,
+    UNALLOCATED,
     ReleaseManifest,
     TableEntry,
     TableSchema,
     aggregate_channel,
     release_invariants,
 )
+from climate_finance.spec import BILATERAL, MULTILATERAL_OUTFLOW
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from climate_finance.build.stages import StageContext
 
-# A commitment's link counts as high probability from this value.
-HIGH_PROBABILITY = 0.8
 # `disbursement_profile` groups and the Bi_Multi codes each pools. `all` holds the
 # codes the recipient view counts.
 PROFILE_GROUPS = {
@@ -69,13 +76,34 @@ _FLOW_AMOUNTS = {
 }
 
 
+# The release tables whose years bound the provider view's attributed finance:
+# core contributions, and the agency shares each method reads.
+COVERAGE_TABLES = ("core_contributions", "agency_shares", "agency_spending")
+
+
+def _table_years(
+    tables: Mapping[str, pl.DataFrame], names: Sequence[str]
+) -> dict[str, tuple[int, int]]:
+    """The first and last year of each of `names` in `tables` that holds a row."""
+    return {
+        name: tables[name].select(pl.min("year"), pl.max("year").alias("last")).row(0)
+        for name in names
+        if not tables[name].is_empty()
+    }
+
+
 def seal_release(
     context: StageContext,
     tables: Mapping[str, pl.DataFrame],
     sha256: Mapping[str, str],
     out_dir: Path,
 ) -> None:
-    """Check the written release tables and write `release.json` beside them.
+    """Check the written release tables and write `release.json` beside them,
+    with the `RELEASE_SETTINGS` of the build config.
+
+    Its `years` holds the years the build read from each source, and the years
+    `core_contributions`, `agency_shares` and `agency_spending` hold, which bound
+    attributed finance.
 
     Raises:
         ReleaseInvariantError: when the tables break `schema.release_invariants`.
@@ -93,6 +121,7 @@ def seal_release(
         source_versions=source_versions(
             context.read("fetch", "raw_manifest").collect()
         ),
+        years=fetched_years(context) | _table_years(tables, COVERAGE_TABLES),
         model_versions={
             "jev": context.config.jev.model,
             "embedding": (
@@ -100,6 +129,10 @@ def seal_release(
             ),
         },
         gates={},
+        settings={
+            setting: setting_value(context.config, setting)
+            for setting in RELEASE_SETTINGS
+        },
     )
     (out_dir / "release.json").write_text(manifest.model_dump_json(indent=2) + "\n")
 
@@ -107,11 +140,13 @@ def seal_release(
 def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
     """Every release table, each input read from the last stage that writes it."""
     crdf = context.read("normalise", "crdf")
-    crs = context.read("normalise", "crs")
+    last_year = last_complete_year(context)
+    # Later CRS years hold early reports, which allocate leaves out too.
+    crs = context.read("normalise", "crs").filter(pl.col("year") <= last_year)
     links = context.read("review", "links")
     allocations = context.read("fill", "allocations")
     status = context.read("review", "commitments")
-    objectives = context.read("label", "objectives")
+    objectives = context.read("label", "objectives").collect()
 
     commitments = release_commitments(crdf, status=status, links=links).collect()
     disbursements = release_disbursements(
@@ -124,8 +159,9 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
     return {
         "commitments": commitments,
         "disbursements": disbursements,
-        "objectives": objectives.collect(),
+        "objectives": objectives,
         "agency_shares": context.read("measure", "agency_shares").collect(),
+        "agency_spending": context.read("measure", "agency_spending").collect(),
         "modelled": context.read("measure", "modelled").collect(),
         "core_contributions": core_contributions(
             context.read("normalise", "core_contributions")
@@ -135,17 +171,18 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
             commitments.lazy(),
             status=status,
             allocations=allocations,
-            last_year=context.config.years.crs_last_complete,
+            last_year=last_year,
         ).collect(),
         "quality": quality(
             commitments.lazy(),
             disbursements=disbursements.lazy(),
-            objectives=objectives,
+            objectives=objectives.lazy(),
             links=links,
         ).collect(),
+        "unallocated": unallocated(allocations, crs=crs).collect(),
         "total_flows": total_flows(crs).collect(),
         # Provider coefficients come from the BTR link, which is not implemented.
-        "provider_coefficients": _empty(PROVIDER_COEFFICIENTS),
+        "provider_coefficients": pl.DataFrame(schema=PROVIDER_COEFFICIENTS.dtypes),
     }
 
 
@@ -374,6 +411,9 @@ def core_contributions(stage: pl.LazyFrame) -> pl.LazyFrame:
 def total_flows(crs: pl.LazyFrame) -> pl.LazyFrame:
     """Every CRS record's amounts by provider, recipient, year, Bi_Multi and flow.
 
+    `assemble` passes the records up to `years.crs_last_complete`, as allocation
+    reads them, so the denominator covers the years `disbursements` does.
+
     A key and flow with no reported amount has no row.
     """
     keys = ["provider_code", "recipient_code", "year", "bi_multi"]
@@ -404,58 +444,54 @@ def quality(
 ) -> pl.LazyFrame:
     """Coverage of the counted commitments' climate value, by provider and year.
 
-    A commitment is linked when a `crdf_crs` link reaches a CRS commitment, and high
-    probability when its most probable such link reaches `HIGH_PROBABILITY`. It is
-    model-labelled when one of its allocated records carries a Jev objective label,
-    and report-labelled otherwise. `disbursed_climate_usd` is the climate value of
-    its disbursements' `allocated_high_usd`, and `certain_disbursed_climate_usd` of
-    their `allocated_low_usd`, each at the commitment's climate share of face.
-    `grant_equiv_coverage` is the share of the linked commitments' allocated records
-    with a grant equivalent. Repeats count only in `repeat_climate_usd`.
+    A commitment is linked when a `crdf_crs` link reaches a CRS commitment, and
+    reaches it through a certain route when every such link's method is in
+    `CERTAIN_ROUTES`. It is model-labelled when one of its allocated records carries
+    a Jev objective label, and report-labelled otherwise. `disbursed_climate_usd` is
+    the climate value of its disbursements' `allocated_high_usd`, and
+    `certain_disbursed_climate_usd` of their `allocated_low_usd`, each at the
+    commitment's climate share of face. `grant_equiv_coverage` is the share of the
+    linked commitments' allocated value whose record has a grant equivalent, null
+    where nothing is allocated to them. Repeats count only in `repeat_climate_usd`.
     """
-    best = (
+    routes = (
         links.filter(pl.col("task") == "crdf_crs")
         .group_by(row_id="left_id")
-        .agg(best_probability=pl.col("probability").max())
+        .agg(certain=pl.col("link_method").is_in(CERTAIN_ROUTES).all())
     )
     jev = (
         objectives.filter(pl.col("label_source") == "jev")
         .select("record_id", jev=pl.lit(True))
         .unique()
     )
+    allocated = pl.col("allocated_usd")
     by_row = (
-        disbursements.select(
-            "row_id",
-            "record_id",
-            has_grant_equiv=pl.col("record_grant_equiv_usd").is_not_null(),
-        )
-        .unique()
-        .join(jev, on="record_id", how="left")
+        disbursements.join(jev, on="record_id", how="left")
         .group_by("row_id")
         .agg(
-            records=pl.len(),
-            grant_equiv_records=pl.col("has_grant_equiv").sum(),
+            allocated_usd=ordered_sum(allocated),
+            valued_usd=ordered_sum(
+                allocated.filter(pl.col("record_grant_equiv_usd").is_not_null())
+            ),
             model_labelled=pl.col("jev").any(),
+            high=ordered_sum(pl.col("allocated_high_usd")),
+            low=ordered_sum(pl.col("allocated_low_usd")),
         )
-    )
-    disbursed = disbursements.group_by("row_id").agg(
-        high=ordered_sum(pl.col("allocated_high_usd")),
-        low=ordered_sum(pl.col("allocated_low_usd")),
     )
     climate = pl.col("climate_usd")
     face = pl.col("face_usd")
     counted = pl.col("repeat_of").is_null()
-    linked = counted & pl.col("best_probability").is_not_null()
+    linked = counted & pl.col("certain").is_not_null()
     model = counted & pl.col("model_labelled").fill_null(False)
     return (
-        commitments.join(best, on="row_id", how="left")
+        commitments.join(routes, on="row_id", how="left")
         .join(by_row, on="row_id", how="left")
-        .join(disbursed, on="row_id", how="left")
         .group_by("provider_code", "year")
         .agg(
             commitments=counted.sum().cast(pl.Int32),
             climate_usd=ordered_sum(climate.filter(counted)),
             linked_usd=ordered_sum(climate.filter(linked)),
+            certain_route_usd=ordered_sum(climate.filter(linked, pl.col("certain"))),
             disbursed_climate_usd=ordered_sum(
                 (climate * pl.col("high") / face).filter(
                     counted, face > 0, pl.col("high").is_not_null()
@@ -466,21 +502,63 @@ def quality(
                     counted, face > 0, pl.col("low").is_not_null()
                 )
             ),
-            linked_high_probability_usd=ordered_sum(
-                climate.filter(linked, pl.col("best_probability") >= HIGH_PROBABILITY)
-            ),
             model_labelled_usd=ordered_sum(climate.filter(model)),
             report_labelled_usd=ordered_sum(climate.filter(counted & ~model)),
             repeat_climate_usd=ordered_sum(climate.filter(~counted)),
-            linked_records=pl.col("records").filter(linked).sum(),
-            with_grant_equiv=pl.col("grant_equiv_records").filter(linked).sum(),
+            linked_allocated=ordered_sum(allocated.filter(linked).drop_nulls()),
+            linked_valued=ordered_sum(pl.col("valued_usd").filter(linked).drop_nulls()),
         )
         .with_columns(
-            grant_equiv_coverage=pl.when(pl.col("linked_records") > 0).then(
-                pl.col("with_grant_equiv") / pl.col("linked_records")
+            grant_equiv_coverage=pl.when(pl.col("linked_allocated") > 0).then(
+                pl.col("linked_valued") / pl.col("linked_allocated")
             )
         )
         .select(list(QUALITY.columns))
+    )
+
+
+def unallocated(allocations: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame:
+    """Rio-marked CRS disbursement outside `disbursements`, by provider and year.
+
+    A record enters when it is in the recipient view's Bi_Multi codes, disburses a
+    positive amount and carries an adaptation or mitigation marker. Its allocations
+    split its disbursement into the `disbursements` rows, `excess_usd`, and
+    `outside_release_usd` for commitments with no CRDF row (a null `row_id`). A
+    record with no allocation is linked to nothing and counts its whole
+    disbursement in `unlinked_marked_usd`. Years are disbursement years.
+    """
+    marked = trace_population(crs).filter(
+        pl.col("bi_multi").is_in(PROFILE_GROUPS["all"]),
+        pl.col("disbursement_usd") > 0,
+        (pl.col("rio_adaptation") > 0) | (pl.col("rio_mitigation") > 0),
+    )
+    excess = pl.col("rule") == "excess"
+    amount = pl.col("allocated_usd")
+    by_record = (
+        allocations.filter(pl.col("disbursement_source") == "crs")
+        .group_by("record_id")
+        .agg(
+            excess_usd=ordered_sum(amount.filter(excess)),
+            outside_release_usd=ordered_sum(
+                amount.filter(~excess, pl.col("row_id").is_null())
+            ),
+            allocated=pl.lit(True),
+        )
+    )
+    unlinked = pl.col("allocated").is_null()
+    return (
+        marked.select(
+            "record_id", "year", "disbursement_usd", provider_code="donor_code"
+        )
+        .join(by_record, on="record_id", how="left")
+        .group_by("provider_code", "year")
+        .agg(
+            ordered_sum(pl.col("excess_usd", "outside_release_usd").drop_nulls()),
+            unlinked_marked_usd=ordered_sum(
+                pl.col("disbursement_usd").filter(unlinked)
+            ),
+        )
+        .select(list(UNALLOCATED.columns))
     )
 
 
@@ -506,9 +584,7 @@ def disbursement_profile(
         .collect()
     )
     observed = (
-        years_since_commitment(
-            allocations.collect(), crdf=traceable.lazy(), last_year=last_year
-        )
+        years_since_commitment(allocations, crdf=traceable.lazy(), last_year=last_year)
         .join(traceable.lazy(), on="row_id")
         .with_columns(
             disbursed_climate=pl.col("climate_usd")
@@ -553,27 +629,21 @@ def _optional(context: StageContext, stage: str, table: TableSchema) -> pl.DataF
     try:
         return context.read(stage, table.name).collect()
     except StageInputMissingError:
-        return _empty(table)
-
-
-def _empty(table: TableSchema) -> pl.DataFrame:
-    return pl.DataFrame(
-        schema={name: column.dtype for name, column in table.columns.items()}
-    )
+        return pl.DataFrame(schema=table.dtypes)
 
 
 def pack_release(release_dir: Path, *, out_path: Path) -> Path:
     """Pack a release as `.tar.zst` with its sources and licences file."""
-    raise NotImplementedError("packing a release")
+    raise NotImplementedError("pack_release is not implemented")
 
 
 def cut_release(
     release: str, *, config: Path, out_dir: Path, waive_precision: bool = False
 ) -> Path:
     """Build, gate and pack `release`; record a precision waiver in release.json."""
-    raise NotImplementedError("cutting a release")
+    raise NotImplementedError("cut_release is not implemented")
 
 
 def upload_release(pack: Path, *, target: str) -> str:
     """Upload a packed release to `target`; return its URL."""
-    raise NotImplementedError("uploading a release")
+    raise NotImplementedError("upload_release is not implemented")

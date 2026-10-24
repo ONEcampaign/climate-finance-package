@@ -9,9 +9,9 @@ from pathlib import Path
 import polars as pl
 import pytest
 from normalised import crdf_rows, crs_records
+from stage_runs import BUILD_TOML, run_stage, stage_context, write_inputs
 
 from climate_finance import schema
-from climate_finance.build import write_stage
 from climate_finance.build.config import BuildConfig, load_config
 from climate_finance.build.fetch import ADAPTATION_LABELS_FILE
 from climate_finance.build.jev_client import JevClient, canonical_request
@@ -27,9 +27,8 @@ from climate_finance.build.label import (
     read_adaptation_labels,
     reported_objectives,
 )
-from climate_finance.build.stages import REGISTRY, StageContext, table_path
+from climate_finance.build.stages import StageContext, table_path
 
-BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 MODEL = "jev-1.14.0"
 
 
@@ -86,7 +85,7 @@ def _allocations() -> pl.DataFrame:
             }
             for row_id, record_id in rows
         ],
-        schema={name: c.dtype for name, c in schema.ALLOCATIONS.columns.items()},
+        schema=schema.ALLOCATIONS.dtypes,
     )
 
 
@@ -142,28 +141,18 @@ def test_reported_objectives_label_linked_records_once_per_source() -> None:
 
 def _context(tmp_path: Path, config: BuildConfig) -> StageContext:
     release_dir = tmp_path / "r"
-    for stage, table, frame in (
-        ("fill", "allocations", _allocations()),
-        ("normalise", "crdf", _commitments()),
-        ("normalise", "crs", _records()),
-    ):
-        path = table_path(release_dir, stage, table)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        frame.write_parquet(path)
-    return StageContext(
-        release="r", release_dir=release_dir, config=config, offline=True
-    )
+    write_inputs(release_dir, "fill", {"allocations": _allocations()})
+    write_inputs(release_dir, "normalise", {"crdf": _commitments(), "crs": _records()})
+    return stage_context(release_dir, config=config)
 
 
 def test_run_label_writes_tables_that_pass_their_schemas(tmp_path: Path) -> None:
     context = _context(tmp_path, load_config(BUILD_TOML))
-    release_dir = context.release_dir
-    stage = next(entry for entry in REGISTRY if entry.name == "label")
 
-    written = write_stage(stage, stage.run(context), release_dir)
+    written = run_stage("label", context)
 
     assert set(written) == set(schema.STAGE_TABLES["label"])
-    objectives = pl.read_parquet(table_path(release_dir, "label", "objectives"))
+    objectives = pl.read_parquet(table_path(context.release_dir, "label", "objectives"))
     assert objectives.height == 5
 
 
@@ -360,9 +349,8 @@ def test_run_label_labels_described_marker_records_with_one_shared_client(
     labels = context.raw_dir / ADAPTATION_LABELS_FILE
     labels.parent.mkdir(parents=True)
     _write_human(labels)
-    stage = next(entry for entry in REGISTRY if entry.name == "label")
 
-    write_stage(stage, stage.run(context), context.release_dir)
+    run_stage("label", context)
 
     objectives = pl.read_parquet(table_path(context.release_dir, "label", "objectives"))
     # The bank record has climate components, r_blank no text, r_excess no

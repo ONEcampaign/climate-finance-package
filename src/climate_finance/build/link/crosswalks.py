@@ -133,7 +133,7 @@ def link_by_crosswalk(
         )
         .unique()
     )
-    return as_exact_links(pairs.lazy(), task="trace").collect()
+    return as_exact_links(pairs, task="trace")
 
 
 def crosswalk_profile(

@@ -1,11 +1,11 @@
 """Bank ledgers as one `ledger` table, with amounts in US dollars."""
 
 import logging
+from collections.abc import Collection
 from pathlib import Path
 
 import polars as pl
 
-from climate_finance.build.config import Ledgers
 from climate_finance.build.fetch import GCF_FILE
 from climate_finance.build.normalise.external import to_usd
 from climate_finance.build.readers.ledgers.finances_one import (
@@ -30,11 +30,16 @@ logger = logging.getLogger(__name__)
 
 
 def normalise_ledgers(
-    raw: Path, *, ledgers: Ledgers, exchange: pl.DataFrame
+    raw: Path,
+    *,
+    publishers: Collection[str],
+    years: tuple[int, int],
+    exchange: pl.DataFrame,
 ) -> pl.DataFrame:
-    """Read every ledger `ledgers` names from `raw` and convert it to US dollars.
+    """Read the ledger of each of `publishers` from `raw` and convert it to US
+    dollars.
 
-    World Bank Finances One gives flows for `ledgers.years`; the other ledgers give
+    World Bank Finances One gives flows for `years`; the other ledgers give
     every transaction their files hold. Amounts are converted by `to_usd`, and the
     AfDB's SDR amounts, which have no DAC rate, at the IMF's annual average US dollar
     rate of the SDR for their year, which fetch saves when the AfDB is named. Amounts
@@ -43,16 +48,17 @@ def normalise_ledgers(
 
     Args:
         raw: The raw directory fetch wrote.
-        ledgers: The ledger sources of the build config.
+        publishers: The ledgers the build config names.
+        years: The first and last years of the ledgers, as fetch recorded them.
         exchange: DAC exchange rates with `iso_code`, `year` and `exchange_rate`.
     """
-    first, last = ledgers.years
+    first, last = years
     frames = [
         _read(raw, publisher=publisher, years=range(first, last + 1))
-        for publisher in ledgers.publishers
+        for publisher in publishers
     ]
     ledger = to_usd(pl.concat(frames), exchange=exchange)
-    if XDR_PUBLISHERS & set(ledgers.publishers):
+    if XDR_PUBLISHERS & set(publishers):
         ledger = _sdr_to_usd(ledger, rates=read_sdr_rates(raw / SDR_FILE))
     unconverted = ledger.filter(pl.col("amount_usd").is_null())
     if unconverted.height:

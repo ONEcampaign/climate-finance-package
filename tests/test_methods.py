@@ -7,6 +7,7 @@ from climate_finance.methods import (
     OECD,
     ONE,
     Method,
+    MethodRange,
     label,
     transform_markers_into_indicators,
     weights,
@@ -31,19 +32,20 @@ def _by_objective(frame: pl.DataFrame) -> dict[str, float]:
     return dict(zip(frame["objective"], frame["value"], strict=True))
 
 
-def test_oecd_counts_a_significant_marker_in_full() -> None:
-    assert _by_objective(_indicators(1, 0, OECD)) == {"adaptation": DISBURSED}
-
-
-def test_one_counts_a_significant_marker_at_40_percent() -> None:
-    result = _by_objective(_indicators(1, 0, ONE))
-
-    assert result == {"adaptation": pytest.approx(0.4 * DISBURSED)}
-
-
-@pytest.mark.parametrize("method", [ONE, OECD])
-def test_a_principal_marker_counts_in_full_under_both(method: Method) -> None:
-    assert _by_objective(_indicators(0, 2, method)) == {"mitigation": DISBURSED}
+@pytest.mark.parametrize(
+    ("method", "adaptation", "mitigation", "expected"),
+    [
+        (OECD, 1, 0, {"adaptation": DISBURSED}),
+        (ONE, 1, 0, {"adaptation": pytest.approx(0.4 * DISBURSED)}),
+        (ONE, 0, 2, {"mitigation": DISBURSED}),
+        (OECD, 0, 2, {"mitigation": DISBURSED}),
+    ],
+    ids=["OECD significant", "ONE significant", "ONE principal", "OECD principal"],
+)
+def test_a_single_marker_counts_at_its_coefficient(
+    method: Method, adaptation: int, mitigation: int, expected: dict[str, float]
+) -> None:
+    assert _by_objective(_indicators(adaptation, mitigation, method)) == expected
 
 
 @pytest.mark.parametrize(
@@ -111,9 +113,22 @@ def test_climate_components_ignore_coefficients_and_count_the_overlap_once(
 
 def test_named_methods_print_their_names_and_custom_ones_their_coefficients() -> None:
     assert label(ONE) == "ONE"
-    assert label(ONE.replace(significant=0.5)).startswith("significant 0.5,")
+    assert label(ONE.replace(significant=0.5)).startswith(
+        "significant 0.5, principal 1,"
+    )
     assert label(ONE.replace(eu="provider")) == "ONE, EU as a provider"
     assert label(OECD.replace(eu="channel")) == "OECD, EU as a channel"
+
+
+def test_methods_with_close_coefficients_keep_distinct_labels() -> None:
+    close = (ONE.replace(significant=0.5000001), ONE.replace(significant=0.5000002))
+
+    assert label(close[0]) != label(close[1])
+
+
+def test_a_range_refuses_repeated_members() -> None:
+    with pytest.raises(ValueError, match="more than once"):
+        MethodRange(methods=(ONE, OECD, ONE))
 
 
 def test_coefficients_outside_zero_to_one_are_refused() -> None:

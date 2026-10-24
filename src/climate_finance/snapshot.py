@@ -18,7 +18,7 @@ from climate_finance.schema import (
     scan_table,
     sha256_file,
 )
-from climate_finance.spec import Currency, Flow, Spec, View
+from climate_finance.spec import Currency, Flow, Measure, Spec, View
 
 
 class Snapshot:
@@ -50,6 +50,7 @@ class Snapshot:
         currency: Currency = "USD",
         prices: int | Literal["current"] = "current",
         oda_only: bool = False,
+        measure: Measure = "amount",
         spec: Spec | None = None,
     ) -> Result:
         """Climate finance under `method`, or under `spec` when given.
@@ -67,6 +68,7 @@ class Snapshot:
                 currency=currency,
                 prices=prices,
                 oda_only=oda_only,
+                measure=measure,
             )
         return query.spending(self, spec=spec)
 
@@ -91,7 +93,7 @@ class Snapshot:
         method: Method | MethodRange = ONE,
     ) -> Reconciliation:
         """Compare each party's BTR figures with OECD data."""
-        raise NotImplementedError("reconciling with BTR reports")
+        raise NotImplementedError("BTR reconciliation is not implemented")
 
     def disbursement_profile(self) -> pl.DataFrame:
         """Cumulative disbursed share of traceable climate value by years since
@@ -113,13 +115,16 @@ def load(
 ) -> Snapshot:
     """Open a release from `path`, or download `release` into `cache_dir` once.
 
+    A relative `path` resolves against the working directory at load, so the
+    snapshot reads the files it verified after a later change of directory.
+
     Raises:
         ReleaseIntegrityError: when `release.json` or a release table is missing, or
             a table's sha256 differs from `release.json`.
     """
     if path is None:
-        raise NotImplementedError("downloading a release")
-    path = Path(path)
+        raise NotImplementedError("downloading a release is not implemented")
+    path = Path(path).resolve()
     manifest_path = path / "release.json"
     if not manifest_path.is_file():
         raise ReleaseIntegrityError(f"{path} has no release.json")

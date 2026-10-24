@@ -4,12 +4,11 @@ marker rules that turn Rio markers or climate components into objective weights.
 from typing import Literal, Self
 
 import polars as pl
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from climate_finance.catalogue import Catalogue
+from climate_finance.schema import OBJECTIVES
 
-type Objective = Literal["adaptation", "mitigation", "cross_cutting"]
-OBJECTIVES: tuple[Objective, ...] = ("adaptation", "mitigation", "cross_cutting")
 NOT_CLIMATE = "not_climate_relevant"
 
 
@@ -38,10 +37,11 @@ class Method(Frozen):
     does: under ONE, USD 0.035bn attributed against 2.72bn the EIB disbursed in 2021
     and 2022. It stays in the recipient view and in a query for 918 alone, and
     `quality()` reports the rows left out.
-    As a `"provider"`, those three channels attribute nothing and 918 counts in its
-    own right, as the OECD counts it. That also leaves out the OECD's imputed EIB
-    share of members' contributions, USD 0.035bn in 2021 and 2022. Either way a
-    query for 918 alone returns its own spending.
+    As a `"provider"`, 918 counts the EU budget and the EDF in its own right, and
+    contributions to them attribute nothing. The EIB is a channel, as the OECD counts
+    it: the EIB's own rows (agency 3) leave every result, and members' contributions
+    to it carry the EIB's climate share. A query for 918 alone returns the spending of
+    the EU budget and the EDF.
     """
 
     significant: float = Field(ge=0.0, le=1.0)
@@ -51,22 +51,37 @@ class Method(Frozen):
     relevance: Literal["markers", "jev"] = "markers"
     eu: Literal["channel", "provider"] = "channel"
 
+    @property
+    def methods(self) -> tuple[Self, ...]:
+        """The method itself, so a method and a range both list their members."""
+        return (self,)
+
     def _repr_markdown_(self) -> str:
         return describe(self)
 
 
 class MethodRange(Frozen):
-    """Several methods reported together. `low` and `high` are their row-wise bounds."""
+    """Several methods reported together. `low` and `high` are their row-wise bounds.
+
+    Each method may appear once, since a repeated one would count its rows twice.
+    """
 
     methods: tuple[Method, ...] = Field(min_length=1)
+
+    @field_validator("methods")
+    @classmethod
+    def _distinct(cls, methods: tuple[Method, ...]) -> tuple[Method, ...]:
+        if len(set(methods)) < len(methods):
+            raise ValueError("a range lists a method more than once")
+        return methods
 
     def _repr_markdown_(self) -> str:
         return describe(self)
 
 
 ONE = Method(significant=0.4, principal=1.0, highest_marker=True)
-# The OECD counts EU Institutions as a provider. Its imputed shares hold the EIB
-# (42004) but no EU budget or EDF channel. PROVIDER reads ONE's agency shares, so it
+# The OECD's imputed shares hold the EIB alone of the EU channels, because it counts
+# the EU budget and the EDF as a provider. PROVIDER reads ONE's agency shares, so it
 # keeps ONE's EU setting.
 OECD = Method(significant=1.0, principal=1.0, highest_marker=False, eu="provider")
 PROVIDER = Method(
@@ -77,8 +92,25 @@ RANGE = MethodRange(methods=(ONE, OECD, PROVIDER))
 _NAMED = {"ONE": ONE, "OECD": OECD, "PROVIDER": PROVIDER}
 
 
+def uses_imputed_shares(method: Method) -> bool:
+    """Whether `method` attributes core contributions with the OECD's imputed
+    shares, as OECD does with either EU setting. Any other method weighs the
+    agency's own spending."""
+    return method.replace(eu=OECD.eu) == OECD
+
+
+def _number(value: float) -> str:
+    """`value` in the shortest form that reads back as the same float, -0 as 0."""
+    return repr(value + 0.0).removesuffix(".0")
+
+
 def label(method: Method | MethodRange) -> str:
-    """The method's name if it is a named method, else its coefficients."""
+    """The method's name if it is a named method, else every field that defines it.
+
+    Results group rows by this label, so two methods share a label only when they
+    are equal: coefficients print in full, as the shortest text that reads back as
+    the same float.
+    """
     if isinstance(method, MethodRange):
         if method == RANGE:
             return "RANGE"
@@ -90,7 +122,8 @@ def label(method: Method | MethodRange) -> str:
             return f"{name}, EU as a {method.eu}"
     rule = "highest marker" if method.highest_marker else "each marker"
     return (
-        f"significant {method.significant:g}, principal {method.principal:g}, {rule}"
+        f"significant {_number(method.significant)}, "
+        f"principal {_number(method.principal)}, {rule}"
         f", {method.coefficients} coefficients, {method.relevance} relevance"
         f", EU as a {method.eu}"
     )
@@ -121,7 +154,7 @@ def describe(method: Method | MethodRange) -> str:
     if method.coefficients == "provider":
         text += (
             " Each provider takes its own significant coefficient from the release, "
-            f"or {method.significant:g} where it has no confirmed coefficient."
+            f"or {_number(method.significant)} where it has no confirmed coefficient."
         )
     if method.relevance == "jev":
         text += (
@@ -143,10 +176,11 @@ _EU = {
     "development bank's own lending does: under ONE, USD 0.035bn attributed against "
     "2.72bn the EIB disbursed in 2021 and 2022. It stays in the recipient view, and "
     "quality() reports the EU rows left out.",
-    "provider": " In the provider view EU Institutions count as a provider: "
-    "contributions to the EU budget, the EDF and the EIB attribute nothing, and EU "
-    "Institutions' own rows count in their own right. This leaves out the OECD's "
-    "imputed EIB share of members' contributions, USD 0.035bn in 2021 and 2022.",
+    "provider": " In the provider view EU Institutions count as a provider and the "
+    "EIB as a channel: the rows of the EU budget and the EDF count in EU "
+    "Institutions' own right and contributions to them attribute nothing, while the "
+    "EIB's own rows leave and members' contributions to it carry the EIB's climate "
+    "share.",
 }
 
 
@@ -255,12 +289,12 @@ def weights(
 
 def face_shares() -> dict[str, pl.Expr]:
     """A commitment's climate, adaptation, mitigation and overlap value as fractions
-    of `face_usd`, 0 for a zero face value. They are the `share_*` inputs of
-    `weights`."""
+    of `face_usd`, 0 for a zero face value or a part the CRDF does not measure (a
+    null adaptation or overlap). They are the `share_*` inputs of `weights`."""
     face = pl.col("face_usd")
     return {
         f"share_{part}": pl.when(face != 0)
-        .then(pl.col(f"{part}_usd") / face)
+        .then(pl.col(f"{part}_usd").fill_null(0.0) / face)
         .otherwise(0.0)
         for part in ("climate", "adaptation", "mitigation", "overlap")
     }

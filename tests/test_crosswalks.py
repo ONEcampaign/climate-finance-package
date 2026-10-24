@@ -6,6 +6,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from stage_runs import write_fetched_years, write_inputs
 
 from climate_finance import schema
 from climate_finance.build import write_stage
@@ -273,7 +274,12 @@ def test_allocation_pools_a_group_over_the_projects_it_connects() -> None:
     assert crosswalk["group_id"].unique().to_list() == ["crosswalk|5078|238"]
     assert crosswalk.group_by("left_id").len()["len"].to_list() == [2, 2]
 
-    pairs = allocate(units.lazy(), crs=crs, links=links.lazy())
+    pairs = allocate(
+        units.lazy(),
+        crs=crs,
+        links=links.lazy(),
+        crdf=pl.LazyFrame(schema=schema.CRDF.dtypes),
+    )
     filled = (
         pairs.filter(pl.col("commitment_id").is_not_null())
         .group_by("commitment_id")
@@ -365,10 +371,10 @@ def test_run_link_writes_the_provider_profile_with_recoveries(
     external = pl.DataFrame(
         schema={name: c.dtype for name, c in schema.EXTERNAL.columns.items()}
     )
-    for name, frame in (("crs", crs), ("crdf", crdf), ("external", external)):
-        path = table_path(tmp_path, "normalise", name)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        frame.write_parquet(path)
+    write_inputs(
+        tmp_path, "normalise", {"crs": crs, "crdf": crdf, "external": external}
+    )
+    write_fetched_years(tmp_path)
     raw = raw_dir(tmp_path)
     raw.mkdir(parents=True)
     if "gef" in publishers:

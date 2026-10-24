@@ -283,16 +283,18 @@ def pending_rows(
         round_units = (
             near_units.join(own, on="component", how="semi").drop("component").lazy()
         )
+        round_rows = near_rows.join(own, on="component", how="semi").lazy()
         pairs = allocate(
             round_units,
             crs=near_crs,
             links=rejected,
+            crdf=round_rows,
             dated=dated,
             windowed=windowed,
         )
         allocated = allocate_to_rows(
             pairs,
-            crdf=near_rows.join(own, on="component", how="semi").lazy(),
+            crdf=round_rows,
             units=round_units,
             crs=near_crs,
             links=rejected,

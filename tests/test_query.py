@@ -4,6 +4,7 @@ Golden tables live in tests/golden/; set CF_UPDATE_GOLDEN=1 to rewrite them afte
 deliberate change, then review the diff.
 """
 
+import inspect
 import itertools
 import os
 import tomllib
@@ -16,9 +17,19 @@ from polars.testing import assert_frame_equal
 from releases import copy_release
 
 import climate_finance as cf
+from climate_finance import convert as convert_module
 from climate_finance.methods import OECD, ONE, RANGE, Method, MethodRange, label
-from climate_finance.query import BILATERAL, EU_CHANNELS, EU_INSTITUTIONS
-from climate_finance.result import AMOUNTS
+from climate_finance.query import (
+    BILATERAL,
+    EIB_AGENCY,
+    EIB_CHANNEL,
+    EU_BUDGET_AND_EDF,
+    EU_CHANNELS,
+    EU_INSTITUTIONS,
+    _aggregate,
+)
+from climate_finance.result import AMOUNTS, ROW_KEYS
+from climate_finance.schema import ReleaseManifest
 from climate_finance.snapshot import Snapshot
 from climate_finance.spec import Spec
 
@@ -75,6 +86,21 @@ def test_quality_summary_matches_its_golden_table() -> None:
     _golden("quality_summary", SNAP.quality().summary())
 
 
+def test_certain_route_share_is_certain_route_value_over_climate_value() -> None:
+    table = SNAP.table("quality").collect()
+    summary = SNAP.quality().summary()
+
+    expected = table.group_by("provider_code").agg(
+        share=pl.col("certain_route_usd").sum() / pl.col("climate_usd").sum()
+    )
+    joined = summary.join(expected, on="provider_code", validate="1:1")
+    assert joined.height == table["provider_code"].n_unique()
+    assert joined["certain_route_share"].to_list() == pytest.approx(
+        joined["share"].to_list()
+    )
+    assert (joined["certain_route_share"] < joined["link_rate"]).any()
+
+
 GRID = [
     Method(significant=significant, principal=principal, highest_marker=highest)
     for significant, principal, highest in itertools.product(
@@ -98,12 +124,14 @@ def test_value_stays_within_face_and_between_its_bounds(flow: str, view: str) ->
         assert (known["value"] <= known["high"]).all()
 
 
-def _without_code_2(tmp_path: Path) -> Snapshot:
+@pytest.fixture(scope="module")
+def without_code_2(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
+    """The fixture release without its Bi_Multi 2 commitments and their rows."""
     code_2 = SNAP.table("commitments").filter(pl.col("bi_multi") == 2).collect()
     assert code_2.height, "the fixture needs a Bi_Multi 2 commitment"
     keep = ~pl.col("row_id").is_in(code_2["row_id"].implode())
     release = copy_release(
-        tmp_path / "release",
+        tmp_path_factory.mktemp("without_code_2") / "release",
         edits={
             "commitments": lambda frame: frame.filter(keep),
             "disbursements": lambda frame: frame.filter(keep),
@@ -115,14 +143,14 @@ def _without_code_2(tmp_path: Path) -> Snapshot:
 @pytest.mark.parametrize("flow", FLOWS)
 @pytest.mark.parametrize("view", VIEWS)
 def test_code_2_rows_leave_every_total_unchanged(
-    tmp_path: Path, flow: str, view: str
+    without_code_2: Snapshot, flow: str, view: str
 ) -> None:
     spec = Spec(method=cf.methods.RANGE, flow=flow, view=view)
-    stripped = _without_code_2(tmp_path)
-
     with_code_2 = SNAP.spending(spec=spec).table.to_polars()
 
-    assert_frame_equal(with_code_2, stripped.spending(spec=spec).table.to_polars())
+    assert_frame_equal(
+        with_code_2, without_code_2.spending(spec=spec).table.to_polars()
+    )
     bilateral = with_code_2.filter(pl.col("bi_multi").is_in(BILATERAL))
     assert bilateral.height
 
@@ -141,6 +169,7 @@ def test_code_2_rows_leave_every_total_unchanged(
         ),
         Spec(method=cf.methods.ONE.replace(significant=0.25), flow="grant_equivalent"),
         Spec(method=cf.methods.ONE.replace(eu="provider"), view="provider"),
+        Spec(view="provider", providers=(5,), measure="share_of_total"),
     ],
 )
 def test_a_spec_round_trips_through_json_and_reruns_identically(spec: Spec) -> None:
@@ -158,6 +187,16 @@ def test_keyword_arguments_build_the_same_spec() -> None:
     result = SNAP.spending(providers=5, years=range(2021, 2023), view="provider")
 
     assert result.spec == Spec(providers=(5,), years=(2021, 2022), view="provider")
+
+
+def test_spending_defaults_match_the_spec_defaults() -> None:
+    parameters = inspect.signature(Snapshot.spending).parameters
+    fields = Spec.model_fields
+
+    assert set(fields) <= set(parameters)
+    assert {name: parameters[name].default for name in fields} == {
+        name: field.default for name, field in fields.items()
+    }
 
 
 @pytest.mark.parametrize("flow", FLOWS)
@@ -204,20 +243,42 @@ def test_a_channel_with_no_agency_share_attributes_nothing(
     assert_frame_equal(result, SNAP.spending(spec=spec).table.to_polars())
 
 
-# Fixture inputs: Germany gives IDA (channel 44002) 60m in 2021; IDA's ONE shares are
-# adaptation 0.18, mitigation 0.22 and cross-cutting 0.04, its OECD shares 0.20,
-# 0.25 and 0.05, each of adaptation and mitigation including the cross-cutting share.
+# Fixture inputs: Germany gives IDA (channel 44002) 60m in 2021. IDA's commitments,
+# as fractions of its spending, are 0.06 principal adaptation, 0.2 significant
+# adaptation, 0.1 principal mitigation, 0.2 significant mitigation and 0.1
+# significant on both, so its ONE shares are adaptation 0.18, mitigation 0.22 and
+# cross-cutting 0.04. Its OECD shares are 0.20, 0.25 and 0.05, each of adaptation
+# and mitigation including the cross-cutting share.
+ONE_IDA = (60e6 * 0.14, 60e6 * 0.18, 60e6 * 0.04, 60e6 * (0.18 + 0.22 - 0.04))
+# Significant markers at 1.0: adaptation 0.06 + 0.2, mitigation 0.1 + 0.2, and 0.1
+# cross-cutting.
+SIGNIFICANT_IDA = (60e6 * 0.26, 60e6 * 0.30, 60e6 * 0.10, 60e6 * 0.66)
+
+
 @pytest.mark.parametrize(
     ("method", "expected"),
     [
         # The highest-marker rule takes cross-cutting out of both objectives.
-        (
-            cf.methods.ONE,
-            (60e6 * 0.14, 60e6 * 0.18, 60e6 * 0.04, 60e6 * (0.18 + 0.22 - 0.04)),
-        ),
+        (cf.methods.ONE, ONE_IDA),
         (
             cf.methods.OECD,
             (60e6 * 0.20, 60e6 * 0.25, 60e6 * 0.05, 60e6 * (0.20 + 0.25 - 0.05)),
+        ),
+        # The EU setting leaves the share source alone.
+        (
+            cf.methods.OECD.replace(eu="channel"),
+            (60e6 * 0.20, 60e6 * 0.25, 60e6 * 0.05, 60e6 * (0.20 + 0.25 - 0.05)),
+        ),
+        # Agency shares follow the method's coefficients.
+        (cf.methods.ONE.replace(significant=1.0), SIGNIFICANT_IDA),
+        # Agencies take the method's significant coefficient, not Germany's 0.5.
+        (cf.methods.PROVIDER, ONE_IDA),
+        (cf.methods.PROVIDER.replace(significant=1.0), SIGNIFICANT_IDA),
+        # Each marker counts: adaptation 0.06 + 0.4 x 0.3, mitigation 0.1 + 0.4 x
+        # 0.3, overlap 0.4 x 0.1.
+        (
+            cf.methods.ONE.replace(highest_marker=False),
+            (60e6 * 0.18, 60e6 * 0.22, 60e6 * 0.04, 60e6 * 0.36),
         ),
     ],
 )
@@ -245,9 +306,12 @@ def test_a_climate_only_share_attributes_value_as_unsplit() -> None:
     rows = result.rows(origin="attribution")
     assert rows["method"].to_list() == ["OECD"]
     assert rows.select(columns).row(0) == expected
-    assert result.table.to_polars().select(columns).row(0) == expected
+    # ONE and PROVIDER hold no AfDB share for 2020, so the range's low bound is 0.
+    oecd = pl.col("method") == "OECD"
+    table = result.table.to_polars().filter(oecd)
+    assert table.select(columns).row(0) == (*expected[:5], 0.0, expected[6])
     # France's 2020 code 2 flows total 1.5 times its contribution.
-    share = result.share_of_total().table.to_polars()["value"].item()
+    share = result.share_of_total().table.to_polars().filter(oecd)["value"].item()
     assert share == pytest.approx(0.35 / 1.5)
     assert "Channels 46002: the climate share has no split" in result.explain()
     assert "value sits in unsplit" in result.explain()
@@ -309,6 +373,93 @@ def test_bounds_follow_each_allocation_in_its_own_year() -> None:
     )
 
 
+def test_a_zero_central_allocation_keeps_its_upper_bound(tmp_path: Path) -> None:
+    def zero_central(frame: pl.DataFrame) -> pl.DataFrame:
+        record = pl.col("record_id") == "DEU-1-R0"
+        return frame.with_columns(
+            pl.when(record).then(0.0).otherwise(pl.col(name)).alias(name)
+            for name in ("allocated_low_usd", "allocated_usd")
+        )
+
+    release = copy_release(tmp_path / "release", edits={"disbursements": zero_central})
+    row = cf.load(path=release).spending().rows(record_id="DEU-1-R0")
+
+    # DEU-1 is principal-marked, so the 13.3m upper allocation counts in full. The
+    # record allocates nothing at the centre, so its allocation weight is unknown.
+    assert row.select("value", "low", "high").row(0) == pytest.approx(
+        (0.0, 0.0, 13.3e6)
+    )
+    assert row["allocation_weight"].to_list() == [None]
+
+
+def test_a_range_bounds_every_key_under_every_method(tmp_path: Path) -> None:
+    # Without ONE shares or spending for AfDB, France's attribution to it counts under
+    # OECD only.
+    def oecd_only_for_afdb(frame: pl.DataFrame) -> pl.DataFrame:
+        return frame.filter(
+            (pl.col("channel_code") != 46002) | (pl.col("source") == "oecd")
+        )
+
+    release = copy_release(
+        tmp_path / "release",
+        edits={
+            "agency_shares": oecd_only_for_afdb,
+            "agency_spending": lambda frame: frame.filter(
+                pl.col("channel_code") != 46002
+            ),
+        },
+    )
+    result = cf.load(path=release).spending(method=RANGE, view="provider")
+    table = result.table.to_polars()
+
+    assert set(result.rows(origin="attribution", provider_code=4)["method"]) == {"OECD"}
+    by_method = table.partition_by("method", as_dict=True, include_key=False)
+    keys = [frame.select(ROW_KEYS).sort(pl.all()) for frame in by_method.values()]
+    for other in keys[1:]:
+        assert_frame_equal(keys[0], other)
+    bounds = table.group_by("method").agg(pl.col("low").sum(), pl.col("high").sum())
+    assert bounds["low"].n_unique() == bounds["high"].n_unique() == 1
+    assert table.filter(pl.col("provider_code") == 4)["low"].min() == 0.0
+
+
+def test_sums_do_not_depend_on_row_order() -> None:
+    # Summed in the order given, 1e16 + 1 - 1e16 is 0 and 1e16 - 1e16 + 1 is 1.
+    values = pl.Series([1e16, 1.0, -1e16])
+    rows = pl.DataFrame(
+        {
+            "year": pl.Series([2021] * 3, dtype=pl.Int16),
+            "provider_code": pl.Series([5] * 3, dtype=pl.Int32),
+            "recipient_code": pl.Series([248] * 3, dtype=pl.Int32),
+            "bi_multi": pl.Series([1] * 3, dtype=pl.Int8),
+            "method": ["ONE"] * 3,
+            **dict.fromkeys(AMOUNTS, values),
+        }
+    )
+
+    def summed(order: list[int]) -> pl.DataFrame:
+        return _aggregate(rows[order].lazy(), methods=["ONE"]).collect()
+
+    first = summed([0, 1, 2])
+    for order in ([0, 2, 1], [1, 0, 2], [2, 0, 1]):
+        assert_frame_equal(first, summed(order), check_exact=True)
+
+
+def test_a_range_of_close_methods_counts_each_member_once() -> None:
+    close = (ONE.replace(significant=0.5000001), ONE.replace(significant=0.5000002))
+    spec = Spec(providers=(5,), recipients=(248,), years=(2022,))
+
+    together = SNAP.spending(spec=spec.replace(method=MethodRange(methods=close)))
+
+    values = together.table.to_polars().group_by("method").agg(pl.col("value").sum())
+    assert values.height == 2
+    for method in close:
+        alone = SNAP.spending(spec=spec.replace(method=method)).table.to_polars()
+        expected = alone["value"].sum()
+        assert values.filter(pl.col("method") == label(method))["value"].item() == (
+            pytest.approx(expected)
+        )
+
+
 def test_the_recipient_view_counts_outflows_and_no_attribution() -> None:
     rows = SNAP.spending().rows()
 
@@ -326,12 +477,8 @@ def test_oecd_attribution_uses_the_imputed_shares() -> None:
 
 
 def _hold_afdb_2022(frame: pl.DataFrame) -> pl.DataFrame:
-    # AfDB's 2022 ONE share repeats an earlier year's.
-    key = (
-        (pl.col("channel_code") == 46002)
-        & (pl.col("year") == 2022)
-        & (pl.col("source") == "one")
-    )
+    # AfDB's 2022 spending repeats an earlier year's.
+    key = (pl.col("channel_code") == 46002) & (pl.col("year") == 2022)
     return frame.with_columns(
         share_source=pl.when(key).then(pl.lit("held")).otherwise("share_source")
     )
@@ -340,7 +487,7 @@ def _hold_afdb_2022(frame: pl.DataFrame) -> pl.DataFrame:
 def test_attributed_value_shows_and_sums_by_share_source(tmp_path: Path) -> None:
     snap = cf.load(
         path=copy_release(
-            tmp_path / "release", edits={"agency_shares": _hold_afdb_2022}
+            tmp_path / "release", edits={"agency_spending": _hold_afdb_2022}
         )
     )
     rows = snap.spending(view="provider").rows(origin="attribution")
@@ -361,6 +508,44 @@ def test_attributed_value_shows_and_sums_by_share_source(tmp_path: Path) -> None
     ) == pytest.approx(sorted(by_source.select(columns.columns).rows()))
     oecd_rows = snap.spending(view="provider", method=OECD).rows(origin="attribution")
     assert set(oecd_rows["share_source"]) == {"oecd"}
+
+
+def test_agency_shares_stand_in_where_agency_spending_measures_none(
+    tmp_path: Path,
+) -> None:
+    # AfDB (channel 46002) loses its measured 2022 share and gains a `one` share in
+    # its place; IDA's `one` share in 2021 sits beside a measured one and is unused.
+    def stand_in(frame: pl.DataFrame) -> pl.DataFrame:
+        added = frame.filter(pl.col("year") == 2021).with_columns(
+            source=pl.lit("one"),
+            year=pl.when(pl.col("channel_code") == 46002).then(2022).otherwise(2021),
+            share=pl.col("share") / 10,
+        )
+        return pl.concat([frame, added.cast(frame.schema)])
+
+    release = copy_release(
+        tmp_path / "release",
+        edits={
+            "agency_shares": stand_in,
+            "agency_spending": lambda frame: frame.filter(
+                (pl.col("channel_code") != 46002) | (pl.col("year") != 2022)
+            ),
+        },
+    )
+    rows = cf.load(path=release).spending(view="provider").rows(origin="attribution")
+    totals = rows.group_by("channel_code", "year").agg(pl.col("value").sum())
+    value = {(channel, year): total for channel, year, total in totals.iter_rows()}
+    # France gives AfDB 25m a year: in 2021 at its components, 0.27 + 0.30 - 0.08;
+    # in 2022 at its OECD shares over 10, 0.055. Germany and Norway give IDA 75m a
+    # year at its measured climate share, 0.36.
+    assert value == pytest.approx(
+        {
+            (46002, 2021): 25e6 * 0.49,
+            (46002, 2022): 25e6 * 0.055,
+            (44002, 2021): 75e6 * 0.36,
+            (44002, 2022): 75e6 * 0.36,
+        }
+    )
 
 
 def test_grant_equivalent_gaps_stay_missing() -> None:
@@ -506,6 +691,28 @@ def test_explain_names_the_method_view_and_units() -> None:
     assert "USD at current prices" in text
 
 
+@pytest.mark.parametrize(
+    ("spec", "converted"),
+    [({}, False), ({"currency": "EUR"}, True), ({"prices": 2024}, True)],
+)
+def test_converted_results_carry_conversion_provenance(
+    monkeypatch: pytest.MonkeyPatch, spec: dict[str, object], converted: bool
+) -> None:
+    factors = pl.DataFrame(
+        {"entity_code": [5, 20001], "year": [2022, 2022], "factor": [0.8, 0.5]},
+        schema={"entity_code": pl.Int32, "year": pl.Int16, "factor": pl.Float64},
+    )
+    monkeypatch.setattr(convert_module, "dac_factors", lambda **_: factors)
+
+    result = SNAP.spending(years=2022, **spec)
+
+    assert (result.meta.conversion is not None) is converted
+    if converted:
+        assert result.meta.conversion.factors_sha256 in result.explain()
+    else:
+        assert "Conversion factors" not in result.explain()
+
+
 def test_share_of_total_divides_each_key_by_its_total_flows() -> None:
     result = SNAP.spending(view="provider", providers=5, years=2021)
 
@@ -524,6 +731,41 @@ def test_share_of_total_divides_each_key_by_its_total_flows() -> None:
         60e6 * 0.36 / (4 * 60e6 * 0.95 / 3 + 1.5 * 60e6)
     )
     assert_frame_equal(shares.drop(AMOUNTS), result.table.to_polars().drop(AMOUNTS))
+
+
+def test_a_share_result_reruns_from_its_own_spec() -> None:
+    shares = SNAP.spending(view="provider", providers=5, years=2021).share_of_total()
+
+    assert shares.spec.measure == "share_of_total"
+    assert_frame_equal(
+        SNAP.spending(spec=shares.spec).table.to_polars(), shares.table.to_polars()
+    )
+    assert_frame_equal(
+        shares.share_of_total().table.to_polars(), shares.table.to_polars()
+    )
+
+
+@pytest.mark.parametrize(
+    ("measure", "expected", "absent"),
+    [
+        ("amount", "Amounts in USD at current prices.", "Values are shares"),
+        ("share_of_total", "Values are shares of all CRS flows", "Amounts in USD"),
+    ],
+)
+def test_explain_and_title_name_the_measure(
+    measure: str, expected: str, absent: str
+) -> None:
+    result = SNAP.spending(providers=5, years=2021, measure=measure)
+
+    assert expected in result.explain()
+    assert absent not in result.explain()
+    title = repr(result).splitlines()[0]
+    assert ("share of total" in title) == (measure == "share_of_total")
+
+
+def test_an_amount_spec_serialises_without_a_measure() -> None:
+    assert "measure" not in Spec(flow="commitments").model_dump_json()
+    assert "share_of_total" in Spec(measure="share_of_total").model_dump_json()
 
 
 @pytest.mark.parametrize(
@@ -598,49 +840,79 @@ def test_a_bilateral_commitment_divides_by_every_bilateral_code(
 
 
 ONE_EU_AS_PROVIDER = cf.methods.ONE.replace(eu="provider")
-# France gives the EU budget (channel 42001) 30m a year in 2021 and 2022 in every
-# flow, whose ONE climate share is 0.30. EU Institutions' own commitment EU-1 copies
-# Norway's NOR-1: committed in 2021, disbursed in 2021, 2022 and 2023.
+# France gives the EU budget (channel 42001) and the EDF (42003) 30m each and the EIB
+# (42004) 10m a year in 2021 and 2022 in every flow. Their ONE climate shares are
+# 0.30, 0.30 and 0.20, and the EIB's OECD share is 0.40. EU Institutions' own
+# commitments EU-1, EU-2 and EU-3 copy Norway's NOR-1 for the EU budget, the EDF and
+# the EIB (agencies 1, 2 and 3):
+# committed in 2021, disbursed in 2021, 2022 and 2023.
 EU_CONTRIBUTION, EU_SHARE = 30e6, 0.30
+EIB_CONTRIBUTION, EIB_ONE_SHARE, EIB_OECD_SHARE = 10e6, 0.20, 0.40
 EU_ATTRIBUTION_YEARS = (2021, 2022)
+EU_AGENCIES = {"EU-1": 1, "EU-2": 2, "EU-3": EIB_AGENCY}
 
 
-def _with_eu_commitment(frame: pl.DataFrame) -> pl.DataFrame:
-    eu = frame.filter(pl.col("row_id") == "NOR-1").with_columns(
-        row_id=pl.lit("EU-1"), provider_code=pl.lit(EU_INSTITUTIONS, pl.Int32)
-    )
-    if "record_id" in frame.columns:
-        eu = eu.with_columns(pl.col("record_id").str.replace("NOR-1", "EU-1"))
-    return pl.concat([frame, eu])
+def _with_eu_commitments(frame: pl.DataFrame) -> pl.DataFrame:
+    norway = frame.filter(pl.col("row_id") == "NOR-1")
+    copies = []
+    for row_id, agency in EU_AGENCIES.items():
+        eu = norway.with_columns(
+            row_id=pl.lit(row_id),
+            provider_code=pl.lit(EU_INSTITUTIONS, pl.Int32),
+            agency_code=pl.lit(agency, pl.Int32),
+        )
+        if "record_id" in frame.columns:
+            eu = eu.with_columns(pl.col("record_id").str.replace("NOR-1", row_id))
+        copies.append(eu)
+    return pl.concat([frame, *copies])
 
 
 def _with_eu_contributions(frame: pl.DataFrame) -> pl.DataFrame:
     rows = pl.DataFrame(
         {
             "provider_code": 4,
-            "channel_code": 42001,
-            "year": [year for year in (2021, 2022) for _ in FLOWS],
-            "flow": list(FLOWS) * 2,
-            "contribution_usd": EU_CONTRIBUTION,
+            "channel_code": [
+                channel
+                for channel in (*EU_BUDGET_AND_EDF, EIB_CHANNEL)
+                for _ in EU_ATTRIBUTION_YEARS
+                for _ in FLOWS
+            ],
+            "year": [year for year in EU_ATTRIBUTION_YEARS for _ in FLOWS] * 3,
+            "flow": list(FLOWS) * 6,
+            "contribution_usd": [EU_CONTRIBUTION] * 12 + [EIB_CONTRIBUTION] * 6,
         }
     )
     return pl.concat([frame, rows.cast(frame.schema)])
 
 
 def _with_eu_shares(frame: pl.DataFrame) -> pl.DataFrame:
-    rows = pl.DataFrame(
-        {
-            "channel_code": 42001,
-            "year": [year for year in (2021, 2022) for _ in range(3)],
-            "objective": ["adaptation", "mitigation", "cross_cutting"] * 2,
-            "share": [0.10, 0.25, 0.05] * 2,
-            "source": "one",
-            "share_source": "computed",
-        }
+    def shares(channel: int, source: str, split: list[float]) -> pl.DataFrame:
+        return pl.DataFrame(
+            {
+                "channel_code": channel,
+                "year": [year for year in EU_ATTRIBUTION_YEARS for _ in range(3)],
+                "objective": ["adaptation", "mitigation", "cross_cutting"] * 2,
+                "share": split * 2,
+                "source": source,
+            }
+        ).cast(frame.schema)
+
+    return pl.concat(
+        [
+            frame,
+            *(
+                shares(channel, "one", [0.10, 0.25, 0.05])
+                for channel in EU_BUDGET_AND_EDF
+            ),
+            # The OECD's shares for the EU budget and the EDF, which OECD ignores.
+            *(
+                shares(channel, "oecd", [0.10, 0.25, 0.05])
+                for channel in EU_BUDGET_AND_EDF
+            ),
+            shares(EIB_CHANNEL, "one", [0.05, 0.15, 0.0]),
+            shares(EIB_CHANNEL, "oecd", [0.10, 0.30, 0.0]),
+        ]
     )
-    # The OECD's share for the same channel, which OECD ignores.
-    oecd = rows.with_columns(source=pl.lit("oecd"), share_source=pl.lit("oecd"))
-    return pl.concat([frame, rows.cast(frame.schema), oecd.cast(frame.schema)])
 
 
 @pytest.fixture(scope="module")
@@ -648,8 +920,8 @@ def eu_snap(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
     release = copy_release(
         tmp_path_factory.mktemp("eu") / "release",
         edits={
-            "commitments": _with_eu_commitment,
-            "disbursements": _with_eu_commitment,
+            "commitments": _with_eu_commitments,
+            "disbursements": _with_eu_commitments,
             "core_contributions": _with_eu_contributions,
             "agency_shares": _with_eu_shares,
         },
@@ -664,29 +936,37 @@ def test_the_eu_constants_match_the_channels_the_build_maps_to_eu_institutions()
     agencies = tomllib.loads(toml.read_text())["agencies"]
 
     channels = {
-        row["channel_code"]
+        row["channel_code"]: row["agency_codes"]
         for row in agencies
         if row["provider_code"] == EU_INSTITUTIONS
     }
-    assert channels == set(EU_CHANNELS)
+    assert channels.keys() == set(EU_CHANNELS)
+    assert channels[EIB_CHANNEL] == [EIB_AGENCY]
 
 
 @pytest.mark.parametrize("flow", FLOWS)
 @pytest.mark.parametrize(
-    ("method", "eu_own_rows", "eu_attributed"),
+    ("method", "eu_own_agencies", "eu_attributed"),
     [
-        # As a channel, France's contribution carries the EU's share and the EU's
+        # As a channel, France's contributions carry the EU's shares and the EU's
         # own rows leave the all-provider total.
-        (cf.methods.ONE, False, EU_SHARE),
-        (ONE_EU_AS_PROVIDER, True, 0.0),
-        (cf.methods.OECD, True, 0.0),
+        (
+            cf.methods.ONE,
+            set(),
+            len(EU_BUDGET_AND_EDF) * EU_CONTRIBUTION * EU_SHARE
+            + EIB_CONTRIBUTION * EIB_ONE_SHARE,
+        ),
+        # As a provider, the EU budget and the EDF keep their own rows and the EIB
+        # is a channel.
+        (ONE_EU_AS_PROVIDER, {1, 2}, EIB_CONTRIBUTION * EIB_ONE_SHARE),
+        (cf.methods.OECD, {1, 2}, EIB_CONTRIBUTION * EIB_OECD_SHARE),
     ],
 )
 def test_an_all_provider_total_counts_eu_money_once(
     eu_snap: Snapshot,
     method: Method,
     flow: str,
-    eu_own_rows: bool,
+    eu_own_agencies: set[int],
     eu_attributed: float,
 ) -> None:
     rows = eu_snap.spending(view="provider", method=method, flow=flow).rows()
@@ -696,26 +976,28 @@ def test_an_all_provider_total_counts_eu_money_once(
         pl.col("year").is_in(EU_ATTRIBUTION_YEARS),
     )
     attributed = rows.filter(pl.col("channel_code").is_in(EU_CHANNELS))
-    assert (own.height > 0) == eu_own_rows
+    assert set(own["agency_code"]) == eu_own_agencies
     assert attributed.filter(pl.col("provider_code") == EU_INSTITUTIONS).is_empty()
-    assert attributed["value"].sum() == pytest.approx(
-        2 * EU_CONTRIBUTION * eu_attributed
-    )
+    assert attributed["value"].sum() == pytest.approx(2 * eu_attributed)
 
 
 @pytest.mark.parametrize("view", VIEWS)
 @pytest.mark.parametrize("flow", FLOWS)
-def test_eu_institutions_alone_return_their_own_spending_under_either_setting(
+def test_eu_institutions_alone_return_their_own_spending(
     eu_snap: Snapshot, flow: str, view: str
 ) -> None:
     def eu_alone(method: Method) -> pl.DataFrame:
         result = eu_snap.spending(
             view=view, method=method, flow=flow, providers=EU_INSTITUTIONS
         )
-        return result.table.to_polars().drop("method")
+        return result.rows().drop("method")
 
     as_channel = eu_alone(cf.methods.ONE)
-    assert as_channel.height
+    eib = pl.col("agency_code") == EIB_AGENCY
+    assert as_channel.filter(eib).height
+    # As a provider, the EU leaves out the EIB's own rows in the provider view.
+    if view == "provider":
+        as_channel = as_channel.filter(~eib)
     assert_frame_equal(as_channel, eu_alone(ONE_EU_AS_PROVIDER))
 
 
@@ -749,12 +1031,13 @@ def test_a_member_counts_its_eu_share_only_with_the_eu_as_a_channel(
         return result.rows(origin="attribution")["value"].sum()
 
     assert france(cf.methods.ONE) - france(ONE_EU_AS_PROVIDER) == pytest.approx(
-        EU_CONTRIBUTION * EU_SHARE
+        len(EU_BUDGET_AND_EDF) * EU_CONTRIBUTION * EU_SHARE
     )
 
 
 def test_eu_own_rows_stay_in_a_year_without_eu_attribution(eu_snap: Snapshot) -> None:
-    # EU-1 disburses in 2023, a year in which France attributes nothing to the EU.
+    # The EU's commitments disburse in 2023, a year in which France attributes
+    # nothing to the EU.
     def eu_rows(method: Method) -> pl.DataFrame:
         rows = eu_snap.spending(view="provider", method=method).rows(
             provider_code=EU_INSTITUTIONS
@@ -764,29 +1047,28 @@ def test_eu_own_rows_stay_in_a_year_without_eu_attribution(eu_snap: Snapshot) ->
     as_channel = eu_rows(cf.methods.ONE)
 
     assert set(as_channel["year"]) == {2023}
+    assert set(as_channel["agency_code"]) == set(EU_AGENCIES.values())
     assert_frame_equal(
-        as_channel, eu_rows(ONE_EU_AS_PROVIDER).filter(pl.col("year") == 2023)
+        as_channel.filter(pl.col("agency_code") != EIB_AGENCY),
+        eu_rows(ONE_EU_AS_PROVIDER).filter(pl.col("year") == 2023),
     )
 
 
-def _with_eib_and_no_2022_budget_share(frame: pl.DataFrame) -> pl.DataFrame:
-    # France also gives the EIB (42004), with an EIB share in 2021 and 2022, and the
-    # EU budget's 2022 share is missing.
-    eib = _with_eu_shares(frame.clear()).with_columns(
-        channel_code=pl.lit(42004, pl.Int32)
+def _unmeasured_deu_2(frame: pl.DataFrame) -> pl.DataFrame:
+    # As normalise writes a commitment of a year the CRDF measures no adaptation in.
+    unmeasured = pl.col("row_id") != "DEU-2"
+    return frame.with_columns(
+        pl.when(unmeasured).then(pl.col(name)).alias(name)
+        for name in ("rio_adaptation", "adaptation_usd", "overlap_usd")
     )
-    budget = _with_eu_shares(frame).filter(
+
+
+def _without_a_2022_budget_share(frame: pl.DataFrame) -> pl.DataFrame:
+    # The EIB keeps its share in 2021 and 2022; the EU budget's 2022 share is
+    # missing.
+    return _with_eu_shares(frame).filter(
         ~((pl.col("channel_code") == 42001) & (pl.col("year") == 2022))
     )
-    return pl.concat([budget, eib])
-
-
-def _with_eib_contributions(frame: pl.DataFrame) -> pl.DataFrame:
-    with_budget = _with_eu_contributions(frame)
-    eib = with_budget.filter(channel_code=42001).with_columns(
-        channel_code=pl.lit(42004, pl.Int32)
-    )
-    return pl.concat([with_budget, eib])
 
 
 def test_a_year_without_a_budget_share_keeps_the_budgets_own_rows(
@@ -795,10 +1077,10 @@ def test_a_year_without_a_budget_share_keeps_the_budgets_own_rows(
     release = copy_release(
         tmp_path / "release",
         edits={
-            "commitments": _with_eu_commitment,
-            "disbursements": _with_eu_commitment,
-            "core_contributions": _with_eib_contributions,
-            "agency_shares": _with_eib_and_no_2022_budget_share,
+            "commitments": _with_eu_commitments,
+            "disbursements": _with_eu_commitments,
+            "core_contributions": _with_eu_contributions,
+            "agency_shares": _without_a_2022_budget_share,
         },
     )
 
@@ -812,6 +1094,8 @@ def test_a_year_without_a_budget_share_keeps_the_budgets_own_rows(
 def test_quality_reports_the_eu_rows_a_provider_total_leaves_out(
     eu_snap: Snapshot, flow: str
 ) -> None:
+    # As a provider, the EU keeps its budget and EDF rows; the EIB's leave as a
+    # channel's own rows under either method.
     own = (
         eu_snap.spending(
             view="provider",
@@ -828,9 +1112,147 @@ def test_quality_reports_the_eu_rows_a_provider_total_leaves_out(
     left_out = eu_snap.quality().eu_left_out.to_polars().filter(flow=flow)
 
     assert own.height
-    assert set(left_out.select("agency_code", "channel_code").rows()) == {(1, 42001)}
-    assert dict(left_out.select("year", "value").rows()) == pytest.approx(
-        dict(own.rows())
+    assert set(left_out.select("agency_code", "channel_code").rows()) == {
+        (1, 42001),
+        (2, 42003),
+        (EIB_AGENCY, EIB_CHANNEL),
+    }
+    budget_and_edf = (
+        left_out.filter(pl.col("agency_code") != EIB_AGENCY)
+        .group_by("year")
+        .agg(pl.col("value").sum())
     )
+    assert dict(budget_and_edf.rows()) == pytest.approx(dict(own.rows()))
     assert eu_snap.quality(method=ONE_EU_AS_PROVIDER).eu_left_out.to_polars().is_empty()
     assert eu_snap.quality(providers=4).eu_left_out.to_polars().is_empty()
+
+
+def _unmeasured_deu_2_markers(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(
+        inherited_rio_adaptation=pl.when(pl.col("row_id") != "DEU-2").then(
+            pl.col("inherited_rio_adaptation")
+        )
+    )
+
+
+def _unmeasured_2022_spending(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(adaptation_measured=pl.col("year") != 2022)
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+def test_unmeasured_adaptation_stays_null_and_value_counts_mitigation(
+    tmp_path: Path, flow: str
+) -> None:
+    release = copy_release(
+        tmp_path / "release",
+        edits={
+            "commitments": _unmeasured_deu_2,
+            "disbursements": _unmeasured_deu_2_markers,
+            "agency_spending": _unmeasured_2022_spending,
+        },
+    )
+    spec = Spec(providers=(5,), view="provider", flow=flow, method=ONE)
+    result = cf.load(path=release).spending(spec=spec)
+    original = SNAP.spending(spec=spec)
+
+    # DEU-2's own rows and 2022's attribution; disbursements in 2022 of DEU-1, a
+    # 2021 commitment, keep their adaptation.
+    rows = result.rows(year=2022).filter(
+        (pl.col("row_id") == "DEU-2") | (pl.col("origin") == "attribution")
+    )
+    assert set(rows["origin"]) == {"attribution"} | (
+        {"commitment"} if flow == "commitments" else {"disbursement"}
+    )
+    assert rows["adaptation"].is_null().all()
+    assert rows["cross_cutting"].is_null().all()
+    assert rows["value"].to_list() == pytest.approx(rows["mitigation"].to_list())
+    table = result.table.to_polars()
+    # The table rows these rows reach, by recipient and Bi_Multi code.
+    reached = table.join(
+        rows.select("recipient_code", "bi_multi").unique(),
+        on=["recipient_code", "bi_multi"],
+        nulls_equal=True,
+    ).filter(year=2022)
+    assert reached.height == rows.select("recipient_code", "bi_multi").n_unique()
+    assert reached.select("adaptation", "cross_cutting").null_count().row(0) == (
+        reached.height,
+        reached.height,
+    )
+    assert table.filter(year=2021).equals(original.table.to_polars().filter(year=2021))
+    years = "2022" if flow == "commitments" else "2022 to 2024"
+    assert f"not measured for rows in {years}," in result.explain()
+    assert "not measured" not in original.explain()
+
+
+_SPENDING_COVERS = (
+    "Under {}, attributed finance covers core contributions in 2021 to 2022 and "
+    "agency spending in 2022 to 2023; the provider view attributes none in "
+)
+_IMPUTED_COVERS = (
+    "Under OECD, attributed finance covers core contributions in 2021 to 2022 and "
+    "the OECD's imputed shares in 2020 to 2022; the provider view attributes none in "
+)
+
+
+@pytest.mark.parametrize(
+    ("view", "method", "years", "named"),
+    [
+        (
+            "provider",
+            ONE,
+            None,
+            [_SPENDING_COVERS.format("ONE") + "2015 to 2021 and 2023 to 2024."],
+        ),
+        (
+            "provider",
+            OECD,
+            None,
+            [_IMPUTED_COVERS + "2015 to 2020 and 2023 to 2024."],
+        ),
+        (
+            "provider",
+            ONE,
+            (2020, 2021),
+            [_SPENDING_COVERS.format("ONE") + "2020 to 2021."],
+        ),
+        ("provider", OECD, (2021, 2022), []),
+        (
+            "provider",
+            RANGE,
+            (2020, 2021),
+            [
+                _SPENDING_COVERS.format("ONE and PROVIDER") + "2020 to 2021.",
+                _IMPUTED_COVERS + "2020.",
+            ],
+        ),
+        ("provider", RANGE, (2022,), []),
+        ("recipient", ONE, None, []),
+    ],
+)
+def test_explain_names_queried_years_without_attributed_finance(
+    tmp_path: Path,
+    view: str,
+    method: Method | MethodRange,
+    years: tuple[int, ...] | None,
+    named: list[str],
+) -> None:
+    release = copy_release(tmp_path / "release")
+    path = release / "release.json"
+    manifest = ReleaseManifest.model_validate_json(path.read_text())
+    # Each method's line names the years of the share table it reads.
+    covered = {
+        "crdf_recipient": (2015, 2024),
+        "core_contributions": (2021, 2022),
+        "agency_shares": (2020, 2022),
+        "agency_spending": (2022, 2023),
+    }
+    path.write_text(manifest.model_copy(update={"years": covered}).model_dump_json())
+
+    text = cf.load(path=release).spending(view=view, method=method, years=years)
+    lines = [
+        line
+        for line in text.explain().splitlines()
+        if "attributed finance covers" in line
+    ]
+
+    assert lines == named
