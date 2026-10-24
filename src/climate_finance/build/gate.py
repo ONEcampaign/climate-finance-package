@@ -7,8 +7,8 @@ over-allocation:
 
 - `precision`: each provider's blind-sample estimate passes the sequential rule
   (`evaluate.estimate_precision`). Without a blind sample every provider fails, and
-  so does a provider whose sampled pairs the build no longer allocates by the same
-  method in the same stratum.
+  so does a provider with sampled pairs that the build does not allocate by the
+  same method in the same stratum.
 - `human_audit`: at least `min_share` of the blind sample's draws carry a person's
   decision.
 - `conservation`: each linked CRS record's allocations, the unallocated excess
@@ -76,7 +76,7 @@ DRIFT_MEASURES = ("climate_usd", "disbursed_climate_usd")
 _SHOWN = 5
 # The gates `waive_precision` lets fail: both certify the blind sample.
 _WAIVABLE = ("precision", "human_audit")
-# The columns a sampled pair must still match in the build it gates.
+# The columns a sampled pair must match in the build it gates.
 _SAMPLED = ("provider_code", "task", "left_id", "right_id", "link_method", "stratum")
 
 
@@ -155,7 +155,7 @@ def run_gates(
         report_only: return the results without raising on a failure.
         waive_precision: let failed precision and human_audit rows pass, marked
             `waived`.
-        gates: thresholds; `gates.yaml` when not given.
+        gates: thresholds, read from `gates.yaml` when not given.
 
     Returns:
         Rows in `RESULT_SCHEMA`, in `GATES` order.
@@ -469,8 +469,8 @@ def over_allocation_gate(
     linked to it over every commitment unit that unit links to, by face, before
     allocation's year order and face cap.
     """
-    # No commitment row means no row above its face, so an empty `above` passes;
-    # conservation already fails a build with nothing linked.
+    # No commitment row means no row above its face, so an empty `above` passes.
+    # Conservation fails a build with nothing linked.
     above = (
         commitments.filter(pl.col("face_usd") > 0)
         .select("row_id", excess=pl.col("disbursed_usd") - pl.col("face_usd"))

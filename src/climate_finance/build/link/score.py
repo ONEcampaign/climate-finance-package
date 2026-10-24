@@ -18,8 +18,8 @@ line no record commits. Where a project's later records contradict its ids this 
 (see `contradicted_commitments`), the project number and recipient take the id's
 place for lines the id cannot follow (see `id_truth`). Where the project committed
 two lines to one recipient in a year, a new line of that recipient continues one of
-them and nothing says which. Those pairs are `unlabelled` and neither train nor
-measure the classifier. Canada also tells lines apart by purpose, so a Canadian
+them and nothing says which. Those pairs are `unlabelled` and sit outside both
+training and measurement. Canada also tells lines apart by purpose, so a Canadian
 disbursement continues the commitments of its own project, recipient and purpose
 where there are any (see `purpose_lines`). Where a donor changes a project's number
 or agency and then issues a new crs id, the new line continues what the records that
@@ -43,12 +43,12 @@ a miss.
 
 A private donor, as the OECD classes it (`private_donors`), files each grant under
 one project number, so the classifier scores its eligible pairs only where the two
-units carry the same number (`confirmable_pairs`). Its scoring group still counts
-them all. A pair under two numbers is two grants or a
-grant the donor renumbered, and neither the number nor the generic titles of
-foundation grants confirm it. The Hewlett Foundation (1624) moved from numbers such
-as `41867` to ones such as `2020-1471` in its 2021 records, and 4 of 15 of its
-links under two numbers, read by hand, were right.
+units carry the same number (`confirmable_pairs`). Its scoring group counts
+them all. A pair under two numbers is two grants or a grant the donor renumbered,
+and the generic titles of foundation grants leave it unconfirmed. The Hewlett
+Foundation (1624) moved from numbers such as `41867` to ones such as `2020-1471`
+in its 2021 records, and 4 of 15 of its links under two numbers, read by hand, were
+right.
 
 An eligible pair links when its probability reaches the threshold and it is not a
 sibling (`programme_level` 1). Each disbursement unit joins the one commitment it

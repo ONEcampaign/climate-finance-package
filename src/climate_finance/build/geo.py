@@ -1,6 +1,6 @@
 """resolvekit's bundled packs, and the DAC codes of places and providers they give.
 
-Names resolve on exact matches only: an exact tier, never a fuzzy or full-text hit.
+Names resolve on exact matches only, through the `exact_code` and `exact_name` tiers.
 """
 
 from functools import cache

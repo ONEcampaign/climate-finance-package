@@ -181,7 +181,7 @@ class Quality:
     `held_usd` and `oecd_usd`. `precision` holds, by provider, the share of
     allocated value whose link a blind human sample found right (`estimate`), its
     interval (`lower`, `upper`), whether it passed the release's precision gate,
-    whether a failure was waived, and the gate's reading; it is empty for a release
+    whether a failure was waived, and the gate's reading. It is empty for a release
     that was not gated.
     """
 

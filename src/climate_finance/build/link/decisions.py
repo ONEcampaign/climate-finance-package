@@ -109,9 +109,8 @@ def import_labels(
 
     The CSV holds `LABEL_COLUMNS`: the packet's pair number, `match` or `no_match`,
     the decider's confidence that the pair matches, from 0 to 1 and on the label's
-    side of 0.5, and the reason. It
-    must answer exactly the pairs of `packet`, and the packet must be the one its
-    pairs file was written with.
+    side of 0.5, and the reason. It must answer exactly the pairs of `packet`, and
+    the packet must be the one its pairs file was written with.
 
     Args:
         packet: the packet the CSV answers (`packet.write_packet`).

@@ -70,7 +70,7 @@ def test_uk_programme_numbers_find_their_programme_years(
     found_years = found.select("programme", "year").unique().height
     # Six of the seven not found have CRS records only in the other year. The
     # seventh, 300137 in 2022, has one record with no amount, which `normalise_crs`
-    # drops; the prototype's join on the raw CRS finds it, giving 285.
+    # drops. The prototype's join on the raw CRS finds it, giving 285.
     assert (years, found_years) == (291, 284)
 
 
@@ -171,7 +171,7 @@ def reconciliation(
         ("SWE", 2021, "crs_disbursed_at_party_weight", 1.0016),
         ("NLD", 2021, "crs_disbursed_at_party_weight", 1.0059),
         ("CHE", 2022, "crs_disbursed_at_party_weight", 1.0118),
-        # 6.2% under, which the prototype's report rounds to 0.94: its CRDF at 100%
+        # 6.2% under, which the prototype's report rounds to 0.94. Its CRDF at 100%
         # is the same USD 12,411m.
         ("DEU", 2022, "crdf_at_party_weight", 0.9385),
     ],

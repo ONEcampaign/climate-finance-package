@@ -5,7 +5,7 @@ fit and score with them, and `comparison_levels` evaluates the same SQL conditio
 for the truth-group classifier, so a pair's `levels` mean the same in `links` and in
 `pair_scores`. Splink numbers each comparison's levels by their order: -1 for the
 null level, else from the first level's count down to 0. In Splink's terms the
-commitment is the left record (`_l`) and the disbursement the right (`_r`); in
+commitment is the left record (`_l`) and the disbursement the right (`_r`). In
 `candidates` and `trace` links the disbursement unit is `left_id`.
 
 A unit reads its fields from its representative record, the largest by absolute
@@ -60,7 +60,7 @@ DESCRIPTION_WORDS = 80
 # Pairs compared at once, which bounds the memory a batch takes.
 BATCH_PAIRS = 500_000
 _RATIO = "disbursement_usd_r / commitment_usd_l"
-# The date features, each as SQL over a pair; a comparison with a null date is null.
+# The date features, each as SQL over a pair. A comparison with a null date is null.
 _DATE_SQL = {
     "same_start": "(expected_start_date_r = expected_start_date_l)::tinyint",
     "same_completion": "(completion_date_r = completion_date_l)::tinyint",

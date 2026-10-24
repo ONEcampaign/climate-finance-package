@@ -305,24 +305,24 @@ def reconcile(
     finance, one row per party, year and method.
 
     A party-year is compared on its main status, the one carrying the most face
-    value: Denmark reports each activity both committed and disbursed. A party
+    value (Denmark reports each activity both committed and disbursed). A party
     whose rows carry no status is compared on all of them, with a null status.
     `btr_face` and `btr_grant_equivalent` sum that status's rows, and
     `unfccc_only_usd` the face value of those rows no CRS record links to.
 
     The comparators sum the party's bilateral rows (`BILATERAL`) of the year, and of
-    the CRDF its Rio-marked rows only: a party weight applies to markers, and a
+    the CRDF its Rio-marked rows only. A party weight applies to markers, and a
     party's BTR leaves out the climate components its development bank publishes,
     as the EU's leaves out the EIB's. `crdf_at_party_weight` and `crdf_at_100` are
-    its CRDF commitments with Significant
-    at the party's weight (`provider_coefficients`, confirmed or not, as
-    `weight_confirmed` says) and at 100%; `traced_climate_value` the climate value
-    `method` gives what those commitments disbursed; `crs_disbursed_at_party_weight`
-    the year's CRS disbursements on Rio-marked records, Significant at the party's
-    weight. A party that reports commitments reads against the first three, one that
-    reports disbursements against the last. A party without a weight has null
-    weighted comparators, and one without a DAC provider code null comparators.
-    Each `btr_over_<comparator>` divides `btr_face` by it.
+    its CRDF commitments with Significant at the party's weight
+    (`provider_coefficients`, confirmed or not, as `weight_confirmed` says) and at
+    100%; `traced_climate_value` the climate value `method` gives what those
+    commitments disbursed; `crs_disbursed_at_party_weight` the year's CRS
+    disbursements on Rio-marked records, Significant at the party's weight. A party
+    that reports commitments reads against the first three, one that reports
+    disbursements against the last. A party without a weight has null weighted
+    comparators, and one without a DAC provider code null comparators. Each
+    `btr_over_<comparator>` divides `btr_face` by it.
     """
     years = tuple(years)
     btr = snapshot.table("btr").filter(pl.col("year").is_in(years))
@@ -364,7 +364,7 @@ def reconcile(
     commitments = (
         _counted_commitments(snapshot)
         .filter(*bilateral, pl.col("climate_share").is_null())
-        # Jev labels CRS records, not commitments, so a Jev method reads markers.
+        # Jev labels CRS records only, so a Jev method reads markers here.
         .with_columns(**face_shares(), jev_level=pl.lit(None, pl.Int8))
         .join(
             reported.select("provider_code", "party_weight").unique(),

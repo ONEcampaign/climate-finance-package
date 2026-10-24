@@ -17,8 +17,8 @@ stratum's draws, so a provider's weights sum to its allocated value.
 
 People or agents decide the sample from labelling packets (`packet.write_packet`),
 one per provider and batch, which show both units' ids and fields and no score,
-link method or stratum. Their decisions carry a `sample_id`, so they measure
-precision and never become pair labels or link overrides. The estimate counts an
+link method or stratum. Their decisions carry a `sample_id`, so they feed the
+precision estimate and create no pair labels or link overrides. The estimate counts an
 agent's decision as it counts a person's and reports the share agents decided.
 
 The estimate is the share of allocated value whose pair is right: per stratum the
@@ -229,8 +229,8 @@ def sample_design(
 
     A pair's `sample_id` is `<release>/<provider>/<first draw>`, shared by its
     draws. Each provider draws from its own random stream, seeded by `rule.seed`
-    and its code, over its pairs in pair order, so the design depends neither on
-    the order of `pairs` nor on the other providers.
+    and its code, over its pairs in pair order, so a provider's draws do not
+    change with the order of `pairs` or with the other providers.
     """
     parts = [
         _provider_draws(group, rule=rule, provider=int(provider))

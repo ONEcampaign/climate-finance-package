@@ -2,7 +2,7 @@
 
 The fetch is offline. The archive files take their places in the raw layout, with a
 `raw_manifest` that records them. One build runs with key repair off and pins the
-2021 to 2022 statuses; a second reuses its fetch and normalise tables, runs link and
+2021 to 2022 statuses. A second reuses its fetch and normalise tables, runs link and
 allocate with key repair on, and pins the no-record value the rules move.
 """
 
@@ -37,7 +37,7 @@ CRS_SHA256 = "d24840a5fad50e718da4eb5831c3e1e333e7c5ef6b46c158e3510c7497518f06"
 YEARS = (2021, 2022)
 # USD bn of 2021 to 2022 climate value per status.
 TOLERANCE_BN = 0.1
-# The reference leaves a repeat row's allocation on the repeat; the build moves it
+# The reference leaves a repeat row's allocation on the repeat. The build moves it
 # to the first row, and the 2021 to 2022 first rows of EIB repeats leave not
 # traceable.
 FIRST_ROWS_MOVED_BN = {
@@ -46,8 +46,8 @@ FIRST_ROWS_MOVED_BN = {
     "no_disbursement_record": 0.0,
     "not_traceable": -0.94,
 }
-# The reference keys World Bank disbursements on their crs ids, which name projects;
-# the build's `wb_loan` tier keys them on their loan or credit numbers.
+# The reference keys World Bank disbursements on their crs ids, which name projects.
+# The build's `wb_loan` tier keys them on their loan or credit numbers.
 LOAN_TIER_MOVED_BN = {
     "disbursed": 1.60,
     "partly_disbursed": 1.18,

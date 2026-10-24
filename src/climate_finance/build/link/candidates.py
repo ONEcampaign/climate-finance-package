@@ -266,7 +266,7 @@ def generate_candidates(
             only the disbursements left in. The key tiers link one where a later
             record carries its commitment's date (`floor_seen`).
         embedder: vectors of unit texts, which add embedding neighbours to the
-            blocking rules; none adds no neighbours.
+            blocking rules. Without one, the other rules alone block.
     """
     indexed = units.with_row_index("unit")
     reached = links.filter(task="crdf_crs").select(unit_id="right_id")

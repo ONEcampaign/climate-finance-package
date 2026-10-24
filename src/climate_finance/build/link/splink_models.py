@@ -12,12 +12,12 @@ pooled model that completes fewer scores nothing. u and EM run on one DuckDB thr
 since a parallel sum adds in whatever order threads finish, and two builds must give
 the same model.
 
-Raw EM probabilities do not link. On the prototype's id truth they reached precision
-0.141 at p of 0.5 or more. A model is calibrated once people have labelled
-`CALIBRATION_LABELS` of its pairs. Until then it gives no probability, and its pairs
-enter the review queue only as its calibration sample: `CALIBRATION_LABELS` pairs
-spread evenly over the bands of EM match weight in `WEIGHT_BANDS`, less those already
-labelled.
+Raw EM probabilities are too imprecise to link on. On the prototype's id truth they
+reached precision 0.141 at p of 0.5 or more. A model is calibrated once people or
+agents have labelled `CALIBRATION_LABELS` of its pairs. Until then it gives no
+probability, and its pairs enter the review queue only as its calibration sample:
+`CALIBRATION_LABELS` pairs spread evenly over the bands of EM match weight in
+`WEIGHT_BANDS`, less those already labelled.
 
 Once calibrated, Jev answers a sample of `JEV_SAMPLE` pairs drawn the same way.
 People's labels set Jev's scale for the model, a logistic of their label on the logit
@@ -282,8 +282,8 @@ def read_decision_labels(path: Path) -> pl.DataFrame:
     source `human` or `agent`, one per pair, and none when nothing has been decided yet.
 
     A pair's standing decision is the one `decisions.standing_decisions` keeps.
-    A blind-sample decision (one with a `sample_id`) measures precision, so it never
-    becomes a label. `stratified` marks the decisions on calibration pairs, which
+    A blind-sample decision (one with a `sample_id`) measures precision, so it is left
+    out of the labels. `stratified` marks the decisions on calibration pairs, which
     `stratified_sample` drew, so only they take inverse-probability weights.
     """
     columns = {
@@ -409,7 +409,7 @@ def _model(
             queued = sample.with_columns(review_reason=pl.lit(CALIBRATION_REASON))
             scores = scores.join(queued, on=_PAIR, how="left")
             return _Model(report=report, scores=scores)
-        # People's and agents' answers join the labels; Jev's stay apart.
+        # People's and agents' answers join the labels. Jev's stay apart.
         # `stratified_sample` drew both.
         given = answer(sample.sort(_PAIR), attributes).with_columns(
             stratified=pl.lit(True)

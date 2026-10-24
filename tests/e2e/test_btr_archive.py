@@ -28,7 +28,7 @@ def test_archive_gives_every_party_table_iii1_rows(tmp_path: Path) -> None:
     assert btr["party"].n_unique() == 39
     assert btr["face_usd"].sum() == pytest.approx(75.41996e9, rel=1e-6)
     # Chile (2 rows for 2023 and 2024) and Indonesia (9 rows, grant equivalent only)
-    # report South-South support; the other 37 parties give 27,398 rows.
+    # report South-South support. The other 37 parties give 27,398 rows.
     others = btr.filter(~pl.col("party").is_in(["CHL", "IDN"]))
     assert others.height == 27_398
     assert others["face_usd"].sum() == pytest.approx(75.41991e9, rel=1e-6)

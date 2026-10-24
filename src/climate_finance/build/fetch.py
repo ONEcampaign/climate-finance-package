@@ -235,10 +235,10 @@ def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> Non
     Raises:
         SourceUnavailableError: when the sources `recorded` holds differ from those
             `config` names, in either direction, or `recorded` names a CRS or
-            adaptation label file other than the one `config` names, or when
-            `raw` lacks a recorded
-            file, holds an unrecorded one, or holds one whose sha256 differs from
-            the recorded one. The message names every such source or file.
+            adaptation label file other than the one `config` names, or when `raw`
+            lacks a recorded file, holds an unrecorded one, or holds one whose
+            sha256 differs from the recorded one. The message names every such
+            source or file.
     """
     expected, held = set(expected_sources(config)), set(recorded["source"])
     if expected != held:

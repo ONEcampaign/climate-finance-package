@@ -75,7 +75,7 @@ def archive_config(archive: Path, *, key_repair: bool, recoveries: bool) -> Buil
         | {
             "key_repair": key_repair,
             "recoveries": recoveries,
-            # The archive builds run offline with no Jev cache; the Jev step has its
+            # The archive builds run offline with no Jev cache. The Jev step has its
             # own measurement.
             "jev_links": False,
             "sources": base.sources.model_dump()

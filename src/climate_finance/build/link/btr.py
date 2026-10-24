@@ -15,10 +15,10 @@ tiers link them:
 - `btr_splink`: one Fellegi-Sunter model per party over six comparisons (title
   words against the CRS title and descriptions, recipient, amount, sector,
   instrument, and the Rio marker against the type of support), over the records
-  with a commitment or a disbursement. Its u comes from
-  random sampling, its m from two EM sessions blocked on strong evidence, since a
-  session blocked on recipient alone converged on non-matches. The model never
-  reads the ids: they are cut from the title before it compares text.
+  with a commitment or a disbursement. Its u comes from random sampling, its m from
+  two EM sessions blocked on strong evidence, since a session blocked on recipient
+  alone converged on non-matches. The model reads no ids, as they are cut from the
+  title before it compares text.
 
 Rows the reader flags `is_aggregate`, such as Finland's channel totals, total
 spending under many commitments, so neither tier reads them.
@@ -549,8 +549,8 @@ def _settings(*, prior: float) -> SettingsCreator:
 
 
 def comparisons() -> list[ComparisonCreator | dict[str, Any]]:
-    """Text, recipient, amount, sector, instrument and Rio marker; `_l` is the BTR
-    row, `_r` the CRS record."""
+    """Text, recipient, amount, sector, instrument and Rio marker comparisons. `_l`
+    is the BTR row, `_r` the CRS record."""
     found = (
         "len(list_intersect(title_toks_l, text_toks_r))::double "
         "/ nullif(len(title_toks_l), 0)"

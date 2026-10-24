@@ -122,21 +122,21 @@ _PARTIES: dict[str, tuple[str, str]] = {
     "Zimbabwe": ("ZWE", "ZWL"),
 }
 _CURRENCIES = dict(_PARTIES.values())
-# The EU reports as "EUU"; the geo pack gives it no provider code.
+# The EU reports as "EUU". The geo pack gives it no provider code.
 _PARTY_PROVIDERS = {"EUU": 918}
 
-# Parties whose Table III.1 amounts are in millions; their workbooks do not say so.
+# Parties whose Table III.1 amounts are in millions. Their workbooks do not say so.
 _MILLIONS = frozenset({"GBR", "USA"})
 # A sheet whose median amount is below this reads as millions. It checks `_MILLIONS`
 # against the data: those two parties' sheets have medians of 0.5 to 1.4, every
 # other party's are above 1,000.
 _MILLIONS_BELOW = 10.0
 
-# Indonesia's sheet names no year; each row's year sits in its "Additional
+# Indonesia's sheet names no year. Each row's year sits in its "Additional
 # information" cell.
 _YEAR_ROLES = {"IDN": "additional_information"}
 
-# Rows that report a whole channel or programme of a party, not one activity.
+# Rows that each cover a whole channel or programme of a party.
 _AGGREGATE_TITLES = frozenset(
     {
         ("FIN", "Other bilateral projects"),
@@ -167,7 +167,7 @@ _TEXT_ROLES = (
 )
 _AMOUNTS = ("face_domestic", "face_usd", "grant_equiv_domestic", "grant_equiv_usd")
 # Belgium reports its disbursements as "provided". Chile's "terminado" (finished)
-# and "en curso" (ongoing) say neither whether the amount is committed or disbursed.
+# and "en curso" (ongoing) leave open whether the amount is committed or disbursed.
 _STATUSES = {
     "committed": "committed",
     "disbursed": "disbursed",
@@ -197,7 +197,7 @@ def read_btr_workbook(path: Path, *, party: str) -> pl.DataFrame:
 
     `path` is a workbook, or a zip of workbooks as Canada and the EU ship them.
     Every Table III.1 sheet gives a row per activity with an amount. Rows whose four
-    amount cells are empty or a notation key ("NA") are dropped: Germany, Norway and
+    amount cells are empty or a notation key ("NA") are dropped. Germany, Norway and
     Spain list every activity on both year sheets and leave the other year empty.
     Rows labelled as totals are dropped. Amounts of the parties in `_MILLIONS` are
     multiplied by a million. A USD amount the party leaves empty is filled from the
@@ -248,7 +248,7 @@ def ingest_unfccc(archive_dir: Path, *, out_path: Path) -> Path:
 def read_btr_archive(archive_dir: Path) -> pl.DataFrame:
     """Every workbook the archive manifest lists, as one `btr` table.
 
-    Each party's year must come from one sheet; a draft and a final copy of a
+    Each party's year must come from one sheet. A draft and a final copy of a
     workbook both giving rows stop the read.
 
     Raises:
@@ -581,7 +581,7 @@ def _column_roles(
 ) -> dict[str, int]:
     """Each role's column. A text column takes the role of its topmost label that
     names one (Canada repeats the labels in a lower row). A "Face value" or "Grant
-    equivalent" label spans right to the next label in its row; a currency column
+    equivalent" label spans right to the next label in its row. A currency column
     takes the one above or below it."""
     width = max(len(row) for row in block)
     labels = [
@@ -808,7 +808,7 @@ def _label(cell: object) -> str:
 
 def _text(value: object) -> str | None:
     """A text cell without notation keys. Finland stacks "NA" lines around the
-    recipient ("NA\\nAfrica\\nNA"); those lines go."""
+    recipient ("NA\\nAfrica\\nNA"). Those lines go."""
     if value is None:
         return None
     lines = [line.strip() for line in str(value).splitlines()]
@@ -826,7 +826,7 @@ def _number(value: object) -> float | None:
     text = re.sub(r"\s|\(\d+\)$", "", str(value))
     if not text or text.upper() in _NOTATION:
         return None
-    # "1,691" groups thousands; Chile's "44050,34" has a decimal comma.
+    # "1,691" groups thousands. Chile's "44050,34" has a decimal comma.
     if _THOUSANDS.fullmatch(text):
         return float(text.replace(",", ""))
     return float(text.replace(",", "."))

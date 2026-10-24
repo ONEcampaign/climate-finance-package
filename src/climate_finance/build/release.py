@@ -864,11 +864,11 @@ def cut_release(
     The gates read the blind-sample labels from the config's review decisions, the
     sample's design from `sample` and the previous release from `previous` (see
     `gate.run_gates`). Their rows, keyed by gate name, the previous release's name
-    and `waive_precision` go into `release.json`; the pack is
+    and `waive_precision` go into `release.json`. The pack is
     `<out_dir>/climate-finance-<release>.tar.zst`.
 
     Raises:
-        GateFailedError: when a gate fails; `waive_precision` lets the precision
+        GateFailedError: when a gate fails. `waive_precision` lets the precision
             and human-audit gates fail.
     """
     build_package.build(release, config=config, out_dir=out_dir)

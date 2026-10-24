@@ -283,7 +283,7 @@ CRS = _table(
     text_hash=_str(nullable=True),
 )
 
-# One row per provider, agency, year and flow. The build writes every flow in FLOWS.
+# One row per provider, channel, year and flow. The build writes every flow in FLOWS.
 # MULTI publishes aggregate channels beside their members, such as 40000 for all
 # multilaterals and 44000 for the World Bank Group. Normalise keeps them. The release
 # keeps leaf channels, so each dollar counts once, plus a 40000 row for the part of
@@ -292,7 +292,7 @@ CRS = _table(
 CONTRIBUTION_KEY = ("provider_code", "year", "flow")
 # MULTI's total of a provider's core contributions, which sums every leaf channel
 # it reports, 30010 included. The intermediate aggregates (41000, 47000 and the
-# like) do not follow the code prefixes: MULTI files some 41xxx channels under 47000.
+# like) follow no code prefix, as MULTI files some 41xxx channels under 47000.
 TOP_CHANNEL = 40000
 CORE_CONTRIBUTIONS = _table(
     "core_contributions",
@@ -349,13 +349,13 @@ EXTERNAL = _table(
 # Bank and bilateral ledgers, as the ledger readers return them: one row per
 # transaction, or per World Bank loan and year. `key` is the id the CRS project number
 # carries, so a ledger row and a CRS row join on it; `activity_id` is the id as
-# published. Amounts are as published, in `currency`; the readers fill `amount_usd` for
+# published. Amounts are as published, in `currency`. The readers fill `amount_usd` for
 # USD rows, and normalise converts the rest at DAC annual rates where the DAC publishes
 # one for the currency. A World Bank row is the December-to-December flow of a loan,
 # dated 31 December. A GEF disbursement is the rise of its running peak, since GEF
 # declares its figures cumulative. `disbursed_to_date` is a GCF readiness grant's
-# disbursed amount, which the list does not date: its `date` and `year` are null and no
-# calendar-year check can use it. `other_ids` lists the activity's other identifiers,
+# disbursed amount, which the list does not date, so its `date` and `year` are null and
+# no calendar-year check can use it. `other_ids` lists the activity's other identifiers,
 # which the bilateral id matching reads.
 LEDGER = _table(
     "ledger",
@@ -518,7 +518,7 @@ PROGRAMME_STEMS = _table(
 # under a blocking rule. `eligible` pairs are open to scoring: no key linked either
 # unit and neither agency's ids persist. The other rows pair commitments of
 # `id_persistent` agencies. `same_crs_id` says whether a pair's units share a raw
-# crs id; the classifier trains on `score.id_truth`. `programme_level` is 2 for
+# crs id. The classifier trains on `score.id_truth`. `programme_level` is 2 for
 # the same project number, 1 for siblings under one programme stem, else 0.
 CANDIDATES = _table(
     "candidates",
@@ -675,10 +675,10 @@ PAIR_LABELS = _table(
 )
 
 # Decisions on queued pairs and blind-sample pairs, appended over time. A decision
-# carries either the queue's `review_reason` or the blind sample's `sample_id`:
-# queue decisions become pair labels and link overrides, and blind-sample decisions
-# only measure precision. `label_source` says whether a person or an agent decided;
-# an agent's decision names its `model`, its `confidence` that the pair matches, and
+# carries either the queue's `review_reason` or the blind sample's `sample_id`.
+# Queue decisions become pair labels and link overrides, and blind-sample decisions
+# only measure precision. `label_source` says whether a person or an agent decided.
+# An agent's decision names its `model`, its `confidence` that the pair matches, and
 # its labelling `round`. `reviewer` names the person or the agent run, and `note`
 # holds the stated reason.
 REVIEW_DECISIONS = _table(
@@ -782,11 +782,10 @@ COMMITMENTS = _table(
     # counts in full in both bounds, so it is the same part of all three.
     withheld_usd=_usd(),
     project_disbursing=_bool(),
-    # True or null: true where the bank's ledger
-    # (`ledger.UNDISBURSED_PUBLISHERS`) confirms no disbursement; null where no
-    # ledger covers the row or it shows money moving. It stands whatever `status`
-    # says, so a row the allocation calls disbursed and the ledger does not points
-    # at a link to check.
+    # True where the bank's ledger (`ledger.UNDISBURSED_PUBLISHERS`) confirms no
+    # disbursement, null where no ledger covers the row or it shows money moving.
+    # It stands whatever `status` says, so a row the allocation calls disbursed and
+    # the ledger does not points at a link to check.
     ledger_undisbursed=_bool(nullable=True),
     repeat_of=_str(nullable=True),
     # The published CRDF aggregate row this child was rebuilt from. The release
@@ -1103,22 +1102,21 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     allocated_high, each plus `withheld_usd`, sum to disbursed, disbursed_low and
     disbursed_high, and 0 <= disbursed_low <= disbursed <= disbursed_high <= face,
     where a face of zero or below (a published downward revision) allows nothing
-    disbursed. A record's
-    rows share one `record_disbursement_usd` and one `record_grant_equiv_usd` (all
-    null or all set), and its allocated amounts sum to at most
-    `record_disbursement_usd`. Amounts compare within `INVARIANT_TOLERANCE_USD`, and
-    none of them is null. Every disbursements row from the CRS names the link that
-    carried it, and every fill (a bank-ledger or IATI row) carries its commitment's
-    provider, agency, recipient, channel, Bi_Multi, purpose and project number. No
-    disbursements row names a commitment that repeats an earlier vintage, as
-    allocate moves a repeat's allocations to its first row. No commitment is
-    another's `parent_row_id`, no table in `tables` holds a row of a fill record
-    the release leaves out (`withheld_record`) or the bulk CRS's
-    `CRS_UNSPECIFIED_RECIPIENT`. A channel, year and source of
-    `agency_shares` holds either split rows or one `climate` row, all of one
-    `share_source`. Each commitment's
-    value under the OECD method equals its published `climate_usd`, and no channel
-    of `core_contributions` aggregates another of its channels. An empty list means
+    disbursed. A record's rows share one `record_disbursement_usd` and one
+    `record_grant_equiv_usd` (all null or all set), and its allocated amounts sum
+    to at most `record_disbursement_usd`. Amounts compare within
+    `INVARIANT_TOLERANCE_USD`, and none of them is null. Every disbursements row
+    from the CRS names the link that carried it, and every fill (a bank-ledger or
+    IATI row) carries its commitment's provider, agency, recipient, channel,
+    Bi_Multi, purpose and project number. No disbursements row names a commitment
+    that repeats an earlier vintage, as allocate moves a repeat's allocations to
+    its first row. No commitment is another's `parent_row_id`. No table in
+    `tables` holds a row of a fill record the release leaves out
+    (`withheld_record`) or a row with the bulk CRS's `CRS_UNSPECIFIED_RECIPIENT`.
+    A channel, year and source of `agency_shares` holds either split rows or one
+    `climate` row, all of one `share_source`. Each commitment's value under the
+    OECD method equals its published `climate_usd`, and no channel of
+    `core_contributions` aggregates another of its channels. An empty list means
     every check passed.
     """
     commitments = tables["commitments"]

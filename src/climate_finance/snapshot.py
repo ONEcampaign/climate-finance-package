@@ -141,7 +141,7 @@ class Snapshot:
         """Compare each party's BTR figures with OECD data (`query.reconcile`).
 
         `parties` are ISO 3 codes as the `btr` table holds them, such as "NOR" and
-        "EUU"; None compares every party.
+        "EUU". None compares every party.
         """
         return query.reconcile(
             self,
@@ -242,7 +242,7 @@ def _fetch_index() -> ReleaseIndex:
 
 
 def _resolve(index: ReleaseIndex, release: str) -> str:
-    """The release `release` names in `index`; "latest" names the newest.
+    """The release `release` names in `index`. "latest" names the newest.
 
     Raises:
         UnknownNameError: when `index` lists no such release.

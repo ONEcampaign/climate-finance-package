@@ -7,7 +7,7 @@ name comes back ambiguous; the one candidate with the wanted id prefix is taken 
 it matches the name exactly. A hand-built pack adds development finance institutions
 the org pack misses. A CRS channel string without a code takes the code its coded
 rows carry, else the channel whose codelist name it equals. Fuzzy and full-text
-matches are not taken, because on channel names they were 15% correct.
+matches are left out, since on channel names they were 15% correct.
 """
 
 import re
