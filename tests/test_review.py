@@ -21,6 +21,7 @@ from climate_finance.build.allocate import (
 from climate_finance.build.config import Ledgers, load_config
 from climate_finance.build.link.crdf_crs import link_within_year
 from climate_finance.build.link.decisions import (
+    PAIR,
     drop_pairs,
     import_labels,
     override_links,
@@ -366,35 +367,72 @@ GROUP = [
 
 
 @pytest.mark.parametrize(
-    ("dropped", "left"),
+    ("dropped", "accepted", "left"),
     [
         # d20 reaches nothing else in the group, so only its link goes.
         (
             ("d20", "c19"),
+            None,
             {("d22", "c19"), ("d22", "c21"), ("d22b", "c19"), ("d22b", "c21")},
         ),
         # d22 keeps c21, so c19 leaves the group for every unit.
-        (("d22", "c19"), {("d22", "c21"), ("d22b", "c21")}),
+        (("d22", "c19"), None, {("d22", "c21"), ("d22b", "c21")}),
+        # d22b's accepted link to c19 stays, and d22b's part of the group, holding
+        # it, runs before d22's. d20, undecided, still loses c19.
+        (
+            ("d22", "c19"),
+            ("d22b", "c19"),
+            {("d22", "c21"), ("d22b", "c19"), ("d22b", "c21")},
+        ),
     ],
 )
-def test_dropping_a_pair_keeps_a_groups_units_reaching_the_same_commitments(
-    dropped: tuple[str, str], left: set[tuple[str, str]]
+def test_a_decision_keeps_a_groups_units_reaching_the_same_commitments(
+    dropped: tuple[str, str],
+    accepted: tuple[str, str] | None,
+    left: set[tuple[str, str]],
 ) -> None:
     case = Linked(GROUP, [])
     unit = case.unit
-    pair = pl.DataFrame(
-        {
-            "task": ["trace"],
-            "left_id": [unit(dropped[0])],
-            "right_id": [unit(dropped[1])],
-        }
+
+    decided = [(dropped, False)] + ([(accepted, True)] if accepted else [])
+    labels = pl.DataFrame(
+        [
+            {"task": "trace", "left_id": unit(left), "right_id": unit(right)}
+            | {"is_match": is_match, "pair_label_source": "human"}
+            for (left, right), is_match in decided
+        ],
+        schema={**dict.fromkeys(PAIR, pl.String), "is_match": pl.Boolean}
+        | {"pair_label_source": pl.String},
     )
 
-    kept = drop_pairs(case.links, pairs=pair)
+    kept = override_links(case.links, labels=labels)
 
     names = {unit(name): name for name in ("c19", "c21", "d20", "d22", "d22b")}
     assert {(names[a], names[b]) for a, b in pairs_of(kept)} == left
-    allocate(case.units.lazy(), crs=case.crs.lazy(), links=kept.lazy())
+    allocated = allocate(case.units.lazy(), crs=case.crs.lazy(), links=kept.lazy())
+    filled = allocated.drop_nulls("commitment_id")
+    by_commitment = filled.group_by("commitment_id").agg(pl.col("allocated_usd").sum())
+    face = case.crs.select(commitment_id="record_id", face="commitment_usd")
+    assert (
+        by_commitment.join(face, on="commitment_id")
+        .filter(pl.col("allocated_usd") > pl.col("face") + TOLERANCE)
+        .is_empty()
+    )
+    # Each linked record gives what it disbursed, excess included.
+    given = allocated.group_by("record_id").agg(pl.col("allocated_usd").sum())
+    disbursed = case.crs.join(given, on="record_id").select(
+        "record_id", "disbursement_usd"
+    )
+    assert dict(given.iter_rows()) == pytest.approx(dict(disbursed.iter_rows()))
+    if accepted:
+        # d22b claims c19 first, and d22 fills c21 with all it disbursed.
+        assert set(filled.select("record_id", "commitment_id").rows()) == {
+            ("d22b", "c19"),
+            ("d22", "c21"),
+        }
+        assert filled.filter(record_id="d22")["allocated_usd"].sum() == pytest.approx(
+            100.0
+        )
 
 
 def _release(

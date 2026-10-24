@@ -349,7 +349,11 @@ def test_crosswalk_profile_measures_the_climate_value_a_crosswalk_reaches() -> N
     ]
 
 
-def test_run_link_writes_the_provider_profile_with_recoveries(tmp_path: Path) -> None:
+# An EIB-only build has no GEF IATI files, and reads none.
+@pytest.mark.parametrize("publishers", [("eib", "gef"), ("eib",)])
+def test_run_link_writes_the_provider_profile_with_recoveries(
+    tmp_path: Path, publishers: tuple[str, ...]
+) -> None:
     crs = normalise_crs(
         pl.scan_parquet(OECD / "CRS.parquet"), years=(2010, 2025)
     ).collect()
@@ -366,17 +370,25 @@ def test_run_link_writes_the_provider_profile_with_recoveries(tmp_path: Path) ->
         path.parent.mkdir(parents=True, exist_ok=True)
         frame.write_parquet(path)
     raw = raw_dir(tmp_path)
-    shutil.copytree(FIXTURES / "gef", raw / IATI_DIR / "gef")
+    raw.mkdir(parents=True)
+    if "gef" in publishers:
+        shutil.copytree(FIXTURES / "gef", raw / IATI_DIR / "gef")
     pl.DataFrame(
         {"iso_code": ["EUI"] * 16, "year": range(2010, 2026), "exchange_rate": 0.8}
     ).write_parquet(raw / DAC_EXCHANGE_FILE)
     config = load_config(Path(__file__).parents[1] / "build.toml")
+    sources = config.sources.model_copy(update={"iati_publishers": publishers})
     context = StageContext(
         release="test",
         release_dir=tmp_path,
         # The fixture has no truth group to set Jev's scale.
         config=config.model_copy(
-            update={"key_repair": False, "recoveries": True, "jev_links": False}
+            update={
+                "key_repair": False,
+                "recoveries": True,
+                "jev_links": False,
+                "sources": sources,
+            }
         ),
         offline=True,
     )

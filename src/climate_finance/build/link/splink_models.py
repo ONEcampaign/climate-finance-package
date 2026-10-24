@@ -28,6 +28,8 @@ weight gives the probability: the model's own map when its labelled pairs hold
 `MIN_ISOTONIC_OUTCOMES` matches and as many non-matches, else a map pooled over the
 calibrated models. When people's labels hold under `MIN_JEV_SCALE_OUTCOMES` of either
 outcome, Jev's scale cannot be fitted, and their labels alone set m and the map.
+Without a Jev client, which the link stage passes only with `jev_links` on, people's
+labels alone set m and the map, and Jev is never asked.
 
 With `jev_links` on, a model with fewer than `CALIBRATION_LABELS` people's labels
 has its calibration sample answered instead (`jev.jev_answers`): Jev reads each pair,
@@ -188,7 +190,7 @@ def score_with_splink(
     stems: pl.DataFrame,
     provider_profile: pl.DataFrame,
     labels: pl.DataFrame,
-    client: JevClient,
+    client: JevClient | None,
     answer: CalibrationAnswers | None = None,
 ) -> SplinkResult:
     """Splink scores for the eligible candidate pairs of the providers in the
@@ -204,7 +206,8 @@ def score_with_splink(
         labels: pair labels in the `pair_labels` schema with `stratified`, as
             `read_decision_labels` gives them; the `human` and `agent` labels of
             task `trace` calibrate.
-        client: the build's Jev client.
+        client: the build's Jev client, which answers the stratified sample of a
+            calibrated model; None leaves calibration to people's labels alone.
         answer: what answers the calibration sample of a model with fewer than
             `CALIBRATION_LABELS` people's labels (`jev.jev_answers`); None leaves
             the sample to people.
@@ -376,7 +379,7 @@ def _model(
     pairs: pl.DataFrame,
     attributes: pl.DataFrame,
     human: pl.DataFrame,
-    client: JevClient,
+    client: JevClient | None,
     answer: CalibrationAnswers | None,
     pooled: bool = False,
 ) -> _Model:
@@ -664,16 +667,17 @@ def _labels(
     human: pl.DataFrame,
     answered: pl.DataFrame,
     attributes: pl.DataFrame,
-    client: JevClient,
+    client: JevClient | None,
     report: ModelReport,
 ) -> tuple[pl.DataFrame, str]:
     """The labels that calibrate a model, `y` per pair, and what they hold.
 
     People's labels stand. Where Jev `answered` the calibration sample, its labels
-    join them as they are. Otherwise, with both outcomes among people's labels, Jev
-    answers the stratified sample and every labelled pair, and its answers on pairs
-    people did not label become labels through Jev's scale. `stratified` marks the
-    labels `stratified_sample` drew: people's on calibration pairs and all of Jev's.
+    join them as they are. Otherwise, with a `client` and both outcomes among
+    people's labels, Jev answers the stratified sample and every labelled pair, and
+    its answers on pairs people did not label become labels through Jev's scale.
+    `stratified` marks the labels `stratified_sample` drew: people's on calibration
+    pairs and all of Jev's.
     """
     columns = ["left_id", "right_id", "y", "stratified"]
     if answered.height:
@@ -681,7 +685,10 @@ def _labels(
         labels = pl.concat([human.select(columns), answered])
         return labels, f"human:{human.height},jev:{answered.height}"
     outcomes = human["y"].sum()
-    if min(outcomes, human.height - outcomes) < MIN_JEV_SCALE_OUTCOMES:
+    if (
+        client is None
+        or min(outcomes, human.height - outcomes) < MIN_JEV_SCALE_OUTCOMES
+    ):
         return human.select(columns), f"human:{human.height}"
     asked = pl.concat(
         [

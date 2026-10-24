@@ -5,10 +5,15 @@ People and agents decide the pairs of a packet (`packet.write_packet`) and retur
 that `import_labels` appends to the review-decisions table.
 `splink_models.read_decision_labels` reads the queue decisions back as `human` and
 `agent` pair labels, leaving out blind-sample decisions, which only measure the links'
-precision. An accepted link takes probability 1, and its records count as agreeing. A
-rejected link leaves `links` (`drop_pairs`).
+precision. Decisions hold pair by pair: an accepted link stays at probability 1, and
+its records count as agreeing, and a rejected link leaves `links`, splitting its
+trace group where other units accepted the same commitment (`drop_pairs`). The link
+stage applies the decisions to each key and recovery tier as it runs, so a rejected
+link frees its disbursement for the tiers and blocking that follow, and no later
+tier links it again.
 """
 
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -24,18 +29,41 @@ LABEL_COLUMNS = ("pair", "label", "confidence", "reason")
 LABELS = {"match": "accept", "no_match": "reject"}
 # The labels that decide pairs: people's and agents'.
 DECIDING_SOURCES = ("human", "agent")
+# What a split trace group's `group_id` ends in, before the part's rank.
+SPLIT = "|split|"
+PAIR_FRAME = pl.DataFrame(schema=dict.fromkeys(PAIR, pl.String))
+
+
+def rejected_pairs(labels: pl.DataFrame) -> pl.DataFrame:
+    """The pairs (`task`, `left_id`, `right_id`) that `human` and `agent` labels
+    of `labels` reject."""
+    return _decided(labels).filter(~pl.col("is_match")).select(PAIR)
+
+
+def accepted_pairs(labels: pl.DataFrame) -> pl.DataFrame:
+    """The pairs (`task`, `left_id`, `right_id`) that `human` and `agent` labels
+    of `labels` accept."""
+    return _decided(labels).filter("is_match").select(PAIR)
+
+
+def _decided(labels: pl.DataFrame) -> pl.DataFrame:
+    return labels.filter(pl.col("pair_label_source").is_in(DECIDING_SOURCES))
 
 
 def override_links(links: pl.DataFrame, *, labels: pl.DataFrame) -> pl.DataFrame:
     """`links` with the `human` and `agent` pair labels of `labels` applied:
     accepted links at probability 1 with records that agree, rejected links dropped
     (`drop_pairs`). A label on a pair the build did not link changes nothing."""
-    decided = labels.filter(pl.col("pair_label_source").is_in(DECIDING_SOURCES))
-    accepted = decided.filter("is_match").select(PAIR, accepted=pl.lit(True))
-    kept = drop_pairs(links, pairs=decided.filter(~pl.col("is_match")))
+    accepted = accepted_pairs(labels)
+    kept = drop_pairs(links, pairs=rejected_pairs(labels), accepted=accepted)
     is_accepted = pl.col("accepted").fill_null(False)
     return (
-        kept.join(accepted, on=PAIR, how="left", maintain_order="left")
+        kept.join(
+            accepted.with_columns(accepted=pl.lit(True)),
+            on=PAIR,
+            how="left",
+            maintain_order="left",
+        )
         .with_columns(
             probability=pl.when(is_accepted).then(1.0).otherwise("probability"),
             records_disagree=pl.when(is_accepted & pl.col("records_disagree"))
@@ -46,15 +74,28 @@ def override_links(links: pl.DataFrame, *, labels: pl.DataFrame) -> pl.DataFrame
     )
 
 
-def drop_pairs(links: pl.DataFrame, *, pairs: pl.DataFrame) -> pl.DataFrame:
-    """`links` less the links of `pairs` (`task`, `left_id`, `right_id`).
+def drop_pairs(
+    links: pl.DataFrame, *, pairs: pl.DataFrame, accepted: pl.DataFrame | None = None
+) -> pl.DataFrame:
+    """`links` less the links of `pairs` (`task`, `left_id`, `right_id`), with the
+    links of `accepted` kept.
 
-    Allocation pools a trace group's disbursement units over the commitments they
-    all reach. A dropped trace link whose disbursement unit keeps another link in
-    its group therefore takes its commitment out of the group for every unit of the
-    group, so they all reach the same commitments. A unit whose only link in the
-    group is dropped leaves the group.
+    Decisions hold pair by pair: a link of `pairs` goes, and a link of `accepted`
+    stays. Allocation pools a trace group's disbursement units over the commitments
+    they all reach. A dropped trace link whose disbursement unit keeps another link
+    in its group therefore takes its commitment out of the group for every unit
+    that has no accepted link to it. A unit whose only link in the group is dropped
+    leaves the group.
+
+    Where some units keep such a commitment through an accepted link and others
+    lose it, the group splits: the units keeping the same set of those commitments
+    form one part, and each part's `group_id` takes the suffix `SPLIT` and its rank
+    (`split_rank`). Parts holding accepted links rank first, in the order of the
+    commitments they keep, and the part holding none ranks last. Allocation runs
+    each part in a pass after the parts ranked before it (`allocate.allocate`), so
+    parts of one group may share a commitment.
     """
+    accepted = PAIR_FRAME if accepted is None else accepted.select(PAIR)
     dropped = links.join(pairs.select(PAIR), on=PAIR, how="semi")
     kept = links.join(dropped, on=PAIR, how="anti")
     trace = pl.col("task") == "trace"
@@ -65,7 +106,57 @@ def drop_pairs(links: pl.DataFrame, *, pairs: pl.DataFrame) -> pl.DataFrame:
         .select(*group, "right_id")
         .unique()
     )
-    return kept.join(shared, on=[*group, "right_id"], how="anti", maintain_order="left")
+    reached = kept.join(shared, on=[*group, "right_id"], how="semi")
+    held = reached.join(accepted, on=PAIR, how="semi")
+    kept = kept.join(
+        reached.join(held, on=PAIR, how="anti"),
+        on=PAIR,
+        how="anti",
+        maintain_order="left",
+    )
+    if held.is_empty():
+        return kept
+    # Each unit of a split group, with the shared commitments it keeps.
+    units = (
+        kept.join(held.select(group).unique(), on=group, how="semi")
+        .select(*group, "left_id")
+        .unique()
+        .join(
+            held.group_by(*group, "left_id").agg(
+                keeps=pl.col("right_id").sort().str.join("|")
+            ),
+            on=[*group, "left_id"],
+            how="left",
+        )
+    )
+    # The part that keeps none sorts last.
+    parts = units.select(*group, "keeps").unique()
+    ranked = parts.with_columns(
+        rank=pl.struct(none=pl.col("keeps").is_null(), keeps="keeps")
+        .rank("dense")
+        .over(group)
+        .sub(1)
+    )
+    renamed = units.join(ranked, on=[*group, "keeps"], nulls_equal=True).select(
+        *group,
+        "left_id",
+        split_id=pl.concat_str(
+            [pl.col("group_id"), pl.lit(SPLIT), pl.col("rank").cast(pl.String)]
+        ),
+    )
+    return (
+        kept.join(renamed, on=[*group, "left_id"], how="left", maintain_order="left")
+        .with_columns(group_id=pl.coalesce("split_id", "group_id"))
+        .drop("split_id")
+    )
+
+
+def split_rank(group_id: pl.Expr) -> pl.Expr:
+    """The rank `drop_pairs` gave the part of a split trace group, 0 for a group
+    that is not split."""
+    return (
+        group_id.str.extract(f"{re.escape(SPLIT)}(\\d+)$").cast(pl.Int16).fill_null(0)
+    )
 
 
 def import_labels(

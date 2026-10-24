@@ -225,10 +225,12 @@ def _run(
     labels: pl.DataFrame | None = None,
     providers: tuple[int, ...] = (DONOR, OTHER_DONOR),
     answer: Callable[[JevClient], CalibrationAnswers] | None = None,
+    *,
+    jev: bool = True,
 ) -> Run:
     """Score both donors, with Jev answering through `_responses` and `answer`,
-    given the client, answering calibration samples. `scores` adds each pair's
-    truth `y`."""
+    given the client, answering calibration samples. Without `jev`, scoring gets
+    no client. `scores` adds each pair's truth `y`."""
     weighed = []
     band_weights = splink_models._band_weights
 
@@ -255,7 +257,7 @@ def _run(
                 world["candidates"].filter(pl.col("donor_code").is_in(providers))
             ),
             labels=pl.DataFrame(schema=_LABEL_SCHEMA) if labels is None else labels,
-            client=client,
+            client=client if jev else None,
             answer=None if answer is None else answer(client),
         )
     scores = result.scores.join(
@@ -340,6 +342,26 @@ def test_calibration_labels_give_monotone_probabilities(
     linked = scores.filter(pl.col("probability") >= 0.9)
     assert linked.height
     assert linked["y"].mean() > 0.9
+
+
+def test_without_a_client_people_s_labels_alone_calibrate(
+    world: dict[str, pl.DataFrame],
+    calibration_labels: pl.DataFrame,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    # Slow: one more run, about 5 s. The labels that let Jev set its scale in
+    # `calibrated` calibrate alone.
+    run = _run(
+        world, tmp_path_factory.mktemp("jev"), _labels(calibration_labels), jev=False
+    )
+    reports = {report.name: report for report in run.result.models}
+    own = reports[f"own_{DONOR}"]
+    assert own.calibrated
+    assert own.jev_labels == 0
+    assert run.client.live_calls == 0
+    scores = run.scores.filter(donor_code=DONOR)
+    assert scores["label_set"].unique().to_list() == [f"human:{2 * CALIBRATION_LABELS}"]
+    assert scores["probability"].null_count() == 0
 
 
 def test_a_provider_without_calibration_labels_stays_in_the_queue(

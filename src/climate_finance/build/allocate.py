@@ -27,6 +27,12 @@ several methods enters one pass per group, in that order, and each later pass
 receives only what the earlier ones left: the exact key tiers first, then the
 key-repair rules. What the last pass leaves is excess.
 
+A trace group that review decisions split (`decisions.drop_pairs`) runs as one group
+per part. Where certainty, record year, method and class tie, a part ranked after
+another (`decisions.split_rank`) runs, with its own commitments, in later passes, so
+parts of one group may share a commitment. A part holding an accepted link ranks
+before the part holding none, and so claims a shared commitment's headroom first.
+
 A disbursement record's own commitment in a group fills before the rest of the group
 (`_own_commitments`). That is the record itself where it also commits, else the one
 commitment record of the group whose real commitment date it carries and whose title
@@ -61,6 +67,7 @@ import polars as pl
 
 from climate_finance.build.errors import AllocationInputError
 from climate_finance.build.link.candidates import word_share
+from climate_finance.build.link.decisions import split_rank
 from climate_finance.build.link.id_practice import period_of
 from climate_finance.build.link.keys import line_date
 from climate_finance.build.link.levels import title_words
@@ -397,7 +404,8 @@ def _trace_pairs(
             on="c_unit",
         )
         .with_columns(
-            certain=pl.col("certain") | (pl.col("record_id") == pl.col("c_record"))
+            certain=pl.col("certain") | (pl.col("record_id") == pl.col("c_record")),
+            split=split_rank(pl.col("group_id")),
         )
         .drop("c_record")
     )
@@ -417,7 +425,7 @@ def _trace_pairs(
             pairs.with_columns(later=pl.lit(value=True)),
         ]
     )
-    key = ["estimated", "year", "rank", "class_year", "later"]
+    key = ["estimated", "year", "rank", "class_year", "split", "later"]
     # A group's pass is certain when all its pairs are, since the pass pools the
     # group's disbursement over all its commitments.
     pairs = pairs.with_columns(

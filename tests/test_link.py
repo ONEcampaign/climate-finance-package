@@ -1,7 +1,7 @@
 """Units, the exact key tiers, id practice and the within-year CRDF join."""
 
 import shutil
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import polars as pl
@@ -11,6 +11,7 @@ from climate_finance import schema
 from climate_finance.build import write_stage
 from climate_finance.build.config import load_config
 from climate_finance.build.errors import StageInputMissingError
+from climate_finance.build.jev_client import JevClient
 from climate_finance.build.link import run_link
 from climate_finance.build.link.crdf_crs import link_within_year
 from climate_finance.build.link.disagreement import flag_disagreement
@@ -768,15 +769,26 @@ def _normalised(release_dir: Path) -> None:
         frame.write_parquet(path)
 
 
-def _context(release_dir: Path, **switches: bool) -> StageContext:
+class _NoJev(StageContext):
+    """A context that refuses to make a Jev client."""
+
+    @property
+    def jev(self) -> JevClient:
+        raise AssertionError("the link stage asked for Jev with jev_links off")
+
+
+def _context(
+    release_dir: Path, decisions: Path | None = None, **switches: bool
+) -> StageContext:
     # The fixture has no truth group to set Jev's scale, so the Jev step is off
-    # unless a test turns it on.
+    # unless a test turns it on. With it off, the context refuses to make a client.
     config = load_config(Path(__file__).parents[1] / "build.toml")
-    return StageContext(
-        release="test",
-        release_dir=release_dir,
-        config=config.model_copy(update={"jev_links": False} | switches),
-        offline=True,
+    config = config.model_copy(update={"jev_links": False} | switches)
+    if decisions is not None:
+        sources = config.sources.model_copy(update={"review_decisions": decisions})
+        config = config.model_copy(update={"sources": sources})
+    return (StageContext if config.jev_links else _NoJev)(
+        release="test", release_dir=release_dir, config=config, offline=True
     )
 
 
@@ -829,3 +841,89 @@ def test_run_link_reproduces_its_tables(tmp_path: Path) -> None:
     first = write_stage(link, run_link(context), tmp_path)
     shutil.rmtree(tmp_path / "link")
     assert write_stage(link, run_link(context), tmp_path) == first
+
+
+def _table(table: schema.TableSchema, rows: list[dict[str, object]]) -> pl.DataFrame:
+    """`rows` in `table`'s columns, null where a row gives none."""
+    columns = {name: column.dtype for name, column in table.columns.items()}
+    return pl.DataFrame(
+        [{name: row.get(name) for name in columns} for row in rows], schema=columns
+    )
+
+
+def _link(context: StageContext) -> dict[str, pl.DataFrame]:
+    """`run_link`'s tables, each collected."""
+    return {
+        name: frame.collect() if isinstance(frame, pl.LazyFrame) else frame
+        for name, frame in run_link(context).items()
+    }
+
+
+def test_a_rejected_key_link_frees_its_disbursement_and_stays_unlinked(
+    tmp_path: Path,
+) -> None:
+    # d22 continues c19 by project number under a new crs id: an exact tier links
+    # it, and key repair's `repair_new_crs_id` would link it again. c18 shares its
+    # recipient, purpose and title.
+    shared: dict[str, object] = {"agency_code": 10, "recipient_code": 289}
+    shared |= {"purpose_code": 23210, "title": "Solar grid phase one"}
+    lines = [
+        ("c19", 2019, "A", "P-1", 100.0, None),
+        ("c18", 2018, "B", "P-2", 100.0, None),
+        ("d22", 2022, "A2", "P-1", None, 30.0),
+    ]
+    crs = _table(
+        schema.CRS,
+        [
+            shared
+            | {"record_id": name, "year": year, "crs_id": crs_id}
+            | {"project_number": pn, "donor_code": 1, "bi_multi": 1, "flow_code": 11}
+            | {"commitment_usd": commit, "disbursement_usd": disburse}
+            for name, year, crs_id, pn, commit, disburse in lines
+        ],
+    )
+    crdf = _table(
+        schema.CRDF,
+        [
+            shared
+            | {"row_id": name, "perspective": "recipient", "provider_code": 1}
+            | {"year": year, "crs_id": crs_id, "project_number": pn}
+            | {"face_usd": commit, "climate_usd": commit / 4}
+            for name, year, crs_id, pn, commit, _ in lines
+            if commit is not None
+        ],
+    )
+    for name, frame in (("crs", crs), ("crdf", crdf)):
+        path = table_path(tmp_path, "normalise", name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        frame.write_parquet(path)
+    linked = _link(_context(tmp_path, recoveries=False))
+    unit = {
+        record_ids[0]: unit_id
+        for unit_id, record_ids in linked["units"]
+        .select("unit_id", "record_ids")
+        .iter_rows()
+    }
+    traced = linked["links"].filter(task="trace")
+    assert traced.select("left_id", "right_id", "link_method").rows() == [
+        (unit["d22"], unit["c19"], "pn_recipient_purpose")
+    ]
+    assert linked["candidates"].is_empty()
+
+    decisions = tmp_path / "review_decisions.parquet"
+    _table(
+        schema.REVIEW_DECISIONS,
+        [
+            {"task": "trace", "left_id": unit["d22"], "right_id": unit["c19"]}
+            | {"decision": "reject", "label_source": "human", "reviewer": "analyst"}
+            | {"review_reason": "band", "decided_at": datetime(2026, 1, 1, tzinfo=UTC)}
+        ],
+    ).write_parquet(decisions)
+    rejected = _link(_context(tmp_path, decisions, recoveries=False))
+
+    assert rejected["links"].filter(task="trace").is_empty()
+    candidates = rejected["candidates"].filter("eligible")
+    assert set(candidates.select("left_id", "right_id").rows()) == {
+        (unit["d22"], unit["c18"]),
+        (unit["d22"], unit["c19"]),
+    }
