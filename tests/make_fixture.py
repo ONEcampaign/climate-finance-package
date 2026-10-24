@@ -6,8 +6,9 @@ passes `release_invariants`, and covers six providers, a Bi_Multi 2 row, Bi_Mult
 rows, an id-less multilateral row, a modelled-line provider, every status, every link
 method, a CRS record split across two commitments with excess, a bank-ledger gap
 fill, cross-cutting agency shares measured from markers and from components, a
-climate share with no split by objective, core contributions for every flow, a
-confirmed and an unconfirmed provider coefficient, commitments reached through
+climate share with no split by objective, core contributions for every flow,
+provider coefficients that change between years, split by agency, hold a
+both-significant coefficient or a case-by-case default, commitments reached through
 certain and estimated CRDF routes, and unallocated disbursements of each kind.
 Amounts are invented.
 
@@ -167,8 +168,21 @@ CORE_CONTRIBUTIONS = (
     (NOR, IDA_CH, 15e6, (2021, 2022)),
 )
 CORE_FLOW_FACTOR = {"commitments": 1.2, "disbursements": 1.0, "grant_equivalent": 1.0}
-# Germany's coefficient is confirmed. Japan's is not, so PROVIDER gives Japan 0.4.
-PROVIDER_COEFFICIENTS = ((DEU, 0.5, True), (JPN, 0.6, False))
+# (provider, agency, first_year, last_year, significant, principal, both_significant,
+#  case_by_case, source, locator). Germany counts an activity significant for both
+# objectives at 1.0. Japan's coefficients change in 2022. France's agency 1 assesses
+# case by case and states no default, so its rows take the method's coefficients
+# rather than France's 0.3. Norway assesses case by case with a default of 0.3 for
+# significant activities and none for principal ones.
+SURVEY, REPORT = "Fixture survey", "Fixture report"
+PROVIDER_COEFFICIENTS = (
+    (DEU, None, None, None, 0.5, 1.0, 1.0, False, SURVEY, "p. 8"),
+    (JPN, None, None, 2021, 0.5, 0.85, None, False, REPORT, "footnote 4"),
+    (JPN, None, 2022, None, 0.6, 1.0, None, False, SURVEY, "p. 8"),
+    (FRA, None, None, None, 0.3, 1.0, None, False, SURVEY, "p. 8"),
+    (FRA, 1, None, None, None, None, None, True, SURVEY, "p. 9, note f"),
+    (NOR, None, None, None, 0.3, None, None, True, SURVEY, "p. 5"),
+)
 # The route by which a commitment's CRDF row reaches its CRS commitment, where it is
 # not `within_year`.
 CRDF_ROUTES = {"NOR-1": "crosswalk_amount", "JPN-3": "title_recipient"}
@@ -480,13 +494,8 @@ def build_tables() -> dict[str, pl.DataFrame]:
             for flow in FLOWS
         ],
         "provider_coefficients": [
-            {
-                "provider_code": provider,
-                "significant": significant,
-                "basis": "btr_crs_ratio",
-                "confirmed": confirmed,
-            }
-            for provider, significant, confirmed in PROVIDER_COEFFICIENTS
+            dict(zip(RELEASE_TABLES["provider_coefficients"].columns, row, strict=True))
+            for row in PROVIDER_COEFFICIENTS
         ],
         "btr": [
             {
