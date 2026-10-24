@@ -47,6 +47,9 @@ NO_RECORD = "no_disbursement_record"
 # FRA-1's project pays earlier tranches, and AFDB-2 is the id-less multilateral row.
 PROJECT_DISBURSING = {"FRA-1"}
 FULLY_DISBURSED = {"IDA-1"}
+# A row the allocation calls partly disbursed and the IDA ledger undisbursed, as a
+# wrong repair link would leave it.
+LEDGER_UNDISBURSED = {"IDA-2"}
 ID_LESS = {"AFDB-2"}
 
 # (row_id, provider, agency, recipient, channel, bi_multi, year, rio_adaptation,
@@ -337,6 +340,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
             "overlap_usd": overlap,
             "status": status,
             "project_disbursing": row_id in PROJECT_DISBURSING,
+            "ledger_undisbursed": True if row_id in LEDGER_UNDISBURSED else None,
             "repeat_of": None,
             "parent_row_id": None,
         }

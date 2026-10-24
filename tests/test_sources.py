@@ -53,8 +53,16 @@ def _manifest_row(record: files.RawFile, raw_dir: Path) -> dict[str, object]:
 # World Bank ---------------------------------------------------------------------
 
 
-def _finances_one_api(rows_by_snapshot: dict[tuple[str, str], int]) -> Handler:
-    """An API serving `n` loans per (dataset, end of period) in pages as asked."""
+def _finances_one_api(
+    rows_by_snapshot: dict[tuple[str, str], int],
+    *,
+    order: int = 1,
+    overlap: int = 0,
+    miscount: int = 0,
+) -> Handler:
+    """An API serving `n` loans per (dataset, end of period) in pages as asked, each
+    page in `order` (-1 reverses it) and every page after the first starting
+    `overlap` loans early, with a `count` of `n` plus `miscount`."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         params = request.url.params
@@ -64,6 +72,7 @@ def _finances_one_api(rows_by_snapshot: dict[tuple[str, str], int]) -> Handler:
         period = params["filter"].removeprefix("end_of_period='").removesuffix("'")
         columns = next(c for name, c in DATASETS.items() if name == dataset)
         top, skip = int(params["top"]), int(params["skip"])
+        shift = overlap if skip else 0
         total = rows_by_snapshot.get((dataset, period), 0)
         page = [
             {
@@ -72,9 +81,9 @@ def _finances_one_api(rows_by_snapshot: dict[tuple[str, str], int]) -> Handler:
                 columns.title: f"Loan {i}",
                 "end_of_period": period,
             }
-            for i in range(skip, min(skip + top, total))
-        ]
-        return httpx.Response(200, json={"data": page})
+            for i in range(skip - shift, min(skip + top, total) - shift)
+        ][::order]
+        return httpx.Response(200, json={"count": total + miscount, "data": page})
 
     return handler
 
@@ -118,6 +127,52 @@ def test_finances_one_pages_each_year_end_and_feeds_the_reader(tmp_path: Path) -
     # Loans 0000 to 0002 stand at the same value at both year-ends; loan 1000 is new.
     assert ibrd.filter(key="DS00975-0000")["amount"].item() == 0
     assert ibrd.filter(key="DS00975-1000")["amount"].item() == 100.0 * 1_001
+
+
+def test_finances_one_saves_a_snapshot_sorted_by_loan(tmp_path: Path) -> None:
+    api = _finances_one_api(
+        {(d, f"31-Dec-{y}"): 3 for d in DATASETS for y in (2020, 2021)}, order=-1
+    )
+
+    download_finances_one(
+        tmp_path, years=[2021], offline=False, client=_client(api), pause_seconds=0
+    )
+
+    saved = json.loads(
+        (tmp_path / "ledgers" / "finances_one" / "DS00975_31-Dec-2021.json").read_text()
+    )
+    assert [row["loan_number"] for row in saved] == [
+        "DS00975-0000",
+        "DS00975-0001",
+        "DS00975-0002",
+    ]
+
+
+def test_finances_one_refuses_pages_that_overlap(tmp_path: Path) -> None:
+    # The second page repeats the first page's last loan and so never reaches the
+    # snapshot's last loan.
+    api = _finances_one_api(
+        {(d, f"31-Dec-{y}"): 1_001 for d in DATASETS for y in (2020, 2021)},
+        overlap=1,
+    )
+
+    with pytest.raises(SourceUnavailableError, match="DS00975-0999"):
+        download_finances_one(
+            tmp_path, years=[2021], offline=False, client=_client(api), pause_seconds=0
+        )
+    assert not (tmp_path / "ledgers").exists()
+
+
+def test_finances_one_refuses_a_snapshot_short_of_its_count(tmp_path: Path) -> None:
+    api = _finances_one_api(
+        {(d, f"31-Dec-{y}"): 3 for d in DATASETS for y in (2020, 2021)}, miscount=1
+    )
+
+    with pytest.raises(SourceUnavailableError, match=r"served 3 rows .* counts 4"):
+        download_finances_one(
+            tmp_path, years=[2021], offline=False, client=_client(api), pause_seconds=0
+        )
+    assert not (tmp_path / "ledgers").exists()
 
 
 def test_finances_one_retries_a_rate_limit(tmp_path: Path) -> None:

@@ -218,18 +218,19 @@ def test_the_classifier_meets_its_targets_on_the_prototype_years(
     # Id truth follows a line through its forms of id (`line_id`), Canada's
     # disbursements continue the commitments of their own purpose (`purpose_lines`),
     # and the classifier reads start and completion dates and no commitment date,
-    # which refits the threshold.
-    assert threshold == 0.40
+    # which refits the threshold. Template lines (`template_lines`) leave the
+    # training pairs, which refits it again.
+    assert threshold == 0.38
     assert prototype["f1"] >= F1_TARGET
     assert every_year["ece"] <= ECE_TARGET
-    # Canada renumbers its lines from year to year, so it carries 574 of the 1,603
-    # held-out misses over the build's CRDF years; without it the ECE is 0.0056.
+    # Canada renumbers its lines from year to year, so it carries 384 of the 1,297
+    # held-out misses over the build's CRDF years; without it the ECE is 0.0054.
     assert every_year == pytest.approx(
-        {"precision": 0.92436, "recall": 0.91446, "f1": 0.91938, "ece": 0.00868},
+        {"precision": 0.91708, "recall": 0.93079, "f1": 0.92388, "ece": 0.00851},
         abs=1e-5,
     )
     assert prototype == pytest.approx(
-        {"precision": 0.93564, "recall": 0.93475, "f1": 0.93520, "ece": 0.02554},
+        {"precision": 0.92125, "recall": 0.94288, "f1": 0.93194, "ece": 0.01760},
         abs=1e-5,
     )
 
@@ -249,24 +250,24 @@ def test_held_out_figures_by_provider_class(
         # The UK's lettered copies carry their line's id (`line_id`) and count as
         # true.
         "bilateral": pytest.approx(
-            {"precision": 0.92087, "recall": 0.91010, "f1": 0.91545, "ece": 0.00869},
+            {"precision": 0.91283, "recall": 0.92770, "f1": 0.92021, "ece": 0.00931},
             abs=1e-5,
         ),
         # Private donors write a line suffix with and without zero padding, which
         # `line_id` reads as one line.
         "private": pytest.approx(
-            {"precision": 0.98256, "recall": 0.98256, "f1": 0.98256, "ece": 0.02520},
+            {"precision": 0.98817, "recall": 0.97093, "f1": 0.97947, "ece": 0.02669},
             abs=1e-5,
         ),
         "banks": pytest.approx(
-            {"precision": 0.93220, "recall": 0.95652, "f1": 0.94421, "ece": 0.03812},
+            {"precision": 0.95763, "recall": 0.98261, "f1": 0.96996, "ece": 0.06969},
             abs=1e-5,
         ),
         # The class's held-out pairs are the Adaptation Fund's. Truth follows its
-        # renumbered projects by title (`carried_continuations`), so 88 of its 95
-        # true disbursement units link and 8 of its 96 links are false.
+        # renumbered projects by title (`carried_continuations`), so all 95 of its
+        # true disbursement units link and 10 of its 105 links are false.
         "other_multilateral": pytest.approx(
-            {"precision": 0.91667, "recall": 0.92632, "f1": 0.92147, "ece": 0.07621},
+            {"precision": 0.90476, "recall": 1.0, "f1": 0.95000, "ece": 0.05481},
             abs=1e-5,
         ),
     }
@@ -285,24 +286,20 @@ def test_the_link_stage_writes_the_classifier_links_and_profile(
     assert written.equals(flag_disagreement(scored.links, units=units))
     scoring = profile.drop_nulls("scoring_group").select(scored.profile.columns)
     assert scoring.equals(scored.profile)
-    # The key tiers take 1,428 units the classifier would link: the date tier 1,225
-    # of Germany's, the purpose tier's own guard 203, mostly Canada's. The
-    # private-donor rule (`confirmable_pairs`) drops 34 of donor 1624's. Key repair
-    # takes 936 more, since a line's spare commitment is open to it: 820 by
-    # `repair_new_crs_id` (623 Canada's, 183 Germany's), 75 by
-    # `repair_title_recipient` and 41 by `repair_pn_variant`. 49 pairs drop out of
-    # blocking because repair reaches their commitment from a later year.
-    # `repair_stray_country` links 2 more German pairs itself, each between two
-    # regional recipient codes.
-    assert written.height == 1_112
+    # The key tiers (the date tier and the purpose tier's own guard) and key repair
+    # take units the classifier would otherwise link, and the private-donor rule
+    # (`confirmable_pairs`) drops some of donor 1624's pairs.
+    assert written.height == 1_164
     # The AsDB (915) sat at `SPLINK_MIN_COMMITMENTS`, with 300 commitments in
     # eligible pairs. Key repair now links 40 of them, lines whose spare commitment
     # is open to it, and the disbursements that reach them, so 265 remain and the
-    # AsDB scores with the pooled model.
+    # AsDB scores with the pooled model. `template_lines` takes every eligible pair
+    # of the Development Bank of Latin America and the New Development Bank, and
+    # leaves the EBRD too few commitments for a model of its own.
     assert dict(scoring.group_by("scoring_group").len().iter_rows()) == {
         "truth": 25,
-        "splink": 5,
-        "pooled_splink": 37,
+        "splink": 4,
+        "pooled_splink": 35,
     }
 
 
@@ -352,9 +349,9 @@ def test_classifier_links_move_statuses(
     assert sum(moved.values()) == pytest.approx(0.0, abs=1e-9)
     assert moved == pytest.approx(
         {
-            "disbursed": 0.01915,
-            "partly_disbursed": 0.02465,
-            "no_disbursement_record": -0.04380,
+            "disbursed": 0.00408,
+            "partly_disbursed": 0.04667,
+            "no_disbursement_record": -0.05075,
             "not_traceable": 0.0,
             "pending_review": 0.0,
         },

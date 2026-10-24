@@ -64,7 +64,10 @@ def test_germany_spans_one_to_oecd_under_range(answers: dict) -> None:
 
     assert 0 < one < oecd
     assert totals["RANGE"]["ONE"]["value"] == pytest.approx(one)
-    assert totals["RANGE"]["OECD"]["low"] == pytest.approx(one)
+    # A method's own low counts only what certain links carried, so the range's low
+    # is ONE's low, below ONE's value.
+    assert totals["RANGE"]["OECD"]["low"] == pytest.approx(totals["ONE"]["ONE"]["low"])
+    assert totals["RANGE"]["OECD"]["low"] < one
     assert totals["RANGE"]["OECD"]["high"] == pytest.approx(oecd)
     assert answers["compare"] == pytest.approx({"ONE": one, "OECD": oecd})
 

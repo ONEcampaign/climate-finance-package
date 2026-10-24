@@ -337,6 +337,13 @@ def crs_key(units: pl.DataFrame) -> pl.Series:
     ).to_series()
 
 
+def partner_recipient(*, commitment: pl.Expr, disbursement: pl.Expr) -> pl.Expr:
+    """Whether a line to the `disbursement` recipient can continue a commitment to
+    the `commitment` recipient: the same recipient, or a commitment to a region or
+    an unspecified recipient (`regional_codes`), which disburses to its countries."""
+    return (disbursement == commitment) | commitment.is_in(regional_codes())
+
+
 @cache
 def regional_codes() -> tuple[int, ...]:
     """The DAC recipient codes of regions and of unspecified recipients."""

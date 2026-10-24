@@ -53,18 +53,21 @@ from climate_finance.schema import (
     BTR,
     BTR_LINKS,
     COMMITMENTS,
+    CONTRIBUTION_KEY,
     CORE_CONTRIBUTIONS,
     DISBURSEMENT_PROFILE,
     DISBURSEMENTS,
+    INVARIANT_TOLERANCE_USD,
     LINK_METHODS,
     PROVIDER_COEFFICIENTS,
     QUALITY,
     RELEASE_TABLES,
+    TOP_CHANNEL,
     TOTAL_FLOWS,
     ReleaseManifest,
     TableEntry,
     TableSchema,
-    aggregate_channels,
+    aggregate_channel,
     release_invariants,
     sha256_file,
     withheld_record,
@@ -200,7 +203,10 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
     ).collect()
     withheld = withheld_record(pl.col("record_id"))
     commitments = release_commitments(
-        crdf, status=status, withheld=disbursements.lazy().filter(withheld)
+        crdf,
+        status=status,
+        links=links,
+        withheld=disbursements.lazy().filter(withheld),
     ).collect()
     return {
         "commitments": commitments,
@@ -235,15 +241,36 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
 
 
 def release_commitments(
-    crdf: pl.LazyFrame, *, status: pl.LazyFrame, withheld: pl.LazyFrame
+    crdf: pl.LazyFrame,
+    *,
+    status: pl.LazyFrame,
+    links: pl.LazyFrame,
+    withheld: pl.LazyFrame,
 ) -> pl.LazyFrame:
     """The CRDF rows allocation follows, with their status and disbursed amounts, and
-    as `withheld_usd` the sum of their `withheld` disbursements rows."""
+    as `withheld_usd` the sum of their `withheld` disbursements rows.
+
+    `ledger_undisbursed` is true or null, never false: true where the bank's ledger
+    confirms no disbursement, as `confirmed_undisbursed` on every `crdf_crs` link
+    of the row; null where no ledger covers the row or it shows money moving.
+    """
+    undisbursed = (
+        links.filter(pl.col("task") == "crdf_crs")
+        .group_by(row_id="left_id")
+        .agg(
+            ledger_undisbursed=pl.when(
+                (pl.col("ledger_check") == "confirmed_undisbursed")
+                .fill_null(value=False)
+                .all()
+            ).then(pl.lit(value=True))
+        )
+    )
     withheld_usd = withheld.group_by("row_id").agg(
         withheld_usd=ordered_sum(pl.col("allocated_usd"))
     )
     return (
         counted_rows(crdf)
+        .join(undisbursed, on="row_id", how="left", validate="1:1")
         .join(
             status.select(
                 "row_id",
@@ -429,19 +456,63 @@ def carrying_links(
 
 
 def core_contributions(stage: pl.LazyFrame) -> pl.LazyFrame:
-    """Core contributions to leaf channels for every flow.
+    """Core contributions to leaf channels for every flow, with each provider's
+    unitemised remainder on `TOP_CHANNEL`.
 
-    MULTI publishes aggregate channels beside their members, and each provider's
-    members sum to its aggregate, so the aggregates leave (`aggregate_channels`).
-    MULTI publishes commitments and disbursements. The grant-equivalent rows equal
-    the disbursement rows, as the DAC's grant-equivalent measure counts core
-    contributions to multilateral agencies at face value.
+    MULTI publishes aggregate channels beside their leaves (`aggregate_channel`), so
+    the aggregates leave and each dollar counts once. Where a provider's
+    `TOP_CHANNEL` total for a year and flow exceeds its leaves by more than
+    `INVARIANT_TOLERANCE_USD`, the difference stays as a `TOP_CHANNEL` row, so the
+    provider's total is conserved. That row carries no agency share, so it adds
+    nothing to attributed climate finance. MULTI publishes commitments and
+    disbursements. The grant-equivalent rows equal the disbursement rows, as the
+    DAC's grant-equivalent measure counts core contributions to multilateral
+    agencies at face value.
+
+    Raises:
+        ReleaseInvariantError: when a provider's leaves for a year and flow exceed
+            its `TOP_CHANNEL` total, or it reports aggregates without that total.
     """
-    stage = stage.join(aggregate_channels(stage), on="channel_code", how="anti")
-    grant_equivalent = stage.filter(pl.col("flow") == "disbursements").with_columns(
+    key = list(CONTRIBUTION_KEY)
+    channel, amount = pl.col("channel_code"), pl.col("contribution_usd")
+    aggregate = aggregate_channel(channel)
+    totals = (
+        stage.group_by(key)
+        .agg(
+            top=amount.filter(channel == TOP_CHANNEL).first(),
+            leaves=ordered_sum(amount.filter(~aggregate)),
+            aggregated=aggregate.any(),
+        )
+        .sort(key)
+        .collect()
+    )
+    over = totals.filter(pl.col("leaves") - pl.col("top") > INVARIANT_TOLERANCE_USD)
+    untopped = totals.filter(pl.col("top").is_null(), "aggregated")
+    problems = [
+        f"core_contributions {provider} {year} {flow}: leaves sum to {leaves}, above "
+        f"the {TOP_CHANNEL} total of {top}"
+        for provider, year, flow, top, leaves, _ in over.iter_rows()
+    ] + [
+        f"core_contributions {provider} {year} {flow}: aggregate channels without "
+        f"a {TOP_CHANNEL} total"
+        for provider, year, flow, *_ in untopped.iter_rows()
+    ]
+    if problems:
+        raise ReleaseInvariantError(problems)
+    remainder = totals.filter(
+        pl.col("top") - pl.col("leaves") > INVARIANT_TOLERANCE_USD
+    ).select(
+        *key,
+        channel_code=pl.lit(TOP_CHANNEL, pl.Int32),
+        contribution_usd=pl.col("top") - pl.col("leaves"),
+    )
+    kept = pl.concat(
+        [stage.filter(~aggregate), remainder.lazy()], how="diagonal_relaxed"
+    )
+    grant_equivalent = kept.filter(pl.col("flow") == "disbursements").with_columns(
         flow=pl.lit("grant_equivalent")
     )
-    return pl.concat([stage, grant_equivalent]).select(list(CORE_CONTRIBUTIONS.columns))
+    return pl.concat([kept, grant_equivalent]).select(list(CORE_CONTRIBUTIONS.columns))
 
 
 def total_flows(crs: pl.LazyFrame) -> pl.LazyFrame:

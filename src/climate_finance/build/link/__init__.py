@@ -184,13 +184,7 @@ def run_link(context: StageContext) -> StageOutput:
         "candidates": candidates,
         "pair_scores": splink.scores,
         "provider_profile": provider_profile(
-            crosswalk_profile(
-                crdf,
-                links=links,
-                units=units,
-                us_awards=None,
-                crosswalks=config.recoveries,
-            ),
+            crosswalk_profile(crdf, links=links, crosswalks=config.recoveries),
             scoring=scored.profile,
         ),
     }

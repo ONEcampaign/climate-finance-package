@@ -103,6 +103,23 @@ CLASSIFIER_RELEASE_MOVED_BN = {
     "no_disbursement_record": -0.15,
     "not_traceable": 0.0,
 }
+# A record's own commitment fills before older commitments of its key group
+# (`_own_commitments`), so where a donor files a new module or yearly grant under a
+# reused crs id, the new record's money no longer fills the older module's headroom.
+# Mostly Dutch and British rows move from disbursed to partly disbursed, and own
+# commitments with no record take their records' money.
+OWN_FIRST_MOVED_BN = {
+    "disbursed": -0.50,
+    "partly_disbursed": 0.70,
+    "no_disbursement_record": -0.21,
+    "not_traceable": 0.0,
+}
+OWN_FIRST_RELEASE_MOVED_BN = {
+    "disbursed": -0.50,
+    "partly_disbursed": 0.63,
+    "no_disbursement_record": -0.14,
+    "not_traceable": 0.0,
+}
 # With aggregate children counted and their parents left out (the release rule).
 RELEASE_RULE_BN = {
     "disbursed": 56.37,
@@ -156,8 +173,14 @@ def config(data: Path) -> BuildConfig:
             "btr_archive": None,
         }
     )
+    # The archive builds run offline with no Jev cache.
     return config.model_copy(
-        update={"key_repair": False, "recoveries": False, "sources": sources}
+        update={
+            "key_repair": False,
+            "recoveries": False,
+            "jev_links": False,
+            "sources": sources,
+        }
     )
 
 
@@ -280,6 +303,7 @@ def test_statuses_reproduce_the_reference_without_recoveries(
         + UNIQUE_BY_MOVED_BN[status]
         + DATE_TIER_MOVED_BN[status]
         + CLASSIFIER_MOVED_BN[status]
+        + OWN_FIRST_MOVED_BN[status]
         for status, usd_bn in reference.select("status", "usd_bn").iter_rows()
     }
     assert built == pytest.approx(expected, abs=TOLERANCE_BN)
@@ -300,6 +324,7 @@ def test_statuses_under_the_release_rule(base: Path) -> None:
         + UNIQUE_BY_MOVED_BN[status]
         + DATE_TIER_MOVED_BN[status]
         + CLASSIFIER_RELEASE_MOVED_BN[status]
+        + OWN_FIRST_RELEASE_MOVED_BN[status]
         for status, usd_bn in RELEASE_RULE_BN.items()
     }
     assert built == pytest.approx(expected, abs=TOLERANCE_BN)

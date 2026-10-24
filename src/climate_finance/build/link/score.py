@@ -83,7 +83,7 @@ from climate_finance.build.link.id_practice import (
 )
 from climate_finance.build.link.keys import (
     floor_loaded,
-    regional_codes,
+    partner_recipient,
     separator_free_pn,
 )
 from climate_finance.build.link.levels import (
@@ -556,8 +556,10 @@ def carried_continuations(
                 pl.col("year_left") > pl.col("year"),
                 pl.col("crs_id_left") != pl.col("crs_id"),
                 pl.col("project_number_left") != pl.col("project_number"),
-                (pl.col("recipient_code_left") == pl.col("recipient_code"))
-                | pl.col("recipient_code").is_in(regional_codes()),
+                partner_recipient(
+                    commitment=pl.col("recipient_code"),
+                    disbursement=pl.col("recipient_code_left"),
+                ),
             ),
             titles=titles,
         )

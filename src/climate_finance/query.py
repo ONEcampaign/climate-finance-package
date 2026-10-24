@@ -10,7 +10,8 @@ converts it, and sums the rows into the result table. Rows have one of three ori
   times allocated_usd over the record's disbursement),
   weighted by the markers and climate share it inherits from that commitment. `low`
   and `high` scale by the allocation's own bounds: `low` counts what certain links
-  carried (`schema.CERTAIN_METHODS`) and `high` everything allocated.
+  carried (`schema.CERTAIN_METHODS`) to rows reached by certain routes
+  (`schema.CERTAIN_ROUTES`), and `high` everything allocated.
 - `attribution`: under `view="provider"`, a provider's core contribution of the
   spec's flow to an agency times the agency's climate share. An agency share with no
   split by objective counts in `unsplit`, with the objectives 0. `share_source` says

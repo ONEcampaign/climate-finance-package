@@ -435,11 +435,17 @@ def test_a_later_group_takes_only_what_the_earlier_one_left() -> None:
     assert excess_of(pairs) == {}
 
 
-@pytest.mark.parametrize("disagree", [False, True])
-def test_low_bounds_keep_only_what_certain_links_carried(disagree: bool) -> None:
+@pytest.mark.parametrize(
+    ("disagree", "route"),
+    [(False, "within_year"), (True, "within_year"), (False, "eib_list")],
+)
+def test_low_bounds_keep_only_what_certain_links_carried(
+    disagree: bool, route: str
+) -> None:
     # c19's crs id link is certain unless its records disagree; the repair link to
     # cB never is. s20 commits and disburses in one record, so its link to itself
-    # stays certain when flagged.
+    # stays certain when flagged. A CRDF row reached by an estimated route, as the
+    # EIB list's match on recipient, amount and title, counts nothing in low.
     crs, crdf, units, links = link(
         [*CASCADE, record("s20", 2020, commit=30.0, disburse=30.0, crs_id="S")],
         [
@@ -455,10 +461,14 @@ def test_low_bounds_keep_only_what_certain_links_carried(disagree: bool) -> None
         "repair_new_crs_id",
     )
     links = with_links(links, repair).with_columns(
-        records_disagree=pl.when(pl.col("task") == "trace").then(disagree)
+        records_disagree=pl.when(pl.col("task") == "trace").then(disagree),
+        link_method=pl.when(pl.col("task") == "crdf_crs")
+        .then(pl.lit(route))
+        .otherwise("link_method"),
     )
     pairs = allocate(units, crs=crs, links=links)
     rows = allocate_to_rows(pairs, crdf=crdf, units=units, crs=crs, links=links)
+    routed = route == "within_year"
     got = {
         row: (allocated, low, high)
         for row, allocated, low, high in rows.select(
@@ -467,11 +477,32 @@ def test_low_bounds_keep_only_what_certain_links_carried(disagree: bool) -> None
     }
     assert got == pytest.approx(
         {
-            "c19": (100.0, 0.0 if disagree else 100.0, 100.0),
+            "c19": (100.0, 100.0 if routed and not disagree else 0.0, 100.0),
             "cB": (50.0, 0.0, 50.0),
-            "s20": (30.0, 30.0, 30.0),
+            "s20": (30.0, 30.0 if routed else 0.0, 30.0),
         }
     )
+
+
+@pytest.mark.parametrize(
+    ("records", "certain"),
+    [
+        ([record("r1", 2022, commit=100.0, disburse=40.0)], True),
+        # Two unrelated id-less records sum into one unit: nothing ties r2 to r1.
+        (
+            [record("r1", 2022, commit=100.0), record("r2", 2022, disburse=40.0)],
+            False,
+        ),
+    ],
+)
+def test_a_unit_link_to_itself_is_certain_only_for_one_record(
+    records: list[dict[str, object]], certain: bool
+) -> None:
+    crs, _, units, links = link([{**rec, "crs_id": None} for rec in records])
+    unit = unit_of(units, "r1")
+    links = with_links(links, (unit, unit, "aggregate|x", "aggregate_partition"))
+    pairs = allocate(units, crs=crs, links=links)
+    assert pairs.select("allocated_usd", "certain").rows() == [(40.0, certain)]
 
 
 def test_certain_links_fill_before_estimated_links_of_earlier_years() -> None:

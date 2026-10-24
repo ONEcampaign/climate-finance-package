@@ -24,6 +24,7 @@ Key `row_id`. One row per recipient-perspective CRDF commitment, which is the po
 - `disbursed_usd`, `disbursed_low_usd`, `disbursed_high_usd`: the sums of the commitment's allocations in `disbursements` plus `withheld_usd`, with `0 <= disbursed_low_usd <= disbursed_usd <= disbursed_high_usd <= face_usd`.
 - `withheld_usd`: the part of `disbursed_usd` that comes from fill records the release leaves out (the Green Climate Fund's ledger). It is excluded from `disbursements`.
 - `project_disbursing`: true when the commitment has no record of its own and its id disbursed against an earlier commitment.
+- `ledger_undisbursed`: true where the bank's ledger confirms the commitment disbursed nothing, and null where no ledger covers it or the ledger shows money moving. It is never false. A row whose `status` says disbursed while `ledger_undisbursed` is true points at a link to check.
 - `repeat_of`: the first row of a commitment republished in a later vintage. `parent_row_id` names the published aggregate row a rebuilt child came from.
 
 ## `disbursements`

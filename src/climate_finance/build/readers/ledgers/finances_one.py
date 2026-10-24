@@ -1,7 +1,8 @@
 """World Bank Finances One loan disbursements (DS00975 IBRD, DS00976 IDA)."""
 
 import json
-from collections.abc import Iterable
+from collections import Counter
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -45,6 +46,18 @@ def snapshot_years(years: Iterable[int]) -> list[int]:
     return sorted({year + offset for year in years for offset in (-1, 0)})
 
 
+def repeated_keys(
+    records: Sequence[Mapping[str, object]], *, dataset: Dataset
+) -> list[str]:
+    """The loan or credit numbers that appear more than once in a snapshot, sorted.
+
+    Finances One lists each loan once per year-end, so a repeat means the snapshot's
+    pages overlapped.
+    """
+    counts = Counter(str(record[DATASETS[dataset].key]) for record in records)
+    return sorted(key for key, count in counts.items() if count > 1)
+
+
 def read_finances_one(
     path: Path, *, dataset: Dataset, years: Iterable[int]
 ) -> pl.DataFrame:
@@ -65,12 +78,13 @@ def read_finances_one(
             year-end snapshot.
 
     Raises:
-        SourceUnavailableError: when a snapshot file is missing.
+        SourceUnavailableError: when a snapshot file is missing or lists a loan
+            twice.
     """
     columns = DATASETS[dataset]
     years = sorted(set(years))
     cumulative = {
-        year: _read_snapshot(path / snapshot_file(dataset, year), columns)
+        year: _read_snapshot(path / snapshot_file(dataset, year), dataset=dataset)
         for year in snapshot_years(years)
     }
     flows = [
@@ -82,25 +96,29 @@ def read_finances_one(
     )
 
 
-def _read_snapshot(file: Path, columns: _Columns) -> pl.DataFrame:
+def _read_snapshot(file: Path, *, dataset: Dataset) -> pl.DataFrame:
+    """One snapshot's cumulative disbursement and title per loan.
+
+    Raises:
+        SourceUnavailableError: when the file is missing or lists a loan twice,
+            which summed would read as a phantom disbursement.
+    """
     if not file.is_file():
         raise SourceUnavailableError(f"Finances One snapshot {file} is not there.")
     records = json.loads(file.read_text(encoding="utf-8"))
-    return (
-        pl.DataFrame(
-            {
-                "key": [r[columns.key] for r in records],
-                "cumulative": [r[columns.disbursed] or 0 for r in records],
-                "title": [r.get(columns.title) for r in records],
-            },
-            schema={
-                "key": pl.String,
-                "cumulative": pl.Float64,
-                "title": pl.String,
-            },
+    if repeated := repeated_keys(records, dataset=dataset):
+        raise SourceUnavailableError(
+            f"Finances One snapshot {file} lists {len(repeated)} loans more than "
+            f"once, such as {repeated[:3]}; fetch it again."
         )
-        .group_by("key")
-        .agg(pl.col("cumulative").sum(), pl.col("title").first())
+    columns = DATASETS[dataset]
+    return pl.DataFrame(
+        {
+            "key": [r[columns.key] for r in records],
+            "cumulative": [r[columns.disbursed] or 0 for r in records],
+            "title": [r.get(columns.title) for r in records],
+        },
+        schema={"key": pl.String, "cumulative": pl.Float64, "title": pl.String},
     )
 
 

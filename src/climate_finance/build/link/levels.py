@@ -45,13 +45,12 @@ import splink.comparison_level_library as cll
 import splink.comparison_library as cl
 from splink.internals.comparison_level_creator import ComparisonLevelCreator
 
-from climate_finance.build.link.candidates import with_programme
+from climate_finance.build.link.candidates import pn_block, with_programme
 from climate_finance.build.link.text import (
-    NO_TEXT,
-    normalise_text,
     representative,
+    text_norm,
+    text_words,
     title_norm,
-    words,
 )
 from climate_finance.schema import COMPARISON_LEVELS
 
@@ -60,8 +59,6 @@ LEVELS = tuple(COMPARISON_LEVELS.to_schema())
 DESCRIPTION_WORDS = 80
 # Pairs compared at once, which bounds the memory a batch takes.
 BATCH_PAIRS = 500_000
-# Project numbers that name nothing once lower-cased and stripped.
-_NO_PN = ("notapplicable", "na", "none", "nan", "null", "0", "")
 _RATIO = "disbursement_usd_r / commitment_usd_l"
 # The date features, each as SQL over a pair; a comparison with a null date is null.
 _DATE_SQL = {
@@ -99,27 +96,18 @@ def unit_attributes(
         "expected_start_date",
         "completion_date",
     )
-    pn_digits = (
-        pl.col("project_number")
-        .str.to_lowercase()
-        .str.replace_all("[^a-z0-9]", "")
-        .str.strip_chars_start("0")
-    )
-    description = normalise_text(pl.col("rep_long_description"))
-    title_toks = words(pl.col("title_norm"))
+    title_toks = text_words(pl.col("title_norm"))
     return (
         with_programme(units.lazy().drop("record_ids"), stems=stems.lazy())
         .join(representative(units, crs=crs, fields=fields), on="unit_id", how="left")
         .with_columns(
-            pn_norm=pl.when(
-                ~pn_digits.is_in(_NO_PN) & (pn_digits.str.len_chars() >= 3)
-            ).then(pn_digits),
+            pn_norm=pn_block(pl.col("project_number")),
             title_norm=title_norm(),
-            desc_norm=pl.when(~description.is_in(NO_TEXT)).then(description),
+            desc_norm=text_norm(pl.col("rep_long_description")),
         )
         .with_columns(
             title_toks=title_toks,
-            desc_toks=words(pl.col("desc_norm"), first=DESCRIPTION_WORDS),
+            desc_toks=text_words(pl.col("desc_norm"), first=DESCRIPTION_WORDS),
             title_key=pl.when(title_toks.list.len() >= 2).then(
                 title_toks.list.head(2).list.join(" ")
             ),

@@ -34,9 +34,16 @@ KEY_TIERS = (
     "pn_recipient",
 )
 # The key tiers whose donor id names the commitment: a link of one of them whose
-# records do not disagree (`LINKS.records_disagree`) is certain, as is a unit's link
-# to itself, where one record commits and disburses. Every other link is estimated.
+# records do not disagree (`LINKS.records_disagree`) is certain. So is the pair of a
+# record with its own commitment, where one record commits and disburses, whatever
+# link joined them. Every other pair is estimated.
 CERTAIN_METHODS = ("wb_loan", "crs_id_purpose", "crs_id", "crs_id_parent")
+# The `crdf_crs` routes that tie a CRDF row to its CRS commitment by construction:
+# the same crs id in the same year, a contract matched within 0.01% in euros, and
+# the CRS record the row was cut from. Every other route, `eib_list` and
+# `title_recipient` among them, is estimated, so a certain trace link reached
+# through it counts nothing in the low bound.
+CERTAIN_ROUTES = ("within_year", "crosswalk", "aggregate_partition")
 KEY_REPAIR_METHODS = (
     "repair_new_crs_id",
     "repair_pn_variant",
@@ -175,8 +182,8 @@ def _year(*, nullable: bool = False) -> Column:
     return Column(pl.Int16(), nullable=nullable)
 
 
-def _bool() -> Column:
-    return Column(pl.Boolean())
+def _bool(*, nullable: bool = False) -> Column:
+    return Column(pl.Boolean(), nullable=nullable)
 
 
 def _rio() -> Column:
@@ -278,8 +285,15 @@ CRS = _table(
 
 # One row per provider, agency, year and flow. The build writes every flow in FLOWS.
 # MULTI publishes aggregate channels beside their members, such as 40000 for all
-# multilaterals and 44000 for the World Bank Group. Normalise keeps them; the
-# release keeps leaf channels only, so each dollar counts once (`aggregate_channels`).
+# multilaterals and 44000 for the World Bank Group. Normalise keeps them. The release
+# keeps leaf channels, so each dollar counts once, plus a 40000 row for the part of
+# a provider's 40000 total that no leaf itemises (`release.core_contributions`).
+# The key within which a provider's leaf channels sum to its `TOP_CHANNEL` row.
+CONTRIBUTION_KEY = ("provider_code", "year", "flow")
+# MULTI's total of a provider's core contributions, which sums every leaf channel
+# it reports, 30010 included. The intermediate aggregates (41000, 47000 and the
+# like) do not follow the code prefixes: MULTI files some 41xxx channels under 47000.
+TOP_CHANNEL = 40000
 CORE_CONTRIBUTIONS = _table(
     "core_contributions",
     ("provider_code", "channel_code", "year", "flow"),
@@ -503,7 +517,8 @@ PROGRAMME_STEMS = _table(
 # CRDF row reaches (right), of one donor, the disbursement of a later record year,
 # under a blocking rule. `eligible` pairs are open to scoring: no key linked either
 # unit and neither agency's ids persist. The other rows pair commitments of
-# `id_persistent` agencies, whose label is `same_crs_id`. `programme_level` is 2 for
+# `id_persistent` agencies. `same_crs_id` says whether a pair's units share a raw
+# crs id; the classifier trains on `score.id_truth`. `programme_level` is 2 for
 # the same project number, 1 for siblings under one programme stem, else 0.
 CANDIDATES = _table(
     "candidates",
@@ -767,6 +782,12 @@ COMMITMENTS = _table(
     # counts in full in both bounds, so it is the same part of all three.
     withheld_usd=_usd(),
     project_disbursing=_bool(),
+    # True or null, never false: true where the bank's ledger
+    # (`ledger.UNDISBURSED_PUBLISHERS`) confirms no disbursement; null where no
+    # ledger covers the row or it shows money moving. It stands whatever `status`
+    # says, so a row the allocation calls disbursed and the ledger does not points
+    # at a link to check.
+    ledger_undisbursed=_bool(nullable=True),
     repeat_of=_str(nullable=True),
     # The published CRDF aggregate row this child was rebuilt from. The release
     # leaves such parents out, so the id names a CRDF row and no release row.
@@ -1045,23 +1066,10 @@ def withheld_record(record_id: pl.Expr) -> pl.Expr:
     ).fill_null(False)
 
 
-def aggregate_channels(frame: pl.LazyFrame) -> pl.LazyFrame:
-    """The `channel_code`s of `frame` that aggregate another of its channels.
-
-    A DAC channel code X0000 aggregates every code X????, and XY000 every code XY???,
-    as 40000 holds all multilaterals and 44000 the World Bank Group's 44001.
-    """
-    codes = frame.select("channel_code").unique()
-    parent, child = pl.col("channel_code"), pl.col("child")
-    aggregates = ((parent % 10_000 == 0) & (child // 10_000 == parent // 10_000)) | (
-        (parent % 1_000 == 0) & (child // 1_000 == parent // 1_000)
-    )
-    return (
-        codes.join(codes.select(child="channel_code"), how="cross")
-        .filter(parent != child, aggregates)
-        .select("channel_code")
-        .unique()
-    )
+def aggregate_channel(code: pl.Expr) -> pl.Expr:
+    """Whether a DAC channel code aggregates others: X0000 holds every code X????,
+    and XY000 every code XY???, as 44000 holds the World Bank Group's 44001."""
+    return code % 1_000 == 0
 
 
 def _exceeds(smaller: str, larger: str) -> pl.Expr:
@@ -1201,11 +1209,28 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     problems.extend(_record_problems(disbursements))
     problems.extend(_share_problems(tables["agency_shares"]))
     problems.extend(_oecd_problems(commitments))
+    core = tables["core_contributions"]
+    channel = pl.col("channel_code")
     problems.extend(
-        f"core_contributions {code}: an aggregate channel beside its members"
-        for code in aggregate_channels(tables["core_contributions"].lazy())
-        .collect()["channel_code"]
-        .sort()
+        f"core_contributions {provider} {year} {flow} {code}: an aggregate channel "
+        f"other than the {TOP_CHANNEL} remainder"
+        for provider, year, flow, code in core.filter(
+            aggregate_channel(channel), channel != TOP_CHANNEL
+        )
+        .select(*CONTRIBUTION_KEY, "channel_code")
+        .sort(pl.all())
+        .iter_rows()
+    )
+    problems.extend(
+        f"core_contributions {provider} {year} {flow}: a {TOP_CHANNEL} remainder "
+        "of zero or less"
+        for provider, year, flow in core.filter(
+            channel == TOP_CHANNEL,
+            pl.col("contribution_usd") <= INVARIANT_TOLERANCE_USD,
+        )
+        .select(CONTRIBUTION_KEY)
+        .sort(pl.all())
+        .iter_rows()
     )
     problems.extend(
         f"{name}: {count} rows of a fill record the release leaves out"

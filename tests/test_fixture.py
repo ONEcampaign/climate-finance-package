@@ -261,6 +261,25 @@ def _repeat_an_allocated_row(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def _remainder(frame: pl.DataFrame, usd: float) -> pl.DataFrame:
+    # A 40000 row holds the part of a provider's total no leaf itemises.
+    first = frame.head(1).with_columns(
+        channel_code=pl.lit(40000, pl.Int32), contribution_usd=pl.lit(usd)
+    )
+    return pl.concat([frame, first])
+
+
+def test_a_top_channel_remainder_breaks_no_invariant() -> None:
+    tables = {name: _read(name) for name in INVARIANT_TABLES}
+    tables["core_contributions"] = _remainder(tables["core_contributions"], 5e6)
+
+    assert release_invariants(tables) == []
+
+
+def _zero_remainder(frame: pl.DataFrame) -> pl.DataFrame:
+    return _remainder(frame, 0.0)
+
+
 @pytest.mark.parametrize(
     ("table", "edit", "row_id"),
     [
@@ -286,6 +305,7 @@ def _repeat_an_allocated_row(frame: pl.DataFrame) -> pl.DataFrame:
         ("agency_shares", _mix_share_sources, "44002 2021 one"),
         ("commitments", _publish_more_climate_than_face, "DEU-1"),
         ("core_contributions", _keep_an_aggregate_channel, "44000"),
+        ("core_contributions", _zero_remainder, "40000"),
     ],
 )
 def test_release_invariants_name_the_row_that_breaks_one(

@@ -177,6 +177,33 @@ def test_the_provider_view_attributes_core_contributions_of_its_flow(
     assert rows["recipient_code"].is_null().all()
 
 
+def _with_top_channel_remainders(frame: pl.DataFrame) -> pl.DataFrame:
+    # Every provider, year and flow keeps 1m its leaves do not itemise on 40000.
+    remainders = (
+        frame.select("provider_code", "year", "flow")
+        .unique()
+        .with_columns(
+            channel_code=pl.lit(40000, pl.Int32), contribution_usd=pl.lit(1e6)
+        )
+    )
+    return pl.concat([frame, remainders.select(frame.columns)])
+
+
+@pytest.mark.parametrize("method", [ONE, OECD, RANGE])
+def test_a_channel_with_no_agency_share_attributes_nothing(
+    tmp_path: Path, method: MethodRange | Method
+) -> None:
+    release = copy_release(
+        tmp_path / "release",
+        edits={"core_contributions": _with_top_channel_remainders},
+    )
+
+    spec = Spec(view="provider", method=method)
+    result = cf.load(path=release).spending(spec=spec).table.to_polars()
+
+    assert_frame_equal(result, SNAP.spending(spec=spec).table.to_polars())
+
+
 # Fixture inputs: Germany gives IDA (channel 44002) 60m in 2021; IDA's ONE shares are
 # adaptation 0.18, mitigation 0.22 and cross-cutting 0.04, its OECD shares 0.20,
 # 0.25 and 0.05, each of adaptation and mitigation including the cross-cutting share.

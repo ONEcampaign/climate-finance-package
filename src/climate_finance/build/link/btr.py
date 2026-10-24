@@ -49,13 +49,13 @@ from splink.internals.comparison_creator import ComparisonCreator
 
 from climate_finance import schema
 from climate_finance.build.geo import recipient_code
-from climate_finance.build.link.candidates import title_words
 from climate_finance.build.link.keys import regional_codes
 from climate_finance.build.link.splink_models import (
     MIN_EM_PAIRS,
     MIN_ISOTONIC_OUTCOMES,
     isotonic_map,
 )
+from climate_finance.build.link.text import text_words
 from climate_finance.build.readers.btr import LEVEL_TOLERANCE, WEIGHT_LEVELS
 
 _log = logging.getLogger(__name__)
@@ -606,7 +606,7 @@ def _btr_input(rows: pl.DataFrame) -> pl.DataFrame:
     title = pl.col("title")
     for tag in TITLE_TAGS:
         title = title.str.replace_all(tag, "")
-    words = title_words(title)
+    words = text_words(title)
     support = pl.col("support_type").str.to_lowercase()
     instrument = pl.col("instrument").str.to_lowercase()
     return _conform(
@@ -648,14 +648,14 @@ def _crs_input(records: pl.DataFrame) -> pl.DataFrame:
             rec_key=pl.when(pl.col("recipient_code").is_in(regional_codes()))
             .then(pl.lit(AGGREGATE))
             .otherwise(pl.col("recipient_code").cast(pl.String)),
-            title_norm=_joined(title_words(title)),
-            desc_norm=_joined(title_words(short)),
+            title_norm=_joined(text_words(title)),
+            desc_norm=_joined(text_words(short)),
             title_desc=_joined(
-                title_words(
+                text_words(
                     pl.concat_str(title, short, separator=" ", ignore_nulls=True)
                 )
             ),
-            text_toks=title_words(
+            text_toks=text_words(
                 pl.concat_str(
                     title, short, "long_description", separator=" ", ignore_nulls=True
                 )

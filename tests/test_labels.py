@@ -242,7 +242,7 @@ def test_a_packet_changed_after_its_pairs_were_written_is_refused(
     assert packet_pairs_path(packet).exists()
 
 
-def test_a_persons_later_decision_and_an_agents_latest_round_stand(
+def test_a_persons_decision_and_an_agents_latest_round_stand(
     tmp_path: Path,
 ) -> None:
     case = Case(tmp_path)
@@ -262,6 +262,14 @@ def test_a_persons_later_decision_and_an_agents_latest_round_stand(
 
     agent([(1, "no_match", 0.3), (2, "match", 0.6)], "label")
     agent([(1, "match", 0.7), (2, "no_match", 0.4)], "adjudicate")
+    # A second label recorded after the adjudication does not displace it.
+    agent([(1, "no_match", 0.2), (2, "match", 0.9)], "second")
+
+    labels = read_decision_labels(decisions)
+    assert set(labels["pair_label_source"]) == {"agent"}
+    got = dict(labels.select("left_id", "is_match").iter_rows())
+    assert got == {case.unit("d21"): True, case.unit("d22"): False}
+
     import_labels(
         packet=packet,
         labels_csv=case.labels([(1, "no_match", 0.0), (2, "no_match", 0.0)], "p.csv"),
@@ -269,19 +277,13 @@ def test_a_persons_later_decision_and_an_agents_latest_round_stand(
         label_source="human",
         reviewer="analyst",
     )
-    # A second label recorded after the adjudication does not displace it.
-    agent([(1, "no_match", 0.2), (2, "match", 0.9)], "second")
+    # An adjudication imported after the person's decision leaves it in place.
+    agent([(1, "match", 0.9), (2, "match", 0.9)], "adjudicate")
 
     labels = read_decision_labels(decisions)
     got = dict(labels.select("left_id", "pair_label_source").iter_rows())
     assert got == {case.unit("d21"): "human", case.unit("d22"): "human"}
     assert not labels["is_match"].any()
-
-    # An adjudication after the person's decision stands over it.
-    agent([(1, "match", 0.9), (2, "match", 0.9)], "adjudicate")
-    labels = read_decision_labels(decisions)
-    assert set(labels["pair_label_source"]) == {"agent"}
-    assert labels["is_match"].all()
 
 
 def test_pairs_with_neither_a_reason_nor_a_sample_id_are_refused(

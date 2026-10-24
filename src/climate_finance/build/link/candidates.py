@@ -25,17 +25,24 @@ commitments carry the id truth instead: a pair is a true continuation when the t
 units share a crs id. The table keeps eligible pairs and the pairs of commitments
 whose agency is `id_persistent`, which train and test the truth-group classifier.
 
-A template line is never eligible (`template_lines`): a unit with no project number
-whose title its donor gives, with no project number, to units of at least
-`TEMPLATE_RECIPIENTS` recipients in at least `TEMPLATE_YEARS` record years. Such a
-title names a reporting category, not an activity: the New Development Bank's
-"Aggregate" line per country and year, which sums every project the bank funds
-there, a credit-line or "aggregated disbursements" line, a sector or purpose name.
-An aggregate sums several activities, so no link to one commitment is right, and a
-category title says nothing of which activity a line continues. Key tiers and
-repair rules run before candidates and keep any link they give such a line. On the
-archive, 33 such titles of 8 providers leave 5,972 of 1,345,352 eligible pairs out;
-three recipients would also catch regional road corridors.
+A template line enters no candidate pair, eligible or training (`template_lines`):
+a unit with no project number whose title its donor gives, with no project number,
+to units of at least `TEMPLATE_RECIPIENTS` recipients in at least `TEMPLATE_YEARS`
+record years. Such a title names a reporting category, not an activity: the New
+Development Bank's "Aggregate" line per country and year, which sums every project
+the bank funds there, a credit-line or "aggregated disbursements" line, a sector or
+purpose name. An aggregate sums several activities, so no link to one commitment is
+right, and a category title says nothing of which activity a line continues. A title
+whose lines carry identity is no template: when at least `TEMPLATE_IDENTITY_UNITS`
+of its units, and `TEMPLATE_IDENTITY_SHARE` of them, are id-persistent units whose
+crs id an id-persistent unit of the donor carries in another record year, the title
+names one activity per country, as Japan's "The Economic and Social Development
+Programme" does. Key tiers and repair rules run before candidates and keep any link
+they give such a line. On the archive, 701 template titles hold 244,740 units. They
+leave out 6,346 of 1,346,917 eligible pairs, from 37 titles of 10 providers, and
+5,827,107 of 7,213,658 training pairs, none of them true and 5,813,108 of them
+Japan's "TC aggregated activities". Three recipients would also catch regional road
+corridors.
 
 A programme stem maps a component's project number to its programme's. A project
 number's shape replaces each digit run by 9 and each letter run by A, so
@@ -65,6 +72,13 @@ from climate_finance.build.link.id_practice import (
     period_of,
 )
 from climate_finance.build.link.keys import floor_loaded, normalise_pn
+from climate_finance.build.link.text import (
+    NO_TITLE,
+    clean_text,
+    largest_record,
+    text_words,
+    word_share,
+)
 
 MAX_PN_UNITS = 300
 MAX_TITLE_UNITS = 100
@@ -72,40 +86,16 @@ MAX_TITLE_UNITS = 100
 # recipients in at least this many record years is a template (`template_lines`).
 TEMPLATE_RECIPIENTS = 4
 TEMPLATE_YEARS = 2
+# A title is no template when at least this many of its units, and this share of
+# them, continue a crs id across record years under persistent ids. On the archive
+# any share from 0.01 to 0.25 keeps every id-truth pair; 0.3 loses 49.
+TEMPLATE_IDENTITY_UNITS = 2
+TEMPLATE_IDENTITY_SHARE = 0.1
 STEM_SEGMENTS = (1, 2)
 MIN_PAIRS = 20
 MAX_ERROR = 0.10
 MAX_FANOUT = 50
 MIN_SIMILARITY = 0.5
-# Words that say nothing about which project a title names.
-STOPWORDS = (
-    "the",
-    "and",
-    "for",
-    "des",
-    "les",
-    "del",
-    "von",
-    "und",
-    "with",
-    "from",
-    "that",
-    "this",
-    "dans",
-    "pour",
-    "por",
-    "para",
-    "zur",
-    "der",
-    "die",
-    "das",
-    "project",
-    "programme",
-    "program",
-    "projet",
-    "proyecto",
-    "support",
-)
 # Texts to an (n, dimensions) array of their vectors, as `embed.TextEmbedder`.
 type Embedder = Callable[[list[str]], np.ndarray]
 # Blocking rules: a key the two units share, and the most later disbursement units
@@ -116,9 +106,8 @@ BLOCKING_RULES: tuple[tuple[tuple[str, ...], int | None], ...] = (
     (("title_block",), MAX_TITLE_UNITS),
     (("recipient_code", "title_head"), None),
 )
-# Project numbers and titles that name no project once lower-cased and stripped.
+# Project numbers that name no project once lower-cased and stripped.
 _NO_PN = ("notapplicable", "na", "none", "nan", "null", "0", "")
-_NO_TITLE = ("not applicable", "na", "none", "n a", "nan", "null")
 _SEPARATORS = ".-/_&: "
 _LAST_SEGMENT = r"[.\-/_&: ]+[A-Z0-9]+$"
 _AGENCY = ("donor_code", "agency_code")
@@ -139,20 +128,6 @@ def strip_segments(pn: pl.Expr, segments: int) -> pl.Expr:
     return pl.when(stem.str.contains("[A-Z0-9]")).then(stem)
 
 
-def title_words(title: pl.Expr) -> pl.Expr:
-    """The distinct words of `title` that can tell projects apart, in order."""
-    return (
-        _clean(title)
-        .str.split(" ")
-        .list.eval(
-            pl.element().filter(
-                (pl.element().str.len_chars() >= 3) & ~pl.element().is_in(STOPWORDS)
-            )
-        )
-        .list.unique(maintain_order=True)
-    )
-
-
 def learn_programme_stems(crs: pl.LazyFrame) -> pl.LazyFrame:
     """Programme stem rules per (donor, agency) from `crs`, in the `programme_stems`
     schema.
@@ -164,8 +139,8 @@ def learn_programme_stems(crs: pl.LazyFrame) -> pl.LazyFrame:
         crs.with_columns(project_number=normalise_pn(pl.col("project_number")))
         .drop_nulls(["agency_code", "project_number"])
         .group_by(*_AGENCY, "project_number", "recipient_code")
-        .agg(_largest("title"))
-        .with_columns(words=title_words(pl.col("title")))
+        .agg(largest_record("title"))
+        .with_columns(words=text_words(pl.col("title")))
         .drop("title")
     )
     scores = pl.concat(
@@ -233,7 +208,7 @@ def _score_stems(projects: pl.LazyFrame, *, segments: int) -> pl.LazyFrame:
         .agg(
             pairs=pl.len().cast(pl.Int64),
             consistent_pairs=(
-                _jaccard(pl.col("words"), pl.col("words_other")) >= MIN_SIMILARITY
+                word_share(pl.col("words"), pl.col("words_other")) >= MIN_SIMILARITY
             )
             .sum()
             .cast(pl.Int64),
@@ -322,21 +297,23 @@ def generate_candidates(
         sides = sides.join(rows, on="text", how="left", maintain_order="left").drop(
             "text"
         )
-    commitments = sides.join(commitments.select("unit"), on="unit", how="semi")
-    disbursements = sides.join(disbursements.select("unit"), on="unit", how="semi")
+    # The blocking caps count every disbursement, template lines included.
+    reference = sides.join(disbursements.select("unit"), on="unit", how="semi")
+    lines = sides.filter(~pl.col("unit").is_in(template_lines(sides).implode()))
+    commitments = lines.join(commitments.select("unit"), on="unit", how="semi")
+    disbursements = lines.join(disbursements.select("unit"), on="unit", how="semi")
     renumbered = _renumbered_lines(units)
     truth = _block(
         commitments.filter("id_persistent"),
         disbursements,
-        reference=disbursements,
+        reference=reference,
         renumbered=renumbered,
         vectors=vectors,
     )
-    template = pl.col("unit").is_in(template_lines(sides).implode())
     open_pairs = _block(
-        commitments.filter(~pl.col("keyed_later"), ~pl.col("ids_persist"), ~template),
-        disbursements.filter(~pl.col("taken"), ~pl.col("ids_persist"), ~template),
-        reference=disbursements,
+        commitments.filter(~pl.col("keyed_later"), ~pl.col("ids_persist")),
+        disbursements.filter(~pl.col("taken"), ~pl.col("ids_persist")),
+        reference=reference,
         renumbered=renumbered,
         vectors=vectors,
     )
@@ -390,19 +367,36 @@ def generate_candidates(
 def template_lines(sides: pl.DataFrame) -> pl.Series:
     """The `unit`s of `sides` (`_sides`) that are template lines: no project number,
     and a title their donor gives to units with no project number in at least
-    `TEMPLATE_RECIPIENTS` recipients and `TEMPLATE_YEARS` record years."""
+    `TEMPLATE_RECIPIENTS` recipients and `TEMPLATE_YEARS` record years, unless at
+    least `TEMPLATE_IDENTITY_UNITS` and `TEMPLATE_IDENTITY_SHARE` of the title's
+    units continue a crs id: the unit's ids persist, and an id-persistent unit of the
+    donor carries its crs id in another record year."""
     bare = sides.filter(
         pl.col("project_number").is_null(), pl.col("title_block").is_not_null()
     )
+    continued = (
+        sides.filter("id_persistent")
+        .drop_nulls("crs_id")
+        .group_by("donor_code", "crs_id")
+        .agg(years=pl.col("year").n_unique())
+        .filter(pl.col("years") >= 2)
+        .select("donor_code", "crs_id", continues=pl.lit(value=True))
+    )
+    continues = pl.col("id_persistent") & pl.col("continues").fill_null(value=False)
     templates = (
-        bare.group_by("donor_code", "title_block")
+        bare.join(continued, on=["donor_code", "crs_id"], how="left")
+        .group_by("donor_code", "title_block")
         .agg(
             recipients=pl.col("recipient_code").n_unique(),
             years=pl.col("year").n_unique(),
+            continuing=continues.sum(),
+            share=continues.mean(),
         )
         .filter(
             pl.col("recipients") >= TEMPLATE_RECIPIENTS,
             pl.col("years") >= TEMPLATE_YEARS,
+            (pl.col("continuing") < TEMPLATE_IDENTITY_UNITS)
+            | (pl.col("share") < TEMPLATE_IDENTITY_SHARE),
         )
     )
     return bare.join(templates, on=["donor_code", "title_block"], how="semi")["unit"]
@@ -442,7 +436,7 @@ def _sides(
             on="record_id",
         )
         .group_by("unit")
-        .agg(_largest("title", "text") if texts else _largest("title"))
+        .agg(largest_record("title", "text") if texts else largest_record("title"))
     )
     classes = id_practice.lazy().select(
         *_AGENCY,
@@ -458,8 +452,8 @@ def _sides(
         .filter(pl.col("year") > pl.col("year_commitment"))
         .get_column("right_id")
     )
-    title = _clean(pl.col("title")).str.replace_all(" +", " ")
-    words = title_words(pl.col("title"))
+    title = clean_text(pl.col("title")).str.replace_all(" +", " ")
+    words = text_words(pl.col("title"))
     return (
         with_programme(
             units.lazy().select(
@@ -478,8 +472,8 @@ def _sides(
         )
         .join(titles, on="unit", how="left")
         .with_columns(
-            pn_block=_pn_block(pl.col("project_number")),
-            title_block=pl.when(~title.is_in(_NO_TITLE)).then(title),
+            pn_block=pn_block(pl.col("project_number")),
+            title_block=pl.when(~title.is_in(NO_TITLE)).then(title),
             title_head=pl.when(words.list.len() >= 2).then(
                 words.list.head(2).list.join(" ")
             ),
@@ -502,7 +496,7 @@ def _renumbered_lines(units: pl.DataFrame) -> pl.DataFrame:
         units.filter(pl.col("donor_code").is_in(RENUMBERED_DONORS))
         .select(
             "donor_code",
-            pn_block=_pn_block(pl.col("project_number")),
+            pn_block=pn_block(pl.col("project_number")),
             line=_renumbered_line(),
         )
         .drop_nulls()
@@ -579,7 +573,7 @@ def _narrow_keys(
     return later.filter(pl.col("units") <= cap).select(*key, year="year_commitment")
 
 
-def _pn_block(project_number: pl.Expr) -> pl.Expr:
+def pn_block(project_number: pl.Expr) -> pl.Expr:
     """`project_number` lower-cased, with every character other than a to z and
     digits and leading zeros dropped; null when it names no project or keeps under
     three characters."""
@@ -597,25 +591,3 @@ def _renumbered_line() -> pl.Expr:
     return pl.when(donor.is_in(RENUMBERED_DONORS)).then(
         line_id(donor, pl.col("crs_id"))
     )
-
-
-def _largest(*columns: str) -> pl.Expr:
-    """`columns` of the group's largest record by commitment plus disbursement,
-    ties to the smaller record id."""
-    size = pl.col("commitment_usd").abs().fill_null(0) + pl.col(
-        "disbursement_usd"
-    ).abs().fill_null(0)
-    return pl.col(*columns).sort_by(size, "record_id", descending=[True, False]).first()
-
-
-def _clean(text: pl.Expr) -> pl.Expr:
-    """`text` lower-cased, every run of characters other than a to z and digits a
-    space, trimmed."""
-    return text.str.to_lowercase().str.replace_all("[^a-z0-9]+", " ").str.strip_chars()
-
-
-def _jaccard(left: pl.Expr, right: pl.Expr) -> pl.Expr:
-    """Shared words over all words of two word lists; null when either is null or
-    both are empty."""
-    union = left.list.set_union(right).list.len()
-    return pl.when(union > 0).then(left.list.set_intersection(right).list.len() / union)
