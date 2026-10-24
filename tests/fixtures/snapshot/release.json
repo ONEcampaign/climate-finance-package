@@ -4,7 +4,7 @@
   "package_version": "2.0.0.dev0",
   "tables": {
     "disbursements": {
-      "sha256": "15ab83512a4485b8ae3b960fd99e620b8b0a0d0bb52042ebcc40a5fcf6403b29",
+      "sha256": "a5728bfecaa20342eac85990eab0dc1a022cf259aa9fa5551d9e6fcfa90c4632",
       "rows": 36
     },
     "objectives": {
@@ -40,8 +40,12 @@
       "rows": 14
     },
     "quality": {
-      "sha256": "96562613c79c5b5102349ef0002657e86c6628253d05038de841138b8c2f0219",
+      "sha256": "053ac5b1ac9d5f385bfcf7680e459e06f9d903f2994bb9e94f51f70773b0e1ce",
       "rows": 12
+    },
+    "unallocated": {
+      "sha256": "da156e69260e65eb54373fdc3c9d69243860b62d498473f8528406fd58a9f7dd",
+      "rows": 3
     },
     "total_flows": {
       "sha256": "86c54066aa5dddd4b64407eaa363b3cab1371583fada3533b14870c8494c34ea",
@@ -56,6 +60,21 @@
     "jev": "jev-1.14.0"
   },
   "gates": {},
+  "settings": {
+    "offline": true,
+    "key_repair": true,
+    "recoveries": true,
+    "years": {
+      "crdf": [
+        2021,
+        2022
+      ],
+      "crs": [
+        2021,
+        2023
+      ]
+    }
+  },
   "precision_gate_waived": false,
   "previous_release": null
 }

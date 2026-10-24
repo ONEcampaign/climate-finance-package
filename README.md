@@ -37,18 +37,19 @@ Each query takes these arguments:
 - `view`: `"recipient"` (the default) or `"provider"`, which adds core contributions to multilateral agencies in proportion to each agency's climate share.
 - `currency` and `prices`: `"USD"`, `"EUR"`, `"GBP"` or `"CAD"`, at current prices or at a base year, converted with OECD DAC exchange rates and deflators. A converted result's `meta.conversion` holds the pydeflate version and a SHA-256 of the factors used, because pydeflate refreshes its DAC data every 30 days.
 - `oda_only`: keep official development assistance flows only.
+- `measure`: `"amount"` (the default) or `"share_of_total"`, which divides every amount by all CRS flows for the same key.
 
 Providers and recipients take names or DAC codes. `cf.providers`, `cf.recipients`, `cf.flows` and `cf.methods` list what is available, with `.list()`, `.info(name)` and `.search(text)`. A misspelt name raises an error that suggests close matches.
 
 ## Trace and compare
 
-`result.rows()` returns the project rows behind the table, and `result.explain()` describes the method, flow, filters and units in plain language. `result.meta` records the release, package version and source versions. `result.share_of_total()` divides every amount by all CRS flows for the same key. `snap.quality()` reports how much climate value traces to CRS records, and `cf.compare(a, b)` sets several results side by side.
+`result.rows()` returns the project rows behind the table, and `result.explain()` describes the method, flow, filters and units in plain language. `result.meta` records the release, package version and source versions. `result.share_of_total()` returns the same result under `measure="share_of_total"`, so its spec reruns to the same shares. `snap.quality()` reports how much climate value traces to CRS records, and `cf.compare(a, b)` sets several results side by side.
 
 `result.spec` holds every argument as a frozen `Spec`, and `snap.spending(spec=result.spec)` reruns the query to an identical table.
 
 ## Migrating from 1.x
 
-`ClimateData`, `set_climate_finance_data_path` and `get_unfccc_data` still import, with a `DeprecationWarning`, until 3.0. Each call without a 2.0 equivalent raises an error that names its replacement.
+`ClimateData`, `set_climate_finance_data_path` and `get_unfccc_data` still import, with a `DeprecationWarning`, until 3.0. Each call without a 2.0 equivalent raises an error that names its replacement. The legacy source names select the traced dataset, which includes disbursements from development banks' own ledgers, so `"OECD_CRS"` can return more than the CRS alone. The `_ALLOCABLE` names return the same rows as their plain names, without their former filter.
 
 ## Contact
 

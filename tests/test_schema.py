@@ -7,7 +7,9 @@ from make_fixture import FIXTURE_DIR
 from climate_finance import catalogue
 from climate_finance.errors import SchemaError
 from climate_finance.schema import (
+    CERTAIN_ROUTES,
     FLOWS,
+    LINK_METHODS,
     PERSPECTIVES,
     RELEASE_TABLES,
     Column,
@@ -72,9 +74,12 @@ def test_undeclared_sort_key_is_refused() -> None:
         ("disbursements", "record_grant_equiv_usd", float("nan")),
         ("commitments", "adaptation_usd", float("inf")),
         ("commitments", "climate_share", float("-inf")),
+        ("disbursements", "record_grant_equiv_usd", -1.0),
     ],
 )
-def test_non_finite_amounts_are_refused(table: str, column: str, value: float) -> None:
+def test_non_finite_and_negative_amounts_are_refused(
+    table: str, column: str, value: float
+) -> None:
     frame = pl.read_parquet(FIXTURE_DIR / f"{table}.parquet")
     broken = frame.with_columns(
         pl.when(pl.int_range(pl.len()) == 0)
@@ -97,3 +102,11 @@ def test_the_query_vocabularies_match_the_schema() -> None:
         == set(catalogue.flows.list()["name"])
     )
     assert set(get_args(View.__value__)) == set(PERSPECTIVES)
+
+
+def test_an_amount_paired_crosswalk_is_an_estimated_route() -> None:
+    links = pl.read_parquet(FIXTURE_DIR / "disbursements.parquet")["link_method"]
+
+    assert "crosswalk_amount" in set(links)
+    assert set(CERTAIN_ROUTES) < set(LINK_METHODS)
+    assert "crosswalk_amount" not in CERTAIN_ROUTES

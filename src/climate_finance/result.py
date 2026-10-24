@@ -203,13 +203,14 @@ class Quality:
     status: Table
 
     def summary(self) -> pl.DataFrame:
-        """Per provider: link rate, linked share above 0.8, label sources, status split.
+        """Per provider: link rate, certain-route share, label sources, status split.
 
         Shares are of the climate value of commitments. `link_rate` is the share that
-        traces to CRS records, and `linked_high_probability_share` the part of that
-        whose most probable link is at least 0.8. `grant_equiv_coverage` is the
-        share of linked records with a grant equivalent, weighted by linked climate
-        value over the years that have linked records.
+        traces to CRS records, and `certain_route_share` the share that traces with
+        every CRDF row reaching its CRS commitment through `schema.CERTAIN_ROUTES`.
+        `grant_equiv_coverage` is the part of the linked commitments' allocated value
+        whose record has a grant equivalent, each year's weighted by linked climate
+        value over the years that have allocations.
         """
         climate = pl.col("climate_usd").sum()
         linked = pl.col("linked_usd").sum()
@@ -219,8 +220,7 @@ class Quality:
             pl.col("commitments").sum(),
             climate_usd=climate,
             link_rate=linked / climate,
-            linked_high_probability_share=pl.col("linked_high_probability_usd").sum()
-            / linked,
+            certain_route_share=pl.col("certain_route_usd").sum() / climate,
             model_labelled_share=pl.col("model_labelled_usd").sum() / climate,
             report_labelled_share=pl.col("report_labelled_usd").sum() / climate,
             grant_equiv_coverage=pl.when(known.any()).then(

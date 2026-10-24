@@ -18,8 +18,8 @@ from releases import copy_release
 import climate_finance as cf
 from climate_finance import convert as convert_module
 from climate_finance.methods import OECD, ONE, RANGE, Method, MethodRange, label
-from climate_finance.query import BILATERAL
-from climate_finance.result import AMOUNTS
+from climate_finance.query import BILATERAL, _aggregate
+from climate_finance.result import AMOUNTS, ROW_KEYS
 from climate_finance.snapshot import Snapshot
 from climate_finance.spec import Spec
 
@@ -52,6 +52,21 @@ def test_method_outputs_match_their_golden_tables(name: str, spec: Spec) -> None
 
 def test_quality_summary_matches_its_golden_table() -> None:
     _golden("quality_summary", SNAP.quality().summary())
+
+
+def test_certain_route_share_is_certain_route_value_over_climate_value() -> None:
+    table = SNAP.table("quality").collect()
+    summary = SNAP.quality().summary()
+
+    expected = table.group_by("provider_code").agg(
+        share=pl.col("certain_route_usd").sum() / pl.col("climate_usd").sum()
+    )
+    joined = summary.join(expected, on="provider_code", validate="1:1")
+    assert joined.height == table["provider_code"].n_unique()
+    assert joined["certain_route_share"].to_list() == pytest.approx(
+        joined["share"].to_list()
+    )
+    assert (joined["certain_route_share"] < joined["link_rate"]).any()
 
 
 GRID = [
@@ -259,6 +274,51 @@ def test_a_zero_central_allocation_keeps_its_upper_bound(tmp_path: Path) -> None
         (0.0, 0.0, 13.3e6)
     )
     assert row["allocation_weight"].to_list() == [None]
+
+
+def test_a_range_bounds_every_key_under_every_method(tmp_path: Path) -> None:
+    # Without ONE shares for AfDB, France's attribution to it counts under OECD only.
+    def oecd_only_for_afdb(frame: pl.DataFrame) -> pl.DataFrame:
+        return frame.filter(
+            (pl.col("channel_code") != 46002) | (pl.col("source") == "oecd")
+        )
+
+    release = copy_release(
+        tmp_path / "release", edits={"agency_shares": oecd_only_for_afdb}
+    )
+    result = cf.load(path=release).spending(method=RANGE, view="provider")
+    table = result.table.to_polars()
+
+    assert set(result.rows(origin="attribution", provider_code=4)["method"]) == {"OECD"}
+    by_method = table.partition_by("method", as_dict=True, include_key=False)
+    keys = [frame.select(ROW_KEYS).sort(pl.all()) for frame in by_method.values()]
+    for other in keys[1:]:
+        assert_frame_equal(keys[0], other)
+    bounds = table.group_by("method").agg(pl.col("low").sum(), pl.col("high").sum())
+    assert bounds["low"].n_unique() == bounds["high"].n_unique() == 1
+    assert table.filter(pl.col("provider_code") == 4)["low"].min() == 0.0
+
+
+def test_sums_do_not_depend_on_row_order() -> None:
+    # Summed in the order given, 1e16 + 1 - 1e16 is 0 and 1e16 - 1e16 + 1 is 1.
+    values = pl.Series([1e16, 1.0, -1e16])
+    rows = pl.DataFrame(
+        {
+            "year": pl.Series([2021] * 3, dtype=pl.Int16),
+            "provider_code": pl.Series([5] * 3, dtype=pl.Int32),
+            "recipient_code": pl.Series([248] * 3, dtype=pl.Int32),
+            "bi_multi": pl.Series([1] * 3, dtype=pl.Int8),
+            "method": ["ONE"] * 3,
+            **dict.fromkeys(AMOUNTS, values),
+        }
+    )
+
+    def summed(order: list[int]) -> pl.DataFrame:
+        return _aggregate(rows[order].lazy(), methods=["ONE"]).collect()
+
+    first = summed([0, 1, 2])
+    for order in ([0, 2, 1], [1, 0, 2], [2, 0, 1]):
+        assert_frame_equal(first, summed(order), check_exact=True)
 
 
 def test_a_range_of_close_methods_counts_each_member_once() -> None:

@@ -46,6 +46,7 @@ from climate_finance.spec import (
     Spec,
     View,
 )
+from climate_finance.sums import ordered_sum
 
 if TYPE_CHECKING:
     from climate_finance.snapshot import Snapshot
@@ -135,7 +136,7 @@ def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
         "channel_code", nulls_last=True,
     )  # fmt: skip
     return Result(
-        table=Table(_aggregate(rows)),
+        table=Table(_aggregate(rows, methods=[label(method) for method in methods])),
         modelled=Table(_modelled(snapshot, spec=spec, conditions=filters)),
         rows=rows,
         totals=_totals(snapshot, spec=spec, conditions=filters),
@@ -394,15 +395,34 @@ def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
 
 
 def _sum(name: str) -> pl.Expr:
-    """The sum of `name`, null when every value is missing."""
-    return pl.when(pl.col(name).is_not_null().any()).then(pl.col(name).sum())
+    """The sum of `name` in a fixed order, null when every value is missing."""
+    column = pl.col(name)
+    return pl.when(column.is_not_null().any()).then(ordered_sum(column))
 
 
-def _aggregate(rows: pl.LazyFrame) -> pl.LazyFrame:
-    """Sum rows by `KEYS`. `low` and `high` then span every method for the same key."""
+def _aggregate(rows: pl.LazyFrame, *, methods: Sequence[str]) -> pl.LazyFrame:
+    """Sum rows by `KEYS`. `low` and `high` then span every method for the same key.
+
+    Every method in `methods` holds a row for every key any method holds, with zero
+    amounts where it counts nothing, so a method that has no row for a key still
+    bounds it.
+    """
+    summed = rows.group_by(KEYS).agg(
+        *(_sum(name).alias(name) for name in AMOUNTS), _held=pl.len()
+    )
+    grid = (
+        summed.select(ROW_KEYS)
+        .unique()
+        .join(pl.LazyFrame({"method": methods}), how="cross")
+    )
+    held = pl.col("_held").is_not_null()
     return (
-        rows.group_by(KEYS)
-        .agg(_sum(name).alias(name) for name in AMOUNTS)
+        grid.join(summed, on=KEYS, how="left", nulls_equal=True)
+        .with_columns(
+            pl.when(held).then(pl.col(name)).otherwise(0.0).alias(name)
+            for name in AMOUNTS
+        )
+        .drop("_held")
         .with_columns(
             low=pl.col("low").min().over(ROW_KEYS),
             high=pl.col("high").max().over(ROW_KEYS),
@@ -423,7 +443,7 @@ def _totals(
     by_recipient = flows.select(*ROW_KEYS, total="amount_usd")
     all_recipients = (
         flows.group_by("year", "provider_code", "bi_multi")
-        .agg(total=pl.col("amount_usd").sum())
+        .agg(total=ordered_sum(pl.col("amount_usd")))
         .with_columns(recipient_code=pl.lit(None, pl.Int32))
         .select(*ROW_KEYS, "total")
     )
