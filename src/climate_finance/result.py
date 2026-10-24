@@ -140,21 +140,30 @@ class Result:
 
     def explain(self) -> str:
         """A plain-language account of the method, flow and filters applied."""
-        provider = {
+        provider = [
             label(method)
             for method in self.spec.methods
             if method.coefficients == "provider"
-        }
+        ]
+        coefficients = None
+        if provider:
+            coefficients = (
+                self._rows.filter(
+                    pl.col("method").is_in(provider),
+                    pl.col("climate_share").is_null(),
+                )
+                .group_by(
+                    "method", "coefficient_basis", "coefficient_source", "provider_code"
+                )
+                .agg(
+                    pl.col("agency_code").drop_nulls().unique().sort(),
+                    pl.col("year").unique().sort(),
+                )
+                .collect()
+            )
         by_method = (
             self._rows.group_by("method")
             .agg(
-                fallbacks=pl.col("provider_code")
-                .filter(
-                    pl.col("climate_share").is_null(),
-                    pl.col("coefficient_basis").is_null(),
-                )
-                .unique()
-                .sort(),
                 unsplit=pl.col("channel_code")
                 .filter(pl.col("origin") == "attribution", pl.col("unsplit") != 0)
                 .unique()
@@ -165,17 +174,10 @@ class Result:
             )
             .collect()
         )
-        fallbacks = {
-            method: codes
-            for method, codes in zip(
-                by_method["method"], by_method["fallbacks"].to_list(), strict=True
-            )
-            if method in provider
-        }
         return explain(
             self.spec,
             release=self.meta.release,
-            fallbacks=fallbacks,
+            coefficients=coefficients,
             unsplit=dict(
                 zip(by_method["method"], by_method["unsplit"].to_list(), strict=True)
             ),
@@ -301,7 +303,7 @@ def explain(
     spec: Spec,
     *,
     release: str,
-    fallbacks: Mapping[str, Sequence[int]] | None = None,
+    coefficients: pl.DataFrame | None = None,
     unsplit: Mapping[str, Sequence[int]] | None = None,
     unmeasured: Sequence[int] = (),
     years: Mapping[str, tuple[int, int]] | None = None,
@@ -309,27 +311,28 @@ def explain(
 ) -> str:
     """The method, view, flow, filters and units behind `spec`, in plain language.
 
-    `fallbacks` maps each provider-coefficient method's label to the providers that
-    have no confirmed coefficient of their own in the release. `unsplit` maps a
-    method's label to the agency channel codes whose climate share has no split by
-    objective. `unmeasured` lists the years with rows whose adaptation is not
-    measured. `years` is the release's `years`; under the provider view, the queried
-    years (`spec.years`, else the recipient CRDF's) outside those of
-    `core_contributions` or of the share table a method reads (`agency_shares`
-    under the OECD's imputed shares, else `agency_spending`) are named as holding
-    no attributed finance under that method. `conversion` names the conversion
-    factors of a converted result.
+    `coefficients` holds, per provider-coefficient method label (`method`), each
+    `coefficient_basis` and `coefficient_source` its marker rows took, with the
+    `provider_code` and the lists of `agency_code` and `year` values that took them.
+    `unsplit` maps a method's label to the agency channel codes whose climate share
+    has no split by objective. `unmeasured` lists the years with rows whose
+    adaptation is not measured. `years` is the release's `years`; under the provider
+    view, the queried years (`spec.years`, else the recipient CRDF's) outside those
+    of `core_contributions` or of the share table a method reads (`agency_shares`
+    under the OECD's imputed shares, else `agency_spending`) are named as holding no
+    attributed finance under that method. `conversion` names the conversion factors
+    of a converted result.
     """
-    fallbacks = fallbacks or {}
     unsplit = unsplit or {}
     methods = spec.methods
     lines = [f"Release {release}."]
     for method in methods:
         lines.append(describe(method))
-        if missing := fallbacks.get(label(method)):
-            lines.append(
-                f"Provider coefficients: providers {', '.join(map(str, missing))} "
-                f"have no confirmed coefficient and take {method.significant:g}."
+        if coefficients is not None and method.coefficients == "provider":
+            lines.extend(
+                _coefficient_lines(
+                    method, coefficients.filter(pl.col("method") == label(method))
+                )
             )
         if channels := unsplit.get(label(method)):
             lines.append(
@@ -489,6 +492,69 @@ def _listing(codes: Sequence[int | str]) -> str:
     """`codes` as running text, such as "1, 3, 7 and 8"."""
     *rest, last = map(str, codes)
     return f"{', '.join(rest)} and {last}" if rest else last
+
+
+# The order in which `explain` lists the bases of provider coefficients.
+_BASES = ("provider", "default", "case_by_case", None)
+
+
+def _coefficient_lines(method: Method, uses: pl.DataFrame) -> list[str]:
+    """One sentence per coefficient basis and source that `method`'s rows took.
+
+    `uses` holds a row per basis, source and provider, with the provider's
+    `agency_code` and `year` lists. A provider listed under several bases or sources
+    is named with the agencies, or the years, that tell its entries apart.
+    """
+    entries: dict[tuple[str | None, str | None], list[dict]] = {}
+    by_provider: dict[int, list[dict]] = {}
+    for use in uses.sort("provider_code").iter_rows(named=True):
+        key = (use["coefficient_basis"], use["coefficient_source"])
+        entries.setdefault(key, []).append(use)
+        by_provider.setdefault(use["provider_code"], []).append(use)
+
+    def name(use: dict) -> str:
+        others = by_provider[use["provider_code"]]
+        parts = [
+            f"{noun if len(use[column]) == 1 else plural} "
+            f"{', '.join(map(str, use[column]))}"
+            for noun, plural, column in (
+                ("agency", "agencies", "agency_code"),
+                ("year", "years", "year"),
+            )
+            if use[column] and len({tuple(other[column]) for other in others}) > 1
+        ]
+        code = str(use["provider_code"])
+        return f"{code} ({'; '.join(parts)})" if parts else code
+
+    fallback = f"significant {method.significant:g} and principal {method.principal:g}"
+    lines = []
+    for basis in _BASES:
+        for (held, source), members in sorted(
+            (item for item in entries.items() if item[0][0] == basis),
+            key=lambda item: item[0][1] or "",
+        ):
+            names = ", ".join(map(name, members))
+            match held:
+                case "provider":
+                    lines.append(f"Coefficients of providers {names}: {source}.")
+                case "default":
+                    lines.append(
+                        f"Providers {names} assess each activity case by case; where "
+                        "an activity's share is unknown they take the default share "
+                        f"in {source}."
+                    )
+                case "case_by_case":
+                    lines.append(
+                        f"Providers {names} assess each activity case by case "
+                        f"({source}) and state no flat coefficient, so they take "
+                        f"{fallback}."
+                    )
+                case _:
+                    lines.append(
+                        f"Providers {names} have no coefficient in the release and "
+                        f"take {fallback}."
+                    )
+    return lines
 
 
 _VIEWS = {

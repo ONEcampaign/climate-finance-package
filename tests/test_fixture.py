@@ -68,6 +68,7 @@ INVARIANT_TABLES = (
     "agency_shares",
     "agency_spending",
     "core_contributions",
+    "provider_coefficients",
 )
 
 
@@ -293,6 +294,26 @@ def _zero_remainder(frame: pl.DataFrame) -> pl.DataFrame:
     return _remainder(frame, 0.0)
 
 
+def _coefficient_edit(
+    provider: int, first_year: int | None, **changes: object
+) -> Callable[[pl.DataFrame], pl.DataFrame]:
+    """An edit setting `changes` on the provider's general row from `first_year`."""
+    first = pl.col("first_year")
+    is_row = (
+        (pl.col("provider_code") == provider)
+        & pl.col("agency_code").is_null()
+        & (first.is_null() if first_year is None else first == first_year)
+    )
+
+    def edit(frame: pl.DataFrame) -> pl.DataFrame:
+        return frame.with_columns(
+            pl.when(is_row).then(pl.lit(value)).otherwise(pl.col(name)).alias(name)
+            for name, value in changes.items()
+        )
+
+    return edit
+
+
 @pytest.mark.parametrize(
     ("table", "edit", "row_id"),
     [
@@ -321,6 +342,27 @@ def _zero_remainder(frame: pl.DataFrame) -> pl.DataFrame:
         ("agency_shares", _measure_ida_twice, "44002 2021"),
         ("agency_spending", _give_a_marker_row_components, "44002 2021 2 0"),
         ("agency_spending", _repeat_a_components_row, "46002 2022 None None"),
+        # Japan's coefficients up to 2021 would also cover 2022.
+        (
+            "provider_coefficients",
+            _coefficient_edit(701, None, last_year=2022),
+            "701 None 2022",
+        ),
+        (
+            "provider_coefficients",
+            _coefficient_edit(701, 2022, last_year=2021),
+            "701 None 2022",
+        ),
+        (
+            "provider_coefficients",
+            _coefficient_edit(5, None, significant=None),
+            "5 None None",
+        ),
+        (
+            "provider_coefficients",
+            _coefficient_edit(5, None, both_significant=1.5),
+            "5 None None",
+        ),
     ],
 )
 def test_release_invariants_name_the_row_that_breaks_one(
