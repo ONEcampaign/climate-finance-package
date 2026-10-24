@@ -5,7 +5,7 @@ Cutting a release requires the `build` extra, a `build.toml`, and the OECD bulk 
 ## Before you start
 
 - Download the bulk CRS parquet through a browser and set `[sources].crs_file` to its path and sha256. The OECD's bot challenge blocks scripted downloads, and the fetch stage attempts a direct download when `crs_file` is absent.
-- Check the switches in `build.toml`. A published release turns `review` on, along with `gap_fill` and `jev_links` when the build has bank ledgers and a Jev key. [cf-build](../reference/cf-build.md) lists all switches.
+- Check the switches in `build.toml`. The shipped file holds the settings of a published release: `key_repair`, `recoveries`, `review`, and `jev_links` on, the `[sources.ledgers]` section set for the ledger check, `gap_fill`, `jev_labels`, and `embed` off, and `crdf = "all"` under `[years]`. `release.json` records every switch under `settings`. [cf-build](../reference/cf-build.md) lists all switches.
 - Keep a previous release's directory on hand for the drift gate, or pass `--first-release` on the initial release.
 
 ## Steps
@@ -24,7 +24,7 @@ Cutting a release requires the `build` extra, a `build.toml`, and the OECD bulk 
     cf-build sample releases/2026a --out sample
     ```
 
-    `sample` writes one packet per provider and batch to `sample/<provider>/batch-<NN>.md` and saves the design to `sample/design.parquet`. Packets omit the score, link method, and stratum. Label them with the `import-labels` command covered in the review guide, appending to the decisions file that `sources.review_decisions` names. At least one draw in ten needs a person's decision to pass the `human_audit` gate.
+    `sample` writes one packet per provider and batch to `sample/<provider>/batch-<NN>.md` and saves the design to `sample/design.parquet`. Packets omit the score, link method, and stratum. Agents label every draw, and a person decides at least one draw in ten, which the `human_audit` gate checks. Record each set of labels with the `import-labels` command covered in the review guide, appending to the decisions file that `sources.review_decisions` names.
 
 4. Check the gates after each batch. `--report` prints failures without stopping.
 

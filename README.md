@@ -41,12 +41,12 @@ for row in result.table.to_polars().iter_rows(named=True):
 2023 12.0 40.3
 ```
 
-`result.table` has one row per year, provider, recipient, and Bi_Multi code, with adaptation, mitigation, cross-cutting, and total climate `value` in USD. `value` counts every disbursement the build linked to a climate commitment. `low` counts only links that the donor's own ids make certain, from the CRDF row to its CRS commitment and from the commitment to the disbursement. `result.rows()` returns the project rows behind the table, and `result.explain()` states the method, flow, and filters in words.
+`result.table` has one row per year, provider, recipient, and Bi_Multi code, with adaptation, mitigation, cross-cutting, and total climate `value` in USD. `value` counts every disbursement the build allocated to a climate commitment in the release, from the first CRDF year to the last complete CRS year. `low` counts only the money on links the build treats as certain by rule, from the CRDF row to its CRS commitment and from the commitment to the disbursement. Most rest on the donor's own ids. The parts of rebuilt aggregate rows, which match their CRS records by amount, count too. In the provider view `low` also counts attributed core contributions, because the bounds measure link certainty and a method's coefficients and agency shares weigh every bound alike. `result.rows()` returns the project rows behind the table, and `result.explain()` states the method, flow, and filters in words.
 
 ## What you can ask
 
 - Commitments, disbursements, and grant equivalents of climate finance by provider, recipient, and year, in USD, EUR, GBP, or CAD, at current or constant prices.
-- Climate value under `ONE`, `OECD`, or `PROVIDER` marker weights, or all three at once with `RANGE`.
+- Climate value under `ONE` or `OECD` marker weights, under `PROVIDER`, which takes the coefficients each provider applies when it reports to the UNFCCC, or under all three at once with `RANGE`. A release built with Jev's labels also answers `relevance="jev"` queries.
 - Core contributions to multilateral agencies attributed to the providers that pay them, so each dollar counts once.
 - Link rates, commitment status, and the measured precision of the links with `snap.quality()`, and a party's BTR report against the OECD data with `snap.reconcile()`.
 

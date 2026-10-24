@@ -10,7 +10,7 @@ In climate-finance 1.2.3, `ClimateData` downloaded OECD files, matched them, and
 
 ## Keep 1.x code running
 
-`ClimateData` imports from `climate_finance` and runs, with a `DeprecationWarning`, until 3.0. It wraps 2.0 by calling `spending()` once per source and flow and returning pandas. `set_climate_finance_data_path` and `get_unfccc_data` import with the same warning. Calling them raises `NotImplementedError` and names their replacement. Calls with no 2.0 equivalent also raise `NotImplementedError` and state that none exists.
+`ClimateData` imports from `climate_finance` and runs, with a `DeprecationWarning`, until 3.0. It wraps 2.0 by calling `spending()` once per source and flow and returning pandas. The examples on this page run on the synthetic test release, so their amounts are invented. `set_climate_finance_data_path` and `get_unfccc_data` import with the same warning. Calling them raises `NotImplementedError` and names their replacement. Calls with no 2.0 equivalent also raise `NotImplementedError` and state that none exists.
 
 ```python
 from climate_finance import ClimateData
@@ -74,13 +74,14 @@ Releases hold gross disbursements only, so `net_disbursements` has no 2.0 equiva
 ## What else is different
 
 - The result is a polars table by default, with `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, and `high` columns. `result.rows()` returns the projects behind it.
+- `value` is climate value only, in `ClimateData` too, and no row carries the 1.x indicator `not_climate_relevant`. A 1.x script that sums `value` over every indicator gets a different number and no error.
 - A result carries its `Spec`. `snap.spending(spec=result.spec)` reruns it.
 - Names and codes resolve through `cf.providers` and `cf.recipients`. A misspelt name raises an error that suggests close matches.
 - Building a release fetches OECD data, using `cf-build` and the `build` extra. 2.0 reads the built release. [cf-build](reference/cf-build.md) lists the commands.
 
 ## Verify it worked
 
-Run the 1.x and 2.0 queries for one provider and year and compare `value`.
+Run the `ClimateData` call and its `spending()` rewrite for one provider and year on the same release. Their `value` columns match. A figure from 1.2.3 itself differs, for the reasons the release notes give.
 
 ## Next
 

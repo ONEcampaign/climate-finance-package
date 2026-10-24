@@ -4,7 +4,7 @@ Before you publish a figure for a provider, check how much of its climate financ
 
 ## Before you start
 
-Load a release. The examples check Germany and Japan.
+Load a release. The examples check Germany and Japan on the synthetic test release, so their numbers are invented.
 
 ```python
 import polars as pl
@@ -17,7 +17,7 @@ quality = snap.quality(providers=["Germany", "Japan"])
 
 ## Steps
 
-1. Read the link rate. `summary()` has one row per provider. `link_rate` is the share of the provider's climate value held in commitments that trace to at least one CRS record, and `linked_high_probability_share` is the part whose most probable link is at least 0.8.
+1. Read the link rate. `summary()` has one row per provider. `link_rate` is the share of the provider's climate value whose CRDF rows match a CRS commitment, and `linked_high_probability_share` is the part whose most probable link is at least 0.8.
 
     ```python
     summary = quality.summary()
@@ -30,7 +30,7 @@ quality = snap.quality(providers=["Germany", "Japan"])
     701 1.0 1.0
     ```
 
-    A low link rate means the provider's commitments lack matching CRS records. Such commitments show as `not_traceable` or `no_disbursement_record`, and the figure for the provider is a lower bound.
+    A link rate counts the match to a CRS commitment, whether or not anything disbursed against it. A provider can read a `link_rate` of 1.0 and still hold every commitment in `not_traceable`, so read it beside the status split in the next step.
 
 2. Read the status split. `summary()` holds one `<status>_share` column per status: `disbursed`, `partly_disbursed`, `no_disbursement_record`, `not_traceable`, and `pending_review`.
 
@@ -78,6 +78,8 @@ quality = snap.quality(providers=["Germany", "Japan"])
     ```
 
     Ungated releases, including the synthetic release, leave this table empty. For a published release, check that every provider you report has a row, that `passed` is true, and that `waived` is false. A wide interval means the provider has few labelled links, so its estimate is rough.
+
+    A provider's estimate covers all its allocated value, certain and estimated links together. Each stratum's estimate and interval sit beside it in `snap.manifest.gates["precision"]`, under `strata`. Where a provider's figure rests on estimated links, read the `model` stratum as well as the provider's row.
 
 5. Check what a provider view omits. For provider-view totals, `quality.eu_left_out` holds the value of EU Institutions agencies' own rows omitted from the total because members' contributions stand in for them. `quality.attribution` holds the value attributed through core contributions by share source.
 

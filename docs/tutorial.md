@@ -95,11 +95,11 @@ commitments 130.0
 disbursements 38.0
 ```
 
-Japan's climate commitments for 2021 and 2022 total 130.0, and the traced disbursements in those years total 38.0. `oda_only=True`, `currency=`, and `prices=` filter or convert a query the same way. [Python API](reference/python-api.md) lists the parameters.
+Japan's climate commitments for 2021 and 2022 total 130.0. The 38.0 is what Japan disbursed in those two years against climate commitments of any year the release holds, so the two figures measure different money. `oda_only=True`, `currency=`, and `prices=` filter or convert a query the same way. [Python API](reference/python-api.md) lists the parameters.
 
 ## Step 6. Check how much traces
 
-`quality()` reports how much of a provider's climate value traces to CRS records, and how its commitments split by status.
+`quality()` reports how much of a provider's climate value matches a CRS commitment, and how its commitments split by status.
 
 ```python
 summary = snap.quality(providers="Japan").summary().row(0, named=True)
@@ -114,7 +114,7 @@ print(
 1.0 0.31 0.69
 ```
 
-Every Japanese commitment in this release links to at least one CRS record (`link_rate` 1.0). Commitments disbursed to 90% or more hold 31% of the climate value, and partly disbursed commitments hold 69%.
+Every Japanese commitment in this release matches a CRS commitment (`link_rate` 1.0), which says nothing yet about what disbursed. Commitments disbursed to 90% or more hold 31% of the climate value, and partly disbursed commitments hold 69%.
 
 This synthetic release skips the blind-sample gate, so `snap.quality().precision` is empty. In a published release, that table holds each provider's measured link precision and interval.
 

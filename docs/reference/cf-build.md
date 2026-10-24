@@ -24,7 +24,7 @@ Runs the build stages and writes their tables.
 - `--stage` (repeatable) runs only the named stages. A stage that reads a table missing from earlier stages raises `StageInputMissingError`.
 - `--offline` refuses network access.
 
-The `build.toml` switches are `offline`, `key_repair` and `recoveries` (both on by default), `gap_fill`, `review`, `jev_labels`, `jev_links`, and `embed`. `skip_eib_routes` names EIB recovery routes to omit so a test can measure what a route adds. A release builds with an empty list. The sections `[years]`, `[sources]`, `[jev]`, and `[embedding]` set the years, the pinned source files and their sha256, the Jev model version, cost cap and band, and the embedding model.
+The `build.toml` switches are `offline`, `key_repair` and `recoveries` (both on by default), `gap_fill`, `review`, `jev_labels`, `jev_links`, and `embed`. `skip_eib_routes` names EIB recovery routes to omit so a test can measure what a route adds. A release builds with an empty list. `[years] crdf` takes an inclusive pair of years or `"all"`, every year the recipient-perspective CRDF holds, and the build records the years it resolved in `release.json`. The sections `[years]`, `[sources]`, `[jev]`, and `[embedding]` set the years, the pinned source files and their sha256, the Jev model version, cost cap and band, and the embedding model.
 
 ## `cf-build sample`
 

@@ -12,6 +12,7 @@ climate-finance 2.0 returns international public climate finance from OECD and U
 - [How to check link quality](how-to/check-link-quality.md) covers link rates, status, certain share, and measured precision.
 - [How to review links](how-to/review-links.md) shows release managers how a person or an agent decides the pairs a build queued.
 - [How to reconcile a party's BTR report with OECD data](how-to/reconcile-with-btr.md)
+- [How to reproduce the BTR tables](how-to/reproduce-btr-tables.md) builds the BTR rows and their links locally from the UNFCCC's workbooks.
 - [How to cut a release](how-to/cut-a-release.md) shows release managers how to build, sample, gate, and pack.
 - [Migrating from 1.x](migrating-from-1x.md)
 

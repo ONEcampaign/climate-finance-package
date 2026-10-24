@@ -1,6 +1,6 @@
 # Python API
 
-Everything in version 2.0 imports from `climate_finance`, usually as `cf`. The names in `cf.__all__` form the public API. `Quality` and `Reconciliation`, the return types of `quality()` and `reconcile()`, live in `climate_finance.result`, and the errors live in `climate_finance.errors`. [Migrating from 1.x](../migrating-from-1x.md) covers the deprecated 1.x names.
+Everything in version 2.0 imports from `climate_finance`, usually as `cf`. The examples run on the synthetic test release, so their amounts are invented. The names in `cf.__all__` form the public API. `Quality` and `Reconciliation`, the return types of `quality()` and `reconcile()`, live in `climate_finance.result`, and the errors live in `climate_finance.errors`. [Migrating from 1.x](../migrating-from-1x.md) covers the deprecated 1.x names.
 
 ## `cf.load(release="latest", *, path=None, cache_dir=None, refresh=False)`
 
@@ -50,9 +50,9 @@ Returns a `Result`. Every argument is optional and keyword-only:
 - `oda_only` (`bool`, default `False`).
 - `spec` (`Spec | None`). Replaces every other argument.
 
-Raises `UnknownProviderError` or `UnknownRecipientError` for a name outside the listings.
+Raises `UnknownProviderError` or `UnknownRecipientError` for a name outside the listings, and `MissingLabelsError` for a method with `relevance="jev"` on a release that holds no Jev labels.
 
-**Flow.** `flow="disbursements"` counts what the trace allocated to climate commitments. `flow="commitments"` counts CRDF commitments at face value in the commitment year, with `low`, `value`, and `high` equal. `flow="grant_equivalent"` counts the grant equivalent of the disbursements and leaves unvalued records missing. `snap.quality().summary()` reports this coverage as `grant_equiv_coverage`.
+**Flow.** `flow="disbursements"` counts what the trace allocated to the release's climate commitments, by the year of the disbursement record. A disbursement counts only against a commitment the release holds, and the commitments start at the first CRDF year, so the earliest years count less of what was paid. Disbursements end at the build's `crs_last_complete`. `flow="commitments"` counts CRDF commitments at face value in the commitment year, with `low`, `value`, and `high` equal. `flow="grant_equivalent"` counts the grant equivalent of the disbursements. A record with no grant equivalent, or a negative one on a positive disbursement, counts nothing, and `snap.quality().summary()` reports the valued share of allocated value as `grant_equiv_coverage`.
 
 ```python
 for flow in ("commitments", "disbursements", "grant_equivalent"):
@@ -104,7 +104,7 @@ result = snap.spending(
 
 ### `Snapshot.quality(*, providers, years, method)`
 
-Returns a `Quality` object.
+Returns a `Quality` object. Its amounts are the CRDF's published climate value of the commitments. `method` acts on the provider-view columns alone, `eu_left_out` and `attribution`.
 
 ### `Snapshot.reconcile(*, parties, years, method)`
 
@@ -151,8 +151,8 @@ A frozen pydantic model with six fields.
 | `significant` | `float` | required | Share of face value counted for a significant marker, 0 to 1. |
 | `principal` | `float` | required | Share counted for a principal marker, 0 to 1. |
 | `highest_marker` | `bool` | required | Count each activity once under its higher marker. |
-| `coefficients` | `"fixed" \| "provider"` | `"fixed"` | `"provider"` takes each provider's own `significant` where the release has a confirmed one. |
-| `relevance` | `"markers" \| "jev"` | `"markers"` | `"jev"` reads Jev's adaptation level where Jev labelled a record. |
+| `coefficients` | `"fixed" \| "provider"` | `"fixed"` | `"provider"` takes each provider's coefficients for the row's year and agency from `provider_coefficients`. |
+| `relevance` | `"markers" \| "jev"` | `"markers"` | `"jev"` reads Jev's adaptation level where Jev labelled a record, and needs a release built with `jev_labels` on. |
 | `eu` | `"channel" \| "provider"` | `"channel"` | How EU Institutions count in the provider view. |
 
 `Method.replace(**changes)` returns a validated copy. `cf.methods.ONE`, `OECD`, and `PROVIDER` are `Method` values, and `cf.methods.RANGE` is a `MethodRange` of the three. `cf.methods.describe(method)` returns the plain-language text that `Result.explain()` uses for the method. [About the methods](../explanation/methods.md) explains the choices.
@@ -173,7 +173,7 @@ The answer to one `Spec`:
 - `modelled` is a `Table` of the "modelled, not reported" range with the columns: `year`, `provider_code`, `recipient_code`, `basis`, `low`, and `high`. It is populated only when the query asks for recipient-view disbursements with `oda_only=False`.
 - `spec` is the `Spec`. `snap.spending(spec=result.spec)` reruns the query to an identical table.
 - `meta` holds `release`, `package_version`, `source_versions`, and `model_versions`.
-- `rows(**filters)` returns the project rows behind the table as a polars DataFrame, filtered by column equality. A list, tuple, set, or range matches any item. Raises `KeyError` for an unknown column. `origin` is `commitment`, `disbursement`, or `attribution`. A row has the columns `origin`, `row_id`, `record_id`, `year`, `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_category`, `flow_code`, `project_number`, `title`, `status`, `rio_adaptation`, `rio_mitigation`, `record_rio_adaptation`, `record_rio_mitigation`, `marker_source`, `climate_share`, `share_source`, `link_method`, `link_probability`, `allocation_weight`, `objective_label`, `label_source`, `jev_level`, `amount`, `coefficient_basis`, and `method`, followed by the weighted amounts `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, and `high`.
+- `rows(**filters)` returns the project rows behind the table as a polars DataFrame, filtered by column equality. A list, tuple, set, or range matches any item. Raises `KeyError` for an unknown column. `origin` is `commitment`, `disbursement`, or `attribution`. A row has the columns `origin`, `row_id`, `record_id`, `year`, `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_category`, `flow_code`, `project_number`, `title`, `status`, `rio_adaptation`, `rio_mitigation`, `record_rio_adaptation`, `record_rio_mitigation`, `marker_source`, `climate_share`, `share_source`, `link_method`, `link_probability`, `allocation_weight`, `objective_label`, `label_source`, `jev_level`, `amount`, `coefficient_basis`, `coefficient_source`, and `method`, followed by the weighted amounts `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, and `high`. `coefficient_basis` is `provider`, `default`, or `case_by_case`, and null where the release has no coefficient row for the provider.
 - `explain()` returns the method, view, flow, filters, and units in plain language, as a string.
 - `share_of_total()` returns a `Result` with every amount divided by all CRS flows for the same flow, year, provider, recipient, and Bi_Multi code. A key missing from `total_flows` gives null.
 
@@ -199,13 +199,22 @@ Returned by `Snapshot.quality()`. Each attribute is a `Table`:
 - `precision` holds one row per provider with the columns: `provider_code`, `estimate`, `lower`, `upper`, `passed`, `waived`, and `detail`. `estimate` is the share of allocated value whose link a blind sample verified, `lower` and `upper` are its interval, `passed` records whether the lower bound reached the release's threshold, and `waived` records whether a failure was waived. The table is empty for an ungated release.
 - `summary()` returns a DataFrame with one row per provider containing: `commitments`, `climate_usd`, `repeat_climate_usd`, `link_rate`, `linked_high_probability_share`, `model_labelled_share`, `report_labelled_share`, `grant_equiv_coverage`, and a `<status>_share` for each status.
 
-`link_rate` is the share of climate value that traces to CRS records. `linked_high_probability_share` is the part of that value whose most probable link is at least 0.8. `grant_equiv_coverage` is the share of linked records with a grant equivalent. `repeat_climate_usd` is the climate value of rows that repeat an earlier vintage, which every total excludes.
+`link_rate` is the share of climate value whose CRDF rows match a CRS commitment, whether or not anything disbursed against it, so a provider can read a `link_rate` of 1.0 beside a `not_traceable_share` of 1.0. `linked_high_probability_share` is the part of that value whose most probable link is at least 0.8. `grant_equiv_coverage` is the part of the linked commitments' allocated value whose record has a grant equivalent. `repeat_climate_usd` is the climate value of rows that repeat an earlier vintage, which every total excludes.
 
 ## `Reconciliation`
 
-Returned by `Snapshot.reconcile()`. `table` has one row per party, year, and method, with the columns: `party`, `provider_code`, `year`, `status`, `method`, `party_weight`, `weight_confirmed`, `btr_face`, `btr_grant_equivalent`, `unfccc_only_usd`, four comparators, and `btr_over_<comparator>` (the BTR face value divided by each comparator). The comparators are `crdf_at_party_weight`, `crdf_at_100`, `traced_climate_value`, and `crs_disbursed_at_party_weight`.
+Returned by `Snapshot.reconcile()`. `table` has one row per party, year, status, and method, and rows with no status sit on their own row. The columns, in order:
 
-`rows(party, year)` returns the BTR rows of that party and year alongside each linked CRS record, with the record's facts prefixed `crs_`, and `unfccc_only` set to true for unlinked rows.
+- `party`, `provider_code`, `year`, `status`, `method`, `party_weight`, `party_principal`, `weight_source`.
+- `btr_face`: the BTR total at the DAC rate. `btr_face_reported` is the total at the party's own USD conversion, `dac_rate` the DAC rate, and `party_rate` the rate the party's USD figure implies (`dac_rate` × `btr_face` ÷ `btr_face_reported`).
+- `btr_grant_equivalent`: the BTR grant equivalent at the DAC rate, counting rows with no status and rows with zero face value.
+- `unfccc_only_usd`: BTR rows that no CRS record links to, split by funding source into `unfccc_only_oda_usd`, `unfccc_only_oof_usd`, and `unfccc_only_other_usd`.
+- `oecd_only_usd`: the status's CRS flow on bilateral climate-marked records that no BTR row links to. Null on a row with no status.
+- The comparators `crdf_at_party_weight`, `crdf_at_100`, `traced_climate_value`, `crs_disbursed_at_party_weight`, and `crs_grant_equivalent_at_party_weight`.
+- `comparator`: the comparator of the row's flow, `crdf_at_party_weight` for committed rows and `crs_disbursed_at_party_weight` for disbursed rows, null on a row with no status. `btr_over_comparator` is the BTR total over it, and `thin_comparator` is true where the comparator is below USD 10m (`query.THIN_COMPARATOR_USD`).
+- `btr_over_<comparator>` for each of the four face comparators, null for the other flow's comparators, and `btr_grant_equivalent_over_crs_grant_equivalent`.
+
+`rows(party, year)` returns the BTR rows of that party and year alongside each linked CRS record, with the record's facts prefixed `crs_`, and `unfccc_only` set to true for unlinked rows. On a published release, which leaves out `btr` and `btr_links`, it raises `WithheldTableError`.
 
 ## `compare(*results)` and `Comparison`
 
@@ -233,6 +242,8 @@ All errors inherit from `ClimateFinanceError`. The three name errors import from
 | `UnknownProviderError`, `UnknownRecipientError` | a provider or recipient is absent from its listing. |
 | `ReleaseIntegrityError` | a release fails its check. |
 | `SourceUnavailableError` | a download fails. |
+| `MissingLabelsError` | a method with `relevance="jev"` queries a release with no Jev labels. The message names the `jev_labels` setting. |
+| `WithheldTableError` | `Snapshot.table()` asks for a table the published release leaves out, `btr` or `btr_links`. `release.json` names each under `withheld_tables` with a note on how to build it. |
 | `SchemaError` | a table fails to match its schema. |
 
 ## Next

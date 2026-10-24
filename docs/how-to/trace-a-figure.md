@@ -4,7 +4,7 @@ Trace a figure from `spending()` to the projects and links behind it, and save t
 
 ## Before you start
 
-Load a release and run the query you want to trace. The examples follow Japan's 2023 disbursements.
+Load a release and run the query you want to trace. The examples follow Japan's 2023 disbursements on the synthetic test release, so their amounts are invented.
 
 ```python
 import polars as pl
@@ -45,7 +45,7 @@ result = snap.spending(providers="Japan", years=[2023])
     12.0 12.0
     ```
 
-    Group the rows by `link_method` to see which methods carry the rest, and read `link_probability` for the build's confidence in each link. `low` requires both a certain link and a certain route for the commitment's CRDF rows.
+    Group the rows by `link_method` to see which methods carry the rest. `link_probability` is 1.0 on a certain link, the model's score on a `classifier`, `classifier_jev`, or `splink_jev` link, and null on every other rule link. `low` requires both a certain link and a certain route for the commitment's CRDF rows.
 
 3. Check the status of each commitment. Group by `status` to see how much of the figure sits in fully and partly disbursed commitments.
 
