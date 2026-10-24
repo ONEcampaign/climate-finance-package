@@ -44,10 +44,10 @@ import numpy as np
 import polars as pl
 
 from climate_finance.build.errors import AllocationInputError
-from climate_finance.build.link.id_practice import EU_DONOR, period_of
+from climate_finance.build.link.id_practice import period_of
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
-from climate_finance.schema import LINK_METHODS
+from climate_finance.schema import EU_INSTITUTIONS, LINK_METHODS
 
 if TYPE_CHECKING:
     from climate_finance.build.stages import StageContext, StageOutput
@@ -156,10 +156,12 @@ def _commitment_records(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.DataFra
     )
 
 
-def _unit_windows(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame:
-    """Each unit's earliest expected start year and latest completion year."""
+def _commitment_windows(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame:
+    """Each commitment unit's earliest expected start year and latest completion
+    year. Only commitment units have windows, which spares exploding the records of
+    the disbursement units."""
     return (
-        _unit_records(units, crs=crs)
+        _unit_records(units.filter(pl.col("commitment_usd") > 0), crs=crs)
         .group_by("unit_id")
         .agg(pl.col("start_year").min(), pl.col("end_year").max())
     )
@@ -200,7 +202,7 @@ def window_donors(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> list[int]:
     ids = ["donor_code", "crs_id"]
     tested = (
         units.filter(pl.col("commitment_usd") > 0, pl.col("crs_id").is_not_null())
-        .join(_unit_windows(units, crs=crs), on="unit_id")
+        .join(_commitment_windows(units, crs=crs), on="unit_id")
         .group_by(ids)
         .agg(
             years=pl.col("placed_year").n_unique(),
@@ -310,12 +312,16 @@ def _trace_pairs(
     ).collect()
     commitment_units = (
         units.select(c_unit="unit_id", cyear="placed_year")
-        .join(_unit_windows(units, crs=crs).rename({"unit_id": "c_unit"}), on="c_unit")
+        .join(
+            _commitment_windows(units, crs=crs).rename({"unit_id": "c_unit"}),
+            on="c_unit",
+        )
         .collect()
     )
     year, date_year, cyear = pl.col("year"), pl.col("date_year"), pl.col("cyear")
     floored = ~(
-        pl.col("method").is_in(NO_FLOOR_METHODS) & (pl.col("donor_code") == EU_DONOR)
+        pl.col("method").is_in(NO_FLOOR_METHODS)
+        & (pl.col("donor_code") == EU_INSTITUTIONS)
     )
     floor = pl.when(floored).then(pl.col("floor_year"))
     dated_record = (
@@ -354,14 +360,18 @@ def _trace_pairs(
             .otherwise(pl.lit("fifo")),
         )
     )
+    key = ["year", "rank", "class_year"]
     passes = (
-        unit_pairs.select("year", "rank", "class_year")
+        unit_pairs.select(key)
         .unique()
-        .sort("year", "rank", "class_year", nulls_last=True)
+        .sort(key, nulls_last=True)
         .with_row_index("pass")
     )
-    unit_pairs = unit_pairs.join(
-        passes, on=["year", "rank", "class_year"], nulls_equal=True
+    # The join gathers `pass` alone, so it copies none of the pairs' columns.
+    unit_pairs = unit_pairs.with_columns(
+        unit_pairs.select(key)
+        .join(passes, on=key, nulls_equal=True, maintain_order="left")
+        .get_column("pass")
     )
     _check_pooling(unit_pairs)
     commitments = (
@@ -942,7 +952,7 @@ def cancellations(crs: pl.LazyFrame) -> pl.LazyFrame:
 
 
 def years_since_commitment(
-    allocations: pl.DataFrame, *, crdf: pl.LazyFrame, last_year: int
+    allocations: pl.LazyFrame | pl.DataFrame, *, crdf: pl.LazyFrame, last_year: int
 ) -> pl.LazyFrame:
     """Cumulative allocation per commitment row by years since its CRDF year.
 
@@ -951,8 +961,10 @@ def years_since_commitment(
     """
     rows = crdf.select("row_id", "year")
     by_year = (
-        allocations.filter(pl.col("row_id").is_not_null(), pl.col("rule") != "excess")
-        .join(rows.collect(), on="row_id", suffix="_commitment")
+        allocations.lazy()
+        .select("row_id", "record_id", "year", "rule", "allocated_usd")
+        .filter(pl.col("row_id").is_not_null(), pl.col("rule") != "excess")
+        .join(rows, on="row_id", suffix="_commitment")
         .sort("row_id", "record_id", "year", "rule")
         .group_by(
             "row_id",
@@ -969,7 +981,7 @@ def years_since_commitment(
             years_since=pl.int_ranges(0, last_year - pl.col("year") + 1, dtype=pl.Int16)
         )
         .explode("years_since")
-        .join(by_year.lazy(), on=["row_id", "years_since"], how="left")
+        .join(by_year, on=["row_id", "years_since"], how="left")
         .sort("row_id", "years_since")
         .select(
             "row_id",

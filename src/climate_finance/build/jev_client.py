@@ -6,7 +6,7 @@ from pathlib import Path
 
 def canonical_hash(request: Mapping[str, object]) -> str:
     """Hash of the canonicalised request, the cache key."""
-    raise NotImplementedError("slice S18a")
+    raise NotImplementedError("canonical_hash is not implemented")
 
 
 class JevClient:
@@ -28,9 +28,9 @@ class JevClient:
         Raises:
             CostCapExceededError: when the batch's estimated cost exceeds the cap.
         """
-        raise NotImplementedError("slice S18a")
+        raise NotImplementedError("JevClient.score is not implemented")
 
 
 def import_prototype_cache(paths: Iterable[Path], *, cache_dir: Path) -> int:
     """Re-key prototype Jev caches under `canonical_hash`; return entries written."""
-    raise NotImplementedError("slice S18a")
+    raise NotImplementedError("import_prototype_cache is not implemented")

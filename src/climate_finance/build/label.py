@@ -41,11 +41,7 @@ def run_label(context: StageContext) -> StageOutput:
     )
     return {
         "objectives": objectives,
-        "jev_level_map": pl.DataFrame(
-            schema={
-                name: column.dtype for name, column in JEV_LEVEL_MAP.columns.items()
-            }
-        ),
+        "jev_level_map": pl.DataFrame(schema=JEV_LEVEL_MAP.dtypes),
     }
 
 
@@ -146,9 +142,9 @@ def reported_objectives(
 
 def classify_objectives(records: pl.LazyFrame, *, client: JevClient) -> pl.LazyFrame:
     """Jev adaptation and mitigation labels for CRS texts."""
-    raise NotImplementedError("slice S18b")
+    raise NotImplementedError("classify_objectives is not implemented")
 
 
 def fit_jev_level_map(labels: pl.LazyFrame, *, human: pl.LazyFrame) -> pl.LazyFrame:
     """Isotonic map from Jev's expected coefficient to a calibrated level."""
-    raise NotImplementedError("slice S18b")
+    raise NotImplementedError("fit_jev_level_map is not implemented")

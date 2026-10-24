@@ -46,6 +46,7 @@ from climate_finance.result import (
     Result,
     Table,
 )
+from climate_finance.schema import EU_INSTITUTIONS
 from climate_finance.spec import (
     BILATERAL,
     CORE_CONTRIBUTION,
@@ -59,9 +60,8 @@ from climate_finance.spec import (
 if TYPE_CHECKING:
     from climate_finance.snapshot import Snapshot
 
-# EU Institutions and their channels: the EU budget, the EDF and the EIB, as
+# The channels of EU Institutions: the EU budget, the EDF and the EIB, as
 # build/providers.toml maps them.
-EU_INSTITUTIONS = 918
 EU_CHANNELS = (42001, 42003, 42004)
 # The objective label a record shows when several sources label it: the bank's own
 # climate components first, then Jev, then the donor's markers.

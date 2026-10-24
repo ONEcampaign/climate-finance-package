@@ -15,7 +15,9 @@ def run_fill(context: StageContext) -> StageOutput:
     through unchanged.
     """
     if context.config.gap_fill:
-        raise NotImplementedError("slice S15")
+        raise NotImplementedError(
+            "the bank-ledger gap fill (gap_fill = true) is not implemented"
+        )
     return {
         table: context.read("allocate", table)
         for table in ("allocations", "commitments")

@@ -5,6 +5,7 @@ Codes are real DAC codes; ids, titles and amounts are invented.
 """
 
 import shutil
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -91,10 +92,18 @@ def crs_records(*records: dict[str, object]) -> pl.DataFrame:
     return _frame(schema.CRS, [_CRS_DEFAULTS | record for record in records])
 
 
+def named_records(
+    records: Mapping[str, Mapping[str, object]], **defaults: object
+) -> pl.LazyFrame:
+    """CRS records by record id, each field `defaults` sets or `crs_records`
+    defaults where the record leaves it out."""
+    return crs_records(
+        *({**defaults, "record_id": name, **fields} for name, fields in records.items())
+    ).lazy()
+
+
 def _frame(table: schema.TableSchema, rows: list[dict[str, object]]) -> pl.DataFrame:
-    frame = pl.DataFrame(
-        rows, schema={name: column.dtype for name, column in table.columns.items()}
-    )
+    frame = pl.DataFrame(rows, schema=table.dtypes)
     schema.validate(table, frame)
     return frame
 
@@ -148,7 +157,7 @@ def write_raw(raw: Path, *, crdf_years: tuple[int, int]) -> pl.DataFrame:
             }
             for source, _, target in files
         ],
-        schema={name: c.dtype for name, c in schema.RAW_MANIFEST.columns.items()},
+        schema=schema.RAW_MANIFEST.dtypes,
     )
 
 

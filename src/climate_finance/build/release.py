@@ -107,7 +107,7 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
     links = context.read("review", "links")
     allocations = context.read("fill", "allocations")
     status = context.read("review", "commitments")
-    objectives = context.read("label", "objectives")
+    objectives = context.read("label", "objectives").collect()
 
     commitments = release_commitments(crdf, status=status).collect()
     disbursements = release_disbursements(
@@ -120,7 +120,7 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
     return {
         "commitments": commitments,
         "disbursements": disbursements,
-        "objectives": objectives.collect(),
+        "objectives": objectives,
         "agency_shares": context.read("measure", "agency_shares").collect(),
         "modelled": context.read("measure", "modelled").collect(),
         "core_contributions": core_contributions(
@@ -136,12 +136,12 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         "quality": quality(
             commitments.lazy(),
             disbursements=disbursements.lazy(),
-            objectives=objectives,
+            objectives=objectives.lazy(),
             links=links,
         ).collect(),
         "total_flows": total_flows(crs).collect(),
         # Provider coefficients come from the BTR link, which is not implemented.
-        "provider_coefficients": _empty(PROVIDER_COEFFICIENTS),
+        "provider_coefficients": pl.DataFrame(schema=PROVIDER_COEFFICIENTS.dtypes),
     }
 
 
@@ -397,9 +397,7 @@ def disbursement_profile(
         .collect()
     )
     observed = (
-        years_since_commitment(
-            allocations.collect(), crdf=traceable.lazy(), last_year=last_year
-        )
+        years_since_commitment(allocations, crdf=traceable.lazy(), last_year=last_year)
         .join(traceable.lazy(), on="row_id")
         .with_columns(
             disbursed_climate=pl.col("climate_usd")
@@ -444,27 +442,21 @@ def _optional(context: StageContext, stage: str, table: TableSchema) -> pl.DataF
     try:
         return context.read(stage, table.name).collect()
     except StageInputMissingError:
-        return _empty(table)
-
-
-def _empty(table: TableSchema) -> pl.DataFrame:
-    return pl.DataFrame(
-        schema={name: column.dtype for name, column in table.columns.items()}
-    )
+        return pl.DataFrame(schema=table.dtypes)
 
 
 def pack_release(release_dir: Path, *, out_path: Path) -> Path:
     """Pack a release as `.tar.zst` with its sources and licences file."""
-    raise NotImplementedError("slice S10b")
+    raise NotImplementedError("pack_release is not implemented")
 
 
 def cut_release(
     release: str, *, config: Path, out_dir: Path, waive_precision: bool = False
 ) -> Path:
     """Build, gate and pack `release`; record a precision waiver in release.json."""
-    raise NotImplementedError("slice S10b")
+    raise NotImplementedError("cut_release is not implemented")
 
 
 def upload_release(pack: Path, *, target: str) -> str:
     """Upload a packed release to `target`; return its URL."""
-    raise NotImplementedError("slice S10b")
+    raise NotImplementedError("upload_release is not implemented")

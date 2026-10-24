@@ -7,10 +7,9 @@ import numpy as np
 import polars as pl
 import pytest
 from normalised import crdf_rows, crs_records
+from stage_runs import run_stage, stage_context, write_inputs
 
 from climate_finance import schema
-from climate_finance.build import write_stage
-from climate_finance.build.config import load_config
 from climate_finance.build.errors import ConfigError
 from climate_finance.build.measure import (
     AgencyChannel,
@@ -21,9 +20,8 @@ from climate_finance.build.measure import (
     load_provider_facts,
     modelled_ranges,
 )
-from climate_finance.build.stages import REGISTRY, StageContext, table_path
+from climate_finance.build.stages import table_path
 
-BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 ASDB, EU, ADAPTATION_FUND, CAF, IFC, NDB = 915, 918, 1012, 1015, 903, 1044
 PERU, MEXICO, AMERICA_REGIONAL, UNSPECIFIED = 454, 358, 498, 998
 AGENCIES = (
@@ -32,11 +30,7 @@ AGENCIES = (
     AgencyChannel(channel_code=42004, provider_code=EU, agency_codes=(3,)),
     AgencyChannel(channel_code=47111, provider_code=ADAPTATION_FUND),
 )
-NO_IMPUTED = pl.LazyFrame(
-    schema={
-        name: column.dtype for name, column in schema.IMPUTED_SHARES.columns.items()
-    }
-)
+NO_IMPUTED = pl.LazyFrame(schema=schema.IMPUTED_SHARES.dtypes)
 
 
 def _bank(row_id: str, year: int, **row: object) -> dict[str, object]:
@@ -135,7 +129,7 @@ def test_oecd_shares_are_the_imputed_shares_unchanged() -> None:
             "objective": ["adaptation", "mitigation", "cross_cutting", "climate"],
             "share": [0.2, 0.15, 0.05, 0.37],
         },
-        schema={name: c.dtype for name, c in schema.IMPUTED_SHARES.columns.items()},
+        schema=schema.IMPUTED_SHARES.dtypes,
     )
     crdf, crs = crdf_rows(), crs_records()
 
@@ -397,28 +391,19 @@ def test_an_agency_reports_for_one_channel(agencies: list[dict[str, object]]) ->
         ProviderFacts.model_validate({"agencies": agencies, "modelled": []})
 
 
-def _write(release_dir: Path, stage: str, table: str, frame: pl.DataFrame) -> None:
-    path = table_path(release_dir, stage, table)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.write_parquet(path)
-
-
 def _measure(tmp_path: Path, crdf: pl.DataFrame, crs: pl.DataFrame) -> dict:
     release_dir = tmp_path / "r"
     status = pl.DataFrame(
         {"row_id": crdf["row_id"], "status": "not_traceable"},
         schema={"row_id": pl.String, "status": pl.String},
     )
-    _write(release_dir, "normalise", "crdf", crdf)
-    _write(release_dir, "normalise", "crs", crs)
-    _write(release_dir, "normalise", "imputed_shares", NO_IMPUTED.collect())
-    _write(release_dir, "review", "commitments", status)
-    context = StageContext(
-        release="r", release_dir=release_dir, config=load_config(BUILD_TOML),
-        offline=True,
-    )  # fmt: skip
-    stage = next(entry for entry in REGISTRY if entry.name == "measure")
-    write_stage(stage, stage.run(context), release_dir)
+    write_inputs(
+        release_dir,
+        "normalise",
+        {"crdf": crdf, "crs": crs, "imputed_shares": NO_IMPUTED.collect()},
+    )
+    write_inputs(release_dir, "review", {"commitments": status})
+    run_stage("measure", stage_context(release_dir))
     return {
         table: pl.read_parquet(table_path(release_dir, "measure", table))
         for table in schema.STAGE_TABLES["measure"]

@@ -326,9 +326,7 @@ def modelled_ranges(
     ]
     columns = list(MODELLED.columns)
     if not frames:
-        return pl.LazyFrame(
-            schema={name: column.dtype for name, column in MODELLED.columns.items()}
-        )
+        return pl.LazyFrame(schema=MODELLED.dtypes)
     return (
         pl.concat(frames)
         .group_by("provider_code", "year", "recipient_code", "basis")
@@ -373,15 +371,15 @@ def _modelled(
     rows = rows.with_columns(
         _low=pl.when(cancelled).then(0.0).otherwise(pl.min_horizontal(capped)),
         _high=pl.when(cancelled).then(0.0).otherwise(pl.max_horizontal(capped)),
-    )
+    ).collect()
 
-    missing = rows.filter(pl.col("_low").is_null()).select("row_id").collect()
+    missing = rows.filter(pl.col("_low").is_null())
     if missing.height:
         raise ConfigError(
             f"providers.toml: no disbursement ratio for provider "
             f"{provider.provider_code}'s rows {missing['row_id'].head(5).to_list()}"
         )
-    return rows.select(
+    return rows.lazy().select(
         provider_code=pl.lit(provider.provider_code, pl.Int32),
         year="year",
         recipient_code="recipient_code",
@@ -402,13 +400,18 @@ def _with_crs_ratios(
     year's vintage ratio. Recipient ratios replace portfolio ones where the run
     holds the recipient's commitments.
     """
-    records = records.select(
-        "year",
-        "project_number",
-        "recipient_code",
-        _portfolio=pl.lit(0),
-        com=pl.col("commitment_usd").fill_null(0.0),
-        dis=pl.col("disbursement_usd").fill_null(0.0),
+    # The provider's records are read once, then held for the several ratios.
+    records = (
+        records.select(
+            "year",
+            "project_number",
+            "recipient_code",
+            _portfolio=pl.lit(0),
+            com=pl.col("commitment_usd").fill_null(0.0),
+            dis=pl.col("disbursement_usd").fill_null(0.0),
+        )
+        .collect()
+        .lazy()
     )
     disbursing = (
         records.filter(pl.col("dis") > 0).select(pl.col("year").unique()).collect()

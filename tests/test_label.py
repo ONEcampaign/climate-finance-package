@@ -4,14 +4,11 @@ from pathlib import Path
 
 import polars as pl
 from normalised import crdf_rows, crs_records
+from stage_runs import run_stage, stage_context, write_inputs
 
 from climate_finance import schema
-from climate_finance.build import write_stage
-from climate_finance.build.config import load_config
 from climate_finance.build.label import inherit_markers, reported_objectives
-from climate_finance.build.stages import REGISTRY, StageContext, table_path
-
-BUILD_TOML = Path(__file__).parents[1] / "build.toml"
+from climate_finance.build.stages import table_path
 
 
 def _commitments() -> pl.DataFrame:
@@ -66,7 +63,7 @@ def _allocations() -> pl.DataFrame:
             }
             for row_id, record_id in rows
         ],
-        schema={name: c.dtype for name, c in schema.ALLOCATIONS.columns.items()},
+        schema=schema.ALLOCATIONS.dtypes,
     )
 
 
@@ -122,21 +119,10 @@ def test_reported_objectives_label_linked_records_once_per_source() -> None:
 
 def test_run_label_writes_tables_that_pass_their_schemas(tmp_path: Path) -> None:
     release_dir = tmp_path / "r"
-    for stage, table, frame in (
-        ("fill", "allocations", _allocations()),
-        ("normalise", "crdf", _commitments()),
-        ("normalise", "crs", _records()),
-    ):
-        path = table_path(release_dir, stage, table)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        frame.write_parquet(path)
-    context = StageContext(
-        release="r", release_dir=release_dir, config=load_config(BUILD_TOML),
-        offline=True,
-    )  # fmt: skip
-    stage = next(entry for entry in REGISTRY if entry.name == "label")
+    write_inputs(release_dir, "fill", {"allocations": _allocations()})
+    write_inputs(release_dir, "normalise", {"crdf": _commitments(), "crs": _records()})
 
-    written = write_stage(stage, stage.run(context), release_dir)
+    written = run_stage("label", stage_context(release_dir))
 
     assert set(written) == set(schema.STAGE_TABLES["label"])
     objectives = pl.read_parquet(table_path(release_dir, "label", "objectives"))

@@ -11,6 +11,7 @@ import pandas as pd
 import polars as pl
 import pytest
 from reads import record_reads
+from stage_runs import BUILD_TOML
 
 import climate_finance.build
 from climate_finance.build import BuildConfig, Stage, build, fetch, load_config
@@ -19,7 +20,6 @@ from climate_finance.build.stages import REGISTRY, raw_dir
 from climate_finance.errors import SourceUnavailableError
 from climate_finance.schema import sha256_file
 
-BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 FIXTURES = Path(__file__).parent / "fixtures" / "raw"
 CRS_URL = "https://webfs-dcd.oecd.org/files/dotStat/DSD_CRS/CRS.parquet"
 CRDF_FILES = {"recipient": "CRDF-RP_2024.xlsx", "provider": "CRDF-PP_2024.xlsx"}
@@ -125,14 +125,6 @@ def _config(
 def _fetch(config: BuildConfig, out_dir: Path, *, offline: bool = False) -> Path:
     build("r", config=config, out_dir=out_dir, stages=[Stage.FETCH], offline=offline)
     return out_dir / "r"
-
-
-def test_build_toml_names_the_bulk_crs_file() -> None:
-    crs = load_config(BUILD_TOML).sources.crs_file
-
-    assert crs is not None
-    assert crs.path == BUILD_TOML.parent / "data/raw/oecd/CRS_v20261006.parquet"
-    assert crs.sha256.startswith("d24840a5")
 
 
 def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(

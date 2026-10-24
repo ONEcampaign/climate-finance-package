@@ -6,17 +6,16 @@ from pathlib import Path
 import polars as pl
 import pytest
 from normalised import write_raw
+from stage_runs import BUILD_TOML, OECD, run_stage, stage_context
 
 from climate_finance import schema
-from climate_finance.build import write_stage
 from climate_finance.build.config import load_config
-from climate_finance.build.normalise import run_normalise
 from climate_finance.build.normalise.crdf import CRDFNormaliseError, normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs, trace_population
 from climate_finance.build.normalise.external import MULTI_COUNTRY
-from climate_finance.build.stages import REGISTRY, StageContext, raw_dir, table_path
+from climate_finance.build.normalise.ids import content_id, with_content_id
+from climate_finance.build.stages import raw_dir, table_path
 
-OECD = Path(__file__).parent / "fixtures" / "raw" / "oecd"
 YEARS = (2010, 2025)
 
 
@@ -106,6 +105,19 @@ def test_crs_record_ids_are_unique_and_stable(crs: pl.DataFrame) -> None:
         )
     # Two tranches of one project get two ids.
     assert crs.filter(crs_id="2022000101")["record_id"].n_unique() == 2
+
+
+def test_numbering_repeated_identities_only_gives_the_same_ids() -> None:
+    # "a" repeats three times, once tied on `n`; None repeats; "b" stands alone.
+    frame = pl.LazyFrame(
+        {"key": ["a", "b", "a", None, "a", None], "n": [3, 1, 2, 1, 2, 0]}
+    )
+
+    numbered = with_content_id(frame, "id", ["key"], order_by=["n"]).collect()
+
+    expected = frame.with_columns(id=content_id(["key"], order_by=["n"])).collect()
+    assert numbered.equals(expected)
+    assert numbered["id"].is_unique().all()
 
 
 def test_trace_population_leaves_out_core_contributions(crs: pl.DataFrame) -> None:
@@ -266,21 +278,15 @@ def test_run_normalise_writes_every_table_from_raw(
     core_held: set[int],
 ) -> None:
     write_raw(raw_dir(tmp_path), crdf_years=crdf_years)
-    config = load_config(Path(__file__).parents[1] / "build.toml")
-    context = StageContext(
-        release="test",
-        release_dir=tmp_path,
-        config=config.model_copy(
-            update={
-                "recoveries": recoveries,
-                "years": config.years.model_copy(update={"crdf": crdf_years}),
-            }
-        ),
-        offline=True,
+    config = load_config(BUILD_TOML)
+    years = config.years.model_copy(update={"crdf": crdf_years})
+    context = stage_context(
+        tmp_path,
+        config=config.model_copy(update={"years": years}),
+        recoveries=recoveries,
     )
-    normalise = next(stage for stage in REGISTRY if stage.name == "normalise")
 
-    hashes = write_stage(normalise, run_normalise(context), tmp_path)
+    hashes = run_stage("normalise", context)
 
     # `btr` waits for an ingested BTR table; `orgs` is written with recoveries.
     expected = set(schema.STAGE_TABLES["normalise"]) - {"btr", "orgs"}

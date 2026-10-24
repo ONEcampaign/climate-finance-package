@@ -5,6 +5,7 @@ import polars as pl
 import pytest
 from normalised import IATI_PUBLISHERS, record_fetch, write_raw
 from reads import record_reads
+from stage_runs import BUILD_TOML
 
 import climate_finance.build
 from climate_finance.build import (
@@ -28,8 +29,6 @@ from climate_finance.build.stages import (
     raw_dir,
 )
 from climate_finance.schema import STAGE_TABLES, Column, TableSchema
-
-BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 
 TABLE = TableSchema(
     name="numbers",
@@ -145,10 +144,18 @@ def test_every_stage_reads_the_settings_it_declares_and_no_others(
     assert reads == {stage.name: set(stage.settings) for stage in REGISTRY}
 
 
+@pytest.mark.parametrize(
+    "keys",
+    [
+        # Repeated keys sort by their values too.
+        ["b", "a", "b", "c", "a"],
+        # Unique keys alone decide the order.
+        ["b", "a", "e", "c", "d"],
+    ],
+)
 def test_sorted_writes_hash_identically_whatever_the_row_order(
-    config: BuildConfig, tmp_path: Path
+    config: BuildConfig, tmp_path: Path, keys: list[str]
 ) -> None:
-    keys = ["b", "a", "b", "c", "a"]
     values = [2.0, 1.0, 0.5, 3.0, -1.0]
     shuffled = [4, 2, 0, 3, 1]
 

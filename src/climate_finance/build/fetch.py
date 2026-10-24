@@ -112,8 +112,7 @@ def run_fetch(context: StageContext) -> StageOutput:
     shutil.rmtree(partial, ignore_errors=True)
     with _http_client() as client:
         files = fetch_sources(partial, config=context.config, client=client)
-    schema = {name: column.dtype for name, column in RAW_MANIFEST.columns.items()}
-    return {RAW_MANIFEST.name: pl.DataFrame(files, schema=schema)}
+    return {RAW_MANIFEST.name: pl.DataFrame(files, schema=RAW_MANIFEST.dtypes)}
 
 
 def seal_fetch(
@@ -188,8 +187,7 @@ def expected_sources(config: BuildConfig) -> list[str]:
     """The `raw_manifest` source names a complete fetch under `config` records."""
     return [
         "crs",
-        *(f"crdf_{perspective}" for perspective in CRDF_FILES),
-        "multisystem",
+        *YEAR_SOURCES,
         "imputed_shares",
         "gcf_projects",
         "dac_exchange",

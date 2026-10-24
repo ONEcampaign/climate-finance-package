@@ -10,9 +10,9 @@ import numpy as np
 import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
+from stage_runs import run_stage, stage_context, write_inputs
 
 from climate_finance import schema
-from climate_finance.build import write_stage
 from climate_finance.build.allocate import (
     _fill,
     allocate,
@@ -25,13 +25,11 @@ from climate_finance.build.allocate import (
     window_donors,
     years_since_commitment,
 )
-from climate_finance.build.config import load_config
 from climate_finance.build.errors import AllocationInputError
 from climate_finance.build.link.crdf_crs import link_within_year
 from climate_finance.build.link.keys import as_exact_links, build_units, link_by_keys
-from climate_finance.build.stages import REGISTRY, StageContext, table_path
+from climate_finance.build.stages import table_path
 
-BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 FIRST_YEAR = 2010
 TOLERANCE = 1e-6
 
@@ -135,8 +133,7 @@ def crdf_row(
 
 
 def no_classes() -> pl.DataFrame:
-    columns = schema.ID_PRACTICE.columns.items()
-    return pl.DataFrame(schema={name: column.dtype for name, column in columns})
+    return pl.DataFrame(schema=schema.ID_PRACTICE.dtypes)
 
 
 def link(
@@ -1142,11 +1139,6 @@ def test_fifo_fills_an_older_commitment_before_a_newer_one(seed: int) -> None:
 # The stage ---------------------------------------------------------------------
 
 
-def _write(path: Path, frame: pl.DataFrame) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.write_parquet(path)
-
-
 def test_run_allocate_writes_tables_that_pass_their_schemas(tmp_path: Path) -> None:
     records, crdf_rows = _random_records(np.random.default_rng(3))
     # One CRDF row becomes an aggregate child, so its parent drops out.
@@ -1156,19 +1148,17 @@ def test_run_allocate_writes_tables_that_pass_their_schemas(tmp_path: Path) -> N
     crs, rows, units, links = link(records, crdf.to_dicts())
 
     release_dir = tmp_path / "r"
-    _write(table_path(release_dir, "normalise", "crs"), crs.collect())
-    _write(table_path(release_dir, "normalise", "crdf"), crdf)
-    _write(table_path(release_dir, "link", "units"), units.collect())
-    _write(table_path(release_dir, "link", "links"), links.collect())
-    _write(table_path(release_dir, "link", "id_practice"), no_classes())
-    context = StageContext(
-        release="r",
-        release_dir=release_dir,
-        config=load_config(BUILD_TOML),
-        offline=True,
+    write_inputs(release_dir, "normalise", {"crs": crs.collect(), "crdf": crdf})
+    write_inputs(
+        release_dir,
+        "link",
+        {
+            "units": units.collect(),
+            "links": links.collect(),
+            "id_practice": no_classes(),
+        },
     )
-    stage = next(entry for entry in REGISTRY if entry.name == "allocate")
-    written = write_stage(stage, stage.run(context), release_dir)
+    written = run_stage("allocate", stage_context(release_dir))
     assert set(written) == set(schema.STAGE_TABLES["allocate"])
 
     status = pl.read_parquet(table_path(release_dir, "allocate", "commitments"))

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import polars as pl
 
-from climate_finance.schema import EXTERNAL
+from climate_finance.build.readers.external import external_rows
 
 logger = logging.getLogger(__name__)
 
@@ -68,40 +68,7 @@ def read_iati_activities(path: Path) -> pl.DataFrame:
                 )
     if any(skipped.values()):
         logger.warning("IATI rows skipped: %s", skipped)
-    return (
-        pl.DataFrame(
-            rows,
-            schema={
-                "publisher": pl.String,
-                "activity_id": pl.String,
-                "title": pl.String,
-                "recipient_iso": pl.String,
-                "currency": pl.String,
-                "cumulative_declared": pl.Boolean,
-                "year": pl.Int16,
-                "transaction_type": pl.String,
-                "amount": pl.Float64,
-            },
-        )
-        .group_by(
-            "publisher",
-            "activity_id",
-            "title",
-            "recipient_iso",
-            "currency",
-            "cumulative_declared",
-            "year",
-            "transaction_type",
-            maintain_order=True,
-        )
-        .agg(pl.col("amount").sum())
-        .with_columns(
-            source=pl.lit("iati"),
-            amount_usd=pl.when(pl.col("currency") == "USD").then(pl.col("amount")),
-            recipient_code=pl.lit(None, pl.Int32),
-        )
-        .select(list(EXTERNAL.columns))
-    )
+    return external_rows(rows, source="iati")
 
 
 def _activities(file: Path, skipped: dict[str, int]) -> Iterator[ET.Element]:

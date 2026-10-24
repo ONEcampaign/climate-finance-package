@@ -5,7 +5,7 @@ import polars as pl
 
 def learn_programme_stems(crs: pl.LazyFrame) -> pl.LazyFrame:
     """Programme stem rules per (donor, agency), relearned each release."""
-    raise NotImplementedError("slice S11")
+    raise NotImplementedError("learn_programme_stems is not implemented")
 
 
 def generate_candidates(
@@ -16,4 +16,4 @@ def generate_candidates(
     stems: pl.LazyFrame,
 ) -> pl.LazyFrame:
     """Eligible unlinked pairs from the blocking rules, with `programme_level`."""
-    raise NotImplementedError("slice S11")
+    raise NotImplementedError("generate_candidates is not implemented")

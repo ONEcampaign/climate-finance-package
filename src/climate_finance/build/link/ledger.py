@@ -7,4 +7,4 @@ def check_ledgers(
     links: pl.LazyFrame, *, allocations: pl.LazyFrame, ledgers: pl.LazyFrame
 ) -> pl.LazyFrame:
     """Set `ledger_check` per link and emit `ledger` pair labels."""
-    raise NotImplementedError("slice S12b")
+    raise NotImplementedError("check_ledgers is not implemented")

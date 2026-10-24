@@ -11,6 +11,7 @@ import numpy as np
 import polars as pl
 import pytest
 from normalised import crdf_rows, crs_records
+from stage_runs import BUILD_TOML, registered, stage_context
 
 import climate_finance as cf
 from climate_finance import schema
@@ -29,7 +30,6 @@ from climate_finance.build.stages import REGISTRY, Stage, StageContext, table_pa
 from climate_finance.errors import SchemaError
 from climate_finance.schema import STAGE_TABLES
 
-BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 NOR, IDA_CHANNEL = 8, 44002
 # Norway commits 100 in 2019 under crs id X1 and disburses 60 in 2020 and 70 in 2021,
 # so the commitment fills and 30 of 2021 is excess.
@@ -74,13 +74,13 @@ CORE = pl.DataFrame(
         "flow": ["commitments", "disbursements"],
         "contribution_usd": [12.0, 10.0],
     },
-    schema={name: c.dtype for name, c in schema.CORE_CONTRIBUTIONS.columns.items()},
+    schema=schema.CORE_CONTRIBUTIONS.dtypes,
 )
 LATER_STAGES = ("link", "allocate", "fill", "review", "label", "assemble")
 
 
 def _empty(table: schema.TableSchema) -> pl.DataFrame:
-    return pl.DataFrame(schema={name: c.dtype for name, c in table.columns.items()})
+    return pl.DataFrame(schema=table.dtypes)
 
 
 def _write(release_dir: Path, stage: str, frames: dict[str, pl.DataFrame]) -> None:
@@ -98,7 +98,7 @@ def _write_stage(
     reads: tuple[str, ...] = (),
 ) -> None:
     """Write `frames` as `stage`'s output, recording that it read `reads`."""
-    entry = next(entry for entry in REGISTRY if entry.name == stage)
+    entry = registered(stage)
     provenance = Provenance(
         stage=stage, release_dir=release_dir, config=config, settings=entry.settings
     )
@@ -121,7 +121,7 @@ def _raw_manifest(version: str) -> pl.DataFrame:
             "first_year": [None],
             "last_year": [None],
         },
-        schema={n: c.dtype for n, c in schema.RAW_MANIFEST.columns.items()},
+        schema=schema.RAW_MANIFEST.dtypes,
     )
 
 
@@ -438,13 +438,10 @@ def test_fill_and_review_pass_through_with_their_switch_off(
     switch: str,
     carried: dict[str, str],
 ) -> None:
-    run = next(entry.run for entry in REGISTRY if entry.name == stage)
+    run = registered(stage).run
 
     def context(*, on: bool) -> StageContext:
-        switched = config.model_copy(update={switch: on})
-        return StageContext(
-            release="r", release_dir=release_dir, config=switched, offline=True
-        )
+        return stage_context(release_dir, config=config, **{switch: on})
 
     output = run(context(on=False))
 

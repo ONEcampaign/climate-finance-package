@@ -18,12 +18,12 @@ Korea's EDCF or KfW, still files some projects under a new crs id each year.
 """
 
 from dataclasses import dataclass
+from typing import overload
 
 import polars as pl
 
 from climate_finance import schema
 from climate_finance.build.link.id_practice import (
-    EU_DONOR,
     LETTER_SUFFIX_DONORS,
     PN_KEY,
     parent_id,
@@ -128,7 +128,7 @@ def link_by_keys(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
         pl.col("floor_year").is_null() | (pl.col("floor_year") >= first_year),
     ).with_columns(
         crs_parent=_parent_key(parent_id(pl.col("donor_code"), pl.col("crs_id"))),
-        parent_floor_year=pl.when(pl.col("donor_code") != EU_DONOR).then(
+        parent_floor_year=pl.when(pl.col("donor_code") != schema.EU_INSTITUTIONS).then(
             pl.col("floor_year")
         ),
     )
@@ -146,7 +146,7 @@ def link_by_keys(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
         remaining = remaining.join(
             tier_pairs.select(unit_id="left_id"), on="unit_id", how="anti"
         )
-    return as_exact_links(pl.concat(pairs).lazy(), task="trace").collect()
+    return as_exact_links(pl.concat(pairs), task="trace")
 
 
 def crs_key(units: pl.DataFrame) -> pl.Series:
@@ -223,8 +223,15 @@ def _eligible_pairs(
     )
 
 
-def as_exact_links(pairs: pl.LazyFrame, *, task: str) -> pl.LazyFrame:
-    """`pairs` (left_id, right_id, group_id, link_method) as certain `links` rows."""
+@overload
+def as_exact_links(pairs: pl.DataFrame, *, task: str) -> pl.DataFrame: ...
+@overload
+def as_exact_links(pairs: pl.LazyFrame, *, task: str) -> pl.LazyFrame: ...
+def as_exact_links(
+    pairs: pl.DataFrame | pl.LazyFrame, *, task: str
+) -> pl.DataFrame | pl.LazyFrame:
+    """`pairs` (left_id, right_id, group_id, link_method) as certain `links` rows,
+    eager or lazy as `pairs` is."""
     given = {name: pl.col(name) for name in pairs.collect_schema().names()}
     fixed = {"task": pl.lit(task), "probability": pl.lit(1.0), "review": pl.lit(False)}
     return pairs.select(

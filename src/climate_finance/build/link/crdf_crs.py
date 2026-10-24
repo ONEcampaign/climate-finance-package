@@ -33,19 +33,17 @@ import polars as pl
 from climate_finance.build.errors import LinkInputError
 from climate_finance.build.link.keys import as_exact_links
 from climate_finance.build.normalise.crs import trace_population
+from climate_finance.build.normalise.pairing import pair_one_to_one
 from climate_finance.build.normalise.project_numbers import normalise_pn
-from climate_finance.build.normalise.vintages import match_eib, pair_one_to_one
+from climate_finance.build.normalise.vintages import match_eib
+from climate_finance.schema import EIB_AGENCY, EU_INSTITUTIONS, EURO_ISSUER
 
 # CRDF rows and CRS commitments that agree on these, the CRDF provider standing for
 # the CRS donor, are one commitment. 99.5% of such keys pair one to one.
 WITHIN_YEAR_KEY = ("donor_code", "crs_id", "year", "purpose_code")
 
-_EIB_DONOR = 918
-_EIB_AGENCY = 3
 # The EIB's IATI activity id: its project serial, then one finance contract number.
 _EIB_ACTIVITY = r"^XM-DAC-918-3-(?<serial>\d{8})-(?<contract>\d{5})$"
-# DAC exchange rates are by country, and the euro's is held by EU Institutions.
-_EURO_ISSUER = "EUI"
 # A project's commitments match a row's face value within this share, in euros.
 _AMOUNT_TOLERANCE = 0.10
 # The title route needs word sets that overlap this much, on a title that at most
@@ -116,13 +114,13 @@ def recover(
         LinkInputError: when the euro has no DAC rate for a year an EIB row or bulk
             EIB commitment needs.
     """
-    rates = exchange.filter(pl.col("iso_code") == _EURO_ISSUER).select(
+    rates = exchange.filter(pl.col("iso_code") == EURO_ISSUER).select(
         year=pl.col("year").cast(pl.Int16), euro_per_usd=pl.col("exchange_rate")
     )
     rows = _in_euro(
         crdf.filter(
-            pl.col("provider_code") == _EIB_DONOR,
-            pl.col("agency_code") == _EIB_AGENCY,
+            pl.col("provider_code") == EU_INSTITUTIONS,
+            pl.col("agency_code") == EIB_AGENCY,
             pl.col("repeat_of").is_null(),
             pl.col("face_usd") > 0,
         ).collect(),
@@ -199,8 +197,8 @@ def _by_aggregate_record(crdf: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataF
     )
     return pl.concat(
         [
-            as_exact_links(to_records.lazy(), task="crdf_crs").collect(),
-            as_exact_links(own.lazy(), task="trace").collect(),
+            as_exact_links(to_records, task="crdf_crs"),
+            as_exact_links(own, task="trace"),
         ]
     )
 
@@ -210,7 +208,9 @@ def _eib_commitments(
 ) -> pl.DataFrame:
     """Bulk EIB commitment records with their commitment unit, amount in euros and
     normalised project number."""
-    eib = (pl.col("donor_code") == _EIB_DONOR) & (pl.col("agency_code") == _EIB_AGENCY)
+    eib = (pl.col("donor_code") == EU_INSTITUTIONS) & (
+        pl.col("agency_code") == EIB_AGENCY
+    )
     unit_of = (
         units.filter(eib, pl.col("commitment_usd") > 0)
         .select("unit_id", record_id="record_ids")
@@ -354,14 +354,14 @@ def _settle(
         .select(links.columns)
     )
     new = as_exact_links(
-        claimed.lazy().select(
+        claimed.select(
             left_id="row_id",
             right_id="unit_id",
             group_id=group,
             link_method=pl.lit(method),
         ),
         task="crdf_crs",
-    ).collect()
+    )
     return pl.concat(
         [links.join(taken.select("group_id"), on="group_id", how="anti"), moved, new]
     ).unique(["left_id", "right_id"], keep="first", maintain_order=True)

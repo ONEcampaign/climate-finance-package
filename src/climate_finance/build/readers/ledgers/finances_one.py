@@ -14,4 +14,4 @@ def read_finances_one(
     offline: bool,
 ) -> pl.DataFrame:
     """Calendar-year loan disbursements from the cumulative monthly snapshots."""
-    raise NotImplementedError("slice S12a")
+    raise NotImplementedError("read_finances_one is not implemented")

@@ -7,6 +7,7 @@ import polars as pl
 
 from climate_finance.build.normalise.crs import CORE_CONTRIBUTION
 from climate_finance.build.normalise.ids import content_id
+from climate_finance.schema import EIB_AGENCY, EU_INSTITUTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,6 @@ _TEXT_COLUMNS = ("crs_id", "project_number", "project_title")
 # 2015, EIB serials (year and four digits, letters for components) to 2020, reporting
 # sequences (year and six digits, or year, "PSI" and a number) in 2019 to 2023, and
 # bulk CRS ids (year, agency 3, project number, suffix) from 2024.
-_EIB = {"provider_code": 918, "agency_code": 3}
 _EIB_SERIAL = r"^\d{8}[a-z]*$"
 _EIB_SEQUENCE = r"^\d{4}(\d{6}|PSI\d+)[a-z]*$"
 ID_SCHEMES = ("none", "eib_serial", "sequence", "bulk")
@@ -300,10 +300,12 @@ def _id_scheme() -> pl.Expr:
     crs_id = pl.col("crs_id")
     bulk_prefix = pl.concat_str(
         pl.col("year").cast(pl.String),
-        pl.lit(str(_EIB["agency_code"])),
+        pl.lit(str(EIB_AGENCY)),
         pl.col("project_number"),
     )
-    is_eib = pl.all_horizontal(pl.col(k) == v for k, v in _EIB.items())
+    is_eib = (pl.col("provider_code") == EU_INSTITUTIONS) & (
+        pl.col("agency_code") == EIB_AGENCY
+    )
     return (
         pl.when(~is_eib.fill_null(False))
         .then(pl.lit(None, pl.String))

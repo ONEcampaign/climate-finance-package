@@ -246,10 +246,7 @@ def resolve_orgs(names: pl.LazyFrame, *, channels: pl.LazyFrame) -> pl.DataFrame
     ]
     channel_names = named.filter(role="channel")["source_name"]
     rows = [*providers, *agencies, *_channels(channel_names, channels=channels)]
-    columns = schema.ORGS.columns
-    return pl.DataFrame(
-        rows, schema={name: column.dtype for name, column in columns.items()}
-    ).unique()
+    return pl.DataFrame(rows, schema=schema.ORGS.dtypes).unique()
 
 
 def _provider(name: str) -> dict[str, object] | None:

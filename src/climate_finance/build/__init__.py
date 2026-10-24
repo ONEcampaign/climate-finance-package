@@ -63,17 +63,24 @@ class BuildManifest:
 
 
 def write_table(frame: pl.DataFrame, table: TableSchema, path: Path) -> str:
-    """Write `frame` in schema column order, fully sorted; return its sha256."""
+    """Write `frame` in schema column order, fully sorted; return its sha256.
+
+    Rows sort by the schema's sort key, then by the remaining flat columns. When the
+    key is unique the remaining columns decide no position, so the sort leaves them
+    out, which spares it encoding every text column.
+    """
     ordered = frame.select(list(table.columns))
-    tiebreak = [
-        name
-        for name, dtype in ordered.schema.items()
-        if name not in table.sort_key and not dtype.is_nested()
-    ]
+    keys = list(table.sort_key)
+    if not ordered.select(pl.struct(keys).is_unique().all()).item():
+        keys += [
+            name
+            for name, dtype in ordered.schema.items()
+            if name not in table.sort_key and not dtype.is_nested()
+        ]
     path.parent.mkdir(parents=True, exist_ok=True)
-    ordered.sort(
-        [*table.sort_key, *tiebreak], nulls_last=True, maintain_order=True
-    ).write_parquet(path, compression="zstd", statistics=True)
+    ordered.sort(keys, nulls_last=True, maintain_order=True).write_parquet(
+        path, compression="zstd", statistics=True
+    )
     return sha256_file(path)
 
 

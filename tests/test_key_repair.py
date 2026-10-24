@@ -5,11 +5,12 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from normalised import named_records
+from stage_runs import registered, stage_context, write_normalised
 
 from climate_finance import schema
 from climate_finance.build import write_stage
 from climate_finance.build.allocate import allocate
-from climate_finance.build.config import load_config
 from climate_finance.build.link import run_link
 from climate_finance.build.link.key_repair import (
     MAX_COMMITMENTS,
@@ -21,49 +22,14 @@ from climate_finance.build.link.key_repair import (
     wb_loan,
 )
 from climate_finance.build.link.keys import build_units, link_by_keys
-from climate_finance.build.normalise.crdf import normalise_crdf
-from climate_finance.build.normalise.crs import normalise_crs
-from climate_finance.build.stages import REGISTRY, StageContext, table_path
 
-OECD = Path(__file__).parent / "fixtures" / "raw" / "oecd"
 FIRST_YEAR = 2010
-_RECORD = {
-    "donor_code": 913,
-    "agency_code": 1,
-    "crs_id": None,
-    "project_number": None,
-    "title": None,
-    "recipient_code": 238,
-    "purpose_code": 23210,
-    "year": 2020,
-    "commitment_date": None,
-    "commitment_usd": None,
-    "disbursement_usd": None,
-    "expected_start_date": None,
-    "completion_date": None,
-}
-_CRS_SCHEMA = {
-    "record_id": pl.String,
-    "donor_code": pl.Int32,
-    "agency_code": pl.Int32,
-    "crs_id": pl.String,
-    "project_number": pl.String,
-    "title": pl.String,
-    "recipient_code": pl.Int32,
-    "purpose_code": pl.Int32,
-    "year": pl.Int16,
-    "commitment_date": pl.Date,
-    "commitment_usd": pl.Float64,
-    "disbursement_usd": pl.Float64,
-    "expected_start_date": pl.Date,
-    "completion_date": pl.Date,
-}
 
 
 def _crs(records: dict[str, dict[str, object]]) -> pl.LazyFrame:
-    return pl.LazyFrame(
-        [{**_RECORD, "record_id": name, **fields} for name, fields in records.items()],
-        schema=_CRS_SCHEMA,
+    """CRS records named by their record id."""
+    return named_records(
+        records, donor_code=913, recipient_code=238, purpose_code=23210, year=2020
     )
 
 
@@ -585,39 +551,21 @@ def test_title_words() -> None:
     assert words == "phase rural supply two water"
 
 
-def _context(release_dir: Path, **switches: bool) -> StageContext:
-    config = load_config(Path(__file__).parents[1] / "build.toml")
-    return StageContext(
-        release="test",
-        release_dir=release_dir,
-        config=config.model_copy(update=switches),
-        offline=True,
-    )
-
-
 def test_run_link_adds_key_repair_links_when_on(tmp_path: Path) -> None:
-    crs = normalise_crs(
-        pl.scan_parquet(OECD / "CRS.parquet"), years=(2010, 2025)
-    ).collect()
-    crdf = normalise_crdf(
-        pl.scan_parquet(OECD / "crdf_recipient.parquet"),
-        perspective="recipient",
-        crs=crs.lazy(),
-    ).collect()
-    for name, frame in (("crs", crs), ("crdf", crdf)):
-        path = table_path(tmp_path, "normalise", name)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        frame.write_parquet(path)
-    link = next(stage for stage in REGISTRY if stage.name == "link")
+    write_normalised(tmp_path)
 
-    off = run_link(_context(tmp_path, key_repair=False, recoveries=False))["links"]
-    on = run_link(_context(tmp_path, key_repair=True, recoveries=False))
-    write_stage(link, on, tmp_path)
+    off = run_link(stage_context(tmp_path, key_repair=False, recoveries=False))
+    on = run_link(stage_context(tmp_path, key_repair=True, recoveries=False))
+    write_stage(registered("link"), on, tmp_path)
 
     added = (
         on["links"]
         .lazy()
         .collect()
-        .join(off.lazy().collect(), on=["task", "left_id", "right_id"], how="anti")
+        .join(
+            off["links"].lazy().collect(),
+            on=["task", "left_id", "right_id"],
+            how="anti",
+        )
     )
     assert set(added["link_method"]) <= set(schema.KEY_REPAIR_METHODS)

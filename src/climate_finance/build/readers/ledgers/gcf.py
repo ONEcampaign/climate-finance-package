@@ -9,9 +9,9 @@ def read_gcf_disbursements(
     *, archive: Path | None = None, offline: bool
 ) -> pl.DataFrame:
     """GCF project disbursements by project id and date."""
-    raise NotImplementedError("slice S12a")
+    raise NotImplementedError("read_gcf_disbursements is not implemented")
 
 
 def read_gcf_readiness(path: Path) -> pl.DataFrame:
     """GCF readiness grants by id and year."""
-    raise NotImplementedError("slice S12a")
+    raise NotImplementedError("read_gcf_readiness is not implemented")

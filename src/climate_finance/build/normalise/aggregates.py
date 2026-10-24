@@ -30,9 +30,9 @@ fields, its amounts scaled by the record's share of the row's records, and
 import polars as pl
 
 from climate_finance import schema
-from climate_finance.build.normalise.crs import trace_population
+from climate_finance.build.normalise.crs import crs_ids, trace_population
 from climate_finance.build.normalise.ids import content_id
-from climate_finance.build.normalise.vintages import crs_ids, pair_one_to_one
+from climate_finance.build.normalise.pairing import pair_one_to_one
 
 _BILATERAL = 1
 # A row matches its records when they sum to it within these shares of the row.
@@ -82,8 +82,12 @@ def rebuild_aggregates(crdf: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame
         crs: Normalised CRS records.
     """
     rows = crdf.collect()
+    donors = crs.select(provider_code="donor_code").unique().collect()
+    known = crs_ids(crs).collect()
     children = [
-        _rebuild(rows.filter(perspective=perspective), crs=crs)
+        _rebuild(
+            rows.filter(perspective=perspective), crs=crs, donors=donors, known=known
+        )
         for perspective in rows["perspective"].unique().sort()
     ]
     return pl.concat([rows, *children]).lazy()
@@ -100,15 +104,21 @@ def continent(recipient_code: pl.Expr) -> pl.Expr:
     return pl.coalesce(*regions, pl.lit(schema.UNSPECIFIED_RECIPIENT, pl.Int32))
 
 
-def aggregate_rows(rows: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
-    """Bilateral rows with a climate value and no crs id the CRS knows.
+def aggregate_rows(
+    rows: pl.DataFrame, *, donors: pl.DataFrame, known: pl.DataFrame
+) -> pl.DataFrame:
+    """Bilateral rows of a CRS donor with a climate value and no crs id the CRS
+    knows.
 
     EIB rows (the only rows with an `id_scheme`) are left out. The EIB is a
     development bank inside a bilateral provider, EU Institutions, and its rows
     carry ids of their own scheme that the EIB recovery route matches.
+
+    Args:
+        rows: CRDF rows of one perspective.
+        donors: The CRS donors, as `provider_code`.
+        known: `crs.crs_ids` of the CRS.
     """
-    donors = crs.select(provider_code="donor_code").unique().collect()
-    known = crs_ids(crs).with_columns(known=pl.lit(True)).collect()
     return (
         rows.filter(
             pl.col("bi_multi") == _BILATERAL,
@@ -117,15 +127,19 @@ def aggregate_rows(rows: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
             pl.col("parent_row_id").is_null(),
         )
         .join(donors, on="provider_code", how="semi")
-        .join(known, on=["provider_code", "crs_id"], how="left")
-        .filter(pl.col("known").is_null())
-        .drop("known")
+        .join(known, on=["provider_code", "crs_id"], how="anti")
     )
 
 
-def _rebuild(rows: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
+def _rebuild(
+    rows: pl.DataFrame,
+    *,
+    crs: pl.LazyFrame,
+    donors: pl.DataFrame,
+    known: pl.DataFrame,
+) -> pl.DataFrame:
     """Child rows for one perspective's aggregate rows."""
-    parents = aggregate_rows(rows, crs=crs).with_columns(
+    parents = aggregate_rows(rows, donors=donors, known=known).with_columns(
         target=pl.col("recipient_code"),
         m=pl.col("rio_mitigation").fill_null(0),
         a=pl.col("rio_adaptation").fill_null(0),

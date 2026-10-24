@@ -51,14 +51,13 @@ commitment unit falls in one group of a rule by its key.
 
 from collections.abc import Callable
 from functools import cache
-from importlib.resources import files
 
 import numpy as np
 import polars as pl
 from rapidfuzz import fuzz
 from rapidfuzz.process import cpdist
 
-from climate_finance import schema
+from climate_finance import catalogue, schema
 from climate_finance.build.link.keys import as_exact_links
 
 # A disbursement reaching more commitments than this sits under a shared key.
@@ -202,7 +201,7 @@ def repair_keys(
         commitments = commitments.join(
             pairs.select(unit_id="right_id"), on="unit_id", how="anti"
         )
-    return as_exact_links(pl.concat(found).lazy(), task="trace").collect()
+    return as_exact_links(pl.concat(found), task="trace")
 
 
 def _unit_facts(units: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
@@ -259,13 +258,8 @@ def _programmes(units: pl.DataFrame, *, key: tuple[str, ...]) -> pl.DataFrame:
 @cache
 def _regional_codes() -> tuple[int, ...]:
     """The DAC recipient codes of regions and of unspecified recipients."""
-    recipients = pl.read_csv(
-        (files("climate_finance") / "data" / "recipients.csv").read_bytes(),
-        schema_overrides={"code": pl.Int32},
-    )
-    return tuple(
-        recipients.filter(pl.col("name").str.contains("regional|unspecified"))["code"]
-    )
+    regions = pl.col("name").str.contains("regional|unspecified")
+    return tuple(catalogue.recipients.list().filter(regions)["code"])
 
 
 def _same_number(

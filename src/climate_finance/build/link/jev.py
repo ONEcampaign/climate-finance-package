@@ -12,4 +12,4 @@ if TYPE_CHECKING:
 
 def adjudicate_band(pairs: pl.LazyFrame, *, client: JevClient) -> pl.LazyFrame:
     """Combine model and Jev probabilities for pairs in the configured band."""
-    raise NotImplementedError("slice S14")
+    raise NotImplementedError("adjudicate_band is not implemented")

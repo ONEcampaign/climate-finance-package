@@ -122,6 +122,11 @@ class TableSchema:
         if unknown:
             raise ValueError(f"{self.name}: sort key columns {unknown} not declared")
 
+    @property
+    def dtypes(self) -> dict[str, DType]:
+        """Each column's dtype, in write order, as a polars `schema=` argument."""
+        return {name: column.dtype for name, column in self.columns.items()}
+
 
 def _str(*, nullable: bool = False, values: tuple[str, ...] | None = None) -> Column:
     return Column(pl.String(), nullable=nullable, values=values)
@@ -821,6 +826,11 @@ INVARIANT_TOLERANCE_USD = 1e-6
 # 9998 in the bulk CRS. Release tables carry 998 only.
 UNSPECIFIED_RECIPIENT = 998
 CRS_UNSPECIFIED_RECIPIENT = 9998
+# EU Institutions as a DAC provider, and the EIB, which reports as its agency 3.
+EU_INSTITUTIONS = 918
+EIB_AGENCY = 3
+# DAC exchange rates are by country, and the euro's is held by EU Institutions.
+EURO_ISSUER = "EUI"
 
 # Pairs (smaller, larger) of amounts that must hold smaller <= larger. "0" is zero.
 _ALLOCATION_ORDER = (

@@ -513,8 +513,7 @@ def _commitments(
 
 
 def _polars_schema(table: str) -> pl.Schema:
-    columns = RELEASE_TABLES[table].columns
-    return pl.Schema({name: column.dtype for name, column in columns.items()})
+    return pl.Schema(RELEASE_TABLES[table].dtypes)
 
 
 def _total_flows(

@@ -184,7 +184,9 @@ EUROS = 255e6
 BULK_ID = "2024392954645"
 
 
-def _eib_case(**earlier: object) -> tuple[pl.DataFrame, pl.DataFrame]:
+def _eib_case(
+    bulk_number: str = "92954", **earlier: object
+) -> tuple[pl.DataFrame, pl.DataFrame]:
     crdf = crdf_rows(
         _eib(
             "early",
@@ -214,7 +216,7 @@ def _eib_case(**earlier: object) -> tuple[pl.DataFrame, pl.DataFrame]:
             "donor_code": 918,
             "agency_code": 3,
             "crs_id": BULK_ID,
-            "project_number": "92954",
+            "project_number": bulk_number,
             "title": "AGRA METRO RAIL PROJECT A",
             "recipient_code": 645,
             "purpose_code": 21020,
@@ -248,6 +250,25 @@ def test_eib_rows_repeat_through_a_matched_bulk_commitment(
     crdf, crs = _eib_case(**earlier)
 
     assert _repeats(crdf, crs) == {"early": None, "late": "early" if repeats else None}
+
+
+@pytest.mark.parametrize(
+    ("row_number", "bulk_number", "repeats"),
+    [
+        # Two placeholders name no project, so they are no evidence.
+        ("UNKNOWN", "UNKNOWN", False),
+        ("92954.0", " 92954 ", True),
+    ],
+)
+def test_eib_project_numbers_compare_normalised(
+    row_number: str, bulk_number: str, repeats: bool
+) -> None:
+    # Title and purpose differ, so only the project number can pair the rows.
+    crdf, crs = _eib_case(
+        bulk_number, project_number=row_number, title="Urban transport"
+    )
+
+    assert _repeats(crdf, crs)["late"] == ("early" if repeats else None)
 
 
 def test_eib_amounts_compare_in_euros() -> None:

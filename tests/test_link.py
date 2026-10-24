@@ -6,10 +6,10 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from normalised import named_records
+from stage_runs import run_stage, stage_context, write_normalised
 
 from climate_finance import schema
-from climate_finance.build import write_stage
-from climate_finance.build.config import load_config
 from climate_finance.build.errors import StageInputMissingError
 from climate_finance.build.link import run_link
 from climate_finance.build.link.crdf_crs import link_within_year
@@ -19,45 +19,16 @@ from climate_finance.build.link.id_practice import (
     period_of,
 )
 from climate_finance.build.link.keys import build_units, link_by_keys
-from climate_finance.build.normalise.crdf import normalise_crdf
-from climate_finance.build.normalise.crs import normalise_crs
 from climate_finance.build.normalise.project_numbers import normalise_pn
-from climate_finance.build.stages import REGISTRY, StageContext, table_path
+from climate_finance.build.stages import table_path
 
-OECD = Path(__file__).parent / "fixtures" / "raw" / "oecd"
 FIRST_YEAR = 2010
-_RECORD = {
-    "donor_code": 5,
-    "agency_code": 1,
-    "crs_id": None,
-    "project_number": None,
-    "recipient_code": 238,
-    "purpose_code": 23210,
-    "year": 2020,
-    "commitment_date": None,
-    "commitment_usd": None,
-    "disbursement_usd": None,
-}
-_CRS_SCHEMA = {
-    "record_id": pl.String,
-    "donor_code": pl.Int32,
-    "agency_code": pl.Int32,
-    "crs_id": pl.String,
-    "project_number": pl.String,
-    "recipient_code": pl.Int32,
-    "purpose_code": pl.Int32,
-    "year": pl.Int16,
-    "commitment_date": pl.Date,
-    "commitment_usd": pl.Float64,
-    "disbursement_usd": pl.Float64,
-}
 
 
 def _crs(records: dict[str, dict[str, object]]) -> pl.LazyFrame:
-    """CRS records named by their record id, with `_RECORD`'s defaults."""
-    return pl.LazyFrame(
-        [{**_RECORD, "record_id": name, **fields} for name, fields in records.items()],
-        schema=_CRS_SCHEMA,
+    """CRS records named by their record id."""
+    return named_records(
+        records, donor_code=5, recipient_code=238, purpose_code=23210, year=2020
     )
 
 
@@ -523,43 +494,16 @@ def test_within_year_join() -> None:
     assert set(links["task"]) == {"crdf_crs"}
 
 
-def _normalised(release_dir: Path) -> None:
-    """Write the normalise stage's `crs` and `crdf` from the raw fixtures, and no
-    other table."""
-    crs = normalise_crs(
-        pl.scan_parquet(OECD / "CRS.parquet"), years=(2010, 2025)
-    ).collect()
-    crdf = pl.concat(
-        normalise_crdf(
-            pl.scan_parquet(OECD / f"crdf_{perspective}.parquet"),
-            perspective=perspective,
-            crs=crs.lazy(),
-        )
-        for perspective in ("recipient", "provider")
-    ).collect()
-    for name, frame in (("crs", crs), ("crdf", crdf)):
-        path = table_path(release_dir, "normalise", name)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        frame.write_parquet(path)
+def test_run_link_writes_the_deterministic_tables_reproducibly(
+    tmp_path: Path,
+) -> None:
+    write_normalised(tmp_path)
+    context = stage_context(tmp_path, key_repair=False, recoveries=False)
 
+    hashes = run_stage("link", context)
+    shutil.rmtree(tmp_path / "link")
 
-def _context(release_dir: Path, **switches: bool) -> StageContext:
-    config = load_config(Path(__file__).parents[1] / "build.toml")
-    return StageContext(
-        release="test",
-        release_dir=release_dir,
-        config=config.model_copy(update=switches),
-        offline=True,
-    )
-
-
-def test_run_link_writes_the_deterministic_tables(tmp_path: Path) -> None:
-    _normalised(tmp_path)
-    context = _context(tmp_path, key_repair=False, recoveries=False)
-    link = next(stage for stage in REGISTRY if stage.name == "link")
-
-    hashes = write_stage(link, run_link(context), tmp_path)
-
+    assert run_stage("link", context) == hashes
     assert set(hashes) == {"links", "units", "id_practice"}
     links = pl.read_parquet(table_path(tmp_path, "link", "links"))
     crdf = pl.read_parquet(table_path(tmp_path, "normalise", "crdf"))
@@ -573,16 +517,7 @@ def test_run_link_writes_the_deterministic_tables(tmp_path: Path) -> None:
 
 def test_recoveries_read_their_inputs_only_when_on(tmp_path: Path) -> None:
     # Normalise wrote neither `external` nor `orgs`.
-    _normalised(tmp_path)
-    run_link(_context(tmp_path, key_repair=False, recoveries=False))
+    write_normalised(tmp_path)
+    run_link(stage_context(tmp_path, key_repair=False, recoveries=False))
     with pytest.raises(StageInputMissingError):
-        run_link(_context(tmp_path, key_repair=False, recoveries=True))
-
-
-def test_run_link_reproduces_its_tables(tmp_path: Path) -> None:
-    _normalised(tmp_path)
-    link = next(stage for stage in REGISTRY if stage.name == "link")
-    context = _context(tmp_path, key_repair=False, recoveries=False)
-    first = write_stage(link, run_link(context), tmp_path)
-    shutil.rmtree(tmp_path / "link")
-    assert write_stage(link, run_link(context), tmp_path) == first
+        run_link(stage_context(tmp_path, key_repair=False, recoveries=True))

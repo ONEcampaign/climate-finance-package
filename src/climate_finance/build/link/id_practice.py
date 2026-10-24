@@ -16,6 +16,7 @@ record year's period. Later years reuse the last period.
 """
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 import polars as pl
 
@@ -26,7 +27,7 @@ PERIODS = {
     "2015-2018": (2015, 2018),
     "2019-2022": (2019, 2022),
 }
-# Agencies whose project-number tiers and scoring are off.
+# Classes whose crs ids persist from commitment to disbursement.
 ID_PERSISTENT_CLASSES = ("id_persistent", "parent_id_persistent")
 # A commitment is open when more than this share is left after its own year.
 OPEN_SHARE = 0.05
@@ -35,7 +36,6 @@ MIN_CONTINUED = 0.2
 MIN_OPEN = 10
 
 # An EU contract's crs id is its 10-character decision id plus a contract number.
-EU_DONOR = 918
 _DECISION_ID_LENGTH = 10
 # Denmark, Germany, the UK, the US and the AsDB file a later record of a project
 # under its crs id plus up to three letters (`2019001320a`, `2021000329-c`,
@@ -57,7 +57,8 @@ def parent_id(donor_code: pl.Expr, crs_id: pl.Expr) -> pl.Expr:
     `LETTER_SUFFIX_DONORS` id adds letters to. Null for every other id."""
     return (
         pl.when(
-            (donor_code == EU_DONOR) & (crs_id.str.len_chars() > _DECISION_ID_LENGTH)
+            (donor_code == schema.EU_INSTITUTIONS)
+            & (crs_id.str.len_chars() > _DECISION_ID_LENGTH)
         )
         .then(crs_id.str.slice(0, _DECISION_ID_LENGTH))
         .when(donor_code.is_in(LETTER_SUFFIX_DONORS))
@@ -82,19 +83,52 @@ def classify_id_practice(
     `units` is the `units` table, and `periods` a subset of `PERIODS`. An agency
     with no open commitment in a period gets no row for it.
     """
-    disbursements = units.filter(pl.col("disbursement_usd") > 0).with_columns(
-        crs_parent=parent_id(pl.col("donor_code"), pl.col("crs_id"))
-    )
+    disbursed = _disbursed(units)
     return pl.concat(
-        _classify(units, disbursements, first=first, last=last).with_columns(
+        _classify(units, disbursed, first=first, last=last).with_columns(
             period=pl.lit(name)
         )
         for name, (first, last) in periods.items()
     ).select(list(schema.ID_PRACTICE.columns))
 
 
+@dataclass(frozen=True)
+class _Disbursed:
+    """What the disbursement units show, the same in every period.
+
+    `same_year` sums disbursement by (donor, crs id, year). `last_by_id` and
+    `last_by_parent` give the last disbursement year under a (donor, crs id) and
+    under a (donor, parent id). `pn_events` holds the distinct (donor, agency,
+    project number, recipient, crs id, year) of disbursements.
+    """
+
+    same_year: pl.DataFrame
+    last_by_id: pl.DataFrame
+    last_by_parent: pl.DataFrame
+    pn_events: pl.DataFrame
+
+
+def _disbursed(units: pl.DataFrame) -> _Disbursed:
+    disbursements = units.filter(pl.col("disbursement_usd") > 0).with_columns(
+        crs_parent=parent_id(pl.col("donor_code"), pl.col("crs_id"))
+    )
+    later = (*PN_KEY, "crs_id", "year")
+    return _Disbursed(
+        same_year=disbursements.group_by(_EVENT).agg(
+            same_year_usd=pl.col("disbursement_usd").sum()
+        ),
+        last_by_id=disbursements.drop_nulls("crs_id")
+        .group_by("donor_code", "crs_id")
+        .agg(last_id_year=pl.col("year").max()),
+        last_by_parent=disbursements.drop_nulls("crs_parent")
+        .group_by("donor_code", crs_id="crs_parent")
+        .agg(last_child_year=pl.col("year").max()),
+        pn_events=disbursements.drop_nulls(later).select(later).unique(),
+    )
+
+
 def _classify(
-    units: pl.DataFrame, disbursements: pl.DataFrame, *, first: int, last: int
+    units: pl.DataFrame, disbursed: _Disbursed, *, first: int, last: int
 ) -> pl.DataFrame:
     commitments = units.filter(
         pl.col("commitment_usd") > 0,
@@ -102,7 +136,7 @@ def _classify(
         pl.col("crs_id").is_not_null(),
     )
     flagged = _continuations(
-        _open(commitments, disbursements), commitments, disbursements
+        _open(commitments, disbursed.same_year), commitments, disbursed
     )
     value = pl.col("commitment_usd")
     shares = flagged.group_by(_AGENCY).agg(
@@ -133,12 +167,9 @@ def _classify(
     )
 
 
-def _open(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataFrame:
+def _open(commitments: pl.DataFrame, same_year: pl.DataFrame) -> pl.DataFrame:
     """Commitments by (donor, agency, crs id, year) with more than `OPEN_SHARE` left
-    after the same (donor, crs id)'s disbursements that year."""
-    same_year = disbursements.group_by(_EVENT).agg(
-        same_year_usd=pl.col("disbursement_usd").sum()
-    )
+    after the same (donor, crs id)'s disbursements that year (`same_year`)."""
     return (
         commitments.group_by(*_AGENCY, "crs_id", "year")
         .agg(pl.col("commitment_usd").sum())
@@ -151,32 +182,16 @@ def _open(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataFram
 
 
 def _continuations(
-    open_commitments: pl.DataFrame,
-    commitments: pl.DataFrame,
-    disbursements: pl.DataFrame,
+    open_commitments: pl.DataFrame, commitments: pl.DataFrame, disbursed: _Disbursed
 ) -> pl.DataFrame:
     """Flag how each open commitment continues: `by_id`, `by_parent` or `by_pn`,
     each only where no earlier route applies."""
-    last_by_id = (
-        disbursements.drop_nulls("crs_id")
-        .group_by("donor_code", "crs_id")
-        .agg(last_id_year=pl.col("year").max())
-    )
-    last_by_parent = (
-        disbursements.drop_nulls("crs_parent")
-        .group_by("donor_code", crs_id="crs_parent")
-        .agg(last_child_year=pl.col("year").max())
-    )
     later = (*PN_KEY, "crs_id", "year")
     by_pn = (
         commitments.drop_nulls(PN_KEY)
         .select(later)
         .unique()
-        .join(
-            disbursements.drop_nulls(later).select(later).unique(),
-            on=PN_KEY,
-            suffix="_later",
-        )
+        .join(disbursed.pn_events, on=PN_KEY, suffix="_later")
         .filter(
             pl.col("year_later") > pl.col("year"),
             pl.col("crs_id_later") != pl.col("crs_id"),
@@ -188,8 +203,10 @@ def _continuations(
     by_id = (pl.col("last_id_year") > pl.col("year")).fill_null(value=False)
     by_parent = (pl.col("last_child_year") > pl.col("year")).fill_null(value=False)
     return (
-        open_commitments.join(last_by_id, on=["donor_code", "crs_id"], how="left")
-        .join(last_by_parent, on=["donor_code", "crs_id"], how="left")
+        open_commitments.join(
+            disbursed.last_by_id, on=["donor_code", "crs_id"], how="left"
+        )
+        .join(disbursed.last_by_parent, on=["donor_code", "crs_id"], how="left")
         .join(by_pn, on=_EVENT, how="left")
         .with_columns(by_id=by_id, by_parent=by_parent & ~by_id)
         .with_columns(
