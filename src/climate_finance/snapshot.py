@@ -23,6 +23,7 @@ from climate_finance.errors import (
     ReleaseIntegrityError,
     SourceUnavailableError,
     UnknownNameError,
+    WithheldTableError,
 )
 from climate_finance.methods import ONE, Method, MethodRange
 from climate_finance.result import Quality, Reconciliation, Result
@@ -81,9 +82,12 @@ class Snapshot:
 
         Raises:
             KeyError: when `name` is not a release table.
+            WithheldTableError: when the release leaves `name` out.
         """
         if name not in RELEASE_TABLES:
             raise KeyError(f"{name!r} is not a release table: {sorted(RELEASE_TABLES)}")
+        if note := self.manifest.withheld_tables.get(name):
+            raise WithheldTableError(name, note=note)
         return scan_table(self.path / f"{name}.parquet")
 
     def spending(
@@ -179,8 +183,9 @@ def load(
 
     Raises:
         ReleaseIntegrityError: when `release.json` is missing or malformed, a
-            release table is missing, a table's sha256 differs from `release.json`,
-            or a pack's sha256 differs from the index.
+            release table it does not withhold is missing, a table's sha256
+            differs from `release.json`, or a pack's sha256 differs from the
+            index.
         UnknownNameError: when the index lists no release named `release`.
         SourceUnavailableError: when the index or a pack cannot be downloaded.
     """
@@ -211,7 +216,7 @@ def _open(path: Path, *, release: str | None = None) -> Snapshot:
     problems = [
         f"{name}: not in release.json"
         for name in RELEASE_TABLES
-        if name not in manifest.tables
+        if name not in manifest.tables and name not in manifest.withheld_tables
     ]
     if release is not None and manifest.release != release:
         problems.append(f"release.json names release {manifest.release!r}")

@@ -66,6 +66,9 @@ INVARIANT_TABLES = (
     "disbursements",
     "agency_shares",
     "core_contributions",
+    "btr",
+    "btr_links",
+    "btr_totals",
 )
 
 
@@ -280,6 +283,22 @@ def _zero_remainder(frame: pl.DataFrame) -> pl.DataFrame:
     return _remainder(frame, 0.0)
 
 
+def _restate_a_btr_total(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(
+        face_usd=pl.when(pl.col("party") == "NOR")
+        .then(pl.col("face_usd") * 1.01)
+        .otherwise("face_usd")
+    )
+
+
+def _unlink_a_btr_total(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(linked=pl.col("linked") & (pl.col("party") != "DEU"))
+
+
+def _drop_a_btr_row(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.filter(pl.col("party") != "DEU")
+
+
 @pytest.mark.parametrize(
     ("table", "edit", "row_id"),
     [
@@ -306,6 +325,9 @@ def _zero_remainder(frame: pl.DataFrame) -> pl.DataFrame:
         ("commitments", _publish_more_climate_than_face, "DEU-1"),
         ("core_contributions", _keep_an_aggregate_channel, "44000"),
         ("core_contributions", _zero_remainder, "40000"),
+        ("btr_totals", _restate_a_btr_total, "NOR"),
+        ("btr_totals", _unlink_a_btr_total, "DEU 2021"),
+        ("btr", _drop_a_btr_row, "DEU"),
     ],
 )
 def test_release_invariants_name_the_row_that_breaks_one(

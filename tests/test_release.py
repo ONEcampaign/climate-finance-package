@@ -546,6 +546,118 @@ def test_btr_links_carry_their_crs_records_facts() -> None:
     assert built["disbursement_usd"].to_list() == [70.0]
 
 
+def test_btr_totals_sum_the_rows_by_status_funding_currency_and_link() -> None:
+    # Norway: two linked ODA disbursements (one reached by two links), an unlinked
+    # one, an OOF commitment, and a row of no status with a grant equivalent only.
+    rows = (
+        ("N1", "disbursed", "ODA", 10.0, 9.0, 100.0),
+        ("N2", "disbursed", "ODA (ETS)", 5.0, None, 50.0),
+        ("N3", "disbursed", "ODA", 1.0, 1.0, 10.0),
+        ("N4", "committed", "OOF (ICF) OOF (ICF*)", 7.0, 3.0, 70.0),
+        ("N5", None, "ODA/OOF", None, 2.0, None),
+    )
+    btr = pl.DataFrame(
+        {
+            "row_id": [row[0] for row in rows],
+            "party": "NOR",
+            "provider_code": NOR,
+            "year": 2021,
+            "status": [row[1] for row in rows],
+            "funding_source": [row[2] for row in rows],
+            "currency": "NOK",
+            "face_usd": [row[3] for row in rows],
+            "grant_equiv_usd": [row[4] for row in rows],
+            "amount_domestic": [row[5] for row in rows],
+        },
+        schema_overrides={"year": pl.Int16, "provider_code": pl.Int32},
+    )
+    links = pl.DataFrame({"row_id": ["N1", "N1", "N2"], "record_id": ["a", "b", "c"]})
+
+    totals = release.btr_totals(btr.lazy(), links=links.lazy()).collect()
+
+    schema.validate(schema.BTR_TOTALS, totals)
+    key = ["status", "funding", "linked"]
+    assert totals.sort(key, nulls_last=True).select(
+        *key, "rows", "face_usd", "grant_equiv_usd", "amount_domestic"
+    ).rows() == [
+        ("committed", "oof", False, 1, 7.0, 3.0, 70.0),
+        ("disbursed", "oda", False, 1, 1.0, 1.0, 10.0),
+        ("disbursed", "oda", True, 2, 15.0, 9.0, 150.0),
+        (None, "other", False, 1, None, 2.0, None),
+    ]
+
+
+def test_btr_crs_unlinked_sums_the_climate_records_no_btr_row_reaches() -> None:
+    # Of Norway's bilateral 2021 records, d21 is linked, u21 and c21 are not, m21
+    # carries no Rio marker and the core contribution is not bilateral. Norway's
+    # BTR also covers 2022, and a party without a DAC code has no CRS side.
+    crs = pl.concat(
+        [
+            CRS,
+            crs_records(
+                {"record_id": "u21", "year": 2021, "disbursement_usd": 20.0},
+                {
+                    "record_id": "c21",
+                    "year": 2021,
+                    "commitment_usd": 30.0,
+                    "rio_mitigation": 1,
+                },
+                {
+                    "record_id": "m21",
+                    "year": 2021,
+                    "disbursement_usd": 5.0,
+                    "rio_mitigation": 0,
+                },
+            ),
+        ]
+    )
+    links = pl.DataFrame(
+        {
+            "task": ["btr_crs", "trace"],
+            "left_id": ["BTR-NOR-2021-00001", "c21"],
+            "right_id": ["d21", "u21"],
+        }
+    )
+    btr = pl.DataFrame(
+        {"provider_code": [NOR, NOR, None], "year": [2021, 2022, 2021]},
+        schema={"provider_code": pl.Int32, "year": pl.Int16},
+    )
+
+    built = release.btr_crs_unlinked(
+        crs.lazy(), btr=btr.lazy(), links=links.lazy()
+    ).collect()
+
+    schema.validate(schema.BTR_CRS_UNLINKED, built)
+    assert built.sort("year", "flow").rows() == [
+        (NOR, 2021, "commitments", 30.0),
+        (NOR, 2021, "disbursements", 20.0),
+        (NOR, 2022, "commitments", 0.0),
+        (NOR, 2022, "disbursements", 0.0),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("funding_source", "funding"),
+    [
+        ("ODA", "oda"),
+        ("ODA (ETS)", "oda"),
+        ("OOF", "oof"),
+        ("OOF (ICF) OOF (ICF*)", "oof"),
+        ("ODA/ OOF", "other"),
+        ("OOF (ICF) OOF (ICF*) ODA", "other"),
+        ("Other (OSEC)", "other"),
+        ("Minagri/UGRA - INIA", "other"),
+        (None, "other"),
+    ],
+)
+def test_a_funding_source_classes_as_oda_oof_or_other(
+    funding_source: str | None, funding: str
+) -> None:
+    frame = pl.DataFrame({"source": [funding_source]}, schema={"source": pl.String})
+
+    assert frame.select(release.funding_class(pl.col("source"))).item() == funding
+
+
 def test_provider_coefficients_come_from_the_party_weights() -> None:
     weights = {
         "NOR": {"significant": 0.4, "confirmed": True},

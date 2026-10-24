@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 import polars as pl
+import polars.selectors as cs
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from climate_finance.errors import SchemaError
@@ -124,6 +125,7 @@ FETCH_METHODS = ("http", "registered", "manual")
 PERSPECTIVES = ("provider", "recipient")
 ORG_ROLES = ("provider", "agency", "channel")
 FLOWS = ("commitments", "disbursements", "grant_equivalent")
+FUNDING_CLASSES = ("oda", "oof", "other")
 DECISIONS = ("accept", "reject")
 # Code 6 holds private-sector and philanthropic outflows, kept as published. The query
 # views list the codes they count and leave it out.
@@ -908,6 +910,40 @@ BTR_LINKS = _table(
     rio_marker=Column(pl.Int8(), values=RIO_MARKERS),
 )
 
+# Each party's BTR rows summed by year, status, funding class, currency and whether a
+# CRS record links them (`btr_links`): the reconciliation's BTR side in a release
+# that leaves out `btr` and `btr_links`. `funding` is `oda` or `oof` where the row's
+# funding source names only that flow, and `other` otherwise. `rows` counts the rows;
+# an amount is null where every row of the group lacks it.
+BTR_TOTALS = _table(
+    "btr_totals",
+    ("party", "year", "status", "funding", "currency", "linked"),
+    party=_str(),
+    provider_code=_code(nullable=True),
+    year=_year(),
+    status=_str(nullable=True, values=("committed", "disbursed")),
+    funding=_str(values=FUNDING_CLASSES),
+    currency=_str(nullable=True),
+    linked=_bool(),
+    rows=_count(),
+    face_usd=_usd(nullable=True),
+    grant_equiv_usd=_usd(nullable=True),
+    amount_domestic=_f64(nullable=True),
+)
+
+# For each BTR party's DAC provider and each year its BTR rows cover, the bilateral
+# CRS amount of each flow on climate-marked records (higher Rio marker 1 or 2) that
+# no `btr_crs` link reaches: the reconciliation's OECD-only side, as the release
+# holds no CRS records. Zero where every such record is linked.
+BTR_CRS_UNLINKED = _table(
+    "btr_crs_unlinked",
+    ("provider_code", "year", "flow"),
+    provider_code=_code(),
+    year=_year(),
+    flow=_str(values=("commitments", "disbursements")),
+    amount_usd=_usd(),
+)
+
 # Each provider's own significant-marker coefficient, from BTR-to-CRS amount ratios.
 PROVIDER_COEFFICIENTS = _table(
     "provider_coefficients",
@@ -929,6 +965,8 @@ RELEASE_TABLES: Mapping[str, TableSchema] = {
         CORE_CONTRIBUTIONS,
         BTR,
         BTR_LINKS,
+        BTR_TOTALS,
+        BTR_CRS_UNLINKED,
         DISBURSEMENT_PROFILE,
         QUALITY,
         TOTAL_FLOWS,
@@ -1027,6 +1065,9 @@ def validate(table: TableSchema, frame: pl.DataFrame) -> None:
 
 # Absolute tolerance, in USD, for the amount checks in `release_invariants`.
 INVARIANT_TOLERANCE_USD = 1e-6
+# The relative difference `btr_totals` may show from the `btr` rows it sums, as the
+# two add the same amounts in different orders.
+BTR_TOTALS_TOLERANCE = 1e-9
 # "Developing countries, unspecified": 998 in the CRDF and the DAC recipient list,
 # 9998 in the bulk CRS. Release tables carry 998 only.
 UNSPECIFIED_RECIPIENT = 998
@@ -1094,8 +1135,8 @@ _FILL_FACTS = (
 
 
 def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
-    """Problems with a release's `commitments`, `disbursements`, `agency_shares` and
-    `core_contributions`.
+    """Problems with a release's `commitments`, `disbursements`, `agency_shares`,
+    `core_contributions` and BTR tables.
 
     Every disbursements row holds 0 <= allocated_low <= allocated <= allocated_high
     and names a commitment. Per commitment, its rows' allocated, allocated_low and
@@ -1116,8 +1157,10 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     A channel, year and source of `agency_shares` holds either split rows or one
     `climate` row, all of one `share_source`. Each commitment's value under the
     OECD method equals its published `climate_usd`, and no channel of
-    `core_contributions` aggregates another of its channels. An empty list means
-    every check passed.
+    `core_contributions` aggregates another of its channels. Per party, year and
+    status, `btr_totals` holds as many rows and linked rows as `btr` and
+    `btr_links` do, and the same face and grant-equivalent sums within
+    `BTR_TOTALS_TOLERANCE` of their size. An empty list means every check passed.
     """
     commitments = tables["commitments"]
     disbursements = tables["disbursements"]
@@ -1206,6 +1249,11 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
         for row_id in failing["row_id"]
     )
     problems.extend(_record_problems(disbursements))
+    problems.extend(
+        _btr_problems(
+            tables["btr"], links=tables["btr_links"], totals=tables["btr_totals"]
+        )
+    )
     problems.extend(_share_problems(tables["agency_shares"]))
     problems.extend(_oecd_problems(commitments))
     core = tables["core_contributions"]
@@ -1248,6 +1296,51 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
             ).height
         )
     )
+    return problems
+
+
+def _btr_problems(
+    btr: pl.DataFrame, *, links: pl.DataFrame, totals: pl.DataFrame
+) -> list[str]:
+    """Where `totals` (`btr_totals`) differs from the `btr` rows it sums."""
+    keys = ("party", "year", "status")
+    sums = [pl.col(name).sum() for name in ("face_usd", "grant_equiv_usd")]
+    from_rows = (
+        btr.with_columns(linked=pl.col("row_id").is_in(links["row_id"].implode()))
+        .group_by(keys)
+        .agg(*sums, rows=pl.len(), linked=pl.col("linked").sum())
+    )
+    from_totals = totals.group_by(keys).agg(
+        *sums, rows=pl.col("rows").sum(), linked=pl.col("rows").filter("linked").sum()
+    )
+    compared = (
+        from_rows.join(
+            from_totals,
+            on=keys,
+            how="full",
+            nulls_equal=True,
+            coalesce=True,
+            suffix="_totals",
+        )
+        .with_columns(cs.numeric().fill_null(0))
+        .sort(keys, nulls_last=True)
+    )
+    problems = []
+    for row in compared.iter_rows(named=True):
+        label = " ".join(str(row[key]) for key in keys)
+        problems.extend(
+            f"btr_totals {label}: {row[f'{count}_totals']} {count}, btr has "
+            f"{row[count]}"
+            for count in ("rows", "linked")
+            if row[count] != row[f"{count}_totals"]
+        )
+        problems.extend(
+            f"btr_totals {label}: {name} {row[f'{name}_totals']!r}, btr sums to "
+            f"{row[name]!r}"
+            for name in ("face_usd", "grant_equiv_usd")
+            if abs(row[name] - row[f"{name}_totals"])
+            > BTR_TOTALS_TOLERANCE * max(abs(row[name]), 1.0)
+        )
     return problems
 
 
@@ -1346,7 +1439,11 @@ class TableEntry(BaseModel):
 
 
 class ReleaseManifest(BaseModel):
-    """The contents of `release.json`."""
+    """The contents of `release.json`.
+
+    `withheld_tables` maps each release table a published pack leaves out to the
+    note saying how to build it. `tables` lists every other release table.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -1359,6 +1456,7 @@ class ReleaseManifest(BaseModel):
     gates: dict[str, JsonValue]
     precision_gate_waived: bool = False
     previous_release: str | None = None
+    withheld_tables: dict[str, str] = {}
 
 
 def sha256_file(path: Path) -> str:

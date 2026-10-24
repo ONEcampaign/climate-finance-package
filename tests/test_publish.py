@@ -27,6 +27,7 @@ from climate_finance.errors import (
     ReleaseIntegrityError,
     SourceUnavailableError,
     UnknownNameError,
+    WithheldTableError,
 )
 from climate_finance.schema import ReleaseManifest, sha256_file
 from climate_finance.snapshot import IndexEntry, ReleaseIndex
@@ -104,12 +105,29 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
 
     packed = members(first)
     assert sha256_file(first) == sha256_file(second)
+    # The row-level BTR tables stay out; the rest of the build goes in as built.
     assert set(packed) == {
         f"climate-finance-fixture/{path.name}"
         for path in [*FIXTURE_DIR.iterdir(), Path("sources.json")]
+        if path.name not in {"btr.parquet", "btr_links.parquet"}
     }
-    assert packed["climate-finance-fixture/release.json"] == (
-        (FIXTURE_DIR / "release.json").read_bytes()
+    built = ReleaseManifest.model_validate_json(
+        (FIXTURE_DIR / "release.json").read_text()
+    )
+    manifest = ReleaseManifest.model_validate_json(
+        packed["climate-finance-fixture/release.json"]
+    )
+    assert manifest.withheld_tables == {
+        "btr": release.BTR_WITHHELD_NOTE,
+        "btr_links": release.BTR_WITHHELD_NOTE,
+    }
+    assert manifest.tables == {
+        name: entry
+        for name, entry in built.tables.items()
+        if name not in {"btr", "btr_links"}
+    }
+    assert manifest.model_dump(exclude={"tables", "withheld_tables"}) == (
+        built.model_dump(exclude={"tables", "withheld_tables"})
     )
     sources = json.loads(packed["climate-finance-fixture/sources.json"])
     # The fixture holds BTR rows, so `btr` is listed beside the fetched sources.
@@ -119,8 +137,37 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
         ("crs", release.SOURCE_LICENCES["crs"]),
         ("ledger_iati_44000", release.SOURCE_LICENCES["ledger_iati"]),
     ]
+    assert [row.get("note") for row in sources] == [
+        release.BTR_WITHHELD_NOTE,
+        None,
+        None,
+        None,
+    ]
     assert sources[2]["version"] == "fixture"
     assert sources[2]["urls"] == ["https://example.org/crs"]
+
+
+def test_a_published_release_holds_the_btr_totals_and_a_build_the_rows_too(
+    tmp_path: Path,
+) -> None:
+    release_dir = built_release(tmp_path / "fixture")
+    pack = release.pack_release(release_dir, out_path=tmp_path / PACK)
+    with (
+        pa.input_stream(str(pack), compression="zstd") as stream,
+        tarfile.open(fileobj=stream, mode="r|") as tar,
+    ):
+        tar.extractall(tmp_path / "unpacked", filter="data")
+
+    published = cf.load(path=tmp_path / "unpacked" / "climate-finance-fixture")
+    built = cf.load(path=release_dir / "assemble")
+
+    for name in ("btr", "btr_links"):
+        with pytest.raises(WithheldTableError, match="cf-build build"):
+            published.table(name)
+        assert built.table(name).collect().height > 0
+    totals = published.table("btr_totals").collect()
+    assert totals.height > 0
+    assert totals.equals(built.table("btr_totals").collect())
 
 
 def test_a_source_without_a_licence_stops_the_pack(tmp_path: Path) -> None:
@@ -300,12 +347,12 @@ def test_a_cached_release_that_fails_its_check_downloads_again(
 ) -> None:
     cache = tmp_path / "cache"
     cf.load(cache_dir=cache)
-    table = cache / "climate-finance-fixture" / "btr.parquet"
+    table = cache / "climate-finance-fixture" / "provider_coefficients.parquet"
     table.write_bytes(b"corrupt")
 
     snap = cf.load(cache_dir=cache)
 
-    assert sha256_file(table) == snap.manifest.tables["btr"].sha256
+    assert sha256_file(table) == snap.manifest.tables["provider_coefficients"].sha256
 
 
 def test_load_names_an_unlisted_release_and_an_unreachable_pack(

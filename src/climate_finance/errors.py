@@ -42,6 +42,16 @@ class ReleaseIntegrityError(ClimateFinanceError):
     """A release table is missing or its sha256 differs from release.json."""
 
 
+class WithheldTableError(ClimateFinanceError, LookupError):
+    """A release table the published release leaves out. `note` says how to build
+    it locally."""
+
+    def __init__(self, table: str, *, note: str) -> None:
+        self.table = table
+        self.note = note
+        super().__init__(f"The release leaves out {table!r}. {note}")
+
+
 class SchemaError(ClimateFinanceError):
     """A table does not match its schema. `problems` maps each bad column to why."""
 

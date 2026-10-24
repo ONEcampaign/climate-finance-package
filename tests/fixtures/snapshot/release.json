@@ -35,6 +35,10 @@
       "sha256": "e80d2b224f700738579f55eccf84be7d674511d402939ed1295e4f684c03d7be",
       "rows": 3
     },
+    "btr_crs_unlinked": {
+      "sha256": "cfbc1b7c0ee20f1f98aca96e9b7f6509bd41b3cad35c3569496a72666516b661",
+      "rows": 8
+    },
     "disbursement_profile": {
       "sha256": "8ad93644528bf7178ab05f25dd121c1a5939bdfb670e14c4ce4dffb9dbc4fd73",
       "rows": 9
@@ -46,6 +50,10 @@
     "quality": {
       "sha256": "02b1f258011bc1f5e7744296c691be7fe4f1ebffdee709009e96bbad0245edb5",
       "rows": 12
+    },
+    "btr_totals": {
+      "sha256": "203da65ddc33f6548dca95ee1bbd3e2f276aaba1cf8da88009cfb4938d49534b",
+      "rows": 4
     },
     "total_flows": {
       "sha256": "0e505b91df49e84f925779d2ce2d2d2d18ce090ed8f74a0e142c8abb4859daeb",
@@ -61,5 +69,6 @@
   },
   "gates": {},
   "precision_gate_waived": false,
-  "previous_release": null
+  "previous_release": null,
+  "withheld_tables": {}
 }

@@ -23,6 +23,7 @@ import polars as pl
 
 from climate_finance import __version__
 from climate_finance.build import write_table
+from climate_finance.build.release import btr_totals
 from climate_finance.schema import (
     CERTAIN_METHODS,
     FLOWS,
@@ -172,6 +173,11 @@ BTR_LINKS = (
     ("BTR-DEU-2021", "DEU-B-R2", "btr_id", 1.0, DEU, 2021, "300123-105", 7e6, 2e6),
     ("BTR-NOR-2021", "NOR-B-R1", "btr_splink", 0.93, NOR, 2021, None, None, 15e6),
 )
+# The OECD-only side of each BTR provider-year: bilateral climate-marked CRS amounts
+# on records no BTR row links, in USD millions by provider, year and flow.
+BTR_CRS_UNLINKED = (
+    (DEU, 2021, 12, 4), (DEU, 2022, 9, 3), (NOR, 2021, 0, 0), (NOR, 2022, 6, 2),
+)  # fmt: skip
 # Germany's coefficient is confirmed. Japan's is not, so PROVIDER gives Japan 0.4.
 PROVIDER_COEFFICIENTS = ((DEU, 0.5, True), (JPN, 0.6, False))
 
@@ -503,6 +509,19 @@ def build_tables() -> dict[str, pl.DataFrame]:
             }
             for link in BTR_LINKS
         ],
+        "btr_crs_unlinked": [
+            {
+                "provider_code": provider,
+                "year": year,
+                "flow": flow,
+                "amount_usd": amount * 1e6,
+            }
+            for provider, year, committed, disbursed in BTR_CRS_UNLINKED
+            for flow, amount in (
+                ("commitments", committed),
+                ("disbursements", disbursed),
+            )
+        ],
         "disbursement_profile": [
             {
                 "group": "all",
@@ -523,6 +542,9 @@ def build_tables() -> dict[str, pl.DataFrame]:
         list(commitments.values()), frames["disbursements"]
     )
     frames["quality"] = _quality(frames["commitments"], frames["disbursements"])
+    frames["btr_totals"] = btr_totals(
+        frames["btr"].lazy(), links=frames["btr_links"].lazy()
+    ).collect()
     frames["total_flows"] = _total_flows(
         frames["commitments"], frames["disbursements"], frames["core_contributions"]
     )

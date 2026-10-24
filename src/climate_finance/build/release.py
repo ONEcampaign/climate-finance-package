@@ -16,6 +16,12 @@ redistribution: `disbursements` drops its fill rows (`schema.withheld_record`), 
 each commitment they reached states their amount as `withheld_usd`, so its
 disbursed amounts and `quality` keep them. `sources.json` notes the sources whose
 rows stay out (`WITHHELD_SOURCES`).
+
+The packed release, the one published, also leaves out the row-level BTR tables
+`btr` and `btr_links` (`WITHHELD_TABLES`) until the UNFCCC confirms its terms cover
+them. Its `btr_totals` holds what the reconciliation reads. A build keeps both
+tables in `<release_dir>/assemble/`, so a build from BTR workbooks a person
+downloads from the UNFCCC gives the row-level reconciliation.
 """
 
 from __future__ import annotations
@@ -51,7 +57,9 @@ from climate_finance.build.sums import ordered_sum
 from climate_finance.query import BILATERAL, MULTILATERAL_OUTFLOW
 from climate_finance.schema import (
     BTR,
+    BTR_CRS_UNLINKED,
     BTR_LINKS,
+    BTR_TOTALS,
     COMMITMENTS,
     CONTRIBUTION_KEY,
     CORE_CONTRIBUTIONS,
@@ -136,6 +144,17 @@ WITHHELD_NOTE = (
     "Green Climate Fund rows are left out of the release, as its terms bar "
     "redistribution; `cf-build` rebuilds them from the GCF's API."
 )
+# Release tables the pack leaves out, and the note `release.json` and `sources.json`
+# give them.
+BTR_WITHHELD_NOTE = (
+    "The row-level BTR tables btr and btr_links are left out of the published "
+    "release until the UNFCCC confirms its terms cover them; btr_totals holds the "
+    "reconciliation totals. To build them, download the BTR workbooks from the "
+    "UNFCCC, point sources.btr_archive in build.toml at them, run "
+    "`cf-build build RELEASE --config build.toml` and open the build with "
+    '`cf.load(path="releases/RELEASE/assemble")`.'
+)
+WITHHELD_TABLES = {BTR.name: BTR_WITHHELD_NOTE, BTR_LINKS.name: BTR_WITHHELD_NOTE}
 # Each BTR party's weight on Significant activities, estimated from its linked pairs
 # (`readers.btr.write_party_weights`) and confirmed by a reviewer.
 PARTY_WEIGHTS = Path(__file__).with_name("unfccc_party_weights.yaml")
@@ -209,6 +228,7 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         links=links,
         withheld=disbursements.lazy().filter(withheld),
     ).collect()
+    linked_btr = btr_links(links, crs=crs).collect()
     return {
         "commitments": commitments,
         "disbursements": disbursements.filter(~withheld),
@@ -219,7 +239,11 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
             context.read("normalise", "core_contributions")
         ).collect(),
         "btr": btr,
-        "btr_links": btr_links(links, crs=crs).collect(),
+        "btr_links": linked_btr,
+        "btr_totals": btr_totals(btr.lazy(), links=linked_btr.lazy()).collect(),
+        "btr_crs_unlinked": btr_crs_unlinked(
+            crs, btr=btr.lazy(), links=links
+        ).collect(),
         "disbursement_profile": disbursement_profile(
             commitments.lazy(),
             status=status,
@@ -567,6 +591,77 @@ def btr_links(links: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame:
     )
 
 
+def btr_totals(btr: pl.LazyFrame, *, links: pl.LazyFrame) -> pl.LazyFrame:
+    """The BTR rows summed by `BTR_TOTALS.sort_key`. A row is linked when `links`
+    (`btr_links`) holds a link from it."""
+    linked = links.select("row_id").unique().with_columns(linked=pl.lit(value=True))
+    return (
+        btr.join(linked, on="row_id", how="left", validate="1:1")
+        .with_columns(
+            pl.col("linked").fill_null(value=False),
+            funding=funding_class(pl.col("funding_source")),
+        )
+        .group_by(*BTR_TOTALS.sort_key, "provider_code")
+        .agg(
+            rows=pl.len().cast(pl.Int32),
+            **{
+                name: pl.when(pl.col(name).is_not_null().any()).then(
+                    ordered_sum(pl.col(name).drop_nulls())
+                )
+                for name in ("face_usd", "grant_equiv_usd", "amount_domestic")
+            },
+        )
+        .select(list(BTR_TOTALS.columns))
+    )
+
+
+def btr_crs_unlinked(
+    crs: pl.LazyFrame, *, btr: pl.LazyFrame, links: pl.LazyFrame
+) -> pl.LazyFrame:
+    """Each provider-year of `btr` and flow of `BTR_CRS_UNLINKED`, with the sum of
+    that flow over the provider's bilateral climate-marked CRS records of the year
+    that no `btr_crs` link in `links` reaches."""
+    flows = {"commitments": "commitment_usd", "disbursements": "disbursement_usd"}
+    reached = (
+        links.filter(pl.col("task") == "btr_crs").select(record_id="right_id").unique()
+    )
+    unlinked = (
+        crs.filter(pl.col("bi_multi").is_in(BILATERAL), _rio_marker() >= 1)
+        .join(reached, on="record_id", how="anti")
+        .select("year", provider_code="donor_code", **flows)
+        .unpivot(
+            index=["provider_code", "year"],
+            on=list(flows),
+            variable_name="flow",
+            value_name="usd",
+        )
+        .group_by("provider_code", "year", "flow")
+        .agg(amount_usd=ordered_sum(pl.col("usd").drop_nulls()))
+    )
+    return (
+        btr.select("provider_code", "year")
+        .drop_nulls()
+        .unique()
+        .join(pl.LazyFrame({"flow": list(flows)}), how="cross")
+        .join(unlinked, on=["provider_code", "year", "flow"], how="left")
+        .with_columns(pl.col("amount_usd").fill_null(0.0))
+        .select(list(BTR_CRS_UNLINKED.columns))
+    )
+
+
+def funding_class(funding_source: pl.Expr) -> pl.Expr:
+    """`oda` or `oof` where a BTR funding source names that flow and not the other,
+    as "ODA (ETS)" or "OOF (ICF) OOF (ICF*)" do, and `other` otherwise, as for
+    "ODA/OOF", "Other (OSEC)" or none."""
+    named = funding_source.str.to_uppercase().str.extract_all(r"\b(?:ODA|OOF)\b")
+    flows = named.list.unique()
+    return (
+        pl.when(flows.list.len() == 1)
+        .then(flows.list.first().str.to_lowercase())
+        .otherwise(pl.lit("other"))
+    )
+
+
 def provider_coefficients(weights: Mapping[str, Mapping[str, object]]) -> pl.DataFrame:
     """One row per party in `weights` (the party-weights file) with an estimated
     weight and a DAC provider code, confirmed as the file says."""
@@ -767,11 +862,13 @@ def pack_release(release_dir: Path, *, out_path: Path) -> Path:
     """Pack the release built in `release_dir` as `out_path`, a `.tar.zst`.
 
     The pack holds one directory, `climate-finance-<release>/`, with the release
-    tables, `release.json` and `sources.json`. `sources.json` lists every source the
-    fetch stage recorded, and `btr` when the release holds BTR rows, each with its
-    version, URLs and licence, and a note on each source whose rows the release
-    leaves out. Members go in name order with fixed owners and the
-    release's creation time, so one release packs to the same bytes.
+    tables but those in `WITHHELD_TABLES`, `release.json` and `sources.json`. Its
+    `release.json` is the build's with the withheld tables moved from `tables` to
+    `withheld_tables`. `sources.json` lists every source the fetch stage recorded,
+    and `btr` when the release holds BTR rows, each with its version, URLs and
+    licence, and a note on each source whose rows the release leaves out. Members go
+    in name order with fixed owners and the release's creation time, so one release
+    packs to the same bytes.
 
     Raises:
         BuildError: when a source has no entry in `SOURCE_LICENCES`.
@@ -785,6 +882,23 @@ def pack_release(release_dir: Path, *, out_path: Path) -> Path:
         versions=manifest.source_versions,
         btr_rows=manifest.tables[BTR.name].rows,
     )
+    published = manifest.model_copy(
+        update={
+            "tables": {
+                name: entry
+                for name, entry in manifest.tables.items()
+                if name not in WITHHELD_TABLES
+            },
+            "withheld_tables": WITHHELD_TABLES,
+        }
+    )
+    withheld = {f"{name}.parquet" for name in WITHHELD_TABLES}
+    # Tables stream from disk; the two JSON files are written from memory.
+    files: dict[str, Path | bytes] = {
+        path.name: path for path in assembled.iterdir() if path.name not in withheld
+    }
+    files["release.json"] = (published.model_dump_json(indent=2) + "\n").encode()
+    files[SOURCES_FILE] = (json.dumps(sources, indent=2) + "\n").encode()
     root = release_dirname(manifest.release)
     mtime = int(manifest.created_at.timestamp())
     partial = out_path.with_name(f"{out_path.name}.part")
@@ -793,15 +907,17 @@ def pack_release(release_dir: Path, *, out_path: Path) -> Path:
         pa.output_stream(str(partial), compression="zstd") as stream,
         tarfile.open(fileobj=stream, mode="w|", format=tarfile.PAX_FORMAT) as tar,
     ):
-        for path in sorted(assembled.iterdir()):
-            with path.open("rb") as handle:
+        for name in sorted(files):
+            member = files[name]
+            if isinstance(member, bytes):
                 tar.addfile(
-                    _member(f"{root}/{path.name}", path.stat().st_size, mtime), handle
+                    _member(f"{root}/{name}", len(member), mtime), io.BytesIO(member)
                 )
-        body = (json.dumps(sources, indent=2) + "\n").encode()
-        tar.addfile(
-            _member(f"{root}/{SOURCES_FILE}", len(body), mtime), io.BytesIO(body)
-        )
+                continue
+            with member.open("rb") as handle:
+                tar.addfile(
+                    _member(f"{root}/{name}", member.stat().st_size, mtime), handle
+                )
     partial.replace(out_path)
     return out_path
 
@@ -810,8 +926,8 @@ def release_sources(
     raw_manifest: pl.DataFrame, *, versions: Mapping[str, str], btr_rows: int
 ) -> list[dict[str, object]]:
     """Each source in `raw_manifest`, and `btr` when `btr_rows` is positive, with its
-    version from `versions`, its URLs and its licence, and `WITHHELD_NOTE` as `note`
-    for a source in `WITHHELD_SOURCES`.
+    version from `versions`, its URLs and its licence, and as `note` `WITHHELD_NOTE`
+    for a source in `WITHHELD_SOURCES` and `BTR_WITHHELD_NOTE` for `btr`.
 
     Raises:
         BuildError: when a source has no entry in `SOURCE_LICENCES`.
@@ -830,10 +946,16 @@ def release_sources(
             "version": versions.get(source),
             "urls": urls[source],
             "licence": _licence(source),
-            **({"note": WITHHELD_NOTE} if source.startswith(WITHHELD_SOURCES) else {}),
+            **({"note": note} if (note := _source_note(source)) else {}),
         }
         for source in sorted(urls)
     ]
+
+
+def _source_note(source: str) -> str | None:
+    if source.startswith(WITHHELD_SOURCES):
+        return WITHHELD_NOTE
+    return BTR_WITHHELD_NOTE if source == BTR.name else None
 
 
 def _licence(source: str) -> str | None:
