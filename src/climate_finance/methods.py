@@ -4,7 +4,7 @@ marker rules that turn Rio markers or climate components into objective weights.
 from typing import Literal, Self
 
 import polars as pl
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from climate_finance.catalogue import Catalogue
 
@@ -37,9 +37,19 @@ class Method(Frozen):
 
 
 class MethodRange(Frozen):
-    """Several methods reported together. `low` and `high` are their row-wise bounds."""
+    """Several methods reported together. `low` and `high` are their row-wise bounds.
+
+    Each method may appear once, since a repeated one would count its rows twice.
+    """
 
     methods: tuple[Method, ...] = Field(min_length=1)
+
+    @field_validator("methods")
+    @classmethod
+    def _distinct(cls, methods: tuple[Method, ...]) -> tuple[Method, ...]:
+        if len(set(methods)) < len(methods):
+            raise ValueError("a range lists a method more than once")
+        return methods
 
     def _repr_markdown_(self) -> str:
         return describe(self)
@@ -55,8 +65,18 @@ RANGE = MethodRange(methods=(ONE, OECD, PROVIDER))
 _NAMED = {"ONE": ONE, "OECD": OECD, "PROVIDER": PROVIDER}
 
 
+def _number(value: float) -> str:
+    """`value` in the shortest form that reads back as the same float, -0 as 0."""
+    return repr(value + 0.0).removesuffix(".0")
+
+
 def label(method: Method | MethodRange) -> str:
-    """The method's name if it is a named method, else its coefficients."""
+    """The method's name if it is a named method, else every field that defines it.
+
+    Results group rows by this label, so two methods share a label only when they
+    are equal: coefficients print in full, as the shortest text that reads back as
+    the same float.
+    """
     if isinstance(method, MethodRange):
         if method == RANGE:
             return "RANGE"
@@ -66,7 +86,8 @@ def label(method: Method | MethodRange) -> str:
             return name
     rule = "highest marker" if method.highest_marker else "each marker"
     return (
-        f"significant {method.significant:g}, principal {method.principal:g}, {rule}"
+        f"significant {_number(method.significant)}, "
+        f"principal {_number(method.principal)}, {rule}"
         f", {method.coefficients} coefficients, {method.relevance} relevance"
     )
 
@@ -95,7 +116,7 @@ def describe(method: Method | MethodRange) -> str:
     if method.coefficients == "provider":
         text += (
             " Each provider takes its own significant coefficient from the release, "
-            f"or {method.significant:g} where it has no confirmed coefficient."
+            f"or {_number(method.significant)} where it has no confirmed coefficient."
         )
     return text
 

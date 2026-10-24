@@ -658,9 +658,12 @@ def _dtype_matches(actual: pl.DataType, expected: DType) -> bool:
 def validate(table: TableSchema, frame: pl.DataFrame) -> None:
     """Check `frame` against `table`.
 
+    Float columns hold finite values or null: a missing amount is null, so NaN and
+    infinity are refused.
+
     Raises:
-        SchemaError: naming every missing, undeclared, mistyped, null-holding or
-            out-of-vocabulary column.
+        SchemaError: naming every missing, undeclared, mistyped, null-holding,
+            non-finite or out-of-vocabulary column.
     """
     problems: dict[str, str] = {
         name: "not in schema" for name in frame.columns if name not in table.columns
@@ -675,6 +678,9 @@ def validate(table: TableSchema, frame: pl.DataFrame) -> None:
             continue
         if not column.nullable and (nulls := series.null_count()):
             problems[name] = f"{nulls} nulls in a non-nullable column"
+            continue
+        if series.dtype.is_float() and (infinite := (~series.is_finite()).sum()):
+            problems[name] = f"{infinite} NaN or infinite values"
             continue
         if column.values is not None:
             allowed = pl.Series(column.values, dtype=series.dtype).implode()

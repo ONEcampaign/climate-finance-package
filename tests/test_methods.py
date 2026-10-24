@@ -7,6 +7,7 @@ from climate_finance.methods import (
     OECD,
     ONE,
     Method,
+    MethodRange,
     label,
     transform_markers_into_indicators,
     weights,
@@ -111,7 +112,20 @@ def test_climate_components_ignore_coefficients_and_count_the_overlap_once(
 
 def test_named_methods_print_their_names_and_custom_ones_their_coefficients() -> None:
     assert label(ONE) == "ONE"
-    assert label(ONE.replace(significant=0.5)).startswith("significant 0.5,")
+    assert label(ONE.replace(significant=0.5)).startswith(
+        "significant 0.5, principal 1,"
+    )
+
+
+def test_methods_with_close_coefficients_keep_distinct_labels() -> None:
+    close = (ONE.replace(significant=0.5000001), ONE.replace(significant=0.5000002))
+
+    assert label(close[0]) != label(close[1])
+
+
+def test_a_range_refuses_repeated_members() -> None:
+    with pytest.raises(ValueError, match="more than once"):
+        MethodRange(methods=(ONE, OECD, ONE))
 
 
 def test_coefficients_outside_zero_to_one_are_refused() -> None:

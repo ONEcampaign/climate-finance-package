@@ -15,7 +15,7 @@ from polars.testing import assert_frame_equal
 from releases import copy_release
 
 import climate_finance as cf
-from climate_finance.methods import OECD, RANGE, Method, MethodRange
+from climate_finance.methods import OECD, ONE, RANGE, Method, MethodRange, label
 from climate_finance.query import BILATERAL
 from climate_finance.result import AMOUNTS
 from climate_finance.snapshot import Snapshot
@@ -225,6 +225,41 @@ def test_bounds_follow_each_allocation_in_its_own_year() -> None:
     assert rows["value"].to_list() == pytest.approx([allocated] * 3)
     assert rows["low"].to_list() == pytest.approx([allocated, 0.0, 0.0])
     assert rows["high"].to_list() == pytest.approx([allocated * 1.05] * 3)
+
+
+def test_a_zero_central_allocation_keeps_its_upper_bound(tmp_path: Path) -> None:
+    def zero_central(frame: pl.DataFrame) -> pl.DataFrame:
+        record = pl.col("record_id") == "DEU-1-R0"
+        return frame.with_columns(
+            pl.when(record).then(0.0).otherwise(pl.col(name)).alias(name)
+            for name in ("allocated_low_usd", "allocated_usd")
+        )
+
+    release = copy_release(tmp_path / "release", edits={"disbursements": zero_central})
+    row = cf.load(path=release).spending().rows(record_id="DEU-1-R0")
+
+    # DEU-1 is principal-marked, so the 13.3m upper allocation counts in full. The
+    # record allocates nothing at the centre, so its allocation weight is unknown.
+    assert row.select("value", "low", "high").row(0) == pytest.approx(
+        (0.0, 0.0, 13.3e6)
+    )
+    assert row["allocation_weight"].to_list() == [None]
+
+
+def test_a_range_of_close_methods_counts_each_member_once() -> None:
+    close = (ONE.replace(significant=0.5000001), ONE.replace(significant=0.5000002))
+    spec = Spec(providers=(5,), recipients=(248,), years=(2022,))
+
+    together = SNAP.spending(spec=spec.replace(method=MethodRange(methods=close)))
+
+    values = together.table.to_polars().group_by("method").agg(pl.col("value").sum())
+    assert values.height == 2
+    for method in close:
+        alone = SNAP.spending(spec=spec.replace(method=method)).table.to_polars()
+        expected = alone["value"].sum()
+        assert values.filter(pl.col("method") == label(method))["value"].item() == (
+            pytest.approx(expected)
+        )
 
 
 def test_the_recipient_view_counts_outflows_and_no_attribution() -> None:

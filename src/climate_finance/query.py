@@ -9,7 +9,8 @@ converts it, and sums the rows into the result table. Rows have one of three ori
   (`allocated_usd`, or for `flow="grant_equivalent"` the record's grant equivalent
   times allocated_usd over the record's disbursement),
   weighted by the markers and climate share it inherits from that commitment. `low`
-  and `high` scale by the allocation's own bounds.
+  and `high` weight the allocation's own bounds, `allocated_low_usd` and
+  `allocated_high_usd`, converted to grant equivalents the same way.
 - `attribution`: under `view="provider"`, a provider's core contribution of the
   spec's flow to an agency times the agency's climate share.
 
@@ -77,8 +78,8 @@ _WEIGHT_INPUTS: dict[str, pl.DataType] = {
     "share_adaptation": pl.Float64(),
     "share_mitigation": pl.Float64(),
     "share_overlap": pl.Float64(),
-    "low_ratio": pl.Float64(),
-    "high_ratio": pl.Float64(),
+    "amount_low": pl.Float64(),
+    "amount_high": pl.Float64(),
     "significant": pl.Float64(),
 }
 
@@ -214,8 +215,8 @@ def _base_rows(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
             commitments.with_columns(
                 origin=pl.lit("commitment"),
                 amount=pl.col("face_usd"),
-                low_ratio=pl.lit(1.0),
-                high_ratio=pl.lit(1.0),
+                amount_low=pl.col("face_usd"),
+                amount_high=pl.col("face_usd"),
                 **shares,
             )
         )
@@ -229,33 +230,29 @@ def _base_rows(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
         "overlap_usd",
     )
     allocated = pl.col("allocated_usd")
+    record_allocated = allocated.sum().over("record_id")
     disbursements = (
         snapshot.table("disbursements")
         .with_columns(
-            allocation_weight=allocated / allocated.sum().over("record_id"),
-            low_ratio=pl.when(allocated > 0)
-            .then(pl.col("allocated_low_usd") / allocated)
-            .otherwise(1.0),
-            high_ratio=pl.when(allocated > 0)
-            .then(pl.col("allocated_high_usd") / allocated)
-            .otherwise(1.0),
+            allocation_weight=pl.when(record_allocated != 0).then(
+                allocated / record_allocated
+            )
         )
         .join(commitments, on="row_id", how="inner", validate="m:1")
         .filter(_in_view(spec.view))
         .join(_labels(snapshot), on="record_id", how="left")
     )
-    amount = allocated
+    # Grant equivalents per USD disbursed, null where the record has neither.
+    factor = pl.lit(1.0)
     if spec.flow == "grant_equivalent":
         record = pl.col("record_disbursement_usd")
-        amount = (
-            pl.when(record != 0)
-            .then(pl.col("record_grant_equiv_usd") * allocated / record)
-            .otherwise(None)
-        )
+        factor = pl.when(record != 0).then(pl.col("record_grant_equiv_usd") / record)
     return _conform(
         disbursements.with_columns(
             origin=pl.lit("disbursement"),
-            amount=amount,
+            amount=allocated * factor,
+            amount_low=pl.col("allocated_low_usd") * factor,
+            amount_high=pl.col("allocated_high_usd") * factor,
             rio_adaptation=pl.col("inherited_rio_adaptation"),
             rio_mitigation=pl.col("inherited_rio_mitigation"),
             **shares,
@@ -324,11 +321,11 @@ def _attributed_rows(snapshot: Snapshot, *, spec: Spec, method: Method) -> pl.La
             origin=pl.lit("attribution"),
             bi_multi=pl.lit(CORE_CONTRIBUTION, pl.Int8),
             amount=pl.col("contribution_usd"),
+            amount_low=pl.col("contribution_usd"),
+            amount_high=pl.col("contribution_usd"),
             climate_share=pl.col("share_adaptation")
             + pl.col("share_mitigation")
             - pl.col("share_overlap"),
-            low_ratio=pl.lit(1.0),
-            high_ratio=pl.lit(1.0),
         )
     )
 
@@ -371,20 +368,15 @@ def _coefficients(
 def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
     amount = pl.col("amount")
     fractions = weights(method, significant=pl.col("significant"))
-    return (
-        frame.with_columns(
-            method=pl.lit(label(method)),
-            adaptation=amount * fractions["adaptation"],
-            mitigation=amount * fractions["mitigation"],
-            cross_cutting=amount * fractions["cross_cutting"],
-            value=amount * fractions["climate"],
-        )
-        .with_columns(
-            low=pl.col("value") * pl.col("low_ratio"),
-            high=pl.col("value") * pl.col("high_ratio"),
-        )
-        .drop(*_WEIGHT_INPUTS)
-    )
+    return frame.with_columns(
+        method=pl.lit(label(method)),
+        adaptation=amount * fractions["adaptation"],
+        mitigation=amount * fractions["mitigation"],
+        cross_cutting=amount * fractions["cross_cutting"],
+        value=amount * fractions["climate"],
+        low=pl.col("amount_low") * fractions["climate"],
+        high=pl.col("amount_high") * fractions["climate"],
+    ).drop(*_WEIGHT_INPUTS)
 
 
 def _sum(name: str) -> pl.Expr:
