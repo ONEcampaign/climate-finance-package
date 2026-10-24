@@ -12,6 +12,7 @@ import numpy as np
 import polars as pl
 import pyarrow as pa
 import pytest
+import yaml
 from normalised import crdf_rows, crs_records
 
 import climate_finance as cf
@@ -672,21 +673,44 @@ def test_a_funding_source_classes_as_oda_oof_or_other(
     assert frame.select(release.funding_class(pl.col("source"))).item() == funding
 
 
-def test_provider_coefficients_come_from_the_party_weights() -> None:
-    weights = {
-        "NOR": {"significant": 0.4, "confirmed": True},
-        "EUU": {"significant": 0.4, "confirmed": False},
-        "AUS": {"significant": None, "confirmed": False},
+def test_provider_coefficients_come_from_the_coefficients_file() -> None:
+    entries = {
+        "NOR": [{"significant": 0.4, "principal": 1.0, "source": "S", "locator": "p"}],
+        "EUU": [{"case_by_case": True, "source": "S", "locator": "p"}],
     }
 
-    coefficients = release.provider_coefficients(weights)
+    coefficients = release.provider_coefficients(entries)
 
     schema.validate(schema.PROVIDER_COEFFICIENTS, coefficients)
-    # Australia has no estimate, and the EU's code comes from the party map.
-    assert coefficients.select("provider_code", "confirmed").rows() == [
-        (NOR, True),
-        (918, False),
-    ]
+    # The EU's code comes from the party map; left-out columns are null or false.
+    assert coefficients.select(
+        "provider_code", "significant", "agency_code", "case_by_case"
+    ).rows() == [(NOR, 0.4, None, False), (918, None, None, True)]
+
+
+@pytest.mark.parametrize(
+    ("entry", "message"),
+    [
+        ({"significant": 0.4, "source": "S", "locator": "p", "basis": "x"}, "basis"),
+        ({"significant": 0.4, "principal": 1.0, "source": "S"}, "locator"),
+    ],
+)
+def test_a_coefficients_entry_with_a_stray_or_missing_column_is_refused(
+    entry: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        release.provider_coefficients({"NOR": [entry]})
+
+
+def test_the_coefficients_file_gives_a_valid_table() -> None:
+    entries = yaml.safe_load(
+        release.PROVIDER_COEFFICIENTS_FILE.read_text(encoding="utf-8")
+    )
+
+    coefficients = release.provider_coefficients(entries)
+
+    schema.validate(schema.PROVIDER_COEFFICIENTS, coefficients)
+    assert schema._coefficient_problems(coefficients) == []
 
 
 def test_profile_pools_traceable_value_by_years_since_commitment(

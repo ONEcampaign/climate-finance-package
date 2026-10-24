@@ -526,26 +526,120 @@ def test_share_of_total_divides_each_key_by_its_total_flows() -> None:
     assert_frame_equal(shares.drop(AMOUNTS), result.table.to_polars().drop(AMOUNTS))
 
 
+SURVEY = "Fixture survey, p. 8"
+
+
+def _ratio(snapshot: Snapshot, method: Method, row_id: str) -> tuple[float, str]:
+    """The share of `row_id`'s commitment that counts, and its coefficient basis."""
+    rows = snapshot.spending(method=method, flow="commitments").rows(row_id=row_id)
+    return rows["value"].sum() / rows["amount"].sum(), rows["coefficient_basis"][0]
+
+
 @pytest.mark.parametrize(
-    ("row_id", "significant"),
-    # Germany's 0.5 is confirmed. Japan's 0.6 is not, so Japan takes ONE's 0.4.
-    [("DEU-2", 0.5), ("JPN-2", 0.4)],
+    ("row_id", "method", "ratio", "basis"),
+    [
+        # Germany counts an activity significant for both objectives at 1.0, under
+        # either marker rule.
+        ("DEU-2", cf.methods.PROVIDER, 1.0, "provider"),
+        ("DEU-2", cf.methods.PROVIDER.replace(highest_marker=False), 1.0, "provider"),
+        # Japan's principal coefficient is 0.85 up to 2021 and 1.0 from 2022.
+        ("JPN-1", cf.methods.PROVIDER, 0.85, "provider"),
+        ("JPN-2", cf.methods.PROVIDER, 0.6, "provider"),
+        ("JPN-3", cf.methods.PROVIDER, 1.0, "provider"),
+        # France's agency 1 states no flat coefficient, so it takes PROVIDER's 0.4
+        # rather than France's 0.3.
+        ("FRA-2", cf.methods.PROVIDER, 0.4, "case_by_case"),
+        # Norway's default covers significant activities; principal ones take 1.0.
+        ("NOR-2", cf.methods.PROVIDER, 0.3, "default"),
+        ("NOR-1", cf.methods.PROVIDER, 1.0, "default"),
+        ("DEU-2", cf.methods.ONE, 0.4, None),
+    ],
 )
-def test_provider_coefficients_replace_the_significant_coefficient_once_confirmed(
-    row_id: str, significant: float
+def test_provider_coefficients_apply_by_year_agency_and_marker(
+    row_id: str, method: Method, ratio: float, basis: str | None
 ) -> None:
+    assert _ratio(SNAP, method, row_id) == (pytest.approx(ratio), basis)
+
+
+def _jev_rules_out_adaptation(frame: pl.DataFrame) -> pl.DataFrame:
+    jev = pl.DataFrame(
+        {
+            "record_id": "DEU-2-R0",
+            "objective": "adaptation",
+            "level": 0,
+            "label_source": "jev",
+            "probability": 0.2,
+        }
+    )
+    return pl.concat([frame, jev.cast(frame.schema)])
+
+
+def test_both_significant_reads_the_jev_level(tmp_path: Path) -> None:
+    # DEU-2 marks both objectives significant, which Germany counts at 1.0. Jev
+    # finds DEU-2-R0 not adaptation, so under Jev relevance it is significant for
+    # mitigation alone and counts at Germany's 0.5.
+    release = copy_release(
+        tmp_path / "release", edits={"objectives": _jev_rules_out_adaptation}
+    )
+    snapshot = cf.load(path=release)
+
     def ratio(method: Method) -> float:
-        rows = SNAP.spending(method=method).rows(row_id=row_id)
-        return rows["value"].sum() / rows["amount"].sum()
+        row = snapshot.spending(method=method).rows(record_id="DEU-2-R0")
+        return row["value"].item() / row["amount"].item()
 
-    assert ratio(cf.methods.PROVIDER) == pytest.approx(significant)
-    assert ratio(cf.methods.ONE) == pytest.approx(0.4)
+    assert ratio(cf.methods.PROVIDER) == pytest.approx(1.0)
+    assert ratio(cf.methods.PROVIDER.replace(relevance="jev")) == pytest.approx(0.5)
 
 
-def test_explain_names_providers_without_a_confirmed_coefficient() -> None:
-    text = SNAP.spending(method=cf.methods.PROVIDER).explain()
+def test_an_agency_without_its_own_row_takes_the_providers(tmp_path: Path) -> None:
+    def move_agency(frame: pl.DataFrame) -> pl.DataFrame:
+        return frame.with_columns(
+            agency_code=pl.when(pl.col("agency_code") == 1).then(6)
+        )
 
-    assert "providers 4, 8, 701 have no confirmed coefficient and take 0.4" in text
+    release = copy_release(
+        tmp_path / "release", edits={"provider_coefficients": move_agency}
+    )
+
+    assert _ratio(cf.load(path=release), cf.methods.PROVIDER, "FRA-2") == (
+        pytest.approx(0.3),
+        "provider",
+    )
+
+
+def test_explain_names_each_providers_coefficient_source() -> None:
+    lines = SNAP.spending(method=cf.methods.PROVIDER).explain().splitlines()
+
+    assert "Coefficients of providers 701 (year 2021): Fixture report, footnote 4." in (
+        lines
+    )
+    assert f"Coefficients of providers 5, 701 (years 2022, 2023, 2024): {SURVEY}." in (
+        lines
+    )
+    assert (
+        "Providers 8 assess each activity case by case; where an activity's share is "
+        "unknown they take the default share in Fixture survey, p. 5." in lines
+    )
+    assert (
+        "Providers 4 assess each activity case by case (Fixture survey, p. 9, note f) "
+        "and state no flat coefficient, so they take significant 0.4 and principal 1."
+        in lines
+    )
+
+
+def test_explain_names_providers_without_coefficients(tmp_path: Path) -> None:
+    def drop_norway(frame: pl.DataFrame) -> pl.DataFrame:
+        return frame.filter(pl.col("provider_code") != 8)
+
+    release = copy_release(
+        tmp_path / "release", edits={"provider_coefficients": drop_norway}
+    )
+    text = cf.load(path=release).spending(method=cf.methods.PROVIDER).explain()
+
+    assert (
+        "Providers 8 have no coefficient in the release and take significant 0.4 and "
+        "principal 1." in text.splitlines()
+    )
 
 
 def _repeat_jpn_2(frame: pl.DataFrame) -> pl.DataFrame:

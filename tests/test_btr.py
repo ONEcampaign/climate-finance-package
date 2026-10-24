@@ -7,19 +7,18 @@ from pathlib import Path
 import openpyxl
 import polars as pl
 import pytest
-import yaml
 from typer.testing import CliRunner
 
 from climate_finance import schema
 from climate_finance.build.cli import app
 from climate_finance.build.normalise import btr_at_dac_rates
 from climate_finance.build.readers.btr import (
+    check_party_weights,
     estimate_party_weights,
     ingest_unfccc,
     party_provider,
     read_btr_archive,
     read_btr_workbook,
-    write_party_weights,
 )
 from climate_finance.errors import SourceUnavailableError
 
@@ -447,23 +446,66 @@ def test_party_weight_is_the_level_of_most_significant_pairs() -> None:
     assert weights["EST"]["significant_share_at"]["1.0"] is None
 
 
-def test_party_weights_are_written_unconfirmed(tmp_path: Path) -> None:
-    path = tmp_path / "unfccc_party_weights.yaml"
-    pairs = _pairs("NOR", [(40, 100, 1), (100, 100, 2)])
+def _stated(*rows: tuple[int, int | None, float | None]) -> pl.DataFrame:
+    """A `provider_coefficients` table of (provider, first_year, significant) rows
+    covering every agency."""
+    return pl.DataFrame(
+        [
+            {
+                "provider_code": provider,
+                "first_year": first_year,
+                "significant": significant,
+                "source": "Fixture survey",
+                "locator": "p. 8",
+            }
+            for provider, first_year, significant in rows
+        ],
+        schema_overrides={"provider_code": pl.Int32, "first_year": pl.Int16},
+    ).with_columns(agency_code=pl.lit(None, pl.Int32), last_year=pl.lit(None, pl.Int16))
 
-    write_party_weights(pairs, path=path)
 
-    entry = yaml.safe_load(path.read_text(encoding="utf-8"))["NOR"]
-    assert entry["significant"] == 0.4
-    assert entry["confirmed"] is False
-    assert entry["evidence"]["pairs"] == 2
+def _dated(pairs: pl.DataFrame, year: int = 2021) -> pl.DataFrame:
+    return pairs.with_columns(year=pl.lit(year, pl.Int16))
 
 
-def test_party_weights_keep_a_reviewer_confirmation(tmp_path: Path) -> None:
-    path = tmp_path / "unfccc_party_weights.yaml"
-    pairs = _pairs("NOR", [(40, 100, 1)])
-    write_party_weights(pairs, path=path)
-    path.write_text(path.read_text().replace("confirmed: false", "confirmed: true"))
+def test_the_weight_check_reports_parties_whose_fit_differs() -> None:
+    pairs = pl.concat(
+        [
+            # Norway's pairs fit 0.4, as stated.
+            _pairs("NOR", [(40, 100, 1), (100, 100, 2)]),
+            # Canada's sit at 0.3, off the fit's levels, and one at 1.0 wins it.
+            _pairs("CAN", [(30, 100, 1), (60, 200, 1), (100, 100, 1)]),
+            # Belgium assesses case by case and states no coefficient.
+            _pairs("BEL", [(40, 100, 1)]),
+        ]
+    )
+    stated = _stated((8, None, 0.4), (301, None, 0.3), (2, None, None))
 
-    with pytest.raises(FileExistsError, match="NOR"):
-        write_party_weights(pairs, path=path)
+    check = check_party_weights(_dated(pairs), coefficients=stated)
+
+    assert check.select("party", "stated", "fitted", "source").rows() == [
+        ("CAN", 0.3, 1.0, "Fixture survey, p. 8")
+    ]
+    assert check["share_at_stated"].item() == pytest.approx(2 / 3)
+
+
+def test_the_weight_check_compares_each_span_with_its_own_years() -> None:
+    # Ireland's pairs fit 0.5 up to 2020 and 0.4 from 2021, as it states; its
+    # 2021 pairs against the 2020 coefficient would differ.
+    pairs = pl.concat(
+        [
+            _dated(_pairs("IRL", [(50, 100, 1)]), 2020),
+            _dated(_pairs("IRL", [(40, 100, 1), (80, 200, 1)]), 2021),
+        ]
+    )
+    stated = _stated((21, None, 0.5), (21, 2021, 0.4)).with_columns(
+        last_year=pl.when(pl.col("first_year").is_null()).then(pl.lit(2020, pl.Int16))
+    )
+
+    assert check_party_weights(pairs, coefficients=stated).is_empty()
+    # Without the 2020 pair, the earlier span has nothing to compare.
+    later = pairs.filter(pl.col("year") == 2021)
+    assert check_party_weights(later, coefficients=stated).is_empty()
+    assert check_party_weights(
+        later, coefficients=stated.with_columns(last_year=None)
+    ).select("first_year", "stated", "fitted").rows() == [(None, 0.5, 0.4)]

@@ -49,22 +49,24 @@ def test_germany_reads_against_its_own_weight() -> None:
     row = _row(SNAP.reconcile(parties="DEU"), "DEU", 2022)
 
     assert row["party_weight"] == 0.5
-    assert row["weight_confirmed"] is True
+    assert row["party_principal"] == 1.0
+    assert row["weight_source"] == "Fixture survey, p. 8"
     assert row["btr_face"] == pytest.approx(22e6)
-    # DEU-2 is Significant on both objectives, face 25m.
-    assert row["crdf_at_party_weight"] == pytest.approx(12.5e6)
+    # DEU-2, face 25m, is Significant on both objectives, which Germany counts in
+    # full.
+    assert row["crdf_at_party_weight"] == pytest.approx(25e6)
     assert row["crdf_at_100"] == pytest.approx(25e6)
     assert row["crs_disbursed_at_party_weight"] == pytest.approx(
         DEU_2022_DISBURSED, rel=1e-6
     )
     # ONE counts DEU-2's disbursed 12.5m at 0.4.
     assert row["traced_climate_value"] == pytest.approx(5e6)
-    assert row["btr_over_crdf_at_party_weight"] == pytest.approx(22 / 12.5)
+    assert row["btr_over_crdf_at_party_weight"] == pytest.approx(22 / 25)
     # Germany reports commitments, so it reads against the CRDF first and not
     # against disbursements.
     assert row["status"] == "committed"
     assert row["comparator"] == "crdf_at_party_weight"
-    assert row["btr_over_comparator"] == pytest.approx(22 / 12.5)
+    assert row["btr_over_comparator"] == pytest.approx(22 / 25)
     assert row["thin_comparator"] is False
     assert row["btr_over_crdf_at_100"] == pytest.approx(22 / 25)
     assert row["btr_over_crs_disbursed_at_party_weight"] is None
@@ -78,9 +80,10 @@ def test_a_disbursed_row_reads_against_disbursements_only() -> None:
     assert row["crdf_at_100"] == pytest.approx(18e6)
     assert row["btr_over_crdf_at_100"] is None
     assert row["btr_over_traced_climate_value"] is None
-    # Norway has no weight, so its own comparator is null and says nothing.
-    assert row["btr_over_comparator"] is None
-    assert row["thin_comparator"] is None
+    assert row["btr_over_comparator"] == pytest.approx(
+        row["btr_face"] / row["crs_disbursed_at_party_weight"]
+    )
+    assert row["btr_over_comparator"] == row["btr_over_crs_disbursed_at_party_weight"]
 
 
 def test_grant_equivalent_reads_against_the_crs_grant_equivalent() -> None:
@@ -103,12 +106,36 @@ def test_core_contributions_stay_out_of_the_comparators() -> None:
     assert row["crs_disbursed_at_party_weight"] == pytest.approx(50.666667e6, rel=1e-6)
 
 
-def test_a_party_without_a_weight_has_no_weighted_comparators() -> None:
+def test_a_case_by_case_party_reads_against_its_default() -> None:
+    # Norway assesses each activity, with 0.3 for a Significant one whose share is
+    # unknown and no default for a Principal one, which counts in full. NOR-1 (18m)
+    # is Principal.
     row = _row(SNAP.reconcile(parties="NOR"), "NOR", 2021)
+
+    assert (row["party_weight"], row["party_principal"]) == (0.3, None)
+    assert row["crdf_at_party_weight"] == pytest.approx(18e6)
+
+
+def _without_a_default(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(
+        significant=pl.when(pl.col("provider_code") != 8).then("significant")
+    )
+
+
+def test_a_party_without_a_weight_has_no_weighted_comparators(
+    tmp_path: Path,
+) -> None:
+    release = copy_release(
+        tmp_path / "release", edits={"provider_coefficients": _without_a_default}
+    )
+    row = _row(cf.load(path=release).reconcile(parties="NOR"), "NOR", 2021)
 
     assert row["party_weight"] is None
     assert row["crdf_at_party_weight"] is None
     assert row["crs_disbursed_at_party_weight"] is None
+    # Norway's own comparator is null, so its ratio says nothing.
+    assert row["btr_over_comparator"] is None
+    assert row["thin_comparator"] is None
     assert row["crdf_at_100"] == pytest.approx(18e6)
 
 
@@ -289,9 +316,9 @@ def test_a_comparator_under_10m_is_thin(tmp_path: Path) -> None:
     release = copy_release(tmp_path / "r", edits={"commitments": small})
     row = _row(cf.load(path=release).reconcile(parties="DEU"), "DEU", 2022)
 
-    # DEU-2 is Significant, so 0.8m at Germany's weight of 0.5.
-    assert row["crdf_at_party_weight"] == pytest.approx(0.4e6)
-    assert row["btr_over_comparator"] == pytest.approx(55)
+    # DEU-2 is Significant on both objectives, which Germany counts in full.
+    assert row["crdf_at_party_weight"] == pytest.approx(0.8e6)
+    assert row["btr_over_comparator"] == pytest.approx(27.5)
     assert row["thin_comparator"] is True
 
 
@@ -314,7 +341,7 @@ def test_btr_amounts_read_at_the_dac_rate(tmp_path: Path) -> None:
     assert row["btr_face_reported"] == pytest.approx(22e6)
     assert row["party_rate"] == pytest.approx(1 / 1.1)
     assert row["dac_rate"] == 1.0
-    assert row["btr_over_crdf_at_party_weight"] == pytest.approx(20 / 12.5)
+    assert row["btr_over_crdf_at_party_weight"] == pytest.approx(20 / 25)
 
 
 def test_grant_equivalent_counts_rows_without_a_status_or_a_face_value(

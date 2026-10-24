@@ -69,6 +69,7 @@ INVARIANT_TABLES = (
     "btr",
     "btr_links",
     "btr_totals",
+    "provider_coefficients",
 )
 
 
@@ -299,6 +300,26 @@ def _drop_a_btr_row(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.filter(pl.col("party") != "DEU")
 
 
+def _coefficient_edit(
+    provider: int, first_year: int | None, **changes: object
+) -> Callable[[pl.DataFrame], pl.DataFrame]:
+    """An edit setting `changes` on the provider's general row from `first_year`."""
+    first = pl.col("first_year")
+    is_row = (
+        (pl.col("provider_code") == provider)
+        & pl.col("agency_code").is_null()
+        & (first.is_null() if first_year is None else first == first_year)
+    )
+
+    def edit(frame: pl.DataFrame) -> pl.DataFrame:
+        return frame.with_columns(
+            pl.when(is_row).then(pl.lit(value)).otherwise(pl.col(name)).alias(name)
+            for name, value in changes.items()
+        )
+
+    return edit
+
+
 @pytest.mark.parametrize(
     ("table", "edit", "row_id"),
     [
@@ -328,6 +349,27 @@ def _drop_a_btr_row(frame: pl.DataFrame) -> pl.DataFrame:
         ("btr_totals", _restate_a_btr_total, "NOR"),
         ("btr_totals", _unlink_a_btr_total, "DEU 2021"),
         ("btr", _drop_a_btr_row, "DEU"),
+        # Japan's coefficients up to 2021 would also cover 2022.
+        (
+            "provider_coefficients",
+            _coefficient_edit(701, None, last_year=2022),
+            "701 None 2022",
+        ),
+        (
+            "provider_coefficients",
+            _coefficient_edit(701, 2022, last_year=2021),
+            "701 None 2022",
+        ),
+        (
+            "provider_coefficients",
+            _coefficient_edit(5, None, significant=None),
+            "5 None None",
+        ),
+        (
+            "provider_coefficients",
+            _coefficient_edit(5, None, both_significant=1.5),
+            "5 None None",
+        ),
     ],
 )
 def test_release_invariants_name_the_row_that_breaks_one(

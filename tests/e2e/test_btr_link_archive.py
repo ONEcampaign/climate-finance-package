@@ -167,11 +167,20 @@ def reconciliation(
     pl.DataFrame(
         {
             "provider_code": list(PROTOTYPE_WEIGHTS),
+            "agency_code": None,
+            "first_year": None,
+            "last_year": None,
             "significant": list(PROTOTYPE_WEIGHTS.values()),
-            "basis": "prototype",
-            "confirmed": True,
+            "principal": 1.0,
+            "both_significant": None,
+            "case_by_case": False,
+            "source": "prototype",
+            "locator": "weights",
         },
-        schema_overrides={"provider_code": pl.Int32},
+        schema={
+            name: column.dtype
+            for name, column in schema.PROVIDER_COEFFICIENTS.columns.items()
+        },
     ).write_parquet(out / "provider_coefficients.parquet")
     manifest = schema.ReleaseManifest.model_validate_json(
         (out / "release.json").read_text()

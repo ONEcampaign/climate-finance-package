@@ -84,7 +84,7 @@ from climate_finance.schema import (
 from climate_finance.snapshot import IndexEntry, ReleaseIndex, load, release_dirname
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from climate_finance.build.stages import StageContext
 
@@ -156,10 +156,9 @@ BTR_WITHHELD_NOTE = (
     '`cf.load(path="releases/RELEASE/assemble")`.'
 )
 WITHHELD_TABLES = {BTR.name: BTR_WITHHELD_NOTE, BTR_LINKS.name: BTR_WITHHELD_NOTE}
-# Each BTR party's weight on Significant activities, estimated from its linked pairs
-# (`readers.btr.write_party_weights`) and confirmed by a reviewer.
-PARTY_WEIGHTS = Path(__file__).with_name("unfccc_party_weights.yaml")
-PARTY_WEIGHT_BASIS = "btr_crs_ratio"
+# The coefficients each provider applies when it reports to the UNFCCC, with their
+# sources, keyed by ISO 3 code.
+PROVIDER_COEFFICIENTS_FILE = Path(__file__).with_name("provider_coefficients.yaml")
 # The file in a pack that lists each source with its version, URLs and licence.
 SOURCES_FILE = "sources.json"
 # The CRS amount column behind each flow of `total_flows`.
@@ -259,10 +258,8 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         ).collect(),
         "total_flows": total_flows(crs).collect(),
         "provider_coefficients": provider_coefficients(
-            yaml.safe_load(PARTY_WEIGHTS.read_text(encoding="utf-8"))
-        )
-        if not btr.is_empty()
-        else _empty(PROVIDER_COEFFICIENTS),
+            yaml.safe_load(PROVIDER_COEFFICIENTS_FILE.read_text(encoding="utf-8"))
+        ),
     }
 
 
@@ -670,20 +667,36 @@ def funding_class(funding_source: pl.Expr) -> pl.Expr:
     )
 
 
-def provider_coefficients(weights: Mapping[str, Mapping[str, object]]) -> pl.DataFrame:
-    """One row per party in `weights` (the party-weights file) with an estimated
-    weight and a DAC provider code, confirmed as the file says."""
-    rows = [
-        {
-            "provider_code": code,
-            "significant": entry["significant"],
-            "basis": PARTY_WEIGHT_BASIS,
-            "confirmed": entry["confirmed"],
-        }
-        for party, entry in weights.items()
-        if entry["significant"] is not None
-        and (code := party_provider(party)) is not None
-    ]
+def provider_coefficients(
+    entries: Mapping[str, Sequence[Mapping[str, object]]],
+) -> pl.DataFrame:
+    """The `provider_coefficients` table from `entries`, the coefficients file's rows
+    by ISO 3 code.
+
+    An entry leaves out the columns that are null, and `case_by_case` where it is
+    false.
+
+    Raises:
+        ValueError: when a party has no DAC provider code, or an entry names a column
+            the table does not have or lacks its source.
+    """
+    columns = set(PROVIDER_COEFFICIENTS.columns) - {"provider_code"}
+    rows = []
+    for party, rows_of_party in entries.items():
+        code = party_provider(party)
+        if code is None:
+            raise ValueError(f"{party}: no DAC provider code")
+        for entry in rows_of_party:
+            if unknown := sorted(set(entry) - columns):
+                raise ValueError(f"{party}: unknown columns {unknown}")
+            if missing := sorted({"source", "locator"} - set(entry)):
+                raise ValueError(f"{party}: no {' or '.join(missing)}")
+            rows.append(
+                dict.fromkeys(columns)
+                | {"case_by_case": False}
+                | dict(entry)
+                | {"provider_code": code}
+            )
     return pl.DataFrame(
         rows,
         schema={

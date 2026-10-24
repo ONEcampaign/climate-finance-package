@@ -108,7 +108,7 @@ def test_info_describes_an_entry_by_name_or_code(
 
 def test_method_info_is_the_method_description() -> None:
     assert cf.methods.info("PROVIDER") == cf.methods.describe(cf.methods.PROVIDER)
-    assert "own significant coefficient" in cf.methods.info("PROVIDER")
+    assert "reporting to the UNFCCC" in cf.methods.info("PROVIDER")
 
 
 @pytest.mark.parametrize(

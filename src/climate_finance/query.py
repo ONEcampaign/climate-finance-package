@@ -130,6 +130,7 @@ ROW_COLUMNS: dict[str, pl.DataType] = {
     "jev_level": pl.Int8(),
     "amount": pl.Float64(),
     "coefficient_basis": pl.String(),
+    "coefficient_source": pl.String(),
 }
 # Inputs to the weighting that the rows do not show.
 _WEIGHT_INPUTS: dict[str, pl.DataType] = {
@@ -141,6 +142,12 @@ _WEIGHT_INPUTS: dict[str, pl.DataType] = {
     "low_ratio": pl.Float64(),
     "high_ratio": pl.Float64(),
     "significant": pl.Float64(),
+    "principal": pl.Float64(),
+    "both_significant": pl.Float64(),
+}
+# The coefficient columns `_coefficients` sets, as `weights` takes them.
+_COEFFICIENT_INPUTS = {
+    name: pl.col(name) for name in ("significant", "principal", "both_significant")
 }
 
 
@@ -304,6 +311,26 @@ _PARTY_RULE = Method(significant=1.0, principal=1.0, highest_marker=True)
 _PARTY_YEAR = ("party", "year")
 
 
+def _party_coefficients(snapshot: Snapshot) -> pl.LazyFrame:
+    """Each provider's `provider_coefficients` row for every agency, by year of the
+    release's BTR totals, as `reconcile` reads it."""
+    first, last, year = pl.col("first_year"), pl.col("last_year"), pl.col("year")
+    return (
+        snapshot.table("provider_coefficients")
+        .filter(pl.col("agency_code").is_null())
+        .join(snapshot.table("btr_totals").select("year").unique(), how="cross")
+        .filter(first.is_null() | (first <= year), last.is_null() | (year <= last))
+        .select(
+            "provider_code",
+            "year",
+            party_weight="significant",
+            party_principal="principal",
+            party_both="both_significant",
+            weight_source=pl.format("{}, {}", "source", "locator"),
+        )
+    )
+
+
 def reconcile(
     snapshot: Snapshot,
     *,
@@ -336,12 +363,15 @@ def reconcile(
     The comparators sum the party's bilateral rows (`BILATERAL`) of the year, and of
     the CRDF its Rio-marked rows only. A party weight applies to markers, and a
     party's BTR leaves out the climate components its development bank publishes,
-    as the EU's leaves out the EIB's. `crdf_at_party_weight` and `crdf_at_100` are
-    its CRDF commitments with Significant at the party's weight
-    (`provider_coefficients`, confirmed or not, as `weight_confirmed` says) and at
+    as the EU's leaves out the EIB's. The party's coefficients are its provider's
+    `provider_coefficients` row for every agency and the year: `party_weight` the
+    significant one, `party_principal` the principal one, and `weight_source` their
+    source. `crdf_at_party_weight` and `crdf_at_100` are its CRDF commitments at the
+    party's coefficients, `both_significant` included, and with Significant at
     100%; `traced_climate_value` the climate value `method` gives what those
     commitments disbursed; `crs_disbursed_at_party_weight` the year's CRS
-    disbursements on Rio-marked records, Significant at the party's weight; and
+    disbursements on Rio-marked records at the party's significant and principal
+    coefficients, by each record's higher marker; and
     `crs_grant_equivalent_at_party_weight` their grant equivalent, weighted alike.
     A party without a weight has null weighted comparators, and one without a DAC
     provider code null comparators.
@@ -398,52 +428,53 @@ def reconcile(
             on=["provider_code", "year", "flow"],
             how="left",
         )
-        .join(
-            snapshot.table("provider_coefficients").select(
-                "provider_code",
-                party_weight="significant",
-                weight_confirmed="confirmed",
-            ),
-            on="provider_code",
-            how="left",
-        )
+        .join(_party_coefficients(snapshot), on=["provider_code", "year"], how="left")
     )
     weight = pl.col("party_weight")
+    # A party that states a significant coefficient but no principal one, as a
+    # case-by-case default may, counts Principal in full.
+    principal = pl.col("party_principal").fill_null(_PARTY_RULE.principal)
+    party = ("provider_code", "party_weight", "party_principal", "party_both")
     bilateral = (pl.col("bi_multi").is_in(BILATERAL), pl.col("year").is_in(years))
-    weights_by_provider = reported.select("provider_code", "party_weight").unique()
     commitments = (
         _counted_commitments(snapshot)
         .filter(*bilateral, pl.col("climate_share").is_null())
         # Jev labels CRS records only, so a Jev method reads markers here.
         .with_columns(**face_shares(), jev_level=pl.lit(None, pl.Int8))
-        .join(weights_by_provider, on="provider_code")
+        .join(reported.select(*party, "year").unique(), on=["provider_code", "year"])
     )
 
-    def crdf_at(significant: pl.Expr) -> pl.Expr:
+    def crdf_at(**coefficients: pl.Expr) -> pl.Expr:
         fractions = weights(
-            _PARTY_RULE, significant=significant, published=pl.col("share_climate")
+            _PARTY_RULE, **coefficients, published=pl.col("share_climate")
         )
         return (pl.col("face_usd") * fractions["climate"]).sum()
 
     crdf = commitments.group_by("provider_code", "year").agg(
-        crdf_at_party_weight=crdf_at(weight),
-        crdf_at_100=crdf_at(pl.lit(1.0)),
+        crdf_at_party_weight=crdf_at(
+            significant=weight,
+            principal=principal,
+            both_significant=pl.col("party_both"),
+        ),
+        crdf_at_100=crdf_at(significant=pl.lit(1.0)),
     )
     marker = pl.col("rio_marker")
 
     def crs_at_party_weight(flow: str) -> pl.LazyFrame:
-        """The year's CRS `flow` on Rio-marked records, Significant at the party's
-        weight."""
+        """The year's CRS `flow` on Rio-marked records at the party's significant
+        and principal coefficients, by each record's higher marker."""
         return (
             snapshot.table("total_flows")
             .filter(pl.col("flow") == flow, *bilateral)
-            .join(weights_by_provider, on="provider_code")
+            .join(
+                reported.select(*party, "year").unique(), on=["provider_code", "year"]
+            )
             .group_by("provider_code", "year")
             .agg(
                 (
                     pl.col("amount_usd")
                     * pl.when(marker == 2)
-                    .then(1.0)
+                    .then(principal)
                     .when(marker == 1)
                     .then(weight)
                     .otherwise(0.0)
@@ -461,7 +492,7 @@ def reconcile(
     for each in method.methods if isinstance(method, MethodRange) else (method,):
         weighted = _coefficients(snapshot, commitments, method=each)
         fractions = weights(
-            each, significant=pl.col("significant"), published=pl.col("share_climate")
+            each, **_COEFFICIENT_INPUTS, published=pl.col("share_climate")
         )
         traced = weighted.group_by("provider_code", "year").agg(
             traced_climate_value=(pl.col("disbursed_usd") * fractions["climate"]).sum()
@@ -519,7 +550,8 @@ def reconcile(
             "status",
             "method",
             "party_weight",
-            "weight_confirmed",
+            "party_principal",
+            "weight_source",
             "btr_face",
             "btr_face_reported",
             "party_rate",
@@ -882,26 +914,78 @@ def _conform(frame: pl.LazyFrame) -> pl.LazyFrame:
 def _coefficients(
     snapshot: Snapshot, frame: pl.LazyFrame, *, method: Method
 ) -> pl.LazyFrame:
-    """Set `significant` and `coefficient_basis` for `method`.
+    """Set `significant`, `principal`, `both_significant`, `coefficient_basis` and
+    `coefficient_source` for `method`.
 
-    Under provider coefficients a provider with a confirmed row in
-    `provider_coefficients` takes its own significant coefficient and that row's
-    basis. Any other provider takes the method's, with a null basis.
+    Under provider coefficients each row takes the `provider_coefficients` row of its
+    provider, year and agency, or of its provider and year for an agency without a
+    row of its own, and `weights` gives an activity significant for both objectives
+    the row's `both_significant`. Where the row gives no coefficient, because the
+    provider assesses each activity case by case or has no row, the row takes the
+    method's.
+    `coefficient_basis` is `provider` for the provider's flat coefficients, `default`
+    for the default share of a provider that assesses case by case, `case_by_case`
+    where such a provider gives no default, and null where the release holds no row.
     """
     if method.coefficients == "fixed":
-        return frame.with_columns(significant=pl.lit(method.significant))
-    own = (
-        snapshot.table("provider_coefficients")
-        .filter(pl.col("confirmed"))
-        .select("provider_code", _own="significant", _basis="basis")
-    )
-    return (
-        frame.join(own, on="provider_code", how="left", validate="m:1")
-        .with_columns(
-            significant=pl.col("_own").fill_null(method.significant),
-            coefficient_basis=pl.col("_basis"),
+        return frame.with_columns(
+            significant=pl.lit(method.significant),
+            principal=pl.lit(method.principal),
+            both_significant=pl.lit(None, pl.Float64),
         )
-        .drop("_own", "_basis")
+    first, last, year = pl.col("first_year"), pl.col("last_year"), pl.col("year")
+    held = (
+        snapshot.table("provider_coefficients")
+        .join(frame.select("year").unique(), how="cross")
+        .filter(first.is_null() | (first <= year), last.is_null() | (year <= last))
+        .select(
+            "provider_code",
+            "agency_code",
+            "year",
+            _significant="significant",
+            _principal="principal",
+            _both="both_significant",
+            _basis=pl.when(~pl.col("case_by_case"))
+            .then(pl.lit("provider"))
+            .when(
+                pl.col("significant").is_not_null() | pl.col("principal").is_not_null()
+            )
+            .then(pl.lit("default"))
+            .otherwise(pl.lit("case_by_case")),
+            _source=pl.format("{}, {}", "source", "locator"),
+        )
+    )
+    columns = ("_significant", "_principal", "_both", "_basis", "_source")
+    by_agency = held.filter(pl.col("agency_code").is_not_null())
+    by_provider = held.filter(pl.col("agency_code").is_null()).drop("agency_code")
+    own_agency = pl.col("_source").is_not_null()
+
+    def pick(name: str) -> pl.Expr:
+        return pl.when(own_agency).then(pl.col(name)).otherwise(pl.col(f"{name}_all"))
+
+    return (
+        frame.join(
+            by_agency,
+            on=["provider_code", "agency_code", "year"],
+            how="left",
+            validate="m:1",
+        )
+        .join(
+            by_provider,
+            on=["provider_code", "year"],
+            how="left",
+            validate="m:1",
+            suffix="_all",
+        )
+        .with_columns(pick(name).alias(name) for name in columns)
+        .with_columns(
+            significant=pl.col("_significant").fill_null(method.significant),
+            principal=pl.col("_principal").fill_null(method.principal),
+            both_significant=pl.col("_both"),
+            coefficient_basis=pl.col("_basis"),
+            coefficient_source=pl.col("_source"),
+        )
+        .drop(*columns, *(f"{name}_all" for name in columns))
     )
 
 
@@ -909,7 +993,7 @@ def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
     """Weight each row's amount by objective, unsplit and in total under `method`."""
     amount = pl.col("amount")
     fractions = weights(
-        method, significant=pl.col("significant"), published=pl.col("share_climate")
+        method, **_COEFFICIENT_INPUTS, published=pl.col("share_climate")
     )
     unsplit = pl.col("share_unsplit")
     return (

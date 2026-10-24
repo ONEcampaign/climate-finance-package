@@ -19,7 +19,6 @@ from typing import IO, NamedTuple
 
 import openpyxl
 import polars as pl
-import yaml
 
 from climate_finance import schema
 from climate_finance.build.geo import provider_code
@@ -421,52 +420,104 @@ def estimate_party_weights(pairs: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def write_party_weights(pairs: pl.DataFrame, *, path: Path) -> Path:
-    """Write estimated party weights with their evidence, `confirmed: false`.
+def check_party_weights(
+    pairs: pl.DataFrame, *, coefficients: pl.DataFrame
+) -> pl.DataFrame:
+    """Parties whose fitted significant coefficient differs from the one their
+    provider states.
 
-    The YAML file has one entry per party, keyed by ISO 3 code, for a reviewer to
-    confirm. Rewriting it would discard confirmations, so a file holding a confirmed
-    entry is refused.
+    The fitted coefficient is `estimate_party_weights`'s. The stated one is the
+    `significant` of each row of `coefficients` (a `provider_coefficients` table)
+    that covers every agency of the party's provider and a year of its pairs, so a
+    provider whose coefficient changes within those years gives a row per span. The
+    fit and `share_at_stated` read the pairs of the span's years. A row with no
+    stated coefficient, as
+    for a provider that assesses each activity case by case, and a party with no
+    fitted coefficient are left out. The fit only takes the levels in
+    `WEIGHT_LEVELS`, so a stated coefficient off them, such as 0.3, always differs;
+    `share_at_stated` is the share of the party's Significant pairs whose ratio sits
+    within `LEVEL_TOLERANCE` of the stated coefficient, which says whether the pairs
+    bear it out.
 
     Args:
-        pairs: Linked BTR and CRS pairs, as `estimate_party_weights` takes them.
-        path: The YAML file to write.
+        pairs: Linked BTR and CRS pairs, as `estimate_party_weights` takes them,
+            with the BTR row's `year`.
+        coefficients: The release's `provider_coefficients` table.
+
+    Returns:
+        One row per party and span: `party`, `provider_code`, `first_year`,
+        `last_year`, `stated`, `fitted`, `share_at_stated`, `pairs`, and `source`
+        (the stated coefficient's source and locator).
 
     Raises:
-        FileExistsError: when `path` holds an entry a reviewer has confirmed.
+        ValueError: when `pairs` has no `year`.
     """
-    if path.exists():
-        existing = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        confirmed = sorted(p for p, entry in existing.items() if entry["confirmed"])
-        if confirmed:
-            raise FileExistsError(
-                f"{path} holds confirmed weights for {confirmed}; move it aside to "
-                "estimate again"
+    if "year" not in pairs.columns:
+        raise ValueError("Linked pairs lack the column year")
+    ratio = pl.col("btr_usd") / pl.col("crs_usd")
+    stated = pl.col("stated")
+    significant = pl.col("rio_marker") == _SIGNIFICANT
+    at_stated = significant & ((ratio - stated).abs() <= LEVEL_TOLERANCE * stated)
+    first, last, year = pl.col("first_year"), pl.col("last_year"), pl.col("year")
+    providers = {party: party_provider(party) for party in pairs["party"].unique()}
+    spans = (
+        pairs.with_columns(
+            provider_code=pl.col("party").replace_strict(
+                providers, return_dtype=pl.Int32
             )
-    weights = {
-        row["party"]: {
-            "significant": row["significant"],
-            "confirmed": False,
-            "evidence": {
-                "pairs": row["pairs"],
-                "share_at": _rounded(row["share_at"]),
-                "significant_share_at": _rounded(row["significant_share_at"]),
-                "principal_at_100": _round(row["principal_at_100"]),
-            },
-        }
-        for row in estimate_party_weights(pairs).iter_rows(named=True)
+        )
+        .join(
+            coefficients.filter(
+                pl.col("agency_code").is_null(), pl.col("significant").is_not_null()
+            ).select(
+                "provider_code",
+                "first_year",
+                "last_year",
+                stated="significant",
+                source=pl.format("{}, {}", "source", "locator"),
+            ),
+            on="provider_code",
+        )
+        .filter(first.is_null() | (first <= year), last.is_null() | (year <= last))
+    )
+    span = ["party", "provider_code", "first_year", "last_year", "stated", "source"]
+    rows = []
+    for key, members in spans.partition_by(span, as_dict=True).items():
+        estimate = estimate_party_weights(members)
+        if estimate.is_empty():
+            continue
+        fitted = estimate.row(0, named=True)
+        share = (
+            members.filter(pl.col("crs_usd") > 0)
+            .select(
+                pl.when(significant.sum() > 0).then(at_stated.sum() / significant.sum())
+            )
+            .item()
+        )
+        rows.append(
+            dict(zip(span, key, strict=True))
+            | {
+                "fitted": fitted["significant"],
+                "share_at_stated": share,
+                "pairs": fitted["pairs"],
+            }
+        )
+    columns = {
+        "party": pl.String,
+        "provider_code": pl.Int32,
+        "first_year": pl.Int16,
+        "last_year": pl.Int16,
+        "stated": pl.Float64,
+        "fitted": pl.Float64,
+        "share_at_stated": pl.Float64,
+        "pairs": pl.Int32,
+        "source": pl.String,
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(weights, sort_keys=False), encoding="utf-8")
-    return path
-
-
-def _round(value: float | None) -> float | None:
-    return None if value is None else round(value, 3)
-
-
-def _rounded(shares: dict[str, float | None]) -> dict[str, float | None]:
-    return {level: _round(share) for level, share in shares.items()}
+    return (
+        pl.DataFrame(rows, schema=columns)
+        .filter(pl.col("fitted").is_not_null(), pl.col("fitted") != stated)
+        .sort("party", "first_year", nulls_last=False)
+    )
 
 
 def _workbooks(path: Path) -> Iterator[tuple[str, IO[bytes]]]:

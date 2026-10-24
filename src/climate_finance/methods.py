@@ -120,8 +120,9 @@ def describe(method: Method | MethodRange) -> str:
     )
     if method.coefficients == "provider":
         text += (
-            " Each provider takes its own significant coefficient from the release, "
-            f"or {method.significant:g} where it has no confirmed coefficient."
+            " Each provider takes the coefficients it applies when reporting to the "
+            "UNFCCC for the activity's year and agency, as the release records them "
+            "with their source, and these coefficients where it states none."
         )
     if method.relevance == "jev":
         text += (
@@ -150,10 +151,12 @@ _EU = {
 }
 
 
-def _coefficient(level: pl.Expr, method: Method, significant: pl.Expr) -> pl.Expr:
+def _coefficient(
+    level: pl.Expr, *, significant: pl.Expr, principal: pl.Expr
+) -> pl.Expr:
     return (
         pl.when(level == 2)
-        .then(pl.lit(method.principal))
+        .then(principal)
         .when(level == 1)
         .then(significant)
         .otherwise(pl.lit(0.0))
@@ -170,20 +173,35 @@ def _markers(*, jev: bool = False) -> tuple[pl.Expr, pl.Expr]:
 
 
 def _marker_rules(
-    method: Method, significant: pl.Expr
+    method: Method,
+    *,
+    significant: pl.Expr,
+    principal: pl.Expr,
+    both_significant: pl.Expr | None = None,
 ) -> dict[str, tuple[pl.Expr, pl.Expr, pl.Expr]]:
-    """Per objective: whether a marker row counts towards it, its level, its weight."""
+    """Per objective: whether a marker row counts towards it, its level, its weight.
+
+    A row significant for both objectives takes `both_significant`, where it is set,
+    as its significant coefficient.
+    """
     rio_a, rio_m = _markers(jev=method.relevance == "jev")
+    if both_significant is not None:
+        significant = (
+            pl.when((rio_a == 1) & (rio_m == 1))
+            .then(both_significant.fill_null(significant))
+            .otherwise(significant)
+        )
+    coefficients = {"significant": significant, "principal": principal}
     if method.highest_marker:
         level = pl.max_horizontal(rio_a, rio_m)
-        weight = _coefficient(level, method, significant)
+        weight = _coefficient(level, **coefficients)
         return {
             "adaptation": (rio_a > rio_m, level, weight),
             "mitigation": (rio_m > rio_a, level, weight),
             "cross_cutting": ((rio_a == rio_m) & (rio_a > 0), level, weight),
         }
-    adaptation = _coefficient(rio_a, method, significant)
-    mitigation = _coefficient(rio_m, method, significant)
+    adaptation = _coefficient(rio_a, **coefficients)
+    mitigation = _coefficient(rio_m, **coefficients)
     return {
         "adaptation": (rio_a > 0, rio_a, adaptation),
         "mitigation": (rio_m > 0, rio_m, mitigation),
@@ -199,14 +217,17 @@ def weights(
     method: Method,
     *,
     significant: pl.Expr | None = None,
+    principal: pl.Expr | None = None,
+    both_significant: pl.Expr | None = None,
     published: pl.Expr | None = None,
 ) -> dict[str, pl.Expr]:
     """Fractions of a row's amount counted per objective, and in total, under `method`.
 
     Marker rows (null `climate_share`) weight `rio_adaptation` and `rio_mitigation`
-    (nulls count as 0) by the method's coefficients. `significant` replaces the
-    method's significant coefficient, for example with a per-provider column.
-    `published`, the climate share of face value the provider published (as
+    (nulls count as 0) by the method's coefficients. `significant` and `principal`
+    replace the method's coefficients, for example with per-provider columns, and a
+    row significant for both objectives takes `both_significant` where it is not
+    null. `published`, the climate share of face value the provider published (as
     `face_shares()["share_climate"]`), caps each marker weight: IFAD publishes its
     significant rows at 40% of face value, so no method counts them above that. A
     null `published` caps nothing.
@@ -231,11 +252,15 @@ def weights(
         "mitigation": pl.col("share_mitigation") - exclusive,
         "cross_cutting": overlap,
     }
-    if significant is None:
-        significant = pl.lit(method.significant)
+    rules = _marker_rules(
+        method,
+        significant=pl.lit(method.significant) if significant is None else significant,
+        principal=pl.lit(method.principal) if principal is None else principal,
+        both_significant=both_significant,
+    )
     marker = {
         objective: pl.when(counts).then(weight).otherwise(0.0)
-        for objective, (counts, _, weight) in _marker_rules(method, significant).items()
+        for objective, (counts, _, weight) in rules.items()
     }
     if published is not None:
         marker = {
@@ -287,7 +312,9 @@ def transform_markers_into_indicators(
             **{value: pl.col(value) * weight},
         )
         for objective, (counts, level, weight) in _marker_rules(
-            method, pl.lit(method.significant)
+            method,
+            significant=pl.lit(method.significant),
+            principal=pl.lit(method.principal),
         ).items()
     ]
     not_climate = frame.filter((rio_a == 0) & (rio_m == 0)).with_columns(

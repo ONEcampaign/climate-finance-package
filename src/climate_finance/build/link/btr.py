@@ -452,14 +452,17 @@ def linked_pairs(
     links: pl.DataFrame, *, btr: pl.LazyFrame, crs: pl.LazyFrame
 ) -> pl.DataFrame:
     """The linked pairs `readers.btr.estimate_party_weights` reads, one per BTR
-    row: party, the row's face value, the CRS amount it is set against (the
+    row: party, the row's year and face value, the CRS amount it is set against (the
     disbursement for a disbursed row, else the commitment, summed over the row's
     records) and the records' highest Rio marker."""
     pairs = links.filter(task="btr_crs").select(row_id="left_id", record_id="right_id")
     disbursed = pl.col("status") == "disbursed"
     return (
         pairs.lazy()
-        .join(btr.select("row_id", "party", "status", btr_usd="face_usd"), on="row_id")
+        .join(
+            btr.select("row_id", "party", "year", "status", btr_usd="face_usd"),
+            on="row_id",
+        )
         .join(
             crs.select(
                 "record_id",
@@ -469,7 +472,7 @@ def linked_pairs(
             ),
             on="record_id",
         )
-        .group_by("row_id", "party", "btr_usd")
+        .group_by("row_id", "party", "year", "btr_usd")
         .agg(
             crs_usd=pl.when(disbursed.first())
             .then(pl.col("disbursement_usd").sum())
@@ -477,7 +480,7 @@ def linked_pairs(
             rio_marker=pl.col("rio").max().fill_null(0),
         )
         .sort("row_id")
-        .select("party", "btr_usd", "crs_usd", "rio_marker")
+        .select("party", "year", "btr_usd", "crs_usd", "rio_marker")
         .collect()
     )
 
