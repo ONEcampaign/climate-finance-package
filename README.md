@@ -1,72 +1,55 @@
 [![pypi](https://img.shields.io/pypi/v/climate_finance.svg)](https://pypi.org/project/climate_finance/)
 [![python](https://img.shields.io/pypi/pyversions/climate_finance.svg)](https://pypi.org/project/climate_finance/)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 # The climate finance package
 
-_**climate-finance** is the python package to get, clean, and work with international public climate finance._ 
+**climate-finance** is a Python package for international public climate finance. It returns figures such as the adaptation finance France disbursed to Kenya in 2021 in a few lines of code, under a stated methodology, and traces each figure to the OECD records behind it.
 
-You can use this package to get, rebuild, remix, and create using our tools and methodologies — all with only a few lines of code.
+Climate finance data is messy and scattered across several websites. It took us months to learn which data to use and longer to clean it for the Climate Finance Files. The package ships that work as versioned releases built from the OECD's Creditor Reporting System (CRS) and Climate-related Development Finance database (CRDF), so researchers and campaigners can start from clean data and hold governments to their pledges.
 
-Climate finance data is notoriously difficult to work with. It's messy - really messy - and comes in all sorts of shapes and sizes, scattered across multiple websites.
-
-It took us months to understand which climate finance data to use, and even longer to clean the data ready for the Climate Finance Files. 
-
-We don't think you should have to do this too. 
-
-We have built **climate-finance** to lower the barriers to access that many organisations face when seeking to conduct research or advocacy on these topics. For too long, bad data has restricted climate accoutability. 
-And for too long, global leaders have capitalised on bad data to dictate the narrative on climate finance. 
-
-We hope these tools equip everyone with the data to hold global leaders accountable in the fight against climate change. As currently, they are not doing enough. 
-
-## Getting started 
-This package provides a set of tools to help you work with climate finance data.
-It can be used to:
-
-- download data from the OECD databases (The Creditor Reporting System (CRS)
-  and the Climate-related Development Finance database (CRDF))
-- download data from the UNFCCC data portal
-- clean and harmonise data from the different sources
-- convert climate finance data to different currencies and prices
-
-### Set up
-
-The Climate Finance package is composed of many different tools to download, process
-and analyse data.
-
-To get started, you will need to install the package. You can do this from pipy using pip:
+## Install
 
 ```bash
-
-pip install climate_finance --upgrade
-
+pip install climate-finance
 ```
 
-or directly from the source code:
-
-```bash
-
-pip install git+https://github.com/ONEcampaign/climate-finance-package.git
-
-```
-
-### Basic Usage
-
-The first step when using the Climate Finance package should be to set a working directory
-where the data will be stored. This can be done importing using the
-`set_climate_finance_data_path` function:
+## Query a release
 
 ```python
-from climate_finance import set_climate_finance_data_path
+import climate_finance as cf
 
-set_climate_finance_data_path('path/to/your/data')
-
+snap = cf.load()
+result = snap.spending(
+    providers="France",
+    recipients="Kenya",
+    years=range(2018, 2023),
+    method=cf.methods.ONE,
+)
+result.table.to_polars()
 ```
 
-The easiest way to interact with the data is through the `ClimateData` class.
+`load()` opens the latest release, or the one in `path=` for a release on disk. The result table has one row per year, provider, recipient, Bi_Multi code and method, with adaptation, mitigation, cross-cutting and total climate `value` columns, and `low` and `high` bounds. Convert it with `to_polars()`, `to_pandas()` or `to_arrow()`.
 
-**For a detailed overview of how to use the ClimateData class,[ please see its documentation.](./climate_finance/README.md)**
+Each query takes these arguments:
 
-## Questions? Would like to collaborate?
-We want this package to help others analyse climate finance data. If you want to collaborate, or have any questions, please reach out.
+- `method`: how Rio markers become climate value. `cf.methods.ONE` counts significant markers at 40% and principal markers at 100%, with each activity under its higher marker. `cf.methods.OECD` counts both at 100%. `cf.methods.PROVIDER` is ONE with each provider's own significant coefficient where the release has one. `cf.methods.RANGE` reports all three, and `low` and `high` become the lowest and highest value across them.
+- `flow`: `"commitments"`, `"disbursements"` (the default) or `"grant_equivalent"`.
+- `view`: `"recipient"` (the default) or `"provider"`, which adds core contributions to multilateral agencies in proportion to each agency's climate share.
+- `currency` and `prices`: `"USD"`, `"EUR"`, `"GBP"` or `"CAD"`, at current prices or at a base year, converted with OECD DAC exchange rates and deflators.
+- `oda_only`: keep official development assistance flows only.
 
+Providers and recipients take names or DAC codes. `cf.providers`, `cf.recipients`, `cf.flows` and `cf.methods` list what is available, with `.list()`, `.info(name)` and `.search(text)`. A misspelt name raises an error that suggests close matches.
+
+## Trace and compare
+
+`result.rows()` returns the project rows behind the table, and `result.explain()` describes the method, flow, filters and units in plain language. `result.meta` records the release, package version and source versions. `result.share_of_total()` divides every amount by all CRS flows for the same key. `snap.quality()` reports how much climate value traces to CRS records, and `cf.compare(a, b)` sets several results side by side.
+
+`result.spec` holds every argument as a frozen `Spec`, and `snap.spending(spec=result.spec)` reruns the query to an identical table.
+
+## Migrating from 1.x
+
+`ClimateData`, `set_climate_finance_data_path` and `get_unfccc_data` still import, with a `DeprecationWarning`, until 3.0. Each call without a 2.0 equivalent raises an error that names its replacement.
+
+## Contact
+
+We want this package to help others analyse climate finance data. If you want to collaborate, or have questions, please reach out.

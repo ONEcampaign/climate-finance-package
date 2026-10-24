@@ -4,38 +4,88 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Nightly run of the tests marked `slow`.
+    - cron: "17 3 * * *"
   workflow_dispatch:
 
 jobs:
-  test:
-    name: test
+  lint:
+    name: lint and types
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.0
+      # --locked fails when uv.lock is out of date with pyproject.toml, so a PR that
+      # edits a dependency without relocking cannot pass.
+      - run: uv sync --locked --python 3.12 --all-extras --all-groups
+      - run: uv run --no-sync ruff check
+      - run: uv run --no-sync ruff format --check
+      - run: uv run --no-sync ty check src
 
+  test:
+    name: test (${{ matrix.python-version }})
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
-
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
-      - name: Check-out repository
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.0
+      - run: uv sync --locked --python ${{ matrix.python-version }} --all-extras --all-groups
+      # `integration` tests reach the network; `slow` tests need real data.
+      - run: uv run --no-sync pytest -m "not integration and not slow"
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.0
+  lowest-direct:
+    name: lowest supported dependencies
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.0
+      # --isolated resolves every direct dependency to its floor in pyproject.toml
+      # without rewriting uv.lock.
+      - run: >
+          uv run --isolated --resolution lowest-direct --python 3.12 --all-extras
+          pytest -m "not integration and not slow"
 
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+  base-install:
+    name: base install imports no build dependency
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.0
+      - run: uv build --wheel
+      - run: uv venv --python 3.12 /tmp/base
+      - run: uv pip install --python /tmp/base/bin/python dist/*.whl pytest
+      # Run from tests/ so the checkout's src/ cannot shadow the installed wheel.
+      - name: Run the import-boundary test
+        working-directory: tests
+        env:
+          CF_BASE_INSTALL: "1"
+        run: /tmp/base/bin/python -m pytest -p no:cacheprovider test_import_boundary.py
 
-      # --locked, not --frozen: --frozen would install the existing lockfile
-      # without checking it still matches pyproject.toml, so a PR that edits a
-      # dependency and forgets to relock would pass this gate while testing a
-      # dependency set no user will resolve. --locked fails on that drift.
-      - name: Install the project
-        run: uv sync --locked --python ${{ matrix.python-version }}
-
-      # Tests marked `integration` download OECD bulk data over the network, so
-      # they fail whenever the upstream endpoint is slow or unavailable. They
-      # are deselected here to keep this a deterministic gate; run them locally
-      # with `uv run pytest -m integration`.
-      - name: Run tests
-        run: uv run --no-sync --python ${{ matrix.python-version }} pytest -m "not integration"
+  slow:
+    name: slow (nightly)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      CF_E2E_DATA: ${{ vars.CF_E2E_DATA }}
+    steps:
+      - name: Report a skip when no data is configured
+        if: env.CF_E2E_DATA == ''
+        run: |
+          echo "::warning::skipped: no CF_E2E_DATA"
+          echo "### slow tests skipped: no CF_E2E_DATA" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@v7
+        if: env.CF_E2E_DATA != ''
+      - uses: astral-sh/setup-uv@v10.0.0
+        if: env.CF_E2E_DATA != ''
+      - if: env.CF_E2E_DATA != ''
+        run: uv sync --locked --python 3.13 --all-extras --all-groups
+      - if: env.CF_E2E_DATA != ''
+        run: uv run --no-sync pytest -m slow

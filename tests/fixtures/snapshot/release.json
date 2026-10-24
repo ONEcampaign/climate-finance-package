@@ -1,0 +1,61 @@
+{
+  "release": "fixture",
+  "created_at": "2026-10-21T00:00:00Z",
+  "package_version": "2.0.0.dev0",
+  "tables": {
+    "disbursements": {
+      "sha256": "15ab83512a4485b8ae3b960fd99e620b8b0a0d0bb52042ebcc40a5fcf6403b29",
+      "rows": 36
+    },
+    "objectives": {
+      "sha256": "8880fe62e58d370845bb1d11013469449c3ab61d13a9752c48f59d4215637cbb",
+      "rows": 69
+    },
+    "agency_shares": {
+      "sha256": "1af35490e05bb7510ba2802b6a0b84c41c81e21b0b39b87ed96c43efa84e2642",
+      "rows": 24
+    },
+    "modelled": {
+      "sha256": "92784c29c5b001f8fe979ca655b262455bc68630aea6fef03d92e18b13227257",
+      "rows": 3
+    },
+    "core_contributions": {
+      "sha256": "710184225fa326e3d8367e847f88a8ea82d877c20b222d441b68fb93aea50d96",
+      "rows": 18
+    },
+    "provider_coefficients": {
+      "sha256": "1c3a3a0bfddaa4aef5eda6b8a70c5d82c6c5aea67712cbcabdf120dbbac2a906",
+      "rows": 2
+    },
+    "btr": {
+      "sha256": "3af8deb9ea17dbbcbb0afdbcf98a4ebd949eba678022fd470465ce49fe075f1e",
+      "rows": 4
+    },
+    "disbursement_profile": {
+      "sha256": "8ad93644528bf7178ab05f25dd121c1a5939bdfb670e14c4ce4dffb9dbc4fd73",
+      "rows": 9
+    },
+    "commitments": {
+      "sha256": "6c867469c8a9f5b4442a4c0c6206010525d7a8506ff2adfd77f7cea60498b195",
+      "rows": 14
+    },
+    "quality": {
+      "sha256": "96562613c79c5b5102349ef0002657e86c6628253d05038de841138b8c2f0219",
+      "rows": 12
+    },
+    "total_flows": {
+      "sha256": "86c54066aa5dddd4b64407eaa363b3cab1371583fada3533b14870c8494c34ea",
+      "rows": 89
+    }
+  },
+  "source_versions": {
+    "crs": "fixture",
+    "crdf": "fixture"
+  },
+  "model_versions": {
+    "jev": "jev-1.14.0"
+  },
+  "gates": {},
+  "precision_gate_waived": false,
+  "previous_release": null
+}

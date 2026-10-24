@@ -1,0 +1,32 @@
+# cf-build configuration. Relative paths resolve against this file.
+
+offline = false
+# Key-repair rules: new crs id under one project number, project-number variants,
+# World Bank parent projects, AfDB scientific notation, unique title and recipient.
+key_repair = true
+# Recovery routes: DFI aggregate rebuild, EIB project-list rules, GCF and GEF joins.
+recoveries = true
+
+[years]
+crdf = [2015, 2024]
+crs = [2010, 2025]
+
+[sources]
+crs_version = "v20261006"
+btr_archive = "data/raw/unfccc_btr1"
+ledger_archive = "data/raw/ledgers"
+review_decisions = "data/review_decisions.parquet"
+
+# CRDF file name -> ETag of the pinned copy.
+[sources.crdf_etags]
+
+[jev]
+model = "jev-1.14.0"
+cost_cap_usd = 10.0
+# Calibrated probabilities in [low, high) go to Jev.
+band = [0.3, 0.9]
+cache_dir = "data/jev-cache"
+
+[embedding]
+model = "intfloat/multilingual-e5-small"
+revision = "614241f"

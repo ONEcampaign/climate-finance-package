@@ -13,7 +13,7 @@ jobs:
 
     strategy:
       matrix:
-        python-versions: ["3.10"]
+        python-versions: ["3.12"]
 
     # Matches the environment named in the PyPI trusted publisher for this
     # project. The names must agree or PyPI rejects the OIDC claim.

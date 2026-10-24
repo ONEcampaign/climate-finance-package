@@ -1,37 +1,41 @@
 [project]
 name = "climate-finance"
-version = "1.2.3"
-description = "Climate Finance data"
+version = "2.0.0.dev0"
+description = "Climate finance figures from OECD and UNFCCC data, traced to the project"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Jorge Rivera", email = "jorge.rivera@one.org" }]
 keywords = ["climate", "finance", "data", "oecd", "unfccc"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering",
 ]
 
 dependencies = [
-    "bblocks>=1.4.3,<2",
-    "numpy>=2.3.3",
-    "oda-data>=2.3.1",
-    "openpyxl>=3.1.5",
-    "pandas>=2.3.2",
-    "pydeflate>=2.3.3",
-    "python-dateutil>=2.9.0.post0",
-    "requests>=2.32.5",
-    "selenium>=4.35.0",
-    "thefuzz[speedup]>=0.22.1",
-    "webdriver-manager>=4.0.2",
+    "polars>=1.33.0",
+    "pyarrow>=16.1.0",
+    "pydantic>=2.10.0",
+    "pydeflate>=2.6.2",
 ]
+
+[project.optional-dependencies]
+build = [
+    "rich>=13.8.0",
+    "typer>=0.16.0",
+]
+compat = [
+    "pandas>=2.2.2",
+]
+
+[project.scripts]
+cf-build = "climate_finance.build.cli:app"
 
 [project.urls]
 Homepage = "https://github.com/ONEcampaign/climate-finance-package"
@@ -39,51 +43,37 @@ Repository = "https://github.com/ONEcampaign/climate-finance-package"
 Issues = "https://github.com/ONEcampaign/climate-finance-package/issues"
 
 [build-system]
-requires = ["uv_build>=0.7.0,<0.8.0"]
+requires = ["uv_build>=0.12.15,<0.13"]
 build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0.0",
-    "pytest-cov>=4.0.0",
-    "pytest-snapshot>=0.9.0",
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+    "ty>=0.0.90",
 ]
 
-[tool.setuptools.packages.find]
-include = ["climate_finance"]
+[tool.uv.build-backend]
+module-root = "src"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "B", "UP", "SIM", "RUF", "PERF", "C4", "RET", "PIE", "FURB", "TRY", "I",
+]
+# Exception messages name the offending columns inline.
+ignore = ["TRY003"]
+
+[tool.ty.environment]
+python-version = "3.12"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
 markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "integration: integration tests",
-    "unit: unit tests",
+    "slow: needs real data under CF_E2E_DATA",
+    "integration: reaches the network or a live model",
 ]
-addopts = [
-    "--strict-markers",
-    "--tb=short",
-]
-
-
-[tool.uv.build-backend]
-# src layout is the default, explicitly stated for clarity
-module-root = "src"
-# Exclude large data/cache directories from wheel
-wheel-exclude = ["**/Data/**", "**/.raw_data/**", "**/__pycache__/**"]
-# Exclude from source distribution as well
-source-exclude = ["**/Data/**", "**/.raw_data/**"]
-
-[tool.coverage.run]
-source = ["src/climate_finance"]
-branch = true
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "raise NotImplementedError",
-    "if TYPE_CHECKING:",
-]
+addopts = ["--strict-markers", "--tb=short"]
