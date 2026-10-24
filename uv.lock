@@ -153,6 +153,7 @@ build = [
     { name = "scikit-learn" },
     { name = "scipy" },
     { name = "splink" },
+    { name = "threadpoolctl" },
     { name = "typer" },
 ]
 compat = [
@@ -189,6 +190,7 @@ requires-dist = [
     { name = "scipy", marker = "extra == 'build'", specifier = ">=1.16.2" },
     { name = "sentence-transformers", marker = "extra == 'embed'", specifier = ">=6.2.0" },
     { name = "splink", marker = "extra == 'build'", specifier = ">=5.0.0,<6" },
+    { name = "threadpoolctl", marker = "extra == 'build'", specifier = ">=3.1.0" },
     { name = "typer", marker = "extra == 'build'", specifier = ">=0.16.0" },
 ]
 provides-extras = ["build", "compat", "embed"]

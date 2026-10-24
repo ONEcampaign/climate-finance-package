@@ -171,6 +171,8 @@ def learn_programme_stems(crs: pl.LazyFrame) -> pl.LazyFrame:
     `crs` holds the records the trace follows. Each (donor, agency, project number,
     recipient) takes the title of its largest record.
     """
+    # Collected once: the rules read the projects about eight times, and the
+    # streaming engine would evaluate the grouping again for each read.
     projects = (
         crs.with_columns(project_number=normalise_pn(pl.col("project_number")))
         .drop_nulls(["agency_code", "project_number"])
@@ -178,6 +180,8 @@ def learn_programme_stems(crs: pl.LazyFrame) -> pl.LazyFrame:
         .agg(largest_record("title"))
         .with_columns(words=title_words(pl.col("title")))
         .drop("title")
+        .collect()
+        .lazy()
     )
     scores = pl.concat(
         _score_stems(projects, segments=segments) for segments in STEM_SEGMENTS

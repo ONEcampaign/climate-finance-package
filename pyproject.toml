@@ -39,6 +39,7 @@ build = [
     "scikit-learn>=1.9.0",
     "scipy>=1.16.2",
     "splink>=5.0.0,<6",
+    "threadpoolctl>=3.1.0",
     "typer>=0.16.0",
 ]
 compat = [

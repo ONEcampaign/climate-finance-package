@@ -5,9 +5,9 @@ from collections.abc import Iterator
 
 import polars as pl
 import pytest
-from threadpoolctl import threadpool_limits
 
 from climate_finance import schema
+from climate_finance.build.link import score
 from climate_finance.build.link.keys import build_units
 from climate_finance.build.link.levels import LEVELS
 from climate_finance.build.link.score import (
@@ -203,7 +203,8 @@ _TRUTH_SCHEMA = {
 def _one_thread() -> Iterator[None]:
     # OpenMP threads spin at barriers, so on a busy machine gradient boosting on a
     # few thousand pairs runs faster on one thread than on many.
-    with threadpool_limits(limits=1, user_api="openmp"):
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(score, "FIT_THREADS", 1)
         yield
 
 
@@ -1119,6 +1120,16 @@ def test_held_out_and_unlabelled_labels_never_reach_the_model(
         flipped, groups=scoring_groups(flipped), truth=_truth(_FEATURES)
     )
     assert again.threshold == scores.threshold
+    assert again.pairs["p_model"].equals(scores.pairs["p_model"])
+
+
+def test_the_thread_count_leaves_the_scores_unchanged(
+    scores: TruthScores, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(score, "FIT_THREADS", 4)
+    again = score_truth_group(
+        _FEATURES, groups=scoring_groups(_FEATURES), truth=_truth(_FEATURES)
+    )
     assert again.pairs["p_model"].equals(scores.pairs["p_model"])
 
 

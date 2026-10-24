@@ -39,6 +39,8 @@ record repeats its line's commitment date, so on the training pairs an equal dat
 restates the crs-id label and misleads the model on the pairs it links.
 """
 
+from collections.abc import Mapping
+
 import duckdb
 import polars as pl
 import splink.comparison_level_library as cll
@@ -175,7 +177,9 @@ def title_words(units: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
     )
 
 
-def comparisons() -> list[cl.CustomComparison | cl.ExactMatch]:
+def comparisons(
+    similarity: Mapping[str, str] | None = None,
+) -> list[cl.CustomComparison | cl.ExactMatch]:
     """The ten comparisons of `schema.COMPARISON_LEVELS` as Splink comparisons.
 
     The project number comparison's first level marks siblings: different project
@@ -183,10 +187,16 @@ def comparisons() -> list[cl.CustomComparison | cl.ExactMatch]:
     description that repeats its title counts once. The year gap reads
     `record_year`, a copy of `year`: every Splink EM blocking rule reads `year`,
     and EM leaves out the comparisons that read a blocking column.
+
+    Args:
+        similarity: the SQL the text comparison reads each similarity of
+            `similarities()` as. By default the similarity's own expression, as
+            Splink needs; `comparison_levels` passes the names of columns that
+            hold them.
     """
+    sim = similarities() if similarity is None else similarity
     description_agrees = (
-        "(desc_norm_l is null or desc_norm_r is null "
-        f"or {_jaccard('desc_toks')} >= 0.7)"
+        f"(desc_norm_l is null or desc_norm_r is null or {sim['desc_jaccard']} >= 0.7)"
     )
     return [
         cl.CustomComparison(
@@ -220,19 +230,19 @@ def comparisons() -> list[cl.CustomComparison | cl.ExactMatch]:
                     "title_norm_l = title_norm_r", "title exact, description differs"
                 ),
                 cll.CustomLevel(
-                    "jaro_winkler_similarity(title_norm_l, title_norm_r) >= 0.95 "
-                    f"or {_jaccard('title_toks')} >= 0.6 "
-                    f"or {_jaccard('desc_toks')} >= 0.7",
+                    f"{sim['title_jaro_winkler']} >= 0.95 "
+                    f"or {sim['title_jaccard']} >= 0.6 "
+                    f"or {sim['desc_jaccard']} >= 0.7",
                     label_for_charts="title close or description close",
                 ),
                 cll.CustomLevel(
-                    "jaro_winkler_similarity(title_norm_l, title_norm_r) >= 0.85 "
-                    f"or {_jaccard('title_toks')} >= 0.3 "
-                    f"or {_jaccard('desc_toks')} >= 0.4",
+                    f"{sim['title_jaro_winkler']} >= 0.85 "
+                    f"or {sim['title_jaccard']} >= 0.3 "
+                    f"or {sim['desc_jaccard']} >= 0.4",
                     label_for_charts="title or description similar",
                 ),
                 cll.CustomLevel(
-                    f"{_jaccard('desc_toks')} >= 0.2",
+                    f"{sim['desc_jaccard']} >= 0.2",
                     label_for_charts="description overlaps",
                 ),
                 cll.ElseLevel(),
@@ -323,17 +333,25 @@ def comparison_levels(pairs: pl.DataFrame, *, attributes: pl.DataFrame) -> pl.Da
         side: ", ".join(f'"{name}" as "{name}_{side}"' for name in COMPARISON_COLUMNS)
         for side in "lr"
     }
+    # Each similarity is computed once per pair, where the levels' conditions would
+    # evaluate it again in every `when` a pair reaches.
+    computed = ", ".join(f"{sql} as {name}" for name, sql in similarities().items())
     query = f"""
+        with joined as (
+            select p.pair_row, _commitments.*, _disbursements.*
+            from _batch p
+            left join _commitments on unique_id_l = p.right_id
+            left join _disbursements on unique_id_r = p.left_id
+        ),
+        compared as (select *, {computed} from joined)
         select
             {", ".join(_level_cases())},
             case when commitment_usd_l > 0 and disbursement_usd_r > 0
                 then log10(disbursement_usd_r / commitment_usd_l) end as log_ratio,
             (commitment_usd_r > 0)::tinyint as later_commit,
             {", ".join(f"{sql} as {name}" for name, sql in _DATE_SQL.items())}
-        from _pairs p
-        left join _commitments on unique_id_l = p.right_id
-        left join _disbursements on unique_id_r = p.left_id
-        order by p.pair_row
+        from compared
+        order by pair_row
     """
     keys = pairs.select("left_id", "right_id").with_row_index("pair_row")
     batches = list(keys.iter_slices(BATCH_PAIRS)) or [keys]
@@ -343,9 +361,13 @@ def comparison_levels(pairs: pl.DataFrame, *, attributes: pl.DataFrame) -> pl.Da
         con.sql(f"create table _commitments as select {sides['l']} from _attributes")
         con.sql(f"create table _disbursements as select {sides['r']} from _attributes")
         for batch in batches:
+            # DuckDB scans a registered frame as one task, and a table on a thread
+            # per row group. Each level is a function of its own pair, and the query
+            # orders by pair, so the thread count changes no value or row.
             con.register("_pairs", batch)
-            levels.append(con.sql(query).pl())
+            con.sql("create or replace table _batch as select * from _pairs")
             con.unregister("_pairs")
+            levels.append(con.sql(query).pl())
     return pl.concat(
         [
             pairs,
@@ -362,10 +384,21 @@ def levels_struct() -> pl.Expr:
     return pl.struct(LEVELS).cast(COMPARISON_LEVELS)
 
 
+def similarities() -> dict[str, str]:
+    """The similarities the text comparison reads, by name, each as SQL over a
+    pair."""
+    return {
+        "title_jaro_winkler": "jaro_winkler_similarity(title_norm_l, title_norm_r)",
+        "title_jaccard": _jaccard("title_toks"),
+        "desc_jaccard": _jaccard("desc_toks"),
+    }
+
+
 def _level_cases() -> list[str]:
-    """Each comparison as an SQL case giving its level, named `gamma_<comparison>`."""
+    """Each comparison as an SQL case giving its level, named `gamma_<comparison>`,
+    reading the similarities from the columns of their names."""
     cases = []
-    for creator in comparisons():
+    for creator in comparisons({name: name for name in similarities()}):
         comparison = creator.get_comparison("duckdb")
         whens = " ".join(
             f"else {level.comparison_vector_value}"
@@ -402,10 +435,18 @@ def _text_norm(text: pl.Expr) -> pl.Expr:
 
 
 def _jaccard(column: str) -> str:
-    """Token-set Jaccard similarity of a token-list column, in Splink's SQL."""
+    """Token-set Jaccard similarity of a token-list column, in Splink's SQL.
+
+    The lists hold distinct words (`candidates.title_words`), so the union counts
+    both lists less what they share. DuckDB's `list_intersect` gives null for a null
+    left list and an empty list for a null right one, and a null list counts no
+    words, so the value equals the shared words over the distinct words of both
+    lists in every case.
+    """
+    shared = f"len(list_intersect({column}_l, {column}_r))"
     return (
-        f"len(list_intersect({column}_l, {column}_r))::double"
-        f" / nullif(len(list_distinct(list_concat({column}_l, {column}_r))), 0)"
+        f"{shared}::double / nullif(coalesce(len({column}_l), 0)"
+        f" + coalesce(len({column}_r), 0) - {shared}, 0)"
     )
 
 

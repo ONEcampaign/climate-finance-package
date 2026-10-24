@@ -74,6 +74,7 @@ import sklearn
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.isotonic import IsotonicRegression
 from sklearn.model_selection import GroupKFold
+from threadpoolctl import threadpool_limits
 
 from climate_finance import catalogue, schema
 from climate_finance.build.link.candidates import word_share
@@ -126,6 +127,11 @@ PARAMS = {
     "early_stopping": False,
     "random_state": 0,
 }
+# OpenMP threads per fit and prediction. scikit-learn builds each feature's
+# histogram on one thread and partitions samples stably, so the model does not
+# depend on the count. Every core would only add threads that wait on the slowest:
+# on the archive one fold fitted in 24 s at 18 threads and in 7 s at 8.
+FIT_THREADS = 6
 METHOD = "classifier"
 JEV_METHOD = "classifier_jev"
 MODEL_VERSION = f"truth_hgb/scikit-learn-{sklearn.__version__}"
@@ -1143,11 +1149,13 @@ def _fit(x: np.ndarray, y: np.ndarray) -> HistGradientBoostingClassifier:
     model = HistGradientBoostingClassifier(
         categorical_features=list(range(len(LEVELS))), **PARAMS
     )
-    return model.fit(x, y)
+    with threadpool_limits(limits=FIT_THREADS, user_api="openmp"):
+        return model.fit(x, y)
 
 
 def _predict(model: HistGradientBoostingClassifier, x: np.ndarray) -> np.ndarray:
-    return model.predict_proba(x)[:, 1]
+    with threadpool_limits(limits=FIT_THREADS, user_api="openmp"):
+        return model.predict_proba(x)[:, 1]
 
 
 def _isotonic_maps(
