@@ -725,8 +725,10 @@ def allocate_to_rows(
     (see `_commitment_groups`). The rest, and every pair whose commitment has no
     CRDF row, goes to a null `row_id`, so each record's rows sum to what `allocate`
     gave it, excess included. A repeat row's share then moves to the row it repeats
-    (see `_to_first_rows`). Bounds equal the allocation, since every key link holds
-    with probability 1.
+    (see `_to_first_rows`). Bounds equal the allocation on every row, and no later
+    stage widens them, so an allocation through a link the build does not hold as
+    certain (a project-number tier or key repair, with a null link probability)
+    carries no bound.
     """
     weights, spread, unit_groups = _commitment_groups(
         crdf, units=units, crs=crs, links=links

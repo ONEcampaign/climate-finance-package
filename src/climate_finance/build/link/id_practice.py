@@ -43,10 +43,12 @@ OPEN_SHARE = 0.05
 PERSISTENT_SHARE = 0.8
 MIN_CONTINUED = 0.2
 MIN_OPEN = 10
-# On the archive, agencies with at least USD 1bn disbursed in a period split at this
-# share. In 2019 to 2022 IFAD keys 0.18 of its disbursement value, IDB Invest 0.32,
-# the EBRD 0.34 and the NDB 0.37; the next agency keys 0.53, and 90 of the 108 key
-# 0.8 or more. In 2015 to 2018 the gap runs from 0.35 to 0.57.
+# On the archive, agencies with at least USD 1bn disbursed in a period, pooling the
+# years `period_of` gives it, split at this share. In 2019 to 2022 IFAD keys 0.18 of
+# its disbursement value, IDB Invest 0.32, the EBRD 0.34 and the NDB 0.37; the next
+# agency keys 0.53, and 142 of the 161 key 0.8 or more. In 2015 to 2018 the gap runs
+# from 0.35 to 0.50. In 2010 to 2014, which pools 2000 to 2014, it runs from 0.44
+# (JICA) to 0.53 (the AfDF), and 96 of the 122 key 0.8 or more.
 MIN_KEYED_DISBURSED = 0.45
 
 # An EU contract's crs id is its 10-character decision id plus a contract number.
