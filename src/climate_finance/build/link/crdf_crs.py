@@ -31,8 +31,9 @@ from collections.abc import Callable
 import polars as pl
 
 from climate_finance.build.errors import LinkInputError
-from climate_finance.build.link.keys import as_exact_links, normalise_pn
+from climate_finance.build.link.keys import as_exact_links
 from climate_finance.build.normalise.crs import trace_population
+from climate_finance.build.normalise.project_numbers import normalise_pn
 from climate_finance.build.normalise.vintages import match_eib, pair_one_to_one
 
 # CRDF rows and CRS commitments that agree on these, the CRDF provider standing for

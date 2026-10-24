@@ -29,6 +29,7 @@ from climate_finance.build.link.id_practice import (
     parent_id,
 )
 from climate_finance.build.normalise.ids import content_id
+from climate_finance.build.normalise.project_numbers import normalise_pn
 
 UNIT_KEY = (
     "donor_code",
@@ -39,23 +40,6 @@ UNIT_KEY = (
     "purpose_code",
     "year",
     "commitment_year",
-)
-# Project numbers that name no project, as `normalise_pn` leaves them.
-PLACEHOLDER_PNS = (
-    "NOTAPPLICABLE",
-    "N.A.",
-    "N.A",
-    "NA",
-    "N/A",
-    "NONE",
-    "NULL",
-    "TBD",
-    "UNKNOWN",
-    "0",
-    "-",
-    ".",
-    "..",
-    "X",
 )
 
 
@@ -95,23 +79,6 @@ TIERS = (
 )
 if tuple(tier.name for tier in TIERS) != schema.KEY_TIERS:
     raise RuntimeError("TIERS must follow schema.KEY_TIERS")
-
-
-def normalise_pn(project_number: pl.Expr) -> pl.Expr:
-    """Upper-case, drop a float artefact `.0` and every space. Placeholders and
-    values shorter than two characters or holding no letter or digit become null."""
-    pn = (
-        project_number.str.to_uppercase()
-        .str.strip_chars()
-        .str.replace(r"\.0$", "")
-        .str.replace_all(r"\s+", "")
-    )
-    usable = (
-        ~pn.is_in(PLACEHOLDER_PNS)
-        & pn.str.contains("[A-Z0-9]")
-        & (pn.str.len_chars() >= 2)
-    )
-    return pl.when(usable).then(pn)
 
 
 def build_units(crs: pl.LazyFrame) -> pl.LazyFrame:

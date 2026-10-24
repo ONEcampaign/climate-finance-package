@@ -18,9 +18,10 @@ from climate_finance.build.link.id_practice import (
     parent_id,
     period_of,
 )
-from climate_finance.build.link.keys import build_units, link_by_keys, normalise_pn
+from climate_finance.build.link.keys import build_units, link_by_keys
 from climate_finance.build.normalise.crdf import normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs
+from climate_finance.build.normalise.project_numbers import normalise_pn
 from climate_finance.build.stages import REGISTRY, StageContext, table_path
 
 OECD = Path(__file__).parent / "fixtures" / "raw" / "oecd"

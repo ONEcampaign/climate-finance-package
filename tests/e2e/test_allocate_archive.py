@@ -47,16 +47,32 @@ FIRST_ROWS_MOVED_BN = {
     "no_disbursement_record": 0.0,
     "not_traceable": -0.94,
 }
+# The reference keys a crs id alone, links project numbers only for agencies whose
+# ids do not persist, and takes any long crs id as a contract under its first ten
+# characters. `crs_key` splits an id that names projects in several recipients,
+# which gives each commitment its own recipient's disbursements (USD 0.35 bn more
+# disbursed, 0.53 bn more partly disbursed, 0.88 bn less with no record). The
+# project-number tiers for every agency move most of the rest.
+KEY_TIERS_MOVED_BN = {
+    "disbursed": 0.61,
+    "partly_disbursed": 0.28,
+    "no_disbursement_record": -0.89,
+    "not_traceable": 0.0,
+}
 # With aggregate children counted and their parents left out (the release rule).
 RELEASE_RULE_BN = {
-    "disbursed": 54.77,
-    "partly_disbursed": 104.83,
-    "no_disbursement_record": 34.86,
+    "disbursed": 55.39,
+    "partly_disbursed": 105.09,
+    "no_disbursement_record": 33.98,
     "not_traceable": 35.12,
 }
 # No-record value the key-repair rules move to partly or fully disbursed, counted
-# as the reference counts, by provider category (USD bn).
-REPAIR_MOVED_BN = {"bilateral": 0.96, "banks": 4.54}
+# as the reference counts, by provider category (USD bn). A programme number links
+# only within the disbursement's recipient and purpose (`_programmes`), so fewer
+# units exceed `MAX_COMMITMENTS` and the rules move USD 0.37 bn more bilateral
+# value. The exact tiers' `crs_key` already reaches USD 0.74 bn of bank value the
+# rules moved; the title rule's count of rounded numbers adds back USD 0.11 bn.
+REPAIR_MOVED_BN = {"bilateral": 1.31, "banks": 3.91}
 REPAIR_TOLERANCE_BN = 0.05
 _CATEGORY = {
     "DAC member": "bilateral",
@@ -198,7 +214,7 @@ def test_statuses_reproduce_the_reference_without_recoveries(
     built = _by_status(_prototype_count(_rows(base)))
     assert set(built) == set(reference["status"])
     for status, usd_bn in reference.select("status", "usd_bn").iter_rows():
-        moved = FIRST_ROWS_MOVED_BN[status]
+        moved = FIRST_ROWS_MOVED_BN[status] + KEY_TIERS_MOVED_BN[status]
         assert built[status] == pytest.approx(usd_bn + moved, abs=TOLERANCE_BN), status
 
 

@@ -18,6 +18,46 @@ from climate_finance.build.normalise.crs import normalise_crs, trace_population
 pytestmark = pytest.mark.slow
 
 _SHARES = ("id_share", "parent_share", "pn_share")
+# The references take every crs id longer than ten characters as a contract under
+# its first ten. `parent_id` takes only EU decision ids and `LETTER_SUFFIX_DONORS`
+# letters, so these agencies continue less by parent id in 2019-2022, and those in
+# `_NOW_BY_PN` continue by project number instead.
+_FEWER_BY_PARENT = {
+    (1, 8),
+    (1, 9),
+    (1, 13),
+    (4, 2),
+    (4, 44),
+    (5, 2),
+    (6, 4),
+    (10, 6),
+    (68, 1),
+    (82, 1),
+    (301, 2),
+    (301, 3),
+    (742, 2),
+    (742, 99),
+    (820, 1),
+}
+_NOW_BY_PN = {
+    (1, 9),
+    (4, 2),
+    (6, 4),
+    (10, 6),
+    (68, 1),
+    (82, 1),
+    (301, 2),
+    (301, 3),
+    (742, 2),
+}
+# Disbursement the key tiers link beyond the reference's tiers, by rule. The
+# reference's rules reproduce its total to the dollar.
+# `parent_id` reaches no parent for other donors' 11-digit sequence numbers.
+PARENT_ID_USD = -2.075370018e9
+# `crs_key` keeps an id that names several projects within its recipient.
+CRS_KEY_USD = -2.985551496e9
+# The project-number tiers hold for agencies whose ids persist.
+PN_EVERY_AGENCY_USD = 19.540454511e9
 
 
 @pytest.fixture(scope="module")
@@ -62,21 +102,29 @@ def test_one_period_id_practice_reproduces_the_deterministic_reference(
 
     assert rows.height == reference.height == built.height == 311
     assert (rows["n_open"] == rows["open_commitments"]).all()
-    for share in ("id_share", "parent_share"):
-        assert (rows[share] == rows[f"{share}_built"]).all()
+    assert (rows["id_share"] == rows["id_share_built"]).all()
+    fewer = rows.filter(pl.col("parent_share") != pl.col("parent_share_built"))
+    assert set(fewer.select("donor_code", "agency_code").iter_rows()) == (
+        _FEWER_BY_PARENT
+    )
+    assert (fewer["parent_share_built"] < fewer["parent_share"]).all()
     # That reference collapsed spaces inside project numbers, where the build drops
-    # them, so seven agencies continue a little more by project number. One of them
-    # crosses the 0.2 continued-share line.
+    # them, so seven more agencies continue a little more by project number. One of
+    # them crosses the 0.2 continued-share line.
     moved = rows.filter(pl.col("pn_share") != pl.col("pn_share_built"))
-    assert set(moved.select("donor_code", "agency_code").iter_rows()) == {
-        (3, 1),
-        (5, 9),
-        (5, 63),
-        (5, 66),
-        (5, 94),
-        (910, 1),
-        (951, 1),
-    }
+    assert (
+        set(moved.select("donor_code", "agency_code").iter_rows())
+        == {
+            (3, 1),
+            (5, 9),
+            (5, 63),
+            (5, 66),
+            (5, 94),
+            (910, 1),
+            (951, 1),
+        }
+        | _NOW_BY_PN
+    )
     assert (moved["pn_share_built"] > moved["pn_share"]).all()
     reclassed = rows.filter(pl.col("id_class") != pl.col("id_class_built"))
     assert reclassed.select(
@@ -103,9 +151,22 @@ def test_id_practice_reproduces_the_three_period_reference(
         )
     )
     schema.validate(schema.ID_PRACTICE, id_practice)
-    assert id_practice.sort(id_practice.columns).equals(
-        reference.select(id_practice.columns).sort(id_practice.columns)
-    )
+    key = ["donor_code", "agency_code", "period"]
+    rows = _compare(reference, id_practice, key)
+    assert rows.height == reference.height == id_practice.height == 798
+    for column in ("open_commitments", "id_share"):
+        assert (rows[column] == rows[f"{column}_built"]).all()
+    # Only `parent_id` moves a row: less continues by parent id, and some of it by
+    # project number.
+    fewer = rows.filter(pl.col("parent_share") != pl.col("parent_share_built"))
+    assert fewer.height == 45
+    assert (fewer["parent_share_built"] < fewer["parent_share"]).all()
+    assert (rows["pn_share_built"] >= rows["pn_share"]).all()
+    reclassed = rows.filter(pl.col("id_class") != pl.col("id_class_built"))
+    assert reclassed.sort(key).select(*key, "id_class", "id_class_built").rows() == [
+        (4, 10, "2015-2018", "mixed", "id_persistent"),
+        (301, 9, "2010-2014", "parent_id_persistent", "neither"),
+    ]
 
 
 def test_key_tiers_link_the_reference_disbursements(
@@ -124,7 +185,11 @@ def test_key_tiers_link_the_reference_disbursements(
 
     linked = units.join(tiers, left_on="unit_id", right_on="left_id")
     assert linked["disbursement_usd"].sum() == pytest.approx(
-        metrics["linked_disbursement_bn"] * 1e9, abs=1e3
+        metrics["linked_disbursement_bn"] * 1e9
+        + PARENT_ID_USD
+        + CRS_KEY_USD
+        + PN_EVERY_AGENCY_USD,
+        abs=1e3,
     )
 
 

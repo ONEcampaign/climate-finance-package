@@ -108,6 +108,28 @@ def test_project_id_and_title_pairs_repeat(
     assert _repeats(crdf, BACKING) == {"a": None, "b": "a" if repeats else None}
 
 
+@pytest.mark.parametrize("placeholder", ["UNKNOWN", "N/A"])
+def test_a_placeholder_project_number_pairs_nothing(placeholder: str) -> None:
+    crdf = crdf_rows(
+        {
+            "row_id": "a",
+            "year": 2019,
+            "crs_id": "2019000001",
+            "project_number": placeholder,
+            "face_usd": 10e6,
+        },
+        {
+            "row_id": "b",
+            "year": 2021,
+            "crs_id": "2021000002",
+            "project_number": placeholder,
+            "face_usd": 10e6,
+        },
+    )
+
+    assert _repeats(crdf, BACKING) == {"a": None, "b": None}
+
+
 def test_a_title_four_rows_carry_is_not_specific() -> None:
     title = "Solar mini-grids for rural Kenya"
     crdf = crdf_rows(

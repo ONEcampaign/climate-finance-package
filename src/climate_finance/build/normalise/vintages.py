@@ -11,8 +11,8 @@ different years, within one perspective and provider:
 - EIB bulk record: an EIB row without a CRS commitment of its own matches a bulk
   EIB commitment (`_match_eib`) whose key, or crs id, an EIB row of another year
   carries.
-- project id: same recipient and project number, different crs ids, face values
-  within 10%.
+- project id: same recipient and project number (`normalise_pn`, so placeholders
+  such as `UNKNOWN` name no project), different crs ids, face values within 10%.
 - title: same recipient and a specific title (at most three of the provider's rows
   carry it), different crs ids, face values within 10%.
 
@@ -27,6 +27,7 @@ import polars as pl
 
 from climate_finance.build.normalise.crdf import CRDFNormaliseError
 from climate_finance.build.normalise.crs import trace_population
+from climate_finance.build.normalise.project_numbers import normalise_pn
 
 # Face values of a project-id or title pair agree within this share of the larger.
 _FACE_TOLERANCE = 0.10
@@ -173,12 +174,7 @@ def _with_keys(rows: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
     """Add `backed`, `id_in_crs`, `project_id` and `title_key` to the rows."""
     backed = commitment_keys(crs).with_columns(backed=pl.lit(True)).collect()
     known = crs_ids(crs).with_columns(id_in_crs=pl.lit(True)).collect()
-    project_id = (
-        pl.col("project_number")
-        .str.replace(r"\.0$", "")
-        .str.strip_chars()
-        .str.to_uppercase()
-    )
+    project_id = normalise_pn(pl.col("project_number"))
     title_key = (
         pl.col("title").str.to_uppercase().str.extract_all(r"[A-Z0-9]+").list.join(" ")
     )
