@@ -84,18 +84,19 @@ def normalise_crdf(
     published, and `climate_share` is set on component rows only, as climate over
     face.
 
-    `objective` is cross-cutting when a row has both an adaptation and a mitigation
-    part (by amount or marker), else the one it has, and `climate` for imputed rows
-    that publish only a climate total. `vintage` is the latest data year of the
-    workbook that holds the row. `bi_multi` is not published: imputed multilateral
-    rows are core contributions (2), and every other row takes its provider's most
-    common Bi_Multi among the provider's non-core records in `crs`. `id_scheme`
-    classifies every EIB row's id and is null for every other row.
+    `objective` is cross-cutting when a row has both an adaptation and a mitigation part
+    (by amount or marker), else the one it has, and `climate` for imputed rows that
+    publish only a climate total. `vintage` is the latest data year of the workbook that
+    holds the row. The CRDF does not publish `bi_multi`. Imputed multilateral rows are
+    core contributions (2), and every other row takes its provider's most common
+    Bi_Multi among the provider's non-core records in `crs`. `id_scheme` classifies
+    every EIB row's id and is null for every other row.
 
-    Excel damage is repaired or nulled, with counts logged: error text such as
+    Excel damage is repaired or nulled, with counts logged. Error text such as
     `#NAME?` becomes null, and a project number Excel turned into a date takes the
     record's project number in `crs` (same donor, crs id and year) when exactly one
-    exists, else null.
+    exists, else null. Crs ids and project numbers lose leading and trailing
+    spaces, as in `normalise_crs`.
 
     Args:
         raw: `oda_reader.download_crdf(perspective=..., pre_process=True)` output.
@@ -106,8 +107,9 @@ def normalise_crdf(
         CRDFNormaliseError: when a provider has no CRS record, a row has no climate
             part, or an EIB id follows no known scheme.
     """
+    ids = pl.col("crs_id", "project_number").cast(pl.String).str.strip_chars()
     frame = (
-        _repair_excel_damage(raw.collect(), crs=crs)
+        _repair_excel_damage(raw.with_columns(ids).collect(), crs=crs)
         .with_columns(perspective=pl.lit(perspective))
         .with_columns(row_id=content_id(_IDENTITY, order_by=list(_AMOUNTS.values())))
     )
@@ -146,7 +148,7 @@ def normalise_crdf(
         channel_code=pl.col("channel_code").cast(pl.Int32),
         bi_multi="bi_multi",
         purpose_code=pl.col("purpose_code").cast(pl.Int32),
-        flow_code=pl.col("flow_type_code").cast(pl.Int32),
+        flow_category=pl.col("flow_type_code").cast(pl.Int32),
         objective="objective",
         rio_adaptation="rio_adaptation",
         rio_mitigation="rio_mitigation",
@@ -216,7 +218,7 @@ def _bi_multi(frame: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.Series:
     the 2015 to 2024 data the derived class equals the linked CRS record's class on
     every row that links by provider, crs_id and year: 89.7% of recipient value and
     96.3% of provider value. Four providers (Japan, Korea, Denmark, Hungary) have
-    non-core records in two classes; each has a few private-class (6) records among
+    non-core records in two classes. Each has a few private-class (6) records among
     thousands of bilateral ones and comes out bilateral.
     """
     modal = (

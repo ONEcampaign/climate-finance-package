@@ -35,6 +35,12 @@ _IDENTITY = (
     "project_title",
     "short_description",
 )
+# Records equal on `_IDENTITY` are numbered by their long description, which a
+# revision of amounts leaves alone, and then by their amounts. In the October 2026
+# file 97% of such records also agree on every other published field, so nothing
+# but their amounts tells them apart.
+_OCCURRENCE = ("long_description", *_AMOUNTS.values())
+_IDS = ("crs_id", "project_number")
 _TEXT = ("project_title", "short_description", "long_description")
 
 
@@ -42,28 +48,35 @@ def normalise_crs(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFrame:
     """Records of `years` (inclusive) with an amount, in the `crs` schema.
 
     A record has an amount when its commitment, disbursement or grant equivalent is
-    non-zero; records with only a grant equivalent carry negative grant equivalents
+    non-zero. Records with only a grant equivalent carry negative grant equivalents
     and stay in. Bi_Multi is kept as published, core contributions included (see
     `trace_population`), and missing Rio markers stay null.
 
     `record_id` digests the record's identifying fields, so it is the same in every
-    build of the same file and survives a revision of the record's amounts.
+    build of the same file and survives a revision of the record's amounts. Records
+    that agree on those fields and on their long description are told apart by
+    their amounts alone, so a revision that reorders their amounts swaps their ids.
     """
     has_amount = pl.any_horizontal(
         pl.col(source).fill_null(0) != 0 for source in _AMOUNTS.values()
     )
     return (
         raw.filter(pl.col("year").is_between(*years), has_amount)
+        # Some ids carry trailing spaces (Germany's 2020 records), which no key
+        # would match to the same id written without them.
+        .with_columns(pl.col(_IDS).cast(pl.String).str.strip_chars())
         .with_columns(
-            record_id=content_id(_IDENTITY, order_by=list(_AMOUNTS.values())),
+            record_id=content_id(_IDENTITY, order_by=_OCCURRENCE),
             text_hash=text_digest(_TEXT),
         )
         .select(
             "record_id",
             pl.col("year").cast(pl.Int16),
             pl.col("donor_code", "agency_code").cast(pl.Int32),
-            pl.col("crs_id", "project_number").cast(pl.String),
+            pl.col(_IDS),
             title=pl.col("project_title").cast(pl.String),
+            short_description=pl.col("short_description").cast(pl.String),
+            long_description=pl.col("long_description").cast(pl.String),
             # The bulk CRS publishes "Developing countries, unspecified" as 9998,
             # and the CRDF and the DAC recipient list use 998. Writing 998 here gives
             # every stage and release table one code.
@@ -74,6 +87,7 @@ def normalise_crs(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFrame:
             channel_code=pl.col("channel_code").cast(pl.Int32),
             bi_multi=pl.col("bi_multi").cast(pl.Int8),
             flow_code=pl.col("flow_code").cast(pl.Int32),
+            finance_t=pl.col("finance_t").cast(pl.Int32),
             **{
                 name: pl.col(source).cast(pl.Float64) * _USD_PER_UNIT
                 for name, source in _AMOUNTS.items()

@@ -24,6 +24,7 @@ import polars as pl
 from climate_finance import __version__
 from climate_finance.build import write_table
 from climate_finance.schema import (
+    CERTAIN_METHODS,
     FLOWS,
     LINK_METHODS,
     RELEASE_TABLES,
@@ -46,6 +47,9 @@ NO_RECORD = "no_disbursement_record"
 # FRA-1's project pays earlier tranches, and AFDB-2 is the id-less multilateral row.
 PROJECT_DISBURSING = {"FRA-1"}
 FULLY_DISBURSED = {"IDA-1"}
+# A row the allocation calls partly disbursed and the IDA ledger undisbursed, as a
+# wrong repair link would leave it.
+LEDGER_UNDISBURSED = {"IDA-2"}
 ID_LESS = {"AFDB-2"}
 
 # (row_id, provider, agency, recipient, channel, bi_multi, year, rio_adaptation,
@@ -106,11 +110,13 @@ DISBURSED_SHARE = {
     "no_disbursement_record": 0.0,
     "not_traceable": 0.0,
 }
-# An allocation counts in the low bound when its link is at least this probable,
-# and its high bound is this multiple of the allocation, capped so the commitment's
-# high bounds stay within its face value.
-CERTAIN_PROBABILITY = 0.9
+# An allocation's high bound is this multiple of the allocation, capped so the
+# commitment's high bounds stay within its face value.
 HIGH_FACTOR = 1.05
+# Commitments carry the CRDF's flow category: ODA (10) but for AFDB-2, an other
+# official flow (21). Records carry CRS flow codes.
+ODA_CATEGORY, OOF_CATEGORY = 10, 21
+OTHER_OFFICIAL = {"AFDB-2"}
 # A record's grant equivalent as a share of its disbursement, by flow code.
 GRANT_EQUIV_RATIO = {11: 1.0, 13: 0.6}
 
@@ -145,6 +151,7 @@ CLIMATE_ONLY_SHARE = {
     "objective": "climate",
     "share": 0.35,
     "source": "oecd",
+    "share_source": "oecd",
 }
 # Core contributions disbursed in each of their years, and each flow's amount as a
 # multiple.
@@ -188,16 +195,20 @@ def _allocation(
     """A disbursements row allocating `allocated` of `record_id` to `commitment`.
 
     `record_disbursement` and `record_grant_equiv` are the whole CRS record's.
-    Unlinked rows (a bank-ledger fill) count in full in the low bound.
+    It counts in the low bound when a `CERTAIN_METHODS` link carried it, and a
+    bank-ledger fill counts in full. A fill has no
+    CRS record, so it carries its commitment's facts, no flow code and no record
+    markers, as `release.fill_disbursements` builds it.
     """
-    certain = link_probability is None or link_probability >= CERTAIN_PROBABILITY
+    certain = link_method is None or link_method in CERTAIN_METHODS
+    fill = disbursement_source != "crs"
     first = record_id.endswith("-R0")
     rio_a, rio_m = commitment["rio_adaptation"], commitment["rio_mitigation"]
-    record_rio_a = None if first else rio_a
+    record_rio_a = None if first or fill else rio_a
     # As label.inherit_markers sets it.
     if commitment["climate_share"] is not None:
         marker_source = "components"
-    elif record_rio_a == rio_a:
+    elif fill or record_rio_a == rio_a:
         marker_source = "commitment"
     else:
         marker_source = "record_differs"
@@ -209,12 +220,14 @@ def _allocation(
         "agency_code": commitment["agency_code"],
         "recipient_code": commitment["recipient_code"],
         "channel_code": commitment["channel_code"],
-        "bi_multi": RECORD_BI_MULTI.get(
-            str(commitment["row_id"]), commitment["bi_multi"]
-        ),
-        "purpose_code": 41010,
-        "flow_code": _flow_code(commitment),
-        "project_number": f"PN-{commitment['row_id']}",
+        "bi_multi": commitment["bi_multi"]
+        if fill
+        else RECORD_BI_MULTI.get(str(commitment["row_id"]), commitment["bi_multi"]),
+        "purpose_code": commitment["purpose_code"] if fill else 41010,
+        "flow_code": None if fill else _flow_code(commitment),
+        "project_number": commitment["project_number"]
+        if fill
+        else f"PN-{commitment['row_id']}",
         "title": f"Climate project {commitment['row_id']}",
         "allocated_usd": allocated,
         "allocated_low_usd": allocated if certain else 0.0,
@@ -224,7 +237,7 @@ def _allocation(
         "inherited_rio_adaptation": rio_a,
         "inherited_rio_mitigation": rio_m,
         "record_rio_adaptation": record_rio_a,
-        "record_rio_mitigation": rio_m,
+        "record_rio_mitigation": None if fill else rio_m,
         "marker_source": marker_source,
         "climate_share": commitment["climate_share"],
         "link_method": link_method,
@@ -303,7 +316,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
             "channel_code": channel,
             "bi_multi": bi_multi,
             "purpose_code": 41010,
-            "flow_code": 11,
+            "flow_category": OOF_CATEGORY if row_id in OTHER_OFFICIAL else ODA_CATEGORY,
             "crs_id": f"{year}00{row_id}" if has_ids else None,
             "project_number": f"PN-{row_id}" if has_ids else None,
             "rio_adaptation": rio_a,
@@ -316,6 +329,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
             "overlap_usd": overlap,
             "status": status,
             "project_disbursing": row_id in PROJECT_DISBURSING,
+            "ledger_undisbursed": True if row_id in LEDGER_UNDISBURSED else None,
             "repeat_of": None,
             "parent_row_id": None,
         }
@@ -373,12 +387,13 @@ def build_tables() -> dict[str, pl.DataFrame]:
         disbursement_source="bank_ledger",
     )
     disbursement_rows[-1]["ledger_check"] = None
-    # A Jev objective label on one record without markers.
+    # A Jev label on a record of an adaptation-marked commitment: principal, where
+    # JPN-2 and the record mark adaptation significant.
     objective_rows.append(
         {
-            "record_id": "JPN-1-R1",
+            "record_id": "JPN-2-R1",
             "objective": "adaptation",
-            "level": 1,
+            "level": 2,
             "label_source": "jev",
             "probability": 0.72,
         }
@@ -394,6 +409,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
                 "objective": objective,
                 "share": share,
                 "source": source,
+                "share_source": "computed" if source == "one" else "oecd",
             }
             for (channel, source), shares in AGENCY_SHARES.items()
             for year in (2021, 2022)
@@ -556,10 +572,13 @@ TRACED = ("disbursed", "partly_disbursed", "no_disbursement_record")
 
 def _quality(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataFrame:
     """Climate value by provider and commitment year (all of it, the part that
-    traces, and the part whose most probable link is at least 0.8), and the share of
-    the traced commitments' records with a grant equivalent."""
+    traces, the part whose most probable link is at least 0.8, and that of the
+    high- and low-bound disbursements), and the share of the traced commitments'
+    records with a grant equivalent."""
     links = disbursements.group_by("row_id").agg(
         best_probability=pl.col("link_probability").max(),
+        high=pl.col("allocated_high_usd").sum(),
+        low=pl.col("allocated_low_usd").sum(),
         records=pl.len(),
         with_grant_equiv=pl.col("record_grant_equiv_usd").is_not_null().sum(),
     )
@@ -572,6 +591,10 @@ def _quality(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataF
             commitments=pl.len().cast(pl.Int32),
             climate_usd=climate.sum(),
             linked_usd=climate.filter(traced).sum(),
+            disbursed_climate_usd=(climate * pl.col("high") / pl.col("face_usd")).sum(),
+            certain_disbursed_climate_usd=(
+                climate * pl.col("low") / pl.col("face_usd")
+            ).sum(),
             linked_high_probability_usd=climate.filter(
                 traced, pl.col("best_probability") >= 0.8
             ).sum(),

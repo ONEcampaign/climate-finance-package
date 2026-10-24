@@ -1,3 +1,4 @@
+import json
 import re
 import socket
 import sys
@@ -12,7 +13,9 @@ import polars as pl
 import pytest
 
 from climate_finance.build import BuildConfig, Stage, build, fetch, load_config
-from climate_finance.build.config import LocalFile
+from climate_finance.build.config import Ledgers, LocalFile
+from climate_finance.build.sources import files
+from climate_finance.build.sources.gcf import PROJECTS_URL, READINESS_URL
 from climate_finance.errors import SourceUnavailableError
 from climate_finance.schema import sha256_file
 
@@ -80,6 +83,15 @@ class FakeSources:
         )
 
     def gcf(self, request: httpx.Request) -> httpx.Response:
+        if str(request.url) == READINESS_URL:
+            self.calls.append(("gcf_readiness", {}))
+            grants = json.loads((FIXTURES / "ledgers/gcf/readiness.json").read_text())
+            page = {"props": {"pageProps": {"data": {"data": grants}}}}
+            return httpx.Response(
+                200,
+                text='<script id="__NEXT_DATA__" type="application/json">'
+                f"{json.dumps(page)}</script>",
+            )
         self.calls.append(("gcf", {"url": str(request.url)}))
         return self.gcf_response
 
@@ -144,6 +156,7 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
             "oecd/CRS.parquet",
             "oecd/crdf_recipient.parquet",
             "oecd/crdf_provider.parquet",
+            "oecd/crdf_span.parquet",
             "oecd/multisystem.parquet",
             "oecd/Imputed_multilateral_shares.xlsx",
             "external/gcf/projects.json",
@@ -174,6 +187,16 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
             "perspective": "recipient",
             "start_year": 2015,
             "end_year": 2024,
+            "pre_process": True,
+        },
+    ) in sources.calls
+    # The year before the CRDF years, for the first share year's span.
+    assert (
+        "download_crdf",
+        {
+            "perspective": "recipient",
+            "start_year": 2014,
+            "end_year": 2014,
             "pre_process": True,
         },
     ) in sources.calls
@@ -249,6 +272,114 @@ def test_offline_fetch_refuses_a_manifest_for_other_sources(
         _fetch(config, tmp_path / "out", offline=True)
 
 
+LEDGERS = Ledgers(
+    years=(2021, 2022),
+    publishers=("ibrd", "ida", "asdb", "gcf", "gcf_readiness"),
+    archive=FIXTURES / "ledgers",
+)
+
+
+def test_online_fetch_copies_the_ledger_archive_with_a_source_per_ledger(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    release = _fetch(_config(crs_file=crs_file, ledgers=LEDGERS), tmp_path / "out")
+    manifest = pl.read_parquet(release / MANIFEST).filter(
+        pl.col("path").str.starts_with("ledgers/")
+    )
+
+    snapshots = [
+        (f"ledger_finances_one_{dataset}_{year}", f"{dataset}_31-Dec-{year}.json")
+        for dataset in ("DS00975", "DS00976")
+        for year in (2020, 2021, 2022)
+    ]
+    assert sorted(manifest.select("source", "path").rows()) == sorted(
+        [
+            *((source, f"ledgers/finances_one/{name}") for source, name in snapshots),
+            ("ledger_iati_asdb", "ledgers/iati/asdb/asdb-sample.xml"),
+            ("ledger_gcf_readiness", "ledgers/gcf/readiness.json"),
+        ]
+    )
+    assert set(manifest["method"]) == {"manual"}
+    # The GCF ledger reads the one projects file every fetch downloads.
+    assert sources.names().count("gcf") == 1
+
+
+def test_online_fetch_downloads_ledgers_without_an_archive(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    ledgers = Ledgers(years=(2021, 2022), publishers=("gcf", "gcf_readiness"))
+
+    release = _fetch(_config(crs_file=crs_file, ledgers=ledgers), tmp_path / "out")
+
+    readiness = (
+        pl.read_parquet(release / MANIFEST)
+        .filter(source="ledger_gcf_readiness")
+        .row(0, named=True)
+    )
+    assert (readiness["path"], readiness["method"], readiness["url"]) == (
+        "ledgers/gcf/readiness.json",
+        "http",
+        READINESS_URL,
+    )
+    assert sources.names().count("gcf_readiness") == 1
+
+
+def test_the_afdb_ledger_brings_the_imf_sdr_rate(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    ledgers = LEDGERS.model_copy(update={"publishers": ("afdb",)})
+
+    release = _fetch(_config(crs_file=crs_file, ledgers=ledgers), tmp_path / "out")
+
+    manifest = pl.read_parquet(release / MANIFEST).filter(
+        pl.col("path").str.starts_with("ledgers/")
+    )
+    # The AfDB's ledger is in SDR, which the DAC gives no rate for.
+    assert sorted(manifest.select("source", "path").rows()) == [
+        ("ledger_iati_afdb", "ledgers/iati/afdb/afdb-sample.xml"),
+        ("ledger_imf_sdr", "ledgers/imf/sdr_usd.xml"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("fetched", "offline", "named"),
+    [
+        (None, LEDGERS, "ledger_iati_asdb"),
+        (LEDGERS, None, "ledger_iati_asdb"),
+        (
+            LEDGERS,
+            LEDGERS.model_copy(update={"publishers": ("ibrd", "asdb")}),
+            "ledger_finances_one_DS00976_2020",
+        ),
+        (
+            LEDGERS,
+            LEDGERS.model_copy(update={"years": (2021, 2023)}),
+            "ledger_finances_one_DS00975_2023",
+        ),
+        (
+            LEDGERS,
+            LEDGERS.model_copy(update={"publishers": (*LEDGERS.publishers, "afdb")}),
+            "ledger_imf_sdr",
+        ),
+    ],
+    ids=["added", "dropped", "fewer-publishers", "more-years", "sdr"],
+)
+def test_offline_fetch_refuses_a_manifest_for_other_ledgers(
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    fetched: Ledgers | None,
+    offline: Ledgers | None,
+    named: str,
+) -> None:
+    _fetch(_config(crs_file=crs_file, ledgers=fetched), tmp_path / "out")
+
+    with pytest.raises(SourceUnavailableError, match=named):
+        _fetch(
+            _config(crs_file=crs_file, ledgers=offline), tmp_path / "out", offline=True
+        )
+
+
 def test_offline_fetch_refuses_without_an_earlier_manifest(tmp_path: Path) -> None:
     with pytest.raises(SourceUnavailableError, match="raw_manifest"):
         _fetch(_config(), tmp_path / "out", offline=True)
@@ -312,10 +443,12 @@ def test_a_bad_gcf_response_stops_the_fetch(
     crs_file: LocalFile,
     tmp_path: Path,
     response: httpx.Response,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sources.gcf_response = response
+    monkeypatch.setattr(files.time, "sleep", lambda seconds: None)
 
-    with pytest.raises(SourceUnavailableError, match=fetch.GCF_URL):
+    with pytest.raises(SourceUnavailableError, match=PROJECTS_URL):
         _fetch(_config(crs_file=crs_file), tmp_path / "out")
 
 
@@ -326,3 +459,34 @@ def test_crdf_workbooks_must_match_their_pinned_etags(
 
     with pytest.raises(SourceUnavailableError, match=re.escape("CRDF-PP_2024.xlsx")):
         _fetch(_config(crs_file=crs_file, crdf_etags=pins), tmp_path / "out")
+
+
+def test_jev_labels_bring_the_pinned_adaptation_labels_into_raw(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    path = crs_file.path.with_name("wk.csv")
+    path.write_text("text,level\nSeawalls,2\n")
+    labels = LocalFile(path=path, sha256=sha256_file(path))
+    config = _config(crs_file=crs_file, adaptation_labels=labels).model_copy(
+        update={"jev_labels": True}
+    )
+
+    release = _fetch(config, tmp_path / "out")
+
+    row = (
+        pl.read_parquet(release / MANIFEST)
+        .filter(source="adaptation_labels")
+        .row(0, named=True)
+    )
+    assert (row["path"], row["method"], row["sha256"]) == (
+        "labels/adaptation_labels.csv",
+        "manual",
+        labels.sha256,
+    )
+    assert (release / "raw" / row["path"]).read_bytes() == path.read_bytes()
+    other = _config(
+        crs_file=crs_file,
+        adaptation_labels=LocalFile(path=path, sha256="0" * 64),
+    ).model_copy(update={"jev_labels": True})
+    with pytest.raises(SourceUnavailableError, match="adaptation label file"):
+        _fetch(other, tmp_path / "out", offline=True)

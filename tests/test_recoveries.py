@@ -64,6 +64,7 @@ def _recover(
     *,
     activities: tuple[str, ...] = (),
     rates: dict[int, float] = RATES,
+    skip: tuple[str, ...] = (),
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """(links, units) as the link stage writes them with recoveries on."""
     crdf = crdf_rows(*rows).lazy()
@@ -76,6 +77,7 @@ def _recover(
         crs=crs,
         external=_external(*activities),
         exchange=_exchange(rates),
+        skip=skip,
     )
     schema.validate(schema.LINKS, links)
     return links, units
@@ -124,6 +126,26 @@ def test_the_crosswalk_takes_a_contract_of_the_rows_serial_within_ten_percent(
     )
 
     assert _linked(links, units) == ({("row", "b", "crosswalk")} if linked else set())
+
+
+@pytest.mark.parametrize(
+    ("skip", "linked"),
+    [((), True), (("crosswalk",), False), (("title_recipient",), True)],
+)
+def test_a_skipped_route_links_nothing(skip: tuple[str, ...], linked: bool) -> None:
+    links, units = _recover(
+        [_row("row", 2022, 100.0, project_number="20220001", title="ALPHA")],
+        [_bulk("b", 2023, 106.0, project_number="95001", title="BETA")],
+        activities=("XM-DAC-918-3-20220001-95001",),
+        skip=skip,
+    )
+
+    assert _linked(links, units) == ({("row", "b", "crosswalk")} if linked else set())
+
+
+def test_an_unknown_route_to_skip_is_refused() -> None:
+    with pytest.raises(LinkInputError, match="cross_walk"):
+        _recover([], [], skip=("cross_walk",))
 
 
 def test_a_projects_amount_counts_commitments_from_the_rows_year_on() -> None:
@@ -277,7 +299,7 @@ def test_a_taken_over_commitment_allocates_to_the_earliest_row() -> None:
     crs = crs_records(*records).lazy()
     units = build_units(crs).collect()
     id_practice = classify_id_practice(units)
-    trace = link_by_keys(units, id_practice=id_practice, first_year=2010)
+    trace = link_by_keys(units, first_year=2010)
     recovered = recover(
         crdf,
         within_year=link_within_year(crdf, units=units.lazy()).collect(),

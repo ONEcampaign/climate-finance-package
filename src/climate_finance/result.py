@@ -171,12 +171,23 @@ class Quality:
     """Link, coverage and status statistics for part of a release.
 
     `table` holds the release's `quality` rows by provider and year. `status` holds
-    climate value by provider and commitment status.
+    climate value by provider and commitment status. `eu_left_out` holds, by EU
+    Institutions agency, channel, year and flow, the value of the agency's own rows
+    that a provider view of every provider leaves out when EU Institutions count as
+    a channel, because members' contributions to that channel stand in for them.
+    Add it back to compare with totals that count EU Institutions as a provider.
+    `attribution` holds, by provider, year and flow, the value attributed through
+    core contributions, split by the agency share's source into `computed_usd`,
+    `held_usd` and `oecd_usd`.
     """
 
-    def __init__(self, *, table: Table, status: Table) -> None:
+    def __init__(
+        self, *, table: Table, status: Table, eu_left_out: Table, attribution: Table
+    ) -> None:
         self.table = table
         self.status = status
+        self.eu_left_out = eu_left_out
+        self.attribution = attribution
 
     def summary(self) -> pl.DataFrame:
         """Per provider: link rate, linked share above 0.8, label sources, status split.
@@ -270,12 +281,20 @@ def explain(
     ]
     if filters:
         lines.append(f"Filtered to {'; '.join(filters)}.")
+    if spec.view == "provider":
+        lines.append(
+            "Attributed rows carry share_source: computed shares are measured on the "
+            "agency's own commitments, held shares repeat its last share measured on "
+            "enough commitments, and oecd shares are the OECD's imputed share, which "
+            "OECD always uses and ONE uses where it has no share of its own."
+        )
     if spec.recipients is not None and spec.view == "provider":
         lines.append("Attributed finance has no recipient, so it drops out.")
     if spec.oda_only:
         lines.append(
-            "ODA only: flow codes 11, 13 and 19; rows without a flow code drop out, "
-            "and core contributions count as ODA."
+            "ODA only: commitments of flow category 10 and disbursements of flow "
+            "codes 11, 13 and 19; rows without either drop out, and core "
+            "contributions count as ODA."
         )
     prices = "current prices" if spec.prices == "current" else f"{spec.prices} prices"
     source = (
@@ -298,7 +317,10 @@ _VIEWS = {
 _FLOWS = {
     "commitments": "Flow: commitments at face value; low and high equal value.",
     "disbursements": "Flow: disbursements allocated to climate commitments, weighted "
-    "by the commitment's markers; low and high scale by each allocation's bounds. "
+    "by the commitment's markers; low counts the disbursements linked by the "
+    "donor's CRS id or World Bank loan number where the linked records agree, and "
+    "bank-ledger and IATI fills in full, since they match on the publisher's own "
+    "id; high counts every linked disbursement. "
     "Attributed finance counts core contributions disbursed. The modelled table "
     "holds a disbursement range for commitments whose disbursements no source "
     "reports.",
@@ -317,7 +339,7 @@ class Reconciliation:
 
     def rows(self, party: str, year: int) -> pl.DataFrame:
         """The project-level link behind one party and year."""
-        raise NotImplementedError("slice S19b")
+        raise NotImplementedError("BTR link rows")
 
 
 class Comparison:

@@ -1,6 +1,6 @@
 """Fetch through allocate on the archived source files, with recoveries off.
 
-The fetch is offline: the archive files take their places in the raw layout, with a
+The fetch is offline. The archive files take their places in the raw layout, with a
 `raw_manifest` that records them. One build runs with key repair off and pins the
 2021 to 2022 statuses; a second reuses its fetch and normalise tables, runs link and
 allocate with key repair on, and pins the no-record value the rules move.
@@ -17,6 +17,7 @@ from climate_finance.build import Stage, build, write_table
 from climate_finance.build.config import BuildConfig, LocalFile, load_config
 from climate_finance.build.fetch import (
     CRDF_FILES,
+    CRDF_SPAN_FILE,
     CRS_FILE,
     DAC_EXCHANGE_FILE,
     GCF_FILE,
@@ -45,16 +46,108 @@ FIRST_ROWS_MOVED_BN = {
     "no_disbursement_record": 0.0,
     "not_traceable": -0.94,
 }
+# The reference keys World Bank disbursements on their crs ids, which name projects;
+# the build's `wb_loan` tier keys them on their loan or credit numbers.
+LOAN_TIER_MOVED_BN = {
+    "disbursed": 1.60,
+    "partly_disbursed": 1.18,
+    "no_disbursement_record": -2.78,
+    "not_traceable": 0.0,
+}
+# The build's key tiers link more than the reference's: the project-number tiers
+# run for every agency, the crs-id tiers key an id that names several projects or
+# countries by recipient (`crs_key`) and compare unpadded line suffixes
+# (`canonical_crs_id`), and the project-number tiers compare numbers without `-` and
+# `_` (`pn_key`). That moves value from partly disbursed to disbursed, under the
+# reference's counting and under the release rule.
+KEY_TIERS_MOVED_BN = {
+    "disbursed": 0.30,
+    "partly_disbursed": -0.28,
+    "no_disbursement_record": -0.02,
+    "not_traceable": 0.0,
+}
+KEY_TIERS_RELEASE_MOVED_BN = {
+    "disbursed": 0.30,
+    "partly_disbursed": -0.30,
+    "no_disbursement_record": 0.0,
+    "not_traceable": 0.0,
+}
+# Each project-number tier asks for one crs id over its own key (`Tier.unique_by`),
+# which links US awards and other donors' lines out of no record. The rows it moves
+# count the same under both rules.
+UNIQUE_BY_MOVED_BN = {
+    "disbursed": 0.14,
+    "partly_disbursed": 0.17,
+    "no_disbursement_record": -0.31,
+    "not_traceable": 0.0,
+}
+# `pn_recipient_date` puts German disbursements on the line whose commitment date
+# they repeat.
+DATE_TIER_MOVED_BN = {
+    "disbursed": 0.12,
+    "partly_disbursed": -0.08,
+    "no_disbursement_record": -0.04,
+    "not_traceable": 0.0,
+}
+# The reference links by key alone. The truth-group classifier (`link.score`) links
+# disbursements the keys left to commitments, which moves value out of no record.
+CLASSIFIER_MOVED_BN = {
+    "disbursed": 0.03,
+    "partly_disbursed": 0.11,
+    "no_disbursement_record": -0.15,
+    "not_traceable": 0.0,
+}
+CLASSIFIER_RELEASE_MOVED_BN = {
+    "disbursed": 0.03,
+    "partly_disbursed": 0.12,
+    "no_disbursement_record": -0.15,
+    "not_traceable": 0.0,
+}
+# A record's own commitment fills before older commitments of its key group
+# (`_own_commitments`), so where a donor files a new module or yearly grant under a
+# reused crs id, the new record's money stays out of the older module's headroom.
+# Mostly Dutch and British rows move from disbursed to partly disbursed, and own
+# commitments with no record take their records' money.
+OWN_FIRST_MOVED_BN = {
+    "disbursed": -0.50,
+    "partly_disbursed": 0.70,
+    "no_disbursement_record": -0.21,
+    "not_traceable": 0.0,
+}
+OWN_FIRST_RELEASE_MOVED_BN = {
+    "disbursed": -0.50,
+    "partly_disbursed": 0.63,
+    "no_disbursement_record": -0.14,
+    "not_traceable": 0.0,
+}
 # With aggregate children counted and their parents left out (the release rule).
 RELEASE_RULE_BN = {
-    "disbursed": 54.77,
-    "partly_disbursed": 104.83,
-    "no_disbursement_record": 34.86,
+    "disbursed": 56.37,
+    "partly_disbursed": 106.01,
+    "no_disbursement_record": 32.07,
     "not_traceable": 35.12,
 }
 # No-record value the key-repair rules move to partly or fully disbursed, counted
-# as the reference counts, by provider category (USD bn).
-REPAIR_MOVED_BN = {"bilateral": 0.96, "banks": 4.54}
+# as the reference counts, by provider category (USD bn). The `wb_loan` tier already
+# reaches the World Bank commitments the rules would, so the rules move no IBRD or
+# IDA value. Both builds carry classifier links. In the build without the rules, the
+# classifier already lifts USD 0.08 bn of bilateral rows out of no record through
+# commitments the rules reach, so the rules move that much less. A number committed
+# in several countries links within the disbursement's recipient and purpose
+# (`_programmes`); on the number alone a disbursement would reach more than
+# `MAX_COMMITMENTS` commitments and link to none. US numbers of that kind carry
+# USD 0.40 bn of the bilateral figure; the purpose tier's own guard
+# (`Tier.unique_by`) already links USD 0.20 bn more US value in the build without
+# the rules. A unit that disbursed no more than its own commitment is no
+# disbursement unit to the rules, and a line's spare commitment (`_spare_lines`)
+# joins the commitments a number reaches, so some US numbers reach more than
+# `MAX_COMMITMENTS`. Between them the two take USD 0.07 bn of US rows out of the
+# figure. Rounded AfDB project numbers are null, so `repair_title_recipient` also
+# takes AfDB commitments that the rounded numbers reach, which carry USD 0.18 bn of
+# the banks figure. A rounded AfDB number that also fits a spare line stands for two
+# full numbers, so `repair_afdb_scientific` links it to none (USD 0.05 bn).
+# `repair_stray_country` moves USD 0.01 bn of Canadian and Danish rows.
+REPAIR_MOVED_BN = {"bilateral": 0.85, "banks": 2.12}
 REPAIR_TOLERANCE_BN = 0.05
 _CATEGORY = {
     "DAC member": "bilateral",
@@ -79,8 +172,14 @@ def config(data: Path) -> BuildConfig:
             "iati_archive": data / "raw" / "external" / "iati",
         }
     )
+    # The archive builds run offline with no Jev cache.
     return config.model_copy(
-        update={"key_repair": False, "recoveries": False, "sources": sources}
+        update={
+            "key_repair": False,
+            "recoveries": False,
+            "jev_links": False,
+            "sources": sources,
+        }
     )
 
 
@@ -92,6 +191,7 @@ def _lay_out_raw(release_dir: Path, *, archive: Path, config: BuildConfig) -> No
             f"crdf_{perspective}": [(path, path)]
             for perspective, path in CRDF_FILES.items()
         },
+        "crdf_span": [(CRDF_SPAN_FILE, CRDF_SPAN_FILE)],
         "multisystem": [(MULTISYSTEM_FILE, MULTISYSTEM_FILE)],
         "imputed_shares": [(IMPUTED_SHARES_FILE, IMPUTED_SHARES_FILE)],
         "gcf_projects": [(Path("external/gcf_api/projects.json"), GCF_FILE)],
@@ -159,7 +259,7 @@ def repaired(base: Path, config: BuildConfig) -> Path:
 
 
 def _rows(release_dir: Path) -> pl.DataFrame:
-    """2021 to 2022 recipient-perspective CRDF rows with their status; an aggregate
+    """2021 to 2022 recipient-perspective CRDF rows with their status. An aggregate
     parent left out of allocation has none."""
     crdf = pl.read_parquet(table_path(release_dir, "normalise", "crdf"))
     status = pl.read_parquet(table_path(release_dir, "allocate", "commitments"))
@@ -194,9 +294,18 @@ def test_statuses_reproduce_the_reference_without_recoveries(
     )
     built = _by_status(_prototype_count(_rows(base)))
     assert set(built) == set(reference["status"])
-    for status, usd_bn in reference.select("status", "usd_bn").iter_rows():
-        moved = FIRST_ROWS_MOVED_BN[status]
-        assert built[status] == pytest.approx(usd_bn + moved, abs=TOLERANCE_BN), status
+    expected = {
+        status: usd_bn
+        + FIRST_ROWS_MOVED_BN[status]
+        + LOAN_TIER_MOVED_BN[status]
+        + KEY_TIERS_MOVED_BN[status]
+        + UNIQUE_BY_MOVED_BN[status]
+        + DATE_TIER_MOVED_BN[status]
+        + CLASSIFIER_MOVED_BN[status]
+        + OWN_FIRST_MOVED_BN[status]
+        for status, usd_bn in reference.select("status", "usd_bn").iter_rows()
+    }
+    assert built == pytest.approx(expected, abs=TOLERANCE_BN)
 
 
 def test_statuses_under_the_release_rule(base: Path) -> None:
@@ -208,7 +317,16 @@ def test_statuses_under_the_release_rule(base: Path) -> None:
         .all()
     )
     built = _by_status(rows.drop_nulls("status"))
-    assert built == pytest.approx(RELEASE_RULE_BN, abs=TOLERANCE_BN)
+    expected = {
+        status: usd_bn
+        + KEY_TIERS_RELEASE_MOVED_BN[status]
+        + UNIQUE_BY_MOVED_BN[status]
+        + DATE_TIER_MOVED_BN[status]
+        + CLASSIFIER_RELEASE_MOVED_BN[status]
+        + OWN_FIRST_RELEASE_MOVED_BN[status]
+        for status, usd_bn in RELEASE_RULE_BN.items()
+    }
+    assert built == pytest.approx(expected, abs=TOLERANCE_BN)
 
 
 @pytest.mark.parametrize("build_name", ["base", "repaired"])
@@ -286,7 +404,7 @@ def test_key_repair_moves_no_record_value(
 
 
 def test_units_rebuild_to_the_same_bits(base: Path, repaired: Path) -> None:
-    # The two builds form units from one normalise output, in separate runs; a
+    # The two builds form units from one normalise output, in separate runs. A
     # group sum that adds in thread order changes the last bit of some amounts.
     assert sha256_file(table_path(base, "link", "units")) == sha256_file(
         table_path(repaired, "link", "units")

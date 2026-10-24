@@ -15,7 +15,7 @@ def test_cf_build_declares_every_command() -> None:
         "sample",
         "gate",
         "queue",
-        "apply-decisions",
+        "import-labels",
         "ingest-unfccc",
         "release",
     }

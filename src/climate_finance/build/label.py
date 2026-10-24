@@ -10,15 +10,26 @@ do not.
 Each linked record's reported objectives enter `objectives`: the CRDF objective of
 the climate-component commitments it fills (`crdf`, level 2), and the record's own
 Rio markers (`marker`).
+
+With `jev_labels` on, Jev reads the title and long description of every record
+allocated to a commitment its donor marked adaptation (marker 1 or 2) without climate
+components, as the human-coded projects give them, and answers three adaptation
+questions in one request. Weikmans et al.'s human-coded projects are all
+donor-marked adaptation, so the labels cover that population only. Jev's answers to
+the same questions on those projects fit the cut on the lenient answer that labels a
+record adaptation. A label carries a Rio level, which the weighting reads like a
+donor's marker. Mitigation has no human-coded set, so Jev labels adaptation only.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import polars as pl
 
-from climate_finance.schema import JEV_LEVEL_MAP, OBJECTIVE_LABELS, OBJECTIVES
+from climate_finance.build.fetch import ADAPTATION_LABELS_FILE
+from climate_finance.schema import OBJECTIVE_LABELS, OBJECTIVES
 
 if TYPE_CHECKING:
     from climate_finance.build.jev_client import JevClient
@@ -27,26 +38,80 @@ if TYPE_CHECKING:
 # The level a climate-component commitment gives its CRDF objective.
 COMPONENT_LEVEL = 2
 
+# The adaptation questions, written from the OECD Rio marker handbook and frozen
+# before the held-out evaluation on Weikmans et al.'s projects. A cached answer is
+# keyed on this wording, so a change asks Jev again and needs a new evaluation. The
+# client sorts the choice's options, so Jev always reads them in alphabetical order.
+STRICT = (
+    "Does this aid activity state an aim of reducing vulnerability to, or helping "
+    "people or systems cope with, the impacts of climate change (adaptation)? Answer "
+    "yes only if climate change impacts or climate risk are named or clearly implied "
+    "as the reason for the activity. Answer no if climate is not mentioned, or only "
+    "environment, development, or general disaster work is described."
+)
+LENIENT = (
+    "Does this aid activity contribute in any way to adaptation to climate change: "
+    "reducing vulnerability to climate variability or climate change impacts, "
+    "building resilience, or improving coping with droughts, floods, sea level rise "
+    "or changing weather?"
+)
+LEVEL = (
+    "Which best describes how strongly this aid activity targets adaptation to "
+    "climate change (Rio marker for adaptation)? Judge only from the text given."
+)
+LEVEL_CRITERIA = {
+    "principal": "Climate change adaptation is a fundamental objective of the "
+    "activity: it would not have been undertaken without that aim, and the text "
+    "says so.",
+    "significant": "Adaptation to climate change is a stated objective but "
+    "secondary: the activity has another main purpose and also reduces "
+    "vulnerability to climate impacts or builds adaptive capacity.",
+    "not_targeted": "The activity does not state an adaptation aim. Generic "
+    "mentions of environment, development, poverty or disaster without a link to "
+    "climate change impacts do not count.",
+    "insufficient_info": "The text is too short or too vague to tell whether the "
+    "activity has an adaptation aim (for example only a title, a code, or an "
+    "administrative note).",
+}
+ADAPTATION_QUESTIONS = {
+    "strict": {"type": "noul", "instructions": STRICT},
+    "lenient": {"type": "noul", "instructions": LENIENT},
+    "level": {"type": "choice", "instructions": LEVEL, "criteria": LEVEL_CRITERIA},
+}
+# Cuts on the lenient answer that the threshold fit tries.
+THRESHOLDS = tuple(step / 20 for step in range(1, 20))
+# Weikmans et al.'s adaptation level per project: 0, 1 or 2, and 99 where the text
+# gave too little to tell, which counts as 0.
+WEIKMANS_LEVEL = "Our re-evaluation (climateAdaptation)"
+NO_TEXT = "(no text)"
+
 
 def run_label(context: StageContext) -> StageOutput:
-    """Write `objectives` and `jev_level_map`.
+    """Write `objectives`.
 
-    The objectives hold the CRDF and marker labels of linked records. Jev labels and
-    their level map are not implemented, so `jev_level_map` is written empty.
+    The objectives hold the CRDF and marker labels of linked records. With
+    `jev_labels` on they also hold Jev's adaptation labels, cut at the threshold
+    fitted on the human-coded labels fetch copied into `raw/`.
     """
-    objectives = reported_objectives(
-        context.read("fill", "allocations"),
-        commitments=context.read("normalise", "crdf"),
-        crs=context.read("normalise", "crs"),
+    allocations = context.read("fill", "allocations")
+    commitments = context.read("normalise", "crdf")
+    crs = context.read("normalise", "crs")
+    objectives = reported_objectives(allocations, commitments=commitments, crs=crs)
+    if not context.config.jev_labels:
+        return {"objectives": objectives}
+
+    human = read_adaptation_labels(context.raw_dir / ADAPTATION_LABELS_FILE)
+    fitted = human.join(
+        ask_jev(human.select("label_id", "text"), client=context.jev),
+        on="label_id",
+        validate="1:1",
     )
-    return {
-        "objectives": objectives,
-        "jev_level_map": pl.DataFrame(
-            schema={
-                name: column.dtype for name, column in JEV_LEVEL_MAP.columns.items()
-            }
-        ),
-    }
+    records = jev_records(allocations, commitments=commitments, crs=crs).collect()
+    labels = jev_objectives(
+        ask_jev(records, client=context.jev),
+        threshold=fit_adaptation_threshold(fitted),
+    )
+    return {"objectives": pl.concat([objectives.collect(), labels])}
 
 
 def inherit_markers(
@@ -144,11 +209,148 @@ def reported_objectives(
     )
 
 
-def classify_objectives(records: pl.LazyFrame, *, client: JevClient) -> pl.LazyFrame:
-    """Jev adaptation and mitigation labels for CRS texts."""
-    raise NotImplementedError("slice S18b")
+def read_adaptation_labels(path: Path) -> pl.DataFrame:
+    """Weikmans et al.'s human-coded adaptation levels with each project's text.
+
+    The text is the file's own `text`, else the title and long description, else
+    `NO_TEXT`. Projects without a level are left out.
+
+    Returns:
+        `label_id` (the project's row in the file), `text` and `level` (0, 1 or 2).
+    """
+    text = pl.coalesce(
+        "text", project_text(pl.col("projecttitle"), pl.col("longdescription"))
+    )
+    return (
+        pl.read_csv(path, infer_schema_length=0)
+        .with_row_index("label_id")
+        .filter(pl.col(WEIKMANS_LEVEL).is_not_null())
+        .select(
+            pl.col("label_id").cast(pl.Int64),
+            text=pl.when(text.str.len_chars() > 0)
+            .then(text)
+            .otherwise(pl.lit(NO_TEXT)),
+            level=pl.col(WEIKMANS_LEVEL)
+            .cast(pl.Int8)
+            .replace_strict({0: 0, 1: 1, 2: 2, 99: 0}, return_dtype=pl.Int8),
+        )
+    )
 
 
-def fit_jev_level_map(labels: pl.LazyFrame, *, human: pl.LazyFrame) -> pl.LazyFrame:
-    """Isotonic map from Jev's expected coefficient to a calibrated level."""
-    raise NotImplementedError("slice S18b")
+def jev_records(
+    allocations: pl.LazyFrame, *, commitments: pl.LazyFrame, crs: pl.LazyFrame
+) -> pl.LazyFrame:
+    """The records Jev labels, with their `project_text`.
+
+    A record qualifies when it is allocated to a commitment without climate
+    components whose adaptation marker, which the record inherits, is 1 or 2, and
+    has a title or long description. A commitment marked 0 lies outside the
+    human-coded projects, which are all marked adaptation.
+    """
+    marked = commitments.filter(
+        pl.col("climate_share").is_null(), pl.col("rio_adaptation").is_in([1, 2])
+    ).select("row_id")
+    return (
+        allocations.join(marked, on="row_id", how="semi")
+        .select("record_id")
+        .unique()
+        .join(
+            crs.select(
+                "record_id",
+                text=project_text(pl.col("title"), pl.col("long_description")),
+            ),
+            on="record_id",
+        )
+        .filter(pl.col("text").str.len_chars() > 0)
+    )
+
+
+def project_text(title: pl.Expr, description: pl.Expr) -> pl.Expr:
+    """A project's title and long description, joined by a space and stripped, as
+    Weikmans et al.'s file builds its text."""
+    return pl.concat_str(
+        title.fill_null(""), pl.lit(" "), description.fill_null("")
+    ).str.strip_chars()
+
+
+def ask_jev(texts: pl.DataFrame, *, client: JevClient) -> pl.DataFrame:
+    """Jev's answers to `ADAPTATION_QUESTIONS` for each text.
+
+    Args:
+        texts: a `text` column and any id columns. Each distinct text is asked once.
+        client: the build's Jev client.
+
+    Returns:
+        The id columns with Jev's `lenient` answer, `p_significant` and
+        `p_principal`.
+    """
+    unique = texts.select(pl.col("text").unique().sort())
+    responses = client.score(
+        [
+            {"state": {"project": text}, "questions": ADAPTATION_QUESTIONS}
+            for text in unique["text"]
+        ]
+    )
+    answers = unique.with_columns(
+        lenient=pl.Series([_answer(r, "lenient")["noul"] for r in responses]),
+        p_significant=pl.Series([_level(r, "significant") for r in responses]),
+        p_principal=pl.Series([_level(r, "principal") for r in responses]),
+    )
+    return texts.join(answers, on="text", how="left", validate="m:1").drop("text")
+
+
+def _answer(response: dict[str, object], question: str) -> dict[str, object]:
+    answers = response["answers"]
+    assert isinstance(answers, dict)
+    return answers[question]
+
+
+def _level(response: dict[str, object], option: str) -> float:
+    probabilities = _answer(response, "level")["probabilities"]
+    assert isinstance(probabilities, dict)
+    return float(probabilities[option])
+
+
+def fit_adaptation_threshold(fitted: pl.DataFrame) -> float:
+    """The cut on Jev's lenient answer with the highest adaptation F1.
+
+    Args:
+        fitted: human-coded projects with their `level` and Jev's `lenient` answer.
+
+    Returns:
+        The best of `THRESHOLDS`, a project counting as adaptation when its human
+        level is above 0. A tie goes to the higher cut.
+    """
+    human = pl.col("level") > 0
+
+    def f1(threshold: float) -> pl.Expr:
+        jev = pl.col("lenient") >= threshold
+        return (2 * (jev & human).sum() / (jev.sum() + human.sum())).alias(
+            str(threshold)
+        )
+
+    scores = fitted.select(f1(threshold) for threshold in THRESHOLDS).row(0)
+    return max(zip(scores, THRESHOLDS, strict=True))[1]
+
+
+def jev_objectives(answers: pl.DataFrame, *, threshold: float) -> pl.DataFrame:
+    """Jev's adaptation labels, one per record.
+
+    A record is labelled adaptation when its lenient answer reaches `threshold`, at
+    level 2 when Jev finds principal likelier than significant and 1 otherwise, and
+    at level 0 below it. `probability` is the lenient answer, which is not
+    calibrated.
+    """
+    adaptation = pl.col("lenient") >= threshold
+    principal = pl.col("p_principal") > pl.col("p_significant")
+    return answers.select(
+        "record_id",
+        objective=pl.lit("adaptation"),
+        level=pl.when(adaptation & principal)
+        .then(pl.lit(2, pl.Int8))
+        .when(adaptation)
+        .then(pl.lit(1, pl.Int8))
+        .otherwise(pl.lit(0, pl.Int8)),
+        label_source=pl.lit("jev"),
+        probability="lenient",
+    )

@@ -9,9 +9,10 @@ import pytest
 
 from climate_finance import schema
 from climate_finance.build import write_stage
-from climate_finance.build.config import load_config
+from climate_finance.build.config import Ledgers, load_config
 from climate_finance.build.fetch import (
     CRDF_FILES,
+    CRDF_SPAN_FILE,
     CRS_FILE,
     DAC_EXCHANGE_FILE,
     GCF_FILE,
@@ -117,6 +118,49 @@ def test_crs_record_ids_are_unique_and_stable(crs: pl.DataFrame) -> None:
     assert crs.filter(crs_id="2022000101")["record_id"].n_unique() == 2
 
 
+def test_crs_record_ids_follow_long_descriptions_through_a_revision() -> None:
+    # Two tranches agree on every identifying field; their long descriptions differ.
+    tranche = pl.col("crs_id") == "2022000101"
+    raw = pl.read_parquet(OECD / "CRS.parquet").with_columns(
+        long_description=pl.when(tranche)
+        .then(pl.concat_str("long_description", pl.col("usd_commitment").cast(str)))
+        .otherwise("long_description")
+    )
+    # The revision swaps the tranches' amounts.
+    revised = raw.with_columns(
+        pl.when(tranche)
+        .then(pl.col(name).reverse().over(tranche))
+        .otherwise(pl.col(name))
+        .alias(name)
+        for name in ("usd_commitment", "usd_disbursement", "usd_grant_equiv")
+    )
+
+    ids = [
+        normalise_crs(frame.lazy(), years=YEARS)
+        .filter(crs_id="2022000101")
+        .select("long_description", "record_id")
+        .sort("long_description")
+        .collect()
+        for frame in (raw, revised)
+    ]
+
+    assert ids[0].equals(ids[1])
+
+
+def test_crs_trims_ids(crs: pl.DataFrame) -> None:
+    raw = pl.read_parquet(OECD / "CRS.parquet").with_columns(
+        pl.when(pl.col("crs_id") == "2022000102")
+        .then(pl.concat_str(pl.col(name), pl.lit(" ")))
+        .otherwise(pl.col(name))
+        .alias(name)
+        for name in ("crs_id", "project_number")
+    )
+
+    padded = normalise_crs(raw.lazy(), years=YEARS).collect()
+
+    assert padded.equals(crs)
+
+
 def test_trace_population_leaves_out_core_contributions(crs: pl.DataFrame) -> None:
     traced = trace_population(crs.lazy()).collect()
 
@@ -212,6 +256,16 @@ def test_crdf_repairs_excel_damage(crs: pl.DataFrame) -> None:
     assert _row(crdf, crs_id="2015009999")["project_number"] is None
 
 
+def test_crdf_trims_ids(crs: pl.DataFrame) -> None:
+    raw = pl.read_parquet(OECD / "crdf_recipient.parquet")
+    padded = raw.with_columns(
+        pl.concat_str(pl.lit(" "), pl.col(name), pl.lit(" ")).alias(name)
+        for name in ("crs_id", "project_number")
+    )
+
+    assert _crdf(crs, raw=padded).equals(_crdf(crs, raw=raw))
+
+
 @pytest.mark.parametrize(
     ("project_number", "scheme"),
     [
@@ -258,9 +312,10 @@ def test_crdf_vintage_is_the_workbooks_latest_year(crs: pl.DataFrame) -> None:
     }
 
 
+@pytest.mark.parametrize("ledgers", [False, True])
 @pytest.mark.parametrize("recoveries", [False, True])
 def test_run_normalise_writes_every_table_from_raw(
-    tmp_path: Path, recoveries: bool
+    tmp_path: Path, recoveries: bool, ledgers: bool
 ) -> None:
     raw = tmp_path / "raw"
     fixtures = OECD.parent
@@ -277,31 +332,81 @@ def test_run_normalise_writes_every_table_from_raw(
     ]:
         (raw / target).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(source, raw / target)
+    # 2014 rows of the 2014-2015 workbook, whose 2015 rows are in crdf_recipient:
+    # orchards under their 2015 crs id, and school gardens under another, which
+    # the 2015 row repeats by title and amount.
+    pl.read_parquet(OECD / "crdf_recipient.parquet").filter(
+        pl.col("crs_id").is_in(["2015009999", "2015001842"])
+    ).with_columns(
+        year=pl.lit(2014, pl.Int32),
+        crs_id=pl.col("crs_id").replace({"2015001842": "2014001842"}),
+    ).write_parquet(raw / CRDF_SPAN_FILE)
     shutil.copytree(
         fixtures / "iati", raw / IATI_DIR, ignore=shutil.ignore_patterns("*.md")
+    )
+    shutil.copytree(
+        fixtures / "ledgers", raw / "ledgers", ignore=shutil.ignore_patterns("*.md")
     )
     pl.DataFrame(
         {"iso_code": ["EUI"] * 12, "year": range(2015, 2027), "exchange_rate": 0.8}
     ).write_parquet(raw / DAC_EXCHANGE_FILE)
+    config = load_config(Path(__file__).parents[1] / "build.toml")
+    sources = config.sources.model_copy(
+        update={
+            "ledgers": Ledgers(
+                years=(2021, 2022), publishers=("ibrd", "ida", "ebrd", "afdb", "gcf")
+            )
+            if ledgers
+            else None
+        }
+    )
     context = StageContext(
         release="test",
         release_dir=tmp_path,
-        config=load_config(Path(__file__).parents[1] / "build.toml").model_copy(
-            update={"recoveries": recoveries}
-        ),
+        config=config.model_copy(update={"recoveries": recoveries, "sources": sources}),
         offline=True,
     )
     normalise = next(stage for stage in REGISTRY if stage.name == "normalise")
 
     hashes = write_stage(normalise, run_normalise(context), tmp_path)
 
-    # `btr` waits for an ingested BTR table; `orgs` is written with recoveries.
-    expected = set(schema.STAGE_TABLES["normalise"]) - {"btr", "orgs"}
-    assert set(hashes) == expected | ({"orgs"} if recoveries else set())
+    # `btr` waits for an ingested BTR table; `orgs` is written with recoveries and
+    # `ledger` when the config names ledgers.
+    expected = set(schema.STAGE_TABLES["normalise"]) - {"btr", "orgs", "ledger"}
+    assert set(hashes) == (
+        expected
+        | ({"orgs"} if recoveries else set())
+        | ({"ledger"} if ledgers else set())
+    )
+    if ledgers:
+        ledger = pl.read_parquet(table_path(tmp_path, "normalise", "ledger"))
+        assert set(ledger["publisher"]) == {"ibrd", "ida", "ebrd", "afdb", "gcf"}
+        # EBRD's euros convert at the euro's DAC rate. The DAC publishes no XDR
+        # rate, so the AfDB's SDR amounts convert at the IMF's, which the fixture
+        # gives as 1.25 US dollars in 2020 and not at all for 2019.
+        ebrd = ledger.filter(publisher="ebrd")
+        assert (ebrd["amount_usd"] == ebrd["amount"] / 0.8).all()
+        xdr = ledger.filter(currency="XDR")
+        assert set(xdr["year"]) == {2019, 2020}
+        assert (
+            xdr.filter(year=2020)
+            .select(pl.col("amount") * 1.25 - pl.col("amount_usd"))
+            .to_series()
+            == 0
+        ).all()
+        assert xdr.filter(year=2019)["amount_usd"].is_null().all()
     if recoveries:
         orgs = pl.read_parquet(table_path(tmp_path, "normalise", "orgs"))
         eib = orgs.filter(role="agency", source_name="European Investment Bank")
         assert eib.select("donor_code", "agency_code").rows() == [(918, 3)]
+    # The year before the CRDF years goes to crdf_span alone, dated by its workbook
+    # and without the row a 2015 row repeats.
+    span = pl.read_parquet(table_path(tmp_path, "normalise", "crdf_span"))
+    assert span.select("year", "vintage", "crs_id").rows() == [
+        (2014, 2015, "2015009999")
+    ]
+    crdf = pl.read_parquet(table_path(tmp_path, "normalise", "crdf"))
+    assert crdf["year"].min() == config.years.crdf[0]
     external = pl.read_parquet(table_path(tmp_path, "normalise", "external"))
     # GCF's euro project converts at the euro's DAC rate.
     euro = external.filter(currency="EUR", source="gcf")

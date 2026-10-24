@@ -1,0 +1,170 @@
+{
+ "248089262a0aae66c9071d3a5527e1964b131bdc": {
+  "derived_facts": {
+   "later_disbursement_as_share_of_earlier_commitment": 0.136,
+   "later_record_also_has_its_own_commitment": false,
+   "same_project_number": false,
+   "same_provider": true,
+   "same_purpose_code": true,
+   "same_recipient": true,
+   "same_title": true,
+   "years_between_records": 1
+  },
+  "earlier_record": {
+   "channel_code": 51000,
+   "commitment_usd": 553000,
+   "disbursement_usd": 47000,
+   "finance_type_code": 110,
+   "flow_code": 11,
+   "long_description": "earlier long description 3",
+   "project_number": "earlier project number 0",
+   "provider": "DEU",
+   "purpose_code": 41082,
+   "recipient": "F8_X",
+   "short_description": "earlier short description 2",
+   "title": "earlier title 1",
+   "year": 2021
+  },
+  "later_record": {
+   "channel_code": 51000,
+   "commitment_usd": 0,
+   "disbursement_usd": 75000,
+   "finance_type_code": 110,
+   "flow_code": 11,
+   "long_description": "later long description 3",
+   "project_number": "later project number 0",
+   "provider": "DEU",
+   "purpose_code": 41082,
+   "recipient": "F8_X",
+   "short_description": "later short description 2",
+   "title": "later title 1",
+   "year": 2022
+  }
+ },
+ "2530c5f49e97070569f7d7b9f0b1b114e193a73b": {
+  "derived_facts": {
+   "later_disbursement_as_share_of_earlier_commitment": 0.547,
+   "later_record_also_has_its_own_commitment": false,
+   "same_project_number": false,
+   "same_provider": true,
+   "same_purpose_code": true,
+   "same_recipient": true,
+   "same_title": true,
+   "years_between_records": 1
+  },
+  "earlier_record": {
+   "channel_code": 51000,
+   "commitment_usd": 445000,
+   "disbursement_usd": 50000,
+   "finance_type_code": 110,
+   "flow_code": 11,
+   "long_description": "earlier long description 3",
+   "project_number": "earlier project number 0",
+   "provider": "DEU",
+   "purpose_code": 41082,
+   "recipient": "F8_X",
+   "short_description": "earlier short description 2",
+   "title": "earlier title 1",
+   "year": 2021
+  },
+  "later_record": {
+   "channel_code": 51000,
+   "commitment_usd": 0,
+   "disbursement_usd": 244000,
+   "finance_type_code": 110,
+   "flow_code": 11,
+   "long_description": "later long description 3",
+   "project_number": "later project number 0",
+   "provider": "DEU",
+   "purpose_code": 41082,
+   "recipient": "F8_X",
+   "short_description": "later short description 2",
+   "title": "later title 1",
+   "year": 2022
+  }
+ },
+ "cada6b9e2aa899952a2607151a22a5471adaf91f": {
+  "derived_facts": {
+   "later_disbursement_as_share_of_earlier_commitment": 0.799,
+   "later_record_also_has_its_own_commitment": false,
+   "same_project_number": false,
+   "same_provider": true,
+   "same_purpose_code": true,
+   "same_recipient": true,
+   "same_title": true,
+   "years_between_records": 2
+  },
+  "earlier_record": {
+   "channel_code": 11003,
+   "commitment_usd": 1484000,
+   "disbursement_usd": 287000,
+   "finance_type_code": 110,
+   "flow_code": 11,
+   "long_description": "earlier long description 3",
+   "project_number": "earlier project number 0",
+   "provider": "DEU",
+   "purpose_code": 41020,
+   "recipient": "DPGC_X",
+   "short_description": "earlier short description 2",
+   "title": "earlier title 1",
+   "year": 2021
+  },
+  "later_record": {
+   "channel_code": 11003,
+   "commitment_usd": 0,
+   "disbursement_usd": 1185000,
+   "finance_type_code": 110,
+   "flow_code": 11,
+   "long_description": "later long description 3",
+   "project_number": "later project number 0",
+   "provider": "DEU",
+   "purpose_code": 41020,
+   "recipient": "DPGC_X",
+   "short_description": "later short description 2",
+   "title": "later title 1",
+   "year": 2023
+  }
+ },
+ "eb137091036b66a0b159b15600e2bcff9b733e68": {
+  "derived_facts": {
+   "later_disbursement_as_share_of_earlier_commitment": 0.214,
+   "later_record_also_has_its_own_commitment": false,
+   "same_project_number": false,
+   "same_provider": true,
+   "same_purpose_code": true,
+   "same_recipient": true,
+   "same_title": true,
+   "years_between_records": 1
+  },
+  "earlier_record": {
+   "channel_code": 51000,
+   "commitment_usd": 324000,
+   "disbursement_usd": 42000,
+   "finance_type_code": 110,
+   "flow_code": 11,
+   "long_description": "earlier long description 3",
+   "project_number": "earlier project number 0",
+   "provider": "DEU",
+   "purpose_code": 41082,
+   "recipient": "F8_X",
+   "short_description": "earlier short description 2",
+   "title": "earlier title 1",
+   "year": 2021
+  },
+  "later_record": {
+   "channel_code": 51000,
+   "commitment_usd": 0,
+   "disbursement_usd": 69000,
+   "finance_type_code": 110,
+   "flow_code": 11,
+   "long_description": "later long description 3",
+   "project_number": "later project number 0",
+   "provider": "DEU",
+   "purpose_code": 41082,
+   "recipient": "F8_X",
+   "short_description": "later short description 2",
+   "title": "later title 1",
+   "year": 2022
+  }
+ }
+}

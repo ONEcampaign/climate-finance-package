@@ -12,4 +12,4 @@ def run_gates(
 
     `waive_precision` lets a failed precision gate pass.
     """
-    raise NotImplementedError("slice S17")
+    raise NotImplementedError("release gates")

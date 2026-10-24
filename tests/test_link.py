@@ -13,8 +13,19 @@ from climate_finance.build.config import load_config
 from climate_finance.build.errors import StageInputMissingError
 from climate_finance.build.link import run_link
 from climate_finance.build.link.crdf_crs import link_within_year
-from climate_finance.build.link.id_practice import classify_id_practice, period_of
-from climate_finance.build.link.keys import build_units, link_by_keys, normalise_pn
+from climate_finance.build.link.disagreement import flag_disagreement
+from climate_finance.build.link.id_practice import (
+    classify_id_practice,
+    parent_id,
+    period_of,
+)
+from climate_finance.build.link.jev import JevFitError
+from climate_finance.build.link.keys import (
+    as_exact_links,
+    build_units,
+    link_by_keys,
+    normalise_pn,
+)
 from climate_finance.build.normalise.crdf import normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs
 from climate_finance.build.stages import REGISTRY, StageContext, table_path
@@ -60,28 +71,14 @@ def _units(records: dict[str, dict[str, object]]) -> pl.DataFrame:
     return build_units(_crs(records)).collect()
 
 
-def _no_classes() -> pl.DataFrame:
-    return pl.DataFrame(schema=_schema(schema.ID_PRACTICE))
-
-
-def _schema(table: schema.TableSchema) -> dict[str, schema.DType]:
-    return {name: column.dtype for name, column in table.columns.items()}
-
-
-def _trace(
-    records: dict[str, dict[str, object]], *, id_practice: pl.DataFrame | None = None
-) -> dict[str, tuple[str, list[str]]]:
+def _trace(records: dict[str, dict[str, object]]) -> dict[str, tuple[str, list[str]]]:
     """Each linked disbursement record's tier and the commitment records it reaches.
 
     Every test record is its own unit, so a unit is named by its one record.
     """
     units = _units(records)
     names = dict(zip(units["unit_id"], units["record_ids"].list.first(), strict=True))
-    links = link_by_keys(
-        units,
-        id_practice=_no_classes() if id_practice is None else id_practice,
-        first_year=FIRST_YEAR,
-    )
+    links = link_by_keys(units, first_year=FIRST_YEAR)
     schema.validate(schema.LINKS, links)
     traced: dict[str, tuple[str, list[str]]] = {}
     for row in links.iter_rows(named=True):
@@ -100,6 +97,9 @@ def _trace(
     [
         (" ab 12-c ", "AB12-C"),
         ("4471.0", "4471"),
+        ("2.0002E+12", None),
+        ("2100150000000", None),
+        ("2100150000123", "2100150000123"),
         ("P 1 2 3", "P123"),
         ("not applicable", None),
         ("N/A", None),
@@ -117,8 +117,18 @@ def test_normalise_pn(published: str | None, normalised: str | None) -> None:
 def test_units_sum_records_that_share_every_key() -> None:
     units = _units(
         {
-            "b": {"crs_id": "A", "project_number": "p 1", "commitment_usd": 2.0},
-            "a": {"crs_id": "A", "project_number": "P1", "commitment_usd": 3.0},
+            "b": {
+                "crs_id": "A",
+                "project_number": "p 1",
+                "commitment_date": date(2020, 2, 1),
+                "commitment_usd": 2.0,
+            },
+            "a": {
+                "crs_id": "A",
+                "project_number": "P1",
+                "commitment_date": date(2020, 5, 1),
+                "commitment_usd": 3.0,
+            },
             # A different commitment-date year is a different unit.
             "c": {
                 "crs_id": "A",
@@ -137,6 +147,8 @@ def test_units_sum_records_that_share_every_key() -> None:
     assert summed["commitment_usd"] == 5.0
     assert summed["disbursement_usd"] == 0.0
     assert summed["project_number"] == "P1"
+    # The commitment date is the largest record's.
+    assert summed["commitment_date"] == date(2020, 5, 1)
     assert (summed["placed_year"], summed["floor_year"]) == (2020, None)
     # A record dated before its year is placed and floored at its date's year.
     dated = by_records[("c",)]
@@ -166,12 +178,24 @@ def _disbursement(**fields: object) -> dict[str, object]:
     ("commitment", "disbursement", "tier"),
     [
         ({"crs_id": "A"}, {"crs_id": "A"}, "crs_id_purpose"),
+        # A line suffix with and without zero padding.
+        (
+            {"donor_code": 1601, "crs_id": "2021015528_06"},
+            {"donor_code": 1601, "crs_id": "2021015528_6"},
+            "crs_id_purpose",
+        ),
         # Another purpose under the same crs id.
         ({"crs_id": "A"}, {"crs_id": "A", "purpose_code": 41010}, "crs_id"),
         # An EU contract under its decision id, on another purpose.
         (
-            {"crs_id": "2019000001"},
-            {"crs_id": "2019000001042", "purpose_code": 41010},
+            {"donor_code": 918, "crs_id": "2019000001"},
+            {"donor_code": 918, "crs_id": "2019000001042", "purpose_code": 41010},
+            "crs_id_parent",
+        ),
+        # A German record under its project's crs id plus a letter.
+        (
+            {"crs_id": "2019001320"},
+            {"crs_id": "2019001320a", "purpose_code": 41010},
             "crs_id_parent",
         ),
         # A new crs id under the same project number.
@@ -185,6 +209,12 @@ def _disbursement(**fields: object) -> dict[str, object]:
             {"crs_id": "B", "project_number": "P-1", "purpose_code": 41010},
             "pn_recipient",
         ),
+        # The same project number written with and without separators.
+        (
+            {"crs_id": "A", "project_number": "01AB1907A1_L"},
+            {"crs_id": "B", "project_number": "01-AB1907A1L"},
+            "pn_recipient_purpose",
+        ),
     ],
 )
 def test_each_tier_links_what_the_tiers_before_it_miss(
@@ -194,6 +224,27 @@ def test_each_tier_links_what_the_tiers_before_it_miss(
         {"c": _commitment(**commitment), "d": _disbursement(**disbursement)}
     )
     assert traced == {"d": (tier, ["c"])}
+
+
+@pytest.mark.parametrize(
+    ("donor_code", "traced"),
+    [
+        (905, {"d": ("wb_loan", ["c_loan2"])}),
+        (901, {"d": ("wb_loan", ["c_loan2"])}),
+        # Other donors' numbers carry no loan, so the crs id holds the project.
+        (5, {"d": ("crs_id_purpose", ["c_loan1", "c_loan2"])}),
+    ],
+)
+def test_a_world_bank_disbursement_stays_on_its_own_loan(
+    donor_code: int, traced: dict[str, tuple[str, list[str]]]
+) -> None:
+    project = {"donor_code": donor_code, "crs_id": "A"}
+    records = {
+        "c_loan1": _commitment(**project, project_number="P1.IDA1.CRS1"),
+        "c_loan2": _commitment(**project, project_number="P1.IDA2.CRS1"),
+        "d": _disbursement(**project, project_number="P1.IDA2.CRS3"),
+    }
+    assert _trace(records) == traced
 
 
 def test_a_disbursement_reaches_every_eligible_commitment_of_its_group() -> None:
@@ -221,8 +272,8 @@ def test_the_floor_holds_outside_the_parent_tier() -> None:
             "old": _commitment(crs_id="A", year=2017),
             "new": _commitment(crs_id="A"),
             "d": _disbursement(crs_id="A", **dated),
-            "eu_old": _commitment(crs_id="2017000001", year=2017),
-            "eu_d": _disbursement(crs_id="2017000001007", **dated),
+            "eu_old": _commitment(donor_code=918, crs_id="2017000001", year=2017),
+            "eu_d": _disbursement(donor_code=918, crs_id="2017000001007", **dated),
         }
     )
     assert traced == {
@@ -246,16 +297,59 @@ def test_a_floor_with_no_commitment_on_or_after_it_falls_through() -> None:
     assert traced == {"d": ("pn_recipient", ["renewed"])}
 
 
-def test_a_disbursement_dated_before_the_first_year_links_to_nothing() -> None:
-    traced = _trace(
-        {
-            "c": _commitment(crs_id="2010000001", year=2010),
-            "d": _disbursement(
-                crs_id="2010000001003", commitment_date=date(FIRST_YEAR - 1, 6, 1)
-            ),
-        }
+@pytest.mark.parametrize(
+    ("commitments", "traced"),
+    [
+        # Only later commitments: its own lies before the data.
+        (
+            {
+                "c": _commitment(crs_id="A", year=FIRST_YEAR),
+                "eu_c": _commitment(
+                    donor_code=918, crs_id="2008000001", year=FIRST_YEAR
+                ),
+            },
+            {},
+        ),
+        # A later record carries the commitment's date, so the build sees it, and
+        # the disbursement reaches it and the lines placed after it.
+        (
+            {
+                "c": _commitment(crs_id="A", year=FIRST_YEAR),
+                "c_dated": _commitment(
+                    crs_id="A",
+                    year=FIRST_YEAR,
+                    purpose_code=41010,
+                    commitment_date=date(FIRST_YEAR - 1, 3, 1),
+                ),
+                "eu_c": _commitment(
+                    donor_code=918,
+                    crs_id="2008000001",
+                    year=FIRST_YEAR,
+                    commitment_date=date(FIRST_YEAR - 2, 3, 1),
+                ),
+            },
+            {
+                "d": ("crs_id", ["c", "c_dated"]),
+                "eu_d": ("crs_id_parent", ["eu_c"]),
+            },
+        ),
+    ],
+)
+def test_a_floor_before_the_first_year_links_where_the_build_holds_its_commitment(
+    commitments: dict[str, dict[str, object]],
+    traced: dict[str, tuple[str, list[str]]],
+) -> None:
+    floor = {"commitment_date": date(FIRST_YEAR - 1, 6, 1), "purpose_code": 15110}
+    assert (
+        _trace(
+            {
+                **commitments,
+                "d": _disbursement(crs_id="A", **floor),
+                "eu_d": _disbursement(donor_code=918, crs_id="2008000001003", **floor),
+            }
+        )
+        == traced
     )
-    assert traced == {}
 
 
 def test_a_shared_project_number_does_not_link() -> None:
@@ -276,40 +370,228 @@ def test_a_shared_project_number_does_not_link() -> None:
     assert traced == {"d3": ("pn_recipient_purpose", ["c3"])}
 
 
-@pytest.mark.parametrize(
-    ("id_class", "record_year", "linked"),
-    [
-        ("id_persistent", 2021, False),
-        ("parent_id_persistent", 2021, False),
-        ("pn_persistent", 2021, True),
-        # The class binds only in its own period.
-        ("id_persistent", 2017, True),
-    ],
-)
-def test_project_number_tiers_are_off_for_id_persistent_agencies(
-    id_class: str, record_year: int, linked: bool
-) -> None:
-    classes = pl.DataFrame(
-        {
-            "donor_code": [5],
-            "agency_code": [1],
-            "period": ["2019-2022"],
-            "id_class": [id_class],
-            "open_commitments": [40],
-            "id_share": [0.9],
-            "parent_share": [0.0],
-            "pn_share": [0.0],
-        },
-        schema=_schema(schema.ID_PRACTICE),
-    )
+def test_each_project_number_tier_asks_for_one_crs_id_over_its_own_key() -> None:
+    # One number under two crs ids in one recipient, one per purpose: the purpose
+    # tier reaches each line, and a disbursement under a third purpose none.
     traced = _trace(
         {
-            "c": _commitment(crs_id="A", project_number="P1", year=2016),
-            "d": _disbursement(crs_id="B", project_number="P1", year=record_year),
-        },
-        id_practice=classes,
+            "c1": _commitment(crs_id="A", project_number="P-1"),
+            "c2": _commitment(crs_id="B", project_number="P-1", purpose_code=41010),
+            "d1": _disbursement(crs_id="C", project_number="P-1"),
+            "d2": _disbursement(crs_id="D", project_number="P-1", purpose_code=41010),
+            "d3": _disbursement(crs_id="E", project_number="P-1", purpose_code=15110),
+        }
     )
-    assert bool(traced) == linked
+    assert traced == {
+        "d1": ("pn_recipient_purpose", ["c1"]),
+        "d2": ("pn_recipient_purpose", ["c2"]),
+    }
+
+
+_LINE = {"project_number": "P-1", "commitment_usd": 10.0}
+
+
+def _line(crs_id: str, day: date, **fields: object) -> dict[str, object]:
+    return {
+        **_LINE,
+        "crs_id": crs_id,
+        "year": day.year,
+        "commitment_date": day,
+        **fields,
+    }
+
+
+@pytest.mark.parametrize(
+    ("second", "day", "traced"),
+    [
+        # The disbursement repeats the 2014 line's date and continues that line.
+        (
+            _line("B", date(2016, 3, 1)),
+            date(2014, 6, 27),
+            {"d": ("pn_recipient_date", ["c1"])},
+        ),
+        # Two lines share the date, so the date names neither.
+        (_line("B", date(2014, 6, 27)), date(2014, 6, 27), {}),
+        # One line split by purpose under the date: the purpose tier decides.
+        (
+            _line("A", date(2014, 6, 27), purpose_code=41010),
+            date(2014, 6, 27),
+            {"d": ("pn_recipient_purpose", ["c1"])},
+        ),
+        # A year-end date is a placeholder and names no line.
+        (_line("B", date(2016, 3, 1)), date(2014, 12, 31), {}),
+    ],
+)
+def test_a_disbursement_continues_the_line_whose_commitment_date_it_repeats(
+    second: dict[str, object], day: date, traced: dict[str, tuple[str, list[str]]]
+) -> None:
+    records = {
+        "c1": _line("A", day),
+        "c2": second,
+        "d": _disbursement(crs_id="C", project_number="P-1", commitment_date=day),
+    }
+    assert _trace(records) == traced
+
+
+def test_numbers_that_merge_without_separators_keep_their_own_keys() -> None:
+    # `X.1-1-01` and `X.1-10-1` both read `X.1101` without separators, under two
+    # crs ids, so each number keys on itself as written.
+    traced = _trace(
+        {
+            "c1": _commitment(crs_id="A", project_number="X.1-1-01"),
+            "c2": _commitment(crs_id="B", project_number="X.1-10-1"),
+            "d1": _disbursement(crs_id="C", project_number="X.1-1-01"),
+            "d": _disbursement(crs_id="D", project_number="X.1101"),
+        }
+    )
+    assert traced == {"d1": ("pn_recipient_purpose", ["c1"])}
+
+
+def test_project_number_tiers_hold_for_an_agency_whose_ids_persist() -> None:
+    # Ten projects continue under their crs ids, which classes the agency
+    # id_persistent, and one more continues under a new crs id.
+    agency = {"donor_code": 918, "agency_code": 7}
+    records = _agency(7, n=10, follow=("id",)) | {
+        "c": _commitment(**agency, crs_id="A", project_number="P1", year=2020),
+        "d": _disbursement(**agency, crs_id="B", project_number="P1"),
+    }
+    classes = classify_id_practice(_units(records))
+    assert classes["id_class"].to_list() == ["id_persistent"]
+    assert _trace(records)["d"] == ("pn_recipient_purpose", ["c"])
+
+
+@pytest.mark.parametrize(
+    ("donor_code", "crs_id", "parent"),
+    [
+        (918, "2019000001042", "2019000001"),
+        (918, "2019000001", None),
+        (5, "2019001320a", "2019001320"),
+        (12, "2021000329-c", "2021000329"),
+        (915, "2015003432/b", "2015003432"),
+        (302, "2015018152eqz", "2015018152"),
+        # France and 5RDB006 write sequence numbers, which name other projects.
+        (4, "20161000088", None),
+        (1012, "20230000052", None),
+        (5, "20190013201", None),
+        # Sweden's letters start new agreements.
+        (10, "2016060279A", None),
+    ],
+)
+def test_parent_id(donor_code: int, crs_id: str, parent: str | None) -> None:
+    assert pl.select(parent_id(pl.lit(donor_code), pl.lit(crs_id))).item() == parent
+
+
+@pytest.mark.parametrize(
+    ("other_number", "recipient_code", "traced"),
+    [
+        # The AsDB files an Indian loan under the crs id of a Nauru grant.
+        ("TA9143-NAU", 880, {}),
+        # One project with lines in two countries: each line is its own.
+        ("LN3375-IND", 880, {}),
+        # A regional line of the project.
+        ("LN3375-IND", 798, {"d": ("crs_id", ["c"])}),
+    ],
+)
+def test_the_crs_id_tier_keeps_an_id_that_spans_countries_in_its_recipient(
+    other_number: str, recipient_code: int, traced: dict[str, tuple[str, list[str]]]
+) -> None:
+    project = {"donor_code": 915, "crs_id": "2018000001"}
+    records = {
+        "c": _commitment(
+            **project, project_number=other_number, recipient_code=recipient_code
+        ),
+        "d": _disbursement(
+            **project,
+            project_number="LN3375-IND",
+            recipient_code=645,
+            purpose_code=41010,
+        ),
+    }
+    assert _trace(records) == traced
+
+
+def test_a_line_passed_to_another_country_links_by_project_number() -> None:
+    # Canada files Tanzania under line 7 in 2019 and Guinea under it in 2021, when
+    # Guinea's line is 3.
+    project = {"donor_code": 301, "project_number": "P007307001"}
+    traced = _trace(
+        {
+            "c_tza": _commitment(**project, crs_id="P-0007", recipient_code=282),
+            "c_gin": _commitment(**project, crs_id="P-0003", recipient_code=243),
+            "d": _disbursement(**project, crs_id="P-0007", recipient_code=243),
+        }
+    )
+    assert traced == {"d": ("pn_recipient_purpose", ["c_gin"])}
+
+
+@pytest.mark.parametrize(
+    ("commitment", "disbursement", "flags"),
+    [
+        # The number agrees though the purpose line differs.
+        ({"project_number": "PRJ-001"}, {"project_number": "prj 1"}, {"c": False}),
+        # A crs id shared by two agreements.
+        ({"project_number": "PRJ-001"}, {"project_number": "AGR-002"}, {"c": True}),
+        # The same, where the disbursement unit also commits and links to itself.
+        (
+            {"project_number": "PRJ-001"},
+            {"project_number": "AGR-002", "purpose_code": 23210, "commitment_usd": 1.0},
+            {"c": True, "d": False},
+        ),
+        # No number on one side.
+        ({"project_number": "PRJ-001"}, {}, {"c": False}),
+        # An umbrella decision in another country.
+        (
+            {"donor_code": 918, "crs_id": "2019000001", "recipient_code": 279},
+            {"donor_code": 918, "crs_id": "2019000001042", "recipient_code": 235},
+            {"c": True},
+        ),
+        # A regional decision.
+        (
+            {"donor_code": 918, "crs_id": "2019000001", "recipient_code": 289},
+            {"donor_code": 918, "crs_id": "2019000001042", "recipient_code": 235},
+            {"c": False},
+        ),
+    ],
+)
+def test_a_trace_link_records_whether_its_records_disagree(
+    commitment: dict[str, object],
+    disbursement: dict[str, object],
+    flags: dict[str, bool],
+) -> None:
+    units = _units(
+        {
+            "c": _commitment(**{"crs_id": "A", **commitment}),
+            "d": _disbursement(
+                **{"crs_id": "A", "purpose_code": 41010, **disbursement}
+            ),
+            # A unit linked to itself disagrees with nothing.
+            "cd": _commitment(crs_id="S", project_number="X-1", disbursement_usd=1.0),
+        }
+    )
+    names = dict(zip(units["unit_id"], units["record_ids"].list.first(), strict=True))
+    crdf = pl.DataFrame(
+        {"left_id": ["row"], "right_id": [units["unit_id"][0]]}
+    ).with_columns(link_method=pl.lit("within_year"))
+    links = pl.concat(
+        [
+            link_by_keys(units, first_year=FIRST_YEAR),
+            as_exact_links(crdf.lazy(), task="crdf_crs").collect(),
+        ]
+    )
+
+    flagged = flag_disagreement(links, units=units)
+
+    schema.validate(schema.LINKS, flagged)
+    assert {
+        (names.get(row["left_id"], row["left_id"]), names[row["right_id"]]): row[
+            "records_disagree"
+        ]
+        for row in flagged.iter_rows(named=True)
+    } == {
+        **{("d", right): flag for right, flag in flags.items()},
+        ("cd", "cd"): False,
+        ("row", names[units["unit_id"][0]]): None,
+    }
 
 
 @pytest.mark.parametrize(
@@ -335,7 +617,11 @@ def _agency(
     records: dict[str, dict[str, object]] = {}
     for i in range(n):
         crs_id = f"{agency}{i:09d}"
-        common = {"agency_code": agency, "project_number": f"P{agency}-{i}"}
+        common = {
+            "donor_code": 918,
+            "agency_code": agency,
+            "project_number": f"P{agency}-{i}",
+        }
         records[f"{agency}c{i}"] = {
             **common,
             "crs_id": crs_id,
@@ -483,11 +769,13 @@ def _normalised(release_dir: Path) -> None:
 
 
 def _context(release_dir: Path, **switches: bool) -> StageContext:
+    # The fixture has no truth group to set Jev's scale, so the Jev step is off
+    # unless a test turns it on.
     config = load_config(Path(__file__).parents[1] / "build.toml")
     return StageContext(
         release="test",
         release_dir=release_dir,
-        config=config.model_copy(update=switches),
+        config=config.model_copy(update={"jev_links": False} | switches),
         offline=True,
     )
 
@@ -499,7 +787,15 @@ def test_run_link_writes_the_deterministic_tables(tmp_path: Path) -> None:
 
     hashes = write_stage(link, run_link(context), tmp_path)
 
-    assert set(hashes) == {"links", "units", "id_practice"}
+    assert set(hashes) == {
+        "links",
+        "units",
+        "id_practice",
+        "programme_stems",
+        "candidates",
+        "pair_scores",
+        "provider_profile",
+    }
     links = pl.read_parquet(table_path(tmp_path, "link", "links"))
     crdf = pl.read_parquet(table_path(tmp_path, "normalise", "crdf"))
     crdf_links = links.filter(task="crdf_crs")
@@ -516,6 +812,14 @@ def test_recoveries_read_their_inputs_only_when_on(tmp_path: Path) -> None:
     run_link(_context(tmp_path, key_repair=False, recoveries=False))
     with pytest.raises(StageInputMissingError):
         run_link(_context(tmp_path, key_repair=False, recoveries=True))
+
+
+def test_the_jev_step_runs_only_when_on(tmp_path: Path) -> None:
+    # The fixture has no truth group to set Jev's scale, so the step refuses.
+    _normalised(tmp_path)
+    run_link(_context(tmp_path, key_repair=False, recoveries=False))
+    with pytest.raises(JevFitError):
+        run_link(_context(tmp_path, key_repair=False, recoveries=False, jev_links=True))
 
 
 def test_run_link_reproduces_its_tables(tmp_path: Path) -> None:

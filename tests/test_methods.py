@@ -119,3 +119,60 @@ def test_named_methods_print_their_names_and_custom_ones_their_coefficients() ->
 def test_coefficients_outside_zero_to_one_are_refused() -> None:
     with pytest.raises(ValueError, match="principal"):
         ONE.replace(principal=1.5)
+
+
+def _marker_row(
+    adaptation: int, mitigation: int, jev_level: int | None
+) -> pl.DataFrame:
+    """A marker row, without climate components, with Jev's adaptation level."""
+    return pl.DataFrame(
+        [
+            {
+                **COMPONENTS,
+                "rio_adaptation": adaptation,
+                "rio_mitigation": mitigation,
+                "climate_share": None,
+                "jev_level": jev_level,
+            }
+        ],
+        schema_overrides={"climate_share": pl.Float64, "jev_level": pl.Int8},
+    )
+
+
+@pytest.mark.parametrize(
+    ("method", "markers", "jev_level", "expected"),
+    [
+        # Jev finds no adaptation aim in a principal adaptation row: it counts 0.
+        (ONE, (2, 0), 0, {"adaptation": 0.0, "climate": 0.0}),
+        # A significant Jev level counts at the method's significant coefficient.
+        (ONE, (2, 0), 1, {"adaptation": 0.4, "climate": 0.4}),
+        (OECD, (2, 0), 1, {"adaptation": 1.0, "climate": 1.0}),
+        # Equal levels are cross-cutting under the highest-marker rule.
+        (ONE, (1, 2), 2, {"cross_cutting": 1.0, "mitigation": 0.0, "climate": 1.0}),
+        (
+            ONE.replace(highest_marker=False),
+            (1, 1),
+            2,
+            {"adaptation": 1.0, "mitigation": 0.4, "cross_cutting": 0.4},
+        ),
+        # A record Jev did not label keeps its marker.
+        (ONE, (1, 0), None, {"adaptation": 0.4, "climate": 0.4}),
+    ],
+)
+def test_a_jev_level_weighs_like_the_adaptation_marker_it_replaces(
+    method: Method,
+    markers: tuple[int, int],
+    jev_level: int | None,
+    expected: dict[str, float],
+) -> None:
+    frame = _marker_row(*markers, jev_level)
+
+    result = frame.select(**weights(method.replace(relevance="jev"))).row(0, named=True)
+
+    assert {key: result[key] for key in expected} == pytest.approx(expected)
+
+
+def test_marker_relevance_ignores_a_jev_level() -> None:
+    frame = _marker_row(1, 0, 2)
+
+    assert frame.select(**weights(ONE)).row(0, named=True)["adaptation"] == 0.4

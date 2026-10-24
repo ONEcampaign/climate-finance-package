@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<iati-activities version="2.03">
+<iati-activity xmlns:afdb="http://afdb.org/iati/" default-currency="XDR" xml:lang="en">
+  <iati-identifier>46002-P-ZZ-AA0-001</iati-identifier>
+  <reporting-org ref="XM-DAC-46002" type="40">
+    <narrative>Invented Bank</narrative>
+  </reporting-org>
+  <title>
+    <narrative>Invented institutional support project</narrative>
+  </title>
+  <other-identifier ref="46002" type="B1">
+    <owner-org ref="XM-DAC-0">
+      <narrative>Invented Bank</narrative>
+    </owner-org>
+  </other-identifier>
+  <transaction ref="9000000001" afdb:finance-type-id="9000000001">
+    <transaction-type code="2" />
+    <transaction-date iso-date="2019-02-14" />
+    <value value-date="2019-02-14">80000.00</value>
+  </transaction>
+  <transaction ref="1" afdb:finance-type-id="1">
+    <transaction-type code="2" />
+    <transaction-date iso-date="2019-02-14" />
+    <value value-date="2019-02-14">5000000.00</value>
+  </transaction>
+  <transaction afdb:finance-type-id="9000000001">
+    <transaction-type code="3" />
+    <transaction-date iso-date="2020-06-15" />
+    <value value-date="2020-06-15">80000.00</value>
+  </transaction>
+  <transaction afdb:finance-type-id="9000000001">
+    <transaction-type code="5" />
+    <transaction-date iso-date="2020-04-15" />
+    <value value-date="2020-04-15">30000.00</value>
+  </transaction>
+</iati-activity>
+</iati-activities>

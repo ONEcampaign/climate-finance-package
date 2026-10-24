@@ -49,6 +49,15 @@ class LinkInputError(BuildError):
     """Link-stage inputs that a linking route cannot use."""
 
 
+class ReviewDecisionsError(BuildError):
+    """Decisions that cannot be recorded, such as a labels CSV whose pairs do not
+    match the packet it answers."""
+
+
+class LabelPacketError(BuildError):
+    """A labelling packet that cannot be rendered as asked."""
+
+
 class ReleaseInvariantError(BuildError):
     """Release tables break `schema.release_invariants`."""
 

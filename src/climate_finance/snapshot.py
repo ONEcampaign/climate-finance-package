@@ -12,7 +12,12 @@ from climate_finance import query
 from climate_finance.errors import ReleaseIntegrityError
 from climate_finance.methods import ONE, Method, MethodRange
 from climate_finance.result import Quality, Reconciliation, Result
-from climate_finance.schema import RELEASE_TABLES, ReleaseManifest, sha256_file
+from climate_finance.schema import (
+    RELEASE_TABLES,
+    ReleaseManifest,
+    scan_table,
+    sha256_file,
+)
 from climate_finance.spec import Currency, Flow, Spec, View
 
 
@@ -31,7 +36,7 @@ class Snapshot:
         """
         if name not in RELEASE_TABLES:
             raise KeyError(f"{name!r} is not a release table: {sorted(RELEASE_TABLES)}")
-        return pl.scan_parquet(self.path / f"{name}.parquet")
+        return scan_table(self.path / f"{name}.parquet")
 
     def spending(
         self,
@@ -70,9 +75,13 @@ class Snapshot:
         *,
         providers: str | int | Sequence[str | int] | None = None,
         years: int | Iterable[int] | None = None,
+        method: Method = ONE,
     ) -> Quality:
-        """Link, coverage and status statistics."""
-        return query.quality(self, providers=_as_tuple(providers), years=_years(years))
+        """Link, coverage and status statistics, and the EU Institutions rows that
+        `method`'s provider view leaves out."""
+        return query.quality(
+            self, providers=_as_tuple(providers), years=_years(years), method=method
+        )
 
     def reconcile(
         self,
@@ -82,7 +91,7 @@ class Snapshot:
         method: Method | MethodRange = ONE,
     ) -> Reconciliation:
         """Compare each party's BTR figures with OECD data."""
-        raise NotImplementedError("slice S19b")
+        raise NotImplementedError("reconciling with BTR reports")
 
     def disbursement_profile(self) -> pl.DataFrame:
         """Cumulative disbursed share of traceable climate value by years since
@@ -109,7 +118,7 @@ def load(
             a table's sha256 differs from `release.json`.
     """
     if path is None:
-        raise NotImplementedError("downloading a release: slice S10b")
+        raise NotImplementedError("downloading a release")
     path = Path(path)
     manifest_path = path / "release.json"
     if not manifest_path.is_file():

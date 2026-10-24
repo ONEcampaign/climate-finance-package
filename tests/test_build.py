@@ -162,7 +162,7 @@ def test_a_stage_reads_an_earlier_stage_from_disk(
 
 
 @pytest.mark.parametrize("replaced", [False, True])
-def test_a_build_recovers_a_stage_swap_that_died_halfway(
+def test_a_build_recovers_a_stage_write_or_swap_that_died_halfway(
     config: BuildConfig, tmp_path: Path, replaced: bool
 ) -> None:
     registry = [
@@ -175,6 +175,9 @@ def test_a_build_recovers_a_stage_swap_that_died_halfway(
     # The build died with the last good stage moved aside, before or after the new
     # one moved into its place.
     first, old = tmp_path / "first", tmp_path / "first.old"
+    killed_write = tmp_path / ".second-k3x9q2ab"
+    killed_write.mkdir()
+    (killed_write / "numbers.parquet").write_bytes(b"half")
     if replaced:
         shutil.copytree(first, old)
     else:
@@ -185,6 +188,7 @@ def test_a_build_recovers_a_stage_swap_that_died_halfway(
     )
 
     assert not old.exists()
+    assert not killed_write.exists()
     assert pl.read_parquet(first / "numbers.parquet")["value"].to_list() == [1.5]
     assert pl.read_parquet(tmp_path / "second" / "numbers.parquet").height == 1
 

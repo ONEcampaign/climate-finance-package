@@ -15,12 +15,10 @@ from climate_finance.build.link.key_repair import (
     MAX_COMMITMENTS,
     project_core,
     repair_keys,
-    rounded_digits,
     title_tokens,
     title_words,
-    wb_loan,
 )
-from climate_finance.build.link.keys import build_units, link_by_keys
+from climate_finance.build.link.keys import build_units, link_by_keys, rounded_digits
 from climate_finance.build.normalise.crdf import normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs
 from climate_finance.build.stages import REGISTRY, StageContext, table_path
@@ -33,6 +31,7 @@ _RECORD = {
     "crs_id": None,
     "project_number": None,
     "title": None,
+    "long_description": None,
     "recipient_code": 238,
     "purpose_code": 23210,
     "year": 2020,
@@ -49,6 +48,7 @@ _CRS_SCHEMA = {
     "crs_id": pl.String,
     "project_number": pl.String,
     "title": pl.String,
+    "long_description": pl.String,
     "recipient_code": pl.Int32,
     "purpose_code": pl.Int32,
     "year": pl.Int16,
@@ -73,13 +73,7 @@ def _links(
     """Units, exact links plus key-repair links, and the CRS records."""
     crs = _crs(records)
     units = build_units(crs).collect()
-    exact = link_by_keys(
-        units,
-        id_practice=pl.DataFrame(
-            schema={name: c.dtype for name, c in schema.ID_PRACTICE.columns.items()}
-        ),
-        first_year=FIRST_YEAR,
-    )
+    exact = link_by_keys(units, first_year=FIRST_YEAR)
     repaired = repair_keys(units, crs=crs, links=exact, first_year=FIRST_YEAR)
     schema.validate(schema.LINKS, repaired)
     return units, pl.concat([exact, repaired]), crs
@@ -131,12 +125,6 @@ def _disbursement(**fields: object) -> dict[str, object]:
             {"crs_id": "A", "project_number": "KFW-0012345", "title": "Roads"},
             {"crs_id": "B", "project_number": "KFW12345.CRS2", "title": "Health"},
             "repair_pn_variant",
-        ),
-        # Additional financing booked under the parent project's number.
-        (
-            {"crs_id": "A", "project_number": "P179981.IDA72500.CRS4"},
-            {"crs_id": "B", "project_number": "P170000.IDA72500.CRS1"},
-            "repair_wb_parent",
         ),
         (
             {"crs_id": "A", "project_number": "2100150000123", "title": "Eggsp II"},
@@ -191,23 +179,172 @@ def test_a_unit_stays_out_of_a_group_holding_its_own_crs_id() -> None:
     assert repaired == {}
 
 
-def test_a_disbursement_before_the_first_year_links_to_nothing() -> None:
-    repaired = _repaired(
-        {
-            "c": _commitment(
-                crs_id="A",
-                project_number="G-1",
-                year=FIRST_YEAR,
-                commitment_date=date(FIRST_YEAR - 2, 5, 1),
-            ),
-            "d": _disbursement(
-                crs_id="B",
-                project_number="G-1",
-                commitment_date=date(FIRST_YEAR - 2, 5, 1),
-            ),
-        }
-    )
-    assert repaired == {}
+# One record that commits 10 and disburses 30, and a line of the same project
+# under another crs id and purpose, each linked to itself by crs id and purpose.
+_LINE = {
+    "crs_id": "A",
+    "project_number": "G-1",
+    "year": 2020,
+    "commitment_usd": 10.0,
+    "disbursement_usd": 30.0,
+}
+_SIBLING = {**_LINE, "crs_id": "B", "purpose_code": 41010}
+_SPARE = {"commitment_usd": 50.0, "disbursement_usd": 5.0}
+
+
+@pytest.mark.parametrize(
+    ("others", "repaired"),
+    [
+        # The sibling committed more than it disbursed, so it is a commitment
+        # to the rules.
+        (
+            {"sibling": {**_SIBLING, **_SPARE}},
+            {"line": {"repair_new_crs_id": ["sibling"]}},
+        ),
+        # The sibling disbursed beyond its commitment too, so each commitment is
+        # left to its unit's link to itself and no group holds it.
+        ({"sibling": _SIBLING}, {}),
+        # A unit that committed more than it disbursed is no disbursement unit,
+        # though an open commitment shares its project number.
+        (
+            {
+                "sibling": {**_SIBLING, **_SPARE},
+                "earlier": _commitment(crs_id="C", project_number="G-1"),
+            },
+            {"line": {"repair_new_crs_id": ["earlier", "sibling"]}},
+        ),
+        # A line whose own commitment covers its disbursement has nothing left
+        # for the rules.
+        (
+            {
+                "line": {**_LINE, "disbursement_usd": 10.0},
+                "sibling": {**_SIBLING, **_SPARE},
+            },
+            {},
+        ),
+        # A line that committed more than it disbursed is no disbursement unit
+        # when a later disbursement reaches it by crs id too.
+        (
+            {
+                "line": {**_LINE, **_SPARE},
+                "later": _disbursement(crs_id="A", project_number="G-1"),
+                "earlier": _commitment(crs_id="C", project_number="G-1"),
+            },
+            {"later": {"repair_new_crs_id": ["earlier"]}},
+        ),
+    ],
+)
+def test_a_unit_takes_one_side_in_the_rules(
+    others: dict[str, dict[str, object]], repaired: dict[str, dict[str, list[str]]]
+) -> None:
+    assert _repaired({"line": _LINE, **others}) == repaired
+
+
+def test_allocation_gives_a_sibling_line_what_a_line_disbursed_beyond_its_own() -> None:
+    units, links, crs = _links({"line": _LINE, "sibling": {**_SIBLING, **_SPARE}})
+    assert not links.select("left_id", "right_id").is_duplicated().any()
+
+    pairs = allocate(units.lazy(), crs=crs, links=links.lazy())
+    filled = {
+        (record, commitment): amount
+        for record, commitment, amount in pairs.filter(
+            pl.col("commitment_id").is_not_null()
+        )
+        .select("record_id", "commitment_id", "allocated_usd")
+        .iter_rows()
+    }
+    assert filled == {
+        ("line", "line"): 10.0,
+        ("line", "sibling"): 20.0,
+        ("sibling", "sibling"): 5.0,
+    }
+    assert pairs.filter(rule="excess").is_empty()
+
+
+_PROGRAMME = {"donor_code": 302, "project_number": "35_80", "title": "Operations"}
+_KENYA = {**_PROGRAMME, "recipient_code": 248}
+
+
+@pytest.mark.parametrize(
+    ("others", "repaired"),
+    [
+        # Commitments in two countries, as the US `35_80` has: the Kenyan
+        # disbursement reaches the Kenyan commitments of its purpose, and the
+        # Malawian one reaches none.
+        (
+            {
+                "c_eth": _commitment(**_PROGRAMME, crs_id="A"),
+                "d_mwi": _disbursement(**_PROGRAMME, crs_id="D", recipient_code=253),
+            },
+            {"d_ken": {"repair_new_crs_id": ["c_ken", "c_ken2"]}},
+        ),
+        # Commitments in one country and disbursements in three, as a US element
+        # number has.
+        (
+            {
+                "d_mwi": _disbursement(**_PROGRAMME, crs_id="D", recipient_code=253),
+                "d_tza": _disbursement(**_PROGRAMME, crs_id="E", recipient_code=282),
+            },
+            {"d_ken": {"repair_new_crs_id": ["c_ken", "c_ken2"]}},
+        ),
+        # One loan under a stray recipient code, as at the IDB, links across it.
+        (
+            {"d_mwi": _disbursement(**_PROGRAMME, crs_id="D", recipient_code=253)},
+            {
+                name: {"repair_new_crs_id": ["c_ken", "c_ken2", "c_ken_other"]}
+                for name in ("d_ken", "d_mwi")
+            },
+        ),
+    ],
+)
+def test_a_programme_number_links_only_within_the_disbursements_recipient(
+    others: dict[str, dict[str, object]], repaired: dict[str, dict[str, list[str]]]
+) -> None:
+    # Two Kenyan crs ids keep the exact tiers off.
+    records = {
+        "c_ken": _commitment(**_KENYA, crs_id="B"),
+        "c_ken2": _commitment(**_KENYA, crs_id="B2", year=2020),
+        "c_ken_other": _commitment(**_KENYA, crs_id="B3", purpose_code=91010),
+        "d_ken": _disbursement(**_KENYA, crs_id="C"),
+        **others,
+    }
+    assert _repaired(records) == repaired
+
+
+@pytest.mark.parametrize(
+    ("placed", "repaired"),
+    [
+        # Committed after the floor: the disbursement's own commitment lies
+        # before the data.
+        ({}, {}),
+        # A later record carries the floor year's commitment date.
+        (
+            {"commitment_date": date(FIRST_YEAR - 2, 5, 1)},
+            {"d": {"repair_new_crs_id": ["c"]}},
+        ),
+    ],
+)
+def test_a_floor_before_the_first_year_links_where_the_group_holds_its_commitment(
+    placed: dict[str, object], repaired: dict[str, dict[str, list[str]]]
+) -> None:
+    # Another recipient keeps the exact tiers off.
+    records = {
+        "c": _commitment(
+            crs_id="A",
+            project_number="G-1",
+            title="Water supply",
+            year=FIRST_YEAR,
+            **placed,
+        ),
+        "d": _disbursement(
+            crs_id="B",
+            project_number="G-1",
+            title="Water supply",
+            recipient_code=289,
+            commitment_date=date(FIRST_YEAR - 2, 5, 1),
+        ),
+    }
+    assert _repaired(records) == repaired
 
 
 def test_a_unit_links_only_where_title_or_recipient_agrees_with_its_whole_group() -> (
@@ -248,8 +385,20 @@ def test_a_unit_reaches_at_most_max_commitments(n: int, linked: bool) -> None:
     commitments = {
         f"c{i}": _commitment(crs_id=f"A{i}", project_number="G-1") for i in range(n)
     }
+    # Commitments placed after the record year or before its floor count for
+    # nothing.
+    ineligible = {
+        "later": _commitment(crs_id="L1", project_number="G-1", year=2022),
+        "earlier": _commitment(crs_id="L2", project_number="G-1", year=2016),
+    }
     repaired = _repaired(
-        {**commitments, "d": _disbursement(crs_id="B", project_number="G-1")}
+        {
+            **commitments,
+            **ineligible,
+            "d": _disbursement(
+                crs_id="B", project_number="G-1", commitment_date=date(2018, 3, 1)
+            ),
+        }
     )
     assert repaired == (
         {"d": {"repair_new_crs_id": sorted(commitments)}} if linked else {}
@@ -411,6 +560,46 @@ def test_the_title_rule_needs_a_title_that_names_one_project(
     assert ("d" in repaired) is linked
 
 
+@pytest.mark.parametrize(
+    ("rounded", "linked"),
+    [
+        # A rounded number the full number can stand for is one project.
+        ("2.10016E+12", True),
+        # One that it cannot is another project.
+        ("2.0002E+12", False),
+    ],
+)
+def test_the_title_rule_counts_a_rounded_number_apart_from_a_full_one(
+    rounded: str, linked: bool
+) -> None:
+    title = "Rural water supply"
+    repaired = _repaired(
+        {
+            "c": _commitment(crs_id="A", title=title),
+            "d": _disbursement(crs_id="B", project_number="2100160000123", title=title),
+            "d2": _disbursement(crs_id="C", project_number=rounded, title=title),
+        }
+    )
+    assert ("d" in repaired) is linked
+
+
+def test_the_title_rule_counts_two_spellings_of_one_rounded_number_once() -> None:
+    title = "Rural water supply"
+    repaired = _repaired(
+        {
+            "c": _commitment(crs_id="A", title=title),
+            "d": _disbursement(crs_id="B", project_number="2.0002E+12", title=title),
+            "d2": _disbursement(
+                crs_id="C", project_number="2000200000000", title=title
+            ),
+        }
+    )
+    assert repaired == {
+        "d": {"repair_title_recipient": ["c"]},
+        "d2": {"repair_title_recipient": ["c"]},
+    }
+
+
 def test_the_title_rule_ignores_short_titles() -> None:
     repaired = _repaired(
         {
@@ -419,6 +608,80 @@ def test_the_title_rule_ignores_short_titles() -> None:
         }
     )
     assert repaired == {}
+
+
+# A line committed in one country and disbursed in another under its crs id,
+# which `crs_key` keys by recipient. The two share the crs id, so no other rule
+# takes the pair.
+_STRAY = {"donor_code": 301, "crs_id": "S1", "project_number": "D-7307"}
+_TEXT = {
+    "title": "Maternal and child health",
+    "long_description": "Trains midwives in rural clinics",
+}
+_UNRELATED = {
+    "title": "Customs modernisation",
+    "project_number": "Q-55",
+    "long_description": "Upgrades border posts",
+}
+
+
+@pytest.mark.parametrize(
+    ("disbursement", "others", "linked"),
+    [
+        ({}, {}, True),
+        # Records that agree only on the project core, or only on the long
+        # description.
+        ({**_UNRELATED, "project_number": "D7307.CRS2"}, {}, True),
+        ({**_UNRELATED, "long_description": _TEXT["long_description"]}, {}, True),
+        ({**_UNRELATED}, {}, False),
+        # The disbursement's own country holds a commitment under its project
+        # number, filed under another agency code as Canada does, so that line
+        # is its own.
+        (
+            {"project_number": "P-7307"},
+            {
+                "own": _commitment(
+                    **{
+                        **_STRAY,
+                        "crs_id": "S2",
+                        "agency_code": 3,
+                        "project_number": "P-7307",
+                    }
+                )
+            },
+            False,
+        ),
+        # Canada disburses under a P number and commits under a D number, so the
+        # own line sits under the commitment's number.
+        (
+            {"project_number": "P-7307"},
+            {
+                "own": _commitment(
+                    **{**_UNRELATED, **_STRAY, "crs_id": "S2", "agency_code": 3}
+                )
+            },
+            False,
+        ),
+        # The own line sits under the shared crs id, committed before the
+        # disbursement's floor year, so the crs-id tier passes it by.
+        (
+            {"commitment_date": date(2019, 3, 1)},
+            {"own": _commitment(**{**_STRAY, **_UNRELATED, "year": 2018})},
+            False,
+        ),
+    ],
+)
+def test_a_crs_id_links_across_countries_where_the_records_agree(
+    disbursement: dict[str, object], others: dict[str, dict[str, object]], linked: bool
+) -> None:
+    repaired = _repaired(
+        {
+            "c": _commitment(**_STRAY, **_TEXT, recipient_code=248),
+            "d": _disbursement(**{**_STRAY, **_TEXT, **disbursement}),
+            **others,
+        }
+    )
+    assert repaired == ({"d": {"repair_stray_country": ["c"]}} if linked else {})
 
 
 def test_allocation_fills_only_the_commitments_each_unit_links_to() -> None:
@@ -471,24 +734,11 @@ def test_project_core(published: str | None, core: str | None) -> None:
 
 
 @pytest.mark.parametrize(
-    ("published", "loan"),
-    [
-        ("P179981.IDA72500.CRS4", "IDA72500"),
-        ("P123.TF0B1234.CRS1", "TF0B1234"),
-        ("P179981", None),
-        ("P179981.IDA72500", None),
-    ],
-)
-def test_wb_loan(published: str, loan: str | None) -> None:
-    frame = pl.DataFrame({"pn": [published]})
-    assert frame.select(wb_loan(pl.col("pn"))).item() == loan
-
-
-@pytest.mark.parametrize(
     ("published", "rounded"),
     [
         ("2.10015E+12", {"prefix": "210015", "digits": 13}),
         ("2100150000000", {"prefix": "210015", "digits": 13}),
+        (" 2.10015e+12 ", {"prefix": "210015", "digits": 13}),
         ("2100150000123", None),
         ("210000", None),
         ("G-1", None),
@@ -508,11 +758,12 @@ def test_title_words() -> None:
 
 
 def _context(release_dir: Path, **switches: bool) -> StageContext:
+    # The fixture has no truth group to set Jev's scale.
     config = load_config(Path(__file__).parents[1] / "build.toml")
     return StageContext(
         release="test",
         release_dir=release_dir,
-        config=config.model_copy(update=switches),
+        config=config.model_copy(update={"jev_links": False} | switches),
         offline=True,
     )
 

@@ -1,12 +1,12 @@
-"""Remove each allocation, status and key-repair rule in turn and name the tests
-that fail.
+"""Remove each allocation, status, key-tier and key-repair rule in turn and name the
+tests that fail.
 
 Usage: uv run python scripts/mutation_check.py
 
-Each mutation rewrites one rule in a copy of the package's `build/allocate.py` or
-`build/link/key_repair.py`, runs that module's tests against the copy, and lists the
-failing tests. Exits 1 when the unmutated copy fails, when the copy is not the
-module the tests import, or when removing a rule fails no test.
+Each mutation rewrites one rule in a copy of the package's `build/allocate.py`,
+`build/link/keys.py` or `build/link/key_repair.py`, runs that module's tests against
+the copy, and lists the failing tests. Exits 1 when the unmutated copy fails, when
+the copy is not the module the tests import, or when removing a rule fails no test.
 """
 
 import os
@@ -126,6 +126,18 @@ ALLOCATE = {
     ),
 }
 
+# Rule name -> (text in build/link/keys.py, text that removes the rule).
+KEYS = {
+    "wb_loan_tier": (
+        'project_number.str.split(".").list.get(1, null_on_oob=True)',
+        "pl.lit(None, dtype=pl.String)",
+    ),
+    "wb_loan_world_bank_only": (
+        "donor_code.is_in(WORLD_BANK_DONORS)",
+        "pl.lit(True)",
+    ),
+}
+
 # Rule name -> (text in build/link/key_repair.py, text that removes the rule).
 KEY_REPAIR = {
     "rule_new_crs_id": (
@@ -135,10 +147,6 @@ KEY_REPAIR = {
     "rule_pn_variant": (
         "_candidates(d, c, on=_CORE, key=_CORE),",
         "_candidates(d, c, on=_CORE, key=_CORE).clear(),",
-    ),
-    "rule_wb_parent": (
-        "_candidates(d, c, on=_LOAN, key=_LOAN),",
-        "_candidates(d, c, on=_LOAN, key=_LOAN).clear(),",
     ),
     "rule_afdb_scientific": (
         '"repair_afdb_scientific": _rounded_numbers,',
@@ -202,6 +210,7 @@ KEY_REPAIR = {
 # Module under src -> (its tests, its mutations).
 TARGETS = {
     Path("climate_finance/build/allocate.py"): ("tests/test_allocate.py", ALLOCATE),
+    Path("climate_finance/build/link/keys.py"): ("tests/test_link.py", KEYS),
     Path("climate_finance/build/link/key_repair.py"): (
         "tests/test_key_repair.py",
         KEY_REPAIR,

@@ -12,19 +12,39 @@ returns that manifest unchanged.
 from __future__ import annotations
 
 import shutil
+from collections.abc import Collection
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict
+from typing import TYPE_CHECKING, Literal
 
 import httpx
 import polars as pl
 
 from climate_finance.build.errors import StageInputMissingError
+from climate_finance.build.readers.ledgers.finances_one import (
+    PUBLISHERS as FINANCES_ONE_PUBLISHERS,
+)
+from climate_finance.build.readers.ledgers.finances_one import snapshot_years
+from climate_finance.build.readers.ledgers.gcf import (
+    PUBLISHER as GCF_PUBLISHER,
+)
+from climate_finance.build.readers.ledgers.gcf import (
+    READINESS_PUBLISHER,
+)
+from climate_finance.build.sources import finances_one, iati, imf
+from climate_finance.build.sources.files import LEDGER_DIR, RawFile
+from climate_finance.build.sources.gcf import (
+    PROJECTS_FILE,
+    READINESS_FILE,
+    READINESS_SOURCE,
+    download_gcf_projects,
+    download_gcf_readiness,
+)
 from climate_finance.errors import SourceUnavailableError
 from climate_finance.schema import RAW_MANIFEST, sha256_file
 
 if TYPE_CHECKING:
-    from climate_finance.build.config import BuildConfig, LocalFile
+    from climate_finance.build.config import BuildConfig, Ledgers, LocalFile
     from climate_finance.build.stages import StageContext, StageOutput
 
 CRS_FILE = Path("oecd/CRS.parquet")
@@ -34,29 +54,19 @@ CRDF_FILES: dict[Perspective, Path] = {
     "recipient": Path("oecd/crdf_recipient.parquet"),
     "provider": Path("oecd/crdf_provider.parquet"),
 }
+# Recipient rows of the year before `years.crdf`, so the first share year has the
+# two-year span of `measure.agency_shares`.
+CRDF_SPAN_FILE = Path("oecd/crdf_span.parquet")
 MULTISYSTEM_FILE = Path("oecd/multisystem.parquet")
 IMPUTED_SHARES_NAME = "Imputed_multilateral_shares.xlsx"
 IMPUTED_SHARES_FILE = Path("oecd") / IMPUTED_SHARES_NAME
-GCF_FILE = Path("external/gcf/projects.json")
+GCF_FILE = PROJECTS_FILE
 IATI_DIR = Path("external/iati")
 DAC_EXCHANGE_FILE = Path("dac_exchange.parquet")
+ADAPTATION_LABELS_FILE = Path("labels/adaptation_labels.csv")
 
 CRDF_URL = "https://webfs.oecd.org/climate/"
-GCF_URL = "https://api.gcfund.org/v1/projects"
 _TIMEOUT = httpx.Timeout(30.0, read=300.0)
-
-
-class RawFile(TypedDict):
-    """One fetched file: a `raw_manifest` row."""
-
-    source: str
-    url: str | None
-    path: str
-    sha256: str
-    etag: str | None
-    version: str | None
-    fetched_at: datetime
-    method: str
 
 
 def run_fetch(context: StageContext) -> StageOutput:
@@ -98,35 +108,70 @@ def fetch_sources(
     """Fetch every source into `raw` and describe each file written.
 
     The bulk CRS comes first, so a challenge stops the fetch before the long
-    downloads.
+    downloads. The ledgers `config` names come last.
 
     Raises:
         SourceUnavailableError: when a source cannot be fetched.
     """
     sources = config.sources
     crs = (
-        _link_crs(raw, local=sources.crs_file, version=sources.crs_version)
+        _link_local(
+            raw,
+            local=sources.crs_file,
+            relative=CRS_FILE,
+            source="crs",
+            version=sources.crs_version,
+        )
         if sources.crs_file is not None
         else _download_crs(raw)
     )
+    first, last = config.years.crdf
     crdf = [
         _download_crdf(
             raw,
             perspective=perspective,
-            years=config.years.crdf,
+            years=(first, last),
             pins=sources.crdf_etags,
+            relative=relative,
+            source=f"crdf_{perspective}",
         )
-        for perspective in CRDF_FILES
+        for perspective, relative in CRDF_FILES.items()
     ]
+    span = _download_crdf(
+        raw,
+        perspective="recipient",
+        years=(first - 1, first - 1),
+        pins=sources.crdf_etags,
+        relative=CRDF_SPAN_FILE,
+        source="crdf_span",
+    )
     return [
         crs,
         *crdf,
+        span,
         _download_multisystem(raw, years=config.years.crdf),
         _download_imputed_shares(raw),
-        _download_gcf(raw, client=client),
+        *download_gcf_projects(raw, offline=False, client=client),
         _download_dac_exchange(raw),
         *_copy_iati(
             raw, archive=sources.iati_archive, publishers=sources.iati_publishers
+        ),
+        *(
+            [
+                _link_local(
+                    raw,
+                    local=labels,
+                    relative=ADAPTATION_LABELS_FILE,
+                    source="adaptation_labels",
+                )
+            ]
+            if (labels := _pinned_files(config).get("adaptation_labels"))
+            else []
+        ),
+        *(
+            _fetch_ledgers(raw, ledgers=sources.ledgers, client=client)
+            if sources.ledgers is not None
+            else []
         ),
     ]
 
@@ -136,12 +181,40 @@ def expected_sources(config: BuildConfig) -> list[str]:
     return [
         "crs",
         *(f"crdf_{perspective}" for perspective in CRDF_FILES),
+        "crdf_span",
         "multisystem",
         "imputed_shares",
         "gcf_projects",
         "dac_exchange",
         *(f"iati_{publisher}" for publisher in config.sources.iati_publishers),
+        *(["adaptation_labels"] if config.jev_labels else []),
+        *(
+            _ledger_sources(config.sources.ledgers)
+            if config.sources.ledgers is not None
+            else []
+        ),
     ]
+
+
+def _pinned_files(config: BuildConfig) -> dict[str, LocalFile]:
+    """The local files `config` names for fetch to copy, by source name.
+
+    The adaptation labels count only when `jev_labels` is on, as only then does a
+    stage read them.
+    """
+    sources = config.sources
+    pinned = {"crs": sources.crs_file}
+    if config.jev_labels:
+        pinned["adaptation_labels"] = sources.adaptation_labels
+    return {source: local for source, local in pinned.items() if local is not None}
+
+
+def iati_ledger_publishers(publishers: Collection[str]) -> list[str]:
+    """The ledger publishers read from IATI files, which are the rest of
+    `publishers` once World Bank Finances One and the GCF's own files are set
+    aside."""
+    own = {*FINANCES_ONE_PUBLISHERS, GCF_PUBLISHER, READINESS_PUBLISHER}
+    return [publisher for publisher in publishers if publisher not in own]
 
 
 def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> None:
@@ -151,8 +224,9 @@ def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> Non
 
     Raises:
         SourceUnavailableError: when the sources `recorded` holds differ from those
-            `config` names, in either direction, or `recorded` names a CRS file
-            other than the one `config` names, or when `raw` lacks a recorded
+            `config` names, in either direction, or `recorded` names a CRS or
+            adaptation label file other than the one `config` names, or when
+            `raw` lacks a recorded
             file, holds an unrecorded one, or holds one whose sha256 differs from
             the recorded one. The message names every such source or file.
     """
@@ -163,14 +237,13 @@ def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> Non
             f"records {sorted(held - expected)}, which build.toml does not name; "
             "run the fetch stage online."
         )
-    crs = config.sources.crs_file
-    if crs is not None and recorded.filter(source="crs")["sha256"].to_list() != [
-        crs.sha256
-    ]:
-        raise SourceUnavailableError(
-            f"build.toml names the CRS file {crs.path} (sha256 {crs.sha256}), and "
-            "the raw_manifest records another; run the fetch stage online."
-        )
+    for source, local in _pinned_files(config).items():
+        if recorded.filter(source=source)["sha256"].to_list() != [local.sha256]:
+            raise SourceUnavailableError(
+                f"build.toml names the {_DESCRIPTIONS[source]} {local.path} (sha256 "
+                f"{local.sha256}), and the raw_manifest records another; run the "
+                "fetch stage online."
+            )
 
     on_disk = {
         path.relative_to(raw).as_posix() for path in raw.rglob("*") if path.is_file()
@@ -231,25 +304,37 @@ def _place(origin: Path, target: Path) -> None:
         shutil.copyfile(origin, target)
 
 
-def _link_crs(raw: Path, *, local: LocalFile, version: str) -> RawFile:
-    """Put the browser-downloaded bulk CRS parquet in place, checking its sha256.
+_DESCRIPTIONS = {"crs": "CRS file", "adaptation_labels": "adaptation label file"}
+
+
+def _link_local(
+    raw: Path,
+    *,
+    local: LocalFile,
+    relative: Path,
+    source: str,
+    version: str | None = None,
+) -> RawFile:
+    """Put a local file, such as the browser-downloaded bulk CRS, at `relative`,
+    checking its sha256.
 
     Raises:
         SourceUnavailableError: when the file is missing or its sha256 differs.
     """
     if not local.path.is_file():
         raise SourceUnavailableError(
-            f"build.toml names the CRS file {local.path}, which does not exist."
+            f"build.toml names the {_DESCRIPTIONS[source]} {local.path}, which does "
+            "not exist."
         )
     if (actual := sha256_file(local.path)) != local.sha256:
         raise SourceUnavailableError(
             f"{local.path} has sha256 {actual}, and build.toml expects {local.sha256}."
         )
-    _place(local.path, _target(raw, CRS_FILE))
+    _place(local.path, _target(raw, relative))
     return _record(
         raw,
-        CRS_FILE,
-        source="crs",
+        relative,
+        source=source,
         method="manual",
         version=version,
         sha256=local.sha256,
@@ -285,9 +370,16 @@ def _download_crs(raw: Path) -> RawFile:
 
 
 def _download_crdf(
-    raw: Path, *, perspective: Perspective, years: tuple[int, int], pins: dict[str, str]
+    raw: Path,
+    *,
+    perspective: Perspective,
+    years: tuple[int, int],
+    pins: dict[str, str],
+    relative: Path,
+    source: str,
 ) -> RawFile:
-    """Write one perspective of the CRDF as oda-reader returns it.
+    """Write the `years` of one perspective of the CRDF, as oda-reader returns
+    them, to `relative`.
 
     Raises:
         SourceUnavailableError: when `pins` is not empty and a workbook read is
@@ -309,11 +401,8 @@ def _download_crdf(
             raise SourceUnavailableError(
                 f"CRDF workbooks differ from the ETags pinned in build.toml: {unpinned}"
             )
-    relative = CRDF_FILES[perspective]
     frame.to_parquet(_target(raw, relative), index=False)
-    return _record(
-        raw, relative, source=f"crdf_{perspective}", method="http", url=CRDF_URL
-    )
+    return _record(raw, relative, source=source, method="http", url=CRDF_URL)
 
 
 def _download_multisystem(raw: Path, *, years: tuple[int, int]) -> RawFile:
@@ -339,34 +428,6 @@ def _download_imputed_shares(raw: Path) -> RawFile:
         source="imputed_shares",
         method="http",
         url=f"{CRDF_URL}{IMPUTED_SHARES_NAME}",
-    )
-
-
-def _download_gcf(raw: Path, *, client: httpx.Client) -> RawFile:
-    """Save the GCF projects API response as served.
-
-    Raises:
-        SourceUnavailableError: when the request fails or the response is not a
-            JSON list of projects.
-    """
-    try:
-        response = client.get(GCF_URL)
-        response.raise_for_status()
-        projects = response.json()
-    except (httpx.HTTPError, ValueError) as error:
-        raise SourceUnavailableError(
-            f"{GCF_URL} could not be fetched: {error}"
-        ) from error
-    if not isinstance(projects, list):
-        raise SourceUnavailableError(f"{GCF_URL} did not return a list of projects.")
-    _target(raw, GCF_FILE).write_bytes(response.content)
-    return _record(
-        raw,
-        GCF_FILE,
-        source="gcf_projects",
-        method="http",
-        url=GCF_URL,
-        etag=response.headers.get("etag"),
     )
 
 
@@ -406,3 +467,74 @@ def _copy_iati(
                 _record(raw, relative, source=f"iati_{publisher}", method="manual")
             )
     return files
+
+
+def _fetch_ledgers(
+    raw: Path, *, ledgers: Ledgers, client: httpx.Client
+) -> list[RawFile]:
+    """Put the ledgers `ledgers` names under `ledgers/`, from its archive if it has
+    one. The GCF ledger reads the projects file, which every fetch writes. With the
+    AfDB, whose ledger is in SDR, the IMF's US dollar rate of the SDR comes too.
+
+    Raises:
+        SourceUnavailableError: when a download fails or the archive lacks a file.
+    """
+    first, last = ledgers.years
+    archive = ledgers.archive
+
+    def archived(folder: Path) -> Path | None:
+        return None if archive is None else archive / folder.relative_to(LEDGER_DIR)
+
+    files: list[RawFile] = []
+    if datasets := _finances_one_datasets(ledgers):
+        files += finances_one.download_finances_one(
+            raw,
+            years=range(first, last + 1),
+            datasets=datasets,
+            offline=False,
+            archive=archived(finances_one.FOLDER),
+            client=client,
+        )
+    if publishers := iati_ledger_publishers(ledgers.publishers):
+        files += iati.download_iati_ledgers(
+            raw,
+            publishers=publishers,
+            offline=False,
+            archive=archived(iati.FOLDER),
+            client=client,
+        )
+    if READINESS_PUBLISHER in ledgers.publishers:
+        files += download_gcf_readiness(
+            raw, offline=False, archive=archived(READINESS_FILE.parent), client=client
+        )
+    if imf.XDR_PUBLISHERS & set(ledgers.publishers):
+        files += imf.download_sdr_rates(
+            raw, offline=False, archive=archived(imf.FOLDER), client=client
+        )
+    return files
+
+
+def _ledger_sources(ledgers: Ledgers) -> list[str]:
+    first, last = ledgers.years
+    year_ends = snapshot_years(range(first, last + 1))
+    return [
+        *(
+            finances_one.source_name(dataset, year)
+            for dataset in _finances_one_datasets(ledgers)
+            for year in year_ends
+        ),
+        *(
+            iati.source_name(publisher)
+            for publisher in iati_ledger_publishers(ledgers.publishers)
+        ),
+        *([READINESS_SOURCE] if READINESS_PUBLISHER in ledgers.publishers else []),
+        *([imf.SOURCE] if imf.XDR_PUBLISHERS & set(ledgers.publishers) else []),
+    ]
+
+
+def _finances_one_datasets(ledgers: Ledgers) -> list[finances_one.Dataset]:
+    return [
+        FINANCES_ONE_PUBLISHERS[publisher]
+        for publisher in ledgers.publishers
+        if publisher in FINANCES_ONE_PUBLISHERS
+    ]

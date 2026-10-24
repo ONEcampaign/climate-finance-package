@@ -3,7 +3,7 @@
 An open commitment is a (donor, agency, crs id, year) with commitments recorded in the
 period and less than 95% disbursed in its own year. It continues, checked in this
 order: by id when a later year disburses under the same (donor, crs id); by parent id
-when a later disbursement's crs id begins with its crs id as an EU decision id; by
+when a later disbursement's crs id names its crs id as parent (`parent_id`); by
 project number when a later disbursement under another crs id shares (donor, agency,
 project number, recipient). Shares are of open commitment value.
 
@@ -35,7 +35,27 @@ MIN_CONTINUED = 0.2
 MIN_OPEN = 10
 
 # An EU contract's crs id is its 10-character decision id plus a contract number.
-_PARENT_ID_LENGTH = 10
+EU_DONOR = 918
+_DECISION_ID_LENGTH = 10
+# Denmark, Germany, the UK, the US and the AsDB file a later record of a project
+# under its crs id plus up to three letters (`2019001320a`, `2021000329-c`,
+# `2015003432/b`), and the two records share a title or project number. Other
+# donors' suffixes name other projects: France and 5RDB006 write 11-digit sequence
+# numbers, Sweden and New Zealand letters that start a new agreement.
+LETTER_SUFFIX_DONORS = (3, 5, 12, 302, 915)
+_LETTER_SUFFIX = r"^(\d{10})[-/]?[A-Za-z]{1,3}$"
+# The UK's lettered ids are copies of the line: a recommitment (`2020000488a`) or a
+# later report (`2019000146-c`) of the same activity under the same project number.
+# Germany's letters can name another line of the project.
+COPY_DONORS = (12,)
+# The Adaptation Fund moved its projects to new project numbers and later to new
+# crs ids, with no record that carries both. A record under the old crs id carries
+# the new number.
+RENUMBERED_DONORS = (1012,)
+# A line suffix with and without zero padding (`2021015528_06`, `2021015528_6`)
+# names one line: the Gates Foundation and two other private donors write both
+# forms of 2,396 ids, each pair under one project number.
+_PADDED_LINE = r"_0+(\d+)$"
 _AGENCY = ("donor_code", "agency_code")
 # The project-number key: one project of one agency in one recipient.
 PN_KEY = ("donor_code", "agency_code", "project_number", "recipient_code")
@@ -43,10 +63,33 @@ _EVENT = ("donor_code", "crs_id", "year")
 _ROUTES = ("id", "parent", "pn")
 
 
-def parent_id(crs_id: pl.Expr) -> pl.Expr:
-    """The EU decision id a contract's crs id begins with, or null for a shorter id."""
-    return pl.when(crs_id.str.len_chars() > _PARENT_ID_LENGTH).then(
-        crs_id.str.slice(0, _PARENT_ID_LENGTH)
+def parent_id(donor_code: pl.Expr, crs_id: pl.Expr) -> pl.Expr:
+    """The crs id of the project a record belongs to under another crs id: the EU
+    decision id a contract's crs id begins with, or the crs id a
+    `LETTER_SUFFIX_DONORS` id adds letters to. Null for every other id."""
+    return (
+        pl.when(
+            (donor_code == EU_DONOR) & (crs_id.str.len_chars() > _DECISION_ID_LENGTH)
+        )
+        .then(crs_id.str.slice(0, _DECISION_ID_LENGTH))
+        .when(donor_code.is_in(LETTER_SUFFIX_DONORS))
+        .then(crs_id.str.extract(_LETTER_SUFFIX, 1))
+    )
+
+
+def canonical_crs_id(crs_id: pl.Expr) -> pl.Expr:
+    """`crs_id` with the zero padding of its line suffix dropped."""
+    return crs_id.str.replace(_PADDED_LINE, "_${1}")
+
+
+def line_id(donor_code: pl.Expr, crs_id: pl.Expr) -> pl.Expr:
+    """The crs id every record of one line carries: `canonical_crs_id`, and for
+    `COPY_DONORS` the `parent_id` a copy adds letters to."""
+    canonical = canonical_crs_id(crs_id)
+    return (
+        pl.when(donor_code.is_in(COPY_DONORS))
+        .then(pl.coalesce(parent_id(donor_code, canonical), canonical))
+        .otherwise(canonical)
     )
 
 
@@ -68,7 +111,7 @@ def classify_id_practice(
     with no open commitment in a period gets no row for it.
     """
     disbursements = units.filter(pl.col("disbursement_usd") > 0).with_columns(
-        crs_parent=parent_id(pl.col("crs_id"))
+        crs_parent=parent_id(pl.col("donor_code"), pl.col("crs_id"))
     )
     return pl.concat(
         _classify(units, disbursements, first=first, last=last).with_columns(

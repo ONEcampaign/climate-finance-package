@@ -104,6 +104,47 @@ def read_iati_activities(path: Path) -> pl.DataFrame:
     )
 
 
+def read_related_activities(path: Path) -> pl.DataFrame:
+    """Every activity's `related-activity` references, as published.
+
+    `relation` is the IATI RelatedActivityType code: 1 parent, 2 child, 3 sibling,
+    4 co-funded, 5 third party. `related_id` is upper-cased with its spaces removed.
+    References without a `ref`, and activities that do not parse, are skipped.
+
+    Args:
+        path: One publisher's directory of activity XML files.
+
+    Raises:
+        FileNotFoundError: when `path` holds no XML file.
+    """
+    files = sorted(path.glob("*.xml"))
+    if not files:
+        raise FileNotFoundError(f"No IATI XML under {path}")
+    skipped = {"unparsed": 0}
+    rows = [
+        {
+            "activity_id": activity_id,
+            "related_id": re.sub(r"\s+", "", ref).upper(),
+            "relation": related.get("type"),
+        }
+        for file in files
+        for activity in _activities(file, skipped)
+        if (activity_id := _text(activity.find("iati-identifier")))
+        for related in activity.iterfind("related-activity")
+        if (ref := related.get("ref", "").strip())
+    ]
+    if skipped["unparsed"]:
+        logger.warning("IATI activities skipped: %s", skipped)
+    return pl.DataFrame(
+        rows,
+        schema={
+            "activity_id": pl.String,
+            "related_id": pl.String,
+            "relation": pl.String,
+        },
+    ).unique(maintain_order=True)
+
+
 def _activities(file: Path, skipped: dict[str, int]) -> Iterator[ET.Element]:
     for fragment in _ACTIVITY.findall(file.read_text(encoding="utf-8-sig")):
         try:
