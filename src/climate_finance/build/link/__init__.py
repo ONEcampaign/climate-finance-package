@@ -65,7 +65,8 @@ def run_link(context: StageContext) -> StageOutput:
     on.
     The provider profile measures each provider's climate value and what its
     crosswalk reaches, and sorts providers into scoring groups. The truth group's
-    classifier links what it scores at or above its threshold. Splink scores the
+    classifier links what it scores at or above its threshold, and each scored
+    disbursement whose best pair was rejected links its next best. Splink scores the
     other groups' pairs into `pair_scores`, calibrated by people's recorded
     decisions, and by Jev only with `jev_links` on. With `jev_links` on, Jev
     adjudicates the classifier's band, answers each Splink model that people have
@@ -81,6 +82,7 @@ def run_link(context: StageContext) -> StageOutput:
     config = context.config
     decided = read_decision_labels(config.sources.review_decisions)
     rejected, accepted = rejected_pairs(decided), accepted_pairs(decided)
+    rejected_trace = rejected.filter(task="trace").drop("task")
 
     def unrejected(tier: pl.DataFrame) -> pl.DataFrame:
         return drop_pairs(tier, pairs=rejected, accepted=accepted)
@@ -156,6 +158,7 @@ def run_link(context: StageContext) -> StageOutput:
         id_practice=id_practice,
         stems=stems,
         first_year=config.years.crs[0],
+        rejected=rejected_trace,
     )
     classifier = scored.links
     client = context.jev if config.jev_links else None
@@ -171,7 +174,7 @@ def run_link(context: StageContext) -> StageOutput:
             band=config.jev.band,
             client=client,
         )
-        classifier = classifier_links(scored.scores, jev=band)
+        classifier = classifier_links(scored.scores, jev=band, rejected=rejected_trace)
         answer = jev_answers(client=client, scale=band.scale)
     splink = score_with_splink(
         candidates,
@@ -191,6 +194,7 @@ def run_link(context: StageContext) -> StageOutput:
                 candidates=candidates,
                 units=units,
                 jev_model=client.model,
+                rejected=rejected_trace,
             )
         )
     return {

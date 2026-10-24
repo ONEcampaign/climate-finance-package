@@ -304,6 +304,7 @@ def test_a_row_is_pending_exactly_when_rejecting_its_queued_links_changes_it() -
         accepted,
         allocations=_allocations(case, links),
         links=links,
+        labels=no_labels(),
         units=case.units.lazy(),
         crs=case.crs.lazy(),
         crdf=counted_rows(case.crdf.lazy()),
@@ -319,7 +320,9 @@ def test_a_row_is_pending_exactly_when_rejecting_its_queued_links_changes_it() -
     expected = set()
     for group in queued["row_group"].unique():
         rejected = case.statuses(
-            drop_pairs(links, pairs=queued.filter(row_group=group))
+            drop_pairs(
+                links, pairs=queued.filter(row_group=group), accepted=no_labels()
+            )
         )
         rows = groups.filter(row_group=group)["row_id"]
         changed = (
@@ -341,6 +344,50 @@ def test_a_row_is_pending_exactly_when_rejecting_its_queued_links_changes_it() -
     assert status["disbursed_usd"].sum() == pytest.approx(
         accepted["disbursed_usd"].sum(), abs=TOLERANCE
     )
+
+
+def test_rejecting_queued_links_keeps_the_links_people_accepted() -> None:
+    # d22's link to c19 is queued and d22b's accepted. Rejecting d22's leaves c19
+    # with d22b's 95 of its 100, disbursed as before; dropping d22b's too would
+    # leave c19 with nothing.
+    case = Linked(
+        [
+            *(row for row in GROUP if row["record_id"] != "d22b"),
+            record("d22b", 2022, "A", disburse=95.0, dated=2022),
+        ],
+        [crdf_row("row_c19", 2019, "A", 100.0), crdf_row("row_c21", 2021, "A", 100.0)],
+    )
+    unit = case.unit
+    links = flag_review(case.links, labels=no_labels(), band=BAND).with_columns(
+        review=(pl.col("left_id") == unit("d22")) & (pl.col("right_id") == unit("c19"))
+    )
+    labels = no_labels().vstack(
+        pl.DataFrame(
+            [("trace", unit("d22b"), unit("c19"), True, "human")],
+            schema=no_labels().schema,
+            orient="row",
+        )
+    )
+    statuses = case.statuses(links)
+
+    def pending(decided: pl.DataFrame) -> set[str]:
+        return set(
+            pending_rows(
+                statuses,
+                allocations=_allocations(case, links),
+                links=links,
+                labels=decided,
+                units=case.units.lazy(),
+                crs=case.crs.lazy(),
+                crdf=counted_rows(case.crdf.lazy()),
+            )["row_id"]
+        )
+
+    assert dict(statuses.select("row_id", "status").iter_rows())["row_c19"] == (
+        "disbursed"
+    )
+    assert pending(labels) == set()
+    assert pending(no_labels()) == {"row_c19"}
 
 
 def _allocations(case: Linked, links: pl.DataFrame) -> pl.DataFrame:

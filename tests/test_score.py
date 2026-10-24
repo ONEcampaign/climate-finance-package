@@ -1207,21 +1207,20 @@ def _eligible(left: str, right: str, p: float, **fields: object) -> dict[str, ob
 
 
 def test_each_disbursement_links_its_best_commitment() -> None:
-    links = classifier_links(
-        _scores(
-            _eligible("d1", "c1", 0.6),
-            _eligible("d1", "c2", 0.8),
-            # Ties go to the earlier placed year.
-            _eligible("d2", "c3", 0.7, placed_year=2019),
-            _eligible("d2", "c4", 0.7, placed_year=2018),
-            # Exactly at the threshold links; below does not.
-            _eligible("d3", "c5", 0.5),
-            _eligible("d4", "c6", 0.49),
-            # Siblings never link.
-            _eligible("d5", "c7", 0.99, programme_level=1),
-            _eligible("d6", "c2", 0.9, programme_level=2),
-        )
+    scores = _scores(
+        _eligible("d1", "c1", 0.6),
+        _eligible("d1", "c2", 0.8),
+        # Ties go to the earlier placed year.
+        _eligible("d2", "c3", 0.7, placed_year=2019),
+        _eligible("d2", "c4", 0.7, placed_year=2018),
+        # Exactly at the threshold links; below does not.
+        _eligible("d3", "c5", 0.5),
+        _eligible("d4", "c6", 0.49),
+        # Siblings never link.
+        _eligible("d5", "c7", 0.99, programme_level=1),
+        _eligible("d6", "c2", 0.9, programme_level=2),
     )
+    links = classifier_links(scores)
     schema.validate(schema.LINKS, links)
     assert links.select("left_id", "right_id").rows() == [
         ("d1", "c2"),
@@ -1235,6 +1234,10 @@ def test_each_disbursement_links_its_best_commitment() -> None:
     ].to_list() == [1, 1, 1]
     assert set(links["link_method"]) == {"classifier"}
     assert links["probability"].to_list() == links["p_model"].to_list()
+    # A rejected best pair gives way to the unit's next best.
+    rejected = pl.DataFrame({"left_id": ["d1"], "right_id": ["c2"]})
+    again = classifier_links(scores, rejected=rejected)
+    assert again.filter(left_id="d1")["right_id"].to_list() == ["c1"]
 
 
 def test_training_and_held_out_pairs_never_link() -> None:

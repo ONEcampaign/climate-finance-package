@@ -184,6 +184,7 @@ def score_candidates(
     id_practice: pl.DataFrame,
     stems: pl.DataFrame,
     first_year: int,
+    rejected: pl.DataFrame | None = None,
 ) -> Scored:
     """Sort providers into scoring groups and link what the truth group scores.
 
@@ -195,6 +196,8 @@ def score_candidates(
         id_practice: each agency's class per period.
         stems: the programme stem rules.
         first_year: the first CRS year the build loads.
+        rejected: the trace pairs (`left_id`, `right_id`) review decisions
+            rejected, which never link (`linked_pairs`).
     """
     contradicted = contradicted_commitments(units, first_year=first_year)
     truth = id_truth(
@@ -227,7 +230,7 @@ def score_candidates(
     )
     scores = score_truth_group(features, groups=groups, truth=truth)
     return Scored(
-        links=classifier_links(scores),
+        links=classifier_links(scores, rejected=rejected),
         profile=scoring_profile(groups, scores=scores),
         scores=scores,
     )
@@ -983,12 +986,22 @@ def true_disbursements(truth: pl.DataFrame, *, commitments: pl.Series) -> int:
 
 
 def linked_pairs(
-    pairs: pl.DataFrame, *, threshold: float, jev_threshold: float | None = None
+    pairs: pl.DataFrame,
+    *,
+    threshold: float,
+    jev_threshold: float | None = None,
+    rejected: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Each disbursement unit's link among `pairs`: its best pair
     (`best_commitments` on `probability`) among those that reach their threshold,
     `jev_threshold` on `probability` where Jev answered (`p_jev` not null) and
-    `threshold` on `p_model` elsewhere."""
+    `threshold` on `p_model` elsewhere. The pairs of `rejected` (`left_id`,
+    `right_id`), which review decisions rejected, are left out first, so a unit
+    whose best pair was rejected links its next best."""
+    if rejected is not None:
+        pairs = pairs.join(
+            rejected.select(*_PAIR), on=list(_PAIR), how="anti", maintain_order="left"
+        )
     reached = pl.col("p_model") >= threshold
     if jev_threshold is not None:
         reached = (
@@ -1000,13 +1013,17 @@ def linked_pairs(
 
 
 def classifier_links(
-    scores: TruthScores, *, jev: JevBand | None = None
+    scores: TruthScores,
+    *,
+    jev: JevBand | None = None,
+    rejected: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """The classifier's `trace` links, in the `links` schema.
 
     With `jev` (`jev.adjudicate_band`), an eligible pair Jev answered takes its
     combined probability and links at the combined threshold, as `classifier_jev`;
-    every other pair keeps the classifier's probability and threshold.
+    every other pair keeps the classifier's probability and threshold. No pair of
+    `rejected` links (`linked_pairs`).
     """
     eligible = scores.pairs.filter(pl.col("split") == ELIGIBLE)
     if jev is None:
@@ -1021,6 +1038,7 @@ def classifier_links(
         weighed,
         threshold=scores.threshold,
         jev_threshold=None if jev is None else jev.threshold,
+        rejected=rejected,
     )
     method = (
         pl.when(pl.col("p_jev").is_not_null())

@@ -80,7 +80,7 @@ from climate_finance.build.link.levels import (
     levels_struct,
     unit_attributes,
 )
-from climate_finance.build.link.score import best_commitments
+from climate_finance.build.link.score import linked_pairs
 
 if TYPE_CHECKING:
     from climate_finance.build.jev_client import JevClient
@@ -814,13 +814,14 @@ def splink_links(
     candidates: pl.DataFrame,
     units: pl.DataFrame,
     jev_model: str,
+    rejected: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """The calibrated Splink models' `trace` links, in the `links` schema.
 
     Each disbursement unit joins the commitment of its highest-probability pair at
-    or above `LINK_THRESHOLD` that is not a sibling, ties to the earlier placed
-    year, then the smaller unit id (`score.best_commitments`). A commitment's
-    links form one group.
+    or above `LINK_THRESHOLD` that is not a sibling and not in `rejected`, ties to
+    the earlier placed year, then the smaller unit id (`score.linked_pairs`). A
+    commitment's links form one group.
 
     Args:
         scores: `pair_scores` (`score_with_splink`).
@@ -828,13 +829,19 @@ def splink_links(
         units: the link stage's units, for each commitment's placed year.
         jev_model: the Jev model behind the calibration labels, recorded on the
             links of models whose labels Jev gave some of.
+        rejected: the trace pairs (`left_id`, `right_id`) review decisions
+            rejected.
     """
     taken = (
-        scores.filter(pl.col("probability") >= LINK_THRESHOLD)
+        scores.drop_nulls("probability")
         .join(candidates.select(*_PAIR, "programme_level"), on=_PAIR)
         .join(units.select("placed_year", right_id="unit_id"), on="right_id")
     )
-    best = best_commitments(taken, probability="probability")
+    best = linked_pairs(
+        taken.with_columns(p_model="probability"),
+        threshold=LINK_THRESHOLD,
+        rejected=rejected,
+    )
     given = {
         "task": pl.lit("trace"),
         "left_id": pl.col("left_id"),

@@ -426,6 +426,38 @@ def test_jev_answers_the_calibration_samples_and_the_models_link(
     assert right.mean() > 0.9
 
 
+def test_a_rejected_splink_pair_gives_way_to_the_next_best() -> None:
+    scores = pl.DataFrame(
+        {
+            "left_id": ["d1", "d1", "d1"],
+            "right_id": ["c1", "c2", "c3"],
+            "probability": [0.99, 0.95, LINK_THRESHOLD - 0.01],
+            "model": ["own_1"] * 3,
+            "label_set": ["human:100"] * 3,
+        }
+    ).with_columns(levels=pl.lit(None, dtype=schema.LINKS.columns["levels"].dtype))
+    candidates = scores.select("left_id", "right_id", programme_level=pl.lit(0))
+    units = pl.DataFrame(
+        {"unit_id": ["c1", "c2", "c3"], "placed_year": [2019, 2019, 2019]}
+    )
+
+    def linked(rejected: pl.DataFrame | None = None) -> list[str]:
+        links = splink_links(
+            scores,
+            candidates=candidates,
+            units=units,
+            jev_model=MODEL,
+            rejected=rejected,
+        )
+        return links["right_id"].to_list()
+
+    assert linked() == ["c1"]
+    c1 = pl.DataFrame({"left_id": ["d1"], "right_id": ["c1"]})
+    assert linked(c1) == ["c2"]
+    # Nothing else reaches the threshold.
+    assert linked(pl.concat([c1, c1.with_columns(right_id=pl.lit("c2"))])) == []
+
+
 def test_an_answer_for_people_calibrates_as_their_recorded_labels(
     uncalibrated: Run,
     world: dict[str, pl.DataFrame],

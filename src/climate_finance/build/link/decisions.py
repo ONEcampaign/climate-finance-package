@@ -31,7 +31,6 @@ LABELS = {"match": "accept", "no_match": "reject"}
 DECIDING_SOURCES = ("human", "agent")
 # What a split trace group's `group_id` ends in, before the part's rank.
 SPLIT = "|split|"
-PAIR_FRAME = pl.DataFrame(schema=dict.fromkeys(PAIR, pl.String))
 
 
 def rejected_pairs(labels: pl.DataFrame) -> pl.DataFrame:
@@ -75,7 +74,7 @@ def override_links(links: pl.DataFrame, *, labels: pl.DataFrame) -> pl.DataFrame
 
 
 def drop_pairs(
-    links: pl.DataFrame, *, pairs: pl.DataFrame, accepted: pl.DataFrame | None = None
+    links: pl.DataFrame, *, pairs: pl.DataFrame, accepted: pl.DataFrame
 ) -> pl.DataFrame:
     """`links` less the links of `pairs` (`task`, `left_id`, `right_id`), with the
     links of `accepted` kept.
@@ -95,7 +94,7 @@ def drop_pairs(
     each part in a pass after the parts ranked before it (`allocate.allocate`), so
     parts of one group may share a commitment.
     """
-    accepted = PAIR_FRAME if accepted is None else accepted.select(PAIR)
+    accepted = accepted.select(PAIR)
     dropped = links.join(pairs.select(PAIR), on=PAIR, how="semi")
     kept = links.join(dropped, on=PAIR, how="anti")
     trace = pl.col("task") == "trace"

@@ -34,7 +34,7 @@ from climate_finance.build.allocate import (
     dated_donors,
     window_donors,
 )
-from climate_finance.build.link.decisions import PAIR, drop_pairs
+from climate_finance.build.link.decisions import PAIR, accepted_pairs, drop_pairs
 from climate_finance.build.link.ledger import run_ledger_check
 from climate_finance.build.link.packet import code_names, write_packet
 from climate_finance.build.link.splink_models import read_decision_labels
@@ -71,6 +71,7 @@ def run_review(context: StageContext) -> StageOutput:
         commitments,
         allocations=allocations,
         links=links,
+        labels=decided,
         units=context.read("link", "units"),
         crs=trace_population(context.read("normalise", "crs")),
         crdf=counted_rows(context.read("normalise", "crdf")),
@@ -191,6 +192,7 @@ def pending_rows(
     *,
     allocations: pl.DataFrame,
     links: pl.DataFrame,
+    labels: pl.DataFrame,
     units: pl.LazyFrame,
     crs: pl.LazyFrame,
     crdf: pl.LazyFrame,
@@ -199,9 +201,10 @@ def pending_rows(
 
     A row's queued links are the flagged trace links into the units of its
     `crdf_crs` group. Accepting them all gives the row its status in
-    `commitments`. Rejecting them all (`drop_pairs`) gives the status a new
-    allocation gives it, with the fill stage's ledger and IATI allocations held.
-    The row is pending when the two differ.
+    `commitments`. Rejecting them all (`drop_pairs`), with the links people and
+    agents accepted kept, gives the status a new allocation gives it, with the fill
+    stage's ledger and IATI allocations held. The row is pending when the two
+    differ.
 
     Rejecting links changes allocation only within their connected component of
     trace links, `crdf_crs` links and repeat rows. Each round reallocates the
@@ -212,6 +215,7 @@ def pending_rows(
         commitments: the fill stage's `commitments`.
         allocations: the fill stage's `allocations`.
         links: the links with `review` set (`flag_review`).
+        labels: `read_decision_labels`, whose accepted pairs stay linked.
         units: the link stage's `units`.
         crs: the CRS trace population.
         crdf: the counted CRDF rows (`counted_rows`).
@@ -267,12 +271,14 @@ def pending_rows(
 
     held = allocations.filter(pl.col("disbursement_source") != "crs")
     accepted = commitments.select("row_id", accepted="status")
+    decided = accepted_pairs(labels)
     pending = [no_rows]
     for these in rounds.sort("round").partition_by("round", maintain_order=True):
         own = these.select("component")
         rejected = drop_pairs(
             near_links.join(own, on="component", how="semi").drop("component"),
             pairs=queued.join(these, on="group_id"),
+            accepted=decided,
         ).lazy()
         round_units = (
             near_units.join(own, on="component", how="semi").drop("component").lazy()
