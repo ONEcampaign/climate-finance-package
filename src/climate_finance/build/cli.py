@@ -7,7 +7,7 @@ import typer
 from rich.console import Console
 
 from climate_finance.build import build as run_build
-from climate_finance.build import evaluate, gate, release
+from climate_finance.build import evaluate, gate, load_config, release
 from climate_finance.build.link import decisions as decisions_module
 from climate_finance.build.link import review
 from climate_finance.build.readers import btr
@@ -38,26 +38,21 @@ def build_command(
         console.print(f"{stage_name}: {len(tables)} tables")
 
 
-DecisionsOption = Annotated[
-    Path, typer.Option(help="Review-decisions parquet holding the sample's labels.")
-]
-
-
 @app.command()
 def sample(
     release_dir: Path,
     out: Annotated[
         Path, typer.Option(help="Directory for the sample's packets and design.")
     ],
-    decisions: DecisionsOption = Path("data/review_decisions.parquet"),
+    config: ConfigOption = Path("build.toml"),
 ) -> None:
     """Draw the stratified blind sample: a labelling packet per provider and batch,
-    and the design beside them."""
+    and the design beside them. The review decisions come from the config."""
     console.print(
         evaluate.draw_blind_sample(
             release_dir=release_dir,
             out_dir=out,
-            decisions=decisions,
+            decisions=load_config(config).sources.review_decisions,
             rule=gate.load_gates().precision,
         )
     )
@@ -78,7 +73,7 @@ FirstReleaseOption = Annotated[
 @app.command("gate")
 def gate_command(
     release_dir: Path,
-    decisions: DecisionsOption = Path("data/review_decisions.parquet"),
+    config: ConfigOption = Path("build.toml"),
     sample: SampleOption = None,
     previous: PreviousOption = None,
     first_release: FirstReleaseOption = False,
@@ -86,10 +81,11 @@ def gate_command(
         False
     ),
 ) -> None:
-    """Evaluate the release gates, one line per gate row."""
+    """Evaluate the release gates, one line per gate row. The blind sample's labels
+    come from the config's review decisions."""
     results = gate.run_gates(
         release_dir,
-        decisions=decisions,
+        decisions=load_config(config).sources.review_decisions,
         sample=sample,
         previous=previous,
         first_release=first_release,
@@ -162,7 +158,10 @@ def release_command(
     previous: PreviousOption = None,
     first_release: FirstReleaseOption = False,
     waive_precision: Annotated[
-        bool, typer.Option(help="Pack despite a failed precision gate; recorded.")
+        bool,
+        typer.Option(
+            help="Pack despite failed precision and human-audit gates; recorded."
+        ),
     ] = False,
 ) -> None:
     """Build, gate and pack a release."""

@@ -150,7 +150,7 @@ def _passed(results: pl.DataFrame) -> dict[tuple[str, str | None], bool]:
     }
 
 
-def test_a_sound_release_passes_every_gate_but_precision_without_a_sample(
+def test_a_sound_release_passes_every_gate_but_the_samples_without_one(
     release_dir: Path,
 ) -> None:
     results = _report(release_dir)
@@ -158,6 +158,7 @@ def test_a_sound_release_passes_every_gate_but_precision_without_a_sample(
     assert results["gate"].unique(maintain_order=True).to_list() == list(GATES)
     assert _passed(results) == {
         ("precision", str(NOR)): False,
+        ("human_audit", None): False,
         ("conservation", None): True,
         ("over_allocation", "above_face"): True,
         ("over_allocation", "raw_links"): True,
@@ -176,9 +177,10 @@ def test_a_failed_gate_raises_naming_the_provider_and_the_missing_previous_relea
 
     assert [failure.split(":")[0] for failure in raised.value.failures] == [
         f"precision {NOR}",
+        "human_audit",
         "drift",
     ]
-    assert "first_release" in raised.value.failures[1]
+    assert "first_release" in raised.value.failures[2]
 
 
 def _label(
@@ -202,7 +204,7 @@ def _label(
     agent = label_source == "agent"
     for packet in sorted(out.glob("*/batch-*.md")):
         labels = packet.with_suffix(".labels.csv")
-        right = ~pl.col("left_id").is_in(rejected_units)
+        right = ~pl.col("left_id").is_in(rejected_units.implode())
         pl.read_parquet(packet_pairs_path(packet)).select(
             "pair",
             label=pl.when(right).then(pl.lit("match")).otherwise(pl.lit("no_match")),
@@ -274,6 +276,56 @@ def test_precision_reads_the_blind_sample_by_allocated_value(
     assert row["lower"] == row["upper"] == row["value"]
     assert row["passed"] is passed
     assert ("100% decided by agents" in row["detail"]) is (label_source == "agent")
+
+
+def _units_of(release_dir: Path, record: str) -> pl.Series:
+    units = pl.read_parquet(table_path(release_dir, "link", "units"))
+    return units.filter(pl.col("record_ids").list.contains(record))["unit_id"]
+
+
+@pytest.mark.parametrize("change", ["drop_pair", "change_method"])
+def test_precision_refuses_a_sample_drawn_from_another_build(
+    release_dir: Path, change: str
+) -> None:
+    design = _label(release_dir, rejected=set())
+    d21 = _units_of(release_dir, "d21")
+    trace = (pl.col("task") == "trace") & pl.col("left_id").is_in(d21.implode())
+    _edit(
+        table_path(release_dir, "review", "links"),
+        lambda frame: (
+            frame.filter(~trace)
+            if change == "drop_pair"
+            else frame.with_columns(
+                link_method=pl.when(trace)
+                .then(pl.lit("classifier"))
+                .otherwise("link_method")
+            )
+        ),
+    )
+
+    row = (
+        _report(release_dir, sample=design).filter(gate="precision").row(0, named=True)
+    )
+
+    assert row["passed"] is False
+    assert "1 of 2 sampled pairs" in row["detail"]
+
+
+@pytest.mark.parametrize(
+    ("label_source", "share", "passed"), [("human", 1.0, True), ("agent", 0.0, False)]
+)
+def test_the_human_audit_reads_who_decided_the_draws(
+    release_dir: Path, label_source: str, share: float, passed: bool
+) -> None:
+    design = _label(release_dir, rejected=set(), label_source=label_source)
+
+    row = (
+        _report(release_dir, sample=design)
+        .filter(gate="human_audit")
+        .row(0, named=True)
+    )
+
+    assert (row["value"], row["threshold"], row["passed"]) == (share, 0.1, passed)
 
 
 def test_a_waiver_lets_a_failed_precision_gate_through(release_dir: Path) -> None:
@@ -366,12 +418,64 @@ def test_each_gate_fails_on_a_release_doctored_to_break_it(
     results = _report(release_dir)
 
     failed = {key for key, passed in _passed(results).items() if not passed}
-    assert failed == {("precision", str(NOR)), failing}
+    assert failed == {("precision", str(NOR)), ("human_audit", None), failing}
     gate, subject = failing
     row = results.filter(
         pl.col("gate") == gate, pl.col("subject").eq_missing(subject)
     ).row(0, named=True)
     assert named in row["detail"]
+
+
+def _drop_trace(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.filter(pl.col("task") != "trace")
+
+
+@pytest.mark.parametrize(
+    ("stage", "table", "edit", "failing"),
+    [
+        # Nothing linked: no pair to certify, no record to conserve, no unit to
+        # measure.
+        (
+            "review",
+            "links",
+            _drop_trace,
+            {
+                ("precision", None),
+                ("conservation", None),
+                ("over_allocation", "raw_links"),
+            },
+        ),
+        ("assemble", "disbursements", pl.DataFrame.clear, {("withheld_rows", None)}),
+    ],
+)
+def test_a_gate_with_nothing_to_measure_fails(
+    release_dir: Path,
+    stage: str,
+    table: str,
+    edit: Callable[[pl.DataFrame], pl.DataFrame],
+    failing: set[tuple[str, str | None]],
+) -> None:
+    _edit(table_path(release_dir, stage, table), edit)
+
+    results = _report(release_dir)
+
+    rows = {
+        (gate, subject): (passed, value)
+        for gate, subject, passed, value in results.select(
+            "gate", "subject", "passed", "value"
+        ).rows()
+    }
+    assert {key: rows[key] for key in failing} == dict.fromkeys(failing, (False, None))
+
+
+def test_a_waiver_lets_an_empty_precision_gate_through(release_dir: Path) -> None:
+    _edit(table_path(release_dir, "review", "links"), _drop_trace)
+
+    results = _report(release_dir, waive_precision=True)
+
+    assert results.filter(gate="precision").select("subject", "waived").rows() == [
+        (None, True)
+    ]
 
 
 def _previous(release_dir: Path, *, factor: float) -> Path:
@@ -450,8 +554,17 @@ def _with_row(*, provider: int, year: int, scale: float) -> Callable:
             _with_row(provider=NOR, year=2020, scale=1.0),
             None,
             True,
-            f"new provider-years, not compared: {NOR}/2020",
+            f"provider-years after 2019, not compared: {NOR}/2020",
         ),
+        # A provider-year inside the previous release's years that it lacked.
+        (
+            _with_row(provider=NOR, year=2018, scale=1.0),
+            None,
+            False,
+            f"{NOR}/2018 (new)",
+        ),
+        # An empty previous `quality` sets no baseline.
+        (None, pl.DataFrame.clear, False, "quality table is empty"),
         # A year the previous release held vanishes.
         (
             None,
@@ -514,29 +627,40 @@ def test_quality_shows_each_providers_precision_interval(
     ]
 
 
-def test_the_sample_and_gate_commands_pass_their_options_through(
+def test_the_sample_and_gate_commands_read_decisions_from_the_config(
     release_dir: Path,
 ) -> None:
     runner = CliRunner()
-    decisions = str(release_dir.parent / "decisions.parquet")
+    decisions = release_dir.parent / "labels" / "decisions.parquet"
+    config = release_dir.parent / "build.toml"
+    config.write_text(
+        BUILD_TOML.read_text().replace(
+            'review_decisions = "data/review_decisions.parquet"',
+            f'review_decisions = "{decisions}"',
+        )
+    )
     out = release_dir.parent / "sample"
 
     drawn = runner.invoke(
-        app, ["sample", str(release_dir), "--out", str(out), "--decisions", decisions]
+        app, ["sample", str(release_dir), "--out", str(out), "--config", str(config)]
     )
     gate = [
         "gate",
         str(release_dir),
-        "--decisions",
-        decisions,
+        "--config",
+        str(config),
         "--sample",
         str(design_path(out)),
     ]
+    missing = runner.invoke(app, [*gate, "--first-release", "--report"])
+    decisions.parent.mkdir()
+    _empty(schema.REVIEW_DECISIONS).write_parquet(decisions)
     reported = runner.invoke(app, [*gate, "--first-release", "--report"])
     refused = runner.invoke(app, gate)
 
     assert drawn.exit_code == 0, drawn.output
     assert pl.read_parquet(design_path(out)).height == 2
+    assert isinstance(missing.exception, FileNotFoundError)
     assert reported.exit_code == 0, reported.output
     assert f"precision {NOR}: FAIL; continue after 0 labels (census)" in (
         reported.output

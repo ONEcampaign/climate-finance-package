@@ -29,7 +29,7 @@ Runs the build stages and writes their tables.
 ## `cf-build sample`
 
 ```bash
-cf-build sample RELEASE_DIR --out DIR [--decisions data/review_decisions.parquet]
+cf-build sample RELEASE_DIR --out DIR [--config build.toml]
 ```
 
 Draws the stratified blind sample of a build's allocated links. It writes a labelling packet per provider and batch to `DIR/<provider>/batch-<NN>.md`, and the design, one row per draw, to `DIR/design.parquet`. The packets show both records of a pair and omit the score, link method, and stratum.
@@ -61,7 +61,7 @@ The command raises `ReviewDecisionsError` when the packet changed since its pair
 ## `cf-build gate`
 
 ```bash
-cf-build gate RELEASE_DIR [--decisions FILE] [--sample FILE] [--previous DIR] [--first-release] [--report]
+cf-build gate RELEASE_DIR [--config build.toml] [--sample FILE] [--previous DIR] [--first-release] [--report]
 ```
 
 Evaluates the [release gates](release-gates.md) and prints one line per gate row.

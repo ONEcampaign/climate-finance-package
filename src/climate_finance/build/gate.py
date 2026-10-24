@@ -6,7 +6,11 @@ in `GATES` order, with a row per provider for precision and one per check for
 over-allocation:
 
 - `precision`: each provider's blind-sample estimate passes the sequential rule
-  (`evaluate.estimate_precision`). Without a blind sample every provider fails.
+  (`evaluate.estimate_precision`). Without a blind sample every provider fails, and
+  so does a provider whose sampled pairs the build no longer allocates by the same
+  method in the same stratum.
+- `human_audit`: at least `min_share` of the blind sample's draws carry a person's
+  decision.
 - `conservation`: each linked CRS record's allocations, the unallocated excess
   included, sum to its disbursement.
 - `over_allocation`: no commitment row is disbursed above its face value, and few
@@ -19,8 +23,12 @@ over-allocation:
   as the Green Climate Fund's ledger, whose terms bar redistribution
   (`schema.withheld_record`).
 
-Every value is a largest gap or a count, and a row passes at or below its threshold,
-except precision, whose lower bound passes at or above it.
+Every value is a largest gap, a count or a share. A row passes at or below its
+threshold, except that the raw-links share passes below it, and precision's lower
+bound and the human-audit share pass at or above it. A gate with nothing to
+measure fails: no allocated pairs, no linked record with a disbursement, no linked
+commitment unit, no disbursement row, or an empty sample. `waive_precision` lets
+precision and human_audit rows fail.
 """
 
 from __future__ import annotations
@@ -41,6 +49,7 @@ from climate_finance.schema import ReleaseManifest, scan_table, withheld_record
 GATES_YAML = Path(__file__).with_name("gates.yaml")
 GATES = (
     "precision",
+    "human_audit",
     "conservation",
     "over_allocation",
     "oecd_reconciliation",
@@ -64,10 +73,18 @@ RESULT_SCHEMA = pl.Schema(
 DRIFT_MEASURES = ("climate_usd", "disbursed_climate_usd")
 # How many failing items a row's detail names.
 _SHOWN = 5
+# The gates `waive_precision` lets fail: both certify the blind sample.
+_WAIVABLE = ("precision", "human_audit")
+# The columns a sampled pair must still match in the build it gates.
+_SAMPLED = ("provider_code", "task", "left_id", "right_id", "link_method", "stratum")
 
 
 class _Section(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class HumanAudit(_Section):
+    min_share: float
 
 
 class Conservation(_Section):
@@ -102,6 +119,7 @@ class GateConfig(_Section):
     """The contents of `gates.yaml`."""
 
     precision: evaluate.PrecisionRule
+    human_audit: HumanAudit
     conservation: Conservation
     over_allocation: OverAllocation
     oecd_reconciliation: Reconciliation
@@ -130,11 +148,12 @@ def run_gates(
         release_dir: a build's directory, `<out_dir>/<release>`.
         decisions: the review-decisions parquet holding the blind-sample labels.
         sample: the blind sample's design file (`evaluate.design_path`); without
-            one, every provider fails precision.
+            one, every provider fails precision and the human audit fails.
         previous: the previous release, a directory `cf.load(path=...)` opens.
         first_release: pass the drift gate when there is no previous release.
         report_only: return the results without raising on a failure.
-        waive_precision: let failed precision rows pass, marked `waived`.
+        waive_precision: let failed precision and human_audit rows pass, marked
+            `waived`.
         gates: thresholds; `gates.yaml` when not given.
 
     Returns:
@@ -142,6 +161,7 @@ def run_gates(
 
     Raises:
         GateFailedError: when a row fails and is not waived, unless `report_only`.
+        FileNotFoundError: when `sample` is given and `decisions` does not exist.
     """
     from climate_finance.build.stages import table_path
 
@@ -158,14 +178,19 @@ def run_gates(
         (assembled / "release.json").read_text()
     )
     links, units = scan("review", "links"), scan("link", "units")
+    labels = (
+        None
+        if sample is None
+        else evaluate.read_sample_labels(sample, decisions=decisions)
+    )
     results = pl.concat(
         [
             precision_gate(
                 evaluate.allocated_pairs(release_dir, decisions=decisions),
-                sample=sample,
-                decisions=decisions,
+                labels=labels,
                 rule=gates.precision,
             ),
+            human_audit_gate(labels, config=gates.human_audit),
             conservation_gate(
                 allocations=scan("fill", "allocations"),
                 links=links,
@@ -194,7 +219,7 @@ def run_gates(
             withheld_gate(released("disbursements")),
         ]
     ).with_columns(
-        waived=(pl.col("gate") == "precision") & ~pl.col("passed") & waive_precision
+        waived=pl.col("gate").is_in(_WAIVABLE) & ~pl.col("passed") & waive_precision
     )
     failed = results.filter(~pl.col("passed") & ~pl.col("waived"))
     if failed.height and not report_only:
@@ -257,25 +282,58 @@ def _named(items: list[str]) -> str:
 def precision_gate(
     pairs: pl.DataFrame,
     *,
-    sample: Path | None,
-    decisions: Path,
+    labels: pl.DataFrame | None,
     rule: evaluate.PrecisionRule,
 ) -> pl.DataFrame:
-    """One row per provider with allocated pairs (`evaluate.allocated_pairs`): its
-    estimate and bounds, passing when the sequential rule decides `pass`."""
-    estimates = (
-        evaluate.estimate_precision(
-            evaluate.read_sample_labels(sample, decisions=decisions), rule=rule
+    """One row per provider with allocated pairs (`evaluate.allocated_pairs`) or
+    sampled draws (`labels`, from `evaluate.read_sample_labels`): its estimate and
+    bounds, passing when the sequential rule decides `pass`.
+
+    A provider fails when any pair it sampled is not allocated in this build by the
+    same link method in the same stratum, since its labels then describe another
+    build. With no allocated pairs one row fails, as nothing is certified.
+    """
+    if pairs.is_empty():
+        return _row(
+            "precision",
+            value=None,
+            threshold=rule.threshold,
+            passed=False,
+            detail="no allocated pairs: nothing to certify",
         )
-        if sample is not None
-        else pl.DataFrame(schema=evaluate.ESTIMATE_SCHEMA)
+    if labels is None:
+        sampled = pl.DataFrame(schema=evaluate.DESIGN_SCHEMA).select(_SAMPLED)
+        estimates = pl.DataFrame(schema=evaluate.ESTIMATE_SCHEMA)
+    else:
+        sampled = labels.select(_SAMPLED).unique()
+        estimates = evaluate.estimate_precision(labels, rule=rule)
+    stale = (
+        sampled.join(pairs, on=_SAMPLED, how="anti")
+        .group_by("provider_code")
+        .agg(stale=pl.len())
+        .join(
+            sampled.group_by("provider_code").agg(sampled=pl.len()), on="provider_code"
+        )
     )
-    providers = pairs.select("provider_code").unique()
-    rows = providers.join(estimates, on="provider_code", how="left").sort(
-        "provider_code"
+    providers = pl.concat(
+        [pairs.select("provider_code"), sampled.select("provider_code")]
+    ).unique()
+    rows = (
+        providers.join(estimates, on="provider_code", how="left")
+        .join(stale, on="provider_code", how="left")
+        .sort("provider_code")
     )
     detail = (
-        pl.when(pl.col("design").is_null())
+        pl.when(pl.col("stale").is_not_null())
+        .then(
+            pl.format(
+                "sample drawn from another build: {} of {} sampled pairs not "
+                "allocated here by the same method and stratum",
+                pl.col("stale"),
+                pl.col("sampled"),
+            )
+        )
+        .when(pl.col("design").is_null())
         .then(pl.lit("no blind sample"))
         .otherwise(
             pl.format(
@@ -301,10 +359,37 @@ def precision_gate(
         lower="lower",
         upper="upper",
         threshold=pl.lit(rule.threshold),
-        passed=(pl.col("decision") == "pass").fill_null(value=False),
+        passed=((pl.col("decision") == "pass") & pl.col("stale").is_null()).fill_null(
+            value=False
+        ),
         waived=pl.lit(value=False),
         detail=detail,
     ).cast(RESULT_SCHEMA)
+
+
+def human_audit_gate(
+    labels: pl.DataFrame | None, *, config: HumanAudit
+) -> pl.DataFrame:
+    """The share of the blind sample's draws (`labels`, from
+    `evaluate.read_sample_labels`) whose standing decision is a person's, over every
+    provider. It fails without a sample or with an empty one."""
+    if labels is None or labels.is_empty():
+        return _row(
+            "human_audit",
+            value=None,
+            threshold=config.min_share,
+            passed=False,
+            detail="no blind sample" if labels is None else "the blind sample is empty",
+        )
+    people = int((labels["label_source"] == "human").sum())
+    share = people / labels.height
+    return _row(
+        "human_audit",
+        value=share,
+        threshold=config.min_share,
+        passed=share >= config.min_share,
+        detail=f"{people} of {labels.height} draws decided by a person",
+    )
 
 
 def conservation_gate(
@@ -316,7 +401,8 @@ def conservation_gate(
     config: Conservation,
 ) -> pl.DataFrame:
     """The largest gap between a linked CRS record's disbursement and its
-    allocations, the null-row and excess rows included."""
+    allocations, the null-row and excess rows included. It fails when no linked
+    record has a disbursement."""
     linked = (
         links.filter(task="trace")
         .select(unit_id="left_id")
@@ -331,7 +417,7 @@ def conservation_gate(
         .group_by("record_id")
         .agg(given_usd=ordered_sum(pl.col("allocated_usd")))
     )
-    gaps = (
+    disbursed = (
         crs.join(linked, on="record_id")
         .filter(pl.col("disbursement_usd") > 0)
         .join(given, on="record_id", how="left")
@@ -339,9 +425,18 @@ def conservation_gate(
             "record_id",
             gap=(pl.col("disbursement_usd") - pl.col("given_usd").fill_null(0.0)).abs(),
         )
-        .filter(pl.col("gap") > config.tolerance_usd)
-        .sort("gap", "record_id", descending=[True, False])
         .collect()
+    )
+    if disbursed.is_empty():
+        return _row(
+            "conservation",
+            value=None,
+            threshold=config.tolerance_usd,
+            passed=False,
+            detail="no linked record with a disbursement: nothing to conserve",
+        )
+    gaps = disbursed.filter(pl.col("gap") > config.tolerance_usd).sort(
+        "gap", "record_id", descending=[True, False]
     )
     return _row(
         "conservation",
@@ -366,7 +461,8 @@ def over_allocation_gate(
 ) -> pl.DataFrame:
     """Two rows: the largest amount by which a commitment row is disbursed above
     its face, and the share of linked commitment units whose links bring more than
-    `raw_factor` times their face.
+    `raw_factor` times their face. The share passes below `max_share`, and fails
+    when no commitment unit is linked.
 
     A commitment unit's raw linked disbursement spreads each disbursement unit
     linked to it over every commitment unit that unit links to, by face, before
@@ -394,7 +490,7 @@ def over_allocation_gate(
         .collect()
     )
     over = raw.filter(pl.col("raw_usd") > config.raw_factor * pl.col("face"))
-    share = over.height / raw.height if raw.height else 0.0
+    share = over.height / raw.height if raw.height else None
     return pl.concat(
         [
             _row(
@@ -414,10 +510,12 @@ def over_allocation_gate(
                 subject="raw_links",
                 value=share,
                 threshold=config.max_share,
-                passed=share < config.max_share,
+                passed=share is not None and share < config.max_share,
                 detail=(
                     f"{over.height} of {raw.height} linked commitment units are "
                     f"linked to more than {config.raw_factor} times their face"
+                    if raw.height
+                    else "no linked commitment unit: nothing to measure"
                 ),
             ),
         ]
@@ -487,10 +585,11 @@ def drift_gate(
     A provider-year both releases hold moves by its change over its previous
     total, or by 1 when that total was 0. One the previous release held and this
     one lacks moves by 1 when its previous total was above 0, so a year or a whole
-    provider that vanishes fails unless a cause explains it. A provider-year only
-    this release holds, such as a new CRS year, is named in the detail and not
-    gated. Without a previous release the gate fails, naming the `first_release`
-    override.
+    provider that vanishes fails unless a cause explains it, and so does one only
+    this release holds in a year the previous release covered. A provider-year in a
+    year after the previous release's last, a new CRS year, is named in the detail
+    and not gated. Without a previous release, or with one whose `quality` table is
+    empty, the gate fails, naming the `first_release` override.
     """
     if previous is None:
         return _row(
@@ -507,6 +606,17 @@ def drift_gate(
         )
     key = ["provider_code", "year"]
     before = cf.load(path=previous).table("quality")
+    last_year = before.select(pl.col("year").max()).collect().item()
+    if last_year is None:
+        return _row(
+            "drift",
+            value=None,
+            threshold=config.max_move,
+            passed=first_release,
+            detail="the previous release's quality table is empty: no baseline to "
+            "compare; give another previous release, or pass first_release "
+            "(cf-build gate --first-release)",
+        )
     totals = [
         table.group_by(key).agg(
             *(ordered_sum(pl.col(m)).alias(f"{m}_{side}") for m in DRIFT_MEASURES),
@@ -522,7 +632,7 @@ def drift_gate(
     moves = []
     for measure in DRIFT_MEASURES:
         now = pl.col(f"{measure}_now").fill_null(0.0)
-        then = pl.col(f"{measure}_before")
+        then = pl.col(f"{measure}_before").fill_null(0.0)
         moves.append(
             pl.when(now == then)
             .then(0.0)
@@ -536,10 +646,11 @@ def drift_gate(
         .with_columns(pl.col("in_now", "in_before").fill_null(value=False))
         .collect()
     )
-    new = compared.filter(~pl.col("in_before")).sort(key)
+    later = pl.col("year") > last_year
+    new = compared.filter(later).sort(key)
     unexplained = (
-        compared.filter("in_before")
-        .select(*key, "in_now", move=pl.max_horizontal(moves))
+        compared.filter(~later)
+        .select(*key, "in_now", "in_before", move=pl.max_horizontal(moves))
         .join(explained.collect(), on=key, how="left")
         .filter(pl.col("move") > config.max_move, pl.col("explained").is_null())
         .sort("move", *key, descending=[True, False, False])
@@ -548,8 +659,10 @@ def drift_gate(
         compared.filter("in_now")["provider_code"].unique()
     )
     named = [
-        f"{provider}/{year}" + ("" if present else " (gone)")
-        for provider, year, present in unexplained.select(*key, "in_now").iter_rows()
+        f"{provider}/{year}" + ("" if now and then else " (new)" if now else " (gone)")
+        for provider, year, now, then in unexplained.select(
+            *key, "in_now", "in_before"
+        ).iter_rows()
     ]
     parts = [
         f"provider-years that moved without a recorded cause: {_named(named)}"
@@ -560,7 +673,7 @@ def drift_gate(
         parts.append(f"providers gone: {_named([str(code) for code in sorted(gone)])}")
     if new.height:
         added = [f"{provider}/{year}" for provider, year in new.select(key).iter_rows()]
-        parts.append(f"new provider-years, not compared: {_named(added)}")
+        parts.append(f"provider-years after {last_year}, not compared: {_named(added)}")
     return _row(
         "drift",
         value=_largest(unexplained["move"]),
@@ -572,7 +685,16 @@ def drift_gate(
 
 def withheld_gate(disbursements: pl.LazyFrame) -> pl.DataFrame:
     """The number of `disbursements` rows whose record comes from a source the
-    release withholds (`schema.withheld_record`)."""
+    release withholds (`schema.withheld_record`). It fails on an empty
+    `disbursements`."""
+    if disbursements.select(pl.len()).collect().item() == 0:
+        return _row(
+            "withheld_rows",
+            value=None,
+            threshold=0.0,
+            passed=False,
+            detail="the release holds no disbursements: nothing to check",
+        )
     rows = (
         disbursements.filter(withheld_record(pl.col("record_id")))
         .select("record_id")

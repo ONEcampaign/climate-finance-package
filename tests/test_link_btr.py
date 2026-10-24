@@ -3,6 +3,8 @@
 Codes are real DAC codes; ids, titles and amounts are invented.
 """
 
+import logging
+
 import duckdb
 import polars as pl
 import pytest
@@ -11,7 +13,8 @@ from normalised import crs_records as crs_frame
 from climate_finance import schema
 from climate_finance.build.link.btr import (
     AGGREGATE,
-    MIN_ISOTONIC_OUTCOMES,
+    LINK_PROBABILITY,
+    MIN_MAP_OUTCOMES,
     btr_rows,
     calibrate,
     comparisons,
@@ -19,6 +22,7 @@ from climate_finance.build.link.btr import (
     link_btr,
     link_by_ids,
     linked_pairs,
+    score_party,
 )
 
 _BTR_DEFAULTS: dict[str, object] = {
@@ -87,6 +91,44 @@ def _id_links(btr: pl.DataFrame, crs: pl.DataFrame) -> set[tuple[str, str]]:
             ],
             {"r1", "r2"},
             id="programme-number-reaches-every-component",
+        ),
+        pytest.param(
+            {"party": "GBR", "title": "300123 Solar Kenya"},
+            [
+                {"donor_code": 12, "project_number": "300123-101"},
+                # Ghana's component is another country's line; Africa, regional.
+                {
+                    "donor_code": 12,
+                    "project_number": "300123-105",
+                    "recipient_code": 241,
+                },
+                {
+                    "donor_code": 12,
+                    "project_number": "300123-106",
+                    "recipient_code": 298,
+                },
+            ],
+            {"r1", "r3"},
+            id="programme-number-keeps-to-the-rows-recipient",
+        ),
+        pytest.param(
+            {"party": "GBR", "title": "300123 Solar Africa", "recipient": "Africa"},
+            [
+                {"donor_code": 12, "project_number": "300123-101"},
+                {
+                    "donor_code": 12,
+                    "project_number": "300123-105",
+                    "recipient_code": 241,
+                },
+            ],
+            {"r1", "r2"},
+            id="regional-row-reaches-every-country",
+        ),
+        pytest.param(
+            {"title": "Finnfund total (2021000123)", "is_aggregate": True},
+            [{"crs_id": "2021000123"}],
+            set(),
+            id="aggregate-row-not-linked",
         ),
         pytest.param(
             {"additional_information": "CRS-ID: 2021000123"},
@@ -213,22 +255,25 @@ def _best(party: str, rows: list[tuple[str, str, float]]) -> pl.DataFrame:
     )
 
 
-def test_a_party_without_enough_labels_takes_the_pooled_map() -> None:
-    n = MIN_ISOTONIC_OUTCOMES
-    # Party A: high weights are its id records, low weights are not.
-    a = _best(
-        "A",
-        [(f"a{i}", f"ra{i}", 10.0) for i in range(n)]
-        + [(f"a{n + i}", f"wrong{i}", -10.0) for i in range(n)],
+def _labels(party: str, *, right: int, wrong: int) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """`party`'s best candidates, `right` of them its id records at weight 10 and
+    `wrong` not at weight -10, and the id truth behind them."""
+    best = _best(
+        party,
+        [(f"{party}{i}", f"r{party}{i}", 10.0) for i in range(right)]
+        + [(f"{party}{right + i}", "wrong", -10.0) for i in range(wrong)],
     )
+    truth = best.select("row_id", record_id=pl.format("r{}", "row_id"))
+    return best, truth
+
+
+def test_a_party_without_enough_labels_takes_the_pooled_map() -> None:
+    n = MIN_MAP_OUTCOMES
+    # Party A: high weights are its id records, low weights are not.
+    a, truth = _labels("a", right=n, wrong=n)
     # Party B's one label says weight 10 is wrong; on its own map it would read 0.
     b = _best("B", [("b0", "wrong", 10.0), ("b1", "rb1", 10.0)])
-    truth = pl.DataFrame(
-        {
-            "row_id": [f"a{i}" for i in range(2 * n)] + ["b0"],
-            "record_id": [f"ra{i}" for i in range(2 * n)] + ["rb0"],
-        }
-    )
+    truth = pl.concat([truth, pl.DataFrame({"row_id": ["b0"], "record_id": ["rb0"]})])
 
     probability = dict(
         calibrate(pl.concat([a, b]), truth=truth)
@@ -239,6 +284,49 @@ def test_a_party_without_enough_labels_takes_the_pooled_map() -> None:
     assert probability["a0"] == 1.0
     assert probability[f"a{n}"] == 0.0
     assert probability["b1"] == pytest.approx(30 / 31)
+
+
+@pytest.mark.parametrize(
+    ("right", "wrong", "weight", "probability"),
+    [
+        # Half the right labels sit at weight 0 beside the wrong ones at 1, so the
+        # lowest block reads 0.5; a clipped map would give that to weight -40.
+        (2 * MIN_MAP_OUTCOMES, MIN_MAP_OUTCOMES, -40.0, 0.0),
+        # One right label must not lift every row to 1.
+        (1, 0, -30.0, None),
+        (1, 0, 10.0, None),
+        (MIN_MAP_OUTCOMES, MIN_MAP_OUTCOMES - 1, 10.0, None),
+    ],
+)
+def test_calibration_fails_closed_outside_its_labels(
+    right: int,
+    wrong: int,
+    weight: float,
+    probability: float | None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    a, truth = _labels("a", right=right, wrong=wrong)
+    low = pl.int_range(pl.len()) < MIN_MAP_OUTCOMES
+    a = a.with_columns(
+        match_weight=pl.when(pl.col("record_id") == "wrong")
+        .then(1.0)
+        .when(low)
+        .then(0.0)
+        .otherwise(10.0)
+    )
+    b = _best("B", [("b0", "rb0", weight)])
+
+    with caplog.at_level(logging.WARNING):
+        calibrated = calibrate(pl.concat([a, b]), truth=truth).filter(row_id="b0")
+
+    found = calibrated["probability"].item()
+    if probability is None:
+        assert found is None
+        warned = [r.args for r in caplog.records if r.levelno == logging.WARNING]
+        assert ("B", MIN_MAP_OUTCOMES, 1) in warned
+    else:
+        assert found == probability
+        assert found < LINK_PROBABILITY
 
 
 def test_no_labels_anywhere_gives_no_probability() -> None:
@@ -275,9 +363,10 @@ def _activities(n: int) -> list[tuple[str, int, str, float]]:
     ]
 
 
-def _synthetic(*, ids: int) -> tuple[pl.DataFrame, pl.DataFrame]:
+def _synthetic(*, ids: int, misnamed: int = 0) -> tuple[pl.DataFrame, pl.DataFrame]:
     """150 BTR rows of Norway and their CRS records, beside 150 other records. The
-    first `ids` rows carry their record's crs id."""
+    first `ids` rows carry a crs id: the last `misnamed` of them that of the other
+    record 150 on, which their text does not match, the rest their own record's."""
     activities = _activities(300)
     btr = _btr(
         *(
@@ -286,7 +375,11 @@ def _synthetic(*, ids: int) -> tuple[pl.DataFrame, pl.DataFrame]:
                 "recipient": name,
                 "title": title,
                 "face_usd": amount,
-                "additional_information": f"CRS-ID: 2021{i:06}" if i < ids else None,
+                "additional_information": (
+                    f"CRS-ID: 2021{i + 150 * (i >= ids - misnamed):06}"
+                    if i < ids
+                    else None
+                ),
             }
             for i, (name, _, title, amount) in enumerate(activities[:150])
         )
@@ -310,7 +403,8 @@ def _synthetic(*, ids: int) -> tuple[pl.DataFrame, pl.DataFrame]:
 
 
 def test_the_model_links_only_once_ids_calibrate_it() -> None:
-    btr, crs = _synthetic(ids=100)
+    # The misnamed ids give the map the wrong labels it needs.
+    btr, crs = _synthetic(ids=100, misnamed=MIN_MAP_OUTCOMES)
 
     links = link_btr(btr.lazy(), crs=crs.lazy())
 
@@ -329,6 +423,22 @@ def test_raw_em_probabilities_never_link() -> None:
     links = link_btr(btr.lazy(), crs=crs.lazy())
 
     assert links.is_empty()
+
+
+def test_a_party_whose_model_does_not_fit_is_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Two rows against two records block too few pairs for any EM session.
+    btr, crs = _synthetic(ids=0)
+    rows = btr_rows(btr.head(2).lazy())
+
+    with caplog.at_level(logging.WARNING):
+        best = score_party(rows, records=crs_records(crs.head(2).lazy(), rows=rows))
+
+    assert best.is_empty()
+    assert [(r.levelno, r.args) for r in caplog.records] == [
+        (logging.WARNING, ("NOR", 2, 2))
+    ]
 
 
 def test_linked_pairs_sum_a_programme_and_follow_the_row_status() -> None:

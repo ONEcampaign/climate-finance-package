@@ -9,8 +9,9 @@ tiers link them:
   FCDO programme number "202495") that equals, once lower-cased and stripped to
   letters and digits, a CRS record's project number, the project number's root
   before its first hyphen, or its crs id. The row links to every such record of the
-  year, so a UK programme reaches each component the CRS splits it into
-  ("202495-110", "202495-112").
+  year whose recipient is the row's or a regional or unspecified one, so a UK
+  programme reaches each component the CRS splits it into ("202495-110",
+  "202495-112") and a row for Kenya leaves the programme's Ghana component.
 - `btr_splink`: one Fellegi-Sunter model per party over six comparisons (title
   words against the CRS title and descriptions, recipient, amount, sector,
   instrument, and the Rio marker against the type of support), over the records
@@ -19,13 +20,17 @@ tiers link them:
   session blocked on recipient alone converged on non-matches. The model never
   reads the ids: they are cut from the title before it compares text.
 
+Rows the reader flags `is_aggregate`, such as Finland's channel totals, total
+spending under many commitments, so neither tier reads them.
+
 Raw EM probabilities do not link. The ids calibrate the model: each id row's best
 candidate is labelled by whether it is one of the row's id records, and an isotonic
 map of label on match weight gives the probability, the party's own map where its
-labels hold `MIN_ISOTONIC_OUTCOMES` of each outcome, else one pooled over every
-party's labels. A row the id tier did not link takes its best candidate when the
-calibrated probability is at least `LINK_PROBABILITY`. With no id labels in any
-party, no row links by the model; unlinked rows are UNFCCC only.
+labels hold `MIN_MAP_OUTCOMES` of each outcome, else one pooled over every party's
+labels. A map with fewer of either outcome links nothing, and a weight below a
+map's lowest label reads 0. A row the id tier did not link takes its best candidate
+when the calibrated probability is at least `LINK_PROBABILITY`. Unlinked rows are
+UNFCCC only.
 
 Recipients link on the geo resolver's DAC code (`orgs.recipient_code`), so
 "Vietnam" and "Turkey" find Viet Nam and Türkiye. A recipient that names no single
@@ -39,10 +44,12 @@ from copy import deepcopy
 from typing import Any
 
 import duckdb
+import numpy as np
 import polars as pl
 import splink
 import splink.comparison_level_library as cll
 import splink.comparison_library as cl
+from sklearn.isotonic import IsotonicRegression
 from splink import DuckDBAPI, Linker, SettingsCreator
 from splink.blocking_rule_library import CustomRule
 from splink.internals.comparison_creator import ComparisonCreator
@@ -52,7 +59,6 @@ from climate_finance.build.geo import recipient_code
 from climate_finance.build.link.keys import regional_codes
 from climate_finance.build.link.splink_models import (
     MIN_EM_PAIRS,
-    MIN_ISOTONIC_OUTCOMES,
     isotonic_map,
 )
 from climate_finance.build.link.text import text_words
@@ -61,6 +67,11 @@ from climate_finance.build.readers.btr import LEVEL_TOLERANCE, WEIGHT_LEVELS
 _log = logging.getLogger(__name__)
 
 LINK_PROBABILITY = 0.5
+# Labels of each outcome a calibration map needs. On the archive, four parties hold
+# their own map (Germany 882 right and 55 wrong, France 210 and 65, the UK 184 and
+# 86, Norway 1,156 and 84); Denmark (407 and 19) and the Netherlands (324 and 10)
+# take the pooled map, 3,164 and 320.
+MIN_MAP_OUTCOMES = 30
 # Ids parties write into titles and additional information.
 ID_PATTERN = r"\d{4}\.\d{4}\.\d|\d{6,}(?:-\d+)?|[A-Z]{2,4}-?\d{2,}[\w/\-]*"
 # An id shorter than this, once stripped, names nothing.
@@ -205,21 +216,25 @@ def link_btr(btr: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
 
 def btr_rows(btr: pl.LazyFrame) -> pl.DataFrame:
     """BTR rows with their party's DAC provider code as `donor_code` and their
-    recipient key (`rec_key`)."""
-    rows = btr.select(
-        "row_id",
-        "party",
-        "year",
-        "recipient",
-        "title",
-        "additional_information",
-        "face_usd",
-        "status",
-        "sector",
-        "instrument",
-        "support_type",
-        donor_code="provider_code",
-    ).collect()
+    recipient key (`rec_key`), `is_aggregate` rows left out."""
+    rows = (
+        btr.filter(~pl.col("is_aggregate"))
+        .select(
+            "row_id",
+            "party",
+            "year",
+            "recipient",
+            "title",
+            "additional_information",
+            "face_usd",
+            "status",
+            "sector",
+            "instrument",
+            "support_type",
+            donor_code="provider_code",
+        )
+        .collect()
+    )
     regional = regional_codes()
     countries = {
         name: str(code)
@@ -268,12 +283,15 @@ def crs_records(crs: pl.LazyFrame, *, rows: pl.DataFrame) -> pl.DataFrame:
 
 def link_by_ids(rows: pl.DataFrame, *, records: pl.DataFrame) -> pl.DataFrame:
     """Each BTR row and every same-year record of its party that an id written in
-    its title or additional information names: `row_id`, `record_id`."""
+    its title or additional information names: `row_id`, `record_id`. A row for one
+    country keeps the records of that country and of regional or unspecified
+    recipients."""
     ids = (
         rows.select(
             "row_id",
             "donor_code",
             "year",
+            "rec_key",
             key=pl.concat_str(
                 pl.col("title").fill_null(""),
                 pl.col("additional_information").fill_null(""),
@@ -288,7 +306,13 @@ def link_by_ids(rows: pl.DataFrame, *, records: pl.DataFrame) -> pl.DataFrame:
     keys = (
         pl.concat(
             [
-                records.select("record_id", "donor_code", "year", key=_id_key(source))
+                records.select(
+                    "record_id",
+                    "donor_code",
+                    "year",
+                    "recipient_code",
+                    key=_id_key(source),
+                )
                 for source in (
                     project_number,
                     project_number.str.split("-").list.first(),
@@ -299,8 +323,17 @@ def link_by_ids(rows: pl.DataFrame, *, records: pl.DataFrame) -> pl.DataFrame:
         .filter(pl.col("key").str.len_chars() >= MIN_ID_CHARS)
         .unique()
     )
+    rec_key, recipient = pl.col("rec_key"), pl.col("recipient_code")
+    partners = (
+        rec_key.is_null()
+        | (rec_key == AGGREGATE)
+        | recipient.is_null()
+        | recipient.is_in(regional_codes())
+        | (recipient.cast(pl.String) == rec_key)
+    )
     return (
         ids.join(keys, on=["donor_code", "year", "key"])
+        .filter(partners)
         .select(_PAIR)
         .unique()
         .sort(_PAIR)
@@ -310,7 +343,8 @@ def link_by_ids(rows: pl.DataFrame, *, records: pl.DataFrame) -> pl.DataFrame:
 def score_party(rows: pl.DataFrame, *, records: pl.DataFrame) -> pl.DataFrame:
     """Each of one party's BTR rows with its best-scoring candidate record:
     `party`, `row_id`, `record_id`, `match_weight`, `p_raw`, `model_version`.
-    Empty when the party has no records or no EM session completes."""
+    Empty when the party has no records or no EM session completes, the second
+    logged as a warning."""
     party = rows["party"][0]
     own = records.filter(
         pl.col("donor_code") == rows["donor_code"][0],
@@ -324,6 +358,13 @@ def score_party(rows: pl.DataFrame, *, records: pl.DataFrame) -> pl.DataFrame:
         inputs = _register(con, left=_btr_input(rows), right=_crs_input(own))
         model = _fit(con, inputs, party=party)
         if model is None:
+            _log.warning(
+                "BTR %s: no EM session completed, so none of its %d rows links by "
+                "the model against its %d CRS records",
+                party,
+                rows.height,
+                own.height,
+            )
             return pl.DataFrame(schema=_BEST)
         predictions = _linker(inputs, model).inference.predict()
         scored = con.sql(
@@ -350,12 +391,14 @@ def score_party(rows: pl.DataFrame, *, records: pl.DataFrame) -> pl.DataFrame:
 
 def calibrate(best: pl.DataFrame, *, truth: pl.DataFrame) -> pl.DataFrame:
     """`best` (one scored candidate per BTR row, with `party` and `match_weight`)
-    with `probability`, null when no row has id records.
+    with `probability`, null for a party with no map.
 
     A row with id records (`truth`: row_id, record_id) labels its best candidate 1
-    when the candidate is one of them, else 0. A party with `MIN_ISOTONIC_OUTCOMES`
-    of each label takes its own isotonic map, any other the map pooled over every
-    party's labels.
+    when the candidate is one of them, else 0. A party with `MIN_MAP_OUTCOMES` of
+    each label takes its own isotonic map, any other the map pooled over every
+    party's labels when the pool holds as many. A party left without a map is
+    logged as a warning. A weight below the map's lowest labelled weight reads 0,
+    since no label vouches for it.
     """
     labelled = (
         best.join(truth.select("row_id").unique(), on="row_id", how="semi")
@@ -367,27 +410,42 @@ def calibrate(best: pl.DataFrame, *, truth: pl.DataFrame) -> pl.DataFrame:
             right_id="record_id",
         )
     )
-    if labelled.is_empty():
-        return best.with_columns(probability=pl.lit(None, dtype=pl.Float64))
-    pooled = isotonic_map(labelled)
+    pooled = _map(labelled)
     frames = [best.clear().with_columns(probability=pl.lit(None, dtype=pl.Float64))]
     for (party,), scored in best.group_by("party", maintain_order=True):
-        own = labelled.filter(party=party)
-        outcomes = own["y"].sum()
-        mapping = (
-            isotonic_map(own)
-            if min(outcomes, own.height - outcomes) >= MIN_ISOTONIC_OUTCOMES
-            else pooled
-        )
+        own = _map(labelled.filter(party=party))
+        mapping = pooled if own is None else own
+        if mapping is None:
+            _log.warning(
+                "BTR %s: no calibration map holds %d labels of each outcome, so "
+                "none of its %d rows links by the model",
+                party,
+                MIN_MAP_OUTCOMES,
+                scored.height,
+            )
+            frames.append(
+                scored.with_columns(probability=pl.lit(None, dtype=pl.Float64))
+            )
+            continue
+        weights = scored["match_weight"].to_numpy()
         frames.append(
             scored.with_columns(
                 probability=pl.Series(
-                    mapping.predict(scored["match_weight"].to_numpy()),
+                    np.where(weights < mapping.X_min_, 0.0, mapping.predict(weights)),
                     dtype=pl.Float64,
                 )
             )
         )
     return pl.concat(frames).sort("row_id")
+
+
+def _map(labelled: pl.DataFrame) -> IsotonicRegression | None:
+    """The isotonic map of `labelled`, or None when it holds fewer than
+    `MIN_MAP_OUTCOMES` of either outcome."""
+    right = labelled["y"].sum()
+    if min(right, labelled.height - right) < MIN_MAP_OUTCOMES:
+        return None
+    return isotonic_map(labelled)
 
 
 def linked_pairs(
