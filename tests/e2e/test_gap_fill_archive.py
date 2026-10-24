@@ -16,7 +16,12 @@ from climate_finance.build.config import Ledgers
 from climate_finance.build.link.gap_fill import FUND_PUBLISHERS
 from climate_finance.build.sources import finances_one, iati, imf
 from climate_finance.build.stages import table_path
-from climate_finance.schema import RAW_MANIFEST, RELEASE_TABLES, release_invariants
+from climate_finance.schema import (
+    RAW_MANIFEST,
+    RELEASE_TABLES,
+    release_invariants,
+    withheld_record,
+)
 
 pytestmark = pytest.mark.slow
 
@@ -260,14 +265,31 @@ def test_the_release_carries_each_fill_with_its_commitment_facts(
     disbursements = tables["disbursements"]
     fills = disbursements.filter(pl.col("disbursement_source") != "crs")
     (filled,) = _tables(release_dir, "fill", "allocations")
-    expected = filled.filter(
+    fill_rows = filled.filter(
         pl.col("disbursement_source") != "crs", pl.col("row_id").is_not_null()
+    )
+    # The release withholds the Green Climate Fund's ledger and API rows.
+    withheld = fill_rows.filter(withheld_record(pl.col("record_id")))
+    expected = fill_rows.filter(~withheld_record(pl.col("record_id")))
+    withheld_usd = (
+        withheld.group_by("row_id").agg(pl.col("allocated_usd").sum()).sort("row_id")
+    )
+    carried = (
+        tables["commitments"]
+        .filter(pl.col("withheld_usd") > 0)
+        .select("row_id", pl.col("withheld_usd").alias("allocated_usd"))
+        .sort("row_id")
     )
 
     assert release_invariants(tables) == []
     assert fills.height == expected.height > 0
     assert fills["allocated_usd"].sum() == pytest.approx(
         expected["allocated_usd"].sum(), abs=CONSERVATION_USD
+    )
+    assert withheld_usd.height > 0
+    assert carried["row_id"].to_list() == withheld_usd["row_id"].to_list()
+    assert carried["allocated_usd"].to_list() == pytest.approx(
+        withheld_usd["allocated_usd"].to_list(), abs=CONSERVATION_USD
     )
     assert fills["link_method"].is_null().all()
     assert set(fills["marker_source"]) <= {"commitment", "components"}
