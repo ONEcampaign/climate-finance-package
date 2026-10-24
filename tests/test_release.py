@@ -1,13 +1,16 @@
 """The assemble stage on hand-built normalised tables, run through the stage runner
 from link to assemble, and the fill and review pass-through."""
 
+import json
 import shutil
+import tarfile
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
 import polars as pl
+import pyarrow as pa
 import pytest
 from normalised import crdf_rows, crs_records
 
@@ -39,7 +42,13 @@ CRS = crs_records(
         "disbursement_usd": 70.0,
         "grant_equiv_usd": 35.0,
     },
-    {"record_id": "core", "year": 2021, "bi_multi": 2, "disbursement_usd": 9.0},
+    {
+        "record_id": "core",
+        "year": 2021,
+        "bi_multi": 2,
+        "disbursement_usd": 9.0,
+        "rio_mitigation": 0,
+    },
 )
 # R1 is the commitment; R2 repeats it in a later vintage; P is an aggregate row
 # rebuilt into child C; N is a published downward revision.
@@ -73,6 +82,8 @@ CORE = pl.DataFrame(
     schema={name: c.dtype for name, c in schema.CORE_CONTRIBUTIONS.columns.items()},
 )
 LATER_STAGES = ("link", "allocate", "fill", "review", "label", "assemble")
+_DISBURSED = ("disbursed_usd", "disbursed_low_usd", "disbursed_high_usd")
+SOURCES = release.SOURCES_FILE
 
 
 def _empty(table: schema.TableSchema) -> pl.DataFrame:
@@ -88,8 +99,14 @@ def _write(release_dir: Path, stage: str, frames: dict[str, pl.DataFrame]) -> No
 @pytest.fixture
 def config() -> BuildConfig:
     # The hand-written tables hold no truth group to set Jev's scale.
-    return load_config(BUILD_TOML).model_copy(
-        update={"key_repair": False, "recoveries": False, "jev_links": False}
+    base = load_config(BUILD_TOML)
+    return base.model_copy(
+        update={
+            "key_repair": False,
+            "recoveries": False,
+            "jev_links": False,
+            "sources": base.sources.model_copy(update={"btr_archive": None}),
+        }
     )
 
 
@@ -174,7 +191,11 @@ def test_commitments_carry_the_ledgers_undisbursed_confirmation() -> None:
     )
     status = _empty(STAGE_TABLES["review"]["commitments"]).lazy()
 
-    rows = release.release_commitments(CRDF.lazy(), status=status, links=links)
+    withheld = _empty(schema.DISBURSEMENTS).lazy()
+
+    rows = release.release_commitments(
+        CRDF.lazy(), status=status, links=links, withheld=withheld
+    )
 
     assert dict(rows.select("row_id", "ledger_undisbursed").collect().rows()) == {
         "C": None,
@@ -307,6 +328,94 @@ def test_quality_counts_repeats_on_their_own_line(release_dir: Path) -> None:
     ) == pytest.approx((40.0, 24.0))
 
 
+def test_the_release_leaves_out_gcf_rows_and_keeps_what_they_disbursed(
+    release_dir: Path, config: BuildConfig, tmp_path: Path
+) -> None:
+    # In 2021 the GCF's ledger fills C with 10 and its CC0 IATI files with 5.
+    fills = pl.DataFrame(
+        {
+            "row_id": ["C", "C"],
+            "record_id": ["ledger:gcf:FP001:2021", "iati:gcf:FP001:2021"],
+            "year": [2021, 2021],
+            "allocated_usd": [10.0, 5.0],
+            "allocated_low_usd": [10.0, 5.0],
+            "allocated_high_usd": [10.0, 5.0],
+            "rule": ["bank_ledger", "iati"],
+            "disbursement_source": ["bank_ledger", "iati"],
+        },
+        schema_overrides={"year": pl.Int16},
+    )
+    allocations = pl.read_parquet(table_path(release_dir, "fill", "allocations"))
+    _write(release_dir, "fill", {"allocations": pl.concat([allocations, fills])})
+    is_c = pl.col("row_id") == "C"
+    status = pl.read_parquet(table_path(release_dir, "review", "commitments"))
+    _write(
+        release_dir,
+        "review",
+        {
+            "commitments": status.with_columns(
+                status=pl.when(is_c)
+                .then(pl.lit("partly_disbursed"))
+                .otherwise("status"),
+                **{
+                    column: pl.when(is_c).then(15.0).otherwise(column)
+                    for column in _DISBURSED
+                },
+            )
+        },
+    )
+    manifest = pl.read_parquet(table_path(release_dir, "fetch", "raw_manifest"))
+    _write(
+        release_dir,
+        "fetch",
+        {
+            "raw_manifest": pl.concat(
+                [
+                    manifest,
+                    *(
+                        manifest.with_columns(source=pl.lit(source))
+                        for source in ("gcf_projects", "iati_gcf")
+                    ),
+                ]
+            )
+        },
+    )
+
+    run_stages(
+        REGISTRY, release="r", release_dir=release_dir, config=config,
+        stages=["assemble"],
+    )  # fmt: skip
+    pack = release.pack_release(release_dir, out_path=tmp_path / "r.tar.zst")
+
+    with (
+        pa.input_stream(str(pack), compression="zstd") as stream,
+        tarfile.open(fileobj=stream, mode="r|") as tar,
+    ):
+        packed = {Path(m.name).name: tar.extractfile(m).read() for m in tar}
+    disbursements = pl.read_parquet(packed["disbursements.parquet"])
+    assert disbursements.filter(is_c)["record_id"].to_list() == ["iati:gcf:FP001:2021"]
+    c = pl.read_parquet(packed["commitments.parquet"]).row(
+        by_predicate=is_c, named=True
+    )
+    assert (c["status"], c["disbursed_usd"], c["withheld_usd"]) == (
+        "partly_disbursed",
+        15.0,
+        10.0,
+    )
+    # Disbursements rows conserve against the commitment once its withheld part adds.
+    shipped = disbursements.filter(is_c)["allocated_usd"].sum()
+    assert shipped + c["withheld_usd"] == c["disbursed_usd"]
+    # Quality keeps the GCF fill: C's 15 of 25 is all climate, beside R1's 40.
+    quality = pl.read_parquet(packed["quality.parquet"])
+    assert quality["disbursed_climate_usd"].sum() == 55.0
+    notes = {row["source"]: row.get("note") for row in json.loads(packed[SOURCES])}
+    assert notes == {
+        "crs": None,
+        "gcf_projects": release.WITHHELD_NOTE,
+        "iati_gcf": None,
+    }
+
+
 def test_core_contributions_count_disbursements_as_grant_equivalent(
     release_dir: Path,
 ) -> None:
@@ -401,15 +510,56 @@ def test_core_contributions_read_an_empty_stage_table(
     assert release.core_contributions(stage).collect().is_empty()
 
 
-def test_total_flows_sum_every_crs_record(release_dir: Path) -> None:
+def test_total_flows_sum_every_crs_record_by_its_higher_marker(
+    release_dir: Path,
+) -> None:
     totals = _read(release_dir, "total_flows")
 
-    assert sorted(totals.select("year", "bi_multi", "flow", "amount_usd").rows()) == [
-        (2019, 1, "commitments", 100.0),
-        (2020, 1, "disbursements", 60.0),
-        (2021, 1, "disbursements", 70.0),
-        (2021, 1, "grant_equivalent", 35.0),
-        (2021, 2, "disbursements", 9.0),
+    columns = ("year", "bi_multi", "flow", "rio_marker", "amount_usd")
+    assert sorted(totals.select(columns).rows()) == [
+        (2019, 1, "commitments", 2, 100.0),
+        (2020, 1, "disbursements", 2, 60.0),
+        (2021, 1, "disbursements", 2, 70.0),
+        (2021, 1, "grant_equivalent", 2, 35.0),
+        (2021, 2, "disbursements", 0, 9.0),
+    ]
+
+
+def test_btr_links_carry_their_crs_records_facts() -> None:
+    links = pl.DataFrame(
+        {
+            "task": ["btr_crs", "btr_crs", "trace"],
+            "left_id": ["BTR-NOR-2021-00001", "BTR-NOR-2021-00002", "d21"],
+            "right_id": ["d21", "gone", "c19"],
+            "link_method": ["btr_id", "btr_splink", "crs_id"],
+            "probability": [1.0, 0.8, 1.0],
+        }
+    )
+
+    built = release.btr_links(links.lazy(), crs=CRS.lazy()).collect()
+
+    schema.validate(schema.BTR_LINKS, built)
+    # Only BTR links, and only to records the build holds.
+    assert built.select("row_id", "record_id", "year", "rio_marker").rows() == [
+        ("BTR-NOR-2021-00001", "d21", 2021, 2)
+    ]
+    assert built["disbursement_usd"].to_list() == [70.0]
+
+
+def test_provider_coefficients_come_from_the_party_weights() -> None:
+    weights = {
+        "NOR": {"significant": 0.4, "confirmed": True},
+        "EUU": {"significant": 0.4, "confirmed": False},
+        "AUS": {"significant": None, "confirmed": False},
+    }
+
+    coefficients = release.provider_coefficients(weights)
+
+    schema.validate(schema.PROVIDER_COEFFICIENTS, coefficients)
+    # Australia has no estimate, and the EU's code comes from the party map.
+    assert coefficients.select("provider_code", "confirmed").rows() == [
+        (NOR, True),
+        (918, False),
     ]
 
 
@@ -527,9 +677,12 @@ def _rerun_total_flows() -> pl.LazyFrame:
             "commitment_usd": _amounts(1),
             "disbursement_usd": _amounts(2),
             "grant_equiv_usd": _amounts(3),
+            "rio_adaptation": np.arange(RERUN_ROWS) % 3,
+            "rio_mitigation": 0,
         },
         schema_overrides={"donor_code": pl.Int32, "recipient_code": pl.Int32,
-                          "year": pl.Int16, "bi_multi": pl.Int8},
+                          "year": pl.Int16, "bi_multi": pl.Int8,
+                          "rio_adaptation": pl.Int8, "rio_mitigation": pl.Int8},
     )  # fmt: skip
     return release.total_flows(crs)
 

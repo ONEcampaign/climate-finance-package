@@ -371,12 +371,18 @@ def test_run_link_writes_the_provider_profile_with_recoveries(tmp_path: Path) ->
         {"iso_code": ["EUI"] * 16, "year": range(2010, 2026), "exchange_rate": 0.8}
     ).write_parquet(raw / DAC_EXCHANGE_FILE)
     config = load_config(Path(__file__).parents[1] / "build.toml")
+    sources = config.sources.model_copy(update={"btr_archive": None})
     context = StageContext(
         release="test",
         release_dir=tmp_path,
         # The fixture has no truth group to set Jev's scale.
         config=config.model_copy(
-            update={"key_repair": False, "recoveries": True, "jev_links": False}
+            update={
+                "key_repair": False,
+                "recoveries": True,
+                "jev_links": False,
+                "sources": sources,
+            }
         ),
         offline=True,
     )

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from climate_finance.build.fetch import (
+    BTR_DIR,
     CRDF_FILES,
     CRDF_SPAN_FILE,
     CRS_FILE,
@@ -23,6 +24,7 @@ from climate_finance.build.normalise.external import normalise_external
 from climate_finance.build.normalise.ledgers import normalise_ledgers
 from climate_finance.build.normalise.orgs import org_names, resolve_orgs
 from climate_finance.build.normalise.vintages import mark_repeats
+from climate_finance.build.readers.btr import read_btr_archive
 from climate_finance.build.readers.gcf import read_gcf_projects
 from climate_finance.build.readers.iati import read_iati_activities
 from climate_finance.build.readers.imputed_shares import read_imputed_shares
@@ -35,14 +37,15 @@ if TYPE_CHECKING:
 def run_normalise(context: StageContext) -> StageOutput:
     """Normalise the files fetch wrote under `raw/` into the normalise tables.
 
-    Reads only those files. It writes no `btr` table, which the release treats as
-    optional. `crdf` marks rows repeated across vintages (`repeat_of`) and gains
-    child rows for the bilateral aggregate rows the bulk records rebuild
-    (`parent_row_id`). `crdf_span` holds the recipient rows of the year before
-    `years.crdf`, from `raw/oecd/crdf_span.parquet`, less those a row of the first
-    `crdf` year repeats, with their aggregates rebuilt and `repeat_of` null. `orgs`
-    resolves the CRS's and CRDF's provider, agency and channel names to DAC codes,
-    and is written only when recoveries are on.
+    Reads only those files. `btr` holds the BTR workbooks' Table III.1 rows, and is
+    written only when the build config names a BTR archive. `crdf` marks rows
+    repeated across vintages (`repeat_of`) and gains child rows for the bilateral
+    aggregate rows the bulk records rebuild (`parent_row_id`). `crdf_span` holds the
+    recipient rows of the year before `years.crdf`, from
+    `raw/oecd/crdf_span.parquet`, less those a row of the first `crdf` year repeats,
+    with their aggregates rebuilt and `repeat_of` null. `orgs` resolves the CRS's and
+    CRDF's provider, agency and channel names to DAC codes, and is written only when
+    recoveries are on.
     `ledger` holds the bank ledgers, and is written only when the build config names
     them.
     """
@@ -86,6 +89,8 @@ def run_normalise(context: StageContext) -> StageOutput:
         "imputed_shares": read_imputed_shares(raw / IMPUTED_SHARES_FILE),
         "external": external,
     }
+    if context.config.sources.btr_archive is not None:
+        tables["btr"] = read_btr_archive(raw / BTR_DIR)
     if (ledgers := context.config.sources.ledgers) is not None:
         tables["ledger"] = normalise_ledgers(raw, ledgers=ledgers, exchange=exchange)
     if context.config.recoveries:

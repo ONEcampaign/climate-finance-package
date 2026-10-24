@@ -65,3 +65,11 @@ class ReleaseInvariantError(BuildError):
         self.problems = problems
         shown = "; ".join(problems[:10])
         super().__init__(f"{len(problems)} release invariant problems: {shown}")
+
+
+class GateFailedError(BuildError):
+    """A release fails one or more of its gates (`build.gate.run_gates`)."""
+
+    def __init__(self, failures: list[str]) -> None:
+        self.failures = failures
+        super().__init__(f"{len(failures)} gate rows failed: {'; '.join(failures)}")

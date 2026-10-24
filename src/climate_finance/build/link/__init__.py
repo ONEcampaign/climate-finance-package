@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from climate_finance.build.fetch import DAC_EXCHANGE_FILE, IATI_DIR
+from climate_finance.build.link.btr import link_btr
 from climate_finance.build.link.candidates import (
     generate_candidates,
     learn_programme_stems,
@@ -62,7 +63,9 @@ def run_link(context: StageContext) -> StageOutput:
     answers each Splink model that people have not calibrated, and the calibrated
     Splink models link. Each trace link records whether its two sides disagree on
     recipient or project number (`flag_disagreement`). People's and agents'
-    queue decisions then override the links they decided (`override_links`).
+    queue decisions then override the links they decided (`override_links`). When the
+    build has BTR rows, each links to the same-year CRS records of its party
+    (`link_btr`).
 
     Raises:
         JevFitError: when `jev_links` is on and the build has no truth group to
@@ -170,11 +173,11 @@ def run_link(context: StageContext) -> StageOutput:
                 jev_model=context.jev.model,
             )
         )
+    linked = [flag_disagreement(pl.concat([links, *scored_links]), units=units)]
+    if config.sources.btr_archive is not None:
+        linked.append(link_btr(context.read("normalise", "btr"), crs=crs))
     return {
-        "links": override_links(
-            flag_disagreement(pl.concat([links, *scored_links]), units=units),
-            labels=decided,
-        ),
+        "links": override_links(pl.concat(linked), labels=decided),
         "units": units,
         "id_practice": id_practice,
         "programme_stems": stems,

@@ -60,10 +60,9 @@ import numpy as np
 import polars as pl
 
 from climate_finance.build.errors import AllocationInputError
-from climate_finance.build.link.candidates import word_share
 from climate_finance.build.link.id_practice import period_of
 from climate_finance.build.link.keys import line_date
-from climate_finance.build.link.levels import title_words
+from climate_finance.build.link.text import title_words, word_share
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
 from climate_finance.schema import CERTAIN_METHODS, CERTAIN_ROUTES, LINK_METHODS

@@ -12,9 +12,15 @@ from climate_finance.schema import ReleaseManifest, TableEntry, sha256_file
 type Edit = Callable[[pl.DataFrame], pl.DataFrame]
 
 
-def copy_release(target: Path, *, edits: Mapping[str, Edit] | None = None) -> Path:
-    """Copy the fixture release to `target`, apply `edits` per table, rehash them."""
-    shutil.copytree(FIXTURE_DIR, target)
+def copy_release(
+    target: Path,
+    *,
+    edits: Mapping[str, Edit] | None = None,
+    source: Path = FIXTURE_DIR,
+) -> Path:
+    """Copy the release at `source`, the fixture by default, to `target`, apply
+    `edits` per table and rehash them."""
+    shutil.copytree(source, target)
     manifest = ReleaseManifest.model_validate_json(
         (target / "release.json").read_text()
     )

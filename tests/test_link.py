@@ -768,14 +768,19 @@ def _normalised(release_dir: Path) -> None:
         frame.write_parquet(path)
 
 
-def _context(release_dir: Path, **switches: bool) -> StageContext:
+def _context(
+    release_dir: Path, *, btr_archive: Path | None = None, **switches: bool
+) -> StageContext:
     # The fixture has no truth group to set Jev's scale, so the Jev step is off
     # unless a test turns it on.
     config = load_config(Path(__file__).parents[1] / "build.toml")
+    sources = config.sources.model_copy(update={"btr_archive": btr_archive})
     return StageContext(
         release="test",
         release_dir=release_dir,
-        config=config.model_copy(update={"jev_links": False} | switches),
+        config=config.model_copy(
+            update={"jev_links": False, **switches, "sources": sources}
+        ),
         offline=True,
     )
 
@@ -804,6 +809,38 @@ def test_run_link_writes_the_deterministic_tables(tmp_path: Path) -> None:
     assert linked.height
     assert set(linked["perspective"]) == {"recipient"}
     assert set(links["task"]) == {"crdf_crs", "trace"}
+
+
+def test_btr_rows_link_when_the_build_has_them(tmp_path: Path) -> None:
+    _normalised(tmp_path)
+    archive = tmp_path / "archive"
+    with pytest.raises(StageInputMissingError):
+        run_link(_context(tmp_path, btr_archive=archive, recoveries=False))
+    btr = pl.DataFrame(
+        {
+            "row_id": ["BTR-DEU-2022-00001"],
+            "party": ["DEU"],
+            "provider_code": [5],
+            "year": [2022],
+            "title": ["Solar Kenya (2022000102)"],
+            "is_aggregate": [False],
+            "source_file": ["DEU.xlsx"],
+        }
+    )
+    btr = btr.select(
+        pl.col(name).cast(column.dtype)
+        if name in btr.columns
+        else pl.lit(None, column.dtype).alias(name)
+        for name, column in schema.BTR.columns.items()
+    )
+    path = table_path(tmp_path, "normalise", "btr")
+    btr.write_parquet(path)
+
+    links = run_link(_context(tmp_path, btr_archive=archive, recoveries=False))["links"]
+
+    assert links.filter(task="btr_crs").select(
+        "left_id", "right_id", "link_method"
+    ).rows() == [("BTR-DEU-2022-00001", "5c1a3ae4d0c8775b", "btr_id")]
 
 
 def test_recoveries_read_their_inputs_only_when_on(tmp_path: Path) -> None:

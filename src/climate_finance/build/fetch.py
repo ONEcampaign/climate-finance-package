@@ -21,6 +21,8 @@ import httpx
 import polars as pl
 
 from climate_finance.build.errors import StageInputMissingError
+from climate_finance.build.readers.btr import MANIFEST as BTR_MANIFEST
+from climate_finance.build.readers.btr import archive_files
 from climate_finance.build.readers.ledgers.finances_one import (
     PUBLISHERS as FINANCES_ONE_PUBLISHERS,
 )
@@ -62,6 +64,8 @@ IMPUTED_SHARES_NAME = "Imputed_multilateral_shares.xlsx"
 IMPUTED_SHARES_FILE = Path("oecd") / IMPUTED_SHARES_NAME
 GCF_FILE = PROJECTS_FILE
 IATI_DIR = Path("external/iati")
+BTR_DIR = Path("unfccc/btr1")
+BTR_SOURCE = "unfccc_btr1"
 DAC_EXCHANGE_FILE = Path("dac_exchange.parquet")
 ADAPTATION_LABELS_FILE = Path("labels/adaptation_labels.csv")
 
@@ -157,6 +161,11 @@ def fetch_sources(
             raw, archive=sources.iati_archive, publishers=sources.iati_publishers
         ),
         *(
+            _copy_btr(raw, archive=sources.btr_archive)
+            if sources.btr_archive is not None
+            else []
+        ),
+        *(
             [
                 _link_local(
                     raw,
@@ -187,6 +196,7 @@ def expected_sources(config: BuildConfig) -> list[str]:
         "gcf_projects",
         "dac_exchange",
         *(f"iati_{publisher}" for publisher in config.sources.iati_publishers),
+        *([BTR_SOURCE] if config.sources.btr_archive is not None else []),
         *(["adaptation_labels"] if config.jev_labels else []),
         *(
             _ledger_sources(config.sources.ledgers)
@@ -225,10 +235,10 @@ def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> Non
     Raises:
         SourceUnavailableError: when the sources `recorded` holds differ from those
             `config` names, in either direction, or `recorded` names a CRS or
-            adaptation label file other than the one `config` names, or when
-            `raw` lacks a recorded
-            file, holds an unrecorded one, or holds one whose sha256 differs from
-            the recorded one. The message names every such source or file.
+            adaptation label file other than the one `config` names, or when `raw`
+            lacks a recorded file, holds an unrecorded one, or holds one whose
+            sha256 differs from the recorded one. The message names every such
+            source or file.
     """
     expected, held = set(expected_sources(config)), set(recorded["source"])
     if expected != held:
@@ -466,6 +476,22 @@ def _copy_iati(
             files.append(
                 _record(raw, relative, source=f"iati_{publisher}", method="manual")
             )
+    return files
+
+
+def _copy_btr(raw: Path, *, archive: Path) -> list[RawFile]:
+    """Put the BTR archive's manifest and every workbook it lists under
+    `unfccc/btr1/`.
+
+    Raises:
+        SourceUnavailableError: when the manifest or a workbook it lists is missing.
+    """
+    origins = [archive / BTR_MANIFEST, *(path for path, _ in archive_files(archive))]
+    files = []
+    for origin in origins:
+        relative = BTR_DIR / origin.name
+        _place(origin, _target(raw, relative))
+        files.append(_record(raw, relative, source=BTR_SOURCE, method="manual"))
     return files
 
 

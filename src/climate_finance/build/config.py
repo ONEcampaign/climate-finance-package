@@ -84,14 +84,16 @@ class Ledgers(_Section):
 class Sources(_Section):
     """Pinned source versions and local source paths.
 
-    `crs_file` names a browser-downloaded bulk CRS parquet; without it, fetch
+    `crs_file` names a browser-downloaded bulk CRS parquet. Without it, fetch
     downloads the file with oda-reader. `crdf_etags`, when not empty, pins every
     CRDF workbook fetch reads to the ETag it maps the workbook's name to.
     `iati_archive` holds one directory of activity XML per publisher, and fetch
     copies those of `iati_publishers`. Without `ledgers`, fetch and normalise skip
     the bank ledgers. `adaptation_labels` names Weikmans et al.'s human-coded
     adaptation re-evaluation, which fetch copies into `raw/` when `jev_labels` is on
-    and which fits the cut on Jev's answers.
+    and which fits the cut on Jev's answers. `btr_archive` holds the BTR workbooks
+    a person downloaded with their `manifest.json`. Without it the build has no
+    BTR rows and the release has no reconciliation.
     """
 
     crs_version: str
@@ -99,7 +101,7 @@ class Sources(_Section):
     crdf_etags: dict[str, str]
     iati_archive: ConfigPath
     iati_publishers: tuple[str, ...]
-    btr_archive: ConfigPath
+    btr_archive: ConfigPath | None = None
     ledgers: Ledgers | None = None
     review_decisions: ConfigPath
     adaptation_labels: LocalFile | None = None

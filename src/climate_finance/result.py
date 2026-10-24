@@ -178,16 +178,27 @@ class Quality:
     Add it back to compare with totals that count EU Institutions as a provider.
     `attribution` holds, by provider, year and flow, the value attributed through
     core contributions, split by the agency share's source into `computed_usd`,
-    `held_usd` and `oecd_usd`.
+    `held_usd` and `oecd_usd`. `precision` holds, by provider, the share of
+    allocated value whose link a blind human sample found right (`estimate`), its
+    interval (`lower`, `upper`), whether it passed the release's precision gate,
+    whether a failure was waived, and the gate's reading. It is empty for a release
+    that was not gated.
     """
 
     def __init__(
-        self, *, table: Table, status: Table, eu_left_out: Table, attribution: Table
+        self,
+        *,
+        table: Table,
+        status: Table,
+        eu_left_out: Table,
+        attribution: Table,
+        precision: Table,
     ) -> None:
         self.table = table
         self.status = status
         self.eu_left_out = eu_left_out
         self.attribution = attribution
+        self.precision = precision
 
     def summary(self) -> pl.DataFrame:
         """Per provider: link rate, linked share above 0.8, label sources, status split.
@@ -318,9 +329,12 @@ _FLOWS = {
     "commitments": "Flow: commitments at face value; low and high equal value.",
     "disbursements": "Flow: disbursements allocated to climate commitments, weighted "
     "by the commitment's markers; low counts the disbursements linked by the "
-    "donor's CRS id or World Bank loan number where the linked records agree, and "
-    "bank-ledger and IATI fills in full, since they match on the publisher's own "
-    "id; high counts every linked disbursement. "
+    "donor's CRS id or World Bank loan number where the linked records agree, or "
+    "by one record that commits and disburses, to commitments whose CRDF row ties "
+    "to its CRS record by construction (same crs id and year, a matched contract, "
+    "or the record the row was cut from), and bank-ledger and IATI fills in full, "
+    "since they match on the publisher's own id; high counts every linked "
+    "disbursement. "
     "Attributed finance counts core contributions disbursed. The modelled table "
     "holds a disbursement range for commitments whose disbursements no source "
     "reports.",
@@ -331,15 +345,22 @@ _FLOWS = {
 
 
 class Reconciliation:
-    """A party-by-year comparison of BTR reports with OECD data."""
+    """A party-by-year comparison of BTR reports with OECD data.
+
+    `table` holds one row per party, year and method (see `query.reconcile`).
+    """
 
     def __init__(self, *, table: Table, rows: pl.LazyFrame) -> None:
         self.table = table
         self._rows = rows
 
     def rows(self, party: str, year: int) -> pl.DataFrame:
-        """The project-level link behind one party and year."""
-        raise NotImplementedError("BTR link rows")
+        """The project-level link behind one party and year: each BTR row of every
+        status with each CRS record linked to it, the record's facts prefixed
+        `crs_`, and `unfccc_only` true for a row no record links to."""
+        return self._rows.filter(
+            pl.col("party") == party, pl.col("year") == year
+        ).collect()
 
 
 class Comparison:

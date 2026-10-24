@@ -66,7 +66,8 @@ def seed_raw(raw: Path, *, archive: Path, publishers: tuple[str, ...]) -> pl.Dat
 
 
 def archive_config(archive: Path, *, key_repair: bool, recoveries: bool) -> BuildConfig:
-    """`build.toml` with the archive's CRS and IATI files as its sources."""
+    """`build.toml` with the archive's CRS and IATI files as its sources, and no
+    BTR archive."""
     base = load_config(REPO / "build.toml")
     crs = archive / ARCHIVE_FILES[("oecd/CRS.parquet", "crs")]
     return BuildConfig.model_validate(
@@ -74,13 +75,15 @@ def archive_config(archive: Path, *, key_repair: bool, recoveries: bool) -> Buil
         | {
             "key_repair": key_repair,
             "recoveries": recoveries,
-            # The archive builds run offline with no Jev cache; the Jev step has its
+            # The archive builds run offline with no Jev cache. The Jev step has its
             # own measurement.
             "jev_links": False,
             "sources": base.sources.model_dump()
             | {
                 "crs_file": LocalFile(path=crs, sha256=CRS_SHA256),
                 "iati_archive": archive / "external/iati",
+                # The BTR link runs in its own e2e file, on the BTR archive.
+                "btr_archive": None,
             },
         }
     )

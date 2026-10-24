@@ -5,7 +5,7 @@ fit and score with them, and `comparison_levels` evaluates the same SQL conditio
 for the truth-group classifier, so a pair's `levels` mean the same in `links` and in
 `pair_scores`. Splink numbers each comparison's levels by their order: -1 for the
 null level, else from the first level's count down to 0. In Splink's terms the
-commitment is the left record (`_l`) and the disbursement the right (`_r`); in
+commitment is the left record (`_l`) and the disbursement the right (`_r`). In
 `candidates` and `trace` links the disbursement unit is `left_id`.
 
 A unit reads its fields from its representative record, the largest by absolute
@@ -45,14 +45,13 @@ import splink.comparison_level_library as cll
 import splink.comparison_library as cl
 from splink.internals.comparison_level_creator import ComparisonLevelCreator
 
-from climate_finance.build.link.candidates import (
-    NO_TITLE,
-    clean_text,
-    largest_record,
-    pn_block,
-    with_programme,
+from climate_finance.build.link.candidates import pn_block, with_programme
+from climate_finance.build.link.text import (
+    representative,
+    text_norm,
+    text_words,
+    title_norm,
 )
-from climate_finance.build.link.candidates import title_words as words_of
 from climate_finance.schema import COMPARISON_LEVELS
 
 LEVELS = tuple(COMPARISON_LEVELS.to_schema())
@@ -61,7 +60,7 @@ DESCRIPTION_WORDS = 80
 # Pairs compared at once, which bounds the memory a batch takes.
 BATCH_PAIRS = 500_000
 _RATIO = "disbursement_usd_r / commitment_usd_l"
-# The date features, each as SQL over a pair; a comparison with a null date is null.
+# The date features, each as SQL over a pair. A comparison with a null date is null.
 _DATE_SQL = {
     "same_start": "(expected_start_date_r = expected_start_date_l)::tinyint",
     "same_completion": "(completion_date_r = completion_date_l)::tinyint",
@@ -97,18 +96,18 @@ def unit_attributes(
         "expected_start_date",
         "completion_date",
     )
-    title_toks = words_of(pl.col("title_norm"))
+    title_toks = text_words(pl.col("title_norm"))
     return (
         with_programme(units.lazy().drop("record_ids"), stems=stems.lazy())
-        .join(_representative(units, crs=crs, fields=fields), on="unit_id", how="left")
+        .join(representative(units, crs=crs, fields=fields), on="unit_id", how="left")
         .with_columns(
             pn_norm=pn_block(pl.col("project_number")),
-            title_norm=_title_norm(),
-            desc_norm=_text_norm(pl.col("rep_long_description")),
+            title_norm=title_norm(),
+            desc_norm=text_norm(pl.col("rep_long_description")),
         )
         .with_columns(
             title_toks=title_toks,
-            desc_toks=words_of(pl.col("desc_norm"), first=DESCRIPTION_WORDS),
+            desc_toks=text_words(pl.col("desc_norm"), first=DESCRIPTION_WORDS),
             title_key=pl.when(title_toks.list.len() >= 2).then(
                 title_toks.list.head(2).list.join(" ")
             ),
@@ -143,17 +142,6 @@ def unit_attributes(
             long_description="rep_long_description",
         )
         .sort("unique_id")
-        .collect()
-    )
-
-
-def title_words(units: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
-    """Each unit's title words (`title_toks`), as `unit_attributes` reads them:
-    unit_id and title_toks, null where the unit has no title."""
-    fields = ("title", "short_description")
-    return (
-        _representative(units, crs=crs, fields=fields)
-        .select("unit_id", title_toks=words_of(_title_norm()))
         .collect()
     )
 
@@ -360,36 +348,6 @@ def _level_cases() -> list[str]:
             f"case {whens} end::tinyint as gamma_{comparison.output_column_name}"
         )
     return cases
-
-
-def _representative(
-    units: pl.DataFrame, *, crs: pl.LazyFrame, fields: tuple[str, ...]
-) -> pl.LazyFrame:
-    """`fields` of each unit's largest record (`candidates.largest_record`), as
-    `rep_` columns."""
-    return (
-        units.lazy()
-        .select("unit_id", record_id="record_ids")
-        .explode("record_id")
-        .join(
-            crs.select("record_id", "commitment_usd", "disbursement_usd", *fields),
-            on="record_id",
-        )
-        .group_by("unit_id")
-        .agg(largest_record(*fields).name.prefix("rep_"))
-    )
-
-
-def _title_norm() -> pl.Expr:
-    """The representative record's normalised title, else short description."""
-    return _text_norm(pl.coalesce("rep_title", "rep_short_description"))
-
-
-def _text_norm(text: pl.Expr) -> pl.Expr:
-    """`text` cleaned (`candidates.clean_text`); null when nothing is left or it
-    names nothing (`candidates.NO_TITLE`)."""
-    cleaned = clean_text(text)
-    return pl.when((cleaned != "") & ~cleaned.is_in(NO_TITLE)).then(cleaned)
 
 
 def _jaccard(column: str) -> str:
