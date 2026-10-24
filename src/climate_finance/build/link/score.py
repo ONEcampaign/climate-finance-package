@@ -5,7 +5,8 @@ carries the commitment's line id (`line_id`: the crs id, with a zero-padded line
 suffix unpadded and a UK copy's letters dropped), so those agencies' candidate pairs
 are labelled truth. A crs id that a later record files under another project number
 and an unrelated title names another project. A provider with at least
-`MIN_TRUE_PAIRS` true pairs among its training pairs is in the truth group: one
+`MIN_TRUE_PAIRS` true pairs among its training pairs is in the truth group, where
+the group's training pairs can be cross-fitted (`training_folds`): one
 gradient-boosted classifier, trained on the truth group's labelled pairs, scores the
 eligible pairs of its other agencies. Providers without that truth are scored by
 Splink, alone or, below `SPLINK_MIN_COMMITMENTS` open commitments or
@@ -27,12 +28,12 @@ bridge the change continue, and at the Adaptation Fund, which leaves no bridge, 
 its title continues (see `carried_continuations`).
 
 Labelled pairs split into halves by the md5 of their commitment's donor and line id
-(the unit id where it has none). The classifier trains on one half, with five folds
-grouped by the same key, and the other half measures it. The out-of-fold scores fit
-an isotonic map: the provider's own where it has at least `MIN_CALIBRATION_PAIRS`
-true and as many false training pairs, else the pooled one. The link threshold
-maximises F1 on out-of-fold scores calibrated by maps fitted on the other folds, so
-no map scores the pairs it was fitted on.
+(the unit id where it has none). The classifier trains on one half, with up to
+`FOLDS` folds grouped by the same key, and the other half measures it. The
+out-of-fold scores fit an isotonic map: the provider's own where it has at least
+`MIN_CALIBRATION_PAIRS` true and as many false training pairs, else the pooled one.
+The link threshold maximises F1 on out-of-fold scores calibrated by maps fitted on
+the other folds, so no map scores the pairs it was fitted on.
 
 F1 is read on links, as `classifier_links` makes them: each disbursement unit's best
 pair (`best_commitments`) links when it reaches the threshold, and is right when it
@@ -104,6 +105,9 @@ MIN_CALIBRATION_PAIRS = 30
 SPLINK_MIN_COMMITMENTS = 300
 SPLINK_MIN_PAIRS = 2_000
 FOLDS = 5
+# The fewest folds that cross-fit the classifier: with fewer split keys the truth
+# group is not trained, and its providers are scored by Splink.
+MIN_FOLDS = 2
 THRESHOLDS = np.round(np.arange(0.01, 1.0, 0.01), 2)
 FEATURES = (
     *LEVELS,
@@ -809,6 +813,11 @@ def with_split(
 def scoring_groups(pairs: pl.DataFrame) -> pl.DataFrame:
     """Each provider's scoring group and the counts that set it.
 
+    A provider with at least `MIN_TRUE_PAIRS` true training pairs is in the truth
+    group when the training pairs of all such providers can be cross-fitted
+    (`training_folds`); otherwise none is, and each takes the Splink group its
+    eligible pairs set.
+
     Args:
         pairs: `with_split` candidates.
 
@@ -823,9 +832,20 @@ def scoring_groups(pairs: pl.DataFrame) -> pl.DataFrame:
         commitments=pl.col("right_id").filter(eligible).n_unique(),
         pairs=eligible.sum(),
     )
+    admitted = counts.filter(pl.col("true_pairs") >= MIN_TRUE_PAIRS)["provider_code"]
+    trainable = not admitted.is_empty() and (
+        training_folds(
+            pairs.filter(
+                pl.col("split") == TRAIN, pl.col("donor_code").is_in(admitted.implode())
+            ).sort(*_PAIR)
+        )
+        is not None
+    )
     return counts.select(
         "provider_code",
-        scoring_group=pl.when(pl.col("true_pairs") >= MIN_TRUE_PAIRS)
+        scoring_group=pl.when(
+            (pl.col("true_pairs") >= MIN_TRUE_PAIRS) & pl.lit(trainable)
+        )
         .then(pl.lit("truth"))
         .when(
             (pl.col("commitments") >= SPLINK_MIN_COMMITMENTS)
@@ -856,7 +876,10 @@ def score_truth_group(
     train = pairs.filter(split=TRAIN)
     x, y = _matrix(train), train["true_pair"].to_numpy()
     donors = train["donor_code"].to_numpy()
-    folds = list(GroupKFold(n_splits=FOLDS).split(x, y, train["split_key"].to_numpy()))
+    folds = training_folds(train)
+    if folds is None:
+        msg = "the truth group's training pairs cannot be cross-fitted"
+        raise ValueError(msg)
     raw = np.empty(len(y))
     for fit_rows, score_rows in folds:
         raw[score_rows] = _predict(_fit(x[fit_rows], y[fit_rows]), x[score_rows])
@@ -891,6 +914,23 @@ def score_truth_group(
     return TruthScores(pairs=scored, threshold=threshold, calibration=calibration)
 
 
+def training_folds(train: pl.DataFrame) -> list[tuple[np.ndarray, np.ndarray]] | None:
+    """The folds that cross-fit the classifier on `train`, the truth group's
+    training pairs: `FOLDS` grouped by split key, or one per key where there are
+    fewer, as (fitting rows, scoring rows). None when there are fewer than
+    `MIN_FOLDS` keys, or when a fold's fitting rows lack true or false pairs, as
+    no classifier is fitted on one outcome."""
+    keys = train["split_key"].to_numpy()
+    n_splits = min(FOLDS, len(np.unique(keys)))
+    if n_splits < MIN_FOLDS:
+        return None
+    y = train["true_pair"].to_numpy()
+    folds = list(GroupKFold(n_splits=n_splits).split(keys, y, keys))
+    if any(len(np.unique(y[fit_rows])) < 2 for fit_rows, _ in folds):
+        return None
+    return folds
+
+
 def best_commitments(
     pairs: pl.DataFrame, *, probability: str = "p_model"
 ) -> pl.DataFrame:
@@ -917,6 +957,10 @@ def heldout_links(pairs: pl.DataFrame) -> pl.DataFrame:
     training half continues a commitment of that half and is dropped. A false one
     is the unit's link, wrong whichever half holds it.
 
+    Every score ranked is out-of-sample: a held-out pair takes the final model's,
+    and a training pair the model of the fold that scored it. The final model's
+    scores of training pairs would put in-sample scores into the ranking.
+
     Args:
         pairs: `TruthScores.pairs`.
     """
@@ -938,6 +982,23 @@ def true_disbursements(truth: pl.DataFrame, *, commitments: pl.Series) -> int:
     )
 
 
+def linked_pairs(
+    pairs: pl.DataFrame, *, threshold: float, jev_threshold: float | None = None
+) -> pl.DataFrame:
+    """Each disbursement unit's link among `pairs`: its best pair
+    (`best_commitments` on `probability`) among those that reach their threshold,
+    `jev_threshold` on `probability` where Jev answered (`p_jev` not null) and
+    `threshold` on `p_model` elsewhere."""
+    reached = pl.col("p_model") >= threshold
+    if jev_threshold is not None:
+        reached = (
+            pl.when(pl.col("p_jev").is_not_null())
+            .then(pl.col("probability") >= jev_threshold)
+            .otherwise(reached)
+        )
+    return best_commitments(pairs.filter(reached), probability="probability")
+
+
 def classifier_links(
     scores: TruthScores, *, jev: JevBand | None = None
 ) -> pl.DataFrame:
@@ -949,21 +1010,18 @@ def classifier_links(
     """
     eligible = scores.pairs.filter(pl.col("split") == ELIGIBLE)
     if jev is None:
-        taken = eligible.filter(pl.col("p_model") >= scores.threshold).with_columns(
+        weighed = eligible.with_columns(
             probability="p_model", p_jev=pl.lit(None, dtype=pl.Float64)
         )
     else:
-        answered = pl.col("p_jev").is_not_null()
-        taken = (
-            eligible.join(jev.answers, on=list(_PAIR), how="left")
-            .with_columns(probability=pl.coalesce("p_combined", "p_model"))
-            .filter(
-                pl.when(answered)
-                .then(pl.col("probability") >= jev.threshold)
-                .otherwise(pl.col("p_model") >= scores.threshold)
-            )
+        weighed = eligible.join(jev.answers, on=list(_PAIR), how="left").with_columns(
+            probability=pl.coalesce("p_combined", "p_model")
         )
-    best = best_commitments(taken, probability="probability")
+    best = linked_pairs(
+        weighed,
+        threshold=scores.threshold,
+        jev_threshold=None if jev is None else jev.threshold,
+    )
     method = (
         pl.when(pl.col("p_jev").is_not_null())
         .then(pl.lit(JEV_METHOD))

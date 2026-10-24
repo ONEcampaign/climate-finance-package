@@ -13,7 +13,9 @@ training-half pairs of single-id donors (`single_id_donors`), labelled by id tru
 
 - the band pairs, on which a logistic regression of the label on logit(model) and
   logit(Jev) gives an eligible band pair its final probability. A band pair links
-  when that probability reaches the threshold that maximises F1 on these pairs.
+  when that probability reaches the threshold at which the links the build makes
+  among the training pairs of single-id donors have the highest F1
+  (`deployed_threshold`).
 - `SCALE_SAMPLE` pairs spread over the bands of the classifier's probability
   (`SCALE_BANDS`), on which a logistic regression of the label on logit(Jev) alone
   is the scale that turns Jev's answers on a Splink model's calibration sample into
@@ -41,9 +43,10 @@ from climate_finance.build.errors import BuildError
 from climate_finance.build.link.levels import unit_attributes
 from climate_finance.build.link.score import (
     ELIGIBLE,
+    THRESHOLDS,
     TRAIN,
     TruthScores,
-    best_threshold,
+    linked_pairs,
 )
 from climate_finance.build.normalise.ids import content_id
 
@@ -198,11 +201,11 @@ def adjudicate_band(
     labelled = pairs.filter(
         pl.col("split") == TRAIN,
         pl.col("donor_code").is_in(single_id_donors(pairs).implode()),
-    ).select(*_PAIR, "p_model", "programme_level", y="true_pair")
-    fit_on = labelled.filter(in_band).drop("programme_level")
+    ).select(*_PAIR, "p_model", "programme_level", "placed_year", "true_pair")
+    fit_on = labelled.filter(in_band).select(*_PAIR, "p_model", y="true_pair")
     scale_on = spread_sample(
         labelled, band=probability_band(pl.col("p_model")), n=SCALE_SAMPLE
-    ).select(*_PAIR, "p_model", "y")
+    ).select(*_PAIR, "p_model", y="true_pair")
     for name, frame in (("training band pairs", fit_on), ("scale pairs", scale_on)):
         outcomes = int(frame["y"].sum())
         if min(outcomes, frame.height - outcomes) < MIN_FIT_OUTCOMES:
@@ -227,8 +230,11 @@ def adjudicate_band(
     )
     fitted = fit_on.join(answered, on=_PAIR).sort(_PAIR)
     combined = fit_logistic(fitted, inputs=["p_model", "p_jev"], y="y")
-    y = fitted["y"].to_numpy()
-    p_fitted = fitted.select(combined(pl.col("p_model"), pl.col("p_jev"))).to_series()
+    tuned = labelled.join(
+        fitted.select(*_PAIR, "p_jev"), on=_PAIR, how="left"
+    ).with_columns(
+        probability=pl.coalesce(combined(pl.col("p_model"), pl.col("p_jev")), "p_model")
+    )
     return JevBand(
         answers=eligible.join(answered, on=_PAIR)
         .select(
@@ -236,12 +242,42 @@ def adjudicate_band(
         )
         .sort(_PAIR),
         combined=combined,
-        threshold=best_threshold(p_fitted.to_numpy(), y, n_true=int(y.sum())),
+        threshold=deployed_threshold(tuned, threshold=scores.threshold),
         scale=fit_logistic(
             scale_on.join(answered, on=_PAIR).sort(_PAIR), inputs=["p_jev"], y="y"
         ),
         model=client.model,
     )
+
+
+def deployed_threshold(pairs: pl.DataFrame, *, threshold: float) -> float:
+    """The grid threshold for Jev's answers of highest F1, the lowest on ties, of
+    the links the build makes among `pairs` (`score.linked_pairs`), with
+    `threshold` for the pairs Jev did not answer.
+
+    A link is right when its pair is true, and recall counts the disbursement units
+    with a true pair among `pairs`. A disbursement unit links one commitment, so a
+    false pair that its true pair outscores costs nothing, and a true pair that a
+    pair over `threshold` outscores gains nothing.
+
+    Args:
+        pairs: labelled pairs with `p_model`, `true_pair`, `programme_level` and
+            `placed_year`, and where Jev answered, `p_jev` and the combined
+            `probability` (else `p_model`).
+        threshold: the classifier's threshold.
+    """
+    n_true = pairs.filter("true_pair")["left_id"].n_unique()
+    # A pair Jev did not answer and under the classifier's threshold never links.
+    pairs = pairs.filter(
+        pl.col("p_jev").is_not_null() | (pl.col("p_model") >= threshold)
+    )
+    f1 = []
+    for jev_threshold in THRESHOLDS:
+        links = linked_pairs(
+            pairs, threshold=threshold, jev_threshold=float(jev_threshold)
+        )
+        f1.append(2 * int(links["true_pair"].sum()) / (links.height + n_true))
+    return float(THRESHOLDS[int(np.argmax(f1))])
 
 
 def spread_sample(frame: pl.DataFrame, *, band: pl.Expr, n: int) -> pl.DataFrame:

@@ -21,6 +21,7 @@ from climate_finance.build.link.jev import (
     JevFitError,
     Logistic,
     adjudicate_band,
+    deployed_threshold,
     pair_request,
 )
 from climate_finance.build.link.levels import LEVELS
@@ -29,6 +30,7 @@ from climate_finance.build.link.score import (
     HELDOUT,
     TRAIN,
     TruthScores,
+    best_threshold,
     classifier_links,
 )
 
@@ -258,6 +260,38 @@ def test_jev_adjudicates_the_band_and_the_combination_links(
         band.scale,
         band.threshold,
     )
+
+
+def test_the_jev_threshold_is_tuned_on_the_links_the_build_makes() -> None:
+    # d1 and d2 each link their true pair over a false one; d3's true pair and d4's
+    # false one stand alone; d5's pair over the classifier's 0.5 outscores its true
+    # band pair.
+    rows = [
+        ("d1", "c1", 0.6, True),
+        ("d1", "c2", 0.5, False),
+        ("d2", "c3", 0.6, True),
+        ("d2", "c4", 0.5, False),
+        ("d3", "c5", 0.3, True),
+        ("d4", "c6", 0.2, False),
+        ("d5", "c7", 0.65, True),
+        ("d5", "c8", 0.95, False),
+    ]
+    pairs = pl.DataFrame(
+        rows, schema=["left_id", "right_id", "probability", "true_pair"], orient="row"
+    ).with_columns(
+        p_model="probability",
+        p_jev=pl.when(pl.col("right_id") != "c8").then(0.5),
+        programme_level=0,
+        placed_year=2018,
+    )
+    # The links of each disbursement peak at 0.21, where d3 links and d4 does not.
+    assert deployed_threshold(pairs, threshold=0.5) == 0.21
+    # F1 on band pairs counts false pairs that never link and a true one that never
+    # wins, and peaks at 0.51.
+    band = pairs.filter(pl.col("p_jev").is_not_null())
+    y = band["true_pair"].to_numpy()
+    p = band["probability"].to_numpy()
+    assert best_threshold(p, y, n_true=int(y.sum())) == 0.51
 
 
 def test_an_offline_build_refuses_a_cache_miss(

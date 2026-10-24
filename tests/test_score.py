@@ -12,6 +12,7 @@ from climate_finance.build.link.keys import build_units
 from climate_finance.build.link.levels import LEVELS
 from climate_finance.build.link.score import (
     ELIGIBLE,
+    FOLDS,
     HELDOUT,
     MIN_TRUE_PAIRS,
     SPLINK_MIN_COMMITMENTS,
@@ -321,11 +322,16 @@ def test_scoring_groups(
         _pair(f"t{index}", f"c{index}", donor=7, split=TRAIN, same=True, levels={})
         for index in range(true_pairs)
     ]
-    # Held-out and unlabelled true pairs and a false training pair add no truth.
+    # Held-out and unlabelled true pairs and false training pairs add no truth.
     rows += [
         _pair("h", "ch", donor=7, split=HELDOUT, same=True, levels={}),
         _pair("u", "cu", donor=7, split=UNLABELLED, same=True, levels={}),
-        _pair("f", "cf", donor=7, split=TRAIN, same=False, levels={}),
+        *(
+            _pair(
+                f"f{index}", f"cf{index}", donor=7, split=TRAIN, same=False, levels={}
+            )
+            for index in range(FOLDS)
+        ),
     ]
     rows += [
         _pair(
@@ -341,6 +347,39 @@ def test_scoring_groups(
     profile = scoring_groups(_frame(rows)).row(0, named=True)
     assert profile["scoring_group"] == group
     assert profile["true_pairs"] == true_pairs
+
+
+@pytest.mark.parametrize(
+    ("true_keys", "false_keys", "group"),
+    [
+        # Four commitments allow four folds.
+        (4, 4, "truth"),
+        # One commitment allows no cross-fitting.
+        (1, 1, "pooled_splink"),
+        # The fold of the one commitment with false pairs fits on true pairs alone.
+        (4, 1, "pooled_splink"),
+    ],
+)
+def test_the_truth_group_trains_on_the_folds_its_commitments_allow(
+    true_keys: int, false_keys: int, group: str
+) -> None:
+    rows = [
+        _pair(f"t{i}", f"c{i % true_keys}", donor=7, split=TRAIN, same=True, levels={})
+        for i in range(40)
+    ]
+    rows += [
+        _pair(
+            f"f{i}", f"c{i % false_keys}", donor=7, split=TRAIN, same=False, levels={}
+        )
+        for i in range(40)
+    ]
+    rows.append(_pair("e", "o", donor=7, split=ELIGIBLE, same=False, levels={}))
+    pairs = _frame(rows)
+    groups = scoring_groups(pairs)
+    assert groups["scoring_group"].to_list() == [group]
+    if group == "truth":
+        scored = score_truth_group(pairs, groups=groups, truth=_truth(pairs))
+        assert scored.pairs["p_model"].is_not_null().all()
 
 
 def test_id_truth_follows_the_crs_id_into_later_disbursements() -> None:
