@@ -19,18 +19,10 @@ agency ids connect, in one recipient. Every disbursement unit of a component
 reaches all its commitment units, less those its record year or floor rules out,
 and each commitment unit falls in one group.
 
-The United States reports each CRS project number as `<submission id>_<activity
-id>` of its ForeignAssistance.gov submission, as `76_62884`. ForeignAssistance.gov
-gives each such activity a project number, which for USAID is the award number its
-IATI activity ids carry. `read_us_crosswalk` reads that pairing; it keys the US
-commitments to a ledger, and adds no trace link.
-
 `crosswalk_profile` writes, per provider, the climate value of the counted CRDF
 commitments and the part that links by key through a crosswalk, into
 `provider_profile`.
 """
-
-from pathlib import Path
 
 import polars as pl
 
@@ -38,15 +30,10 @@ from climate_finance.build.link.keys import as_exact_links, floor_seen
 from climate_finance.build.sums import ordered_sum
 
 GEF_DONOR = 811
-US_DONOR = 302
 METHOD = "crosswalk"
-US_CROSSWALK_FILE = "crosswalk.parquet"
 
 _GEF_ACTIVITY = r"^XI-BRIDGE-6385676864-0*(\d+)$"
 _GEF_PROJECT_NUMBER = r"^0*(\d+)(?:-|$)"
-# ForeignAssistance.gov project numbers that name no award: empty, redacted, or an
-# administrative placeholder.
-_NO_AWARD = r"(?i)REDACT|^(N/?A\b.*|NULL|NONE|OE)?$"
 # Each agency's id as the GEF IATI file references it and as the CRS project number
 # carries it. UNDP numbers are zero-padded in some years and not in others.
 _AGENCY_IDS = {
@@ -149,45 +136,10 @@ def link_by_crosswalk(
     return as_exact_links(pairs.lazy(), task="trace").collect()
 
 
-def read_us_crosswalk(path: Path) -> pl.DataFrame:
-    """CRS project numbers of US activities with the award each names.
-
-    A project number that names no award (`_NO_AWARD`) is left out, and so is a CRS
-    project number ForeignAssistance.gov gives more than one award.
-
-    Args:
-        path: The directory holding `crosswalk.parquet`, as
-            `sources.foreignassistance.download_foreign_assistance` writes it.
-
-    Returns:
-        `project_number`, as the CRS prints it, and `award`, upper-cased without
-        spaces.
-
-    Raises:
-        FileNotFoundError: when `path` holds no `crosswalk.parquet`.
-    """
-    award = pl.col("project_number").str.replace_all(r"\s+", "").str.to_uppercase()
-    return (
-        pl.read_parquet(path / US_CROSSWALK_FILE)
-        .filter(~pl.col("project_number").fill_null("").str.contains(_NO_AWARD))
-        .select(
-            project_number=pl.concat_str(
-                "submission_id", "submission_activity_id", separator="_"
-            ),
-            award=award,
-        )
-        .unique()
-        .filter(pl.len().over("project_number") == 1)
-        .sort("project_number")
-    )
-
-
 def crosswalk_profile(
     crdf: pl.LazyFrame,
     *,
     links: pl.DataFrame,
-    units: pl.DataFrame,
-    us_awards: pl.DataFrame | None,
     crosswalks: bool,
 ) -> pl.DataFrame:
     """The crosswalk columns of `provider_profile`: each provider's counted climate
@@ -196,30 +148,21 @@ def crosswalk_profile(
     The rows counted are those `measure.counted_commitments` counts: recipient
     perspective, no repeat of an earlier vintage, and no aggregate parent whose
     rebuilt children stand in for it. A row links by key when a `crdf_crs` link
-    takes it to a commitment unit that a `crosswalk` trace link fills (GEF), or to a
-    US commitment unit whose project number names an award (`read_us_crosswalk`).
-    The crosswalk columns are null for every other provider, for the US when
-    `us_awards` is None, and for every provider when `crosswalks` is False.
+    takes it to a commitment unit that a `crosswalk` trace link fills (GEF). The
+    crosswalk columns are null for every other provider, and for every provider when
+    `crosswalks` is False.
 
     Args:
         crdf: The normalise stage's `crdf`.
         links: The link stage's `links`.
-        units: The link stage's `units`.
-        us_awards: `read_us_crosswalk` output, or None where the build has no US
-            crosswalk.
         crosswalks: whether the build ran the crosswalks (recoveries on).
     """
-    reached = links.filter(
-        pl.col("task") == "trace", pl.col("link_method") == METHOD
-    ).select(unit_id="right_id")
+    reached = (
+        links.filter(pl.col("task") == "trace", pl.col("link_method") == METHOD)
+        .select(unit_id="right_id")
+        .unique()
+    )
     measured = [GEF_DONOR] if crosswalks else []
-    if crosswalks and us_awards is not None:
-        awarded = units.filter(pl.col("donor_code") == US_DONOR).join(
-            us_awards, on="project_number", how="semi"
-        )
-        reached = pl.concat([reached, awarded.select("unit_id")])
-        measured.append(US_DONOR)
-    reached = reached.unique()
     reached_rows = (
         links.filter(pl.col("task") == "crdf_crs")
         .select(row_id="left_id", unit_id="right_id")

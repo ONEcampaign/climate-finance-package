@@ -24,7 +24,8 @@ from typing import Any
 import polars as pl
 
 from climate_finance.build.errors import LabelPacketError
-from climate_finance.build.link.levels import title_words, word_share
+from climate_finance.build.link.candidates import word_share
+from climate_finance.build.link.levels import title_words
 
 MATCH_DEFINITION = (
     "A matches B when A's money is spending under the commitment B records. That "

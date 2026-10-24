@@ -33,9 +33,9 @@ With `jev_links` on, a model with fewer than `CALIBRATION_LABELS` people's label
 has its calibration sample answered instead (`jev.jev_answers`): Jev reads each pair,
 and a scale fitted on id truth turns its answer into a label. Those labels, with any
 of people's, set m and the map directly, since there are not enough people's labels
-to set Jev's scale for the model. Only labels of source `human` are read from
-`labels`. Ledger-check labels never calibrate: they sit on key-linked pairs, whose
-disbursements no model scores, and they hold no negatives.
+to set Jev's scale for the model. Only labels of source `human` or `agent` are
+read from `labels`. Ledger-check labels never calibrate: they sit on key-linked
+pairs, whose disbursements no model scores, and they hold no negatives.
 
 `splink_links` links each disbursement unit to its best calibrated pair at or above
 `LINK_THRESHOLD`, as `splink_jev`.
@@ -280,9 +280,11 @@ def read_decision_labels(path: Path) -> pl.DataFrame:
     """People's and agents' queue decisions at `path` as `pair_labels` rows with
     source `human` or `agent`, one per pair; none when nothing has been decided yet.
 
-    Of an agent's decisions on a pair, the latest round stands (`LABEL_ROUNDS`
-    order), then the latest decided. A person's decision stands over an agent's
-    standing decision made before it, and the latest decision stands among people.
+    A person's decision on a pair stands over any agent's, whenever either was
+    imported, and the latest decision stands among people. Of an agent's decisions,
+    the latest round stands (`LABEL_ROUNDS` order), then the latest imported.
+    `decided_at` is the import time, so ordering people and agents by it would let
+    a re-imported agent round erase a person's verdict.
     A blind-sample decision (one with a `sample_id`) measures precision, so it never
     becomes a label. `stratified` marks the decisions on calibration pairs, which
     `stratified_sample` drew, so only they take inverse-probability weights.
@@ -307,11 +309,14 @@ def read_decision_labels(path: Path) -> pl.DataFrame:
         .sort("rank", "decided_at", maintain_order=True)
         .unique(pair, keep="last", maintain_order=True)
     )
-    human = decided.filter(label_source="human")
+    human = (
+        decided.filter(label_source="human")
+        .sort("decided_at", maintain_order=True)
+        .unique(pair, keep="last", maintain_order=True)
+    )
     return (
         pl.concat([agent, human])
-        .sort("decided_at", maintain_order=True)
-        .unique(pair, keep="last")
+        .unique(pair, keep="last", maintain_order=True)
         .sort(pair)
         .select(
             *pair,
@@ -813,7 +818,8 @@ def splink_links(
         scores: `pair_scores` (`score_with_splink`).
         candidates: the link stage's candidates, for each pair's programme level.
         units: the link stage's units, for each commitment's placed year.
-        jev_model: the Jev model behind the calibration labels.
+        jev_model: the Jev model behind the calibration labels, recorded on the
+            links of models whose labels Jev gave some of.
     """
     taken = (
         scores.filter(pl.col("probability") >= LINK_THRESHOLD)
@@ -832,7 +838,9 @@ def splink_links(
         "programme_level": pl.col("programme_level"),
         "levels": pl.col("levels"),
         "model_version": pl.col("model"),
-        "jev_model": pl.lit(jev_model),
+        "jev_model": pl.when(pl.col("label_set").str.contains(r"jev:[1-9]")).then(
+            pl.lit(jev_model)
+        ),
         "label_set": pl.col("label_set"),
         "review": pl.lit(value=False),
     }

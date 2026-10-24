@@ -1,5 +1,6 @@
 """The ledger readers parse their pinned raw slices into one stackable frame."""
 
+import json
 import logging
 from datetime import date
 from pathlib import Path
@@ -67,6 +68,19 @@ def test_finances_one_reads_ida_credits_by_credit_number() -> None:
     assert set(ida["publisher"]) == {"ida"}
     # IDA90002: 700,000 at the end of 2020 and 760,000 at the end of 2021.
     assert _amount(ida, key="IDA90002") == 60_000
+
+
+def test_finances_one_refuses_a_snapshot_that_lists_a_loan_twice(
+    tmp_path: Path,
+) -> None:
+    folder = LEDGERS / "finances_one"
+    before, after = "DS00975_31-Dec-2020.json", "DS00975_31-Dec-2021.json"
+    (tmp_path / before).write_text((folder / before).read_text())
+    rows = json.loads((folder / after).read_text())
+    (tmp_path / after).write_text(json.dumps([*rows, rows[0]]))
+
+    with pytest.raises(SourceUnavailableError, match="IBRD90001"):
+        read_finances_one(tmp_path, dataset="DS00975", years=[2021])
 
 
 def test_finances_one_names_a_missing_snapshot() -> None:

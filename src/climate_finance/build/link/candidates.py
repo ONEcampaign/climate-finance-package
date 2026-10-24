@@ -39,7 +39,7 @@ crs id an id-persistent unit of the donor carries in another record year, the ti
 names one activity per country, as Japan's "The Economic and Social Development
 Programme" does. Key tiers and repair rules run before candidates and keep any link
 they give such a line. On the archive, 701 template titles hold 244,740 units. They
-leave out 5,972 of 1,345,361 eligible pairs, from 33 titles of 8 providers, and
+leave out 6,346 of 1,346,917 eligible pairs, from 37 titles of 10 providers, and
 5,827,107 of 7,213,658 training pairs, none of them true and 5,813,108 of them
 Japan's "TC aggregated activities". Three recipients would also catch regional road
 corridors.
@@ -130,7 +130,7 @@ BLOCKING_RULES: tuple[tuple[tuple[str, ...], int | None], ...] = (
 )
 # Project numbers and titles that name no project once lower-cased and stripped.
 _NO_PN = ("notapplicable", "na", "none", "nan", "null", "0", "")
-_NO_TITLE = ("not applicable", "na", "none", "n a", "nan", "null")
+NO_TITLE = ("not applicable", "na", "none", "n a", "nan", "null")
 _SEPARATORS = ".-/_&: "
 _LAST_SEGMENT = r"[.\-/_&: ]+[A-Z0-9]+$"
 _AGENCY = ("donor_code", "agency_code")
@@ -151,18 +151,17 @@ def strip_segments(pn: pl.Expr, segments: int) -> pl.Expr:
     return pl.when(stem.str.contains("[A-Z0-9]")).then(stem)
 
 
-def title_words(title: pl.Expr) -> pl.Expr:
-    """The distinct words of `title` that can tell projects apart, in order."""
-    return (
-        _clean(title)
-        .str.split(" ")
-        .list.eval(
-            pl.element().filter(
-                (pl.element().str.len_chars() >= 3) & ~pl.element().is_in(STOPWORDS)
-            )
+def title_words(title: pl.Expr, *, first: int | None = None) -> pl.Expr:
+    """The distinct words of `title`, or of its first `first` words, that can tell
+    projects apart, in order: three letters or more and not in `STOPWORDS`."""
+    words = clean_text(title).str.split(" ")
+    if first is not None:
+        words = words.list.head(first)
+    return words.list.eval(
+        pl.element().filter(
+            (pl.element().str.len_chars() >= 3) & ~pl.element().is_in(STOPWORDS)
         )
-        .list.unique(maintain_order=True)
-    )
+    ).list.unique(maintain_order=True)
 
 
 def learn_programme_stems(crs: pl.LazyFrame) -> pl.LazyFrame:
@@ -176,7 +175,7 @@ def learn_programme_stems(crs: pl.LazyFrame) -> pl.LazyFrame:
         crs.with_columns(project_number=normalise_pn(pl.col("project_number")))
         .drop_nulls(["agency_code", "project_number"])
         .group_by(*_AGENCY, "project_number", "recipient_code")
-        .agg(_largest("title"))
+        .agg(largest_record("title"))
         .with_columns(words=title_words(pl.col("title")))
         .drop("title")
     )
@@ -245,7 +244,7 @@ def _score_stems(projects: pl.LazyFrame, *, segments: int) -> pl.LazyFrame:
         .agg(
             pairs=pl.len().cast(pl.Int64),
             consistent_pairs=(
-                _jaccard(pl.col("words"), pl.col("words_other")) >= MIN_SIMILARITY
+                word_share(pl.col("words"), pl.col("words_other")) >= MIN_SIMILARITY
             )
             .sum()
             .cast(pl.Int64),
@@ -473,7 +472,7 @@ def _sides(
             on="record_id",
         )
         .group_by("unit")
-        .agg(_largest("title", "text") if texts else _largest("title"))
+        .agg(largest_record("title", "text") if texts else largest_record("title"))
     )
     classes = id_practice.lazy().select(
         *_AGENCY,
@@ -489,7 +488,7 @@ def _sides(
         .filter(pl.col("year") > pl.col("year_commitment"))
         .get_column("right_id")
     )
-    title = _clean(pl.col("title")).str.replace_all(" +", " ")
+    title = clean_text(pl.col("title")).str.replace_all(" +", " ")
     words = title_words(pl.col("title"))
     return (
         with_programme(
@@ -509,8 +508,8 @@ def _sides(
         )
         .join(titles, on="unit", how="left")
         .with_columns(
-            pn_block=_pn_block(pl.col("project_number")),
-            title_block=pl.when(~title.is_in(_NO_TITLE)).then(title),
+            pn_block=pn_block(pl.col("project_number")),
+            title_block=pl.when(~title.is_in(NO_TITLE)).then(title),
             title_head=pl.when(words.list.len() >= 2).then(
                 words.list.head(2).list.join(" ")
             ),
@@ -533,7 +532,7 @@ def _renumbered_lines(units: pl.DataFrame) -> pl.DataFrame:
         units.filter(pl.col("donor_code").is_in(RENUMBERED_DONORS))
         .select(
             "donor_code",
-            pn_block=_pn_block(pl.col("project_number")),
+            pn_block=pn_block(pl.col("project_number")),
             line=_renumbered_line(),
         )
         .drop_nulls()
@@ -610,7 +609,7 @@ def _narrow_keys(
     return later.filter(pl.col("units") <= cap).select(*key, year="year_commitment")
 
 
-def _pn_block(project_number: pl.Expr) -> pl.Expr:
+def pn_block(project_number: pl.Expr) -> pl.Expr:
     """`project_number` lower-cased, with every character other than a to z and
     digits and leading zeros dropped; null when it names no project or keeps under
     three characters."""
@@ -630,7 +629,7 @@ def _renumbered_line() -> pl.Expr:
     )
 
 
-def _largest(*columns: str) -> pl.Expr:
+def largest_record(*columns: str) -> pl.Expr:
     """`columns` of the group's largest record by commitment plus disbursement,
     ties to the smaller record id."""
     size = pl.col("commitment_usd").abs().fill_null(0) + pl.col(
@@ -639,13 +638,13 @@ def _largest(*columns: str) -> pl.Expr:
     return pl.col(*columns).sort_by(size, "record_id", descending=[True, False]).first()
 
 
-def _clean(text: pl.Expr) -> pl.Expr:
+def clean_text(text: pl.Expr) -> pl.Expr:
     """`text` lower-cased, every run of characters other than a to z and digits a
     space, trimmed."""
     return text.str.to_lowercase().str.replace_all("[^a-z0-9]+", " ").str.strip_chars()
 
 
-def _jaccard(left: pl.Expr, right: pl.Expr) -> pl.Expr:
+def word_share(left: pl.Expr, right: pl.Expr) -> pl.Expr:
     """Shared words over all words of two word lists; null when either is null or
     both are empty."""
     union = left.list.set_union(right).list.len()

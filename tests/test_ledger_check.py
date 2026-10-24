@@ -9,35 +9,42 @@ from climate_finance import schema
 from climate_finance.build.link.ledger import check_ledgers
 
 IDA, IBRD, AFDB, GERMANY = 905, 901, 913, 5
+KENYA, ETHIOPIA, AFRICA = 248, 238, 298
 YEARS = (2021, 2022)
 
-# unit_id: (donor_code, project_number, year, placed_year, disbursement_usd)
+# unit_id: (donor_code, project_number, year, placed_year, disbursement_usd,
+# recipient_code)
 UNITS = {
     # One IDA credit split over two CRS rows: 60 + 40 in 2021, 50 in 2022.
-    "c_ida1": (IDA, "P000001.IDA10010.CRS1", 2020, 2020, 0.0),
-    "d_ida1a": (IDA, "P000001.IDA10010.CRS1", 2021, 2021, 60.0),
-    "d_ida1b": (IDA, "P000001.IDA10010.CRS2", 2021, 2021, 40.0),
-    "d_ida1c": (IDA, "P000001.IDA10010.CRS1", 2022, 2022, 50.0),
-    "d_ida1_old": (IDA, "P000001.IDA10010.CRS1", 2019, 2019, 30.0),
+    "c_ida1": (IDA, "P000001.IDA10010.CRS1", 2020, 2020, 0.0, KENYA),
+    "d_ida1a": (IDA, "P000001.IDA10010.CRS1", 2021, 2021, 60.0, KENYA),
+    # A line of the credit to Ethiopia, and a regional commitment under its key.
+    "d_ida1b": (IDA, "P000001.IDA10010.CRS2", 2021, 2021, 40.0, ETHIOPIA),
+    "c_ida1_africa": (IDA, "P000001.IDA10010.CRS1", 2020, 2020, 0.0, AFRICA),
+    "d_ida1c": (IDA, "P000001.IDA10010.CRS1", 2022, 2022, 50.0, KENYA),
+    "d_ida1_old": (IDA, "P000001.IDA10010.CRS1", 2019, 2019, 30.0, KENYA),
     # Another credit of the same project, and one the ledger does not list.
-    "d_ida2": (IDA, "P000001.IDA20020.CRS1", 2021, 2021, 25.0),
-    "c_ida3": (IDA, "P000003.IDA30030.CRS1", 2018, 2018, 0.0),
-    "d_ida3": (IDA, "P000003.IDA30030.CRS1", 2021, 2021, 70.0),
+    "d_ida2": (IDA, "P000001.IDA20020.CRS1", 2021, 2021, 25.0, KENYA),
+    "c_ida3": (IDA, "P000003.IDA30030.CRS1", 2018, 2018, 0.0, KENYA),
+    "d_ida3": (IDA, "P000003.IDA30030.CRS1", 2021, 2021, 70.0, KENYA),
     # IBRD loans committed in 2021: one never disburses, one does in the ledger only.
-    "c_ibrd4": (IBRD, "P000004.IBRD40040.CRS1", 2021, 2021, 0.0),
-    "c_ibrd5": (IBRD, "P000005.IBRD50050.CRS1", 2021, 2021, 0.0),
+    "c_ibrd4": (IBRD, "P000004.IBRD40040.CRS1", 2021, 2021, 0.0, KENYA),
+    "c_ibrd5": (IBRD, "P000005.IBRD50050.CRS1", 2021, 2021, 0.0, KENYA),
     # An AfDB loan whose ledger is in XDR, which has no DAC rate.
-    "c_afdb6": (AFDB, "2100150000006", 2020, 2020, 0.0),
-    "d_afdb6": (AFDB, "2100150000006", 2021, 2021, 15.0),
+    "c_afdb6": (AFDB, "2100150000006", 2020, 2020, 0.0, KENYA),
+    "d_afdb6": (AFDB, "2100150000006", 2021, 2021, 15.0, KENYA),
+    # An AfDB loan committed in 2021 that its ledger shows undisbursed.
+    "c_afdb8": (AFDB, "2100150000008", 2021, 2021, 0.0, KENYA),
     # A provider with no ledger.
-    "c_deu7": (GERMANY, "DE7", 2020, 2020, 0.0),
-    "d_deu7": (GERMANY, "DE7", 2021, 2021, 9.0),
+    "c_deu7": (GERMANY, "DE7", 2020, 2020, 0.0, KENYA),
+    "d_deu7": (GERMANY, "DE7", 2021, 2021, 9.0, KENYA),
 }
 
 # (task, left_id, right_id)
 LINKS = [
     ("trace", "d_ida1a", "c_ida1"),
     ("trace", "d_ida1b", "c_ida1"),
+    ("trace", "d_ida1b", "c_ida1_africa"),
     ("trace", "d_ida1c", "c_ida1"),
     ("trace", "d_ida1_old", "c_ida1"),
     ("trace", "d_ida2", "c_ida1"),
@@ -48,6 +55,7 @@ LINKS = [
     ("crdf_crs", "row_ibrd5", "c_ibrd5"),
     ("crdf_crs", "row_ida1", "c_ida1"),
     ("crdf_crs", "row_deu7", "c_deu7"),
+    ("crdf_crs", "row_afdb8", "c_afdb8"),
 ]
 
 # (publisher, key, year, currency, amount, amount_usd)
@@ -60,6 +68,7 @@ LEDGER = [
     ("ibrd", "IBRD40040", 2022, "USD", 0.0, 0.0),
     ("ibrd", "IBRD50050", 2022, "USD", 10.0, 10.0),
     ("afdb", "2100150000006", 2021, "XDR", 11.0, None),
+    ("afdb", "2100150000008", 2021, "USD", 0.0, 0.0),
 ]
 
 
@@ -73,6 +82,7 @@ def _units() -> pl.LazyFrame:
             "year": pl.Int16,
             "placed_year": pl.Int16,
             "disbursement_usd": pl.Float64,
+            "recipient_code": pl.Int32,
         },
         orient="row",
     )
@@ -138,6 +148,7 @@ def _check(links: pl.DataFrame, left_id: str, right_id: str) -> str | None:
         # 60 + 40 against 104: within 5% of the ledger.
         ("d_ida1a", "c_ida1", "confirmed"),
         ("d_ida1b", "c_ida1", "confirmed"),
+        ("d_ida1b", "c_ida1_africa", "confirmed"),
         # 50 against 53 + 1: outside 5%.
         ("d_ida1c", "c_ida1", "contradicted"),
         # Before the years checked.
@@ -155,6 +166,9 @@ def _check(links: pl.DataFrame, left_id: str, right_id: str) -> str | None:
         ("row_ibrd5", "c_ibrd5", None),
         ("row_ida1", "c_ida1", None),
         ("row_deu7", "c_deu7", None),
+        # Only the World Bank's and the IDB's ledgers can confirm a commitment
+        # undisbursed.
+        ("row_afdb8", "c_afdb8", None),
     ],
 )
 def test_ledger_check_per_link(left_id: str, right_id: str, expected: str) -> None:
@@ -178,13 +192,14 @@ def test_links_outside_the_check_keep_their_ledger_check() -> None:
     assert _check(links.collect(), "d_deu7", "c_deu7") == "contradicted"
 
 
-def test_confirmed_trace_pairs_become_ledger_labels() -> None:
+def test_confirmed_pairs_to_the_commitment_recipient_become_ledger_labels() -> None:
     _, labels = _checked()
 
     schema.validate(schema.PAIR_LABELS, labels)
+    # d_ida1b goes to Ethiopia, so only the commitment to the region labels it.
     assert sorted(labels.select("left_id", "right_id").rows()) == [
         ("d_ida1a", "c_ida1"),
-        ("d_ida1b", "c_ida1"),
+        ("d_ida1b", "c_ida1_africa"),
     ]
     assert labels["is_match"].all()
     assert set(labels["pair_label_source"]) == {"ledger"}

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from climate_finance.build.errors import ConfigError
+from climate_finance.build.link.keys import partner_recipient
 from climate_finance.build.sums import ordered_sum
 
 if TYPE_CHECKING:
@@ -45,6 +46,10 @@ LEDGER_PUBLISHERS: Mapping[int, str] = {
     910: "bcie",
     1016: "gcf",
 }
+# The ledgers that can confirm a commitment undisbursed. These three match the CRS
+# for 99.7% to 100% of loan-years; in the others a key-year with no disbursement can
+# be a gap in the ledger's scope or timing, so silence proves nothing.
+UNDISBURSED_PUBLISHERS = ("ibrd", "ida", "iadb")
 
 
 def ledger_key(publisher: pl.Expr, project_number: pl.Expr) -> pl.Expr:
@@ -114,9 +119,10 @@ def check_ledgers(
     speak to the pair. A key the ledger lists reads as zero in a year it shows no
     disbursement.
 
-    A `crdf_crs` link to a commitment placed in `years` whose key shows no
-    disbursement in either source from that year to the last of `years` is
-    `confirmed_undisbursed`. Other links keep their `ledger_check`.
+    A `crdf_crs` link to a commitment of an `UNDISBURSED_PUBLISHERS` bank placed in
+    `years` whose key shows no disbursement in either source from that year to the
+    last of `years` is `confirmed_undisbursed`. Other links keep their
+    `ledger_check`.
 
     Args:
         links: `links` rows.
@@ -126,7 +132,10 @@ def check_ledgers(
 
     Returns:
         The links, and a `pair_labels` row with `is_match` true and source `ledger`
-        for each confirmed `trace` pair.
+        for each confirmed `trace` pair whose disbursement goes to the commitment's
+        recipient or to a country of its region (`keys.partner_recipient`). The
+        ledger key alone does not show that two units share a recipient, since a
+        bank can file one operation number for lines to several countries.
     """
     first, last = years
     keyed = (
@@ -139,14 +148,23 @@ def check_ledgers(
         .with_columns(key=ledger_key(pl.col("publisher"), pl.col("project_number")))
     )
     key_years = _key_years(keyed, ledger=ledger, years=years)
-    disbursements = keyed.select(left_id="unit_id", left_key="key", year="year")
+    disbursements = keyed.select(
+        left_id="unit_id",
+        left_key="key",
+        year="year",
+        left_recipient="recipient_code",
+    )
     commitments = keyed.select(
-        right_id="unit_id", publisher="publisher", key="key", placed_year="placed_year"
+        right_id="unit_id",
+        publisher="publisher",
+        key="key",
+        placed_year="placed_year",
+        recipient="recipient_code",
     )
     columns = links.collect_schema().names()
 
     same_key = pl.col("left_key") == pl.col("key")
-    trace = (
+    checked = (
         links.filter(task="trace")
         .join(disbursements, on="left_id", how="left")
         .join(commitments, on="right_id", how="left")
@@ -160,11 +178,12 @@ def check_ledgers(
             .then(pl.col("check"))
             .otherwise(pl.lit("none"))
         )
-        .select(columns)
     )
+    trace = checked.select(columns)
     undisbursed = (
         commitments.join(_last_active(key_years), on=["publisher", "key"])
         .filter(
+            pl.col("publisher").is_in(UNDISBURSED_PUBLISHERS),
             pl.col("placed_year").is_between(first, last),
             pl.col("last_active").is_null()
             | (pl.col("last_active") < pl.col("placed_year")),
@@ -183,7 +202,12 @@ def check_ledgers(
     )
     rest = links.filter(~pl.col("task").is_in(["trace", "crdf_crs"]))
     labels = (
-        trace.filter(ledger_check="confirmed")
+        checked.filter(
+            pl.col("ledger_check") == "confirmed",
+            partner_recipient(
+                commitment=pl.col("recipient"), disbursement=pl.col("left_recipient")
+            ),
+        )
         .select(
             "task",
             "left_id",

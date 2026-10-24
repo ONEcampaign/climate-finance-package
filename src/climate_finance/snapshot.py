@@ -12,7 +12,12 @@ from climate_finance import query
 from climate_finance.errors import ReleaseIntegrityError
 from climate_finance.methods import ONE, Method, MethodRange
 from climate_finance.result import Quality, Reconciliation, Result
-from climate_finance.schema import RELEASE_TABLES, ReleaseManifest, sha256_file
+from climate_finance.schema import (
+    RELEASE_TABLES,
+    ReleaseManifest,
+    scan_table,
+    sha256_file,
+)
 from climate_finance.spec import Currency, Flow, Spec, View
 
 
@@ -31,7 +36,7 @@ class Snapshot:
         """
         if name not in RELEASE_TABLES:
             raise KeyError(f"{name!r} is not a release table: {sorted(RELEASE_TABLES)}")
-        return pl.scan_parquet(self.path / f"{name}.parquet")
+        return scan_table(self.path / f"{name}.parquet")
 
     def spending(
         self,

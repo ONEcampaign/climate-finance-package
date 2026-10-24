@@ -161,6 +161,29 @@ def test_commitments_leave_out_parents_and_keep_repeats_and_revisions(
     assert (r1["status"], r1["disbursed_usd"]) == ("disbursed", 100.0)
 
 
+def test_commitments_carry_the_ledgers_undisbursed_confirmation() -> None:
+    # R1 reaches one unit the ledger confirms undisbursed; C reaches two, of which
+    # the ledger confirms one.
+    links = pl.LazyFrame(
+        {
+            "task": ["crdf_crs"] * 3 + ["trace"],
+            "left_id": ["R1", "C", "C", "u-d20"],
+            "right_id": ["u1", "u2", "u3", "u1"],
+            "ledger_check": ["confirmed_undisbursed"] * 2 + [None, "confirmed"],
+        }
+    )
+    status = _empty(STAGE_TABLES["review"]["commitments"]).lazy()
+
+    rows = release.release_commitments(CRDF.lazy(), status=status, links=links)
+
+    assert dict(rows.select("row_id", "ledger_undisbursed").collect().rows()) == {
+        "C": None,
+        "N": None,
+        "R1": True,
+        "R2": None,
+    }
+
+
 def test_disbursements_carry_the_record_and_its_link_and_leave_out_excess(
     release_dir: Path,
 ) -> None:
@@ -313,6 +336,69 @@ def test_core_contributions_keep_leaf_channels_only() -> None:
 
     assert set(core["channel_code"]) == {IDA_CHANNEL, 47066}
     assert core.filter(flow="disbursements")["contribution_usd"].sum() == 15.0
+
+
+def _core(rows: list[tuple[int, int, float]]) -> pl.LazyFrame:
+    """Disbursement core contributions in 2021 as (provider, channel, amount)."""
+    return pl.LazyFrame(
+        [
+            (provider, channel, 2021, "disbursements", usd)
+            for provider, channel, usd in rows
+        ],
+        schema={n: c.dtype for n, c in schema.CORE_CONTRIBUTIONS.columns.items()},
+        orient="row",
+    )
+
+
+def test_core_contributions_keep_the_unitemised_remainder_on_the_top_channel() -> None:
+    # Norway's 40000 total of 20 holds 15 in leaves; 41000 and 44000 leave whatever
+    # they hold, as MULTI's intermediate aggregates do not follow the code prefixes.
+    stage = _core(
+        [
+            (NOR, 40000, 20.0),
+            (NOR, 41000, 3.0),
+            (NOR, 44000, 1.0),
+            (NOR, IDA_CHANNEL, 10.0),
+            (NOR, 47066, 5.0),
+        ]
+    )
+
+    core = release.core_contributions(stage).collect()
+
+    for flow in ("disbursements", "grant_equivalent"):
+        rows = core.filter(flow=flow).select("channel_code", "contribution_usd")
+        assert dict(rows.iter_rows()) == {40000: 5.0, IDA_CHANNEL: 10.0, 47066: 5.0}
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        # The leaves hold 15, above the 40000 total of 10.
+        [(NOR, 40000, 10.0), (NOR, IDA_CHANNEL, 10.0), (NOR, 47066, 5.0)],
+        # Norway reports the World Bank Group with no 40000 total to check it by.
+        [(NOR, 44000, 10.0), (NOR, IDA_CHANNEL, 10.0)],
+    ],
+)
+def test_core_contributions_refuse_leaves_the_top_channel_does_not_cover(
+    rows: list[tuple[int, int, float]],
+) -> None:
+    with pytest.raises(ReleaseInvariantError, match=f"{NOR} 2021 disbursements"):
+        release.core_contributions(_core(rows)).collect()
+
+
+def test_core_contributions_read_an_empty_stage_table(
+    tmp_path: Path, config: BuildConfig
+) -> None:
+    _write(
+        tmp_path, "normalise", {"core_contributions": _empty(schema.CORE_CONTRIBUTIONS)}
+    )
+    context = StageContext(
+        release="r", release_dir=tmp_path, config=config, offline=True
+    )
+
+    stage = context.read("normalise", "core_contributions")
+
+    assert release.core_contributions(stage).collect().is_empty()
 
 
 def test_total_flows_sum_every_crs_record(release_dir: Path) -> None:

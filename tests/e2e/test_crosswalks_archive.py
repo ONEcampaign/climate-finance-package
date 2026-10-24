@@ -8,12 +8,7 @@ import pytest
 from archive_build import archive_config, seed_release
 
 from climate_finance.build import Stage, build
-from climate_finance.build.link.crosswalks import (
-    GEF_DONOR,
-    US_DONOR,
-    crosswalk_profile,
-    read_us_crosswalk,
-)
+from climate_finance.build.link.crosswalks import GEF_DONOR, crosswalk_profile
 from climate_finance.build.stages import table_path
 
 pytestmark = pytest.mark.slow
@@ -56,48 +51,8 @@ def test_the_gef_crosswalk_reaches_little_of_2021_and_2022(linked: Path) -> None
         pl.col("year").is_between(2021, 2022)
     )
     links = pl.read_parquet(table_path(linked, "link", "links"))
-    units = pl.read_parquet(table_path(linked, "link", "units"))
-    profile = crosswalk_profile(
-        crdf, links=links, units=units, us_awards=None, crosswalks=True
-    )
+    profile = crosswalk_profile(crdf, links=links, crosswalks=True)
     climate, crosswalk, share = _gef(profile)
     assert climate == pytest.approx(780.55e6, rel=1e-4)
     assert crosswalk == pytest.approx(4.2e6, rel=1e-4)
     assert share == pytest.approx(0.0054, abs=1e-4)
-
-
-def test_the_us_crosswalk_keys_half_of_2021_and_2022_and_its_ledger_a_quarter(
-    linked: Path,
-) -> None:
-    """Of USD 6.750bn of US climate value committed in 2021 and 2022, 3.534bn sits on
-    CRS project numbers that ForeignAssistance.gov gives one award, and 1.923bn on
-    awards whose USAID IATI activity reports disbursements or expenditure (read
-    from the prototype's parse, since the build reads no USAID IATI)."""
-    data = Path(os.environ["CF_E2E_DATA"])
-    awards = read_us_crosswalk(data / "raw" / "external" / "foreignassistance")
-    parsed = data / "raw" / "bilateral-gate" / "parsed" / "usaid.tx.parquet"
-    spending = (
-        pl.read_parquet(parsed)
-        .filter(pl.col("type").is_in(["3", "4"]))
-        .select(award=pl.col("iati_id").str.replace("^US-GOV-1-", ""))
-        .unique()
-    )
-    crdf = pl.scan_parquet(table_path(linked, "normalise", "crdf")).filter(
-        pl.col("year").is_between(2021, 2022)
-    )
-    links = pl.read_parquet(table_path(linked, "link", "links"))
-    units = pl.read_parquet(table_path(linked, "link", "units"))
-
-    def us(us_awards: pl.DataFrame) -> tuple[float, float, float]:
-        profile = crosswalk_profile(
-            crdf, links=links, units=units, us_awards=us_awards, crosswalks=True
-        )
-        row = profile.filter(provider_code=US_DONOR)
-        return row.select("climate_usd", "crosswalk_usd", "crosswalk_share").row(0)
-
-    climate, keyed, _ = us(awards)
-    assert climate == pytest.approx(6.7498e9, rel=1e-4)
-    assert keyed == pytest.approx(3.5338e9, rel=1e-4)
-    _, ledgered, share = us(awards.join(spending, on="award", how="semi"))
-    assert ledgered == pytest.approx(1.9233e9, rel=1e-4)
-    assert share == pytest.approx(0.2849, abs=1e-4)

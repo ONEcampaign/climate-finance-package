@@ -378,15 +378,23 @@ def test_jev_answers_the_calibration_samples_and_the_models_link(
     assert run.weighed.height == CALIBRATION_LABELS * len(reports)
     assert run.weighed["stratified"].all()
 
+    candidates = world["candidates"].with_columns(
+        programme_level=pl.lit(0, dtype=pl.Int8)
+    )
     links = splink_links(
-        run.result.scores,
-        candidates=world["candidates"].with_columns(
-            programme_level=pl.lit(0, dtype=pl.Int8)
-        ),
+        run.result.scores, candidates=candidates, units=world["units"], jev_model=MODEL
+    )
+    schema.validate(schema.LINKS, links)
+    assert set(links["jev_model"]) == {MODEL}
+    # A model calibrated on people's labels alone links with no Jev model.
+    people = splink_links(
+        run.result.scores.with_columns(label_set=pl.lit(f"human:{CALIBRATION_LABELS}")),
+        candidates=candidates,
         units=world["units"],
         jev_model=MODEL,
     )
-    schema.validate(schema.LINKS, links)
+    assert people.height == links.height
+    assert people["jev_model"].null_count() == people.height
     assert links["left_id"].is_unique().all()
     assert (links["probability"] >= LINK_THRESHOLD).all()
     assert set(links["link_method"]) == {"splink_jev"}
