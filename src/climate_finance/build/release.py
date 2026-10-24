@@ -12,11 +12,12 @@ amounts. `quality` and `disbursement_profile` leave them out of their totals, an
 `quality.repeat_climate_usd` reports them as their own line.
 
 The release leaves out the Green Climate Fund's own records, whose terms allow only
-private study, research and teaching: `disbursements` drops its fill rows
-(`schema.withheld_record`), and each commitment they reached states their amount as
-`withheld_usd`, so its disbursed amounts and `quality` keep them. `untraced` holds
-CRS records alone, so none of them, and `schema.release_invariants` and the
-`withheld_rows` gate refuse any release table with a `record_id` that holds one.
+private study, research and teaching: every release table with a `record_id` drops
+their rows (`schema.withheld_record`), as `disbursements` drops their fills and
+`objectives` their labels, and each commitment they reached states their amount as
+`withheld_usd`, so its disbursed amounts and `quality` keep them.
+`schema.release_invariants` and the `withheld_rows` gate refuse any release table
+with a `record_id` that holds one.
 `sources.json` notes the sources whose rows stay out (`WITHHELD_SOURCES`).
 The packed release, the one published, also leaves out the row-level BTR tables
 `btr` and `btr_links` (`WITHHELD_TABLES`) until the UNFCCC confirms its terms cover
@@ -63,10 +64,11 @@ from climate_finance.build.allocate import (
 from climate_finance.build.config import RELEASE_SETTINGS, load_config
 from climate_finance.build.errors import (
     BuildError,
+    GateFailedError,
     ReleaseInvariantError,
     StageInputMissingError,
 )
-from climate_finance.build.fetch import fetched_years, last_complete_year
+from climate_finance.build.fetch import BTR_SOURCE, fetched_years, last_complete_year
 from climate_finance.build.label import inherit_markers
 from climate_finance.build.measure import load_provider_facts
 from climate_finance.build.provenance import setting_value
@@ -163,7 +165,6 @@ SOURCE_LICENCES = {
     "commercial use and automated bulk download need permission, "
     "https://www.imf.org/en/About/copyright-and-terms",
     "adaptation_labels": "Weikmans et al.; fits the adaptation cut, no rows ship",
-    "btr": _UNFCCC,
     "unfccc": _UNFCCC,
     REPORTS_SOURCE: "single figures quoted from each provider's annual report, "
     "cited by title, year and page in `citations`; the publisher's terms apply",
@@ -173,9 +174,9 @@ SOURCE_LICENCES = {
 # them.
 WITHHELD_SOURCES = ("gcf_projects", "ledger_gcf")
 WITHHELD_NOTE = (
-    "Green Climate Fund rows are left out of the release, as its terms allow only "
-    "private study, research and teaching; `cf-build` rebuilds them from the GCF's "
-    "API."
+    "Green Climate Fund rows are left out of the release, as its website terms "
+    "allow only private study, research and teaching, and no commercial derivative "
+    "works without written consent; `cf-build` rebuilds them from the GCF's API."
 )
 # Release tables the pack leaves out, and the note `release.json` and `sources.json`
 # give them.
@@ -263,7 +264,8 @@ def seal_release(
 
 
 def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
-    """Every release table, each input read from the last stage that writes it."""
+    """Every release table, each input read from the last stage that writes it, with
+    no row whose `record_id` the release withholds (`schema.withheld_record`)."""
     crdf = context.read("normalise", "crdf")
     last_year = last_complete_year(context)
     # Later CRS years hold early reports, which allocate leaves out too.
@@ -295,9 +297,9 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         withheld=disbursements.lazy().filter(withheld),
     ).collect()
     linked_btr = btr_links(links, crs=crs).collect()
-    return {
+    tables = {
         "commitments": commitments,
-        "disbursements": disbursements.filter(~withheld),
+        "disbursements": disbursements,
         "objectives": objectives,
         "agency_shares": context.read("measure", "agency_shares").collect(),
         "agency_spending": context.read("measure", "agency_spending").collect(),
@@ -329,6 +331,12 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         "provider_coefficients": provider_coefficients(
             yaml.safe_load(PROVIDER_COEFFICIENTS_FILE.read_text(encoding="utf-8"))
         ),
+    }
+    # The tables above read every record, so quality and `withheld_usd` count the
+    # withheld ones; the release leaves out their rows.
+    return {
+        name: frame.filter(~withheld) if "record_id" in frame.columns else frame
+        for name, frame in tables.items()
     }
 
 
@@ -660,7 +668,8 @@ def btr_crs_unlinked(
 ) -> pl.LazyFrame:
     """Each provider-year of `btr` and flow of `BTR_CRS_UNLINKED`, with the sum of
     that flow over the provider's bilateral climate-marked CRS records of the year
-    that no `btr_crs` link in `links` reaches."""
+    that no `btr_crs` link in `links` reaches, null for a provider-year without a
+    record in `crs`."""
     flows = {"commitments": "commitment_usd", "disbursements": "disbursement_usd"}
     reached = (
         links.filter(pl.col("task") == "btr_crs").select(record_id="right_id").unique()
@@ -678,13 +687,23 @@ def btr_crs_unlinked(
         .group_by("provider_code", "year", "flow")
         .agg(amount_usd=ordered_sum(pl.col("usd").drop_nulls()))
     )
+    covered = (
+        crs.select("year", provider_code="donor_code")
+        .unique()
+        .with_columns(covered=pl.lit(True))
+    )
     return (
         btr.select("provider_code", "year")
         .drop_nulls()
         .unique()
         .join(pl.LazyFrame({"flow": list(flows)}), how="cross")
         .join(unlinked, on=["provider_code", "year", "flow"], how="left")
-        .with_columns(pl.col("amount_usd").fill_null(0.0))
+        .join(covered, on=["provider_code", "year"], how="left")
+        .with_columns(
+            amount_usd=pl.when(pl.col("covered")).then(
+                pl.col("amount_usd").fill_null(0.0)
+            )
+        )
         .select(list(BTR_CRS_UNLINKED.columns))
     )
 
@@ -958,7 +977,8 @@ def pack_release(release_dir: Path, *, out_path: Path) -> Path:
     """Pack the release built in `release_dir` as `out_path`, a `.tar.zst`.
 
     The pack holds one directory, `climate-finance-<release>/`, with the release
-    tables but those in `WITHHELD_TABLES`, `release.json` and `sources.json`. Its
+    tables but those in `WITHHELD_TABLES`, `release.json` and `sources.json`, and
+    nothing else the assemble stage writes, such as its `stage.json`. Its
     `release.json` is the build's with the withheld tables moved from `tables` to
     `withheld_tables`. `sources.json` lists every source the fetch stage recorded,
     `btr` when the release holds BTR rows, and `REPORTS_SOURCE` when its
@@ -996,10 +1016,9 @@ def pack_release(release_dir: Path, *, out_path: Path) -> Path:
             "withheld_tables": WITHHELD_TABLES,
         }
     )
-    withheld = {f"{name}.parquet" for name in WITHHELD_TABLES}
     # Tables stream from disk; the two JSON files are written from memory.
     files: dict[str, Path | bytes] = {
-        path.name: path for path in assembled.iterdir() if path.name not in withheld
+        f"{name}.parquet": assembled / f"{name}.parquet" for name in published.tables
     }
     files["release.json"] = (published.model_dump_json(indent=2) + "\n").encode()
     files[SOURCES_FILE] = (json.dumps(sources, indent=2) + "\n").encode()
@@ -1034,26 +1053,30 @@ def release_sources(
     btr_workbooks: pl.DataFrame | None,
     citations: Sequence[str],
 ) -> list[dict[str, object]]:
-    """Each source in `raw_manifest`, `btr` when `btr_rows` is positive and
-    `REPORTS_SOURCE` with its `citations` when there are any, with its version from
-    `versions`, its URLs and its licence, and as `note` `WITHHELD_NOTE` for a
-    source in `WITHHELD_SOURCES` and `BTR_WITHHELD_NOTE` for `btr`.
+    """Each source in `raw_manifest`, and `REPORTS_SOURCE` with its `citations` when
+    there are any, with its version from `versions`, its URLs and its licence, and
+    as `note` `WITHHELD_NOTE` for a source in `WITHHELD_SOURCES` and
+    `BTR_WITHHELD_NOTE` for the BTR archive, `fetch.BTR_SOURCE`.
 
-    The `btr` entry lists as `workbooks` each row of `btr_workbooks` (the normalise
+    The BTR entry lists as `workbooks` each row of `btr_workbooks` (the normalise
     stage's `btr_workbooks`): the workbook's file name, its party, the Table III.1
     sheets read, the rows kept, the rows dropped for each reason, and the reporting
     tool's draft state in the file name. A workbook giving no rows shows there, so a
     party that reports nothing reads apart from one that was not loaded.
 
     Raises:
-        BuildError: when a source has no entry in `SOURCE_LICENCES`.
+        BuildError: when a source has no entry in `SOURCE_LICENCES`, or when the
+            release holds BTR rows (`btr_rows`) and `raw_manifest` no BTR archive.
     """
     urls = {
         str(source): sorted(set(frame["url"].drop_nulls()))
         for (source,), frame in raw_manifest.group_by("source")
     }
-    if btr_rows:
-        urls["btr"] = []
+    if btr_rows and BTR_SOURCE not in urls:
+        raise BuildError(
+            f"The release holds {btr_rows} BTR rows but the raw manifest records "
+            f"no {BTR_SOURCE} source to credit them to"
+        )
     if citations:
         urls[REPORTS_SOURCE] = []
     if unlicensed := sorted(source for source in urls if _licence(source) is None):
@@ -1067,7 +1090,7 @@ def release_sources(
             **({"note": note} if (note := _source_note(source)) else {}),
             **(
                 {"workbooks": btr_workbooks.to_dicts()}
-                if source == BTR.name and btr_workbooks is not None
+                if source == BTR_SOURCE and btr_workbooks is not None
                 else {}
             ),
             **({"citations": list(citations)} if source == REPORTS_SOURCE else {}),
@@ -1079,7 +1102,7 @@ def release_sources(
 def _source_note(source: str) -> str | None:
     if source.startswith(WITHHELD_SOURCES):
         return WITHHELD_NOTE
-    return BTR_WITHHELD_NOTE if source == BTR.name else None
+    return BTR_WITHHELD_NOTE if source == BTR_SOURCE else None
 
 
 def report_citations(providers: Collection[int]) -> list[str]:
@@ -1116,20 +1139,26 @@ def cut_release(
     sample: Path | None = None,
     previous: Path | None = None,
     first_release: bool = False,
-    waive_precision: bool = False,
+    waive_precision: str | None = None,
 ) -> Path:
     """Build `release`, run the gates, record their results and pack it.
 
     The gates read the blind-sample labels from the config's review decisions, the
     sample's design from `sample` and the previous release from `previous` (see
     `gate.run_gates`). Their rows, keyed by gate name, the previous release's name
-    and `waive_precision` go into `release.json`. The pack is
+    and any waiver go into `release.json`. The pack is
     `<out_dir>/climate-finance-<release>.tar.zst`.
 
+    Args:
+        waive_precision: the reason to let the precision and human-audit gates
+            fail, recorded as `precision_waiver` with `precision_gate_waived` true.
+
     Raises:
-        GateFailedError: when a gate fails. `waive_precision` lets the precision
-            and human-audit gates fail.
+        GateFailedError: when a gate fails and is not waived.
+        BuildError: when `waive_precision` gives a blank reason.
     """
+    if waive_precision is not None and not waive_precision.strip():
+        raise BuildError("--waive-precision needs a reason, recorded in release.json")
     build_package.build(release, config=config, out_dir=out_dir)
     release_dir = out_dir / release
     results = gate.run_gates(
@@ -1138,14 +1167,15 @@ def cut_release(
         sample=sample,
         previous=previous,
         first_release=first_release,
-        waive_precision=waive_precision,
+        waive_precision=waive_precision is not None,
     )
     manifest_path = release_dir / "assemble" / "release.json"
     manifest = ReleaseManifest.model_validate_json(manifest_path.read_text())
     gated = manifest.model_copy(
         update={
             "gates": gate.gate_results_json(results),
-            "precision_gate_waived": waive_precision,
+            "precision_gate_waived": waive_precision is not None,
+            "precision_waiver": waive_precision,
             "previous_release": None
             if previous is None
             else load(path=previous).manifest.release,
@@ -1155,6 +1185,54 @@ def cut_release(
     return pack_release(
         release_dir, out_path=out_dir / f"{release_dirname(release)}.tar.zst"
     )
+
+
+def packed_manifest(pack: Path) -> ReleaseManifest:
+    """The `release.json` inside the packed release at `pack`.
+
+    Raises:
+        BuildError: when the pack holds no `release.json`.
+    """
+    with (
+        pa.input_stream(str(pack), compression="zstd") as stream,
+        tarfile.open(fileobj=stream, mode="r|") as tar,
+    ):
+        for member in tar:
+            if Path(member.name).name == "release.json" and (
+                file := tar.extractfile(member)
+            ):
+                return ReleaseManifest.model_validate_json(file.read())
+    raise BuildError(f"{pack} holds no release.json")
+
+
+def unpublishable(manifest: ReleaseManifest) -> list[str]:
+    """Why `manifest`'s release may not be published: a gate of `gate.WAIVABLE`
+    with no recorded row, and any recorded gate row neither passed nor waived. A
+    row counts as waived only on a gate of `gate.WAIVABLE`, with the waiver's
+    reason recorded as `precision_waiver`."""
+    problems = [
+        f"{name}: release.json records no result"
+        for name in gate.WAIVABLE
+        if not manifest.gates.get(name)
+    ]
+    for name, rows in manifest.gates.items():
+        if not isinstance(rows, list):
+            problems.append(f"{name}: release.json records a malformed result")
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                problems.append(f"{name}: release.json records a malformed row")
+                continue
+            label = f"{name} {row['subject']}" if row.get("subject") else name
+            if row.get("passed") is True:
+                continue
+            if row.get("waived") is not True:
+                problems.append(f"{label}: failed")
+            elif name not in gate.WAIVABLE:
+                problems.append(f"{label}: waived, but only {gate.WAIVABLE} can be")
+            elif not manifest.precision_waiver:
+                problems.append(f"{label}: waived with no recorded reason")
+    return problems
 
 
 def upload_release(pack: Path, *, target: str) -> str:
@@ -1181,7 +1259,15 @@ def upload_release(pack: Path, *, target: str) -> str:
 def add_to_index(
     index: ReleaseIndex, *, release: str, pack: Path, url: str
 ) -> ReleaseIndex:
-    """`index` with `release` published at `url` as its newest release."""
+    """`index` with `release` published at `url` as its newest release.
+
+    Raises:
+        GateFailedError: when the pack's `release.json` records a gate row
+            neither passed nor waived, a waiver without its reason, or no result
+            for the precision and human-audit gates (`unpublishable`).
+    """
+    if problems := unpublishable(packed_manifest(pack)):
+        raise GateFailedError(problems)
     return index.model_copy(
         update={
             "latest": release,

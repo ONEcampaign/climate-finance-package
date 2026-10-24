@@ -158,11 +158,13 @@ def release_command(
     previous: PreviousOption = None,
     first_release: FirstReleaseOption = False,
     waive_precision: Annotated[
-        bool,
+        str | None,
         typer.Option(
-            help="Pack despite failed precision and human-audit gates; recorded."
+            metavar="REASON",
+            help="Pack despite failed precision and human-audit gates, recording "
+            "REASON in release.json.",
         ),
-    ] = False,
+    ] = None,
 ) -> None:
     """Build, gate and pack a release."""
     console.print(

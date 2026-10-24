@@ -64,7 +64,7 @@ A published release ships the BTR reconciliation totals (`btr_totals` and `btr_c
 
 ## Verify it worked
 
-`snap.table("btr")` holds rows for each party you downloaded, and `sources.json` in the assemble directory lists each workbook with the rows kept and dropped by reason. A party whose workbook gives no rows has every row dropped there, most often because its amounts are blank or a notation key such as "NR".
+`snap.table("btr")` holds rows for each party you downloaded. The build's `normalise/btr_workbooks.parquet` lists each workbook with the rows kept and dropped by reason, and the `sources.json` of a pack that `cf-build release` writes carries the same list. A party whose workbook gives no rows has every row dropped there, most often because its amounts are blank or a notation key such as "NR".
 
 ## Next
 

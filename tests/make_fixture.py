@@ -27,6 +27,7 @@ import polars as pl
 
 from climate_finance import __version__
 from climate_finance.build import write_table
+from climate_finance.build.fetch import BTR_SOURCE
 from climate_finance.build.release import btr_totals
 from climate_finance.schema import (
     CERTAIN_METHODS,
@@ -879,7 +880,11 @@ def write_fixture(out_dir: Path) -> ReleaseManifest:
             created_at=datetime(2026, 10, 21, tzinfo=UTC),
             package_version=__version__,
             tables={},
-            source_versions={"crs": "fixture", "crdf": "fixture"},
+            source_versions={
+                "crs": "fixture",
+                "crdf": "fixture",
+                BTR_SOURCE: "fixture",
+            },
             model_versions={"jev": "jev-1.14.0"},
             gates={},
             settings=SETTINGS,

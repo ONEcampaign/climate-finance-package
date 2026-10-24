@@ -39,7 +39,8 @@ class UnknownRecipientError(UnknownNameError):
 
 
 class ReleaseIntegrityError(ClimateFinanceError):
-    """A release table is missing or its sha256 differs from release.json."""
+    """A release table is missing, its sha256 differs from release.json, or it
+    breaks a rule the query relies on, such as one coefficient per year."""
 
 
 class WithheldTableError(ClimateFinanceError, LookupError):

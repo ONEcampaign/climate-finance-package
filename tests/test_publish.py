@@ -24,6 +24,7 @@ import climate_finance as cf
 from climate_finance import snapshot
 from climate_finance.build import gate, release
 from climate_finance.build.errors import BuildError, GateFailedError
+from climate_finance.build.fetch import BTR_SOURCE
 from climate_finance.build.measure import PROVIDERS_TOML
 from climate_finance.errors import (
     ReleaseIntegrityError,
@@ -40,8 +41,9 @@ BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 
 def built_release(release_dir: Path, *, sources: tuple[str, ...] = ("crs",)) -> Path:
     """A build's release directory: the fixture as `assemble`, and a raw manifest
-    recording `sources`."""
+    recording `sources` and the BTR archive behind the fixture's BTR rows."""
     shutil.copytree(FIXTURE_DIR, release_dir / "assemble")
+    sources = (*sources, BTR_SOURCE)
     (release_dir / "fetch").mkdir()
     pl.DataFrame(
         {
@@ -55,6 +57,36 @@ def built_release(release_dir: Path, *, sources: tuple[str, ...] = ("crs",)) -> 
             "method": ["http"] * len(sources),
         }
     ).write_parquet(release_dir / "fetch" / "raw_manifest.parquet")
+    return release_dir
+
+
+PASSED = {"subject": None, "passed": True, "waived": False}
+
+
+def gated(
+    release_dir: Path,
+    *,
+    rows: dict[str, list[dict[str, object]]] | None = None,
+    waiver: str | None = None,
+) -> Path:
+    """`release_dir` with passed precision, human-audit and drift rows in its
+    `release.json`, replaced gate by gate by `rows`, and `waiver` recorded."""
+    path = release_dir / "assemble" / "release.json"
+    manifest = ReleaseManifest.model_validate_json(path.read_text())
+    gates = {
+        "precision": [PASSED | {"subject": "4"}],
+        "human_audit": [PASSED],
+        "drift": [PASSED],
+    }
+    path.write_text(
+        manifest.model_copy(
+            update={
+                "gates": gates | (rows or {}),
+                "precision_gate_waived": waiver is not None,
+                "precision_waiver": waiver,
+            }
+        ).model_dump_json()
+    )
     return release_dir
 
 
@@ -102,12 +134,14 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
     release_dir = built_release(
         tmp_path / "fixture", sources=("crs", "ledger_iati_44000", "crdf_recipient")
     )
+    (release_dir / "assemble" / "stage.json").write_text("{}\n")
     first = release.pack_release(release_dir, out_path=tmp_path / "a" / PACK)
     second = release.pack_release(release_dir, out_path=tmp_path / "b" / PACK)
 
     packed = members(first)
     assert sha256_file(first) == sha256_file(second)
-    # The row-level BTR tables stay out; the rest of the build goes in as built.
+    # The row-level BTR tables and the stage record stay out; the release tables
+    # go in as built.
     assert set(packed) == {
         f"climate-finance-fixture/{path.name}"
         for path in [*FIXTURE_DIR.iterdir(), Path("sources.json")]
@@ -132,25 +166,25 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
         built.model_dump(exclude={"tables", "withheld_tables"})
     )
     sources = json.loads(packed["climate-finance-fixture/sources.json"])
-    # The fixture holds BTR rows and IFC's modelled range, so `btr` and IFC's
-    # annual report are listed beside the fetched sources.
+    # The fixture holds IFC's modelled range, so IFC's annual report is listed
+    # beside the fetched sources, and the BTR archive once, with the BTR note.
     assert [(row["source"], row["licence"]) for row in sources] == [
-        ("btr", release.SOURCE_LICENCES["btr"]),
         ("crdf_recipient", release.SOURCE_LICENCES["crdf"]),
         ("crs", release.SOURCE_LICENCES["crs"]),
         ("ledger_iati_44000", release.SOURCE_LICENCES["ledger_iati"]),
         (release.REPORTS_SOURCE, release.SOURCE_LICENCES[release.REPORTS_SOURCE]),
+        (BTR_SOURCE, release.SOURCE_LICENCES["unfccc"]),
     ]
     assert [row.get("note") for row in sources] == [
+        None,
+        None,
+        None,
+        None,
         release.BTR_WITHHELD_NOTE,
-        None,
-        None,
-        None,
-        None,
     ]
-    assert sources[2]["version"] == "fixture"
-    assert sources[2]["urls"] == ["https://example.org/crs"]
-    assert [citation.split(",")[0] for citation in sources[4]["citations"]] == [
+    assert [sources[i]["version"] for i in (1, 4)] == ["fixture", "fixture"]
+    assert sources[1]["urls"] == ["https://example.org/crs"]
+    assert [citation.split(",")[0] for citation in sources[3]["citations"]] == [
         "IFC Annual Report 2022"
     ] * 2
 
@@ -214,7 +248,7 @@ def test_sources_list_each_btr_workbook_with_its_rows_kept_and_dropped(
     pack = release.pack_release(release_dir, out_path=tmp_path / PACK)
 
     sources = json.loads(members(pack)["climate-finance-fixture/sources.json"])
-    btr = next(row for row in sources if row["source"] == "btr")
+    btr = next(row for row in sources if row["source"] == BTR_SOURCE)
     assert btr["workbooks"] == workbooks
 
 
@@ -249,10 +283,20 @@ def test_a_source_without_a_licence_stops_the_pack(tmp_path: Path) -> None:
     assert not (tmp_path / PACK).exists()
 
 
-@pytest.mark.parametrize("waive", [False, True])
+def test_btr_rows_without_the_btr_archive_stop_the_pack(tmp_path: Path) -> None:
+    release_dir = built_release(tmp_path / "fixture")
+    raw = release_dir / "fetch" / "raw_manifest.parquet"
+    pl.read_parquet(raw).filter(pl.col("source") != BTR_SOURCE).write_parquet(raw)
+
+    with pytest.raises(BuildError, match=BTR_SOURCE):
+        release.pack_release(release_dir, out_path=tmp_path / PACK)
+
+
+@pytest.mark.parametrize("waiver", [None, "labels arrive after the cut"])
 def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, waive: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, waiver: str | None
 ) -> None:
+    waive = waiver is not None
     calls = []
     config = Path(shutil.copy(BUILD_TOML, tmp_path / "build.toml"))
 
@@ -280,7 +324,7 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
         out_dir=tmp_path,
         sample=tmp_path / "sample.parquet",
         previous=FIXTURE_DIR,
-        waive_precision=waive,
+        waive_precision=waiver,
     )
 
     assert pack == tmp_path / PACK
@@ -297,6 +341,7 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
         members(pack)["climate-finance-fixture/release.json"]
     )
     assert manifest.precision_gate_waived is waive
+    assert manifest.precision_waiver == waiver
     assert manifest.gates == {
         "precision": [{"passed": waive}],
         "drift": [{"passed": True}],
@@ -326,6 +371,47 @@ def test_a_failed_gate_stops_cut_release_before_the_pack(
     assert not (tmp_path / PACK).exists()
 
 
+@pytest.mark.parametrize(
+    ("rows", "waiver", "refused"),
+    [
+        ({}, None, None),
+        ({"human_audit": [PASSED | {"passed": False, "waived": True}]}, "late", None),
+        ({"human_audit": [PASSED | {"passed": False}]}, None, "human_audit: failed"),
+        (
+            {"human_audit": [PASSED | {"passed": False, "waived": True}]},
+            None,
+            "no recorded reason",
+        ),
+        ({"human_audit": []}, None, "human_audit: release.json records no result"),
+        ({"drift": [PASSED | {"subject": "DEU", "passed": False}]}, None, "drift DEU"),
+        (
+            {"drift": [PASSED | {"passed": False, "waived": True}]},
+            "late",
+            "drift: waived, but only",
+        ),
+    ],
+)
+def test_the_index_takes_only_a_release_whose_gates_passed_or_were_waived(
+    tmp_path: Path,
+    rows: dict[str, list[dict[str, object]]],
+    waiver: str | None,
+    refused: str | None,
+) -> None:
+    release_dir = gated(built_release(tmp_path / "fixture"), rows=rows, waiver=waiver)
+    pack = release.pack_release(release_dir, out_path=tmp_path / PACK)
+
+    def publish() -> ReleaseIndex:
+        return release.add_to_index(
+            ReleaseIndex(), release="fixture", pack=pack, url="file:///p"
+        )
+
+    if refused is None:
+        assert publish().latest == "fixture"
+    else:
+        with pytest.raises(GateFailedError, match=refused):
+            publish()
+
+
 def test_upload_copies_into_a_directory_or_puts_to_a_server(
     tmp_path: Path, server: tuple[str, Path]
 ) -> None:
@@ -351,7 +437,7 @@ def published(
     and in the index online. Returns that index and the served directory."""
     url, served = server
     pack = release.pack_release(
-        built_release(tmp_path / "fixture"), out_path=tmp_path / PACK
+        gated(built_release(tmp_path / "fixture")), out_path=tmp_path / PACK
     )
     index = release.add_to_index(
         ReleaseIndex(),

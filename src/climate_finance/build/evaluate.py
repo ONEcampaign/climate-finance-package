@@ -53,6 +53,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 # `release` imports the gates, which import this module, so it is read at call time.
 from climate_finance.build import release
+from climate_finance.build.errors import SampleDesignError
 from climate_finance.build.link.decisions import (
     PAIR,
     read_decision_labels,
@@ -122,7 +123,18 @@ class PrecisionRule(BaseModel):
     interim_z: float
     final_z: float
     census_below: int
+    min_draws: int
     seed: int
+
+    @model_validator(mode="after")
+    def _strata_minimums_fit_the_cap(self) -> Self:
+        """Every stratum can take its minimum within the cap."""
+        if self.min_draws * len(STRATA) > self.cap:
+            raise ValueError(
+                f"min_draws {self.min_draws} over {len(STRATA)} strata exceeds "
+                f"the cap of {self.cap}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _interim_bounds_are_wider(self) -> Self:
@@ -331,7 +343,10 @@ def _provider_draws(
     pairs: pl.DataFrame, *, rule: PrecisionRule, provider: int
 ) -> pl.DataFrame:
     """One provider's draws: every pair once below `rule.census_below` pairs, else
-    `rule.cap` value-weighted draws spread over the strata by value share."""
+    `rule.cap` value-weighted draws spread over the strata by value share, with at
+    least `rule.min_draws` in each stratum, or as many as it has pairs (`_draw_shares`).
+    A draw's weight is its stratum's value over the stratum's draws, so a stratum
+    drawn above its value share counts at its share in the estimate."""
     rng = np.random.default_rng([rule.seed, provider])
     strata = (
         pairs.group_by("stratum")
@@ -348,7 +363,11 @@ def _provider_draws(
                 weight_usd="allocated_usd",
             )
         )
-    shares = (strata["stratum_usd"] / strata["stratum_usd"].sum()).to_numpy()
+    shares = _draw_shares(
+        strata["stratum_usd"].to_numpy(),
+        floors=np.minimum(rule.min_draws, strata["stratum_pairs"].to_numpy()),
+        draws=rule.cap,
+    )
     sequence = _stratum_sequence(shares, draws=rule.cap)
     picked = []
     for index, (stratum, stratum_usd) in enumerate(
@@ -370,6 +389,21 @@ def _provider_draws(
         .with_columns(design=pl.lit("pps"))
         .sort("draw")
     )
+
+
+def _draw_shares(usd: np.ndarray, *, floors: np.ndarray, draws: int) -> np.ndarray:
+    """Each stratum's share of `draws`: its share of `usd`, raised to `floors` draws
+    where that gives fewer, with the other strata sharing the rest by value. A
+    floored share times `draws` is a whole number, so `_stratum_sequence` gives the
+    stratum exactly its floor."""
+    floored = np.zeros(usd.size, dtype=bool)
+    while True:
+        free = draws - floors[floored].sum()
+        scaled = np.where(floored, floors, usd * free / usd[~floored].sum())
+        below = ~floored & (scaled < floors)
+        if not below.any():
+            return scaled / draws
+        floored |= below
 
 
 def _stratum_sequence(shares: np.ndarray, *, draws: int) -> np.ndarray:
@@ -397,10 +431,20 @@ def read_sample_labels(design: Path, *, decisions: Path) -> pl.DataFrame:
     Raises:
         FileNotFoundError: when `decisions` does not exist, since the sample's
             labels can live nowhere else.
+        SampleDesignError: when a draw's `weight_usd` or `stratum_usd` is not a
+            finite positive amount, since no estimate can read it.
     """
     if not decisions.exists():
         raise FileNotFoundError(f"no review decisions at {decisions}")
     drawn = pl.read_parquet(design)
+    weights = pl.col("weight_usd", "stratum_usd")
+    if bad := drawn.filter(
+        pl.any_horizontal(~(weights.is_finite() & (weights > 0)).fill_null(False))
+    ).height:
+        raise SampleDesignError(
+            f"{design}: {bad} draws have a weight_usd or stratum_usd that is not "
+            "a finite positive amount"
+        )
     key = ["sample_id", *PAIR]
     sampled = pl.read_parquet(decisions).join(
         drawn.select(key).unique(), on=key, how="semi"
@@ -578,6 +622,13 @@ def _look_z(rule: PrecisionRule) -> pl.Expr:
     return pl.when(_at_cap(rule)).then(rule.final_z).otherwise(rule.interim_z)
 
 
+def non_finite() -> pl.Expr:
+    """Whether a provider's `estimate`, `lower` or `upper` is NaN or infinite."""
+    return pl.any_horizontal(
+        ~pl.col(name).is_finite() for name in ("estimate", "lower", "upper")
+    )
+
+
 def _decide(providers: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataFrame:
     """Wilson bounds at each provider's effective sample size, and the decision."""
     p, n = pl.col("estimate"), pl.col("labels").cast(pl.Float64)
@@ -597,8 +648,11 @@ def _decide(providers: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataFrame:
         hopeless=pps & (best_lower < threshold),
     )
     lower, upper = pl.col("lower"), pl.col("upper")
+    # NaN sorts above every number, so a NaN bound would otherwise pass.
     decision = (
-        pl.when(p.is_null() | ~(pps | complete))
+        pl.when(non_finite())
+        .then(pl.lit("fail"))
+        .when(p.is_null() | ~(pps | complete))
         .then(pl.lit("continue"))
         .when(lower >= threshold)
         .then(pl.lit("pass"))

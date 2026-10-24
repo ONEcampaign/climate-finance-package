@@ -4,10 +4,10 @@ As of 2.0. A build writes the parquet tables below, each sorted by its key so th
 
 ## Files in a release
 
-A release is a folder, `climate-finance-<name>/`, packed as one `.tar.zst`. It holds the tables below except `btr` and `btr_links`, `release.json`, and `sources.json`:
+A release is a folder, `climate-finance-<name>/`, packed as one `.tar.zst`. It holds the tables below except `btr` and `btr_links`, `release.json`, and `sources.json`, and none of the build's stage records:
 
-- `release.json` has each table's sha256 and row count, the source and model versions, every build switch and year range under `settings`, the years each source holds under `years`, the gate results, the `precision_gate_waived` flag, and under `withheld_tables` each table the pack leaves out, with a note on how to build it. `cf.load()` checks every other table against it and raises `ReleaseIntegrityError` on a mismatch. A pack that fails its sha256 in the release index is refused before it unpacks.
-- `sources.json` lists each source with its version, URLs, licence, and any note on rows the release leaves out, and, under `provider_reports`, the annual reports behind the modelled line's disbursement ratios, cited by title, year, and page. The `btr` entry carries the note from `withheld_tables` and a `workbooks` list, one entry per BTR workbook read, with its file, party, the sheets read, the rows kept, the rows dropped as blank, as a notation key, or as a total, and any draft marker in the file name (`started` or `awaiting_submission`).
+- `release.json` has each table's sha256 and row count, the source and model versions, every build switch and year range under `settings`, the years each source holds under `years`, the gate results, the `precision_gate_waived` flag and the waiver's reason as `precision_waiver`, and under `withheld_tables` each table the pack leaves out, with a note on how to build it. `cf.load()` checks every other table against it and raises `ReleaseIntegrityError` on a mismatch. A pack that fails its sha256 in the release index is refused before it unpacks.
+- `sources.json` lists each source with its version, URLs, licence, and any note on rows the release leaves out, and, under `provider_reports`, the annual reports behind the modelled line's disbursement ratios, cited by title, year, and page. The BTR archive's entry, `unfccc_btr1`, carries the note from `withheld_tables` and a `workbooks` list, one entry per BTR workbook read, with its file, party, the sheets read, the rows kept, the rows dropped as blank, as a notation key, or as a total, and any draft marker in the file name (`started` or `awaiting_submission`).
 
 The release holds only processed tables and metadata. The Green Climate Fund's ledger rows are withheld. [How linking works](../explanation/how-linking-works.md) explains why, and `commitments.withheld_usd` states their amount.
 
@@ -131,7 +131,7 @@ Key `provider_code`, `year`, `flow`. The OECD side of the reconciliation that no
 
 - `provider_code`, `year`.
 - `flow`: `commitments` or `disbursements`.
-- `amount_usd`: the flow's sum over the provider's bilateral CRS records of the year with a Rio marker of 1 or 2 that no `btr_crs` link reaches, zero where every such record is linked.
+- `amount_usd`: the flow's sum over the provider's bilateral CRS records of the year with a Rio marker of 1 or 2 that no `btr_crs` link reaches, zero where every such record is linked, and null where the build's CRS holds no record of the provider and year, as for a year past the last complete CRS year.
 
 ## `disbursement_profile`
 

@@ -14,6 +14,10 @@ precision:
   final_z: 1.96
   # A provider with fewer allocated pairs than this is labelled in full.
   census_below: 60
+  # Draws per stratum at the least, or as many as a smaller stratum has pairs, so
+  # a small stratum's own estimate rests on enough labels. The draw weights keep
+  # each stratum at its value share of the estimate.
+  min_draws: 50
   seed: 20261021
 
 # People decide at least this share of the blind sample's draws, over every

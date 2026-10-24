@@ -40,9 +40,9 @@ Cutting a release requires the `build` extra, a `build.toml`, and the OECD bulk 
     cf-build release 2026a --config build.toml --out-dir releases --sample sample/design.parquet --previous releases/2025a/assemble
     ```
 
-    The command writes `releases/climate-finance-2026a.tar.zst` and records the gate rows in `release.json`. To pack with failed precision or human-audit gates, pass `--waive-precision`. That flag marks the failed rows `waived` and sets `precision_gate_waived` in `release.json`, which surfaces in `snap.quality().precision`.
+    The command writes `releases/climate-finance-2026a.tar.zst` and records the gate rows in `release.json`. To pack with failed precision or human-audit gates, pass `--waive-precision` with the reason. The flag marks the failed rows `waived`, sets `precision_gate_waived` in `release.json`, which surfaces in `snap.quality().precision`, and records the reason as `precision_waiver`.
 
-6. Publish the pack and register it in `releases.json`, which maps each release name to its URL and sha256 and marks the latest release. Call `release.upload_release` and `release.add_to_index` in `climate_finance.build`. The pack's `sources.json` records each source's licence and the rows excluded from the release.
+6. Publish the pack and register it in `releases.json`, which maps each release name to its URL and sha256 and marks the latest release. Call `release.upload_release` and `release.add_to_index` in `climate_finance.build`. `add_to_index` raises `GateFailedError` for a pack with any recorded gate row that neither passed nor was waived, and for a waiver without its reason. The pack's `sources.json` records each source's licence and the rows excluded from the release.
 
 ## Verify it worked
 

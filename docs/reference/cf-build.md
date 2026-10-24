@@ -82,12 +82,12 @@ Parses an archive of BTR workbooks listed in its manifest and writes the rows to
 ## `cf-build release`
 
 ```bash
-cf-build release RELEASE [--config build.toml] [--out-dir releases] [--sample FILE] [--previous DIR] [--first-release] [--waive-precision]
+cf-build release RELEASE [--config build.toml] [--out-dir releases] [--sample FILE] [--previous DIR] [--first-release] [--waive-precision REASON]
 ```
 
 Builds, gates, and packs a release. It writes `<out-dir>/climate-finance-<RELEASE>.tar.zst`, which holds the release tables, `release.json` with the gate results, and `sources.json`. Members go in name order with fixed owners and the release's creation time, so one release packs to the same bytes.
 
-- `--waive-precision` packs despite failed precision and human-audit gates, marks the failed rows `waived`, and records the waiver in `release.json`.
+- `--waive-precision REASON` packs despite failed precision and human-audit gates, marks the failed rows `waived`, and records the waiver and `REASON` in `release.json` as `precision_gate_waived` and `precision_waiver`.
 
 The command raises `GateFailedError` when a gate fails, and `BuildError` when a source lacks a licence entry.
 

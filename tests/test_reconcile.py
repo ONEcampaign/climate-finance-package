@@ -10,7 +10,7 @@ from releases import copy_release
 
 import climate_finance as cf
 from climate_finance.build.release import btr_totals
-from climate_finance.errors import WithheldTableError
+from climate_finance.errors import ReleaseIntegrityError, WithheldTableError
 from climate_finance.methods import OECD, ONE, MethodRange
 from climate_finance.result import Reconciliation
 from climate_finance.schema import ReleaseManifest
@@ -114,6 +114,55 @@ def test_a_case_by_case_party_reads_against_its_default() -> None:
 
     assert (row["party_weight"], row["party_principal"]) == (0.3, None)
     assert row["crdf_at_party_weight"] == pytest.approx(18e6)
+
+
+def _france_reports(frame: pl.DataFrame) -> pl.DataFrame:
+    """France reports Germany's BTR totals."""
+    france = frame.filter(party="DEU").with_columns(
+        party=pl.lit("FRA"), provider_code=pl.lit(4, pl.Int32)
+    )
+    return pl.concat([frame, france])
+
+
+def test_an_agency_reads_against_its_own_coefficients(tmp_path: Path) -> None:
+    # France counts a Significant activity at 0.3, and its agency 1 assesses each
+    # activity case by case, so its Significant commitment FRA-2 (12m) and its
+    # Significant 2021 disbursement (12m) count at PROVIDER's 0.4.
+    release = copy_release(tmp_path / "r", edits={"btr_totals": _france_reports})
+    reconciliation = cf.load(path=release).reconcile(parties="FRA")
+    row = _row(reconciliation, "FRA", 2022)
+
+    assert row["party_weight"] == 0.3
+    assert row["crdf_at_party_weight"] == pytest.approx(0.4 * 12e6)
+    assert row["btr_over_crdf_at_party_weight"] == pytest.approx(22 / 4.8)
+    disbursed = _row(reconciliation, "FRA", 2021)
+    assert disbursed["crs_disbursed_at_party_weight"] == pytest.approx(0.4 * 12e6)
+    # The fixture's grant equivalent is 0.9 of each disbursement.
+    assert disbursed["crs_grant_equivalent_at_party_weight"] == pytest.approx(
+        0.9 * 0.4 * 12e6
+    )
+
+
+def _overlapping_coefficients(frame: pl.DataFrame) -> pl.DataFrame:
+    """A second all-agency row for Germany from 2020, overlapping its first."""
+    later = frame.filter(provider_code=5).with_columns(
+        first_year=pl.lit(2020, pl.Int16), significant=0.9
+    )
+    return pl.concat([frame, later])
+
+
+def test_overlapping_coefficient_rows_refuse_to_reconcile(tmp_path: Path) -> None:
+    # The build refuses such a table; an edited release must not double Germany's
+    # comparators instead.
+    release = copy_release(
+        tmp_path / "r", edits={"provider_coefficients": _overlapping_coefficients}
+    )
+
+    with pytest.raises(
+        ReleaseIntegrityError,
+        match="5 None 2020: covers 2020 to every later year",
+    ):
+        cf.load(path=release).reconcile(parties="DEU").table.to_polars()
 
 
 def _without_a_default(frame: pl.DataFrame) -> pl.DataFrame:
@@ -305,20 +354,25 @@ def test_oecd_only_reads_the_status_flow_of_unlinked_crs_records(
     assert _row(reconciliation, "NOR", 2022)["oecd_only_usd"] == pytest.approx(3e6)
 
 
-def test_a_comparator_under_10m_is_thin(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("face", "ratio"), [(0.8e6, 27.5), (0.0, None)])
+def test_a_comparator_under_10m_is_thin(
+    tmp_path: Path, face: float, ratio: float | None
+) -> None:
     def small(frame: pl.DataFrame) -> pl.DataFrame:
         return frame.with_columns(
             face_usd=pl.when(pl.col("row_id") == "DEU-2")
-            .then(0.8e6)
+            .then(face)
             .otherwise(pl.col("face_usd"))
         )
 
     release = copy_release(tmp_path / "r", edits={"commitments": small})
     row = _row(cf.load(path=release).reconcile(parties="DEU"), "DEU", 2022)
 
-    # DEU-2 is Significant on both objectives, which Germany counts in full.
-    assert row["crdf_at_party_weight"] == pytest.approx(0.8e6)
-    assert row["btr_over_comparator"] == pytest.approx(27.5)
+    # DEU-2 is Significant on both objectives, which Germany counts in full. A
+    # zero comparator gives no ratio.
+    assert row["crdf_at_party_weight"] == pytest.approx(face)
+    assert row["btr_over_comparator"] == pytest.approx(ratio)
+    assert row["btr_over_crdf_at_party_weight"] == pytest.approx(ratio)
     assert row["thin_comparator"] is True
 
 

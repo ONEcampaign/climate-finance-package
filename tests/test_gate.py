@@ -16,7 +16,7 @@ import climate_finance as cf
 from climate_finance import schema
 from climate_finance.build import load_config, run_stages, write_table
 from climate_finance.build.cli import app
-from climate_finance.build.errors import GateFailedError
+from climate_finance.build.errors import GateFailedError, SampleDesignError
 from climate_finance.build.evaluate import (
     allocated_pairs,
     batch_packet_path,
@@ -363,6 +363,34 @@ def test_precision_refuses_a_sample_after_the_population_grows(
     assert stale["passed"].to_list() == [False]
     assert stale["value"].to_list() == [None]
     assert stale["detail"].str.starts_with("stale sample").to_list() == [True]
+
+
+def test_a_non_finite_estimate_fails(release_dir: Path) -> None:
+    design = _label(release_dir, rejected=set())
+    decisions = release_dir.parent / "decisions.parquet"
+    pairs = allocated_pairs(release_dir, decisions=decisions)
+    labels = read_sample_labels(design, decisions=decisions).with_columns(
+        weight_usd=float("nan")
+    )
+
+    row = precision_gate(pairs, labels=labels, rule=GATES_CONFIG.precision).row(
+        0, named=True
+    )
+
+    assert (row["passed"], row["code"]) == (False, "non_finite_estimate")
+
+
+@pytest.mark.parametrize("weight", [float("nan"), float("inf"), 0.0, -1.0, None])
+def test_a_design_without_finite_positive_weights_is_refused(
+    release_dir: Path, weight: float | None
+) -> None:
+    design = _label(release_dir, rejected=set())
+    pl.read_parquet(design).with_columns(
+        stratum_usd=pl.lit(weight, pl.Float64)
+    ).write_parquet(design)
+
+    with pytest.raises(SampleDesignError, match="stratum_usd"):
+        read_sample_labels(design, decisions=release_dir.parent / "decisions.parquet")
 
 
 def test_a_decision_counts_only_for_the_pair_it_decided(release_dir: Path) -> None:

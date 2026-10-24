@@ -486,6 +486,12 @@ def test_the_release_leaves_out_gcf_rows_and_keeps_what_they_disbursed(
     )
     allocations = pl.read_parquet(table_path(release_dir, "fill", "allocations"))
     _write(release_dir, "fill", {"allocations": pl.concat([allocations, fills])})
+    # The label stage labels a ledger fill of a commitment with a climate component.
+    objectives = pl.read_parquet(table_path(release_dir, "label", "objectives"))
+    gcf_label = objectives.head(1).with_columns(
+        record_id=pl.lit("ledger:gcf:FP001:2021")
+    )
+    _write(release_dir, "label", {"objectives": pl.concat([objectives, gcf_label])})
     is_c = pl.col("row_id") == "C"
     status = pl.read_parquet(table_path(release_dir, "review", "commitments"))
     _write(
@@ -533,6 +539,8 @@ def test_the_release_leaves_out_gcf_rows_and_keeps_what_they_disbursed(
         packed = {Path(m.name).name: tar.extractfile(m).read() for m in tar}
     disbursements = pl.read_parquet(packed["disbursements.parquet"])
     assert disbursements.filter(is_c)["record_id"].to_list() == ["iati:gcf:FP001:2021"]
+    labelled = pl.read_parquet(packed["objectives.parquet"])["record_id"]
+    assert not labelled.str.starts_with("ledger:gcf:").any()
     c = pl.read_parquet(packed["commitments.parquet"]).row(
         by_predicate=is_c, named=True
     )
@@ -878,7 +886,8 @@ def test_btr_totals_sum_the_rows_by_status_funding_currency_and_link() -> None:
 def test_btr_crs_unlinked_sums_the_climate_records_no_btr_row_reaches() -> None:
     # Of Norway's bilateral 2021 records, d21 is linked, u21 and c21 are not, m21
     # carries no Rio marker and the core contribution is not bilateral. Norway's
-    # BTR also covers 2022, and a party without a DAC code has no CRS side.
+    # BTR also covers 2022, whose one record is linked, and 2023, past the CRS
+    # years, and a party without a DAC code has no CRS side.
     crs = pl.concat(
         [
             CRS,
@@ -896,18 +905,19 @@ def test_btr_crs_unlinked_sums_the_climate_records_no_btr_row_reaches() -> None:
                     "disbursement_usd": 5.0,
                     "rio_mitigation": 0,
                 },
+                {"record_id": "d22", "year": 2022, "disbursement_usd": 10.0},
             ),
         ]
     )
     links = pl.DataFrame(
         {
-            "task": ["btr_crs", "trace"],
-            "left_id": ["BTR-NOR-2021-00001", "c21"],
-            "right_id": ["d21", "u21"],
+            "task": ["btr_crs", "btr_crs", "trace"],
+            "left_id": ["BTR-NOR-2021-00001", "BTR-NOR-2022-00001", "c21"],
+            "right_id": ["d21", "d22", "u21"],
         }
     )
     btr = pl.DataFrame(
-        {"provider_code": [NOR, NOR, None], "year": [2021, 2022, 2021]},
+        {"provider_code": [NOR, NOR, NOR, None], "year": [2021, 2022, 2023, 2021]},
         schema={"provider_code": pl.Int32, "year": pl.Int16},
     )
 
@@ -921,6 +931,8 @@ def test_btr_crs_unlinked_sums_the_climate_records_no_btr_row_reaches() -> None:
         (NOR, 2021, "disbursements", 20.0),
         (NOR, 2022, "commitments", 0.0),
         (NOR, 2022, "disbursements", 0.0),
+        (NOR, 2023, "commitments", None),
+        (NOR, 2023, "disbursements", None),
     ]
 
 
@@ -984,6 +996,39 @@ def test_the_coefficients_file_gives_a_valid_table() -> None:
 
     schema.validate(schema.PROVIDER_COEFFICIENTS, coefficients)
     assert schema._coefficient_problems(coefficients) == []
+
+
+@pytest.mark.parametrize(
+    ("spans", "overlap"),
+    [
+        ([(None, None, 2020), (None, 2021, None)], None),
+        ([(None, None, 2021), (None, 2021, None)], "2021: covers 2021 to 2021"),
+        ([(None, None, None), (None, 2015, 2018)], "2015: covers 2015 to 2018"),
+        ([(None, None, None), (1, None, None)], None),
+    ],
+)
+def test_coefficient_rows_of_one_agency_cover_each_year_once(
+    spans: list[tuple[int | None, int | None, int | None]], overlap: str | None
+) -> None:
+    coefficients = pl.DataFrame(
+        [(NOR, *span) for span in spans],
+        schema={
+            "provider_code": pl.Int32,
+            "agency_code": pl.Int32,
+            "first_year": pl.Int16,
+            "last_year": pl.Int16,
+        },
+        orient="row",
+    )
+
+    assert schema.coefficient_overlaps(coefficients) == (
+        []
+        if overlap is None
+        else [
+            f"provider_coefficients {NOR} None {overlap}, as does the row from "
+            "no first year"
+        ]
+    )
 
 
 def test_profile_pools_traceable_value_by_years_since_commitment(

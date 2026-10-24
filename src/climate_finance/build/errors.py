@@ -63,6 +63,11 @@ class ReviewDecisionsError(BuildError):
     match the packet it answers."""
 
 
+class SampleDesignError(BuildError):
+    """A blind sample's design that no precision estimate can read, such as one
+    with a NaN weight."""
+
+
 class LabelPacketError(BuildError):
     """A labelling packet that cannot be rendered as asked."""
 

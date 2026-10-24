@@ -73,6 +73,38 @@ def test_a_small_provider_is_a_census_and_a_large_one_draws_to_the_cap() -> None
     assert ids["sample_id"].max() == 1
 
 
+def test_a_small_stratum_draws_its_minimum_and_counts_at_its_value_share() -> None:
+    # Of provider 8's 1,000,090 in value, the ledger's 70 pairs hold 70 and the
+    # model's 20 pairs 20, so by value share neither would draw once in 500.
+    strata = ["key"] * 200 + ["ledger"] * 70 + ["model"] * 20
+    pairs = pl.DataFrame(
+        {
+            "provider_code": LARGE,
+            "task": "trace",
+            "left_id": [f"d{i}" for i in range(290)],
+            "right_id": [f"c{i}" for i in range(290)],
+            "link_method": "crs_id",
+            "allocated_usd": [5000.0] * 200 + [1.0] * 90,
+            "stratum": strata,
+        },
+        schema_overrides={"provider_code": pl.Int32},
+    )
+
+    design = sample_design(pairs, rule=RULE, release="r")
+    # Every model link is wrong and every other link right.
+    labels = design.with_columns(
+        correct=pl.col("stratum") != "model", label_source=pl.lit("human")
+    )
+    row = estimate_precision(labels, rule=RULE).row(0, named=True)
+
+    counts = dict(design.group_by("stratum").len().iter_rows())
+    assert counts == {"key": RULE.cap - 50 - 20, "ledger": 50, "model": 20}
+    assert row["labels"] == RULE.cap
+    # The weights count each stratum at its value, so the 20 wrong draws of the
+    # model stratum cost it 20 of 1,000,090.
+    assert row["estimate"] == pytest.approx(1 - 20 / 1_000_090)
+
+
 def test_the_design_is_the_same_on_every_draw() -> None:
     pairs = _pairs()
 
@@ -177,6 +209,7 @@ def test_strata_combine_by_allocated_value() -> None:
         interim_z=2.5,
         final_z=1.96,
         census_below=0,
+        min_draws=0,
         seed=0,
     )
     # Stratum a holds 900 of value and is right 3 times in 4; b holds 100 and is

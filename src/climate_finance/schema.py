@@ -90,8 +90,10 @@ DISBURSEMENT_SOURCES = ("crs", "bank_ledger", "iati", "none")
 ALLOCATION_RULES = ("fifo", "dated", "window", "excess", "bank_ledger", "iati")
 # Fill records the release leaves out, by the start of their `record_id`
 # (`ledger:<publisher>:<key>:<year>`): the Green Climate Fund's projects API and
-# readiness list, whose terms bar redistribution and derivative works without
-# consent. Its IATI files are CC0 on the IATI Registry, so `iati:gcf:` fills ship.
+# readiness list. The Fund's website terms allow only private study, research and
+# teaching, and no commercial derivative works without written consent, and its
+# projects API states no terms of its own (`build.release` cites them). Its IATI
+# files are CC0 on the IATI Registry, so `iati:gcf:` fills ship.
 # A commitment's `withheld_usd` holds what the withheld records disbursed to it.
 WITHHELD_RECORD_PREFIXES = ("ledger:gcf:", "ledger:gcf_readiness:")
 OBJECTIVES = ("adaptation", "mitigation", "cross_cutting")
@@ -1106,14 +1108,15 @@ BTR_TOTALS = _table(
 # For each BTR party's DAC provider and each year its BTR rows cover, the bilateral
 # CRS amount of each flow on climate-marked records (higher Rio marker 1 or 2) that
 # no `btr_crs` link reaches: the reconciliation's OECD-only side, as the release
-# holds no CRS records. Zero where every such record is linked.
+# holds no CRS records. Zero where every such record is linked, and null where the
+# build's CRS holds no record of the provider and year, as for a year past its last.
 BTR_CRS_UNLINKED = _table(
     "btr_crs_unlinked",
     ("provider_code", "year", "flow"),
     provider_code=_code(),
     year=_year(),
     flow=_str(values=("commitments", "disbursements")),
-    amount_usd=_usd(),
+    amount_usd=_usd(nullable=True),
 )
 
 # The coefficients each provider applies to Rio-marked activities when it reports to
@@ -1545,11 +1548,6 @@ def _coefficient_problems(coefficients: pl.DataFrame) -> list[str]:
     significant and a principal coefficient. A row's `first_year` is at most its
     `last_year`, and no two rows of a provider and agency cover the same year.
     """
-    key = ("provider_code", "agency_code")
-    rows = coefficients.sort(*key, "first_year", nulls_last=False).with_columns(
-        _previous_last=pl.col("last_year").shift().over(key),
-        _later=pl.int_range(pl.len()).over(key) > 0,
-    )
 
     def name(row: dict[str, object]) -> str:
         return (
@@ -1558,7 +1556,7 @@ def _coefficient_problems(coefficients: pl.DataFrame) -> list[str]:
         )
 
     problems = []
-    for row in rows.iter_rows(named=True):
+    for row in coefficients.iter_rows(named=True):
         problems.extend(
             f"{name(row)}: {column} {row[column]!r} outside 0 to 1"
             for column in _COEFFICIENTS
@@ -1570,15 +1568,39 @@ def _coefficient_problems(coefficients: pl.DataFrame) -> list[str]:
             row["first_year"] > row["last_year"]
         ):
             problems.append(f"{name(row)}: first_year after last_year")
-        # Sorted with nulls first, a later row overlaps the one before it unless
-        # that row ends before this one starts.
-        if row["_later"] and (
-            row["first_year"] is None
-            or row["_previous_last"] is None
-            or row["_previous_last"] >= row["first_year"]
-        ):
-            problems.append(f"{name(row)}: covers a year of an earlier row")
-    return problems
+    return [*problems, *coefficient_overlaps(coefficients)]
+
+
+def coefficient_overlaps(coefficients: pl.DataFrame) -> list[str]:
+    """Each row of `provider_coefficients` that covers a year an earlier-starting
+    row of its provider and agency covers, named by provider, agency and first year
+    as `release_invariants` names rows, with the years the two share."""
+    key = ["provider_code", "agency_code"]
+    rows = (
+        coefficients.select(*key, "first_year", "last_year")
+        .sort(*key, "first_year", nulls_last=False)
+        .with_row_index()
+    )
+    pairs = rows.join(rows, on=key, nulls_equal=True, suffix="_later").filter(
+        pl.col("index") < pl.col("index_later")
+    )
+    # A null first or last year has no bound, so the two rows share every year past
+    # the later start, or before the earlier end.
+    shared = pairs.with_columns(
+        start=pl.max_horizontal("first_year", "first_year_later"),
+        end=pl.min_horizontal("last_year", "last_year_later"),
+    ).filter(
+        pl.col("start").is_null()
+        | pl.col("end").is_null()
+        | (pl.col("start") <= pl.col("end"))
+    )
+    return [
+        f"provider_coefficients {row['provider_code']} {row['agency_code']} "
+        f"{row['first_year_later']}: covers {row['start'] or 'every year'} to "
+        f"{row['end'] or 'every later year'}, as does the row from "
+        f"{row['first_year'] or 'no first year'}"
+        for row in shared.iter_rows(named=True)
+    ]
 
 
 def _btr_problems(
@@ -1919,6 +1941,9 @@ class ReleaseManifest(BaseModel):
     # Every build switch and year range the release was built with, by name.
     settings: dict[str, JsonValue]
     precision_gate_waived: bool = False
+    # Why `cf-build release --waive-precision` let the precision and human-audit
+    # gates fail, null without a waiver.
+    precision_waiver: str | None = None
     previous_release: str | None = None
     withheld_tables: dict[str, str] = {}
 

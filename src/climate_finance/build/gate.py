@@ -32,7 +32,9 @@ measure fails: no allocated pairs, no linked record with a disbursement, no link
 commitment unit, no provider-year in the release or the published CRDF, no
 disbursement row, or an empty sample. A precision or human_audit row that could
 not estimate says why in `code`: `no_allocated_pairs`, `no_sample`, `empty_sample`
-or `stale_sample`. `waive_precision` lets precision and human_audit rows fail.
+or `stale_sample`, and a precision row whose estimate or bound is NaN or infinite
+fails as `non_finite_estimate`. The other gates' rows carry no `code`.
+`waive_precision` lets precision and human_audit rows fail.
 """
 
 from __future__ import annotations
@@ -86,7 +88,7 @@ DRIFT_MEASURES = ("climate_usd", "disbursed_climate_usd")
 # How many failing items a row's detail names.
 _SHOWN = 5
 # The gates `waive_precision` lets fail: both certify the blind sample.
-_WAIVABLE = ("precision", "human_audit")
+WAIVABLE = ("precision", "human_audit")
 # The details of a `stale_sample` precision row.
 _STALE = (
     "stale sample: drawn from another population of allocated pairs, as pairs, link "
@@ -238,7 +240,7 @@ def run_gates(
             withheld_gate({name: released(name) for name in RELEASE_TABLES}),
         ]
     ).with_columns(
-        waived=pl.col("gate").is_in(_WAIVABLE) & ~pl.col("passed") & waive_precision
+        waived=pl.col("gate").is_in(WAIVABLE) & ~pl.col("passed") & waive_precision
     )
     failed = results.filter(~pl.col("passed") & ~pl.col("waived"))
     if failed.height and not report_only:
@@ -398,7 +400,9 @@ def precision_gate(
         code=pl.when(pl.col("stale").is_not_null())
         .then(pl.lit("stale_sample"))
         .when(pl.col("design").is_null())
-        .then(pl.lit("no_sample")),
+        .then(pl.lit("no_sample"))
+        .when(evaluate.non_finite())
+        .then(pl.lit("non_finite_estimate")),
         strata="strata",
     ).cast(RESULT_SCHEMA)
 

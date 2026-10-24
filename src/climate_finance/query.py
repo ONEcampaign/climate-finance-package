@@ -64,9 +64,14 @@ import polars as pl
 
 from climate_finance import catalogue
 from climate_finance.convert import convert, provenance
-from climate_finance.errors import MissingLabelsError, SchemaError
+from climate_finance.errors import (
+    MissingLabelsError,
+    ReleaseIntegrityError,
+    SchemaError,
+)
 from climate_finance.methods import (
     ONE,
+    PROVIDER,
     Method,
     MethodRange,
     face_shares,
@@ -93,6 +98,7 @@ from climate_finance.schema import (
     FUNDING_CLASSES,
     RECIPIENT_VIEW,
     SHARE_ORIGINS,
+    coefficient_overlaps,
 )
 from climate_finance.spec import (
     ODA_FLOW_CATEGORY,
@@ -406,21 +412,17 @@ _PARTY_YEAR = ("party", "year")
 
 
 def _party_coefficients(snapshot: Snapshot) -> pl.LazyFrame:
-    """Each provider's `provider_coefficients` row for every agency, by year of the
-    release's BTR totals, as `reconcile` reads it."""
-    first, last, year = pl.col("first_year"), pl.col("last_year"), pl.col("year")
+    """Each provider's `provider_coefficients` row for every agency without a row of
+    its own, by year of the release's BTR totals, as `reconcile` shows it."""
     return (
-        snapshot.table("provider_coefficients")
+        _coefficients_by_year(snapshot, years=snapshot.table("btr_totals"))
         .filter(pl.col("agency_code").is_null())
-        .join(snapshot.table("btr_totals").select("year").unique(), how="cross")
-        .filter(first.is_null() | (first <= year), last.is_null() | (year <= last))
         .select(
             "provider_code",
             "year",
             party_weight="significant",
             party_principal="principal",
-            party_both="both_significant",
-            weight_source=pl.format("{}, {}", "source", "locator"),
+            weight_source="citation",
         )
     )
 
@@ -458,26 +460,29 @@ def reconcile(
     the CRDF its Rio-marked rows only. A party weight applies to markers, and a
     party's BTR leaves out the climate components its development bank publishes,
     as the EU's leaves out the EIB's. The party's coefficients are its provider's
-    `provider_coefficients` row for every agency and the year: `party_weight` the
-    significant one, `party_principal` the principal one, and `weight_source` their
-    source. `crdf_at_party_weight` and `crdf_at_100` are its CRDF commitments at the
-    party's coefficients, `both_significant` included, and with Significant at
-    100%; `traced_climate_value` the climate value `method` gives what those
-    commitments disbursed; `crs_disbursed_at_party_weight` the year's CRS
-    disbursements on Rio-marked records at the party's significant and principal
-    coefficients, by each record's higher marker; and
+    `provider_coefficients` row of the year for every agency without a row of its
+    own: `party_weight` the significant one, `party_principal` the principal one,
+    and `weight_source` their source. The weighted comparators weigh each activity
+    or record as `PROVIDER` does, by its agency's row, else its provider's, and at
+    `PROVIDER`'s coefficients for an agency that assesses each activity case by
+    case, as France's AFD does. `crdf_at_party_weight` is its CRDF commitments so
+    weighted; `crdf_at_100` the same commitments with Significant at 100%;
+    `traced_climate_value` the climate value `method` gives what those commitments
+    disbursed; `crs_disbursed_at_party_weight` the year's CRS disbursements on
+    Rio-marked records so weighted, by each record's higher marker; and
     `crs_grant_equivalent_at_party_weight` their grant equivalent, weighted alike.
     A party without a weight has null weighted comparators, and one without a DAC
     provider code null comparators.
 
-    Each `btr_over_<comparator>` divides `btr_face` by it, and is null for a
+    Each `btr_over_<comparator>` divides `btr_face` by it, null where the
+    comparator is zero or null, and is null for a
     comparator of the other flow: committed rows read against the first three,
     disbursed rows against `crs_disbursed_at_party_weight`, and rows without a
     status against all four. `comparator` names the one a status reads against
     first, `crdf_at_party_weight` or `crs_disbursed_at_party_weight`, with its ratio
     as `btr_over_comparator`, and `thin_comparator` is true where it is below
     `THIN_COMPARATOR_USD`. `btr_grant_equivalent_over_crs_grant_equivalent` divides
-    `btr_grant_equivalent` by its comparator on every row.
+    `btr_grant_equivalent` by its comparator on every row, null where that is zero.
     """
     years = tuple(years)
     totals = snapshot.table("btr_totals").filter(pl.col("year").is_in(years))
@@ -524,20 +529,22 @@ def reconcile(
             on=["provider_code", "year", "flow"],
             how="left",
         )
-        .join(_party_coefficients(snapshot), on=["provider_code", "year"], how="left")
+        .join(
+            _party_coefficients(snapshot),
+            on=["provider_code", "year"],
+            how="left",
+            validate="m:1",
+        )
     )
     weight = pl.col("party_weight")
-    # A party that states a significant coefficient but no principal one, as a
-    # case-by-case default may, counts Principal in full.
-    principal = pl.col("party_principal").fill_null(_PARTY_RULE.principal)
-    party = ("provider_code", "party_weight", "party_principal", "party_both")
+    party_years = reported.select("provider_code", "year").unique()
     bilateral = (pl.col("bi_multi").is_in(BILATERAL), pl.col("year").is_in(years))
     commitments = (
         _counted_commitments(snapshot)
         .filter(*bilateral, pl.col("climate_share").is_null())
         # Jev labels CRS records only, so a Jev method reads markers here.
         .with_columns(**face_shares(), jev_level=pl.lit(None, pl.Int8))
-        .join(reported.select(*party, "year").unique(), on=["provider_code", "year"])
+        .join(party_years, on=["provider_code", "year"], how="semi")
     )
 
     def crdf_at(**coefficients: pl.Expr) -> pl.Expr:
@@ -546,33 +553,34 @@ def reconcile(
         )
         return ordered_sum(pl.col("face_usd") * fractions["climate"])
 
-    crdf = commitments.group_by("provider_code", "year").agg(
-        crdf_at_party_weight=crdf_at(
-            significant=weight,
-            principal=principal,
-            both_significant=pl.col("party_both"),
-        ),
-        crdf_at_100=crdf_at(significant=pl.lit(1.0)),
+    crdf = (
+        _coefficients(snapshot, commitments, method=PROVIDER)
+        .group_by("provider_code", "year")
+        .agg(
+            crdf_at_party_weight=crdf_at(**_COEFFICIENT_INPUTS),
+            crdf_at_100=crdf_at(significant=pl.lit(1.0)),
+        )
     )
     marker = pl.col("rio_marker")
 
     def crs_at_party_weight(flow: str) -> pl.LazyFrame:
-        """The year's CRS `flow` on Rio-marked records at the party's significant
-        and principal coefficients, by each record's higher marker."""
-        return (
+        """The year's CRS `flow` on Rio-marked records at `PROVIDER`'s coefficients
+        of each record's agency, by its higher marker."""
+        flows = (
             snapshot.table("total_flows")
             .filter(pl.col("flow") == flow, *bilateral)
-            .join(
-                reported.select(*party, "year").unique(), on=["provider_code", "year"]
-            )
+            .join(party_years, on=["provider_code", "year"], how="semi")
+        )
+        return (
+            _coefficients(snapshot, flows, method=PROVIDER)
             .group_by("provider_code", "year")
             .agg(
                 ordered_sum(
                     pl.col("amount_usd")
                     * pl.when(marker == 2)
-                    .then(principal)
+                    .then(pl.col("principal"))
                     .when(marker == 1)
-                    .then(weight)
+                    .then(pl.col("significant"))
                     .otherwise(0.0)
                 ).alias("amount_usd")
             )
@@ -628,17 +636,17 @@ def reconcile(
         .with_columns(
             *(
                 pl.when(reads(name))
-                .then(pl.col("btr_face") / pl.col(name))
+                .then(_ratio(pl.col("btr_face"), pl.col(name)))
                 .alias(f"btr_over_{name}")
                 for name in COMPARATORS
             ),
             comparator=status.replace_strict(
                 first, default=None, return_dtype=pl.String
             ),
-            btr_over_comparator=pl.col("btr_face") / comparator_usd,
+            btr_over_comparator=_ratio(pl.col("btr_face"), comparator_usd),
             thin_comparator=comparator_usd < THIN_COMPARATOR_USD,
-            btr_grant_equivalent_over_crs_grant_equivalent=(
-                pl.col("btr_grant_equivalent") / pl.col(GRANT_EQUIVALENT_COMPARATOR)
+            btr_grant_equivalent_over_crs_grant_equivalent=_ratio(
+                pl.col("btr_grant_equivalent"), pl.col(GRANT_EQUIVALENT_COMPARATOR)
             ),
         )
         .select(
@@ -1212,27 +1220,19 @@ def _coefficients(
             principal=pl.lit(method.principal),
             both_significant=pl.lit(None, pl.Float64),
         )
-    first, last, year = pl.col("first_year"), pl.col("last_year"), pl.col("year")
-    held = (
-        snapshot.table("provider_coefficients")
-        .join(frame.select("year").unique(), how="cross")
-        .filter(first.is_null() | (first <= year), last.is_null() | (year <= last))
-        .select(
-            "provider_code",
-            "agency_code",
-            "year",
-            _significant="significant",
-            _principal="principal",
-            _both="both_significant",
-            _basis=pl.when(~pl.col("case_by_case"))
-            .then(pl.lit("provider"))
-            .when(
-                pl.col("significant").is_not_null() | pl.col("principal").is_not_null()
-            )
-            .then(pl.lit("default"))
-            .otherwise(pl.lit("case_by_case")),
-            _source=pl.format("{}, {}", "source", "locator"),
-        )
+    held = _coefficients_by_year(snapshot, years=frame).select(
+        "provider_code",
+        "agency_code",
+        "year",
+        _significant="significant",
+        _principal="principal",
+        _both="both_significant",
+        _basis=pl.when(~pl.col("case_by_case"))
+        .then(pl.lit("provider"))
+        .when(pl.col("significant").is_not_null() | pl.col("principal").is_not_null())
+        .then(pl.lit("default"))
+        .otherwise(pl.lit("case_by_case")),
+        _source="citation",
     )
     columns = ("_significant", "_principal", "_both", "_basis", "_source")
     by_agency = held.filter(pl.col("agency_code").is_not_null())
@@ -1268,6 +1268,29 @@ def _coefficients(
     )
 
 
+def _coefficients_by_year(snapshot: Snapshot, *, years: pl.LazyFrame) -> pl.LazyFrame:
+    """Each `provider_coefficients` row once for every year of `years` its span
+    covers, with `citation` its source and locator.
+
+    Raises:
+        ReleaseIntegrityError: when two rows of one provider and agency cover a
+            year in common, as a release edited after its build may hold.
+    """
+    coefficients = snapshot.table("provider_coefficients").collect()
+    if overlaps := coefficient_overlaps(coefficients):
+        raise ReleaseIntegrityError(
+            f"release {snapshot.manifest.release!r} applies more than one "
+            "coefficient to a year: " + "; ".join(overlaps)
+        )
+    first, last, year = pl.col("first_year"), pl.col("last_year"), pl.col("year")
+    return (
+        coefficients.lazy()
+        .join(years.select("year").unique(), how="cross")
+        .filter(first.is_null() | (first <= year), last.is_null() | (year <= last))
+        .with_columns(citation=pl.format("{}, {}", "source", "locator"))
+    )
+
+
 def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
     """Weight each row's amount by objective, unsplit and in total under `method`.
 
@@ -1292,6 +1315,11 @@ def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
         .then(amount * climate)
         .otherwise(0.0),
     ).drop(*_WEIGHT_INPUTS)
+
+
+def _ratio(numerator: pl.Expr, denominator: pl.Expr) -> pl.Expr:
+    """`numerator` over `denominator`, null where the denominator is zero or null."""
+    return pl.when(denominator != 0).then(numerator / denominator)
 
 
 def _sum(name: str) -> pl.Expr:
