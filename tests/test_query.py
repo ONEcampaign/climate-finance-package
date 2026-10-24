@@ -220,12 +220,17 @@ def test_attribution_reads_agency_shares_as_inclusive_of_cross_cutting(
     method: Method, expected: tuple[float, float, float, float]
 ) -> None:
     result = SNAP.spending(view="provider", method=method, providers=5, years=2021)
-    rows = result.rows(origin="attribution").select(
-        "adaptation", "mitigation", "cross_cutting", "value"
-    )
+    rows = result.rows(origin="attribution")
 
     assert rows.height == 1
-    assert rows.row(0) == pytest.approx(expected)
+    assert rows.select("adaptation", "mitigation", "cross_cutting", "value").row(
+        0
+    ) == pytest.approx(expected)
+    # The shares take no coefficient of Germany's, so the row names none.
+    assert rows.select("coefficient_basis", "coefficient_source").row(0) == (
+        None,
+        None,
+    )
 
 
 @pytest.mark.parametrize("method", [cf.methods.ONE, cf.methods.OECD])

@@ -798,8 +798,9 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     """Problems with the amounts in a release's `commitments` and `disbursements`, and
     with its `provider_coefficients`.
 
-    Every amount is finite or null; the other checks skip a non-finite amount, so it
-    is reported once, as non-finite. Every disbursements row holds
+    Every amount is finite or null; the other checks skip a non-finite amount, and
+    the sum and record checks skip the commitment and the record whose row holds
+    one, so it is reported once, as non-finite. Every disbursements row holds
     0 <= allocated_low <= allocated <= allocated_high and 0 <= record_grant_equiv,
     and names a commitment. Per commitment, its rows' allocated, allocated_low and
     allocated_high sum to disbursed, disbursed_low and disbursed_high, and
@@ -809,8 +810,10 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     compare within `INVARIANT_TOLERANCE_USD`. The `provider_coefficients` checks are
     those of `_coefficient_problems`. An empty list means every check passed.
     """
-    commitments, problems = _finite(tables["commitments"], name="commitments")
-    disbursements, non_finite = _finite(tables["disbursements"], name="disbursements")
+    commitments, problems, _ = _finite(tables["commitments"], name="commitments")
+    disbursements, non_finite, flagged = _finite(
+        tables["disbursements"], name="disbursements"
+    )
     problems.extend(non_finite)
     for smaller, larger in _ALLOCATION_ORDER:
         failing = disbursements.filter(_exceeds(smaller, larger))
@@ -825,11 +828,15 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
         for row_id in orphans["row_id"].unique().sort()
     )
 
-    sums = disbursements.group_by("row_id").agg(
-        pl.col(part).sum().alias(f"_{part}") for part in _DISBURSED_SUMS.values()
+    summed = ~pl.col("row_id").is_in(flagged["row_id"].implode())
+    sums = (
+        disbursements.filter(summed)
+        .group_by("row_id")
+        .agg(pl.col(part).sum().alias(f"_{part}") for part in _DISBURSED_SUMS.values())
     )
     totals = (
-        commitments.select("row_id", *_DISBURSED_SUMS)
+        commitments.filter(summed)
+        .select("row_id", *_DISBURSED_SUMS)
         .join(sums, on="row_id", how="left")
         .with_columns(
             pl.col(f"_{part}").fill_null(0.0) for part in _DISBURSED_SUMS.values()
@@ -850,7 +857,13 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
             f"commitments {row_id}: {smaller} > {larger}"
             for row_id in failing["row_id"]
         )
-    problems.extend(_record_problems(disbursements))
+    problems.extend(
+        _record_problems(
+            disbursements.filter(
+                ~pl.col("record_id").is_in(flagged["record_id"].implode())
+            )
+        )
+    )
     problems.extend(_coefficient_problems(tables["provider_coefficients"]))
     return problems
 
@@ -901,9 +914,11 @@ def _coefficient_problems(coefficients: pl.DataFrame) -> list[str]:
     return problems
 
 
-def _finite(frame: pl.DataFrame, *, name: str) -> tuple[pl.DataFrame, list[str]]:
-    """`frame` with NaN and infinite amounts set to null, and a problem per such
-    amount, naming its row by the table's sort key."""
+def _finite(
+    frame: pl.DataFrame, *, name: str
+) -> tuple[pl.DataFrame, list[str], pl.DataFrame]:
+    """`frame` with NaN and infinite amounts set to null, a problem per such amount,
+    naming its row by the table's sort key, and the rows that held one."""
     columns = [column for column, dtype in frame.schema.items() if dtype.is_float()]
     key = RELEASE_TABLES[name].sort_key
     problems = [
@@ -911,11 +926,14 @@ def _finite(frame: pl.DataFrame, *, name: str) -> tuple[pl.DataFrame, list[str]]
         for column in columns
         for row in frame.filter(~pl.col(column).is_finite()).iter_rows(named=True)
     ]
+    flagged = frame.filter(
+        pl.any_horizontal(~pl.col(column).is_finite() for column in columns)
+    )
     finite = frame.with_columns(
         pl.when(pl.col(column).is_finite()).then(pl.col(column)).alias(column)
         for column in columns
     )
-    return finite, problems
+    return finite, problems, flagged
 
 
 def _record_problems(disbursements: pl.DataFrame) -> list[str]:

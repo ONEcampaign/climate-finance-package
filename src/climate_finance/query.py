@@ -247,7 +247,7 @@ def _base_rows(snapshot: Snapshot, *, flow: Flow, view: View) -> pl.LazyFrame:
         "overlap_usd",
     )
     allocated = pl.col("allocated_usd")
-    record_allocated = allocated.sum().over("record_id")
+    record_allocated = ordered_sum(allocated).over("record_id")
     disbursements = (
         snapshot.table("disbursements")
         .with_columns(
@@ -347,6 +347,7 @@ def _fixed_shares(snapshot: Snapshot, *, source: str) -> pl.LazyFrame:
     """The `agency_shares` of `source` by channel and year."""
 
     def share(objective: str) -> pl.Expr:
+        # Picks the one share a channel and year hold per objective.
         return pl.col("share").filter(pl.col("objective") == objective).sum()
 
     return (
@@ -389,9 +390,9 @@ def _measured_shares(snapshot: Snapshot, *, method: Method) -> pl.LazyFrame:
         )
         .group_by("channel_code", "year")
         .agg(
-            share_adaptation=(face * (fractions["adaptation"] + added)).sum(),
-            share_mitigation=(face * (fractions["mitigation"] + added)).sum(),
-            share_overlap=(face * overlap).sum(),
+            share_adaptation=ordered_sum(face * (fractions["adaptation"] + added)),
+            share_mitigation=ordered_sum(face * (fractions["mitigation"] + added)),
+            share_overlap=ordered_sum(face * overlap),
         )
     )
 
@@ -419,6 +420,8 @@ def _coefficients(
     `coefficient_basis` is `provider` for the provider's flat coefficients, `default`
     for the default share of a provider that assesses case by case, `case_by_case`
     where such a provider gives no default, and null where the release holds no row.
+    A row with a `climate_share` weighs by its shares, which take no provider
+    coefficient, so its `coefficient_basis` and `coefficient_source` are null.
     """
     if method.coefficients == "fixed":
         return frame.with_columns(
@@ -449,6 +452,7 @@ def _coefficients(
 
     rio_a, rio_m = pl.col("rio_adaptation"), pl.col("rio_mitigation")
     significant = pl.col("_significant").fill_null(method.significant)
+    marker = pl.col("climate_share").is_null()
     return (
         frame.join(
             by_agency,
@@ -469,8 +473,8 @@ def _coefficients(
             .then(pl.col("_both").fill_null(significant))
             .otherwise(significant),
             principal=pl.col("_principal").fill_null(method.principal),
-            coefficient_basis=pl.col("_basis"),
-            coefficient_source=pl.col("_source"),
+            coefficient_basis=pl.when(marker).then(pl.col("_basis")),
+            coefficient_source=pl.when(marker).then(pl.col("_source")),
         )
         .drop(*columns, *(f"{name}_all" for name in columns))
     )
