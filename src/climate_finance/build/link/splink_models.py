@@ -65,6 +65,7 @@ from splink import DuckDBAPI, Linker, SettingsCreator
 from splink.internals.comparison import Comparison
 
 from climate_finance import schema
+from climate_finance.build.link.decisions import standing_decisions
 from climate_finance.build.link.jev import (
     CalibrationAnswers,
     ask_jev,
@@ -280,11 +281,7 @@ def read_decision_labels(path: Path) -> pl.DataFrame:
     """People's and agents' queue decisions at `path` as `pair_labels` rows with
     source `human` or `agent`, one per pair; none when nothing has been decided yet.
 
-    A person's decision on a pair stands over any agent's, whenever either was
-    imported, and the latest decision stands among people. Of an agent's decisions,
-    the latest round stands (`LABEL_ROUNDS` order), then the latest imported.
-    `decided_at` is the import time, so ordering people and agents by it would let
-    a re-imported agent round erase a person's verdict.
+    A pair's standing decision is the one `decisions.standing_decisions` keeps.
     A blind-sample decision (one with a `sample_id`) measures precision, so it never
     becomes a label. `stratified` marks the decisions on calibration pairs, which
     `stratified_sample` drew, so only they take inverse-probability weights.
@@ -295,28 +292,13 @@ def read_decision_labels(path: Path) -> pl.DataFrame:
     if not path.exists():
         return pl.DataFrame(schema=columns)
     pair = ["task", "left_id", "right_id"]
-    rounds = {name: rank for rank, name in enumerate(schema.LABEL_ROUNDS)}
     decided = (
         pl.read_parquet(path)
         .filter(pl.col("sample_id").is_null())
         .drop_nulls("right_id")
-        .with_columns(
-            rank=pl.col("round").replace_strict(rounds, default=0, return_dtype=pl.Int8)
-        )
-    )
-    agent = (
-        decided.filter(label_source="agent")
-        .sort("rank", "decided_at", maintain_order=True)
-        .unique(pair, keep="last", maintain_order=True)
-    )
-    human = (
-        decided.filter(label_source="human")
-        .sort("decided_at", maintain_order=True)
-        .unique(pair, keep="last", maintain_order=True)
     )
     return (
-        pl.concat([agent, human])
-        .unique(pair, keep="last", maintain_order=True)
+        standing_decisions(decided, key=pair)
         .sort(pair)
         .select(
             *pair,

@@ -329,9 +329,12 @@ _FLOWS = {
     "commitments": "Flow: commitments at face value; low and high equal value.",
     "disbursements": "Flow: disbursements allocated to climate commitments, weighted "
     "by the commitment's markers; low counts the disbursements linked by the "
-    "donor's CRS id or World Bank loan number where the linked records agree, and "
-    "bank-ledger and IATI fills in full, since they match on the publisher's own "
-    "id; high counts every linked disbursement. "
+    "donor's CRS id or World Bank loan number where the linked records agree, or "
+    "by one record that commits and disburses, to commitments whose CRDF row ties "
+    "to its CRS record by construction (same crs id and year, a matched contract, "
+    "or the record the row was cut from), and bank-ledger and IATI fills in full, "
+    "since they match on the publisher's own id; high counts every linked "
+    "disbursement. "
     "Attributed finance counts core contributions disbursed. The modelled table "
     "holds a disbursement range for commitments whose disbursements no source "
     "reports.",

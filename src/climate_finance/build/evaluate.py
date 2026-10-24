@@ -44,11 +44,11 @@ from pydantic import BaseModel, ConfigDict
 
 # `release` imports the gates, which import this module, so it is read at call time.
 from climate_finance.build import release
-from climate_finance.build.link.decisions import PAIR
+from climate_finance.build.link.decisions import PAIR, standing_decisions
 from climate_finance.build.link.packet import code_names, write_packet
 from climate_finance.build.link.splink_models import read_decision_labels
 from climate_finance.build.sums import ordered_sum
-from climate_finance.schema import KEY_TIERS, LABEL_ROUNDS, scan_table
+from climate_finance.schema import KEY_TIERS, scan_table
 
 STRATA = ("ledger", "key", "model", "reviewed")
 DESIGNS = ("census", "pps")
@@ -318,9 +318,8 @@ def read_sample_labels(design: Path, *, decisions: Path) -> pl.DataFrame:
     was accepted, and `label_source`, who decided it; both null while the pair is
     undecided.
 
-    A pair's standing decision follows `splink_models.read_decision_labels`: of an
-    agent's decisions the latest round, then the latest decided, stands, and a
-    person's decision stands over an agent's made before it.
+    A draw's standing decision is the one `decisions.standing_decisions` keeps, as
+    for the review queue's pairs.
 
     Raises:
         FileNotFoundError: when `decisions` does not exist, since the sample's
@@ -328,28 +327,11 @@ def read_sample_labels(design: Path, *, decisions: Path) -> pl.DataFrame:
     """
     if not decisions.exists():
         raise FileNotFoundError(f"no review decisions at {decisions}")
-    rounds = {name: rank for rank, name in enumerate(LABEL_ROUNDS)}
-    sampled = (
-        pl.read_parquet(decisions)
-        .filter(pl.col("sample_id").is_not_null())
-        .with_columns(
-            rank=pl.col("round").replace_strict(rounds, default=0, return_dtype=pl.Int8)
-        )
-    )
-    agent = (
-        sampled.filter(label_source="agent")
-        .sort("rank", "decided_at", maintain_order=True)
-        .unique("sample_id", keep="last", maintain_order=True)
-    )
-    decided = (
-        pl.concat([agent, sampled.filter(label_source="human")])
-        .sort("decided_at", maintain_order=True)
-        .unique("sample_id", keep="last")
-        .select(
-            "sample_id",
-            correct=pl.col("decision") == "accept",
-            label_source="label_source",
-        )
+    sampled = pl.read_parquet(decisions).filter(pl.col("sample_id").is_not_null())
+    decided = standing_decisions(sampled, key="sample_id").select(
+        "sample_id",
+        correct=pl.col("decision") == "accept",
+        label_source="label_source",
     )
     return pl.read_parquet(design).join(
         decided, on="sample_id", how="left", maintain_order="left"

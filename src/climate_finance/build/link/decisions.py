@@ -27,6 +27,33 @@ LABELS = {"match": "accept", "no_match": "reject"}
 DECIDING_SOURCES = ("human", "agent")
 
 
+def standing_decisions(decided: pl.DataFrame, *, key: str | list[str]) -> pl.DataFrame:
+    """The standing decision of each `key` among the review-decision rows `decided`.
+
+    A person's decision stands over any agent's, whenever either was imported, and
+    the latest decision stands among people. Of an agent's decisions, the latest
+    round stands (`schema.LABEL_ROUNDS` order), then the latest imported.
+    `decided_at` is the import time, so ordering people and agents by it would let
+    a re-imported agent round erase a person's verdict.
+    """
+    rounds = {name: rank for rank, name in enumerate(schema.LABEL_ROUNDS)}
+    agent = (
+        decided.filter(label_source="agent")
+        .with_columns(
+            rank=pl.col("round").replace_strict(rounds, default=0, return_dtype=pl.Int8)
+        )
+        .sort("rank", "decided_at", maintain_order=True)
+        .unique(key, keep="last", maintain_order=True)
+        .drop("rank")
+    )
+    human = (
+        decided.filter(label_source="human")
+        .sort("decided_at", maintain_order=True)
+        .unique(key, keep="last", maintain_order=True)
+    )
+    return pl.concat([agent, human]).unique(key, keep="last", maintain_order=True)
+
+
 def override_links(links: pl.DataFrame, *, labels: pl.DataFrame) -> pl.DataFrame:
     """`links` with the `human` and `agent` pair labels of `labels` applied:
     accepted links at probability 1 with records that agree, rejected links dropped

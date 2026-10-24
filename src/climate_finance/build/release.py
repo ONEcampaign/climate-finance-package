@@ -124,8 +124,6 @@ SOURCE_LICENCES = {
     "ledger_imf": "IMF copyright and terms: derivative works with attribution; "
     "commercial use and automated bulk download need permission, "
     "https://www.imf.org/en/About/copyright-and-terms",
-    "foreignassistance": "US Government work, free of copyright, "
-    "https://foreignassistance.gov/about",
     "adaptation_labels": "Weikmans et al.; fits the adaptation cut, no rows ship",
     "btr": _UNFCCC,
     "unfccc": _UNFCCC,

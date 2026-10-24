@@ -27,8 +27,9 @@ Every value is a largest gap, a count or a share. A row passes at or below its
 threshold, except that the raw-links share passes below it, and precision's lower
 bound and the human-audit share pass at or above it. A gate with nothing to
 measure fails: no allocated pairs, no linked record with a disbursement, no linked
-commitment unit, no disbursement row, or an empty sample. `waive_precision` lets
-precision and human_audit rows fail.
+commitment unit, no provider-year in the release or the published CRDF, no
+disbursement row, or an empty sample. `waive_precision` lets precision and
+human_audit rows fail.
 """
 
 from __future__ import annotations
@@ -468,6 +469,8 @@ def over_allocation_gate(
     linked to it over every commitment unit that unit links to, by face, before
     allocation's year order and face cap.
     """
+    # No commitment row means no row above its face, so an empty `above` passes;
+    # conservation already fails a build with nothing linked.
     above = (
         commitments.filter(pl.col("face_usd") > 0)
         .select("row_id", excess=pl.col("disbursed_usd") - pl.col("face_usd"))
@@ -530,7 +533,8 @@ def reconciliation_gate(
 
     The published total holds the recipient-perspective rows as the OECD publishes
     them, aggregate parents in place of their rebuilt children. The release total
-    holds every `commitments` row, repeats of an earlier vintage included.
+    holds every `commitments` row, repeats of an earlier vintage included. It fails
+    when neither holds a provider-year.
     """
     key = ["provider_code", "year"]
     published = (
@@ -545,7 +549,7 @@ def reconciliation_gate(
     )
     released, published_usd = pl.col("released_usd"), pl.col("published_usd")
     difference = (released.fill_null(0.0) - published_usd.fill_null(0.0)).abs()
-    gaps = (
+    compared = (
         built.join(published, on=key, how="full", coalesce=True)
         .select(
             *key,
@@ -553,9 +557,19 @@ def reconciliation_gate(
             .then(0.0)
             .otherwise(difference / published_usd.fill_null(0.0).abs()),
         )
-        .filter(pl.col("gap") > config.tolerance)
-        .sort("gap", *key, descending=[True, False, False])
         .collect()
+    )
+    if compared.is_empty():
+        return _row(
+            "oecd_reconciliation",
+            value=None,
+            threshold=config.tolerance,
+            passed=False,
+            detail="no climate commitment in the release or the published CRDF: "
+            "nothing to reconcile",
+        )
+    gaps = compared.filter(pl.col("gap") > config.tolerance).sort(
+        "gap", *key, descending=[True, False, False]
     )
     named = [f"{provider}/{year}" for provider, year in gaps.select(key).iter_rows()]
     return _row(

@@ -328,6 +328,32 @@ def test_the_human_audit_reads_who_decided_the_draws(
     assert (row["value"], row["threshold"], row["passed"]) == (share, 0.1, passed)
 
 
+def test_a_persons_blind_decision_stands_over_an_agents_imported_later(
+    release_dir: Path,
+) -> None:
+    design = _label(release_dir, rejected=set())
+    _edit(
+        release_dir.parent / "decisions.parquet",
+        lambda frame: pl.concat(
+            [
+                frame,
+                frame.with_columns(
+                    decision=pl.lit("reject"),
+                    label_source=pl.lit("agent"),
+                    model=pl.lit("claude-opus-5-5"),
+                    round=pl.lit("label"),
+                    decided_at=pl.col("decided_at") + pl.duration(days=1),
+                ),
+            ]
+        ),
+    )
+
+    results = _report(release_dir, sample=design)
+
+    assert results.filter(gate="precision")["value"].to_list() == [1.0]
+    assert results.filter(gate="human_audit")["value"].to_list() == [1.0]
+
+
 def test_a_waiver_lets_a_failed_precision_gate_through(release_dir: Path) -> None:
     design = _label(release_dir, rejected={"d20"})
 
@@ -431,13 +457,12 @@ def _drop_trace(frame: pl.DataFrame) -> pl.DataFrame:
 
 
 @pytest.mark.parametrize(
-    ("stage", "table", "edit", "failing"),
+    ("tables", "edit", "failing"),
     [
         # Nothing linked: no pair to certify, no record to conserve, no unit to
         # measure.
         (
-            "review",
-            "links",
+            [("review", "links")],
             _drop_trace,
             {
                 ("precision", None),
@@ -445,17 +470,27 @@ def _drop_trace(frame: pl.DataFrame) -> pl.DataFrame:
                 ("over_allocation", "raw_links"),
             },
         ),
-        ("assemble", "disbursements", pl.DataFrame.clear, {("withheld_rows", None)}),
+        (
+            [("assemble", "disbursements")],
+            pl.DataFrame.clear,
+            {("withheld_rows", None)},
+        ),
+        # No commitment on either side: nothing to reconcile.
+        (
+            [("assemble", "commitments"), ("normalise", "crdf")],
+            pl.DataFrame.clear,
+            {("oecd_reconciliation", None)},
+        ),
     ],
 )
 def test_a_gate_with_nothing_to_measure_fails(
     release_dir: Path,
-    stage: str,
-    table: str,
+    tables: list[tuple[str, str]],
     edit: Callable[[pl.DataFrame], pl.DataFrame],
     failing: set[tuple[str, str | None]],
 ) -> None:
-    _edit(table_path(release_dir, stage, table), edit)
+    for stage, table in tables:
+        _edit(table_path(release_dir, stage, table), edit)
 
     results = _report(release_dir)
 

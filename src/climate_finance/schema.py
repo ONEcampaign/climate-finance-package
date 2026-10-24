@@ -811,10 +811,11 @@ DISBURSEMENTS = _table(
     title=_str(nullable=True),
     # Face value of the record's disbursement allocated to `row_id`, with the
     # allocation's bounds: 0 <= allocated_low <= allocated <= allocated_high.
-    # allocated_low holds what certain links carried (`CERTAIN_METHODS`). A
-    # bank-ledger or IATI fill counts in full in both bounds, since it matches the
-    # commitment on its publisher's own id: the bank's ledger key or the fund's
-    # project id.
+    # allocated_low holds what certain trace links carried (`CERTAIN_METHODS`, or
+    # one record that commits and disburses) to rows reached through certain
+    # CRDF-to-CRS routes (`CERTAIN_ROUTES`). A bank-ledger or IATI fill counts in
+    # full in both bounds, since it matches the commitment on its publisher's own
+    # id: the bank's ledger key or the fund's project id.
     allocated_usd=_usd(),
     allocated_low_usd=_usd(),
     allocated_high_usd=_usd(),
