@@ -100,6 +100,8 @@ def test_the_project_list_links_a_row_to_its_projects_bulk_commitment() -> None:
 
     assert _linked(links, units) == {("row", "b", "eib_list")}
     assert set(links["group_id"]) == {"eib_list|row"}
+    # The project list is an estimated route, which no model scores.
+    assert links["probability"].to_list() == [None]
 
 
 def test_the_project_list_matches_a_specific_title_and_close_amount() -> None:
@@ -113,9 +115,19 @@ def test_the_project_list_matches_a_specific_title_and_close_amount() -> None:
     assert _linked(links, units) == {("row", "b", "eib_list")}
 
 
-@pytest.mark.parametrize(("commit", "linked"), [(106.0, True), (111.0, False)])
+@pytest.mark.parametrize(
+    ("commit", "method", "probability"),
+    [
+        # Within 0.01% the contract is the row's own: a certain route.
+        (100.0, "crosswalk", 1.0),
+        (100.001, "crosswalk", 1.0),
+        # Within 10% the amount only suggests the contract.
+        (105.0, "crosswalk_amount", None),
+        (111.0, None, None),
+    ],
+)
 def test_the_crosswalk_takes_a_contract_of_the_rows_serial_within_ten_percent(
-    commit: float, linked: bool
+    commit: float, method: str | None, probability: float | None
 ) -> None:
     links, units = _recover(
         [_row("row", 2022, 100.0, project_number="20220001", title="ALPHA")],
@@ -123,7 +135,8 @@ def test_the_crosswalk_takes_a_contract_of_the_rows_serial_within_ten_percent(
         activities=("XM-DAC-918-3-20220001-95001", "XM-DAC-918-3-20220002-95002"),
     )
 
-    assert _linked(links, units) == ({("row", "b", "crosswalk")} if linked else set())
+    assert _linked(links, units) == ({("row", "b", method)} if method else set())
+    assert links["probability"].to_list() == ([probability] if method else [])
 
 
 def test_a_projects_amount_counts_commitments_from_the_rows_year_on() -> None:
@@ -131,7 +144,7 @@ def test_a_projects_amount_counts_commitments_from_the_rows_year_on() -> None:
         [_row("row", 2022, 100.0, project_number="20220001")],
         [
             _bulk("before", 2021, 50.0, project_number="95001"),
-            _bulk("after", 2023, 104.0, project_number="95001"),
+            _bulk("after", 2023, 100.0, project_number="95001"),
         ],
         activities=("XM-DAC-918-3-20220001-95001",),
     )
@@ -166,8 +179,8 @@ def test_rows_and_projects_pair_one_to_one_closest_amount_first() -> None:
     )
 
     assert _linked(links, units) == {
-        ("a", "p2", "crosswalk"),
-        ("b", "p1", "crosswalk"),
+        ("a", "p2", "crosswalk_amount"),
+        ("b", "p1", "crosswalk_amount"),
     }
 
 
@@ -288,7 +301,9 @@ def test_a_taken_over_commitment_allocates_to_the_earliest_row() -> None:
     )
     links = pl.concat([trace, recovered]).lazy()
 
-    pairs = allocate(units.lazy(), crs=crs, links=links, dated=[], windowed=[])
+    pairs = allocate(
+        units.lazy(), crs=crs, links=links, crdf=crdf, dated=[], windowed=[]
+    )
     allocations = allocate_to_rows(
         pairs, crdf=crdf, units=units.lazy(), crs=crs, links=links
     )

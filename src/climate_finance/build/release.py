@@ -237,8 +237,9 @@ def carrying_links(
     """Per allocation's (row_id, record_id), the link that carried it.
 
     That is the most probable `trace` link from the record's unit to a commitment
-    unit of a `crdf_crs` group of the row or of a row that repeats it, the lowest
-    unit id among equals. Allocate moves a repeat's allocations to its first row
+    unit of a `crdf_crs` group of the row or of a row that repeats it, a null
+    probability counting lowest and the lowest unit id winning among equals.
+    Allocate moves a repeat's allocations to its first row
     (`repeat_of`), so the link can sit in the repeat's group.
     """
     record_units = units.select(d_unit="unit_id", record_id="record_ids").explode(
@@ -277,6 +278,7 @@ def carrying_links(
             "link_probability",
             "c_unit",
             descending=[False, False, True, False],
+            nulls_last=True,
         )
         .group_by("row_id", "record_id", maintain_order=True)
         .agg(pl.col("link_method", "link_probability", "ledger_check").first())

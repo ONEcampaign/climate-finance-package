@@ -30,6 +30,15 @@ KEY_TIERS = (
     "pn_recipient_purpose",
     "pn_recipient",
 )
+# The key tiers that tie a disbursement to its commitment by construction: the same
+# crs id, or the EU decision or lettered crs id it continues. A project-number tier
+# is estimated, since shared framework numbers mislead.
+CERTAIN_METHODS = ("crs_id_purpose", "crs_id", "crs_id_parent")
+# The `crdf_crs` routes that tie a CRDF row to its CRS commitment by construction:
+# the same crs id in the same year, a contract matched within 0.01% in euros, and
+# the CRS record the row was cut from. Every other route, `eib_list`,
+# `crosswalk_amount` and `title_recipient` among them, is estimated.
+CERTAIN_ROUTES = ("within_year", "crosswalk", "aggregate_partition")
 KEY_REPAIR_METHODS = (
     "repair_new_crs_id",
     "repair_pn_variant",
@@ -56,12 +65,6 @@ LINK_METHODS = (
     "btr_splink",
     "human",
 )
-# The `crdf_crs` routes that tie a CRDF row to its CRS commitment by construction:
-# the same crs id in the same year, an EIB contract matched within 0.01% in euros,
-# and the CRS record the row was cut from. Every other route is estimated, among
-# them `crosswalk_amount`, which pairs EIB projects by the closest amount beyond
-# that tolerance.
-CERTAIN_ROUTES = ("within_year", "crosswalk", "aggregate_partition")
 LINK_TASKS = ("crdf_crs", "trace", "btr_crs")
 REVIEW_REASONS = (
     "band",
@@ -369,7 +372,9 @@ LINKS = _table(
     left_id=_str(),
     right_id=_str(),
     group_id=_str(nullable=True),
-    probability=_f64(),
+    # 1.0 on a certain rule link (`CERTAIN_METHODS`, `CERTAIN_ROUTES`, or a unit
+    # linked to itself), the model's score on a scored link, null on any other.
+    probability=_f64(nullable=True),
     link_method=_str(values=LINK_METHODS),
     p_model=_f64(nullable=True),
     p_jev=_f64(nullable=True),

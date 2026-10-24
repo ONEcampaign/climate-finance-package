@@ -108,6 +108,12 @@ def _disbursement(**fields: object) -> dict[str, object]:
             {"crs_id": "B", "title": "Phase two: rural water supply"},
             "repair_title_recipient",
         ),
+        # A USAID award renumbered under the same title.
+        (
+            {"crs_id": "A", "project_number": "76_57124", "title": "Feed the Future"},
+            {"crs_id": "B", "project_number": "76_57132", "title": "Feed the Future"},
+            "repair_title_recipient",
+        ),
     ],
 )
 def test_each_rule_links_what_the_exact_tiers_and_earlier_rules_miss(
@@ -181,6 +187,39 @@ def test_a_programme_number_links_only_within_the_disbursements_recipient(
         }
     )
     assert repaired == {"d_ken": {"repair_new_crs_id": ["c_ken", "c_ken2"]}}
+
+
+@pytest.mark.parametrize(
+    ("components", "reached"),
+    [
+        # USAID award 76_48621 commits its components under their own crs ids and
+        # purposes, so the HIV/AIDS component (13040) fills none of them.
+        ({"c_gov": 15152, "c_trade": 33110}, {}),
+        # A disbursement of a committed component reaches that component alone.
+        (
+            {"c_gov": 15152, "c_trade": 33110, "c_hiv": 13040},
+            {"d": {"pn_recipient_purpose": ["c_hiv"]}},
+        ),
+        # An award that commits under one purpose links across purposes.
+        ({"c_gov": 15152}, {"d": {"pn_recipient": ["c_gov"]}}),
+    ],
+)
+def test_a_component_award_links_only_within_a_purpose(
+    components: dict[str, int], reached: dict[str, dict[str, list[str]]]
+) -> None:
+    award = {"donor_code": 302, "project_number": "76_48621", "year": 2015}
+    records = {
+        name: _commitment(**award, crs_id=f"20150146{index}", purpose_code=purpose)
+        for index, (name, purpose) in enumerate(components.items())
+    }
+    records["d"] = _disbursement(**award, crs_id="2015014629", purpose_code=13040)
+    units, links, _ = _links(records)
+    names = dict(zip(units["unit_id"], units["record_ids"].list.first(), strict=True))
+    linked: dict[str, dict[str, list[str]]] = {}
+    for row in links.sort("right_id").iter_rows(named=True):
+        by_method = linked.setdefault(names[row["left_id"]], {})
+        by_method.setdefault(row["link_method"], []).append(names[row["right_id"]])
+    assert linked == reached
 
 
 def test_a_disbursement_before_the_first_year_links_to_nothing() -> None:
@@ -490,7 +529,12 @@ def test_allocation_fills_only_the_commitments_each_unit_links_to() -> None:
     units, links, crs = _links(records)
     assert links["link_method"].unique().to_list() == ["repair_afdb_scientific"]
 
-    pairs = allocate(units.lazy(), crs=crs, links=links.lazy())
+    pairs = allocate(
+        units.lazy(),
+        crs=crs,
+        links=links.lazy(),
+        crdf=pl.LazyFrame(schema=schema.CRDF.dtypes),
+    )
     filled = dict(
         pairs.filter(pl.col("commitment_id").is_not_null())
         .select("record_id", "commitment_id")

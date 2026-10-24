@@ -18,7 +18,9 @@ links is left out of the later ones:
   purpose (`_programmes`). Under one such number the US files unrelated
   activities of one recipient, as `76_51689` holds "USAID Pay and Benefits"
   (91010) and a customs project (33120); a link across purposes there has a title
-  that disagrees 22 times as often, by value, as one within a purpose.
+  that disagrees 22 times as often, by value, as one within a purpose. Both rules
+  compare numbers as awards (`keys.split_components`), so under an award that
+  commits its components separately a link stays within one purpose.
 - `repair_wb_parent`: the same World Bank loan or credit number inside project
   numbers of the form `P<project>.<loan>.CRS<n>`, as when additional financing is
   booked under the parent project.
@@ -58,7 +60,7 @@ from rapidfuzz import fuzz
 from rapidfuzz.process import cpdist
 
 from climate_finance import catalogue, schema
-from climate_finance.build.link.keys import as_exact_links
+from climate_finance.build.link.keys import as_exact_links, split_components
 
 # A disbursement reaching more commitments than this sits under a shared key.
 MAX_COMMITMENTS = 5
@@ -74,7 +76,7 @@ CORE_MIN_CHARS = 4
 _LONG_NUMBER = rf"^\d{{{ROUNDED_MIN_DIGITS},}}$"
 _SCIENTIFIC = r"^(\d)\.(\d+)E\+(\d+)$"
 _WB_LOAN = r"^P\d+\.([A-Z]+[A-Z0-9]*\d)\.CRS\d+$"
-_PN = ("donor_code", "agency_code", "project_number")
+_PN = ("donor_code", "agency_code", "award")
 _CORE = ("donor_code", "agency_code", "core")
 _LOAN = ("donor_code", "loan")
 _PLACE = ("donor_code", "agency_code", "recipient_code")
@@ -206,7 +208,8 @@ def repair_keys(
 
 def _unit_facts(units: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
     """Units with the keys the rules derive, and the title tokens and words of their
-    first record, by record id, that has a title."""
+    first record, by record id, that has a title. `award` and `core` are the
+    project number and its core as awards (`split_components`)."""
     titles = (
         units.lazy()
         .select("unit_id", record_id="record_ids")
@@ -217,7 +220,7 @@ def _unit_facts(units: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
         .collect()
     )
     pn = pl.col("project_number")
-    return (
+    facts = (
         units.drop("record_ids")
         .join(titles, on="unit_id", how="left")
         .with_columns(title=title_tokens(pl.col("title")))
@@ -227,6 +230,10 @@ def _unit_facts(units: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
             loan=wb_loan(pn),
             rounded=rounded_digits(pn),
         )
+    )
+    return facts.with_columns(
+        award=split_components(facts, number="project_number"),
+        core=split_components(facts, number="core"),
     )
 
 

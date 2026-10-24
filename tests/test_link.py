@@ -125,43 +125,50 @@ def _disbursement(**fields: object) -> dict[str, object]:
 
 
 @pytest.mark.parametrize(
-    ("commitment", "disbursement", "tier"),
+    ("commitment", "disbursement", "tier", "probability"),
     [
-        ({"crs_id": "A"}, {"crs_id": "A"}, "crs_id_purpose"),
+        ({"crs_id": "A"}, {"crs_id": "A"}, "crs_id_purpose", 1.0),
         # Another purpose under the same crs id.
-        ({"crs_id": "A"}, {"crs_id": "A", "purpose_code": 41010}, "crs_id"),
+        ({"crs_id": "A"}, {"crs_id": "A", "purpose_code": 41010}, "crs_id", 1.0),
         # An EU contract under its decision id, on another purpose.
         (
             {"donor_code": 918, "crs_id": "2019000001"},
             {"donor_code": 918, "crs_id": "2019000001042", "purpose_code": 41010},
             "crs_id_parent",
+            1.0,
         ),
         # A German record under its project's crs id plus a letter.
         (
             {"crs_id": "2019001320"},
             {"crs_id": "2019001320a", "purpose_code": 41010},
             "crs_id_parent",
+            1.0,
         ),
-        # A new crs id under the same project number.
+        # A new crs id under the same project number: estimated, so unscored.
         (
             {"crs_id": "A", "project_number": "P-1"},
             {"crs_id": "B", "project_number": "p-1"},
             "pn_recipient_purpose",
+            None,
         ),
         (
             {"crs_id": "A", "project_number": "P-1"},
             {"crs_id": "B", "project_number": "P-1", "purpose_code": 41010},
             "pn_recipient",
+            None,
         ),
     ],
 )
 def test_each_tier_links_what_the_tiers_before_it_miss(
-    commitment: dict[str, object], disbursement: dict[str, object], tier: str
+    commitment: dict[str, object],
+    disbursement: dict[str, object],
+    tier: str,
+    probability: float | None,
 ) -> None:
-    traced = _trace(
-        {"c": _commitment(**commitment), "d": _disbursement(**disbursement)}
-    )
-    assert traced == {"d": (tier, ["c"])}
+    records = {"c": _commitment(**commitment), "d": _disbursement(**disbursement)}
+    assert _trace(records) == {"d": (tier, ["c"])}
+    links = link_by_keys(_units(records), first_year=FIRST_YEAR)
+    assert links["probability"].to_list() == [probability]
 
 
 def test_a_disbursement_reaches_every_eligible_commitment_of_its_group() -> None:
@@ -177,9 +184,22 @@ def test_a_disbursement_reaches_every_eligible_commitment_of_its_group() -> None
     assert traced == {"d": ("crs_id_purpose", ["c2018", "c2019"])}
 
 
-def test_a_unit_that_commits_and_disburses_links_to_itself() -> None:
-    traced = _trace({"cd": _commitment(crs_id="A", disbursement_usd=3.0)})
-    assert traced == {"cd": ("crs_id_purpose", ["cd"])}
+@pytest.mark.parametrize(
+    ("ids", "tier"),
+    [
+        ({"crs_id": "A"}, "crs_id_purpose"),
+        # A unit without a crs id reaches itself by project number, and its own
+        # records are still certain.
+        ({"project_number": "P-1"}, "pn_recipient_purpose"),
+    ],
+)
+def test_a_unit_that_commits_and_disburses_links_to_itself(
+    ids: dict[str, object], tier: str
+) -> None:
+    records = {"cd": _commitment(disbursement_usd=3.0, **ids)}
+    assert _trace(records) == {"cd": (tier, ["cd"])}
+    links = link_by_keys(_units(records), first_year=FIRST_YEAR)
+    assert links["probability"].to_list() == [1.0]
 
 
 def test_the_floor_holds_outside_the_parent_tier() -> None:
@@ -199,9 +219,38 @@ def test_the_floor_holds_outside_the_parent_tier() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("in_floor_year", "reached"),
+    [
+        # KfW's shape: the 2020 commitment, and disbursements under its crs id
+        # dated 2021, a year with no commitment of that crs id or project.
+        ({}, ["c2020"]),
+        # A 2021 commitment under the crs id is the one the date names.
+        ({"c2021": _commitment(crs_id="A", year=2021)}, ["c2021"]),
+    ],
+)
+def test_a_floor_naming_no_commitment_passes_under_the_commitments_own_crs_id(
+    in_floor_year: dict[str, dict[str, object]], reached: list[str]
+) -> None:
+    traced = _trace(
+        {
+            "c2020": _commitment(crs_id="A", project_number="P1", year=2020),
+            "d": _disbursement(
+                crs_id="A",
+                project_number="P1",
+                year=2022,
+                commitment_date=date(2021, 3, 1),
+            ),
+            **in_floor_year,
+        }
+    )
+    assert traced == {"d": ("crs_id_purpose", reached)}
+
+
 def test_a_floor_with_no_commitment_on_or_after_it_falls_through() -> None:
-    # The crs id's only commitment precedes the floor, so the tier misses, and the
-    # unique project number reaches a later commitment under a new id.
+    # The crs id's only commitment precedes the floor, and the floor year holds a
+    # commitment of the project under a new id, so the crs-id tiers miss and the
+    # unique project number reaches it.
     traced = _trace(
         {
             "old": _commitment(crs_id="A", year=2016),
