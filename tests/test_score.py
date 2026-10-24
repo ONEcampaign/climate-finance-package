@@ -7,6 +7,7 @@ import polars as pl
 import pytest
 
 from climate_finance import schema
+from climate_finance.build.errors import LinkThresholdError
 from climate_finance.build.link import score
 from climate_finance.build.link.id_practice import FIRST_MEASURED_YEAR
 from climate_finance.build.link.keys import build_units
@@ -1159,7 +1160,7 @@ def test_held_out_and_unlabelled_labels_never_reach_the_model(
     again = score_truth_group(
         flipped, groups=scoring_groups(flipped), truth=_truth(_FEATURES)
     )
-    assert again.threshold == scores.threshold
+    assert again.best_threshold == scores.best_threshold
     assert again.pairs["p_model"].equals(scores.pairs["p_model"])
 
 
@@ -1175,7 +1176,7 @@ def test_the_thread_count_leaves_the_scores_unchanged(
 
 def test_missed_truth_counts_against_recall(scores: TruthScores) -> None:
     # Many true pairs blocking never produced make each false link cheap against
-    # the truth, so the threshold falls.
+    # the truth, so the best threshold falls, and pairs still link at the fixed cut.
     missed = pl.DataFrame(
         {
             "left_id": [f"m{index}" for index in range(20_000)],
@@ -1187,12 +1188,13 @@ def test_missed_truth_counts_against_recall(scores: TruthScores) -> None:
     )
     truth = pl.concat([_truth(_FEATURES), missed])
     again = score_truth_group(_FEATURES, groups=scoring_groups(_FEATURES), truth=truth)
-    assert again.threshold < scores.threshold
+    assert again.best_threshold < scores.best_threshold
+    assert again.threshold == scores.threshold
 
 
 def test_recall_counts_disbursements_not_pairs(scores: TruthScores) -> None:
     # A disbursement links one commitment, so more true commitments for the
-    # disbursements that already count, or ambiguous ones, leave the threshold.
+    # disbursements that already count, or ambiguous ones, leave the best threshold.
     train = _truth(_FEATURES.filter(split=TRAIN, donor_code=1))
     commitments = train["right_id"].unique().sort()
     extra = train.join(commitments.head(20).to_frame("other"), how="cross").select(
@@ -1209,7 +1211,20 @@ def test_recall_counts_disbursements_not_pairs(scores: TruthScores) -> None:
     )
     truth = pl.concat([_truth(_FEATURES), extra, open_pairs]).unique()
     again = score_truth_group(_FEATURES, groups=scoring_groups(_FEATURES), truth=truth)
-    assert again.threshold == scores.threshold
+    assert again.best_threshold == scores.best_threshold
+
+
+def test_a_link_threshold_far_below_the_best_f1_refuses_to_train(
+    scores: TruthScores, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(score, "LINK_THRESHOLD", 0.99)
+    with pytest.raises(LinkThresholdError) as raised:
+        score_truth_group(
+            _FEATURES, groups=scoring_groups(_FEATURES), truth=_truth(_FEATURES)
+        )
+    assert raised.value.threshold == 0.99
+    assert raised.value.best_threshold == scores.best_threshold
+    assert raised.value.f1 < raised.value.best_f1 - score.F1_TOLERANCE
 
 
 def test_held_out_links_take_the_best_pair_of_both_halves() -> None:
@@ -1251,7 +1266,9 @@ def test_best_commitments_follow_the_link_rule() -> None:
     ]
 
 
-def _scores(*rows: dict[str, object], threshold: float = 0.5) -> TruthScores:
+def _scores(
+    *rows: dict[str, object], threshold: float = 0.5, best_threshold: float = 0.5
+) -> TruthScores:
     pairs = _frame(list(rows)).with_columns(
         p_model=pl.Series([row["p"] for row in rows], dtype=pl.Float64)
     )
@@ -1259,7 +1276,12 @@ def _scores(*rows: dict[str, object], threshold: float = 0.5) -> TruthScores:
         {"provider_code": [1], "calibration": ["own"]},
         schema={"provider_code": pl.Int32, "calibration": pl.String},
     )
-    return TruthScores(pairs=pairs, threshold=threshold, calibration=calibration)
+    return TruthScores(
+        pairs=pairs,
+        threshold=threshold,
+        best_threshold=best_threshold,
+        calibration=calibration,
+    )
 
 
 def _eligible(left: str, right: str, p: float, **fields: object) -> dict[str, object]:
@@ -1341,16 +1363,23 @@ def test_the_profile_states_calibration_and_threshold() -> None:
             "crosswalk_share": pl.Float64,
         },
     )
-    scoring = scoring_profile(groups, scores=_scores(threshold=0.4))
+    scoring = scoring_profile(
+        groups, scores=_scores(threshold=0.4, best_threshold=0.37)
+    )
     profile = provider_profile(crosswalk, scoring=scoring)
     schema.validate(schema.PROVIDER_PROFILE, profile)
     assert profile.select(
-        "provider_code", "climate_usd", "scoring_group", "calibration", "threshold"
+        "provider_code",
+        "climate_usd",
+        "scoring_group",
+        "calibration",
+        "threshold",
+        "best_threshold",
     ).rows() == [
-        (1, 5.0, "truth", "own", 0.4),
-        (2, 6.0, None, None, None),
-        (3, 7.0, "splink", None, None),
+        (1, 5.0, "truth", "own", 0.4, 0.37),
+        (2, 6.0, None, None, None, None),
+        (3, 7.0, "splink", None, None, None),
     ]
     empty = provider_profile(crosswalk, scoring=scoring_profile(groups, scores=None))
     schema.validate(schema.PROVIDER_PROFILE, empty)
-    assert empty["threshold"].null_count() == 3
+    assert empty.select("threshold", "best_threshold").null_count().row(0) == (3, 3)

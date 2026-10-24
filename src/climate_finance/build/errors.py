@@ -58,6 +58,23 @@ class LinkInputError(BuildError):
     """Link-stage inputs that a linking route cannot use."""
 
 
+class LinkThresholdError(BuildError):
+    """The classifier's F1 on its training pairs at the fixed link threshold falls
+    too far below its best on the threshold grid (`link.score.F1_TOLERANCE`)."""
+
+    def __init__(
+        self, *, threshold: float, f1: float, best_threshold: float, best_f1: float
+    ) -> None:
+        self.threshold = threshold
+        self.f1 = f1
+        self.best_threshold = best_threshold
+        self.best_f1 = best_f1
+        super().__init__(
+            f"Training F1 is {f1:.4f} at the link threshold {threshold:.2f} and "
+            f"{best_f1:.4f} at {best_threshold:.2f}; refit the link threshold."
+        )
+
+
 class ReviewDecisionsError(BuildError):
     """Decisions that cannot be recorded, such as a labels CSV whose pairs do not
     match the packet it answers."""

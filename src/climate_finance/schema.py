@@ -592,8 +592,9 @@ PAIR_SCORES = _table(
 # The scoring columns (`link.score`) are null for a provider with no candidate pairs:
 # `scoring_group` from the counts beside it, `true_pairs` counting true training
 # pairs, `commitments` and `pairs` the commitments and pairs open to scoring, and for
-# the truth group the isotonic map its pairs took (`calibration`) and the
-# classifier's link `threshold`.
+# the truth group the isotonic map its pairs took (`calibration`), the classifier's
+# link `threshold` (`link.score.LINK_THRESHOLD`), and the grid threshold of highest
+# training F1 (`best_threshold`).
 PROVIDER_PROFILE = _table(
     "provider_profile",
     ("provider_code",),
@@ -607,6 +608,7 @@ PROVIDER_PROFILE = _table(
     pairs=Column(pl.Int32(), nullable=True),
     calibration=_str(nullable=True, values=("own", "pooled")),
     threshold=_f64(nullable=True),
+    best_threshold=_f64(nullable=True),
 )
 
 # A CRS record's disbursement at face value, split over CRDF commitments (`row_id`).

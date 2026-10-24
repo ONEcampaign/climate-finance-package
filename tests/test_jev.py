@@ -102,7 +102,9 @@ def _scores(rows: list[dict[str, object]]) -> TruthScores:
         {"provider_code": [1, 2], "calibration": ["own", "pooled"]},
         schema={"provider_code": pl.Int32, "calibration": pl.String},
     )
-    return TruthScores(pairs=pairs, threshold=0.5, calibration=calibration)
+    return TruthScores(
+        pairs=pairs, threshold=0.5, best_threshold=0.5, calibration=calibration
+    )
 
 
 def _world(rows: list[dict[str, object]]) -> tuple[pl.DataFrame, pl.LazyFrame]:
