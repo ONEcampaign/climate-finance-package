@@ -146,6 +146,7 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
         None,
         None,
         None,
+        None,
     ]
     assert sources[2]["version"] == "fixture"
     assert sources[2]["urls"] == ["https://example.org/crs"]
