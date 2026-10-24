@@ -4,7 +4,7 @@
   "package_version": "2.0.0.dev0",
   "tables": {
     "disbursements": {
-      "sha256": "b8f18e0b651751ec4a9181a94ad4b48dd6157abd5b2562b140184397cb5ea153",
+      "sha256": "d5350b6e4f79027d98e29ce15466b6541b240fe6cfe4fc343de31d77e7c9a2c5",
       "rows": 36
     },
     "objectives": {
@@ -12,8 +12,12 @@
       "rows": 69
     },
     "agency_shares": {
-      "sha256": "961970dd2ccc3f7558f9bc842f9a4dd8f0056f216c6910fc329afb5ac06cac0f",
-      "rows": 25
+      "sha256": "2ce3f2ea7d30defc4770ed1fdd183c67416f59b2d9130503f85dece5148237f7",
+      "rows": 13
+    },
+    "agency_spending": {
+      "sha256": "c087deadb5c46726afcae35f7c0cc7b07ba6d86a2c40c850fc545ee005e1a180",
+      "rows": 12
     },
     "modelled": {
       "sha256": "92784c29c5b001f8fe979ca655b262455bc68630aea6fef03d92e18b13227257",
@@ -40,8 +44,12 @@
       "rows": 14
     },
     "quality": {
-      "sha256": "91308a44355ba9c7b6c3f33f98531ff48f3d7ce7fbfce73742951a79a33d9f16",
+      "sha256": "dbd3b73128a31f4b9e79f85fb0c791e8dc456d4b1204f324ed600f06cd19ca87",
       "rows": 12
+    },
+    "unallocated": {
+      "sha256": "da156e69260e65eb54373fdc3c9d69243860b62d498473f8528406fd58a9f7dd",
+      "rows": 3
     },
     "total_flows": {
       "sha256": "7e5f2b374b36045ce00bc5817827fb1b6d63642242086b3f175c035cfebf6de9",
@@ -56,6 +64,21 @@
     "jev": "jev-1.14.0"
   },
   "gates": {},
+  "settings": {
+    "offline": true,
+    "key_repair": true,
+    "recoveries": true,
+    "years": {
+      "crdf": [
+        2021,
+        2022
+      ],
+      "crs": [
+        2021,
+        2023
+      ]
+    }
+  },
   "precision_gate_waived": false,
   "previous_release": null
 }

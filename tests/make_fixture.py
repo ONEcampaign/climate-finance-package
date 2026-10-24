@@ -5,9 +5,11 @@ Run `uv run python tests/make_fixture.py [out_dir]`. The snapshot is schema-vali
 passes `release_invariants`, and covers six providers, a Bi_Multi 2 row, Bi_Multi 4
 rows, an id-less multilateral row, a modelled-line provider, every status, every link
 method, a CRS record split across two commitments with excess, a bank-ledger gap
-fill, cross-cutting agency shares, a climate share with no split by objective, core
-contributions for every flow, and a confirmed and an unconfirmed provider
-coefficient. Amounts are invented.
+fill, cross-cutting agency shares measured from markers and from components, a
+climate share with no split by objective, core contributions for every flow, a
+confirmed and an unconfirmed provider coefficient, commitments reached through
+certain and estimated CRDF routes, and unallocated disbursements of each kind.
+Amounts are invented.
 
 Run `uv run python tests/make_fixture.py --from-release <dir> [out_dir]` to sample a
 built release: about 300 commitments and their 2,000 or so CRS records from six
@@ -24,6 +26,7 @@ import polars as pl
 from climate_finance import __version__
 from climate_finance.build import write_table
 from climate_finance.schema import (
+    CERTAIN_ROUTES,
     FLOWS,
     LINK_METHODS,
     RELEASE_TABLES,
@@ -129,13 +132,23 @@ SPLIT_ALLOCATIONS = (
 LEDGER_RECORD = "AFDB-1-LEDGER"
 LEDGER_ALLOCATED = 1e6
 
-# Agency shares of climate spending by objective, (adaptation, mitigation,
-# cross_cutting), adaptation and mitigation each including cross_cutting.
-AGENCY_SHARES = {
-    (IDA_CH, "oecd"): (0.20, 0.25, 0.05),
-    (IDA_CH, "one"): (0.18, 0.22, 0.04),
-    (AFDB_CH, "oecd"): (0.30, 0.35, 0.10),
-    (AFDB_CH, "one"): (0.27, 0.30, 0.08),
+# The OECD's imputed agency shares of climate spending by objective, (adaptation,
+# mitigation, cross_cutting), adaptation and mitigation each including cross_cutting.
+AGENCY_SHARES = {IDA_CH: (0.20, 0.25, 0.05), AFDB_CH: (0.30, 0.35, 0.10)}
+# Each agency's commitments by Rio markers as fractions of its spending, with the
+# components of rows that report them: (rio_adaptation, rio_mitigation, face_share,
+# (adaptation_share, mitigation_share, overlap_share) or None). Under ONE the IDA's
+# markers give shares of 0.18, 0.22 and 0.04: significant markers at 0.4 of 0.2 + 0.2
+# + 0.1, principal ones at 1.0 of 0.06 + 0.1. The AfDB reports components alone.
+AGENCY_SPENDING = {
+    IDA_CH: (
+        (2, 0, 0.06, None),
+        (1, 0, 0.2, None),
+        (0, 2, 0.1, None),
+        (0, 1, 0.2, None),
+        (1, 1, 0.1, None),
+    ),
+    AFDB_CH: ((None, None, 0.6, (0.27, 0.30, 0.08)),),
 }
 # AfDB's OECD share for 2020: a climate total with no split by objective, as the
 # OECD gives before 2021. AfDB has no ONE share that year.
@@ -156,6 +169,19 @@ CORE_CONTRIBUTIONS = (
 CORE_FLOW_FACTOR = {"commitments": 1.2, "disbursements": 1.0, "grant_equivalent": 1.0}
 # Germany's coefficient is confirmed. Japan's is not, so PROVIDER gives Japan 0.4.
 PROVIDER_COEFFICIENTS = ((DEU, 0.5, True), (JPN, 0.6, False))
+# The route by which a commitment's CRDF row reaches its CRS commitment, where it is
+# not `within_year`.
+CRDF_ROUTES = {"NOR-1": "crosswalk_amount", "JPN-3": "title_recipient"}
+# Rio-marked disbursements that reach no commitment: (provider, year,
+# outside_release_usd, unlinked_marked_usd). Excess comes from the records' rows.
+UNALLOCATED = ((DEU, 2022, 4e6, 2.5e6), (FRA, 2021, 0.0, 3e6))
+# The build settings the fixture claims, as `release.json` records them.
+SETTINGS = {
+    "offline": True,
+    "key_repair": True,
+    "recoveries": True,
+    "years": {"crdf": [2021, 2022], "crs": [2021, 2023]},
+}
 
 
 def _climate_split(
@@ -393,15 +419,34 @@ def build_tables() -> dict[str, pl.DataFrame]:
                 "year": year,
                 "objective": objective,
                 "share": share,
-                "source": source,
+                "source": "oecd",
             }
-            for (channel, source), shares in AGENCY_SHARES.items()
+            for channel, shares in AGENCY_SHARES.items()
             for year in (2021, 2022)
             for objective, share in zip(
                 ("adaptation", "mitigation", "cross_cutting"), shares, strict=True
             )
         ]
         + [CLIMATE_ONLY_SHARE],
+        "agency_spending": [
+            {
+                "channel_code": channel,
+                "year": year,
+                "rio_adaptation": rio_a,
+                "rio_mitigation": rio_m,
+                "face_share": face,
+                **dict(
+                    zip(
+                        ("adaptation_share", "mitigation_share", "overlap_share"),
+                        components or (None, None, None),
+                        strict=True,
+                    )
+                ),
+            }
+            for channel, rows in AGENCY_SPENDING.items()
+            for year in (2021, 2022)
+            for rio_a, rio_m, face, components in rows
+        ],
         "modelled": [
             {
                 "provider_code": IFC,
@@ -486,6 +531,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
         list(commitments.values()), frames["disbursements"]
     )
     frames["quality"] = _quality(frames["commitments"], frames["disbursements"])
+    frames["unallocated"] = _unallocated(frames["disbursements"])
     frames["total_flows"] = _total_flows(
         frames["commitments"], frames["disbursements"], frames["core_contributions"]
     )
@@ -554,32 +600,33 @@ TRACED = ("disbursed", "partly_disbursed", "no_disbursement_record")
 
 
 def _quality(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataFrame:
-    """Climate value by provider and commitment year (all of it, the part that
-    traces, and the part whose most probable link is at least 0.8), and the share of
-    the traced commitments' records with a grant equivalent."""
-    links = disbursements.group_by("row_id").agg(
-        best_probability=pl.col("link_probability").max(),
-        records=pl.len(),
-        with_grant_equiv=pl.col("record_grant_equiv_usd").is_not_null().sum(),
+    """Climate value by provider and commitment year: all of it, the part that
+    traces, and the traced part whose CRDF route is certain; and the share of the
+    traced commitments' allocated value whose record has a grant equivalent."""
+    allocated = pl.col("allocated_usd")
+    allocations = disbursements.group_by("row_id").agg(
+        allocated=allocated.sum(),
+        with_grant_equiv=allocated.filter(
+            pl.col("record_grant_equiv_usd").is_not_null()
+        ).sum(),
     )
     climate = pl.col("climate_usd")
     traced = pl.col("status").is_in(TRACED)
+    route = pl.col("row_id").replace_strict(CRDF_ROUTES, default="within_year")
     return (
-        commitments.join(links, on="row_id", how="left")
+        commitments.join(allocations, on="row_id", how="left")
         .group_by("provider_code", "year")
         .agg(
             commitments=pl.len().cast(pl.Int32),
             climate_usd=climate.sum(),
             linked_usd=climate.filter(traced).sum(),
-            linked_high_probability_usd=climate.filter(
-                traced, pl.col("best_probability") >= 0.8
-            ).sum(),
-            linked_records=pl.col("records").filter(traced).sum(),
+            certain_route_usd=climate.filter(traced, route.is_in(CERTAIN_ROUTES)).sum(),
+            allocated=pl.col("allocated").filter(traced).sum(),
             with_grant_equiv=pl.col("with_grant_equiv").filter(traced).sum(),
         )
         .with_columns(
-            grant_equiv_coverage=pl.when(pl.col("linked_records") > 0).then(
-                pl.col("with_grant_equiv") / pl.col("linked_records")
+            grant_equiv_coverage=pl.when(pl.col("allocated") > 0).then(
+                pl.col("with_grant_equiv") / pl.col("allocated")
             )
         )
         .with_columns(
@@ -588,6 +635,38 @@ def _quality(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataF
             repeat_climate_usd=pl.lit(0.0),
         )
         .select(list(RELEASE_TABLES["quality"].columns))
+    )
+
+
+def _unallocated(disbursements: pl.DataFrame) -> pl.DataFrame:
+    """Per provider and disbursement year, each record's disbursement beyond its
+    allocations, with `UNALLOCATED`'s amounts outside the release and unlinked."""
+    excess = (
+        disbursements.group_by("provider_code", "year", "record_id")
+        .agg(
+            excess_usd=pl.col("record_disbursement_usd").first()
+            - pl.col("allocated_usd").sum()
+        )
+        .group_by("provider_code", "year")
+        .agg(pl.col("excess_usd").sum())
+    )
+    other = pl.DataFrame(
+        UNALLOCATED,
+        schema=["provider_code", "year", "outside_release_usd", "unlinked_marked_usd"],
+        orient="row",
+    )
+    columns = _polars_schema("unallocated")
+    return (
+        excess.join(
+            other.cast({name: columns[name] for name in other.columns}),
+            on=["provider_code", "year"],
+            how="full",
+            coalesce=True,
+        )
+        .with_columns(pl.col("^.*_usd$").fill_null(0.0))
+        .filter(pl.sum_horizontal("^.*_usd$") > 0)
+        .select(pl.col(name).cast(dtype) for name, dtype in columns.items())
+        .sort("provider_code", "year")
     )
 
 
@@ -604,6 +683,7 @@ def write_fixture(out_dir: Path) -> ReleaseManifest:
             source_versions={"crs": "fixture", "crdf": "fixture"},
             model_versions={"jev": "jev-1.14.0"},
             gates={},
+            settings=SETTINGS,
             precision_gate_waived=False,
         ),
     )

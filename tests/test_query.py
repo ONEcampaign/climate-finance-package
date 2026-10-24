@@ -19,8 +19,8 @@ from releases import copy_release
 import climate_finance as cf
 from climate_finance import convert as convert_module
 from climate_finance.methods import OECD, ONE, RANGE, Method, MethodRange, label
-from climate_finance.query import BILATERAL, EU_CHANNELS, EU_INSTITUTIONS
-from climate_finance.result import AMOUNTS
+from climate_finance.query import BILATERAL, EU_CHANNELS, EU_INSTITUTIONS, _aggregate
+from climate_finance.result import AMOUNTS, ROW_KEYS
 from climate_finance.snapshot import Snapshot
 from climate_finance.spec import Spec
 
@@ -75,6 +75,21 @@ def test_value_is_the_objectives_plus_unsplit(spec: Spec) -> None:
 
 def test_quality_summary_matches_its_golden_table() -> None:
     _golden("quality_summary", SNAP.quality().summary())
+
+
+def test_certain_route_share_is_certain_route_value_over_climate_value() -> None:
+    table = SNAP.table("quality").collect()
+    summary = SNAP.quality().summary()
+
+    expected = table.group_by("provider_code").agg(
+        share=pl.col("certain_route_usd").sum() / pl.col("climate_usd").sum()
+    )
+    joined = summary.join(expected, on="provider_code", validate="1:1")
+    assert joined.height == table["provider_code"].n_unique()
+    assert joined["certain_route_share"].to_list() == pytest.approx(
+        joined["share"].to_list()
+    )
+    assert (joined["certain_route_share"] < joined["link_rate"]).any()
 
 
 GRID = [
@@ -192,17 +207,23 @@ def test_the_provider_view_attributes_core_contributions_of_its_flow(
     assert rows["recipient_code"].is_null().all()
 
 
-# Fixture inputs: Germany gives IDA (channel 44002) 60m in 2021; IDA's ONE shares are
-# adaptation 0.18, mitigation 0.22 and cross-cutting 0.04, its OECD shares 0.20,
-# 0.25 and 0.05, each of adaptation and mitigation including the cross-cutting share.
+# Fixture inputs: Germany gives IDA (channel 44002) 60m in 2021. IDA's commitments,
+# as fractions of its spending, are 0.06 principal adaptation, 0.2 significant
+# adaptation, 0.1 principal mitigation, 0.2 significant mitigation and 0.1
+# significant on both, so its ONE shares are adaptation 0.18, mitigation 0.22 and
+# cross-cutting 0.04. Its OECD shares are 0.20, 0.25 and 0.05, each of adaptation
+# and mitigation including the cross-cutting share.
+ONE_IDA = (60e6 * 0.14, 60e6 * 0.18, 60e6 * 0.04, 60e6 * (0.18 + 0.22 - 0.04))
+# Significant markers at 1.0: adaptation 0.06 + 0.2, mitigation 0.1 + 0.2, and 0.1
+# cross-cutting.
+SIGNIFICANT_IDA = (60e6 * 0.26, 60e6 * 0.30, 60e6 * 0.10, 60e6 * 0.66)
+
+
 @pytest.mark.parametrize(
     ("method", "expected"),
     [
         # The highest-marker rule takes cross-cutting out of both objectives.
-        (
-            cf.methods.ONE,
-            (60e6 * 0.14, 60e6 * 0.18, 60e6 * 0.04, 60e6 * (0.18 + 0.22 - 0.04)),
-        ),
+        (cf.methods.ONE, ONE_IDA),
         (
             cf.methods.OECD,
             (60e6 * 0.20, 60e6 * 0.25, 60e6 * 0.05, 60e6 * (0.20 + 0.25 - 0.05)),
@@ -211,6 +232,17 @@ def test_the_provider_view_attributes_core_contributions_of_its_flow(
         (
             cf.methods.OECD.replace(eu="channel"),
             (60e6 * 0.20, 60e6 * 0.25, 60e6 * 0.05, 60e6 * (0.20 + 0.25 - 0.05)),
+        ),
+        # Agency shares follow the method's coefficients.
+        (cf.methods.ONE.replace(significant=1.0), SIGNIFICANT_IDA),
+        # Agencies take the method's significant coefficient, not Germany's 0.5.
+        (cf.methods.PROVIDER, ONE_IDA),
+        (cf.methods.PROVIDER.replace(significant=1.0), SIGNIFICANT_IDA),
+        # Each marker counts: adaptation 0.06 + 0.4 x 0.3, mitigation 0.1 + 0.4 x
+        # 0.3, overlap 0.4 x 0.1.
+        (
+            cf.methods.ONE.replace(highest_marker=False),
+            (60e6 * 0.18, 60e6 * 0.22, 60e6 * 0.04, 60e6 * 0.36),
         ),
     ],
 )
@@ -238,9 +270,12 @@ def test_a_climate_only_share_attributes_value_as_unsplit() -> None:
     rows = result.rows(origin="attribution")
     assert rows["method"].to_list() == ["OECD"]
     assert rows.select(columns).row(0) == expected
-    assert result.table.to_polars().select(columns).row(0) == expected
+    # ONE and PROVIDER hold no AfDB share for 2020, so the range's low bound is 0.
+    oecd = pl.col("method") == "OECD"
+    table = result.table.to_polars().filter(oecd)
+    assert table.select(columns).row(0) == (*expected[:5], 0.0, expected[6])
     # France's 2020 code 2 flows total 1.5 times its contribution.
-    share = result.share_of_total().table.to_polars()["value"].item()
+    share = result.share_of_total().table.to_polars().filter(oecd)["value"].item()
     assert share == pytest.approx(0.35 / 1.5)
     assert "Channels 46002: the climate share has no split" in result.explain()
     assert "value sits in unsplit" in result.explain()
@@ -313,6 +348,58 @@ def test_a_zero_central_allocation_keeps_its_upper_bound(tmp_path: Path) -> None
     assert row["allocation_weight"].to_list() == [None]
 
 
+def test_a_range_bounds_every_key_under_every_method(tmp_path: Path) -> None:
+    # Without ONE shares or spending for AfDB, France's attribution to it counts under
+    # OECD only.
+    def oecd_only_for_afdb(frame: pl.DataFrame) -> pl.DataFrame:
+        return frame.filter(
+            (pl.col("channel_code") != 46002) | (pl.col("source") == "oecd")
+        )
+
+    release = copy_release(
+        tmp_path / "release",
+        edits={
+            "agency_shares": oecd_only_for_afdb,
+            "agency_spending": lambda frame: frame.filter(
+                pl.col("channel_code") != 46002
+            ),
+        },
+    )
+    result = cf.load(path=release).spending(method=RANGE, view="provider")
+    table = result.table.to_polars()
+
+    assert set(result.rows(origin="attribution", provider_code=4)["method"]) == {"OECD"}
+    by_method = table.partition_by("method", as_dict=True, include_key=False)
+    keys = [frame.select(ROW_KEYS).sort(pl.all()) for frame in by_method.values()]
+    for other in keys[1:]:
+        assert_frame_equal(keys[0], other)
+    bounds = table.group_by("method").agg(pl.col("low").sum(), pl.col("high").sum())
+    assert bounds["low"].n_unique() == bounds["high"].n_unique() == 1
+    assert table.filter(pl.col("provider_code") == 4)["low"].min() == 0.0
+
+
+def test_sums_do_not_depend_on_row_order() -> None:
+    # Summed in the order given, 1e16 + 1 - 1e16 is 0 and 1e16 - 1e16 + 1 is 1.
+    values = pl.Series([1e16, 1.0, -1e16])
+    rows = pl.DataFrame(
+        {
+            "year": pl.Series([2021] * 3, dtype=pl.Int16),
+            "provider_code": pl.Series([5] * 3, dtype=pl.Int32),
+            "recipient_code": pl.Series([248] * 3, dtype=pl.Int32),
+            "bi_multi": pl.Series([1] * 3, dtype=pl.Int8),
+            "method": ["ONE"] * 3,
+            **dict.fromkeys(AMOUNTS, values),
+        }
+    )
+
+    def summed(order: list[int]) -> pl.DataFrame:
+        return _aggregate(rows[order].lazy(), methods=["ONE"]).collect()
+
+    first = summed([0, 1, 2])
+    for order in ([0, 2, 1], [1, 0, 2], [2, 0, 1]):
+        assert_frame_equal(first, summed(order), check_exact=True)
+
+
 def test_a_range_of_close_methods_counts_each_member_once() -> None:
     close = (ONE.replace(significant=0.5000001), ONE.replace(significant=0.5000002))
     spec = Spec(providers=(5,), recipients=(248,), years=(2022,))
@@ -343,6 +430,44 @@ def test_oecd_attribution_uses_the_imputed_shares() -> None:
         return rows["value"].sum()
 
     assert attributed(cf.methods.OECD) > attributed(cf.methods.ONE)
+
+
+def test_agency_shares_stand_in_where_agency_spending_measures_none(
+    tmp_path: Path,
+) -> None:
+    # AfDB (channel 46002) loses its measured 2022 share and gains a `one` share in
+    # its place; IDA's `one` share in 2021 sits beside a measured one and is unused.
+    def stand_in(frame: pl.DataFrame) -> pl.DataFrame:
+        added = frame.filter(pl.col("year") == 2021).with_columns(
+            source=pl.lit("one"),
+            year=pl.when(pl.col("channel_code") == 46002).then(2022).otherwise(2021),
+            share=pl.col("share") / 10,
+        )
+        return pl.concat([frame, added.cast(frame.schema)])
+
+    release = copy_release(
+        tmp_path / "release",
+        edits={
+            "agency_shares": stand_in,
+            "agency_spending": lambda frame: frame.filter(
+                (pl.col("channel_code") != 46002) | (pl.col("year") != 2022)
+            ),
+        },
+    )
+    rows = cf.load(path=release).spending(view="provider").rows(origin="attribution")
+    totals = rows.group_by("channel_code", "year").agg(pl.col("value").sum())
+    value = {(channel, year): total for channel, year, total in totals.iter_rows()}
+    # France gives AfDB 25m a year: in 2021 at its components, 0.27 + 0.30 - 0.08;
+    # in 2022 at its OECD shares over 10, 0.055. Germany and Norway give IDA 75m a
+    # year at its measured climate share, 0.36.
+    assert value == pytest.approx(
+        {
+            (46002, 2021): 25e6 * 0.49,
+            (46002, 2022): 25e6 * 0.055,
+            (44002, 2021): 75e6 * 0.36,
+            (44002, 2022): 75e6 * 0.36,
+        }
+    )
 
 
 def test_grant_equivalent_gaps_stay_missing() -> None:
