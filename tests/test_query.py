@@ -4,6 +4,7 @@ Golden tables live in tests/golden/; set CF_UPDATE_GOLDEN=1 to rewrite them afte
 deliberate change, then review the diff.
 """
 
+import inspect
 import itertools
 import os
 from pathlib import Path
@@ -76,12 +77,14 @@ def test_value_stays_within_face_and_between_its_bounds(flow: str, view: str) ->
         assert (known["value"] <= known["high"]).all()
 
 
-def _without_code_2(tmp_path: Path) -> Snapshot:
+@pytest.fixture(scope="module")
+def without_code_2(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
+    """The fixture release without its Bi_Multi 2 commitments and their rows."""
     code_2 = SNAP.table("commitments").filter(pl.col("bi_multi") == 2).collect()
     assert code_2.height, "the fixture needs a Bi_Multi 2 commitment"
     keep = ~pl.col("row_id").is_in(code_2["row_id"].implode())
     release = copy_release(
-        tmp_path / "release",
+        tmp_path_factory.mktemp("without_code_2") / "release",
         edits={
             "commitments": lambda frame: frame.filter(keep),
             "disbursements": lambda frame: frame.filter(keep),
@@ -93,14 +96,14 @@ def _without_code_2(tmp_path: Path) -> Snapshot:
 @pytest.mark.parametrize("flow", FLOWS)
 @pytest.mark.parametrize("view", VIEWS)
 def test_code_2_rows_leave_every_total_unchanged(
-    tmp_path: Path, flow: str, view: str
+    without_code_2: Snapshot, flow: str, view: str
 ) -> None:
     spec = Spec(method=cf.methods.RANGE, flow=flow, view=view)
-    stripped = _without_code_2(tmp_path)
-
     with_code_2 = SNAP.spending(spec=spec).table.to_polars()
 
-    assert_frame_equal(with_code_2, stripped.spending(spec=spec).table.to_polars())
+    assert_frame_equal(
+        with_code_2, without_code_2.spending(spec=spec).table.to_polars()
+    )
     bilateral = with_code_2.filter(pl.col("bi_multi").is_in(BILATERAL))
     assert bilateral.height
 
@@ -136,6 +139,16 @@ def test_keyword_arguments_build_the_same_spec() -> None:
     result = SNAP.spending(providers=5, years=range(2021, 2023), view="provider")
 
     assert result.spec == Spec(providers=(5,), years=(2021, 2022), view="provider")
+
+
+def test_spending_defaults_match_the_spec_defaults() -> None:
+    parameters = inspect.signature(Snapshot.spending).parameters
+    fields = Spec.model_fields
+
+    assert set(fields) <= set(parameters)
+    assert {name: parameters[name].default for name in fields} == {
+        name: field.default for name, field in fields.items()
+    }
 
 
 @pytest.mark.parametrize("flow", FLOWS)

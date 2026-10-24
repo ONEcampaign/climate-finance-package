@@ -36,16 +36,6 @@ def _run(code: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_importing_the_package_loads_no_build_or_compat_module() -> None:
-    result = _run(
-        "import sys, climate_finance\n"
-        f"print(sorted(m for m in {BUILD_ONLY + COMPAT_ONLY!r} if m in sys.modules))"
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "[]"
-
-
 def test_usd_queries_by_name_and_compare_load_no_build_compat_or_conversion() -> None:
     result = _run(
         "import sys\n"

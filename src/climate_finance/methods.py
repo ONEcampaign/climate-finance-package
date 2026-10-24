@@ -7,9 +7,8 @@ import polars as pl
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from climate_finance.catalogue import Catalogue
+from climate_finance.schema import OBJECTIVES
 
-type Objective = Literal["adaptation", "mitigation", "cross_cutting"]
-OBJECTIVES: tuple[Objective, ...] = ("adaptation", "mitigation", "cross_cutting")
 NOT_CLIMATE = "not_climate_relevant"
 
 
@@ -31,6 +30,11 @@ class Method(Frozen):
     highest_marker: bool
     coefficients: Literal["fixed", "provider"] = "fixed"
     relevance: Literal["markers", "jev"] = "markers"
+
+    @property
+    def methods(self) -> tuple[Self, ...]:
+        """The method itself, so a method and a range both list their members."""
+        return (self,)
 
     def _repr_markdown_(self) -> str:
         return describe(self)

@@ -11,6 +11,13 @@ type View = Literal["recipient", "provider"]
 type Currency = Literal["USD", "EUR", "GBP", "CAD"]
 type Measure = Literal["amount", "share_of_total"]
 
+# Bi_Multi codes: bilateral flows, multilateral outflows and core contributions.
+BILATERAL = (1, 3, 7, 8)
+MULTILATERAL_OUTFLOW = 4
+CORE_CONTRIBUTION = 2
+# CRS flow codes that count as ODA.
+ODA_FLOW_CODES = (11, 13, 19)
+
 
 class Spec(Frozen):
     """Every argument of `Snapshot.spending`, as a frozen pydantic model.
@@ -52,6 +59,4 @@ class Spec(Frozen):
     @property
     def methods(self) -> tuple[Method, ...]:
         """The methods `method` names: itself, or each method of a range."""
-        if isinstance(self.method, Method):
-            return (self.method,)
         return self.method.methods

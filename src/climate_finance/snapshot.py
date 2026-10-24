@@ -84,11 +84,11 @@ class Snapshot:
         method: Method | MethodRange = ONE,
     ) -> Reconciliation:
         """Compare each party's BTR figures with OECD data."""
-        raise NotImplementedError("slice S19b")
+        raise NotImplementedError("BTR reconciliation is not implemented")
 
     def disbursement_profile(self) -> pl.DataFrame:
         """Cumulative disbursed share of traceable value by years since commitment."""
-        raise NotImplementedError("slice S09c")
+        raise NotImplementedError("the disbursement profile is not implemented")
 
 
 def load(
@@ -108,7 +108,7 @@ def load(
             a table's sha256 differs from `release.json`.
     """
     if path is None:
-        raise NotImplementedError("downloading a release: slice S10b")
+        raise NotImplementedError("downloading a release is not implemented")
     path = Path(path).resolve()
     manifest_path = path / "release.json"
     if not manifest_path.is_file():

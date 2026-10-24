@@ -130,8 +130,7 @@ def _code(*, nullable: bool = False) -> Column:
     return Column(pl.Int32(), nullable=nullable)
 
 
-def _count() -> Column:
-    return Column(pl.Int32())
+_count = _code
 
 
 def _year(*, nullable: bool = False) -> Column:
@@ -610,27 +609,24 @@ PROVIDER_COEFFICIENTS = _table(
     confirmed=_bool(),
 )
 
-RELEASE_TABLES: Mapping[str, TableSchema] = {
-    table.name: table
-    for table in (
-        COMMITMENTS,
-        DISBURSEMENTS,
-        OBJECTIVE_LABELS,
-        AGENCY_SHARES,
-        MODELLED,
-        CORE_CONTRIBUTIONS,
-        BTR,
-        DISBURSEMENT_PROFILE,
-        QUALITY,
-        TOTAL_FLOWS,
-        PROVIDER_COEFFICIENTS,
-    )
-}
-
 
 def _by_name(*tables: TableSchema) -> Mapping[str, TableSchema]:
     return {table.name: table for table in tables}
 
+
+RELEASE_TABLES = _by_name(
+    COMMITMENTS,
+    DISBURSEMENTS,
+    OBJECTIVE_LABELS,
+    AGENCY_SHARES,
+    MODELLED,
+    CORE_CONTRIBUTIONS,
+    BTR,
+    DISBURSEMENT_PROFILE,
+    QUALITY,
+    TOTAL_FLOWS,
+    PROVIDER_COEFFICIENTS,
+)
 
 STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
     "fetch": _by_name(RAW_MANIFEST),
@@ -758,8 +754,12 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     sums = disbursements.group_by("row_id").agg(
         pl.col(part).sum().alias(f"_{part}") for part in _DISBURSED_SUMS.values()
     )
-    totals = commitments.join(sums, on="row_id", how="left").with_columns(
-        pl.col(f"_{part}").fill_null(0.0) for part in _DISBURSED_SUMS.values()
+    totals = (
+        commitments.select("row_id", *_DISBURSED_SUMS)
+        .join(sums, on="row_id", how="left")
+        .with_columns(
+            pl.col(f"_{part}").fill_null(0.0) for part in _DISBURSED_SUMS.values()
+        )
     )
     for total, part in _DISBURSED_SUMS.items():
         failing = totals.filter(
@@ -783,29 +783,39 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
 def _record_problems(disbursements: pl.DataFrame) -> list[str]:
     """Record-level columns that differ between a record's rows, and records whose
     allocations exceed their disbursement."""
-    records = disbursements.group_by("record_id").agg(
-        pl.col("allocated_usd").sum().alias("_allocated"),
-        *(
-            expression
-            for column in _RECORD_COLUMNS
-            for expression in (
-                (pl.col(column).max() - pl.col(column).min()).alias(f"_{column}_gap"),
-                pl.col(column).null_count().alias(f"_{column}_nulls"),
-            )
-        ),
-        pl.col("record_disbursement_usd").max().alias("_disbursement"),
-        pl.len().alias("_rows"),
+
+    def differs(column: str) -> pl.Expr:
+        gap = pl.col(column).max() - pl.col(column).min()
+        nulls = pl.col(column).null_count()
+        return (gap.fill_null(0.0) > INVARIANT_TOLERANCE_USD) | (
+            (nulls > 0) & (nulls < pl.len())
+        )
+
+    allocated = pl.col("allocated_usd").sum()
+    disbursement = pl.col("record_disbursement_usd").max()
+    flags = [f"_{column}_differs" for column in _RECORD_COLUMNS]
+    failing = (
+        disbursements.group_by("record_id")
+        .agg(
+            *(
+                differs(column).alias(flag)
+                for column, flag in zip(_RECORD_COLUMNS, flags, strict=True)
+            ),
+            _allocated=allocated,
+            _disbursement=disbursement,
+            _exceeds=allocated - disbursement > INVARIANT_TOLERANCE_USD,
+        )
+        .filter(pl.any_horizontal(*flags, "_exceeds"))
+        .sort("record_id")
     )
     problems = []
-    for row in records.sort("record_id").iter_rows(named=True):
-        for column in _RECORD_COLUMNS:
-            gap, nulls = row[f"_{column}_gap"], row[f"_{column}_nulls"]
-            if (gap or 0.0) > INVARIANT_TOLERANCE_USD or 0 < nulls < row["_rows"]:
-                problems.append(
-                    f"disbursements record {row['record_id']}: {column} differs "
-                    "between rows"
-                )
-        if row["_allocated"] - row["_disbursement"] > INVARIANT_TOLERANCE_USD:
+    for row in failing.iter_rows(named=True):
+        problems.extend(
+            f"disbursements record {row['record_id']}: {column} differs between rows"
+            for column, flag in zip(_RECORD_COLUMNS, flags, strict=True)
+            if row[flag]
+        )
+        if row["_exceeds"]:
             problems.append(
                 f"disbursements record {row['record_id']}: allocated_usd sums to "
                 f"{row['_allocated']!r}, above record_disbursement_usd "

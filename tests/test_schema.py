@@ -1,9 +1,20 @@
+from typing import get_args
+
 import polars as pl
 import pytest
 from make_fixture import FIXTURE_DIR
 
+from climate_finance import catalogue
 from climate_finance.errors import SchemaError
-from climate_finance.schema import RELEASE_TABLES, Column, TableSchema, validate
+from climate_finance.schema import (
+    FLOWS,
+    PERSPECTIVES,
+    RELEASE_TABLES,
+    Column,
+    TableSchema,
+    validate,
+)
+from climate_finance.spec import Flow, View
 
 TABLE = TableSchema(
     name="example",
@@ -77,3 +88,12 @@ def test_non_finite_amounts_are_refused(table: str, column: str, value: float) -
         validate(RELEASE_TABLES[table], broken)
 
     assert set(caught.value.problems) == {column}
+
+
+def test_the_query_vocabularies_match_the_schema() -> None:
+    assert (
+        set(get_args(Flow.__value__))
+        == set(FLOWS)
+        == set(catalogue.flows.list()["name"])
+    )
+    assert set(get_args(View.__value__)) == set(PERSPECTIVES)

@@ -32,19 +32,20 @@ def _by_objective(frame: pl.DataFrame) -> dict[str, float]:
     return dict(zip(frame["objective"], frame["value"], strict=True))
 
 
-def test_oecd_counts_a_significant_marker_in_full() -> None:
-    assert _by_objective(_indicators(1, 0, OECD)) == {"adaptation": DISBURSED}
-
-
-def test_one_counts_a_significant_marker_at_40_percent() -> None:
-    result = _by_objective(_indicators(1, 0, ONE))
-
-    assert result == {"adaptation": pytest.approx(0.4 * DISBURSED)}
-
-
-@pytest.mark.parametrize("method", [ONE, OECD])
-def test_a_principal_marker_counts_in_full_under_both(method: Method) -> None:
-    assert _by_objective(_indicators(0, 2, method)) == {"mitigation": DISBURSED}
+@pytest.mark.parametrize(
+    ("method", "adaptation", "mitigation", "expected"),
+    [
+        (OECD, 1, 0, {"adaptation": DISBURSED}),
+        (ONE, 1, 0, {"adaptation": pytest.approx(0.4 * DISBURSED)}),
+        (ONE, 0, 2, {"mitigation": DISBURSED}),
+        (OECD, 0, 2, {"mitigation": DISBURSED}),
+    ],
+    ids=["OECD significant", "ONE significant", "ONE principal", "OECD principal"],
+)
+def test_a_single_marker_counts_at_its_coefficient(
+    method: Method, adaptation: int, mitigation: int, expected: dict[str, float]
+) -> None:
+    assert _by_objective(_indicators(adaptation, mitigation, method)) == expected
 
 
 @pytest.mark.parametrize(

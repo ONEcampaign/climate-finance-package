@@ -1,6 +1,7 @@
 """`load(path=)` opens a release only when every table matches `release.json`."""
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import polars as pl
@@ -22,37 +23,39 @@ def test_load_opens_the_fixture_with_its_manifest(as_path) -> None:
     assert snap.table("commitments").collect().height == 14
 
 
-def test_a_table_whose_bytes_changed_fails_its_hash(tmp_path: Path) -> None:
-    release = copy_release(tmp_path / "release")
+def _change_bytes(release: Path) -> None:
     (release / "modelled.parquet").write_bytes(
         (release / "quality.parquet").read_bytes()
     )
 
-    with pytest.raises(ReleaseIntegrityError, match="modelled: sha256"):
-        cf.load(path=release)
 
-
-def test_a_missing_table_file_fails(tmp_path: Path) -> None:
-    release = copy_release(tmp_path / "release")
-    (release / "btr.parquet").unlink()
-
-    with pytest.raises(ReleaseIntegrityError, match=r"btr: btr\.parquet is missing"):
-        cf.load(path=release)
-
-
-def test_a_release_table_absent_from_the_manifest_fails(tmp_path: Path) -> None:
-    release = copy_release(tmp_path / "release")
+def _drop_from_manifest(release: Path) -> None:
     manifest = json.loads((release / "release.json").read_text())
     del manifest["tables"]["objectives"]
     (release / "release.json").write_text(json.dumps(manifest))
 
-    with pytest.raises(ReleaseIntegrityError, match="objectives: not in release"):
+
+@pytest.mark.parametrize(
+    ("damage", "message"),
+    [
+        (_change_bytes, "modelled: sha256"),
+        (
+            lambda release: (release / "btr.parquet").unlink(),
+            r"btr: btr\.parquet is missing",
+        ),
+        (_drop_from_manifest, "objectives: not in release"),
+        (lambda release: (release / "release.json").unlink(), r"no release\.json"),
+    ],
+    ids=["changed bytes", "missing file", "absent from manifest", "no release.json"],
+)
+def test_a_damaged_release_fails_its_check(
+    tmp_path: Path, damage: Callable[[Path], None], message: str
+) -> None:
+    release = copy_release(tmp_path / "release")
+    damage(release)
+
+    with pytest.raises(ReleaseIntegrityError, match=message):
         cf.load(path=release)
-
-
-def test_a_directory_without_release_json_fails(tmp_path: Path) -> None:
-    with pytest.raises(ReleaseIntegrityError, match=r"no release\.json"):
-        cf.load(path=tmp_path)
 
 
 def test_table_refuses_names_outside_the_release_contract() -> None:
