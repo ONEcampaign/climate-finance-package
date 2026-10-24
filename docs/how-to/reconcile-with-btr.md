@@ -32,7 +32,7 @@ snap = cf.load()
     NOR 2022 disbursed 1.67
     ```
 
-    A party can report an activity as both committed and disbursed, so each row compares the party's main status for the year, which is the status carrying the most face value. `btr_face` is the BTR total for that status.
+    A party can report an activity as both committed and disbursed. Each row compares the party's main status for the year, which is the status carrying the most face value. `btr_face` is the BTR total for that status.
 
 2. Pick the comparator that fits what the party reports. A party that reports commitments reads against `crdf_at_party_weight`, `crdf_at_100`, and `traced_climate_value`. A party that reports disbursements reads against `crs_disbursed_at_party_weight`. Each comes with its ratio, `btr_over_<comparator>`.
 

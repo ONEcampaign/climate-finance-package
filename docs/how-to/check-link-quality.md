@@ -30,7 +30,7 @@ quality = snap.quality(providers=["Germany", "Japan"])
     701 1.0 1.0
     ```
 
-    A low link rate means the provider's commitments reach no CRS record. Such commitments show as `not_traceable` or `no_disbursement_record`, and the figure for the provider is a floor.
+    A low link rate means the provider's commitments lack matching CRS records. Such commitments show as `not_traceable` or `no_disbursement_record`, and the figure for the provider is a lower bound.
 
 2. Read the status split. `summary()` holds one `<status>_share` column per status: `disbursed`, `partly_disbursed`, `no_disbursement_record`, `not_traceable`, and `pending_review`.
 
@@ -67,7 +67,7 @@ quality = snap.quality(providers=["Germany", "Japan"])
     701 0.09
     ```
 
-4. Read the measured precision. `quality.precision` holds one row per provider that went through the release's blind sample: `estimate` is the share of allocated value whose link a sample found right, `lower` and `upper` give its interval, and `passed` shows whether the lower bound reached the release's threshold. `waived` is true where the release shipped despite a failure.
+4. Read the measured precision. `quality.precision` holds one row per provider that went through the release's blind sample. `estimate` is the share of allocated value whose link a sample found right, `lower` and `upper` give its interval, and `passed` shows whether the lower bound reached the release's threshold. `waived` is true where the release shipped despite a failure.
 
     ```python
     print(quality.precision.to_polars().columns)

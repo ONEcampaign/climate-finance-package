@@ -10,7 +10,7 @@ In climate-finance 1.2.3, `ClimateData` downloaded OECD files, matched them, and
 
 ## Keep 1.x code running
 
-`ClimateData` imports from `climate_finance` and runs, with a `DeprecationWarning`, until 3.0. It is a wrapper that makes one `spending()` call per source and flow and returns pandas. `set_climate_finance_data_path` and `get_unfccc_data` import with the same warning and raise `NotImplementedError` naming their replacement when called.
+`ClimateData` imports from `climate_finance` and runs, with a `DeprecationWarning`, until 3.0. It wraps 2.0 by calling `spending()` once per source and flow and returning pandas. `set_climate_finance_data_path` and `get_unfccc_data` import with the same warning. Calling them raises `NotImplementedError` and names their replacement. Calls with no 2.0 equivalent also raise `NotImplementedError` and state that none exists.
 
 ```python
 from climate_finance import ClimateData
@@ -26,8 +26,6 @@ print(data.columns.tolist()[-6:])
 ```output
 ['unsplit', 'value', 'low', 'high', 'flow', 'source']
 ```
-
-Calls with no 2.0 equivalent raise `NotImplementedError` that names the replacement, or says none exists.
 
 ## Rewrite to the 2.0 API
 
@@ -71,14 +69,14 @@ print(len(data), "rows")
 | `get_unfccc_data()` | `snap.reconcile()` |
 | `get_multilateral_spending_shares()`, `load_multilateral_imputations_data()` | `spending(view="provider")`, with `method=cf.methods.OECD` for the OECD's imputed shares |
 
-`net_disbursements` has no 2.0 equivalent, because releases hold gross disbursements only. The UNFCCC source of `ClimateData` has no equivalent either. `snap.reconcile()` compares BTR reports with OECD data.
+Releases hold gross disbursements only, so `net_disbursements` has no 2.0 equivalent. The UNFCCC source of `ClimateData` has no equivalent either. `snap.reconcile()` compares BTR reports with OECD data.
 
 ## What else is different
 
 - The result is a polars table by default, with `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, and `high` columns. `result.rows()` returns the projects behind it.
 - A result carries its `Spec`. `snap.spending(spec=result.spec)` reruns it.
 - Names and codes resolve through `cf.providers` and `cf.recipients`. A misspelt name raises an error that suggests close matches.
-- Building a release fetches OECD data, using `cf-build` and the `build` extra; 2.0 itself reads the built release. [cf-build](reference/cf-build.md) lists the commands.
+- Building a release fetches OECD data, using `cf-build` and the `build` extra. 2.0 reads the built release. [cf-build](reference/cf-build.md) lists the commands.
 
 ## Verify it worked
 

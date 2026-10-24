@@ -1,18 +1,18 @@
 # climate-finance documentation
 
-climate-finance 2.0 returns international public climate finance from OECD and UNFCCC data. Each figure traces to the project records behind it and carries a low and a high bound. Install the package with `pip install climate-finance`.
+climate-finance 2.0 returns international public climate finance from OECD and UNFCCC data. Each figure traces to its project records and carries a low and a high bound. Install the package with `pip install climate-finance`.
 
 ## Learn
 
-- [Trace Japan's climate finance to Bangladesh](tutorial.md) loads a release, asks for a figure, follows it to the records behind it, and checks how much traces.
+- [Trace Japan's climate finance to Bangladesh](tutorial.md) loads a release, gets a figure, follows it to the project records, and checks the traced share.
 
 ## Do a task
 
 - [How to trace a figure](how-to/trace-a-figure.md) lists the projects and links behind a number, and saves the query to rerun.
 - [How to check link quality](how-to/check-link-quality.md) covers link rates, status, certain share, and measured precision.
-- [How to review links](how-to/review-links.md) explains how a person or an agent decides the pairs a build queued. For release managers.
+- [How to review links](how-to/review-links.md) shows release managers how a person or an agent decides the pairs a build queued.
 - [How to reconcile a party's BTR report with OECD data](how-to/reconcile-with-btr.md)
-- [How to cut a release](how-to/cut-a-release.md) covers how to build, sample, gate, and pack. For release managers.
+- [How to cut a release](how-to/cut-a-release.md) shows release managers how to build, sample, gate, and pack.
 - [Migrating from 1.x](migrating-from-1x.md)
 
 ## Look something up
@@ -24,9 +24,9 @@ climate-finance 2.0 returns international public climate finance from OECD and U
 
 ## Understand
 
-- [How linking works](explanation/how-linking-works.md) explains how a disbursement counts against a commitment, and which rows a release leaves out.
-- [Low and high bounds](explanation/low-and-high-bounds.md) explains which links count where.
-- [About the methods](explanation/methods.md) covers marker weights, comparing methods, attribution to providers, and EU Institutions.
+- [How linking works](explanation/how-linking-works.md) explains how a disbursement counts against a commitment, and which rows a release excludes.
+- [Low and high bounds](explanation/low-and-high-bounds.md) explains which links count in each bound.
+- [About the methods](explanation/methods.md) covers marker weights, method comparisons, provider attribution, and EU Institutions.
 
 ## Release notes
 

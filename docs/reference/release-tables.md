@@ -16,7 +16,7 @@ The release holds only processed tables and metadata. The Green Climate Fund's l
 Key `row_id`. One row per recipient-perspective CRDF commitment, which is the population the trace follows. Aggregate rows rebuilt from their parts keep the parts and omit the parent. Rows that repeat an earlier vintage stay, with their amounts and a `repeat_of`:
 
 - `row_id`, `vintage`, `year`: the CRDF row, the vintage of the CRDF file it came from, and the commitment year.
-- `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `purpose_code`: DAC codes. `bi_multi` is the Bi_Multi code. `flow_category` is the CRDF's flow category: 10 ODA, 21 other official flows, 22 and 30 private grants, and 60 private market flows.
+- `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `purpose_code`: DAC codes. `bi_multi` is the Bi_Multi code. `flow_category` is the CRDF's flow category, where 10 is ODA, 21 is other official flows, 22 and 30 are private grants, and 60 is private market flows.
 - `crs_id`, `project_number`: the donor's ids.
 - `rio_adaptation`, `rio_mitigation`: the Rio markers, 0, 1, or 2. `climate_share` is set for development-bank rows that report climate components, and null for marker rows.
 - `face_usd`, `climate_usd`, `adaptation_usd`, `mitigation_usd`, `overlap_usd`: the commitment and its climate part. Adaptation and mitigation each include the overlap, so `climate_usd` is `adaptation_usd` + `mitigation_usd` − `overlap_usd`. A negative `face_usd` is a published downward revision with zero disbursed.
@@ -32,10 +32,10 @@ Key `row_id`. One row per recipient-perspective CRDF commitment, which is the po
 Key `row_id`, `record_id`, `year`. Allocations of CRS records, and of bank-ledger and IATI fills, to climate commitments, one row per allocation. Every row names a commitment. The table omits any unallocated excess on a record:
 
 - `row_id`, `record_id`, `year`: the commitment, the CRS record (or fill record), and the record's year.
-- `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_code`, `project_number`, `title`: the record's own fields. `flow_code` is the CRS flow: 11 ODA grants, 13 ODA loans, and 19 equity.
+- `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_code`, `project_number`, `title`: the record's own fields. `flow_code` is the CRS flow, where 11 is ODA grants, 13 is ODA loans, and 19 is equity.
 - `allocated_usd`, `allocated_low_usd`, `allocated_high_usd`: the part of the record's disbursement given to the commitment, with `0 <= allocated_low_usd <= allocated_usd <= allocated_high_usd`.
 - `record_disbursement_usd`, `record_grant_equiv_usd`: the whole record's disbursement and grant equivalent, repeated on each row of the record. A query takes an allocation's grant equivalent as `record_grant_equiv_usd` × `allocated_usd` ÷ `record_disbursement_usd`.
-- `inherited_rio_adaptation`, `inherited_rio_mitigation`: the markers of the commitment, which weight the allocation. `record_rio_adaptation` and `record_rio_mitigation` are the record's own. `marker_source` says how they relate: `components`, `commitment`, or `record_differs`.
+- `inherited_rio_adaptation`, `inherited_rio_mitigation`: the markers of the commitment, which weight the allocation. `record_rio_adaptation` and `record_rio_mitigation` are the record's own. `marker_source` says how they relate, taking `components`, `commitment`, or `record_differs`.
 - `climate_share`: the commitment's share for rows weighted by climate components.
 - `link_method`, `link_probability`: the method that linked the record to the commitment and its probability. Null for fills.
 - `rule`: the allocation rule, which is `fifo`, `dated`, `window`, `excess`, `bank_ledger`, or `iati`.

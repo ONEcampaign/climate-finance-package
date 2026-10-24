@@ -32,7 +32,7 @@ result = snap.spending(providers="Japan", years=[2023])
     JPN-2 Climate project JPN-2 6.3
     ```
 
-2. Split certain from estimated links. Each row's `low` column holds the part of its value that certain links carried by certain routes, so the rows' `low` sums to the table's.
+2. Split certain from estimated links. Each row's `low` column holds the part of its value that certain links carried by certain routes, so the rows' `low` sums to the table's `low`.
 
     ```python
     print(
@@ -45,7 +45,7 @@ result = snap.spending(providers="Japan", years=[2023])
     12.0 12.0
     ```
 
-    Group the rows by `link_method` to see which methods carry the rest, and read `link_probability` for the build's confidence in each link. `link_method` alone does not reproduce `low`, since a certain link counts there only when its commitment's CRDF rows took a certain route.
+    Group the rows by `link_method` to see which methods carry the rest, and read `link_probability` for the build's confidence in each link. `low` requires both a certain link and a certain route for the commitment's CRDF rows.
 
 3. Check the status of each commitment. Group by `status` to see how much of the figure sits in fully and partly disbursed commitments.
 

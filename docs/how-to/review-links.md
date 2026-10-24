@@ -36,7 +36,7 @@ The queue also holds every commitment row allocated more than 1.1 times its face
     2,no_match,0.1,different recipient country
     ```
 
-4. Import the labels and name the reviewer. A person's decisions take no model. An agent's decisions require `--model` and may name the `--round`: `label` for a first label, `second` for a second label on an unsure pair, and `adjudicate` for a decision made with ids visible.
+4. Import the labels and name the reviewer. A person's decisions omit `--model`. An agent's decisions require `--model` and may name the `--round`, which takes one of three values: `label` for a first label, `second` for a second label on an unsure pair, and `adjudicate` for a decision made with ids visible.
 
     ```bash
     cf-build import-labels queue.md labels.csv --source human --reviewer analyst-1
@@ -57,7 +57,7 @@ The rebuilt queue omits the decided pairs. `cf-build queue` writes a smaller pac
 
 ## Blind-sample decisions are separate
 
-The precision gate draws its own sample with `cf-build sample` and reads decisions that carry a `sample_id`. Those decisions measure precision and leave models and links untouched, so they stay separate from the queue's decisions. See [Release gates](../reference/release-gates.md) for the sample rules.
+The precision gate draws its own sample with `cf-build sample` and reads decisions that carry a `sample_id`. Those decisions measure precision and leave models and links untouched, so they stay separate from the queue's decisions. [Release gates](../reference/release-gates.md) covers the sample rules.
 
 ## Next
 

@@ -62,7 +62,7 @@ for row in result.rows(origin="disbursement").iter_rows(named=True):
 2023 JPN-SPLIT pn_recipient partly_disbursed
 ```
 
-A link is certain when it is a `crs_id`, `crs_id_purpose`, `crs_id_parent`, or `wb_loan` link whose records agree on recipient and project number, or a record's link to its own commitment, and when the commitment's CRDF row reached its CRS commitment by a certain route. In this release only the 2023 `crs_id` link qualifies, which gives the 12.0 in the `low` column above. Every other method estimates the link from a project number, a title, a trained model, or a crosswalk, and counts in `value` alone. The synthetic release also carries `weak_classifier`, `programme_number`, and `title_recipient` as disbursement links, which the schema permits and no build writes. [How linking works](explanation/how-linking-works.md) lists the methods a build writes.
+A link is certain when two conditions hold. First, it is a `crs_id`, `crs_id_purpose`, `crs_id_parent`, or `wb_loan` link whose records agree on recipient and project number, or a record's link to its own commitment. Second, the commitment's CRDF row reached its CRS commitment by a certain route. In this release only the 2023 `crs_id` link qualifies, which gives the 12.0 in the `low` column above. Every other method estimates the link from a project number, a title, a trained model, or a crosswalk, and counts in `value` alone. The synthetic release also carries `weak_classifier`, `programme_number`, and `title_recipient` as disbursement links, which the schema permits and no build writes. [How linking works](explanation/how-linking-works.md) lists the methods a build writes.
 
 `status` belongs to the commitment. `partly_disbursed` means its linked records cover less than 90% of the matched CRS commitment's face value.
 
@@ -116,7 +116,7 @@ print(
 
 Every Japanese commitment in this release links to at least one CRS record (`link_rate` 1.0). Commitments disbursed to 90% or more hold 31% of the climate value, and partly disbursed commitments hold 69%.
 
-This synthetic release skips the blind-sample gate, leaving `snap.quality().precision` empty. In a published release, that table holds each provider's measured link precision and interval.
+This synthetic release skips the blind-sample gate, so `snap.quality().precision` is empty. In a published release, that table holds each provider's measured link precision and interval.
 
 ## Next
 

@@ -1,6 +1,6 @@
 # Python API
 
-Everything in version 2.0 imports from `climate_finance`, usually as `cf`. The names in `cf.__all__` form the public API. `Quality` and `Reconciliation`, the return types of `quality()` and `reconcile()`, live in `climate_finance.result`, and the errors in `climate_finance.errors`. [Migrating from 1.x](../migrating-from-1x.md) covers the deprecated 1.x names.
+Everything in version 2.0 imports from `climate_finance`, usually as `cf`. The names in `cf.__all__` form the public API. `Quality` and `Reconciliation`, the return types of `quality()` and `reconcile()`, live in `climate_finance.result`, and the errors live in `climate_finance.errors`. [Migrating from 1.x](../migrating-from-1x.md) covers the deprecated 1.x names.
 
 ## `cf.load(release="latest", *, path=None, cache_dir=None, refresh=False)`
 
@@ -138,7 +138,7 @@ A frozen pydantic model of every `spending()` argument. `Spec.methods` returns t
 | `prices` | `int \| "current"` | `"current"` |
 | `oda_only` | `bool` | `False` |
 
-With `view="recipient"`, the query counts bilateral flows (Bi_Multi 1, 3, 7, and 8) and multilateral outflows (code 4). With `view="provider"`, it counts the bilateral flows plus each provider's core contributions multiplied by the receiving agency's climate share. Neither view counts code 2 rows from the release tables. The provider view adds attributed core contributions, which carry Bi_Multi 2, so each dollar counts once.
+With `view="recipient"`, the query counts bilateral flows (Bi_Multi 1, 3, 7, and 8) and multilateral outflows (code 4). With `view="provider"`, it counts the bilateral flows plus each provider's core contributions multiplied by the receiving agency's climate share. Both views exclude code 2 rows from the release tables. The provider view adds attributed core contributions, which carry Bi_Multi 2, so each dollar counts once.
 
 `oda_only=True` keeps commitments of the CRDF's ODA flow category (10) and disbursements of the CRS's ODA flow codes 11, 13, and 19. It keeps bank-ledger and IATI fills whose commitments are in category 10, drops rows without a flow category or code, drops the modelled line, and keeps attributed core contributions.
 
@@ -186,7 +186,7 @@ print(sorted(result.rows(origin="disbursement")["link_method"].unique()))
 ['crs_id', 'pn_recipient', 'programme_number', 'title_recipient']
 ```
 
-The synthetic release behind these examples carries `programme_number` and `title_recipient` as disbursement links. A build writes neither. [How linking works](../explanation/how-linking-works.md) lists the methods it writes.
+The synthetic release behind these examples carries `programme_number` and `title_recipient` as disbursement links. A build omits both. [How linking works](../explanation/how-linking-works.md) lists the methods it writes.
 
 ## `Quality`
 

@@ -32,7 +32,7 @@ Cutting a release requires the `build` extra, a `build.toml`, and the OECD bulk 
     cf-build gate releases/2026a --sample sample/design.parquet --previous releases/2025a/assemble --report
     ```
 
-    Each precision row shows the number of labels read and the sequential rule's verdict: `pass`, `fail`, or `continue`. Label the next batch for every provider marked `continue`. A `fail` means the sample puts that provider's precision below the threshold, which blocks the release unless you waive the gate in step 5.
+    Each precision row shows the number of labels read and the sequential rule's verdict: `pass`, `fail`, or `continue`. Label the next batch for every provider marked `continue`. A `fail` means the sample puts that provider's precision below the threshold, which blocks the release unless waived with `--waive-precision`.
 
 5. Cut the release. `release` builds, runs the gates, and packs the archive, stopping with `GateFailedError` if any gate fails.
 

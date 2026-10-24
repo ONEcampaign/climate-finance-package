@@ -19,7 +19,7 @@ Requires Python 3.12 or later. To build a release, install the `build` extra wit
 
 ## Quickstart
 
-`cf.load()` opens the latest release in `data/releases.json`, the release index shipped with the package. That index ships empty until the first 2.0 release is published, and until then `cf.load()` raises `UnknownNameError`. To open a release you built, pass its directory: `cf.load(path="releases/2026a/assemble")`. The examples in this repository use a small synthetic test release with invented amounts.
+`cf.load()` opens the latest release in `data/releases.json`, the release index shipped with the package. That index ships empty until the first 2.0 release is published, and until then `cf.load()` raises `UnknownNameError`. Pass the directory to open a release you built (`cf.load(path="releases/2026a/assemble")`). The examples in this repository use a small synthetic test release with invented amounts.
 
 ```python
 import climate_finance as cf
