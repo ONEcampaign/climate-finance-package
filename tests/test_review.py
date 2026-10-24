@@ -553,8 +553,10 @@ def _ledger() -> pl.DataFrame:
     return pl.DataFrame([row], schema=columns)
 
 
+# An empty ledger once made polars panic in the ledger check's joins.
+@pytest.mark.parametrize("ledger_rows", [1, 0])
 def test_the_review_stage_writes_tables_that_pass_their_schemas(
-    tmp_path: Path,
+    tmp_path: Path, ledger_rows: int
 ) -> None:
     case = linked()
     links = case.links
@@ -563,7 +565,7 @@ def test_the_review_stage_writes_tables_that_pass_their_schemas(
     for stage, table, frame in [
         ("normalise", "crs", case.crs),
         ("normalise", "crdf", case.crdf),
-        ("normalise", "ledger", _ledger()),
+        ("normalise", "ledger", _ledger().head(ledger_rows)),
         ("link", "units", case.units),
         ("link", "links", links),
         ("link", "pair_scores", _empty(schema.PAIR_SCORES)),

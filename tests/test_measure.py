@@ -652,15 +652,18 @@ def _measure(
     span: pl.DataFrame | None = None,
 ) -> dict:
     """The measure stage's tables, with CAF's channel the only agency entry and
-    `span` as normalise's `crdf_span` where given."""
+    `span` as normalise's `crdf_span`, empty where not given."""
     release_dir = tmp_path / "r"
     status = pl.DataFrame(
         {"row_id": crdf["row_id"], "status": "not_traceable"},
         schema={"row_id": pl.String, "status": pl.String},
     )
     _write(release_dir, "normalise", "crdf", crdf)
-    if span is not None:
-        _write(release_dir, "normalise", "crdf_span", span)
+    if span is None:
+        span = pl.DataFrame(
+            schema={n: c.dtype for n, c in schema.CRDF_SPAN.columns.items()}
+        )
+    _write(release_dir, "normalise", "crdf_span", span)
     _write(release_dir, "normalise", "crs", crs)
     _write(release_dir, "normalise", "imputed_shares", NO_IMPUTED.collect())
     _write(

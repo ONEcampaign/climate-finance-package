@@ -40,7 +40,7 @@ import polars as pl
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from climate_finance.build.allocate import counted_rows
-from climate_finance.build.errors import ConfigError, StageInputMissingError
+from climate_finance.build.errors import ConfigError
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
 from climate_finance.methods import ONE, face_shares, weights
@@ -164,19 +164,14 @@ def run_measure(context: StageContext) -> StageOutput:
     """Write `agency_shares` and `modelled`.
 
     Shares also read `crdf_span`, the CRDF rows of the year before the first share
-    year, where normalise wrote it, so the first share year has its two-year span.
+    year, so the first share year has its two-year span.
     """
     facts = load_provider_facts()
     crdf = counted_commitments(context.read("normalise", "crdf"))
     crs = trace_population(context.read("normalise", "crs"))
-    try:
-        span = counted_commitments(context.read("normalise", "crdf_span"))
-    except StageInputMissingError:
-        spanned = crdf
-    else:
-        spanned = pl.concat([span, crdf])
+    span = counted_commitments(context.read("normalise", "crdf_span"))
     shares = agency_shares(
-        spanned,
+        pl.concat([span, crdf]),
         crs=crs,
         imputed_shares=context.read("normalise", "imputed_shares"),
         agencies=facts.agencies,

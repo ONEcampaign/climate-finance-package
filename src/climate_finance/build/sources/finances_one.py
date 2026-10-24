@@ -10,6 +10,7 @@ import httpx
 from climate_finance.build.readers.ledgers.finances_one import (
     DATASETS,
     Dataset,
+    repeated_keys,
     snapshot_file,
     snapshot_years,
 )
@@ -44,7 +45,12 @@ def download_finances_one(
     """Save the 31 December snapshots that `read_finances_one` needs for `years`.
 
     The full Finances One file exceeds 300 MB, so each snapshot comes through filtered
-    API calls of 1,000 rows, a pause apart. Files land in
+    API calls of 1,000 rows, a pause apart, each skipping the rows already read.
+    The API serves rows by loan number and takes no sort parameter. Each response
+    reports the snapshot's row `count`; the download refuses unless it holds that
+    many rows, none of them a repeated loan, which together prove every loan arrived
+    exactly once. Rows are saved sorted by loan or credit number, so a snapshot
+    downloads to the same bytes whatever order the API served. Files land in
     `<raw_dir>/ledgers/finances_one/`, one per dataset and year-end, each recorded
     under its own source name (`source_name`).
 
@@ -62,7 +68,8 @@ def download_finances_one(
 
     Raises:
         SourceUnavailableError: when offline without an archive, when the archive
-            lacks a snapshot, or when the API returns none for a year-end.
+            lacks a snapshot, or when the API returns none for a year-end, other
+            than its own count of rows, or one loan twice.
     """
     wanted = [(dataset, year) for dataset in datasets for year in snapshot_years(years)]
     if archive is not None:
@@ -98,11 +105,12 @@ def source_name(dataset: Dataset, year: int) -> str:
 
 
 def _pull(
-    client: httpx.Client, dataset: str, year: int, *, pause_seconds: float
+    client: httpx.Client, dataset: Dataset, year: int, *, pause_seconds: float
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
+    count = None
     while True:
-        page = get(
+        response = get(
             client,
             API,
             params={
@@ -113,11 +121,24 @@ def _pull(
                 "filter": f"end_of_period='31-Dec-{year}'",
             },
             pause_seconds=pause_seconds,
-        ).json()["data"]
+        ).json()
+        if count is None:
+            count = response["count"]
+        page = response["data"]
         rows += page
         if len(page) < _PAGE:
             break
         time.sleep(pause_seconds)
     if not rows:
         raise SourceUnavailableError(f"{dataset} has no rows for 31 December {year}.")
-    return rows
+    if len(rows) != count:
+        raise SourceUnavailableError(
+            f"{dataset} served {len(rows)} rows for 31 December {year} but counts "
+            f"{count}; fetch it again."
+        )
+    if repeated := repeated_keys(rows, dataset=dataset):
+        raise SourceUnavailableError(
+            f"{dataset} served {len(repeated)} loans twice for 31 December {year}, "
+            f"such as {repeated[:3]}, so its pages overlapped; fetch it again."
+        )
+    return sorted(rows, key=lambda row: str(row[DATASETS[dataset].key]))

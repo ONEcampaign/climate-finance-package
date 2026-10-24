@@ -15,12 +15,9 @@ from climate_finance.build.fetch import DAC_EXCHANGE_FILE, IATI_DIR
 from climate_finance.build.link import run_link
 from climate_finance.build.link.crosswalks import (
     GEF_DONOR,
-    US_CROSSWALK_FILE,
-    US_DONOR,
     crosswalk_profile,
     gef_crosswalk,
     link_by_crosswalk,
-    read_us_crosswalk,
 )
 from climate_finance.build.link.keys import build_units, link_by_keys
 from climate_finance.build.normalise.crdf import normalise_crdf
@@ -325,8 +322,6 @@ def test_crosswalk_profile_measures_the_climate_value_a_crosswalk_reaches() -> N
             "repeat": {"climate_usd": 5.0, "repeat_of": "reached"},
             "parent": {"climate_usd": 7.0},
             "child": {"climate_usd": 4.0, "parent_row_id": "parent"},
-            "awarded": {"provider_code": US_DONOR, "climate_usd": 2.0},
-            "unawarded": {"provider_code": US_DONOR, "climate_usd": 6.0},
             "other": {"provider_code": 918, "climate_usd": 2.0},
             "provider_view": {"perspective": "provider", "climate_usd": 9.0},
         }
@@ -337,89 +332,21 @@ def test_crosswalk_profile_measures_the_climate_value_a_crosswalk_reaches() -> N
         ("crdf_crs", "parent", "c1", "within_year"),
         ("crdf_crs", "missed", "c2", "within_year"),
         ("crdf_crs", "other", "c1", "within_year"),
-        ("crdf_crs", "awarded", "u1", "within_year"),
-        ("crdf_crs", "unawarded", "u2", "within_year"),
         ("trace", "d1", "c1", "crosswalk"),
         ("trace", "d2", "c2", "crs_id"),
     )
-    units = pl.DataFrame(
-        {
-            "unit_id": ["u1", "u2"],
-            "donor_code": [US_DONOR, US_DONOR],
-            "project_number": ["76_1", "76_2"],
-        },
-        schema_overrides={"donor_code": pl.Int32},
-    )
-    awards = pl.DataFrame({"project_number": ["76_1"], "award": ["AID-1"]})
-
-    profile = crosswalk_profile(
-        crdf, links=links, units=units, us_awards=awards, crosswalks=True
-    )
+    profile = crosswalk_profile(crdf, links=links, crosswalks=True)
 
     assert profile.sort("provider_code").rows() == [
-        (US_DONOR, 8.0, 2.0, 2.0 / 8.0),
         (GEF_DONOR, 8.0, 3.0, 3.0 / 8.0),
         (918, 2.0, None, None),
     ]
-    # Without the US crosswalk the US is not measured.
-    unmeasured = crosswalk_profile(
-        crdf, links=links, units=units, us_awards=None, crosswalks=True
-    )
-    assert unmeasured.filter(provider_code=US_DONOR).rows() == [
-        (US_DONOR, 8.0, None, None)
-    ]
     # Without recoveries no provider is measured, though climate value is.
-    off = crosswalk_profile(
-        crdf, links=links, units=units, us_awards=awards, crosswalks=False
-    )
+    off = crosswalk_profile(crdf, links=links, crosswalks=False)
     assert off.sort("provider_code").rows() == [
-        (US_DONOR, 8.0, None, None),
         (GEF_DONOR, 8.0, None, None),
         (918, 2.0, None, None),
     ]
-
-
-def _us_crosswalk(tmp_path: Path, *rows: tuple[str, str, str | None]) -> Path:
-    pl.DataFrame(
-        [
-            {
-                "submission_id": submission,
-                "submission_activity_id": activity,
-                "project_number": number,
-                "managing_agency": "USAID",
-            }
-            for submission, activity, number in rows
-        ],
-        schema=dict.fromkeys(
-            [
-                "submission_id",
-                "submission_activity_id",
-                "project_number",
-                "managing_agency",
-            ],
-            pl.String,
-        ),
-    ).write_parquet(tmp_path / US_CROSSWALK_FILE)
-    return tmp_path
-
-
-def test_the_us_crosswalk_keeps_the_awards_a_project_number_names(
-    tmp_path: Path,
-) -> None:
-    folder = _us_crosswalk(
-        tmp_path,
-        ("76", "62884", "72DFFP19IO 00066"),
-        # Two awards under one activity name neither.
-        ("76", "1", "AID-306-A-00-08-00513"),
-        ("76", "1", "AID-306-A-00-08-00514"),
-        ("76", "2", "redacted ID"),
-        ("76", "3", "Information Redacted"),
-        ("76", "4", "N/A ADMIN"),
-        ("76", "5", "NULL"),
-        ("76", "6", None),
-        ("76", "7", "OE"),
-    )
-    assert read_us_crosswalk(folder).rows() == [("76_62884", "72DFFP19IO00066")]
 
 
 def test_run_link_writes_the_provider_profile_with_recoveries(tmp_path: Path) -> None:

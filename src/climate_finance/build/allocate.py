@@ -18,7 +18,7 @@ headroom unchanged and are reported by provider and year.
 Passes run certain groups first, then by record year, then link method in
 `LINK_METHODS` order, then class: records with a date floor first, oldest floor
 first, then a dated donor's records dated in their own year, then the rest. A
-group's pass is certain when every link of it is, so certain links fill a
+group's pass is certain when every record pair of it is, so certain links fill a
 commitment before estimated links of any year, and an estimated link of an earlier
 year takes only what they left. Within a pass a group pools its records'
 disbursement and fills its commitments oldest `placed_year` first, pro rata to
@@ -47,7 +47,9 @@ no record gives more than it disbursed. Amounts stay at face value. The release
 query applies the climate share.
 
 An allocation's low bound is its amount when a certain link carried it (see
-`schema.CERTAIN_METHODS`) and 0 otherwise, and its high bound is its amount.
+`schema.CERTAIN_METHODS`) or the record disbursed against its own commitment, and
+the CRDF rows reach that commitment by certain routes alone
+(`schema.CERTAIN_ROUTES`). It is 0 otherwise. Its high bound is its amount.
 """
 
 from __future__ import annotations
@@ -59,12 +61,13 @@ import numpy as np
 import polars as pl
 
 from climate_finance.build.errors import AllocationInputError
+from climate_finance.build.link.candidates import word_share
 from climate_finance.build.link.id_practice import period_of
 from climate_finance.build.link.keys import line_date
-from climate_finance.build.link.levels import title_words, word_share
+from climate_finance.build.link.levels import title_words
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
-from climate_finance.schema import CERTAIN_METHODS, LINK_METHODS
+from climate_finance.schema import CERTAIN_METHODS, CERTAIN_ROUTES, LINK_METHODS
 
 if TYPE_CHECKING:
     from climate_finance.build.stages import StageContext, StageOutput
@@ -273,11 +276,8 @@ def _trace_links(links: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataFrame:
             c_unit="right_id",
             group_id="group_id",
             method="link_method",
-            certain=(pl.col("left_id") == pl.col("right_id"))
-            | (
-                pl.col("link_method").is_in(CERTAIN_METHODS)
-                & ~pl.col("records_disagree").fill_null(value=False)
-            ),
+            certain=pl.col("link_method").is_in(CERTAIN_METHODS)
+            & ~pl.col("records_disagree").fill_null(value=False),
         )
         .collect()
     )
@@ -389,8 +389,18 @@ def _trace_pairs(
         .select(d_unit="unit_id", record_id="record_id", amount="disbursement_usd")
         .collect()
     )
-    pairs = unit_pairs.join(records, on="d_unit").join(
-        commitments.select("c_idx", c_unit="unit_id"), on="c_unit"
+    # A record that commits and disburses is certain of its own commitment, whatever
+    # link joined its unit to itself.
+    pairs = (
+        unit_pairs.join(records, on="d_unit")
+        .join(
+            commitments.select("c_idx", c_unit="unit_id", c_record="record_id"),
+            on="c_unit",
+        )
+        .with_columns(
+            certain=pl.col("certain") | (pl.col("record_id") == pl.col("c_record"))
+        )
+        .drop("c_record")
     )
     own = _own_commitments(pairs, commitments=commitments, crs=crs)
     # Each own commitment is a group of its own, holding the records whose own it
@@ -409,7 +419,7 @@ def _trace_pairs(
         ]
     )
     key = ["estimated", "year", "rank", "class_year", "later"]
-    # A group's pass is certain when all its links are, since the pass pools the
+    # A group's pass is certain when all its pairs are, since the pass pools the
     # group's disbursement over all its commitments.
     pairs = pairs.with_columns(
         estimated=~pl.col("certain").all().over("group_id", *key[1:])
@@ -523,7 +533,7 @@ def allocate(
         One row per (commitment record, disbursement record) that received an
         amount: `commitment_id` (the commitment's CRS record_id), `record_id`,
         `year` (the record's), `allocated_usd`, `rule` and `certain`, whether a
-        certain link carried it. It also holds a `rule="excess"` row, not certain,
+        certain pair carried it. It also holds a `rule="excess"` row, not certain,
         with a null `commitment_id` for each record its groups could not take in
         full.
 
@@ -757,11 +767,18 @@ def allocate_to_rows(
     (see `_commitment_groups`). The rest, and every pair whose commitment has no
     CRDF row, goes to a null `row_id`, so each record's rows sum to what `allocate`
     gave it, excess included. A repeat row's share then moves to the row it repeats
-    (see `_to_first_rows`). `allocated_low_usd` sums the amounts certain links
-    carried, and `allocated_high_usd` equals `allocated_usd`.
+    (see `_to_first_rows`). `allocated_low_usd` sums the amounts certain pairs
+    carried to rows of groups whose `crdf_crs` links all take certain routes, and
+    `allocated_high_usd` equals `allocated_usd`.
     """
     weights, spread, unit_groups = _commitment_groups(
         crdf, units=units, crs=crs, links=links
+    )
+    routes = (
+        links.filter(pl.col("task") == "crdf_crs")
+        .group_by("group_id")
+        .agg(route_certain=pl.col("link_method").is_in(CERTAIN_ROUTES).all())
+        .collect()
     )
     record_groups = (
         _commitment_records(units, crs=crs)
@@ -769,14 +786,18 @@ def allocate_to_rows(
         .select(commitment_id="record_id", group_id="group_id")
     )
     grouped = pairs.join(record_groups, on="commitment_id", how="left")
-    to_rows = grouped.join(weights, on="group_id").select(
-        "row_id",
-        "record_id",
-        "year",
-        "rule",
-        "commitment_id",
-        "certain",
-        allocated_usd=pl.col("allocated_usd") * pl.col("weight"),
+    to_rows = (
+        grouped.join(weights, on="group_id")
+        .join(routes, on="group_id")
+        .select(
+            "row_id",
+            "record_id",
+            "year",
+            "rule",
+            "commitment_id",
+            certain=pl.col("certain") & pl.col("route_certain"),
+            allocated_usd=pl.col("allocated_usd") * pl.col("weight"),
+        )
     )
     to_rows = _to_first_rows(to_rows, crdf=crdf)
     rest = grouped.join(spread, on="group_id", how="left").select(

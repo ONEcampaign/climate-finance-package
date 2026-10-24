@@ -76,6 +76,7 @@ from sklearn.isotonic import IsotonicRegression
 from sklearn.model_selection import GroupKFold
 
 from climate_finance import schema
+from climate_finance.build.link.candidates import word_share
 from climate_finance.build.link.id_practice import (
     RENUMBERED_DONORS,
     line_id,
@@ -93,7 +94,6 @@ from climate_finance.build.link.levels import (
     levels_struct,
     title_words,
     unit_attributes,
-    word_share,
 )
 
 if TYPE_CHECKING:
