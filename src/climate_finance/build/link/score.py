@@ -27,8 +27,11 @@ or agency and then issues a new crs id, the new line continues what the records 
 bridge the change continue, and at the Adaptation Fund, which leaves no bridge, what
 its title continues (see `carried_continuations`).
 
-Labelled pairs split into halves by the md5 of their commitment's donor and line id
-(the unit id where it has none). The classifier trains on one half, with up to
+A commitment from before `FIRST_MEASURED_YEAR` carries no labels: no period measures
+its agency's id practice, and the ids of those years do not persist as later ones do.
+Its pairs are `unlabelled` and the final model scores them. Other labelled pairs
+split into halves by the md5 of their commitment's donor and line id (the unit id
+where it has none). The classifier trains on one half, with up to
 `FOLDS` folds grouped by the same key, and the other half measures it. The
 out-of-fold scores fit an isotonic map: the provider's own where it has at least
 `MIN_CALIBRATION_PAIRS` true and as many false training pairs, else the pooled one.
@@ -79,6 +82,7 @@ from threadpoolctl import threadpool_limits
 from climate_finance import catalogue, schema
 from climate_finance.build.link.candidates import word_share
 from climate_finance.build.link.id_practice import (
+    FIRST_MEASURED_YEAR,
     RENUMBERED_DONORS,
     line_id,
     period_of,
@@ -116,6 +120,7 @@ FEATURES = (
     "log_ratio",
     "later_commit",
     "programme_level",
+    "sibling_lines",
     *DATE_FEATURES,
 )
 PARAMS = {
@@ -135,6 +140,9 @@ FIT_THREADS = 6
 METHOD = "classifier"
 JEV_METHOD = "classifier_jev"
 MODEL_VERSION = f"truth_hgb/scikit-learn-{sklearn.__version__}"
+# A commitment's siblings: the other lines its donor, agency and project number
+# commit in its record year (`sibling_lines`).
+SIBLING_KEY = ("donor_code", "agency_code", "project_number", "year")
 # The values of a pair's `split`.
 TRAIN, HELDOUT, ELIGIBLE, UNLABELLED = "train", "heldout", "eligible", "unlabelled"
 _SIBLING = 1
@@ -234,12 +242,34 @@ def score_candidates(
     )
     features = comparison_levels(
         pairs, attributes=unit_attributes(compared, crs=crs, stems=stems)
-    )
+    ).join(sibling_lines(compared), on="right_id", how="left", maintain_order="left")
     scores = score_truth_group(features, groups=groups, truth=truth)
     return Scored(
         links=classifier_links(scores, rejected=rejected),
         profile=scoring_profile(groups, scores=scores),
         scores=scores,
+    )
+
+
+def sibling_lines(units: pl.DataFrame) -> pl.DataFrame:
+    """Each commitment unit of `units` with a crs id and project number, as
+    `right_id`, and `sibling_lines`: how many other line ids (`line_id`) its
+    `SIBLING_KEY` commits.
+
+    A project that commits several lines in a year can give them one title,
+    recipient and purpose, so a later disbursement compares alike with each of
+    them and continues one.
+    """
+    return (
+        _with_lines(units)
+        .filter(pl.col("commitment_usd") > 0)
+        .drop_nulls(["crs_id", "project_number"])
+        .select(
+            right_id="unit_id",
+            sibling_lines=(pl.col("crs_id").n_unique().over(SIBLING_KEY) - 1).cast(
+                pl.Int16
+            ),
+        )
     )
 
 
@@ -792,7 +822,8 @@ def with_split(
     its `line_id`) and `placed_year`.
 
     A labelled pair (`id_persistent`) is `unlabelled` when `truth` (`id_truth`)
-    holds it as ambiguous, else `train` or `heldout` by its split key. Any other
+    holds it as ambiguous or its commitment's record year is before
+    `FIRST_MEASURED_YEAR`, else `train` or `heldout` by its split key. Any other
     pair is `eligible`. `true_pair` says whether `truth` holds the pair and not as
     ambiguous.
     """
@@ -803,6 +834,7 @@ def with_split(
         right_id="unit_id",
         split_key=split_key(pl.col("donor_code"), line, pl.col("unit_id")),
         placed_year="placed_year",
+        measured=pl.col("year") >= FIRST_MEASURED_YEAR,
     )
     commitments = commitments.with_columns(heldout=is_heldout(commitments["split_key"]))
     held = truth.select(*_PAIR, "ambiguous")
@@ -813,13 +845,13 @@ def with_split(
             true_pair=pl.col("ambiguous").not_().fill_null(value=False),
             split=pl.when(~pl.col("id_persistent"))
             .then(pl.lit(ELIGIBLE))
-            .when(pl.col("ambiguous").fill_null(value=False))
+            .when(pl.col("ambiguous").fill_null(value=False) | ~pl.col("measured"))
             .then(pl.lit(UNLABELLED))
             .when("heldout")
             .then(pl.lit(HELDOUT))
             .otherwise(pl.lit(TRAIN)),
         )
-        .drop("ambiguous", "heldout")
+        .drop("ambiguous", "heldout", "measured")
     )
 
 

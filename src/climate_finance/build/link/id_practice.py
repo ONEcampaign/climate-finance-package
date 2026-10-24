@@ -36,6 +36,13 @@ PERIODS = {
     "2015-2018": (2015, 2018),
     "2019-2022": (2019, 2022),
 }
+# The first record year a period measures. `period_of` gives an earlier year the
+# first period's class, which none of that year's commitments measured, and the ids
+# of those years do not persist as later ones do: on the archive 96 per cent of
+# 2000 to 2003 commitment crs ids end in a `z` that the later records drop, and
+# Italy reissued its ids in 2010, so 0.2 per cent of its 2005 to 2009 commitment
+# ids recur in a later disbursement, against 22 per cent of its 2010 to 2014 ones.
+FIRST_MEASURED_YEAR = min(first for first, _ in PERIODS.values())
 # Classes whose crs ids persist from commitment to disbursement.
 ID_PERSISTENT_CLASSES = ("id_persistent", "parent_id_persistent")
 # A commitment is open when more than this share is left after its own year.

@@ -27,7 +27,9 @@ from climate_finance.build.normalise.crs import normalise_crs, trace_population
 
 pytestmark = pytest.mark.slow
 
-FIRST_YEAR = 2010
+# The CRS years the tests normalise; the first is the first year they load.
+CRS_YEARS = (2010, 2025)
+FIRST_YEAR = CRS_YEARS[0]
 # The prototype's population years, and the CRDF years the build covers.
 PROTOTYPE_YEARS = (2021, 2022)
 CRDF_YEARS = (2015, 2024)
@@ -50,7 +52,7 @@ def data() -> Path:
 def normalised(data: Path) -> pl.DataFrame:
     # Slow: digests 3.8 million records.
     raw = pl.scan_parquet(data / "raw" / "oecd" / "CRS_v20261006.parquet")
-    return normalise_crs(raw, years=(2010, 2025)).collect()
+    return normalise_crs(raw, years=CRS_YEARS).collect()
 
 
 @pytest.fixture(scope="module")

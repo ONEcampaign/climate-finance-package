@@ -26,6 +26,7 @@ from archive_build import archive_config, seed_raw
 from climate_finance import schema
 from climate_finance.build import Stage, build
 from climate_finance.build.allocate import run_allocate
+from climate_finance.build.fetch import read_years
 from climate_finance.build.link.disagreement import flag_disagreement
 from climate_finance.build.link.score import (
     HELDOUT,
@@ -44,7 +45,6 @@ from climate_finance.build.stages import StageContext, stage_dir, table_path
 
 pytestmark = pytest.mark.slow
 
-FIRST_YEAR = 2010
 # The prototype's commitment years, and the CRDF years the build covers.
 PROTOTYPE_YEARS = (2021, 2022)
 CRDF_YEARS = (2015, 2024)
@@ -84,6 +84,12 @@ def _read(release_dir: Path, stage: str, table: str) -> pl.DataFrame:
 
 
 @pytest.fixture(scope="module")
+def first_year(release_dir: Path) -> int:
+    """The first CRS year the build loads, as the link stage reads it."""
+    return read_years(_read(release_dir, "fetch", "raw_manifest"))["crs"][0]
+
+
+@pytest.fixture(scope="module")
 def keyed_links(release_dir: Path) -> pl.DataFrame:
     """The links of the steps before scoring."""
     links = _read(release_dir, "link", "links")
@@ -98,7 +104,9 @@ def crs(release_dir: Path) -> pl.LazyFrame:
 
 
 @pytest.fixture(scope="module")
-def scored(release_dir: Path, keyed_links: pl.DataFrame, crs: pl.LazyFrame) -> Scored:
+def scored(
+    release_dir: Path, keyed_links: pl.DataFrame, crs: pl.LazyFrame, first_year: int
+) -> Scored:
     # Slow: scores the archive's candidates again, as the link stage did.
     return score_candidates(
         _read(release_dir, "link", "candidates"),
@@ -107,7 +115,7 @@ def scored(release_dir: Path, keyed_links: pl.DataFrame, crs: pl.LazyFrame) -> S
         links=keyed_links,
         id_practice=_read(release_dir, "link", "id_practice"),
         stems=_read(release_dir, "link", "programme_stems"),
-        first_year=FIRST_YEAR,
+        first_year=first_year,
     )
 
 
@@ -123,6 +131,7 @@ def heldout(
     keyed_links: pl.DataFrame,
     crs: pl.LazyFrame,
     archive: Path,
+    first_year: int,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Held-out pairs, their links (`heldout_links`), and every true pair of their
     commitments, blocked or not, each with the commitment's record year and
@@ -141,8 +150,8 @@ def heldout(
         crs=crs,
         links=keyed_links,
         id_practice=_read(release_dir, "link", "id_practice"),
-        first_year=FIRST_YEAR,
-        contradicted=contradicted_commitments(units, first_year=FIRST_YEAR),
+        first_year=first_year,
+        contradicted=contradicted_commitments(units, first_year=first_year),
     ).join(pairs.select("right_id").unique(), on="right_id", how="semi")
     categories = (
         pl.scan_parquet(archive / "oecd" / "crdf_recipient.parquet")
@@ -219,18 +228,22 @@ def test_the_classifier_meets_its_targets_on_the_prototype_years(
     # disbursements continue the commitments of their own purpose (`purpose_lines`),
     # and the classifier reads start and completion dates and no commitment date,
     # which refits the threshold. Template lines (`template_lines`) leave the
-    # training pairs, which refits it again.
-    assert threshold == 0.38
+    # training pairs, which refits it again. Truth starts in `FIRST_MEASURED_YEAR`,
+    # and the classifier reads how many sibling lines a commitment has
+    # (`sibling_lines`), which refits it to 0.40.
+    assert threshold == 0.40
     assert prototype["f1"] >= F1_TARGET
     assert every_year["ece"] <= ECE_TARGET
-    # Canada renumbers its lines from year to year, so it carries 384 of the 1,297
-    # held-out misses over the build's CRDF years. Without it the ECE is 0.0054.
+    # Canada renumbers its lines from year to year, so it carries 356 of the 1,169
+    # held-out misses over the build's CRDF years. Without it the ECE is 0.0067.
+    # Commitments from 2010 train the classifier, and their projects commit more
+    # sibling lines than later ones, which `sibling_lines` lets it weigh.
     assert every_year == pytest.approx(
-        {"precision": 0.91708, "recall": 0.93079, "f1": 0.92388, "ece": 0.00851},
+        {"precision": 0.92984, "recall": 0.93768, "f1": 0.93374, "ece": 0.01798},
         abs=1e-5,
     )
     assert prototype == pytest.approx(
-        {"precision": 0.92125, "recall": 0.94288, "f1": 0.93194, "ece": 0.01760},
+        {"precision": 0.94311, "recall": 0.94644, "f1": 0.94477, "ece": 0.02073},
         abs=1e-5,
     )
 
@@ -248,26 +261,27 @@ def test_held_out_figures_by_provider_class(
     }
     assert measured == {
         # The UK's lettered copies carry their line's id (`line_id`) and count as
-        # true.
+        # true. The class frames hold every commitment year that trains, from 2010.
         "bilateral": pytest.approx(
-            {"precision": 0.91283, "recall": 0.92770, "f1": 0.92021, "ece": 0.00931},
+            {"precision": 0.91562, "recall": 0.92016, "f1": 0.91788, "ece": 0.01319},
             abs=1e-5,
         ),
         # Private donors write a line suffix with and without zero padding, which
         # `line_id` reads as one line.
         "private": pytest.approx(
-            {"precision": 0.98817, "recall": 0.97093, "f1": 0.97947, "ece": 0.02669},
+            {"precision": 0.98273, "recall": 0.99225, "f1": 0.98746, "ece": 0.01183},
             abs=1e-5,
         ),
         "banks": pytest.approx(
-            {"precision": 0.95763, "recall": 0.98261, "f1": 0.96996, "ece": 0.06969},
+            {"precision": 0.95122, "recall": 0.98319, "f1": 0.96694, "ece": 0.04291},
             abs=1e-5,
         ),
         # The class's held-out pairs are the Adaptation Fund's. Truth follows its
-        # renumbered projects by title (`carried_continuations`), so all 95 of its
-        # true disbursement units link and 10 of its 105 links are false.
+        # renumbered projects by title (`carried_continuations`). 82 of its 95 true
+        # disbursement units link, the other 13 under the threshold, and 9 of its 91
+        # links are false.
         "other_multilateral": pytest.approx(
-            {"precision": 0.90476, "recall": 1.0, "f1": 0.95000, "ece": 0.05481},
+            {"precision": 0.90110, "recall": 0.86316, "f1": 0.88172, "ece": 0.04945},
             abs=1e-5,
         ),
     }
@@ -288,18 +302,20 @@ def test_the_link_stage_writes_the_classifier_links_and_profile(
     assert scoring.equals(scored.profile)
     # The key tiers (the date tier and the purpose tier's own guard) and key repair
     # take units the classifier would otherwise link, and the private-donor rule
-    # (`confirmable_pairs`) drops some of donor 1624's pairs.
-    assert written.height == 1_164
-    # The AsDB (915) has 300 commitments in eligible pairs, at `SPLINK_MIN_COMMITMENTS`.
-    # Key repair links 40 of them, lines whose spare commitment is open to it, and the
-    # disbursements that reach them, so 265 remain and the AsDB scores with the pooled
-    # model. `template_lines` takes every eligible pair of the Development Bank of Latin
-    # America and the New Development Bank, and leaves the EBRD too few commitments for
-    # a model of its own.
+    # (`confirmable_pairs`) drops some of donor 1624's pairs. Commitments from 2000
+    # are candidates, and 1,094 of the 1,822 links before `sibling_lines` had a
+    # commitment from before 2015.
+    assert written.height == 1_520
+    # The AsDB (915) has 259 commitments in eligible pairs, under
+    # `SPLINK_MIN_COMMITMENTS`, and scores with the pooled model. `template_lines`
+    # takes every eligible pair of the Development Bank of Latin America and the New
+    # Development Bank. Commitments from 2000 give the EBRD (990) 404 commitments, a
+    # model of its own, and the United Arab Emirates (576) 51 true training pairs,
+    # a place in the truth group.
     assert dict(scoring.group_by("scoring_group").len().iter_rows()) == {
-        "truth": 25,
-        "splink": 4,
-        "pooled_splink": 35,
+        "truth": 26,
+        "splink": 5,
+        "pooled_splink": 34,
     }
 
 
@@ -347,11 +363,12 @@ def test_classifier_links_move_statuses(
         for status in schema.STATUSES
     }
     assert sum(moved.values()) == pytest.approx(0.0, abs=1e-9)
+    # 133 of the classifier's 1,520 links reach a 2021 or 2022 commitment.
     assert moved == pytest.approx(
         {
-            "disbursed": 0.00408,
-            "partly_disbursed": 0.04667,
-            "no_disbursement_record": -0.05075,
+            "disbursed": 0.00301,
+            "partly_disbursed": 0.00336,
+            "no_disbursement_record": -0.00637,
             "not_traceable": 0.0,
             "pending_review": 0.0,
         },

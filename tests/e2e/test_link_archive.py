@@ -107,6 +107,8 @@ KEY_RULES_LINKED_USD = {
     "component awards": 20.978664440e9,
 }
 _PERIOD_KEY = ["donor_code", "agency_code", "period"]
+# The CRS years the tests normalise; the first is the first year they load.
+CRS_YEARS = (2010, 2025)
 
 
 @pytest.fixture(scope="module")
@@ -118,7 +120,7 @@ def data() -> Path:
 def crs(data: Path) -> pl.DataFrame:
     # Slow: digests 3.8 million records.
     raw = pl.scan_parquet(data / "raw" / "oecd" / "CRS_v20261006.parquet")
-    return normalise_crs(raw, years=(2010, 2025)).collect()
+    return normalise_crs(raw, years=CRS_YEARS).collect()
 
 
 @pytest.fixture(scope="module")
@@ -294,7 +296,7 @@ def test_key_tiers_link_the_reference_disbursements(
             data / "prototypes" / "a1-reference" / "dated_pnuniq" / "trace_metrics.json"
         ).read_text()
     )
-    links = link_by_keys(units, first_year=2010)
+    links = link_by_keys(units, first_year=CRS_YEARS[0])
     schema.validate(schema.LINKS, links)
     tiers = links.select("left_id", "link_method").unique()
     assert tiers["left_id"].is_unique().all()

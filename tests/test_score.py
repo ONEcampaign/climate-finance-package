@@ -8,6 +8,7 @@ import pytest
 
 from climate_finance import schema
 from climate_finance.build.link import score
+from climate_finance.build.link.id_practice import FIRST_MEASURED_YEAR
 from climate_finance.build.link.keys import build_units
 from climate_finance.build.link.levels import LEVELS
 from climate_finance.build.link.score import (
@@ -32,6 +33,7 @@ from climate_finance.build.link.score import (
     score_truth_group,
     scoring_groups,
     scoring_profile,
+    sibling_lines,
     split_key,
     with_split,
 )
@@ -42,6 +44,7 @@ _PAIRS_SCHEMA = {
     "donor_code": pl.Int32,
     "year_gap": pl.Int16,
     "programme_level": pl.Int8,
+    "sibling_lines": pl.Int16,
     "same_crs_id": pl.Boolean,
     "true_pair": pl.Boolean,
     "id_persistent": pl.Boolean,
@@ -113,6 +116,7 @@ def _pair(
         "donor_code": donor,
         "year_gap": 2,
         "programme_level": programme_level,
+        "sibling_lines": 0,
         "same_crs_id": same,
         "true_pair": same,
         "id_persistent": split != ELIGIBLE,
@@ -241,39 +245,75 @@ def test_the_split_key_is_donor_and_crs_id_else_the_unit() -> None:
 
 
 def test_with_split_halves_labelled_pairs_by_their_commitment() -> None:
+    # c4 is from before `FIRST_MEASURED_YEAR`, so its true pair is unlabelled.
     units = pl.DataFrame(
         {
-            "unit_id": ["c1", "c2", "c3"],
-            "donor_code": [5, 5, 5],
-            "crs_id": ["ABC", "ABD", "ABE"],
-            "placed_year": [2019, 2020, 2021],
+            "unit_id": ["c1", "c2", "c3", "c4"],
+            "donor_code": [5, 5, 5, 5],
+            "crs_id": ["ABC", "ABD", "ABE", "ABF"],
+            "year": [2019, 2020, 2021, FIRST_MEASURED_YEAR - 1],
+            "placed_year": [2019, 2020, 2021, FIRST_MEASURED_YEAR - 1],
         },
         schema={
             "unit_id": pl.String,
             "donor_code": pl.Int32,
             "crs_id": pl.String,
+            "year": pl.Int16,
             "placed_year": pl.Int16,
         },
     )
     candidates = pl.DataFrame(
         {
-            "left_id": ["d1", "d2", "d3", "d4", "d5"],
-            "right_id": ["c1", "c2", "c1", "c3", "c3"],
-            "id_persistent": [True, True, False, True, False],
+            "left_id": ["d1", "d2", "d3", "d4", "d5", "d6"],
+            "right_id": ["c1", "c2", "c1", "c3", "c3", "c4"],
+            "id_persistent": [True, True, False, True, False, True],
         }
     )
     truth = pl.DataFrame(
         {
-            "left_id": ["d2", "d4"],
-            "right_id": ["c2", "c3"],
-            "donor_code": [5, 5],
-            "ambiguous": [False, True],
+            "left_id": ["d2", "d4", "d6"],
+            "right_id": ["c2", "c3", "c4"],
+            "donor_code": [5, 5, 5],
+            "ambiguous": [False, True, False],
         }
     )
     pairs = with_split(candidates, units=units, truth=truth)
-    assert pairs["split"].to_list() == [HELDOUT, TRAIN, ELIGIBLE, UNLABELLED, ELIGIBLE]
-    assert pairs["true_pair"].to_list() == [False, True, False, False, False]
-    assert pairs["placed_year"].to_list() == [2019, 2020, 2019, 2021, 2021]
+    assert pairs["split"].to_list() == [
+        HELDOUT,
+        TRAIN,
+        ELIGIBLE,
+        UNLABELLED,
+        ELIGIBLE,
+        UNLABELLED,
+    ]
+    assert pairs["true_pair"].to_list() == [False, True, False, False, False, True]
+    assert pairs["placed_year"].to_list() == [
+        2019,
+        2020,
+        2019,
+        2021,
+        2021,
+        FIRST_MEASURED_YEAR - 1,
+    ]
+
+
+def test_sibling_lines_counts_the_other_lines_of_a_project_and_year() -> None:
+    # P1 commits three lines in 2012, one of them twice, and one line in 2013; c5
+    # has no project number and d1 commits nothing.
+    units = pl.DataFrame(
+        {
+            "unit_id": ["c1", "c2", "c3", "c3b", "c4", "c5", "d1"],
+            "donor_code": [301] * 7,
+            "agency_code": [1] * 7,
+            "crs_id": ["L1", "L2", "L3", "L3", "L4", "L5", "L1"],
+            "project_number": ["P1", "P1", "P1", "P1", "P1", None, "P1"],
+            "year": [2012, 2012, 2012, 2012, 2013, 2012, 2014],
+            "commitment_usd": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
+        },
+        schema_overrides={"donor_code": pl.Int32, "agency_code": pl.Int32},
+    )
+    lines = dict(sibling_lines(units).iter_rows())
+    assert lines == {"c1": 2, "c2": 2, "c3": 2, "c3b": 2, "c4": 0}
 
 
 def test_a_private_donor_scores_only_pairs_under_one_project_number() -> None:
