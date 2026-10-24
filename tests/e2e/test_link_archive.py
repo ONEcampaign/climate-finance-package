@@ -52,12 +52,22 @@ _NOW_BY_PN = {
 }
 # Disbursement the key tiers link beyond the reference's tiers, by rule. The
 # reference's rules reproduce its total to the dollar.
-# `parent_id` reaches no parent for other donors' 11-digit sequence numbers.
-PARENT_ID_USD = -2.075370018e9
-# `crs_key` keeps an id that names several projects within its recipient.
-CRS_KEY_USD = -2.985551496e9
+# `parent_id` reaches no parent for other donors' 11-digit sequence numbers. A
+# lettered record reaches its parent only in its recipient under its project
+# number (0.92bn less), and only EU contracts pass their floor (0.01bn less).
+PARENT_ID_USD = -3.008258137e9
+# `crs_key` keeps an id that names several projects within its recipient, a
+# missing project number counting as one more (0.03bn less).
+CRS_KEY_USD = -3.016440996e9
 # The project-number tiers hold for agencies whose ids persist.
 PN_EVERY_AGENCY_USD = 19.540454511e9
+# A floor naming no commitment under the disbursement's own crs id passes; 1.60bn
+# of this is EU Institutions' disbursement under its decision ids.
+FLOOR_UNSEEN_USD = 1.819184508e9
+# A component award keys each component by purpose, so its key is unique and the
+# project-number tiers reach it: 24.25bn more is linked, 13.03bn of it AsDB loans
+# and 9.11bn US awards, and 3.28bn linked across components is not.
+COMPONENT_AWARD_USD = 20.978664440e9
 
 
 @pytest.fixture(scope="module")
@@ -188,7 +198,9 @@ def test_key_tiers_link_the_reference_disbursements(
         metrics["linked_disbursement_bn"] * 1e9
         + PARENT_ID_USD
         + CRS_KEY_USD
-        + PN_EVERY_AGENCY_USD,
+        + PN_EVERY_AGENCY_USD
+        + FLOOR_UNSEEN_USD
+        + COMPONENT_AWARD_USD,
         abs=1e3,
     )
 

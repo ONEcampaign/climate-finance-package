@@ -46,12 +46,39 @@ KEY_TIERS_MOVED_BN = {
     "no_disbursement_record": -0.89,
     "not_traceable": 0.0,
 }
+# Allocation reads CRS records up to `crs_last_complete`, so the early 2025 reports
+# no longer complete some 2021 to 2022 commitments.
+LAST_COMPLETE_YEAR_MOVED_BN = {
+    "disbursed": -0.12,
+    "partly_disbursed": 0.11,
+    "no_disbursement_record": 0.01,
+    "not_traceable": 0.0,
+}
+# An agency keying under `MIN_KEYED_DISBURSED` of its disbursement is not traceable:
+# the EBRD's 2019 to 2022 rows (5.17 bn) and IFAD's (0.51 bn).
+DISBURSEMENT_SIDE_MOVED_BN = {
+    "disbursed": 0.0,
+    "partly_disbursed": 0.0,
+    "no_disbursement_record": -5.68,
+    "not_traceable": 5.68,
+}
+# A component award's disbursement reaches its own component (`split_components`),
+# mostly US awards (0.28 bn) and IFAD's (0.06 bn).
+COMPONENT_AWARDS_MOVED_BN = {
+    "disbursed": 0.14,
+    "partly_disbursed": 0.14,
+    "no_disbursement_record": -0.28,
+    "not_traceable": 0.0,
+}
 # With aggregate children counted and their parents left out (the release rule).
+# The last complete year, the disbursement-side test and component awards move it
+# as above; the time order also takes 0.08 bn of Italian children's earlier
+# records, leaving no record.
 RELEASE_RULE_BN = {
-    "disbursed": 55.39,
-    "partly_disbursed": 105.09,
-    "no_disbursement_record": 33.98,
-    "not_traceable": 35.12,
+    "disbursed": 55.41,
+    "partly_disbursed": 105.25,
+    "no_disbursement_record": 28.17,
+    "not_traceable": 40.74,
 }
 # No-record value the key-repair rules move to partly or fully disbursed, counted
 # as the reference counts, by provider category (USD bn). A programme number links
@@ -59,7 +86,11 @@ RELEASE_RULE_BN = {
 # units exceed `MAX_COMMITMENTS` and the rules move USD 0.37 bn more bilateral
 # value. The exact tiers' `crs_key` already reaches USD 0.74 bn of bank value the
 # rules moved; the title rule's count of rounded numbers adds back USD 0.11 bn.
-REPAIR_MOVED_BN = {"bilateral": 1.31, "banks": 3.91}
+# A number disbursed as well as committed in several countries counts as a
+# programme too, which keeps USD 0.57 bn of bank value from the rules. The EBRD's
+# rows that are not traceable leave USD 0.33 bn less to move, and the exact tiers
+# reach USD 0.07 bn of US component value before the rules do.
+REPAIR_MOVED_BN = {"bilateral": 1.24, "banks": 3.07}
 REPAIR_TOLERANCE_BN = 0.05
 _CATEGORY = {
     "DAC member": "bilateral",
@@ -154,7 +185,13 @@ def test_statuses_reproduce_the_reference_without_recoveries(
     built = _by_status(_prototype_count(_rows(base)))
     assert set(built) == set(reference["status"])
     for status, usd_bn in reference.select("status", "usd_bn").iter_rows():
-        moved = FIRST_ROWS_MOVED_BN[status] + KEY_TIERS_MOVED_BN[status]
+        moved = (
+            FIRST_ROWS_MOVED_BN[status]
+            + KEY_TIERS_MOVED_BN[status]
+            + LAST_COMPLETE_YEAR_MOVED_BN[status]
+            + DISBURSEMENT_SIDE_MOVED_BN[status]
+            + COMPONENT_AWARDS_MOVED_BN[status]
+        )
         assert built[status] == pytest.approx(usd_bn + moved, abs=TOLERANCE_BN), status
 
 
@@ -172,12 +209,16 @@ def test_statuses_under_the_release_rule(base: Path) -> None:
 
 @pytest.mark.parametrize("build_name", ["base", "repaired"])
 def test_linked_disbursement_is_conserved(
-    build_name: str, request: pytest.FixtureRequest
+    build_name: str, request: pytest.FixtureRequest, config: BuildConfig
 ) -> None:
     release_dir: Path = request.getfixturevalue(build_name)
     units = pl.scan_parquet(table_path(release_dir, "link", "units"))
     links = pl.scan_parquet(table_path(release_dir, "link", "links"))
-    crs = trace_population(pl.scan_parquet(table_path(release_dir, "normalise", "crs")))
+    # Allocation reads CRS records up to the last complete year, as `run_allocate`
+    # does; later records are linked but give nothing.
+    crs = trace_population(
+        pl.scan_parquet(table_path(release_dir, "normalise", "crs"))
+    ).filter(pl.col("year") <= config.years.crs_last_complete)
     allocations = pl.scan_parquet(table_path(release_dir, "allocate", "allocations"))
     linked = (
         units.join(
