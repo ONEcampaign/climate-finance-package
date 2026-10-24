@@ -35,7 +35,8 @@ _IMPUTED = "Imputed Multilateral Contribution"
 # adaptation marker. The few adaptation marks before 2010 predate the marker's start
 # and count as not measured: 1 row in 2007, 2 in 2008 and 10 of 2,962 in 2009 marked
 # principal or significant, and 49 climate-component rows in 2009, against 3,922 of
-# 6,371 rows marked in 2010.
+# 6,371 rows marked in 2010. Four of the 2009 rows (Kuwait, USD 142m) are marked for
+# adaptation alone, so their climate value, the mitigation value, is 0.
 ADAPTATION_FIRST_YEAR = 2010
 # The columns that measure adaptation, null before `ADAPTATION_FIRST_YEAR`.
 _ADAPTATION_COLUMNS = ("rio_adaptation", "adaptation_usd", "overlap_usd")
@@ -89,7 +90,9 @@ def normalise_crdf(
     `mitigation_usd` each include `overlap_usd`, as published. Before
     `ADAPTATION_FIRST_YEAR` adaptation is not measured: `rio_adaptation`,
     `adaptation_usd` and `overlap_usd` are null, and the climate value is the
-    mitigation value. Rio-marked rows carry
+    mitigation value: a Rio-marked row marked for adaptation alone keeps its face
+    value and objective with a climate value of 0, and a warning gives their count and
+    published climate value. Rio-marked rows carry
     the commitment's full value as `climate_usd` (IFAD's own 40% for significant
     projects aside), and component rows (development banks' climate components and
     imputed multilateral contributions) carry the climate part. `face_usd` is
@@ -140,7 +143,6 @@ def normalise_crdf(
         for name in _ADAPTATION_COLUMNS
     )
     frame = frame.with_columns(
-        objective=_objective(),
         face_usd=pl.when(pl.col("published_share").is_not_null())
         .then(pl.col("climate_usd") / pl.col("published_share"))
         .otherwise(pl.col("climate_usd")),
@@ -150,6 +152,7 @@ def normalise_crdf(
         id_scheme=_id_scheme(),
         vintage=pl.col("year").max().over("source_file").cast(pl.Int16),
     )
+    frame = _mitigation_only(frame).with_columns(objective=_objective())
     _check(frame)
     return frame.lazy().select(
         "row_id",
@@ -295,6 +298,34 @@ def _is_component() -> pl.Expr:
     return pl.col("rio_adaptation").is_null() & pl.col("rio_mitigation").is_null()
 
 
+def _mitigation_only(frame: pl.DataFrame) -> pl.DataFrame:
+    """`frame` with the climate value of Rio-marked rows before
+    `ADAPTATION_FIRST_YEAR` set to their mitigation value."""
+    unmeasured = (pl.col("year") < ADAPTATION_FIRST_YEAR) & pl.col(
+        "rio_mitigation"
+    ).is_not_null()
+    changed = frame.filter(
+        unmeasured, pl.col("climate_usd") != pl.col("mitigation_usd")
+    )
+    if changed.height:
+        logger.warning(
+            "%d Rio-marked CRDF rows before %d publish USD %.1fm of climate value "
+            "beyond their mitigation value; adaptation is not measured then, so it "
+            "counts as 0",
+            changed.height,
+            ADAPTATION_FIRST_YEAR,
+            changed.select(pl.col("climate_usd") - pl.col("mitigation_usd"))
+            .sum()
+            .item()
+            / 1e6,
+        )
+    return frame.with_columns(
+        climate_usd=pl.when(unmeasured)
+        .then(pl.col("mitigation_usd"))
+        .otherwise(pl.col("climate_usd"))
+    )
+
+
 def _objective() -> pl.Expr:
     adaptation = (pl.col("adaptation_usd") > 0) | (
         pl.col("rio_adaptation").fill_null(0) > 0
@@ -311,6 +342,10 @@ def _objective() -> pl.Expr:
         .then(pl.lit("mitigation"))
         .when(pl.col("climate_usd") != 0)
         .then(pl.lit("climate"))
+        # Before `ADAPTATION_FIRST_YEAR`, an adaptation mark the CRDF does not
+        # measure, on a row with no other part.
+        .when(_marker("adaptation_objective") > 0)
+        .then(pl.lit("adaptation"))
     )
 
 
