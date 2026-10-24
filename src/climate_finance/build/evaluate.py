@@ -63,6 +63,7 @@ DESIGN_SCHEMA = pl.Schema(
         "left_id": pl.String(),
         "right_id": pl.String(),
         "provider_code": pl.Int32(),
+        "link_method": pl.String(),
         "stratum": pl.String(),
         "design": pl.String(),
         "draw": pl.Int32(),
@@ -113,9 +114,9 @@ def allocated_pairs(release_dir: Path, *, decisions: Path) -> pl.DataFrame:
     """The trace links that carried an allocation to a published commitment row.
 
     Columns: `provider_code` (the disbursing unit's donor), the pair (`task`,
-    `left_id`, `right_id`), `allocated_usd` (face value summed over the pair's
-    allocations) and `stratum`. A link people or agents accepted in the review
-    queue, read from `decisions`, is `reviewed` whatever its method.
+    `left_id`, `right_id`), `link_method`, `allocated_usd` (face value summed over
+    the pair's allocations) and `stratum`. A link people or agents accepted in the
+    review queue, read from `decisions`, is `reviewed` whatever its method.
     """
     from climate_finance.build.stages import table_path
 
@@ -165,7 +166,7 @@ def allocated_pairs(release_dir: Path, *, decisions: Path) -> pl.DataFrame:
         )
         .join(accepted, on=PAIR, how="left")
         .filter(pl.col("allocated_usd") > 0)
-        .select("provider_code", *PAIR, "allocated_usd", stratum=stratum)
+        .select("provider_code", *PAIR, "link_method", "allocated_usd", stratum=stratum)
         .sort("provider_code", *PAIR)
         .collect()
     )
@@ -320,40 +321,36 @@ def read_sample_labels(design: Path, *, decisions: Path) -> pl.DataFrame:
     A pair's standing decision follows `splink_models.read_decision_labels`: of an
     agent's decisions the latest round, then the latest decided, stands, and a
     person's decision stands over an agent's made before it.
+
+    Raises:
+        FileNotFoundError: when `decisions` does not exist, since the sample's
+            labels can live nowhere else.
     """
-    decided = pl.DataFrame(
-        schema={
-            "sample_id": pl.String(),
-            "correct": pl.Boolean(),
-            "label_source": pl.String(),
-        }
+    if not decisions.exists():
+        raise FileNotFoundError(f"no review decisions at {decisions}")
+    rounds = {name: rank for rank, name in enumerate(LABEL_ROUNDS)}
+    sampled = (
+        pl.read_parquet(decisions)
+        .filter(pl.col("sample_id").is_not_null())
+        .with_columns(
+            rank=pl.col("round").replace_strict(rounds, default=0, return_dtype=pl.Int8)
+        )
     )
-    if decisions.exists():
-        rounds = {name: rank for rank, name in enumerate(LABEL_ROUNDS)}
-        sampled = (
-            pl.read_parquet(decisions)
-            .filter(pl.col("sample_id").is_not_null())
-            .with_columns(
-                rank=pl.col("round").replace_strict(
-                    rounds, default=0, return_dtype=pl.Int8
-                )
-            )
+    agent = (
+        sampled.filter(label_source="agent")
+        .sort("rank", "decided_at", maintain_order=True)
+        .unique("sample_id", keep="last", maintain_order=True)
+    )
+    decided = (
+        pl.concat([agent, sampled.filter(label_source="human")])
+        .sort("decided_at", maintain_order=True)
+        .unique("sample_id", keep="last")
+        .select(
+            "sample_id",
+            correct=pl.col("decision") == "accept",
+            label_source="label_source",
         )
-        agent = (
-            sampled.filter(label_source="agent")
-            .sort("rank", "decided_at", maintain_order=True)
-            .unique("sample_id", keep="last", maintain_order=True)
-        )
-        decided = (
-            pl.concat([agent, sampled.filter(label_source="human")])
-            .sort("decided_at", maintain_order=True)
-            .unique("sample_id", keep="last")
-            .select(
-                "sample_id",
-                correct=pl.col("decision") == "accept",
-                label_source="label_source",
-            )
-        )
+    )
     return pl.read_parquet(design).join(
         decided, on="sample_id", how="left", maintain_order="left"
     )

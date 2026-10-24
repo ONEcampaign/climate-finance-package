@@ -78,6 +78,9 @@ if TYPE_CHECKING:
 
 # A commitment's link counts as high probability from this value.
 HIGH_PROBABILITY = 0.8
+# httpx bounds each socket operation, not the whole upload, so a 150 to 400 MB pack
+# passes at any steady rate. Read waits for the server to store the body and answer.
+UPLOAD_TIMEOUT = httpx.Timeout(60.0, read=300.0)
 # `disbursement_profile` groups and the Bi_Multi codes each pools. `all` holds the
 # codes the recipient view counts.
 PROFILE_GROUPS = {
@@ -797,7 +800,7 @@ def cut_release(
 
     Raises:
         GateFailedError: when a gate fails; `waive_precision` lets the precision
-            gate fail.
+            and human-audit gates fail.
     """
     build_package.build(release, config=config, out_dir=out_dir)
     release_dir = out_dir / release
@@ -843,7 +846,7 @@ def upload_release(pack: Path, *, target: str) -> str:
         return copy.resolve().as_uri()
     url = f"{target.rstrip('/')}/{quote(pack.name)}"
     with pack.open("rb") as body:
-        httpx.put(url, content=body, timeout=None).raise_for_status()
+        httpx.put(url, content=body, timeout=UPLOAD_TIMEOUT).raise_for_status()
     return url
 
 

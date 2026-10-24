@@ -16,6 +16,11 @@ precision:
   census_below: 60
   seed: 20261021
 
+# People decide at least this share of the blind sample's draws, over every
+# provider; agents may decide the rest.
+human_audit:
+  min_share: 0.10
+
 # Allocated plus unallocated equals each linked CRS record's disbursement.
 conservation:
   tolerance_usd: 1.0e-6

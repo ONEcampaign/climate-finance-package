@@ -27,6 +27,7 @@ def _pairs() -> pl.DataFrame:
             "task": "trace",
             "left_id": [f"d{i}" for i in range(320)],
             "right_id": [f"c{i}" for i in range(320)],
+            "link_method": "crs_id",
             "allocated_usd": rng.lognormal(mean=12, sigma=2, size=320),
             "stratum": ["key"] * 20 + strata,
         },
