@@ -72,8 +72,9 @@ _FLOW_AMOUNTS = {
 }
 
 
-# The release tables whose years bound the provider view's attributed finance.
-COVERAGE_TABLES = ("core_contributions", "agency_shares")
+# The release tables whose years bound the provider view's attributed finance:
+# core contributions, and the agency shares each method reads.
+COVERAGE_TABLES = ("core_contributions", "agency_shares", "agency_spending")
 
 
 def _table_years(
@@ -97,7 +98,8 @@ def seal_release(
     with the `RELEASE_SETTINGS` of the build config.
 
     Its `years` holds the years the build read from each source, and the years
-    `core_contributions` and `agency_shares` hold, which bound attributed finance.
+    `core_contributions`, `agency_shares` and `agency_spending` hold, which bound
+    attributed finance.
 
     Raises:
         ReleaseInvariantError: when the tables break `schema.release_invariants`.

@@ -22,7 +22,6 @@ from climate_finance.build.fetch import (
     IATI_DIR,
     IMPUTED_SHARES_FILE,
     MULTISYSTEM_FILE,
-    YEAR_SOURCES,
 )
 from climate_finance.build.provenance import Provenance, record_path
 from climate_finance.build.stages import REGISTRY, Stage, table_path
@@ -112,7 +111,7 @@ def write_raw(raw: Path, *, crdf_years: tuple[int, int] = (2015, 2024)) -> pl.Da
     """Lay the raw fixtures out under `raw` as fetch would, with a euro DAC rate
     of 0.8, and return their `raw_manifest`, which records the years an online
     fetch of `crdf_years` resolves, with CRS years to 2025 and provider-perspective
-    CRDF years from 2013."""
+    CRDF years from 2013, as asked and held."""
     oecd = RAW_FIXTURES / "oecd"
     files = [
         ("crs", oecd / "CRS.parquet", CRS_FILE),
@@ -159,10 +158,13 @@ def write_raw(raw: Path, *, crdf_years: tuple[int, int] = (2015, 2024)) -> pl.Da
                 "sha256": sha256_file(raw / target),
                 "fetched_at": datetime(2026, 10, 21, tzinfo=UTC),
                 "method": "manual",
-                "first_year": years[source][0] if source in YEAR_SOURCES else None,
-                "last_year": years[source][1] if source in YEAR_SOURCES else None,
+                "first_year": first,
+                "last_year": last,
+                "held_first_year": first,
+                "held_last_year": last,
             }
             for source, _, target in files
+            for first, last in [years.get(source, (None, None))]
         ],
         schema=schema.RAW_MANIFEST.dtypes,
     )

@@ -191,8 +191,12 @@ RAW_MANIFEST = _table(
     version=_str(nullable=True),
     fetched_at=Column(pl.Datetime("us", "UTC")),
     method=_str(values=FETCH_METHODS),
+    # For the CRS, the CRDF and MULTI, the years fetch asked for, and those of them
+    # the file holds; the build reads the years asked that the file holds.
     first_year=_year(nullable=True),
     last_year=_year(nullable=True),
+    held_first_year=_year(nullable=True),
+    held_last_year=_year(nullable=True),
 )
 
 CRDF = _table(

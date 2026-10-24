@@ -26,13 +26,20 @@ FIXTURES = Path(__file__).parent / "fixtures" / "raw"
 CRS_URL = "https://webfs-dcd.oecd.org/files/dotStat/DSD_CRS/CRS.parquet"
 CRDF_FILES = {"recipient": "CRDF-RP_2024.xlsx", "provider": "CRDF-PP_2024.xlsx"}
 MANIFEST = Path("fetch/raw_manifest.parquet")
+# A row for every year, as the bulk CRS holds.
+CRS_YEARS = range(1973, 2026)
 
 
 class FakeSources:
-    """Stand-ins for the oda-reader, pydeflate and GCF calls, recording each call."""
+    """Stand-ins for the oda-reader, pydeflate and GCF calls, recording each call.
+
+    The CRDF and MULTI downloads hold a row for each year asked, MULTI from
+    `fetch.MULTISYSTEM_FIRST_YEAR`, less the years `lacking` names by source.
+    """
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, object]]] = []
+        self.lacking: dict[str, set[int]] = {}
         self.gcf_response = httpx.Response(
             200,
             content=(FIXTURES / "gcf" / "projects.json").read_bytes(),
@@ -56,7 +63,7 @@ class FakeSources:
 
     def bulk_download_crs(self, *, save_to_path: Path) -> None:
         self.calls.append(("bulk_download_crs", {}))
-        pd.DataFrame({"year": [1973, 2025], "usd_grant_equiv": [1.0, 1.0]}).to_parquet(
+        pd.DataFrame({"year": CRS_YEARS, "usd_grant_equiv": 1.0}).to_parquet(
             Path(save_to_path) / "CRS.parquet"
         )
 
@@ -77,15 +84,32 @@ class FakeSources:
         self.calls.append(("download_crdf", {"perspective": perspective, **kwargs}))
         return pd.DataFrame(
             {
-                "year": [2024],
-                "source_file": [CRDF_FILES[perspective]],
-                "file_version": [f'"{perspective}-etag"'],
+                "year": self._years(f"crdf_{perspective}", kwargs),
+                "source_file": CRDF_FILES[perspective],
+                "file_version": f'"{perspective}-etag"',
             }
         )
 
     def multisystem(self, **kwargs: object) -> pd.DataFrame:
         self.calls.append(("download_multisystem", kwargs))
-        return pd.DataFrame({"year": [2022], "value": [1.0]})
+        return pd.DataFrame(
+            {
+                "year": self._years(
+                    "multisystem", kwargs, first=fetch.MULTISYSTEM_FIRST_YEAR
+                ),
+                "value": 1.0,
+            }
+        )
+
+    def _years(
+        self, source: str, kwargs: dict[str, object], *, first: int = 0
+    ) -> list[int]:
+        start, end = kwargs["start_year"], kwargs["end_year"]
+        assert isinstance(start, int) and isinstance(end, int)
+        lacking = self.lacking.get(source, set())
+        return [
+            year for year in range(max(start, first), end + 1) if year not in lacking
+        ]
 
     def crdf_file(self, name: str, save_to_path: Path) -> Path:
         self.calls.append(("download_crdf_file", {"name": name}))
@@ -117,7 +141,7 @@ def sources(monkeypatch: pytest.MonkeyPatch) -> FakeSources:
 def crs_file(tmp_path: Path) -> LocalFile:
     path = tmp_path / "archive" / "CRS_v1.parquet"
     path.parent.mkdir()
-    pd.DataFrame({"year": [1973, 2025], "usd_grant_equiv": [2.0, 3.0]}).to_parquet(path)
+    pd.DataFrame({"year": CRS_YEARS, "usd_grant_equiv": 2.0}).to_parquet(path)
     return LocalFile(path=path, sha256=sha256_file(path))
 
 
@@ -149,7 +173,7 @@ def _fetch(config: BuildConfig, out_dir: Path, *, offline: bool = False) -> Path
 
 
 @pytest.mark.parametrize(
-    ("crdf_years", "crs_years", "resolved"),
+    ("crdf_years", "crs_years", "resolved", "multisystem_held"),
     [
         (
             (2015, 2024),
@@ -160,6 +184,7 @@ def _fetch(config: BuildConfig, out_dir: Path, *, offline: bool = False) -> Path
                 "crdf_provider": (2015, 2024),
                 "multisystem": (2015, 2024),
             },
+            (2015, 2024),
         ),
         (
             "all",
@@ -170,6 +195,7 @@ def _fetch(config: BuildConfig, out_dir: Path, *, offline: bool = False) -> Path
                 "crdf_provider": (2013, 2024),
                 "multisystem": (2000, 2024),
             },
+            (2011, 2024),
         ),
         (
             (2010, 2024),
@@ -180,6 +206,7 @@ def _fetch(config: BuildConfig, out_dir: Path, *, offline: bool = False) -> Path
                 "crdf_provider": (2013, 2024),
                 "multisystem": (2010, 2024),
             },
+            (2011, 2024),
         ),
     ],
 )
@@ -191,6 +218,7 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
     crdf_years: tuple[int, int] | Literal["all"],
     crs_years: tuple[int, int] | None,
     resolved: dict[str, tuple[int, int]],
+    multisystem_held: tuple[int, int],
 ) -> None:
     config = _config(crs_file=crs_file, crdf_years=crdf_years, crs_years=crs_years)
     registry, reads = record_reads(monkeypatch, config, REGISTRY)
@@ -234,6 +262,15 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
             "source", "first_year", "last_year"
         ).iter_rows()
     } == resolved
+    # MULTI holds nothing before 2011; every other file holds the years asked.
+    held = resolved | {"multisystem": multisystem_held}
+    assert {
+        source: (first, last)
+        for source, first, last in years.select(
+            "source", "held_first_year", "held_last_year"
+        ).iter_rows()
+    } == held
+    assert fetch.read_years(manifest) == held
     assert (raw / "oecd/CRS.parquet").read_bytes() == crs_file.path.read_bytes()
     assert (raw / "external/gcf/projects.json").read_bytes() == (
         FIXTURES / "gcf" / "projects.json"
@@ -357,6 +394,69 @@ def test_offline_fetch_narrows_to_years_the_raw_files_hold_and_refuses_others(
         "crdf_provider": crdf_years,
         "multisystem": crdf_years,
     }
+
+
+@pytest.mark.parametrize(
+    ("source", "lacking"),
+    [
+        # MULTI starts in 2011, so a file from 2012 lost a year.
+        ("multisystem", {2011}),
+        ("multisystem", {2018}),
+        ("multisystem", {2024}),
+        # The CRDF listing holds recipient years from 2000 and provider from 2013.
+        ("crdf_recipient", {2000}),
+        ("crdf_provider", {2013, 2014}),
+    ],
+)
+def test_an_online_fetch_refuses_a_download_short_of_the_years_the_source_holds(
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    source: str,
+    lacking: set[int],
+) -> None:
+    sources.lacking = {source: lacking}
+    config = _config(crs_file=crs_file, crdf_years="all")
+
+    with pytest.raises(SourceUnavailableError) as raised:
+        _fetch(config, tmp_path / "out")
+
+    assert re.search(
+        rf"{source} \(\d+ to 2024 asked\) lacks {', '.join(map(str, sorted(lacking)))}"
+        r"(;|$)",
+        str(raised.value),
+    )
+    assert not (tmp_path / "out" / "r" / MANIFEST).exists()
+
+
+@pytest.mark.parametrize(
+    ("crdf_years", "multisystem"),
+    [("all", (2011, 2024)), ((2010, 2024), (2011, 2024)), ((2012, 2024), (2012, 2024))],
+)
+def test_an_offline_fetch_reads_the_years_asked_that_the_files_hold(
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    crdf_years: tuple[int, int] | Literal["all"],
+    multisystem: tuple[int, int],
+) -> None:
+    release = _fetch(_config(crs_file=crs_file, crdf_years="all"), tmp_path / "out")
+    config = _config(crs_file=crs_file, crdf_years=crdf_years)
+
+    _fetch(config, tmp_path / "out", offline=True)
+
+    manifest = pl.read_parquet(release / MANIFEST)
+    asked = crdf_years if crdf_years != "all" else (2000, 2024)
+    assert fetch.read_years(manifest) == {
+        "crs": (asked[0], 2025),
+        "crdf_recipient": asked,
+        "crdf_provider": (max(asked[0], 2013), 2024),
+        "multisystem": multisystem,
+    }
+    # The years held stay those the online fetch found.
+    assert manifest.filter(source="multisystem").select(
+        "held_first_year", "held_last_year"
+    ).row(0) == (2011, 2024)
 
 
 def test_an_offline_fetch_of_all_years_reads_an_earlier_fetch_of_all_years(

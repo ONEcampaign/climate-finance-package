@@ -2,20 +2,22 @@
 
 Fetch owns every network call of the build. It writes each source to its place in
 the raw layout and records one `raw_manifest` row per file, with its sha256, and
-for the CRS, the CRDF and MULTI the years the build reads (`resolve_years`). Every
-later stage reads those years from `raw_manifest` through `fetched_years`. The raw
-layout sits in the fetch stage's directory as `<release_dir>/fetch/raw/`, so the
-raw files and the manifest that records them replace the previous ones in one
-directory swap. Online, fetch downloads into `<release_dir>/raw.partial/`, which
-`seal_fetch` moves into the new fetch directory, so a fetch that fails at any point
-leaves the previous files and manifest in place. Offline, it makes no network call.
+for the CRS, the CRDF and MULTI the years asked (`resolve_years`) and the years the
+file holds of them (`held_in`). Every later stage reads the years asked that the
+file holds, through `fetched_years`. The raw layout sits in the fetch stage's
+directory as `<release_dir>/fetch/raw/`, so the raw files and the manifest that
+records them replace the previous ones in one directory swap. Online, fetch
+downloads into `<release_dir>/raw.partial/`, which `seal_fetch` moves into the new
+fetch directory, so a fetch that fails at any point leaves the previous files and
+manifest in place. Offline, it makes no network call.
 It checks that the previous fetch ran under the configured `SETTINGS`, other than
 the years, and that `raw/` holds exactly the files the previous `raw_manifest`
 records, each with its recorded sha256. It resolves the configured years against
-the recorded ones, which must cover them, and returns the manifest with the
-resolved years. An offline fetch of unchanged settings therefore writes the
-`stage.json` the previous fetch wrote, and one of narrower years narrows every
-later stage to them.
+the years the previous fetch asked for, which must cover them, and returns the
+manifest with the resolved years asked and the held years as recorded, since the
+files are the bytes the online fetch checked. An offline fetch of unchanged
+settings therefore writes the `stage.json` the previous fetch wrote, and one of
+narrower years narrows every later stage to them.
 """
 
 from __future__ import annotations
@@ -66,13 +68,20 @@ CRDF_FILES: dict[Perspective, Path] = {
     "provider": Path("oecd/crdf_provider.parquet"),
 }
 MULTISYSTEM_FILE = Path("oecd/multisystem.parquet")
-# Sources read for a range of years, which their `raw_manifest` rows record.
-YEAR_SOURCES = (
-    "crs",
-    *(f"crdf_{perspective}" for perspective in CRDF_FILES),
-    "multisystem",
-)
+# Sources read for a range of years, which their `raw_manifest` rows record, and
+# their files.
+YEAR_FILES = {
+    "crs": CRS_FILE,
+    **{f"crdf_{perspective}": path for perspective, path in CRDF_FILES.items()},
+    "multisystem": MULTISYSTEM_FILE,
+}
+YEAR_SOURCES = tuple(YEAR_FILES)
 type YearRange = tuple[int, int]
+# The first year MULTI holds, as the OECD states no coverage for it: its SDMX
+# availability endpoint returned HTTP 500, and a query of the DAC total for 1990 to
+# 2024 returned 17,252 rows of 2011 to 2024 only (24 October 2026, oda-reader
+# 1.12.0).
+MULTISYSTEM_FIRST_YEAR = 2011
 IMPUTED_SHARES_NAME = "Imputed_multilateral_shares.xlsx"
 IMPUTED_SHARES_FILE = Path("oecd") / IMPUTED_SHARES_NAME
 GCF_FILE = Path("external/gcf/projects.json")
@@ -97,6 +106,8 @@ class RawFile(TypedDict):
     method: str
     first_year: int | None
     last_year: int | None
+    held_first_year: int | None
+    held_last_year: int | None
 
 
 def run_fetch(context: StageContext) -> StageOutput:
@@ -108,7 +119,8 @@ def run_fetch(context: StageContext) -> StageOutput:
             `register_bulk_file` call for a browser download); or, under
             `context.offline`, when there is no earlier `raw_manifest` or `raw/`
             does not match it, or the earlier fetch ran under other `SETTINGS`,
-            or the years it records do not cover the configured ones.
+            or the years it asked for do not cover the configured ones, or a raw
+            file holds none of them.
     """
     if context.offline:
         try:
@@ -124,7 +136,9 @@ def run_fetch(context: StageContext) -> StageOutput:
         years = resolve_years(
             context.config.years, held=_recorded_years(recorded), source="raw_manifest"
         )
-        return {RAW_MANIFEST.name: _with_years(recorded, years=years)}
+        manifest = _with_years(recorded, years=years)
+        read_years(manifest)
+        return {RAW_MANIFEST.name: manifest}
 
     partial = _partial_dir(context.release_dir)
     shutil.rmtree(partial, ignore_errors=True)
@@ -168,12 +182,12 @@ def fetch_sources(
     """Fetch every source into `raw` and describe each file written.
 
     The bulk CRS comes first, so a challenge stops the fetch before the long
-    downloads. The years come from `resolve_years`, against the years the CRS
-    file and the CRDF folder hold.
+    downloads. The years asked come from `resolve_years`, against the years the
+    CRS file and the CRDF folder hold, and `held_in` checks the files.
 
     Raises:
         SourceUnavailableError: when a source cannot be fetched, or does not hold
-            the configured years.
+            the configured years, or a file falls short of them.
     """
     import oda_reader
 
@@ -183,15 +197,12 @@ def fetch_sources(
         if sources.crs_file is not None
         else _download_crs(raw)
     )
+    listing = _crdf_years(oda_reader.list_crdf_files())
     years = resolve_years(
         config.years,
-        held={
-            "crs": held_years(raw / CRS_FILE),
-            **_crdf_years(oda_reader.list_crdf_files()),
-        },
+        held={"crs": held_years(raw / CRS_FILE), **listing},
         source="source",
     )
-    crs["first_year"], crs["last_year"] = years["crs"]
     crdf = [
         _download_crdf(
             raw,
@@ -201,7 +212,7 @@ def fetch_sources(
         )
         for perspective in CRDF_FILES
     ]
-    return [
+    files = [
         crs,
         *crdf,
         _download_multisystem(raw, years=years["multisystem"]),
@@ -212,6 +223,12 @@ def fetch_sources(
             raw, archive=sources.iati_archive, publishers=sources.iati_publishers
         ),
     ]
+    held = held_in(raw, asked=years, crdf=listing)
+    for file in files:
+        if (name := file["source"]) in held:
+            file["first_year"], file["last_year"] = years[name]
+            file["held_first_year"], file["held_last_year"] = held[name]
+    return files
 
 
 def expected_sources(config: BuildConfig) -> list[str]:
@@ -241,10 +258,11 @@ def resolve_years(
 
     Args:
         years: the configured years.
-        held: the years each source holds, by `YEAR_SOURCES` name. The CRDF
-            perspectives and the CRS are required; MULTI is checked when present.
+        held: the years each source holds, by `YEAR_SOURCES` name, or for an
+            earlier fetch the years it asked for. The CRDF perspectives and the
+            CRS are required; MULTI is checked when present.
         source: what `held` describes, for the messages: `"source"` for the
-            files themselves, `"raw_manifest"` for an earlier fetch's record.
+            sources themselves, `"raw_manifest"` for an earlier fetch's record.
 
     Raises:
         SourceUnavailableError: when a source in `held` lacks a year resolved for
@@ -280,15 +298,87 @@ def resolve_years(
     return resolved
 
 
+def held_in(
+    raw: Path, *, asked: Mapping[str, YearRange], crdf: Mapping[str, YearRange]
+) -> dict[str, YearRange]:
+    """The years `asked` that the file of each source in `YEAR_SOURCES` under `raw`
+    holds.
+
+    A file may start after the first year asked where the source holds no earlier
+    year: the CRDF perspectives none before the first year `crdf` (their workbook
+    listing) holds, MULTI none before `MULTISYSTEM_FIRST_YEAR`. The CRS file is the
+    source, so it holds every year asked.
+
+    Raises:
+        SourceUnavailableError: when a file starts later than that, ends before
+            the last year asked, or lacks a year between, as a truncated download
+            would. The message names every such file.
+    """
+    starts = {
+        "crs": asked["crs"][0],
+        **{name: span[0] for name, span in crdf.items()},
+        "multisystem": MULTISYSTEM_FIRST_YEAR,
+    }
+    spans: dict[str, YearRange] = {}
+    problems = []
+    for name in YEAR_SOURCES:
+        first, last = asked[name]
+        held = set(
+            pl.scan_parquet(raw / YEAR_FILES[name])
+            .filter(pl.col("year").is_between(first, last))
+            .select(pl.col("year").unique())
+            .collect()["year"]
+        )
+        start = min(held | {max(first, starts[name])})
+        if missing := sorted(set(range(start, last + 1)) - held):
+            problems.append(
+                f"{name} ({_span(asked[name])} asked) lacks "
+                f"{', '.join(map(str, missing))}"
+            )
+        spans[name] = (start, last)
+    if problems:
+        raise SourceUnavailableError(
+            f"Downloads fall short of the years the sources hold: {'; '.join(problems)}"
+            "; run the fetch stage again."
+        )
+    return spans
+
+
 def fetched_years(context: StageContext) -> dict[str, YearRange]:
     """The years the build reads from each source in `YEAR_SOURCES`, as the fetch
-    stage's `raw_manifest` records them.
+    stage's `raw_manifest` records them (`read_years`).
 
     Raises:
         StageInputMissingError: when the fetch stage wrote no `raw_manifest`.
-        SourceUnavailableError: when it records no years for one of them.
+        SourceUnavailableError: as `read_years` does.
     """
-    return _recorded_years(context.read("fetch", RAW_MANIFEST.name).collect())
+    return read_years(context.read("fetch", RAW_MANIFEST.name).collect())
+
+
+def read_years(manifest: pl.DataFrame) -> dict[str, YearRange]:
+    """The years asked that the file holds, for each source in `YEAR_SOURCES` of
+    `manifest`, a `raw_manifest`.
+
+    Raises:
+        SourceUnavailableError: when it records no years asked or held for one of
+            them, or the file holds none of the years asked.
+    """
+    asked = _recorded_years(manifest)
+    held = _recorded_years(manifest, columns=("held_first_year", "held_last_year"))
+    years = {
+        name: (max(first, held[name][0]), min(last, held[name][1]))
+        for name, (first, last) in asked.items()
+    }
+    if empty := [
+        f"{name} ({_span(asked[name])} asked, {_span(held[name])} held)"
+        for name, (first, last) in years.items()
+        if first > last
+    ]:
+        raise SourceUnavailableError(
+            f"The raw files hold none of the years build.toml asks for: "
+            f"{', '.join(empty)}; set other years under [years]."
+        )
+    return years
 
 
 def last_complete_year(context: StageContext) -> int:
@@ -307,18 +397,20 @@ def last_complete_year(context: StageContext) -> int:
     return complete
 
 
-def _recorded_years(recorded: pl.DataFrame) -> dict[str, YearRange]:
-    """The years `recorded` holds for each source in `YEAR_SOURCES`.
+def _recorded_years(
+    recorded: pl.DataFrame, *, columns: tuple[str, str] = ("first_year", "last_year")
+) -> dict[str, YearRange]:
+    """The years `recorded` holds in `columns` for each source in `YEAR_SOURCES`.
 
     Raises:
         SourceUnavailableError: when it records none, or more than one range, for
             one of them.
     """
-    if not {"first_year", "last_year"} <= set(recorded.columns):
-        recorded = recorded.with_columns(first_year=None, last_year=None)
+    if not set(columns) <= set(recorded.columns):
+        recorded = recorded.with_columns(pl.lit(None).alias(name) for name in columns)
     ranges = (
         recorded.filter(pl.col("source").is_in(YEAR_SOURCES))
-        .select("source", "first_year", "last_year")
+        .select("source", *columns)
         .unique()
         .drop_nulls()
     )
@@ -487,9 +579,7 @@ def _record(
     etag: str | None = None,
     version: str | None = None,
     sha256: str | None = None,
-    years: tuple[int, int] | None = None,
 ) -> RawFile:
-    first_year, last_year = (None, None) if years is None else years
     return RawFile(
         source=source,
         url=url,
@@ -499,8 +589,10 @@ def _record(
         version=version,
         fetched_at=datetime.now(UTC),
         method=method,
-        first_year=first_year,
-        last_year=last_year,
+        first_year=None,
+        last_year=None,
+        held_first_year=None,
+        held_last_year=None,
     )
 
 
@@ -604,7 +696,6 @@ def _download_crdf(
         source=f"crdf_{perspective}",
         method="http",
         url=CRDF_URL,
-        years=years,
     )
 
 
@@ -616,9 +707,7 @@ def _download_multisystem(raw: Path, *, years: tuple[int, int]) -> RawFile:
         start_year=first, end_year=last, pre_process=True, dotstat_codes=True
     )
     frame.to_parquet(_target(raw, MULTISYSTEM_FILE), index=False)
-    return _record(
-        raw, MULTISYSTEM_FILE, source="multisystem", method="http", years=years
-    )
+    return _record(raw, MULTISYSTEM_FILE, source="multisystem", method="http")
 
 
 def _download_imputed_shares(raw: Path) -> RawFile:

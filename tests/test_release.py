@@ -133,6 +133,8 @@ def _raw_manifest(version: str) -> pl.DataFrame:
             "method": ["manual"],
             "first_year": [2010],
             "last_year": [2025],
+            "held_first_year": [2010],
+            "held_last_year": [2025],
         },
         schema=schema.RAW_MANIFEST.dtypes,
     )
@@ -149,7 +151,20 @@ def config() -> BuildConfig:
 def _measure() -> dict[str, pl.DataFrame]:
     return {
         "agency_shares": _empty(schema.AGENCY_SHARES),
-        "agency_spending": _empty(schema.AGENCY_SPENDING),
+        # One share year, so release.json records agency_spending's years.
+        "agency_spending": pl.DataFrame(
+            [
+                {
+                    "channel_code": IDA_CHANNEL,
+                    "year": 2022,
+                    "rio_adaptation": 0,
+                    "rio_mitigation": 2,
+                    "face_share": 0.5,
+                    "adaptation_measured": True,
+                },
+            ],
+            schema=schema.AGENCY_SPENDING.dtypes,
+        ),
         "modelled": _empty(schema.MODELLED),
     }
 
@@ -198,8 +213,10 @@ def test_the_release_opens_and_matches_release_json(release_dir: Path) -> None:
         "crdf_recipient": (2015, 2024),
         "crdf_provider": (2015, 2024),
         "multisystem": (2015, 2024),
-        # The years core_contributions holds; agency_shares holds none.
+        # The years core_contributions and agency_spending hold; agency_shares
+        # holds none.
         "core_contributions": (2021, 2021),
+        "agency_spending": (2022, 2022),
     }
     assert set(snapshot.manifest.tables) == set(schema.RELEASE_TABLES)
     # The config fixture turns key repair and recoveries off.

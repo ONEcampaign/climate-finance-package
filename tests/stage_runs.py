@@ -59,7 +59,7 @@ def year_rows(
     *, crdf: tuple[int, int] = (2015, 2024), crs: tuple[int, int] = (2010, 2025)
 ) -> pl.DataFrame:
     """`raw_manifest` rows recording `crdf` for each CRDF perspective and MULTI and
-    `crs` for the CRS, for files no test reads."""
+    `crs` for the CRS, asked and held, for files no test reads."""
     return pl.DataFrame(
         [
             {
@@ -70,6 +70,8 @@ def year_rows(
                 "method": "manual",
                 "first_year": first,
                 "last_year": last,
+                "held_first_year": first,
+                "held_last_year": last,
             }
             for source in YEAR_SOURCES
             for first, last in [crs if source == "crs" else crdf]

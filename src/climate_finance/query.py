@@ -41,7 +41,7 @@ import polars as pl
 
 from climate_finance import catalogue
 from climate_finance.convert import convert, provenance
-from climate_finance.methods import OECD, Method, label, weights
+from climate_finance.methods import Method, label, uses_imputed_shares, weights
 from climate_finance.result import (
     AMOUNTS,
     ROW_KEYS,
@@ -348,7 +348,7 @@ def _attributed_rows(snapshot: Snapshot, *, flow: Flow, method: Method) -> pl.La
     row counts mitigation alone. An agency without a share attributes nothing, and
     neither do the EU channels when the method counts EU Institutions as a provider.
     """
-    source = "oecd" if method.replace(eu=OECD.eu) == OECD else "one"
+    source = "oecd" if uses_imputed_shares(method) else "one"
     shares = _fixed_shares(snapshot, source=source)
     if source == "one":
         measured = measured_shares(snapshot.table("agency_spending"), method=method)

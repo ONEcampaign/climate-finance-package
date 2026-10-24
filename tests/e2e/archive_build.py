@@ -4,7 +4,8 @@ The archive holds the CRDF and MULTI as two files each: the years from 2015, and
 earlier years an online fetch of every year reads (recipient CRDF and MULTI from
 2000, provider CRDF from 2013). `seed_raw` joins each pair into one raw file and
 links every other source to its archive file. The `raw_manifest` records the years
-`resolve_years` gives for the configured years against the years the files hold.
+`resolve_years` asks for the configured years against the years the files hold, and
+the years of them `held_in` finds in each file (MULTI from 2011).
 """
 
 from datetime import UTC, datetime
@@ -22,6 +23,7 @@ from climate_finance.build.fetch import (
     IATI_DIR,
     IMPUTED_SHARES_FILE,
     MULTISYSTEM_FILE,
+    held_in,
     held_years,
     resolve_years,
 )
@@ -78,17 +80,16 @@ def seed_raw(release_dir: Path, *, archive: Path, config: BuildConfig) -> None:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.symlink_to(archive / origin)
             placed.append((source, relative))
+    crdf = {
+        f"crdf_{perspective}": held_years(raw / path)
+        for perspective, path in CRDF_FILES.items()
+    }
     years = resolve_years(
         config.years,
-        held={
-            "crs": held_years(raw / CRS_FILE),
-            **{
-                f"crdf_{perspective}": held_years(raw / path)
-                for perspective, path in CRDF_FILES.items()
-            },
-        },
+        held={"crs": held_years(raw / CRS_FILE), **crdf},
         source="source",
     )
+    held = held_in(raw, asked=years, crdf=crdf)
     manifest = pl.DataFrame(
         [
             {
@@ -103,6 +104,8 @@ def seed_raw(release_dir: Path, *, archive: Path, config: BuildConfig) -> None:
                 "method": "manual",
                 "first_year": years[source][0] if source in years else None,
                 "last_year": years[source][1] if source in years else None,
+                "held_first_year": held[source][0] if source in held else None,
+                "held_last_year": held[source][1] if source in held else None,
             }
             for source, relative in placed
         ],

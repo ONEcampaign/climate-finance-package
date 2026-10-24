@@ -11,7 +11,13 @@ import polars as pl
 from pydantic import BaseModel, ConfigDict
 
 from climate_finance.convert import Conversion
-from climate_finance.methods import Method, MethodRange, describe, label
+from climate_finance.methods import (
+    Method,
+    MethodRange,
+    describe,
+    label,
+    uses_imputed_shares,
+)
 from climate_finance.schema import STATUSES
 from climate_finance.spec import (
     BILATERAL,
@@ -282,8 +288,10 @@ def explain(
     objective. `unmeasured` lists the years with rows whose adaptation is not
     measured. `years` is the release's `years`; under the provider view, the queried
     years (`spec.years`, else the recipient CRDF's) outside those of
-    `core_contributions` or `agency_shares` are named as holding no attributed
-    finance. `conversion` names the conversion factors of a converted result.
+    `core_contributions` or of the share table a method reads (`agency_shares`
+    under the OECD's imputed shares, else `agency_spending`) are named as holding
+    no attributed finance under that method. `conversion` names the conversion
+    factors of a converted result.
     """
     fallbacks = fallbacks or {}
     unsplit = unsplit or {}
@@ -311,15 +319,8 @@ def explain(
             "null, and their climate value is mitigation only."
         )
     lines.append(_VIEWS[spec.view])
-    if spec.view == "provider" and (
-        outside := _outside_attribution(spec.years, years=years or {})
-    ):
-        lines.append(
-            f"Attributed finance covers core contributions in "
-            f"{_span(years, 'core_contributions')} and agency shares in "
-            f"{_span(years, 'agency_shares')}; the provider view attributes none "
-            f"in {_runs(outside)}."
-        )
+    if spec.view == "provider":
+        lines.extend(_coverage(methods, queried=spec.years, years=years or {}))
     lines.append(_FLOWS[spec.flow])
     lines.append(
         "Commitments that repeat an earlier vintage are left out, and their "
@@ -364,12 +365,46 @@ def explain(
     return "\n".join(lines)
 
 
+# The share table each kind of method reads, and its name in running text.
+_SHARE_TABLES = {
+    True: ("agency_shares", "the OECD's imputed shares"),
+    False: ("agency_spending", "agency spending"),
+}
+
+
+def _coverage(
+    methods: Sequence[Method],
+    *,
+    queried: Sequence[int] | None,
+    years: Mapping[str, tuple[int, int]],
+) -> list[str]:
+    """A line per share table `methods` read, in their order, naming the queried
+    years outside the years of `core_contributions` or of that table."""
+    tables: dict[bool, list[str]] = {}
+    for method in methods:
+        tables.setdefault(uses_imputed_shares(method), []).append(label(method))
+    lines = []
+    for imputed, labels in tables.items():
+        table, text = _SHARE_TABLES[imputed]
+        if outside := _outside_attribution(queried, table=table, years=years):
+            lines.append(
+                f"Under {_listing(labels)}, attributed finance covers core "
+                f"contributions in {_span(years, 'core_contributions')} and {text} "
+                f"in {_span(years, table)}; the provider view attributes none in "
+                f"{_runs(outside)}."
+            )
+    return lines
+
+
 def _outside_attribution(
-    queried: Sequence[int] | None, *, years: Mapping[str, tuple[int, int]]
+    queried: Sequence[int] | None,
+    *,
+    table: str,
+    years: Mapping[str, tuple[int, int]],
 ) -> list[int]:
-    """The queried years outside the years of `core_contributions` or
-    `agency_shares`. Without queried years, the recipient CRDF's are queried; a
-    release that records no years gives none."""
+    """The queried years outside the years of `core_contributions` or `table`.
+    Without queried years, the recipient CRDF's are queried; a release that
+    records no years gives none."""
     if not years:
         return []
     if queried is None:
@@ -377,7 +412,7 @@ def _outside_attribution(
             return []
         first, last = years["crdf_recipient"]
         queried = range(first, last + 1)
-    spans = [years.get(name) for name in ("core_contributions", "agency_shares")]
+    spans = [years.get(name) for name in ("core_contributions", table)]
     return sorted(
         year
         for year in set(queried)
@@ -408,7 +443,7 @@ def _runs(years: Sequence[int]) -> str:
     return f"{', '.join(rest)} and {last}" if rest else last
 
 
-def _listing(codes: Sequence[int]) -> str:
+def _listing(codes: Sequence[int | str]) -> str:
     """`codes` as running text, such as "1, 3, 7 and 8"."""
     *rest, last = map(str, codes)
     return f"{', '.join(rest)} and {last}" if rest else last

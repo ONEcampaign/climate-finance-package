@@ -82,6 +82,13 @@ RANGE = MethodRange(methods=(ONE, OECD, PROVIDER))
 _NAMED = {"ONE": ONE, "OECD": OECD, "PROVIDER": PROVIDER}
 
 
+def uses_imputed_shares(method: Method) -> bool:
+    """Whether `method` attributes core contributions with the OECD's imputed
+    shares, as OECD does with either EU setting. Any other method weighs the
+    agency's own spending."""
+    return method.replace(eu=OECD.eu) == OECD
+
+
 def _number(value: float) -> str:
     """`value` in the shortest form that reads back as the same float, -0 as 0."""
     return repr(value + 0.0).removesuffix(".0")

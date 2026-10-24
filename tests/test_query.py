@@ -902,35 +902,75 @@ def test_unmeasured_adaptation_stays_null_and_value_counts_mitigation(
     assert "not measured" not in original.explain()
 
 
+_SPENDING_COVERS = (
+    "Under {}, attributed finance covers core contributions in 2021 to 2022 and "
+    "agency spending in 2022 to 2023; the provider view attributes none in "
+)
+_IMPUTED_COVERS = (
+    "Under OECD, attributed finance covers core contributions in 2021 to 2022 and "
+    "the OECD's imputed shares in 2020 to 2022; the provider view attributes none in "
+)
+
+
 @pytest.mark.parametrize(
-    ("view", "years", "named"),
+    ("view", "method", "years", "named"),
     [
-        ("provider", None, "2015 to 2020 and 2023 to 2024"),
-        ("provider", (2020, 2021), "2020"),
-        ("provider", (2021, 2022), None),
-        ("recipient", None, None),
+        (
+            "provider",
+            ONE,
+            None,
+            [_SPENDING_COVERS.format("ONE") + "2015 to 2021 and 2023 to 2024."],
+        ),
+        (
+            "provider",
+            OECD,
+            None,
+            [_IMPUTED_COVERS + "2015 to 2020 and 2023 to 2024."],
+        ),
+        (
+            "provider",
+            ONE,
+            (2020, 2021),
+            [_SPENDING_COVERS.format("ONE") + "2020 to 2021."],
+        ),
+        ("provider", OECD, (2021, 2022), []),
+        (
+            "provider",
+            RANGE,
+            (2020, 2021),
+            [
+                _SPENDING_COVERS.format("ONE and PROVIDER") + "2020 to 2021.",
+                _IMPUTED_COVERS + "2020.",
+            ],
+        ),
+        ("provider", RANGE, (2022,), []),
+        ("recipient", ONE, None, []),
     ],
 )
 def test_explain_names_queried_years_without_attributed_finance(
-    tmp_path: Path, view: str, years: tuple[int, ...] | None, named: str | None
+    tmp_path: Path,
+    view: str,
+    method: Method | MethodRange,
+    years: tuple[int, ...] | None,
+    named: list[str],
 ) -> None:
     release = copy_release(tmp_path / "release")
     path = release / "release.json"
     manifest = ReleaseManifest.model_validate_json(path.read_text())
+    # Each method's line names the years of the share table it reads.
     covered = {
         "crdf_recipient": (2015, 2024),
         "core_contributions": (2021, 2022),
         "agency_shares": (2020, 2022),
+        "agency_spending": (2022, 2023),
     }
     path.write_text(manifest.model_copy(update={"years": covered}).model_dump_json())
 
-    text = cf.load(path=release).spending(view=view, years=years).explain()
+    text = cf.load(path=release).spending(view=view, method=method, years=years)
+    lines = [
+        line
+        for line in text.explain().splitlines()
+        if "attributed finance covers" in line
+    ]
 
-    covers = (
-        "Attributed finance covers core contributions in 2021 to 2022 and agency "
-        "shares in 2020 to 2022; the provider view attributes none in "
-    )
-    if named is None:
-        assert "Attributed finance covers" not in text
-    else:
-        assert f"{covers}{named}." in text
+    assert lines == named
