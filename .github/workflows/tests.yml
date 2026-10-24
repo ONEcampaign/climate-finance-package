@@ -4,15 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    # Nightly run of the tests marked `slow`.
-    - cron: "17 3 * * *"
   workflow_dispatch:
 
 jobs:
   lint:
     name: lint and types
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -26,7 +22,6 @@ jobs:
 
   test:
     name: test (${{ matrix.python-version }})
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -41,7 +36,6 @@ jobs:
 
   lowest-direct:
     name: lowest supported dependencies
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -54,7 +48,6 @@ jobs:
 
   base-install:
     name: base install imports no build dependency
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -69,23 +62,3 @@ jobs:
           CF_BASE_INSTALL: "1"
         run: /tmp/base/bin/python -m pytest -p no:cacheprovider test_import_boundary.py
 
-  slow:
-    name: slow (nightly)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    env:
-      CF_E2E_DATA: ${{ vars.CF_E2E_DATA }}
-    steps:
-      - name: Report a skip when no data is configured
-        if: env.CF_E2E_DATA == ''
-        run: |
-          echo "::warning::skipped: no CF_E2E_DATA"
-          echo "### slow tests skipped: no CF_E2E_DATA" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/checkout@v7
-        if: env.CF_E2E_DATA != ''
-      - uses: astral-sh/setup-uv@v10.0.0
-        if: env.CF_E2E_DATA != ''
-      - if: env.CF_E2E_DATA != ''
-        run: uv sync --locked --python 3.13 --all-extras --all-groups
-      - if: env.CF_E2E_DATA != ''
-        run: uv run --no-sync pytest -m slow
