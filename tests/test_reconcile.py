@@ -51,6 +51,7 @@ def test_germany_reads_against_its_own_weight() -> None:
     assert row["party_weight"] == 0.5
     assert row["party_principal"] == 1.0
     assert row["weight_source"] == "Fixture survey, p. 8"
+    assert row["coefficient_basis"] == "provider"
     assert row["btr_face"] == pytest.approx(22e6)
     # DEU-2, face 25m, is Significant on both objectives, which Germany counts in
     # full.
@@ -113,6 +114,7 @@ def test_a_case_by_case_party_reads_against_its_default() -> None:
     row = _row(SNAP.reconcile(parties="NOR"), "NOR", 2021)
 
     assert (row["party_weight"], row["party_principal"]) == (0.3, None)
+    assert row["coefficient_basis"] == "default"
     assert row["crdf_at_party_weight"] == pytest.approx(18e6)
 
 
@@ -171,15 +173,38 @@ def _without_a_default(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def test_a_party_without_a_weight_has_no_weighted_comparators(
+def test_a_case_by_case_party_without_a_default_reads_at_provider_coefficients(
     tmp_path: Path,
 ) -> None:
+    # Norway assesses each activity and here states no default, so its Significant
+    # NOR-2 (9m) counts at PROVIDER's 0.4, as `spending` counts it.
     release = copy_release(
         tmp_path / "release", edits={"provider_coefficients": _without_a_default}
     )
-    row = _row(cf.load(path=release).reconcile(parties="NOR"), "NOR", 2021)
+    row = _row(cf.load(path=release).reconcile(parties="NOR"), "NOR", 2022)
 
     assert row["party_weight"] is None
+    assert row["coefficient_basis"] == "case_by_case"
+    assert row["crdf_at_party_weight"] == pytest.approx(0.4 * 9e6)
+    assert row["btr_over_comparator"] == pytest.approx(
+        row["btr_face"] / row["crs_disbursed_at_party_weight"]
+    )
+
+
+def test_a_party_without_a_coefficient_row_has_no_weighted_comparators(
+    tmp_path: Path,
+) -> None:
+    release = copy_release(
+        tmp_path / "release",
+        edits={
+            "provider_coefficients": lambda frame: frame.filter(
+                pl.col("provider_code") != 8
+            )
+        },
+    )
+    row = _row(cf.load(path=release).reconcile(parties="NOR"), "NOR", 2021)
+
+    assert row["coefficient_basis"] is None
     assert row["crdf_at_party_weight"] is None
     assert row["crs_disbursed_at_party_weight"] is None
     # Norway's own comparator is null, so its ratio says nothing.

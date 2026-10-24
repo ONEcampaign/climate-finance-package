@@ -423,6 +423,7 @@ def _party_coefficients(snapshot: Snapshot) -> pl.LazyFrame:
             party_weight="significant",
             party_principal="principal",
             weight_source="citation",
+            coefficient_basis=_coefficient_basis(),
         )
     )
 
@@ -462,16 +463,21 @@ def reconcile(
     as the EU's leaves out the EIB's. The party's coefficients are its provider's
     `provider_coefficients` row of the year for every agency without a row of its
     own: `party_weight` the significant one, `party_principal` the principal one,
-    and `weight_source` their source. The weighted comparators weigh each activity
-    or record as `PROVIDER` does, by its agency's row, else its provider's, and at
-    `PROVIDER`'s coefficients for an agency that assesses each activity case by
-    case, as France's AFD does. `crdf_at_party_weight` is its CRDF commitments so
-    weighted; `crdf_at_100` the same commitments with Significant at 100%;
+    `weight_source` their source, and `coefficient_basis` the row's basis as
+    `spending` gives it. The weighted comparators weigh each activity or record as
+    `PROVIDER` does, by its agency's row, else its provider's. Where that row
+    assesses each activity case by case and gives no coefficient, at the agency
+    level as for France's AFD or the provider level as for the UK, the activity
+    takes `PROVIDER`'s coefficients, so a `coefficient_basis` of `case_by_case`
+    marks a party whose comparators rest on `PROVIDER`'s coefficients in place of
+    its own. `crdf_at_party_weight` is its CRDF commitments so weighted;
+    `crdf_at_100` the same commitments with Significant at 100%;
     `traced_climate_value` the climate value `method` gives what those commitments
     disbursed; `crs_disbursed_at_party_weight` the year's CRS disbursements on
     Rio-marked records so weighted, by each record's higher marker; and
     `crs_grant_equivalent_at_party_weight` their grant equivalent, weighted alike.
-    A party without a weight has null weighted comparators, and one without a DAC
+    A party whose provider has no `provider_coefficients` row for every agency has
+    null weighted comparators and a null `coefficient_basis`, and one without a DAC
     provider code null comparators.
 
     Each `btr_over_<comparator>` divides `btr_face` by it, null where the
@@ -536,7 +542,6 @@ def reconcile(
             validate="m:1",
         )
     )
-    weight = pl.col("party_weight")
     party_years = reported.select("provider_code", "year").unique()
     bilateral = (pl.col("bi_multi").is_in(BILATERAL), pl.col("year").is_in(years))
     commitments = (
@@ -630,7 +635,9 @@ def reconcile(
     table = (
         pl.concat(frames)
         .with_columns(
-            pl.when(weight.is_not_null()).then(pl.col(name)).alias(name)
+            pl.when(pl.col("coefficient_basis").is_not_null())
+            .then(pl.col(name))
+            .alias(name)
             for name in weighted_comparators
         )
         .with_columns(
@@ -658,6 +665,7 @@ def reconcile(
             "party_weight",
             "party_principal",
             "weight_source",
+            "coefficient_basis",
             "btr_face",
             "btr_face_reported",
             "party_rate",
@@ -1227,11 +1235,7 @@ def _coefficients(
         _significant="significant",
         _principal="principal",
         _both="both_significant",
-        _basis=pl.when(~pl.col("case_by_case"))
-        .then(pl.lit("provider"))
-        .when(pl.col("significant").is_not_null() | pl.col("principal").is_not_null())
-        .then(pl.lit("default"))
-        .otherwise(pl.lit("case_by_case")),
+        _basis=_coefficient_basis(),
         _source="citation",
     )
     columns = ("_significant", "_principal", "_both", "_basis", "_source")
@@ -1265,6 +1269,19 @@ def _coefficients(
             coefficient_source=pl.col("_source"),
         )
         .drop(*columns, *(f"{name}_all" for name in columns))
+    )
+
+
+def _coefficient_basis() -> pl.Expr:
+    """A `provider_coefficients` row's basis: `provider` for flat coefficients,
+    `default` for the default share of a provider that assesses case by case, and
+    `case_by_case` where such a provider gives no default."""
+    return (
+        pl.when(~pl.col("case_by_case"))
+        .then(pl.lit("provider"))
+        .when(pl.col("significant").is_not_null() | pl.col("principal").is_not_null())
+        .then(pl.lit("default"))
+        .otherwise(pl.lit("case_by_case"))
     )
 
 

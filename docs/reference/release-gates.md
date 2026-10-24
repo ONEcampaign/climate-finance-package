@@ -18,7 +18,7 @@ Without a blind sample, every provider fails with code `no_sample`. A build with
 
 ## `human_audit`
 
-Returns the share of the blind sample's draws, over every provider, whose standing decision is a person's. With no sample the row fails with code `no_sample`, and with an empty one with `empty_sample`. The threshold is 0.10, which the share must reach, so people decide at least one draw in ten and agents may decide the rest. `--waive-precision` also waives this gate. `release.add_to_index` publishes a pack only when its `release.json` records `precision` and `human_audit` rows and every recorded gate row passed or was waived. Only precision and human-audit rows can be waived, and only with a recorded `precision_waiver`. Otherwise it raises `GateFailedError`.
+Returns the share of the blind sample's draws, over every provider, whose standing decision is a person's. With no sample the row fails with code `no_sample`, and with an empty one with `empty_sample`. The threshold is 0.10, which the share must reach, so people decide at least one draw in ten and agents may decide the rest. `--waive-precision` also waives this gate. `release.upload_release` and `release.add_to_index` publish a pack only when its `release.json` records `precision` and `human_audit` rows and every recorded gate row passed or was waived. Only precision and human-audit rows can be waived, and only with a recorded `precision_waiver`. Otherwise it raises `GateFailedError`.
 
 ## `conservation`
 

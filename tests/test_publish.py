@@ -391,7 +391,7 @@ def test_a_failed_gate_stops_cut_release_before_the_pack(
         ),
     ],
 )
-def test_the_index_takes_only_a_release_whose_gates_passed_or_were_waived(
+def test_upload_and_index_take_only_a_release_whose_gates_passed_or_were_waived(
     tmp_path: Path,
     rows: dict[str, list[dict[str, object]]],
     waiver: str | None,
@@ -399,17 +399,34 @@ def test_the_index_takes_only_a_release_whose_gates_passed_or_were_waived(
 ) -> None:
     release_dir = gated(built_release(tmp_path / "fixture"), rows=rows, waiver=waiver)
     pack = release.pack_release(release_dir, out_path=tmp_path / PACK)
+    uploads = tmp_path / "uploads"
 
-    def publish() -> ReleaseIndex:
+    def upload() -> str:
+        return release.upload_release(pack, target=str(uploads))
+
+    def index() -> ReleaseIndex:
         return release.add_to_index(
             ReleaseIndex(), release="fixture", pack=pack, url="file:///p"
         )
 
     if refused is None:
-        assert publish().latest == "fixture"
+        upload()
+        assert index().latest == "fixture"
     else:
-        with pytest.raises(GateFailedError, match=refused):
-            publish()
+        for publish in (upload, index):
+            with pytest.raises(GateFailedError, match=refused):
+                publish()
+        assert not uploads.exists()
+
+
+def test_the_index_refuses_a_pack_under_another_release_name(tmp_path: Path) -> None:
+    pack = release.pack_release(
+        gated(built_release(tmp_path / "fixture")), out_path=tmp_path / PACK
+    )
+    with pytest.raises(BuildError, match="holds release 'fixture', not 'other'"):
+        release.add_to_index(
+            ReleaseIndex(), release="other", pack=pack, url="file:///p"
+        )
 
 
 def test_upload_copies_into_a_directory_or_puts_to_a_server(
@@ -417,7 +434,7 @@ def test_upload_copies_into_a_directory_or_puts_to_a_server(
 ) -> None:
     url, served = server
     pack = release.pack_release(
-        built_release(tmp_path / "fixture"), out_path=tmp_path / PACK
+        gated(built_release(tmp_path / "fixture")), out_path=tmp_path / PACK
     )
 
     local = release.upload_release(pack, target=str(tmp_path / "uploads"))

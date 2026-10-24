@@ -981,14 +981,15 @@ def pack_release(release_dir: Path, *, out_path: Path) -> Path:
     nothing else the assemble stage writes, such as its `stage.json`. Its
     `release.json` is the build's with the withheld tables moved from `tables` to
     `withheld_tables`. `sources.json` lists every source the fetch stage recorded,
-    `btr` when the release holds BTR rows, and `REPORTS_SOURCE` when its
-    `modelled` rows use a provider's report ratios, each with its version, URLs
+    the BTR archive under `fetch.BTR_SOURCE` among them, and `REPORTS_SOURCE` when
+    its `modelled` rows use a provider's report ratios, each with its version, URLs
     and licence, and a note on each source whose rows the release leaves out.
     Members go in name order with fixed owners and the release's creation time,
     so one release packs to the same bytes.
 
     Raises:
-        BuildError: when a source has no entry in `SOURCE_LICENCES`.
+        BuildError: when a source has no entry in `SOURCE_LICENCES`, or when the
+            release holds BTR rows and the raw manifest records no BTR archive.
     """
     assembled = release_dir / "assemble"
     manifest = ReleaseManifest.model_validate_json(
@@ -1235,15 +1236,34 @@ def unpublishable(manifest: ReleaseManifest) -> list[str]:
     return problems
 
 
+def publishable(pack: Path) -> ReleaseManifest:
+    """The `release.json` inside the packed release at `pack`, once its gates
+    allow publishing it.
+
+    Raises:
+        GateFailedError: when the pack's `release.json` records a gate row
+            neither passed nor waived, a waiver without its reason, or no result
+            for the precision and human-audit gates (`unpublishable`).
+    """
+    manifest = packed_manifest(pack)
+    if problems := unpublishable(manifest):
+        raise GateFailedError(problems)
+    return manifest
+
+
 def upload_release(pack: Path, *, target: str) -> str:
     """Upload a packed release to `target`; return its URL.
 
     `target` is a directory, or an http(s) URL that takes the pack by PUT at
-    `<target>/<pack name>`.
+    `<target>/<pack name>`. A pack its gates keep from publishing is never
+    uploaded.
 
     Raises:
+        GateFailedError: when the pack's gates keep it from publishing
+            (`publishable`).
         httpx.HTTPStatusError: when the server refuses the upload.
     """
+    publishable(pack)
     if not target.startswith(("http://", "https://")):
         directory = Path(target)
         directory.mkdir(parents=True, exist_ok=True)
@@ -1262,12 +1282,12 @@ def add_to_index(
     """`index` with `release` published at `url` as its newest release.
 
     Raises:
-        GateFailedError: when the pack's `release.json` records a gate row
-            neither passed nor waived, a waiver without its reason, or no result
-            for the precision and human-audit gates (`unpublishable`).
+        GateFailedError: when the pack's gates keep it from publishing
+            (`publishable`).
+        BuildError: when `release` is not the release the pack holds.
     """
-    if problems := unpublishable(packed_manifest(pack)):
-        raise GateFailedError(problems)
+    if (packed := publishable(pack).release) != release:
+        raise BuildError(f"{pack} holds release {packed!r}, not {release!r}")
     return index.model_copy(
         update={
             "latest": release,
