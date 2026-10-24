@@ -57,9 +57,10 @@ def run_link(context: StageContext) -> StageOutput:
     DAC exchange rates fetch wrote, except the routes `skip_eib_routes` names. When
     `recoveries` is on and `sources.iati_publishers` holds `gef`, GEF disbursements
     link to GEF commitments through the GEF IATI file's crosswalk to agency ids.
-    Each tier drops the links people and agents rejected (`drop_pairs`) before the
-    next one runs, so key repair, the EIB routes and blocking see a rejected link's
-    units as unlinked, and no tier links a rejected pair again. Programme stems are
+    Each exact tier, repair rule and recovery drops the links people and agents
+    rejected (`drop_pairs`) before the next one runs, so the later tiers and rules,
+    the EIB routes and blocking see a rejected link's units as unlinked, and no
+    tier links a rejected pair again. Programme stems are
     learned from the trace population, and blocking pairs the units the key, repair
     and crosswalk links left for scoring, with embedding neighbours when `embed` is
     on.
@@ -92,7 +93,7 @@ def run_link(context: StageContext) -> StageOutput:
     population = trace_population(crs)
     units = build_units(population).collect()
     id_practice = classify_id_practice(units)
-    trace = unrejected(link_by_keys(units, first_year=config.years.crs[0]))
+    trace = link_by_keys(units, first_year=config.years.crs[0], decide=unrejected)
     crdf_crs = unrejected(link_within_year(crdf, units=units.lazy()).collect())
     if config.recoveries:
         crdf_crs = unrejected(
@@ -109,8 +110,12 @@ def run_link(context: StageContext) -> StageOutput:
     keyed = [trace]
     if config.key_repair:
         keyed.append(
-            unrejected(
-                repair_keys(units, crs=crs, links=trace, first_year=config.years.crs[0])
+            repair_keys(
+                units,
+                crs=crs,
+                links=trace,
+                first_year=config.years.crs[0],
+                decide=unrejected,
             )
         )
     found = [*keyed, crdf_crs]

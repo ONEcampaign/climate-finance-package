@@ -197,7 +197,8 @@ def score_candidates(
         stems: the programme stem rules.
         first_year: the first CRS year the build loads.
         rejected: the trace pairs (`left_id`, `right_id`) review decisions
-            rejected, which never link (`linked_pairs`).
+            rejected, which never link (`linked_pairs`) and are never true pairs
+            (`id_truth`).
     """
     contradicted = contradicted_commitments(units, first_year=first_year)
     truth = id_truth(
@@ -207,6 +208,7 @@ def score_candidates(
         id_practice=id_practice,
         first_year=first_year,
         contradicted=contradicted,
+        rejected=rejected,
     )
     pairs = with_split(candidates, units=units, truth=truth)
     groups = scoring_groups(pairs)
@@ -304,9 +306,11 @@ def id_truth(
     id_practice: pl.DataFrame,
     first_year: int,
     contradicted: pl.DataFrame,
+    rejected: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Every (disbursement, commitment) unit pair the ids say continues, blocked or
-    not, and the pairs whose continuation the ids leave open.
+    not, and the pairs whose continuation the ids leave open, less the pairs review
+    decisions rejected.
 
     Ids are compared as `line_id`s, so a UK copy and a zero-padded line suffix
     carry their line's id.
@@ -337,6 +341,8 @@ def id_truth(
     Args:
         crs: the CRS records the units sum, for their titles.
         contradicted: `contradicted_commitments`.
+        rejected: the trace pairs (`left_id`, `right_id`) review decisions
+            rejected. A labelled one then trains as a false pair (`with_split`).
 
     Returns:
         left_id, right_id, donor_code and ambiguous, sorted by pair.
@@ -450,11 +456,16 @@ def id_truth(
         first_year=first_year,
     )
     lines = purpose_lines(units, commitments=commitments, first_year=first_year)
-    return (
+    truth = (
         pl.concat([found, carried])
         .join(lines, on="left_id", how="anti")
         .vstack(lines)
         .sort(*_PAIR)
+    )
+    if rejected is None:
+        return truth
+    return truth.join(
+        rejected.select(*_PAIR), on=list(_PAIR), how="anti", maintain_order="left"
     )
 
 

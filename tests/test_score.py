@@ -454,6 +454,17 @@ def test_id_truth_follows_the_crs_id_into_later_disbursements() -> None:
         contradicted=_NONE_CONTRADICTED,
     )
     assert truth.select("left_id", "right_id").rows() == [(unit["d"], unit["c"])]
+    # A pair review decisions rejected is no true pair, whatever the ids say.
+    rejected = pl.DataFrame({"left_id": [unit["d"]], "right_id": [unit["c"]]})
+    assert id_truth(
+        units,
+        crs=crs,
+        links=links,
+        id_practice=id_practice,
+        first_year=2010,
+        contradicted=_NONE_CONTRADICTED,
+        rejected=rejected,
+    ).is_empty()
 
 
 _CRS_SCHEMA = {

@@ -13,7 +13,6 @@ link frees its disbursement for the tiers and blocking that follow, and no later
 tier links it again.
 """
 
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -88,11 +87,14 @@ def drop_pairs(
 
     Where some units keep such a commitment through an accepted link and others
     lose it, the group splits: the units keeping the same set of those commitments
-    form one part, and each part's `group_id` takes the suffix `SPLIT` and its rank
-    (`split_rank`). Parts holding accepted links rank first, in the order of the
-    commitments they keep, and the part holding none ranks last. Allocation runs
-    each part in a pass after the parts ranked before it (`allocate.allocate`), so
-    parts of one group may share a commitment.
+    form one part. Parts holding accepted links rank first, in the order of the
+    commitments they keep, and the part holding none ranks last. Each part's
+    `group_id` takes the suffix `SPLIT` and its rank, and its `split_path` takes
+    the rank after those of the splits before, so a part split again ranks its
+    own parts inside its place among its group's parts. Allocation runs each part
+    in a pass after the parts ranked before it (`allocate.allocate`), so parts of
+    one group may share a commitment. Applying the same decisions again changes
+    nothing, as their rejected links are gone.
     """
     accepted = accepted.select(PAIR)
     dropped = links.join(pairs.select(PAIR), on=PAIR, how="semi")
@@ -137,24 +139,28 @@ def drop_pairs(
         .sub(1)
     )
     renamed = units.join(ranked, on=[*group, "keeps"], nulls_equal=True).select(
-        *group,
-        "left_id",
-        split_id=pl.concat_str(
-            [pl.col("group_id"), pl.lit(SPLIT), pl.col("rank").cast(pl.String)]
-        ),
+        *group, "left_id", "rank"
     )
+    rank = pl.col("rank")
+    split = rank.is_not_null()
+    no_path = pl.lit([], dtype=pl.List(pl.Int16))
     return (
         kept.join(renamed, on=[*group, "left_id"], how="left", maintain_order="left")
-        .with_columns(group_id=pl.coalesce("split_id", "group_id"))
-        .drop("split_id")
-    )
-
-
-def split_rank(group_id: pl.Expr) -> pl.Expr:
-    """The rank `drop_pairs` gave the part of a split trace group, 0 for a group
-    that is not split."""
-    return (
-        group_id.str.extract(f"{re.escape(SPLIT)}(\\d+)$").cast(pl.Int16).fill_null(0)
+        .with_columns(
+            group_id=pl.when(split)
+            .then(
+                pl.concat_str([pl.col("group_id"), pl.lit(SPLIT), rank.cast(pl.String)])
+            )
+            .otherwise("group_id"),
+            split_path=pl.when(split)
+            .then(
+                pl.concat_list(
+                    pl.col("split_path").fill_null(no_path), rank.cast(pl.Int16)
+                )
+            )
+            .otherwise("split_path"),
+        )
+        .drop("rank")
     )
 
 

@@ -472,6 +472,40 @@ def test_a_row_names_the_link_of_the_first_pass_that_filled_it() -> None:
     ]
 
 
+def test_a_row_names_the_link_that_carried_the_most_over_its_records() -> None:
+    # c19's unit sums two commitment records, which take 30 each from d22; c20's
+    # one record takes 50. The row covering both names c19's link, which carried 60.
+    records = [
+        record("c19a", 2019, commit=30.0),
+        record("c19b", 2019, commit=30.0),
+        record("c20", 2020, commit=50.0),
+        record("d22", 2022, disburse=110.0),
+    ]
+    crs, _, units, links = link(records)
+    covered = [
+        ("R", unit_of(units, name), "g", "within_year") for name in ("c19a", "c20")
+    ]
+    links = pl.concat(
+        [
+            links,
+            as_exact_links(
+                pl.LazyFrame(
+                    covered,
+                    schema=["left_id", "right_id", "group_id", "link_method"],
+                    orient="row",
+                ),
+                task="crdf_crs",
+            ),
+        ]
+    )
+    crdf = counted_rows(crdf_frame([crdf_row("R", 2019, 110.0)]))
+    pairs = allocate(units, crs=crs, links=links)
+    table = allocate_to_rows(pairs, crdf=crdf, units=units, crs=crs, links=links)
+    assert table.select("row_id", "allocated_usd", "commitment_unit_id").rows() == [
+        ("R", 110.0, unit_of(units, "c19a"))
+    ]
+
+
 @pytest.mark.parametrize(
     ("disagree", "route"),
     [(False, "within_year"), (True, "within_year"), (False, "eib_list")],

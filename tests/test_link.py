@@ -14,6 +14,7 @@ from climate_finance.build.errors import StageInputMissingError
 from climate_finance.build.jev_client import JevClient
 from climate_finance.build.link import run_link
 from climate_finance.build.link.crdf_crs import link_within_year
+from climate_finance.build.link.decisions import PAIR, drop_pairs
 from climate_finance.build.link.disagreement import flag_disagreement
 from climate_finance.build.link.id_practice import (
     classify_id_practice,
@@ -72,14 +73,27 @@ def _units(records: dict[str, dict[str, object]]) -> pl.DataFrame:
     return build_units(_crs(records)).collect()
 
 
-def _trace(records: dict[str, dict[str, object]]) -> dict[str, tuple[str, list[str]]]:
-    """Each linked disbursement record's tier and the commitment records it reaches.
+def _trace(
+    records: dict[str, dict[str, object]], *, rejected: tuple[tuple[str, str], ...] = ()
+) -> dict[str, tuple[str, list[str]]]:
+    """Each linked disbursement record's tier and the commitment records it reaches,
+    with the (disbursement, commitment) record pairs of `rejected` rejected.
 
     Every test record is its own unit, so a unit is named by its one record.
     """
     units = _units(records)
     names = dict(zip(units["unit_id"], units["record_ids"].list.first(), strict=True))
-    links = link_by_keys(units, first_year=FIRST_YEAR)
+    unit = {name: unit_id for unit_id, name in names.items()}
+    pairs = pl.DataFrame(
+        [("trace", unit[left], unit[right]) for left, right in rejected],
+        schema=dict.fromkeys(PAIR, pl.String),
+        orient="row",
+    )
+    links = link_by_keys(
+        units,
+        first_year=FIRST_YEAR,
+        decide=lambda tier: drop_pairs(tier, pairs=pairs, accepted=pairs.clear()),
+    )
     schema.validate(schema.LINKS, links)
     traced: dict[str, tuple[str, list[str]]] = {}
     for row in links.iter_rows(named=True):
@@ -225,6 +239,19 @@ def test_each_tier_links_what_the_tiers_before_it_miss(
         {"c": _commitment(**commitment), "d": _disbursement(**disbursement)}
     )
     assert traced == {"d": (tier, ["c"])}
+
+
+def test_a_rejected_link_leaves_its_unit_to_the_later_tiers() -> None:
+    # d continues c19 by crs id and c18 by project number under another crs id.
+    records = {
+        "c19": _commitment(crs_id="A"),
+        "c18": _commitment(crs_id="B", project_number="P-9", year=2018),
+        "d": _disbursement(crs_id="A", project_number="P-9"),
+    }
+    assert _trace(records) == {"d": ("crs_id_purpose", ["c19"])}
+    assert _trace(records, rejected=(("d", "c19"),)) == {
+        "d": ("pn_recipient_purpose", ["c18"])
+    }
 
 
 @pytest.mark.parametrize(

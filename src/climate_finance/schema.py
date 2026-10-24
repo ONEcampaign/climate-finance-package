@@ -431,6 +431,9 @@ LINKS = _table(
     left_id=_str(),
     right_id=_str(),
     group_id=_str(nullable=True),
+    # On a part of a trace group that review decisions split (`decisions.drop_pairs`),
+    # its rank at each split, outermost first; null on a group that is not split.
+    split_path=Column(pl.List(pl.Int16()), nullable=True),
     probability=_f64(),
     link_method=_str(values=LINK_METHODS),
     p_model=_f64(nullable=True),

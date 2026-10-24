@@ -15,23 +15,25 @@ with a positive commitment in a commitment unit is a commitment at the unit's
 disbursement. Negative commitments are cancellations. They leave a commitment's
 headroom unchanged and are reported by provider and year.
 
-Passes run certain groups first, then by record year, then link method in
-`LINK_METHODS` order, then class: records with a date floor first, oldest floor
-first, then a dated donor's records dated in their own year, then the rest. A
-group's pass is certain when every record pair of it is, so certain links fill a
-commitment before estimated links of any year, and an estimated link of an earlier
-year takes only what they left. Within a pass a group pools its records'
-disbursement and fills its commitments oldest `placed_year` first, pro rata to
-headroom within a year, capped at face value. A record whose unit carries groups of
-several methods enters one pass per group, in that order, and each later pass
-receives only what the earlier ones left: the exact key tiers first, then the
-key-repair rules. What the last pass leaves is excess.
+Passes run by split rank first (see below), then certain groups first, then by
+record year, then link method in `LINK_METHODS` order, then class: records with a
+date floor first, oldest floor first, then a dated donor's records dated in their
+own year, then the rest. A group's pass is certain when every record pair of it is,
+so certain links fill a commitment before estimated links of any year, and an
+estimated link of an earlier year takes only what they left. Within a pass a group
+pools its records' disbursement and fills its commitments oldest `placed_year`
+first, pro rata to headroom within a year, capped at face value. A record whose unit
+carries groups of several methods enters one pass per group, in that order, and each
+later pass receives only what the earlier ones left: the exact key tiers first, then
+the key-repair rules. What the last pass leaves is excess.
 
 A trace group that review decisions split (`decisions.drop_pairs`) runs as one group
-per part. Where certainty, record year, method and class tie, a part ranked after
-another (`decisions.split_rank`) runs, with its own commitments, in later passes, so
-parts of one group may share a commitment. A part holding an accepted link ranks
-before the part holding none, and so claims a shared commitment's headroom first.
+per part. A part ranked after another (`LINKS.split_path`) runs, with its own
+commitments, in later passes, whatever its certainty and record year, so parts of one
+group may share a commitment. A part holding an accepted link ranks before the part
+holding none, and so claims a shared commitment's headroom first. A group that is not
+split ranks with the first part of a split one, so a build without decisions passes
+as it would with no split rank at all.
 
 A disbursement record's own commitment in a group fills before the rest of the group
 (`_own_commitments`). That is the record itself where it also commits, else the one
@@ -67,7 +69,6 @@ import polars as pl
 
 from climate_finance.build.errors import AllocationInputError
 from climate_finance.build.link.candidates import word_share
-from climate_finance.build.link.decisions import split_rank
 from climate_finance.build.link.id_practice import period_of
 from climate_finance.build.link.keys import line_date
 from climate_finance.build.link.levels import title_words
@@ -270,7 +271,7 @@ def window_donors(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> list[int]:
 
 def _trace_links(links: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataFrame:
     """The `trace` links as (disbursement unit, commitment unit, group, method,
-    certain).
+    certain, split), `split` ordering the parts of split groups (`_split_order`).
 
     Raises:
         AllocationInputError: when a link lacks a group, a group spans two
@@ -287,9 +288,11 @@ def _trace_links(links: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataFrame:
             method="link_method",
             certain=pl.col("link_method").is_in(CERTAIN_METHODS)
             & ~pl.col("records_disagree").fill_null(value=False),
+            split="split_path",
         )
         .collect()
     )
+    trace = trace.with_columns(split=_split_order(trace["split"]))
     if trace["group_id"].null_count():
         raise AllocationInputError("trace links without a group_id")
     spans = trace.group_by("group_id").agg(pl.col("method").n_unique())
@@ -314,6 +317,29 @@ def _trace_links(links: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataFrame:
             "positive disbursement (left) or commitment (right)"
         )
     return trace
+
+
+def _split_order(paths: pl.Series) -> pl.Series:
+    """Each split path's rank among `paths`, 0 for a group that is not split.
+
+    Paths compare rank by rank, outermost first, with the ranks a shorter path
+    lacks read as 0. So the parts of one split group take distinct ranks, a part
+    split again ranks its parts inside its own place, and a group that is not split
+    ranks with the first part of each split group.
+    """
+    depth = paths.list.len().max()
+    if not isinstance(depth, int) or depth == 0:
+        return pl.Series(paths.name, [0] * len(paths), dtype=pl.UInt32)
+    padded = pl.struct(
+        [
+            pl.col(paths.name)
+            .list.get(level, null_on_oob=True)
+            .fill_null(0)
+            .alias(str(level))
+            for level in range(depth)
+        ]
+    )
+    return paths.to_frame().select(padded.rank("dense") - 1).to_series()
 
 
 def _trace_pairs(
@@ -379,6 +405,7 @@ def _trace_pairs(
             "year",
             "certain",
             "method",
+            "split",
             rank=rank,
             class_year=pl.coalesce(floor, pl.when(same_year).then(year)),
             order=order,
@@ -408,8 +435,7 @@ def _trace_pairs(
             on="c_unit",
         )
         .with_columns(
-            certain=pl.col("certain") | (pl.col("record_id") == pl.col("c_record")),
-            split=split_rank(pl.col("group_id")),
+            certain=pl.col("certain") | (pl.col("record_id") == pl.col("c_record"))
         )
         .drop("c_record")
     )
@@ -429,12 +455,11 @@ def _trace_pairs(
             pairs.with_columns(later=pl.lit(value=True)),
         ]
     )
-    key = ["estimated", "year", "rank", "class_year", "split", "later"]
+    by = ["year", "rank", "class_year", "later"]
+    key = ["split", "estimated", *by]
     # A group's pass is certain when all its pairs are, since the pass pools the
     # group's disbursement over all its commitments.
-    pairs = pairs.with_columns(
-        estimated=~pl.col("certain").all().over("group_id", *key[1:])
-    )
+    pairs = pairs.with_columns(estimated=~pl.col("certain").all().over("group_id", *by))
     passes = (
         pairs.select(key).unique().sort(key, nulls_last=True).with_row_index("pass")
     )
@@ -796,8 +821,8 @@ def allocate_to_rows(
     carried to rows of groups whose `crdf_crs` links all take certain routes, and
     `allocated_high_usd` equals `allocated_usd`. `link_method` and
     `commitment_unit_id` name the trace link that carried the row's allocation:
-    that of the first pass to carry any of it, and within that pass the pair that
-    carried the most, then the lowest commitment unit.
+    that of the first pass to carry any of it, and within that pass the link that
+    carried the most over its commitment records, then the lowest commitment unit.
     """
     weights, spread, unit_groups = _commitment_groups(
         crdf, units=units, crs=crs, links=links
@@ -841,24 +866,30 @@ def allocate_to_rows(
         allocated_usd=pl.col("allocated_usd") * (1.0 - pl.col("spread").fill_null(0.0)),
     )
     amount = pl.col("allocated_usd")
+    row = ["row_id", "record_id", "year", "rule"]
+    given = pl.concat([to_rows, rest]).filter(amount > 0)
+    carriers = (
+        given.group_by(*row, *carrier)
+        .agg(carried=ordered_sum(amount))
+        .sort(
+            *row,
+            "pass",
+            "carried",
+            "commitment_unit_id",
+            descending=[False, False, False, False, False, True, False],
+            nulls_last=True,
+        )
+        .group_by(row, maintain_order=True)
+        .agg(pl.col("link_method", "commitment_unit_id").first())
+    )
     return (
-        pl.concat([to_rows, rest])
-        .filter(amount > 0)
-        .sort("row_id", "record_id", "year", "rule", "commitment_id", "pass", "certain")
-        .group_by("row_id", "record_id", "year", "rule", maintain_order=True)
+        given.sort(*row, "commitment_id", "pass", "certain")
+        .group_by(row, maintain_order=True)
         .agg(
             ordered_sum(amount),
-            pl.col("link_method", "commitment_unit_id")
-            .sort_by(
-                "pass",
-                amount,
-                "commitment_unit_id",
-                descending=[False, True, False],
-                nulls_last=True,
-            )
-            .first(),
             allocated_low_usd=ordered_sum(amount.filter(pl.col("certain"))),
         )
+        .join(carriers, on=row, nulls_equal=True, maintain_order="left")
         .select(
             "row_id",
             "record_id",

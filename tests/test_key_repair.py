@@ -11,6 +11,7 @@ from climate_finance.build import write_stage
 from climate_finance.build.allocate import allocate
 from climate_finance.build.config import load_config
 from climate_finance.build.link import run_link
+from climate_finance.build.link.decisions import PAIR, drop_pairs
 from climate_finance.build.link.key_repair import (
     MAX_COMMITMENTS,
     project_core,
@@ -69,22 +70,39 @@ def _crs(records: dict[str, dict[str, object]]) -> pl.LazyFrame:
 
 def _links(
     records: dict[str, dict[str, object]],
+    *,
+    rejected: tuple[tuple[str, str], ...] = (),
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.LazyFrame]:
-    """Units, exact links plus key-repair links, and the CRS records."""
+    """Units, exact links plus key-repair links, and the CRS records, with the
+    (disbursement, commitment) record pairs of `rejected` rejected."""
     crs = _crs(records)
     units = build_units(crs).collect()
+    unit = dict(zip(units["record_ids"].list.first(), units["unit_id"], strict=True))
+    pairs = pl.DataFrame(
+        [("trace", unit[left], unit[right]) for left, right in rejected],
+        schema=dict.fromkeys(PAIR, pl.String),
+        orient="row",
+    )
     exact = link_by_keys(units, first_year=FIRST_YEAR)
-    repaired = repair_keys(units, crs=crs, links=exact, first_year=FIRST_YEAR)
+    repaired = repair_keys(
+        units,
+        crs=crs,
+        links=exact,
+        first_year=FIRST_YEAR,
+        decide=lambda rule: drop_pairs(rule, pairs=pairs, accepted=pairs.clear()),
+    )
     schema.validate(schema.LINKS, repaired)
     return units, pl.concat([exact, repaired]), crs
 
 
 def _repaired(
     records: dict[str, dict[str, object]],
+    *,
+    rejected: tuple[tuple[str, str], ...] = (),
 ) -> dict[str, dict[str, list[str]]]:
     """Each disbursement record the rules link, with the commitment records each
     rule reaches from it. Every test record is its own unit."""
-    units, links, _ = _links(records)
+    units, links, _ = _links(records, rejected=rejected)
     names = dict(zip(units["unit_id"], units["record_ids"].list.first(), strict=True))
     repaired: dict[str, dict[str, list[str]]] = {}
     for row in links.filter(
@@ -421,7 +439,17 @@ def test_the_record_year_and_floor_bound_the_commitments() -> None:
     assert repaired == {"d": {"repair_new_crs_id": ["c2020"]}}
 
 
-def test_each_unit_takes_the_first_rule_that_links_it() -> None:
+@pytest.mark.parametrize(
+    ("rejected", "linked"),
+    [
+        ((), {"d": {"repair_new_crs_id": ["c"]}}),
+        # With d's link rejected, c is free for the title rule, which links d2.
+        ((("d", "c"),), {"d2": {"repair_title_recipient": ["c"]}}),
+    ],
+)
+def test_each_unit_takes_the_first_rule_that_links_it(
+    rejected: tuple[tuple[str, str], ...], linked: dict[str, dict[str, list[str]]]
+) -> None:
     # d matches c on project number and on title, and d2 only on title, which
     # finds c taken. A later commitment under another crs id keeps the project
     # number from the exact tiers.
@@ -435,9 +463,10 @@ def test_each_unit_takes_the_first_rule_that_links_it() -> None:
                 crs_id="B", project_number="G-1", title="Coastal defences"
             ),
             "d2": _disbursement(crs_id="C", title="Coastal defences"),
-        }
+        },
+        rejected=rejected,
     )
-    assert repaired == {"d": {"repair_new_crs_id": ["c"]}}
+    assert repaired == linked
 
 
 def test_a_unit_carries_a_group_of_each_rule_that_links_it() -> None:

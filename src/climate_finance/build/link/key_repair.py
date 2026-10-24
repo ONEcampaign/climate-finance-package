@@ -83,6 +83,7 @@ from climate_finance import schema
 from climate_finance.build.link.id_practice import canonical_crs_id
 from climate_finance.build.link.keys import (
     ROUNDED_MIN_DIGITS,
+    Decide,
     as_exact_links,
     floor_seen,
     regional_codes,
@@ -157,7 +158,12 @@ def title_words(tokens: pl.Expr) -> pl.Expr:
 
 
 def repair_keys(
-    units: pl.DataFrame, *, crs: pl.LazyFrame, links: pl.DataFrame, first_year: int
+    units: pl.DataFrame,
+    *,
+    crs: pl.LazyFrame,
+    links: pl.DataFrame,
+    first_year: int,
+    decide: Decide | None = None,
 ) -> pl.DataFrame:
     """Key-repair `trace` links as `links` rows, each rule under its own
     `link_method`.
@@ -170,6 +176,9 @@ def repair_keys(
         first_year: the first CRS year the build loads. A disbursement whose floor
             precedes it links only into a group that sees its floor, as in the
             exact tiers.
+        decide: applies the review decisions to each rule's links before the next
+            rule runs, so a rejected link leaves its commitment and disbursement to
+            the later rules (`keys.link_by_keys`).
 
     Returns:
         One row per (disbursement unit, commitment unit) pair, `group_id` naming
@@ -209,11 +218,16 @@ def repair_keys(
     )
     found = []
     for method, rule in rules.items():
-        pairs = _settle(
-            rule(disbursements, commitments).filter(seen),
-            method=method,
-            agrees=agreements.get(method, _AGREES),
-        )
+        pairs = as_exact_links(
+            _settle(
+                rule(disbursements, commitments).filter(seen),
+                method=method,
+                agrees=agreements.get(method, _AGREES),
+            ).lazy(),
+            task="trace",
+        ).collect()
+        if decide is not None:
+            pairs = decide(pairs)
         found.append(pairs)
         commitments = commitments.join(
             pairs.select(unit_id="right_id"), on="unit_id", how="anti"
@@ -222,7 +236,7 @@ def repair_keys(
             reached=pl.col("reached")
             | pl.col("unit_id").is_in(pairs["left_id"].implode())
         )
-    return as_exact_links(pl.concat(found).lazy(), task="trace").collect()
+    return pl.concat(found)
 
 
 def _unit_facts(units: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:

@@ -35,6 +35,7 @@ no line, since donors write it as a placeholder for the year and 38% of CRS reco
 carry 31 December against the 0.3% a real date would.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cache
 from importlib.resources import files
@@ -47,6 +48,9 @@ from climate_finance.build.link.id_practice import (
     parent_id,
 )
 from climate_finance.build.normalise.ids import content_id
+
+# Takes the review decisions to a tier's `links` rows (`decisions.drop_pairs`).
+type Decide = Callable[[pl.DataFrame], pl.DataFrame]
 
 UNIT_KEY = (
     "donor_code",
@@ -241,7 +245,9 @@ def build_units(crs: pl.LazyFrame) -> pl.LazyFrame:
     )
 
 
-def link_by_keys(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
+def link_by_keys(
+    units: pl.DataFrame, *, first_year: int, decide: Decide | None = None
+) -> pl.DataFrame:
     """Trace links from each disbursement unit to every eligible commitment unit
     under its first matching tier, as `links` rows.
 
@@ -249,7 +255,9 @@ def link_by_keys(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
     `canonical_crs_id`s and the project-number tiers `pn_key`s (`_with_pn_key`).
     `group_id` names the tier and its key, so the disbursement
     units of one group reach the same commitments, less those their own record
-    year or floor rules out.
+    year or floor rules out. `decide` applies the review decisions to each tier's
+    links before the next tier runs, so a unit whose links a tier's decisions
+    reject all goes on to the later tiers.
     """
     units = units.with_columns(
         crs_id=canonical_crs_id(pl.col("crs_id")),
@@ -275,11 +283,14 @@ def link_by_keys(units: pl.DataFrame, *, first_year: int) -> pl.DataFrame:
             tier=tier,
             first_year=first_year,
         )
-        pairs.append(tier_pairs)
+        tier_links = as_exact_links(tier_pairs.lazy(), task="trace").collect()
+        if decide is not None:
+            tier_links = decide(tier_links)
+        pairs.append(tier_links)
         remaining = remaining.join(
-            tier_pairs.select(unit_id="left_id"), on="unit_id", how="anti"
+            tier_links.select(unit_id="left_id"), on="unit_id", how="anti"
         )
-    return as_exact_links(pl.concat(pairs).lazy(), task="trace").collect()
+    return pl.concat(pairs)
 
 
 def floor_loaded(*, first_year: int) -> pl.Expr:
