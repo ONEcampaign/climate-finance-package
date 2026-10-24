@@ -34,8 +34,9 @@ UNFCCC only.
 
 Recipients link on the geo resolver's DAC code (`orgs.recipient_code`), so
 "Vietnam" and "Turkey" find Viet Nam and Türkiye. A recipient that names no single
-country (a region, a list of countries, a name the resolver does not know) and a CRS
-regional or unspecified code (`keys.regional_codes`) both read as `aggregate`.
+country (a region, a list of countries, a name the resolver does not know, a code
+outside the recipient list such as 999 for "Global") and a CRS regional or
+unspecified code (`keys.regional_codes`) both read as `aggregate`.
 """
 
 import logging
@@ -56,7 +57,7 @@ from splink.internals.comparison_creator import ComparisonCreator
 
 from climate_finance import schema
 from climate_finance.build.geo import recipient_code
-from climate_finance.build.link.keys import regional_codes
+from climate_finance.build.link.keys import country_codes, regional_codes
 from climate_finance.build.link.splink_models import (
     MIN_EM_PAIRS,
     isotonic_map,
@@ -235,11 +236,10 @@ def btr_rows(btr: pl.LazyFrame) -> pl.DataFrame:
         )
         .collect()
     )
-    regional = regional_codes()
     countries = {
         name: str(code)
         for name in rows["recipient"].drop_nulls().unique()
-        if (code := recipient_code(name)) is not None and code not in regional
+        if (code := recipient_code(name)) in country_codes()
     }
     return rows.with_columns(
         rec_key=pl.when(pl.col("recipient").is_not_null()).then(

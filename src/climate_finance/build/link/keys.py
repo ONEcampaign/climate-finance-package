@@ -344,15 +344,27 @@ def partner_recipient(*, commitment: pl.Expr, disbursement: pl.Expr) -> pl.Expr:
 
 
 @cache
-def regional_codes() -> tuple[int, ...]:
-    """The DAC recipient codes of regions and of unspecified recipients."""
-    recipients = pl.read_csv(
+def _recipients() -> pl.DataFrame:
+    return pl.read_csv(
         (files("climate_finance") / "data" / "recipients.csv").read_bytes(),
         schema_overrides={"code": pl.Int32},
     )
+
+
+@cache
+def regional_codes() -> tuple[int, ...]:
+    """The DAC recipient codes of regions and of unspecified recipients."""
+    recipients = _recipients()
     return tuple(
         recipients.filter(pl.col("name").str.contains("regional|unspecified"))["code"]
     )
+
+
+@cache
+def country_codes() -> frozenset[int]:
+    """The DAC recipient codes of single countries: those in the recipient list that
+    are not regional or unspecified (`regional_codes`)."""
+    return frozenset(_recipients()["code"]) - frozenset(regional_codes())
 
 
 def _with_pn_key(

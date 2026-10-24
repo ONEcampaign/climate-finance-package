@@ -182,19 +182,26 @@ def test_ids_written_by_the_party_link_same_year_records(
     assert _id_links(btr, crs) == {("b1", record) for record in linked}
 
 
-def test_recipients_key_on_the_resolver_and_regions_are_aggregate() -> None:
+def test_recipients_key_on_the_resolver_and_non_countries_are_aggregate() -> None:
     btr = _btr(
         *(
             {"row_id": f"b{i}", "recipient": name}
             for i, name in enumerate(
-                ["Vietnam", "Turkey", "Africa", "Multiple countries in Asia", None]
+                [
+                    "Vietnam",
+                    "Turkey",
+                    "Africa",
+                    "Multiple countries in Asia",
+                    "Global",
+                    None,
+                ]
             )
         )
     )
 
     keys = btr_rows(btr.lazy()).sort("row_id")["rec_key"].to_list()
 
-    assert keys == ["769", "55", AGGREGATE, AGGREGATE, None]
+    assert keys == ["769", "55", AGGREGATE, AGGREGATE, AGGREGATE, None]
 
 
 def _amount_level(

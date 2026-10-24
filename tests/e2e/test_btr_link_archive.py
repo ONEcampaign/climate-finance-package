@@ -86,9 +86,11 @@ def test_norway_model_agrees_with_its_ids(btr: pl.LazyFrame, crs: pl.LazyFrame) 
     ).join(truth, on="row_id", how="semi")
     linked = checked.filter(pl.col("probability") >= LINK_PROBABILITY)
 
-    assert linked.height == 1167
+    # 69 of the 1,234 are rows whose recipient is "Global", which keys as an
+    # aggregate and so partners any CRS recipient; all 69 agree with the ids.
+    assert linked.height == 1234
     assert linked["correct"].fill_null(value=False).mean() == pytest.approx(
-        0.982, abs=0.001
+        0.983, abs=0.001
     )
 
 
@@ -103,10 +105,14 @@ def test_links_cover_the_reported_dollars(
         for party in ("NOR", "DEU", "GBR")
     }
 
+    # "Global" rows hold 30% of Norway's dollars and 69% of the UK's, and key as
+    # aggregates. Germany's model links 0.528 of its dollars: its calibration map
+    # puts 230 rows under the threshold, and labels at their weights are right 30% to
+    # 50% of the time.
     assert linked["face_usd"].sum() / rows["face_usd"].sum() == pytest.approx(
-        0.732, abs=0.001
+        0.782, abs=0.001
     )
-    assert share == pytest.approx({"NOR": 1.0, "DEU": 0.879, "GBR": 0.831}, abs=0.001)
+    assert share == pytest.approx({"NOR": 1.0, "DEU": 0.727, "GBR": 0.910}, abs=0.001)
 
 
 def test_linked_pairs_give_germany_half_and_norway_forty_percent(
