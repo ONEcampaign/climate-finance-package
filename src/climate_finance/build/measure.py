@@ -213,7 +213,6 @@ def run_measure(context: StageContext) -> StageOutput:
         spending.lazy(),
         shares=shares.lazy(),
         core_contributions=context.read("normalise", "core_contributions"),
-        agencies=facts.agencies,
     ).collect()
     for row in gaps.iter_rows(named=True):
         logger.warning(
@@ -539,11 +538,9 @@ def unshared_contributions(
     *,
     shares: pl.LazyFrame,
     core_contributions: pl.LazyFrame,
-    agencies: Sequence[AgencyChannel],
 ) -> pl.LazyFrame:
-    """Disbursed core contributions to a channel that carries a share in some year,
-    in the years neither `spending` nor a `one` row of `shares` gives it a ONE
-    share, by channel and year."""
+    """Disbursed core contributions to every channel in the years neither `spending`
+    nor a `one` row of `shares` gives it a ONE share, by channel and year."""
     keys = ["channel_code", "year"]
     one = pl.concat(
         [
@@ -551,21 +548,10 @@ def unshared_contributions(
             shares.filter(pl.col("source") == "one").select(keys),
         ]
     )
-    channels = pl.concat(
-        [
-            spending.select("channel_code"),
-            shares.select("channel_code"),
-            pl.LazyFrame(
-                {"channel_code": [entry.channel_code for entry in agencies]},
-                schema={"channel_code": pl.Int32},
-            ),
-        ]
-    ).unique()
     return (
         core_contributions.filter(
             pl.col("flow") == "disbursements", pl.col("contribution_usd") > 0
         )
-        .join(channels, on="channel_code", how="semi")
         .join(one.unique(), on=keys, how="anti")
         .group_by(keys)
         .agg(ordered_sum(pl.col("contribution_usd")))

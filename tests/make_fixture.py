@@ -595,7 +595,7 @@ def _total_flows(
     """All CRS flows: four times the climate rows' amounts (0.9 of that for grant
     equivalent), plus 1.5 times each flow's core contributions to unspecified
     recipients, so every climate figure has a larger total."""
-    keys = ["provider_code", "recipient_code", "year", "bi_multi"]
+    keys = ["provider_code", "agency_code", "recipient_code", "year", "bi_multi"]
     committed = commitments.select(*keys, amount_usd=pl.col("face_usd") * 4)
     disbursed = disbursements.select(*keys, amount_usd=pl.col("allocated_usd") * 4)
     climate = {
@@ -605,6 +605,7 @@ def _total_flows(
     }
     core = core_contributions.select(
         "provider_code",
+        agency_code=pl.lit(None, pl.Int32),
         recipient_code=pl.lit(UNS, pl.Int32),
         year="year",
         bi_multi=pl.lit(2, pl.Int8),

@@ -86,8 +86,11 @@ class Meta(BaseModel):
 class Result:
     """The answer to one `Spec`: a table, the rows behind it, and its provenance.
 
-    `table` takes amounts. Under `spec.measure="share_of_total"` the result divides
-    them by `totals`, so a result always holds the measure its spec names.
+    `table` takes each method's amounts by key, with that method's own `low` and
+    `high`. Under `spec.measure="share_of_total"` the result divides each method's
+    amounts by its `totals`, so a result always holds the measure its spec names.
+    `low` and `high` then span every method of the key, the lowest `low` and the
+    highest `high`, in amounts or in shares.
     """
 
     def __init__(
@@ -100,9 +103,9 @@ class Result:
         spec: Spec,
         meta: Meta,
     ) -> None:
-        self.table = (
-            _shares(table, totals) if spec.measure == "share_of_total" else table
-        )
+        measured = _shares(table, totals) if spec.measure == "share_of_total" else table
+        self.table = Table(_bounds(measured._frame))
+        self._sums = table
         self.modelled = modelled
         self.spec = spec
         self.meta = meta
@@ -188,14 +191,16 @@ class Result:
         provider, recipient and Bi_Multi code. A row without a recipient, such as
         attributed finance, divides by the sum over recipients. Totals cover every
         flow code, so under `oda_only` the share is ODA climate finance over all
-        flows. A key missing from `total_flows` gives null shares. The rows and the
-        modelled line keep their amounts. The result's spec has
-        `measure="share_of_total"`, so rerunning it returns the same shares.
+        flows. In the provider view, EU Institutions' total holds the same rows as
+        their amounts under each method, at the same scaling. A key missing from
+        `total_flows` gives null shares. The rows and the modelled line keep their
+        amounts. The result's spec has `measure="share_of_total"`, so rerunning it
+        returns the same shares.
         """
         if self.spec.measure == "share_of_total":
             return self
         return Result(
-            table=self.table,
+            table=self._sums,
             modelled=self.modelled,
             rows=self._rows,
             totals=self._totals,
@@ -204,12 +209,21 @@ class Result:
         )
 
 
+def _bounds(frame: pl.LazyFrame) -> pl.LazyFrame:
+    """`frame` with `low` and `high` spanning every method of the same key."""
+    return frame.with_columns(
+        low=pl.col("low").min().over(ROW_KEYS),
+        high=pl.col("high").max().over(ROW_KEYS),
+    )
+
+
 def _shares(table: Table, totals: pl.LazyFrame) -> Table:
-    """`table` with every amount divided by the total of its key in `totals`."""
+    """`table` with every amount divided by the total of its key and method in
+    `totals`."""
     return Table(
         table._frame.join(
             totals,
-            on=ROW_KEYS,
+            on=[*ROW_KEYS, "method"],
             how="left",
             nulls_equal=True,
             validate="m:1",
@@ -376,6 +390,13 @@ def explain(
             "recipient and Bi_Multi code, every flow code included. The rows and the "
             f"modelled table hold amounts in {units}."
         )
+        if spec.view == "provider":
+            lines.append(
+                "EU Institutions' totals hold the same rows as their amounts, at the "
+                "same scaling: the EIB's flows leave them where EU Institutions count "
+                "as a provider, and each agency's flows scale with its own rows where "
+                "they count as a channel."
+            )
     else:
         lines.append(f"Amounts in {units}.")
     if conversion is not None:

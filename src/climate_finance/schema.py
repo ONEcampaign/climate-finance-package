@@ -941,10 +941,13 @@ UNALLOCATED = _table(
 )
 
 # Every CRS flow, climate or not, summed. This is the denominator of `share_of_total`.
+# `agency_code` lets a query take out the EIB's flows where the EIB counts as a
+# channel.
 TOTAL_FLOWS = _table(
     "total_flows",
-    ("provider_code", "recipient_code", "year", "bi_multi", "flow"),
+    ("provider_code", "agency_code", "recipient_code", "year", "bi_multi", "flow"),
     provider_code=_code(),
+    agency_code=_code(nullable=True),
     recipient_code=_code(),
     year=_year(),
     bi_multi=_bi_multi(),

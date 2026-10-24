@@ -454,10 +454,14 @@ def test_contributions_without_a_one_share_are_listed() -> None:
         spending,
         shares=shares,
         core_contributions=core,
-        agencies=(AgencyChannel(channel_code=47015, provider_code=1055),),
     ).collect()
 
-    assert gaps.rows() == [(46004, 2022, 6.0), (46005, 2021, 7.0), (47015, 2021, 8.0)]
+    assert gaps.rows() == [
+        (41114, 2021, 3.0),
+        (46004, 2022, 6.0),
+        (46005, 2021, 7.0),
+        (47015, 2021, 8.0),
+    ]
 
 
 def _report(ratio: float) -> ReportRatio:

@@ -876,6 +876,7 @@ def _rerun_total_flows() -> pl.LazyFrame:
     crs = pl.LazyFrame(
         {
             "donor_code": np.arange(RERUN_ROWS) % 2,
+            "agency_code": 1,
             "recipient_code": 248,
             "year": 2021,
             "bi_multi": 1,
@@ -883,8 +884,9 @@ def _rerun_total_flows() -> pl.LazyFrame:
             "disbursement_usd": _amounts(2),
             "grant_equiv_usd": _amounts(3),
         },
-        schema_overrides={"donor_code": pl.Int32, "recipient_code": pl.Int32,
-                          "year": pl.Int16, "bi_multi": pl.Int8},
+        schema_overrides={"donor_code": pl.Int32, "agency_code": pl.Int32,
+                          "recipient_code": pl.Int32, "year": pl.Int16,
+                          "bi_multi": pl.Int8},
     )  # fmt: skip
     return release.total_flows(crs)
 

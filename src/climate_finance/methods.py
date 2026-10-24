@@ -30,13 +30,14 @@ class Method(Frozen):
 
     `eu` sets how EU Institutions (provider 918) count in the provider view. As a
     `"channel"`, members' core contributions to the EU budget, the EDF and the EIB
-    carry the EU's climate share, and each EU agency's own rows leave a result in
-    the years where its channel holds such an attribution, so EU money counts once,
-    inside its members' totals. The EIB's own lending then reaches members' totals
-    only through their paid-in capital, as every development bank's own lending
-    does: under ONE, USD 0.035bn attributed against 2.72bn the EIB disbursed in 2021
-    and 2022. It stays in the recipient view and in a query for 918 alone, and
-    `quality()` reports the rows left out.
+    carry the EU's climate share. Each EU agency's own rows count times one minus the
+    share of its channel's attributed contributions in that year that come from the
+    providers in the query, so EU money counts once: an all-provider result leaves
+    them out, and a query for 918 alone keeps them in full. The EIB's own lending
+    then reaches members' totals only through their paid-in capital, as every
+    development bank's own lending does: under ONE, USD 0.035bn attributed against
+    2.72bn the EIB disbursed in 2021 and 2022. It stays in the recipient view, and
+    `quality()` reports the rows an all-provider result leaves out.
     As a `"provider"`, 918 counts the EU budget and the EDF in its own right, and
     contributions to them attribute nothing. The EIB is a channel, as the OECD counts
     it: the EIB's own rows (agency 3) leave every result, and members' contributions
@@ -170,8 +171,9 @@ def describe(method: Method | MethodRange) -> str:
 _EU = {
     "channel": " In the provider view EU Institutions count as a channel: members' "
     "core contributions to the EU budget, the EDF and the EIB carry the EU's climate "
-    "share, and each EU agency's own rows leave a result in the years its channel "
-    "holds such an attribution, so EU spending counts once. The EIB's own lending "
+    "share, and each EU agency's own rows count times one minus the share of its "
+    "channel's attributed contributions that come from the providers in the query, "
+    "so EU spending counts once. The EIB's own lending "
     "reaches members' totals only through their paid-in capital, as every "
     "development bank's own lending does: under ONE, USD 0.035bn attributed against "
     "2.72bn the EIB disbursed in 2021 and 2022. It stays in the recipient view, and "

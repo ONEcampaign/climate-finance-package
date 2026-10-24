@@ -19,11 +19,13 @@ converts it, and sums the rows into the result table. Rows have one of three ori
   where the share comes from: `computed`, `held` or `oecd`.
 
 Under `view="provider"` the method's `eu` setting counts EU Institutions once. As a
-channel, the own rows of each EU Institutions agency leave a result in the years
-where that agency's channel attributes another provider's contribution, and
-`quality()` reports them. As a provider, the EU budget and the EDF attribute nothing
-and count in EU Institutions' own rows, while the EIB is a channel: its own rows
-leave and contributions to it attribute.
+channel, the own rows of each EU Institutions agency scale by one minus the share of
+its channel's attributed contributions in the row's year that come from the
+providers in the query: 1 when the query names none of the contributors, 0 when it
+names them all, as an all-provider query does. `quality()` reports the rows an
+all-provider query leaves out. As a provider, the EU budget and the EDF attribute
+nothing and count in EU Institutions' own rows, while the EIB is a channel: its own
+rows leave and contributions to it attribute.
 
 Every row holds `value` = adaptation + mitigation - cross_cutting + unsplit, or
 + cross_cutting under the highest-marker rule, whose objectives are disjoint.
@@ -43,7 +45,7 @@ on Bi_Multi alone and provider attribution comes only from core contributions.
 from __future__ import annotations
 
 import tomllib
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from importlib.metadata import version
 from importlib.resources import files
 from typing import TYPE_CHECKING
@@ -52,6 +54,7 @@ import polars as pl
 
 from climate_finance import catalogue
 from climate_finance.convert import convert, provenance
+from climate_finance.errors import MissingLabelsError
 from climate_finance.methods import (
     ONE,
     Method,
@@ -154,15 +157,21 @@ _WEIGHT_INPUTS: dict[str, pl.DataType] = {
 
 
 def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
-    """Climate finance for `spec` from `snapshot`'s release tables."""
+    """Climate finance for `spec` from `snapshot`'s release tables.
+
+    Raises:
+        MissingLabelsError: when a method reads Jev's labels and the release's
+            `objectives` hold none, as a release built with `jev_labels` off.
+    """
     methods = spec.methods
-    filters = _conditions(
-        providers=spec.providers, recipients=spec.recipients, years=spec.years
-    )
-    conditions = filters
+    if any(method.relevance == "jev" for method in methods):
+        _require_jev_labels(snapshot)
+    named = _conditions(providers=spec.providers, recipients=None, years=None)
+    others = _conditions(providers=None, recipients=spec.recipients, years=spec.years)
+    filters = [*named, *others]
     if spec.oda_only:
-        conditions = [
-            *filters,
+        others = [
+            *others,
             pl.any_horizontal(
                 pl.when(pl.col("flow_code").is_not_null())
                 .then(pl.col("flow_code").is_in(ODA_FLOW_CODES))
@@ -170,23 +179,32 @@ def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
                 pl.col("origin") == "attribution",
             ),
         ]
+    conditions = [*named, *others]
     base = _base_rows(snapshot, flow=spec.flow, view=spec.view).filter(*conditions)
     weighted = []
+    # Per method label, the part of each EU channel-year's own rows that counts.
+    eu_kept: dict[str, pl.LazyFrame] = {}
     for method in methods:
         frame = base
         if spec.view == "provider":
-            attributed = _attributed_rows(
-                snapshot, flow=spec.flow, method=method
-            ).filter(*conditions)
-            if method.eu == "channel":
-                frame = _mark_eu_left_out(frame, attributed=attributed)
-                frame = frame.filter(~pl.col("eu_left_out")).drop("eu_left_out")
-            else:
-                frame = frame.filter(
-                    pl.col("provider_code").ne_missing(EU_INSTITUTIONS)
-                    | pl.col("agency_code").ne_missing(EIB_AGENCY)
-                )
-            frame = pl.concat([frame, attributed])
+            everyone = _attributed_rows(snapshot, flow=spec.flow, method=method).filter(
+                *others
+            )
+            attributed = everyone.filter(*named)
+            kept = eu_kept[label(method)] = _eu_kept(
+                attributed=attributed, everyone=everyone
+            )
+            frame = pl.concat(
+                [
+                    _count_eu_once(
+                        frame,
+                        method=method,
+                        kept=kept,
+                        columns=("amount", "amount_low", "amount_high"),
+                    ),
+                    attributed,
+                ]
+            )
         weighted.append(
             _weigh(_coefficients(snapshot, frame, method=method), method=method)
         )
@@ -204,7 +222,7 @@ def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
         table=Table(_aggregate(rows, methods=[label(method) for method in methods])),
         modelled=Table(_modelled(snapshot, spec=spec, conditions=filters)),
         rows=rows,
-        totals=_totals(snapshot, spec=spec, conditions=filters),
+        totals=_totals(snapshot, spec=spec, conditions=filters, eu_kept=eu_kept),
         spec=spec,
         meta=Meta(
             release=snapshot.manifest.release,
@@ -299,10 +317,11 @@ def _eu_left_out(
             pl.col("provider_code") == EU_INSTITUTIONS, *conditions
         )
         attributed = _attributed_rows(snapshot, flow=flow, method=method)
-        left_out = _mark_eu_left_out(own, attributed=attributed).filter("eu_left_out")
+        kept = _eu_kept(attributed=attributed, everyone=attributed)
+        left_out = _with_eu_kept(own, kept=kept).filter(pl.col("eu_kept") == 0)
         parts.append(
             _weigh(
-                _coefficients(snapshot, left_out.drop("eu_left_out"), method=method),
+                _coefficients(snapshot, left_out.drop("eu_kept"), method=method),
                 method=method,
             )
             .group_by("agency_code", "year")
@@ -422,6 +441,20 @@ def _base_rows(snapshot: Snapshot, *, flow: Flow, view: View) -> pl.LazyFrame:
     )
 
 
+def _require_jev_labels(snapshot: Snapshot) -> None:
+    jev = (
+        snapshot.table("objectives")
+        .filter(pl.col("label_source") == "jev")
+        .head(1)
+        .collect()
+    )
+    if jev.is_empty():
+        raise MissingLabelsError(
+            'relevance="jev" needs Jev labels, and this release holds none: it was '
+            "built with jev_labels off"
+        )
+
+
 def _labels(snapshot: Snapshot) -> pl.LazyFrame:
     """Per record, the highest-marker objective from its first-ranked label source,
     and the level of its Jev adaptation label."""
@@ -510,22 +543,50 @@ def _attributed_rows(snapshot: Snapshot, *, flow: Flow, method: Method) -> pl.La
     )
 
 
-def _mark_eu_left_out(frame: pl.LazyFrame, *, attributed: pl.LazyFrame) -> pl.LazyFrame:
-    """`frame` with `eu_left_out`, true on an EU Institutions row whose agency's
-    channel holds another provider's contribution in `attributed` in the row's year,
-    which already counts that money. `attributed` carries one flow, the spec's.
+def _eu_kept(*, attributed: pl.LazyFrame, everyone: pl.LazyFrame) -> pl.LazyFrame:
+    """Per EU channel (`_eu_channel`) and year, `eu_kept`: the part of an EU agency's
+    own rows that no member's attribution already counts.
+
+    `everyone` holds the attribution rows of every provider and `attributed` those
+    of the providers in the query, both of the spec's flow. `eu_kept` is one minus
+    the share of the channel's contributions from other providers in `everyone`
+    that `attributed` holds: 1 when `attributed` holds none of them, and 0 when it
+    holds them all. A channel-year with no attribution has no row.
+    """
+    keys = ["_eu_channel", "year"]
+
+    def contributed(rows: pl.LazyFrame, name: str) -> pl.LazyFrame:
+        return (
+            rows.filter(
+                pl.col("channel_code").is_in(EU_CHANNELS),
+                pl.col("provider_code") != EU_INSTITUTIONS,
+            )
+            .group_by(pl.col("channel_code").alias("_eu_channel"), "year")
+            .agg(ordered_sum(pl.col("amount")).alias(name))
+        )
+
+    total, named = pl.col("_total"), pl.col("_named")
+    return (
+        contributed(everyone, "_total")
+        .join(contributed(attributed, "_named"), on=keys, how="left")
+        .select(
+            *keys,
+            eu_kept=pl.when(named == total)
+            .then(0.0)
+            .when(named.is_null() | (total == 0))
+            .then(1.0)
+            .otherwise(1 - named / total),
+        )
+    )
+
+
+def _with_eu_kept(frame: pl.LazyFrame, *, kept: pl.LazyFrame) -> pl.LazyFrame:
+    """`frame` with `eu_kept` from `kept` on each EU Institutions row by its agency's
+    channel and year, and 1 on every other row.
 
     The rule runs per agency, so a year in which the EU budget has no climate share
-    keeps the budget's own rows even when the EIB's channel attributes.
+    keeps the budget's own rows in full even when the EIB's channel attributes.
     """
-    attributing = (
-        attributed.filter(
-            pl.col("channel_code").is_in(EU_CHANNELS),
-            pl.col("provider_code") != EU_INSTITUTIONS,
-        )
-        .select("year", _eu_channel="channel_code", eu_left_out=pl.lit(True))
-        .unique()
-    )
     channel = pl.col("agency_code").replace_strict(
         EU_AGENCY_CHANNELS, default=None, return_dtype=pl.Int32
     )
@@ -535,9 +596,30 @@ def _mark_eu_left_out(frame: pl.LazyFrame, *, attributed: pl.LazyFrame) -> pl.La
                 channel
             )
         )
-        .join(attributing, on=["_eu_channel", "year"], how="left")
-        .with_columns(pl.col("eu_left_out").fill_null(False))
+        .join(kept, on=["_eu_channel", "year"], how="left")
+        .with_columns(pl.col("eu_kept").fill_null(1.0))
         .drop("_eu_channel")
+    )
+
+
+def _count_eu_once(
+    frame: pl.LazyFrame, *, method: Method, kept: pl.LazyFrame, columns: Sequence[str]
+) -> pl.LazyFrame:
+    """`frame`'s provider-view rows under `method`'s EU setting, with `columns`
+    scaled. As a channel, each EU Institutions row's `columns` scale by its
+    `eu_kept` from `kept`, and rows at 0 leave. As a provider, the EIB's rows leave.
+    """
+    if method.eu == "provider":
+        return frame.filter(
+            pl.col("provider_code").ne_missing(EU_INSTITUTIONS)
+            | pl.col("agency_code").ne_missing(EIB_AGENCY)
+        )
+    share = pl.col("eu_kept")
+    return (
+        _with_eu_kept(frame, kept=kept)
+        .filter(share != 0)
+        .with_columns(pl.col(*columns) * share)
+        .drop("eu_kept")
     )
 
 
@@ -676,12 +758,12 @@ def _measured_sum(name: str) -> pl.Expr:
 
 
 def _aggregate(rows: pl.LazyFrame, *, methods: Sequence[str]) -> pl.LazyFrame:
-    """Sum rows by `KEYS`. `low` and `high` then span every method for the same key.
-    Adaptation and cross_cutting are null where a row leaves them unmeasured.
+    """Sum rows by `KEYS`, each method's `low` and `high` its own. Adaptation and
+    cross_cutting are null where a row leaves them unmeasured.
 
     Every method in `methods` holds a row for every key any method holds, with zero
     amounts where it counts nothing, so a method that has no row for a key still
-    bounds it.
+    bounds it when `Result` spans the bounds across methods.
     """
     summed = rows.group_by(KEYS).agg(
         *(
@@ -707,24 +789,27 @@ def _aggregate(rows: pl.LazyFrame, *, methods: Sequence[str]) -> pl.LazyFrame:
             for name in AMOUNTS
         )
         .drop("_held")
-        .with_columns(
-            low=pl.col("low").min().over(ROW_KEYS),
-            high=pl.col("high").max().over(ROW_KEYS),
-        )
         .sort(KEYS, nulls_last=True)
     )
 
 
 def _totals(
-    snapshot: Snapshot, *, spec: Spec, conditions: Sequence[pl.Expr]
+    snapshot: Snapshot,
+    *,
+    spec: Spec,
+    conditions: Sequence[pl.Expr],
+    eu_kept: Mapping[str, pl.LazyFrame],
 ) -> pl.LazyFrame:
-    """All CRS flows of `spec.flow` by `ROW_KEYS`, plus a row per provider, year and
-    Bi_Multi code with a null recipient that sums every recipient, for rows such as
-    attribution that have none.
+    """All CRS flows of `spec.flow` by `ROW_KEYS` and method, plus a row per
+    provider, year, Bi_Multi code and method with a null recipient that sums every
+    recipient, for rows such as attribution that have none.
 
     CRDF commitments carry their provider's class, Bi_Multi 1 for a bilateral
     provider, where the CRS splits bilateral flows over codes 1, 3, 7 and 8, so
-    commitment totals count those four codes as 1.
+    commitment totals count those four codes as 1. In the provider view, EU
+    Institutions' flows count under each method's EU setting as its own rows do,
+    through `_count_eu_once` with the method's `eu_kept`, so a share divides by the
+    same rows as its amount.
     """
     flows = snapshot.table("total_flows").filter(
         pl.col("flow") == spec.flow, *conditions
@@ -735,12 +820,26 @@ def _totals(
             .then(pl.lit(BILATERAL[0], pl.Int8))
             .otherwise(pl.col("bi_multi"))
         )
-    by_recipient = flows.group_by(ROW_KEYS).agg(total=pl.col("amount_usd").sum())
+    by_method = pl.concat(
+        (
+            _count_eu_once(
+                flows,
+                method=method,
+                kept=eu_kept[label(method)],
+                columns=("amount_usd",),
+            )
+            if spec.view == "provider"
+            else flows
+        ).with_columns(method=pl.lit(label(method)))
+        for method in spec.methods
+    )
+    total = ordered_sum(pl.col("amount_usd")).alias("total")
+    by_recipient = by_method.group_by(KEYS).agg(total)
     all_recipients = (
-        flows.group_by("year", "provider_code", "bi_multi")
-        .agg(total=ordered_sum(pl.col("amount_usd")))
+        by_method.group_by("year", "provider_code", "bi_multi", "method")
+        .agg(total)
         .with_columns(recipient_code=pl.lit(None, pl.Int32))
-        .select(*ROW_KEYS, "total")
+        .select(*KEYS, "total")
     )
     return convert(
         pl.concat([by_recipient, all_recipients]),

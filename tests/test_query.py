@@ -18,6 +18,7 @@ from releases import copy_release
 
 import climate_finance as cf
 from climate_finance import convert as convert_module
+from climate_finance.errors import MissingLabelsError
 from climate_finance.methods import OECD, ONE, RANGE, Method, MethodRange, label
 from climate_finance.query import (
     BILATERAL,
@@ -674,6 +675,19 @@ def test_explain_says_what_jev_relevance_replaces() -> None:
     assert "Jev labels only records whose commitment is marked adaptation" in text
 
 
+def _without_jev_labels(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.filter(pl.col("label_source") != "jev")
+
+
+def test_jev_relevance_refuses_a_release_without_jev_labels(tmp_path: Path) -> None:
+    release = copy_release(
+        tmp_path / "release", edits={"objectives": _without_jev_labels}
+    )
+
+    with pytest.raises(MissingLabelsError, match="jev_labels"):
+        cf.load(path=release).spending(method=JEV_ONE)
+
+
 def test_the_modelled_line_stays_out_of_traced_totals() -> None:
     result = SNAP.spending()
 
@@ -915,6 +929,26 @@ def _with_eu_shares(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+# Each EU agency's CRS flows to NOR-1's recipient in every year it disburses, under
+# NOR-1's Bi_Multi codes: 100m for the EU budget, 200m for the EDF, 300m for the EIB.
+EU_FLOW_USD = 100e6
+
+
+def _with_eu_total_flows(frame: pl.DataFrame) -> pl.DataFrame:
+    rows = pl.DataFrame(
+        [
+            (EU_INSTITUTIONS, agency, 666, year, 1 if flow == "commitments" else 3,
+             flow, agency * EU_FLOW_USD)
+            for agency in EU_AGENCIES.values()
+            for year in (2021, 2022, 2023)
+            for flow in FLOWS
+        ],
+        schema=frame.columns,
+        orient="row",
+    )  # fmt: skip
+    return pl.concat([frame, rows.cast(frame.schema)])
+
+
 @pytest.fixture(scope="module")
 def eu_snap(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
     release = copy_release(
@@ -1019,6 +1053,118 @@ def test_eu_own_rows_leave_a_result_only_beside_eu_attribution(
     ).rows(provider_code=EU_INSTITUTIONS)
 
     assert (rows.height > 0) == eu_own_rows
+
+
+# Germany gives each EU channel three times what France gives, so France holds a
+# quarter of every EU channel's contributions.
+FRANCE_EU_SHARE = 0.25
+
+
+def _with_two_eu_members(frame: pl.DataFrame) -> pl.DataFrame:
+    france = _with_eu_contributions(frame.clear())
+    germany = france.with_columns(
+        provider_code=pl.lit(5, pl.Int32),
+        contribution_usd=pl.col("contribution_usd") * 3,
+    )
+    return pl.concat([frame, france, germany])
+
+
+@pytest.fixture(scope="module")
+def two_member_snap(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
+    release = copy_release(
+        tmp_path_factory.mktemp("eu-members") / "release",
+        edits={
+            "commitments": _with_eu_commitments,
+            "disbursements": _with_eu_commitments,
+            "core_contributions": _with_two_eu_members,
+            "agency_shares": _with_eu_shares,
+            "total_flows": _with_eu_total_flows,
+        },
+    )
+    return cf.load(path=release)
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+def test_eu_own_rows_count_less_the_contributions_of_queried_members(
+    two_member_snap: Snapshot, flow: str
+) -> None:
+    def value(providers: int | tuple[int, ...] | None, provider: int) -> float:
+        result = two_member_snap.spending(
+            view="provider", flow=flow, providers=providers, years=EU_ATTRIBUTION_YEARS
+        )
+        return result.rows(provider_code=provider)["value"].sum()
+
+    eu_alone = value(EU_INSTITUTIONS, EU_INSTITUTIONS)
+
+    assert eu_alone > 0
+    assert value((EU_INSTITUTIONS, 4), EU_INSTITUTIONS) == pytest.approx(
+        eu_alone * (1 - FRANCE_EU_SHARE)
+    )
+    assert value((EU_INSTITUTIONS, 4), 4) == pytest.approx(value(4, 4))
+    assert value(None, EU_INSTITUTIONS) == 0
+
+
+# NOR-1's records carry no grant equivalent, so the EU rows have none to divide.
+@pytest.mark.parametrize("flow", ["commitments", "disbursements"])
+@pytest.mark.parametrize("providers", [(EU_INSTITUTIONS,), (EU_INSTITUTIONS, 4)])
+def test_eu_shares_of_total_divide_by_the_rows_each_method_counts(
+    two_member_snap: Snapshot, flow: str, providers: tuple[int, ...]
+) -> None:
+    result = two_member_snap.spending(
+        view="provider", method=RANGE, flow=flow, providers=providers
+    )
+    eu = pl.col("provider_code") == EU_INSTITUTIONS
+    amounts = result.table.to_polars().filter(eu)
+    shares = result.share_of_total().table.to_polars().filter(eu)
+
+    # ONE and PROVIDER count the EU as a channel: all three agencies' flows, scaled
+    # as the EU's own rows are by the part France's contributions do not fund. OECD
+    # counts the EU as a provider and leaves the EIB's own rows and flows out.
+    def total(method: str, year: int) -> float:
+        if method == "OECD":
+            return 3 * EU_FLOW_USD
+        named = 4 in providers and year in EU_ATTRIBUTION_YEARS
+        return 6 * EU_FLOW_USD * (1 - FRANCE_EU_SHARE if named else 1)
+
+    assert set(amounts["method"]) == {"ONE", "OECD", "PROVIDER"}
+    assert amounts["value"].min() > 0
+    assert shares["value"].to_list() == pytest.approx(
+        [
+            value / total(method, year)
+            for method, year, value in amounts.select(
+                "method", "year", "value"
+            ).iter_rows()
+        ]
+    )
+
+
+def test_range_share_bounds_span_each_methods_own_share(
+    two_member_snap: Snapshot,
+) -> None:
+    spec = Spec(
+        view="provider",
+        flow="disbursements",
+        providers=(EU_INSTITUTIONS, 4),
+        measure="share_of_total",
+    )
+    eu = pl.col("provider_code") == EU_INSTITUTIONS
+    shares = (
+        two_member_snap.spending(spec=spec.replace(method=RANGE))
+        .table.to_polars()
+        .filter(eu)
+    )
+    alone = pl.concat(
+        two_member_snap.spending(spec=spec.replace(method=method))
+        .table.to_polars()
+        .filter(eu)
+        for method in RANGE.methods
+    )
+    expected = alone.group_by(ROW_KEYS).agg(pl.col("low").min(), pl.col("high").max())
+
+    assert shares.height == 3 * expected.height
+    joined = shares.join(expected, on=ROW_KEYS, suffix="_expected")
+    assert joined["low"].to_list() == pytest.approx(joined["low_expected"].to_list())
+    assert joined["high"].to_list() == pytest.approx(joined["high_expected"].to_list())
 
 
 def test_a_member_counts_its_eu_share_only_with_the_eu_as_a_channel(

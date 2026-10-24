@@ -409,16 +409,18 @@ def core_contributions(stage: pl.LazyFrame) -> pl.LazyFrame:
 
 
 def total_flows(crs: pl.LazyFrame) -> pl.LazyFrame:
-    """Every CRS record's amounts by provider, recipient, year, Bi_Multi and flow.
+    """Every CRS record's amounts by provider, agency, recipient, year, Bi_Multi and
+    flow.
 
     `assemble` passes the records up to `years.crs_last_complete`, as allocation
     reads them, so the denominator covers the years `disbursements` does.
 
     A key and flow with no reported amount has no row.
     """
-    keys = ["provider_code", "recipient_code", "year", "bi_multi"]
+    keys = ["provider_code", "agency_code", "recipient_code", "year", "bi_multi"]
     return (
         crs.select(
+            "agency_code",
             "recipient_code",
             "year",
             "bi_multi",
