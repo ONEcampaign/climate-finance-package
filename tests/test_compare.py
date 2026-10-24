@@ -63,6 +63,14 @@ def test_a_result_under_several_methods_gives_a_column_per_method() -> None:
     ]
 
 
+def test_compare_names_amounts_and_shares_apart() -> None:
+    amounts = SNAP.spending(providers=5)
+
+    table = cf.compare(amounts, amounts.share_of_total()).table.to_polars()
+
+    assert table.columns[len(KEYS) :] == ["amounts", "share of total"]
+
+
 def test_results_nothing_sets_apart_are_numbered() -> None:
     table = cf.compare(SNAP.spending(), SNAP.spending()).table.to_polars()
 

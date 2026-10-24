@@ -3,8 +3,10 @@
 import json
 from pathlib import Path
 
+import polars as pl
 import pytest
 from make_fixture import FIXTURE_DIR
+from polars.testing import assert_frame_equal
 from releases import copy_release
 
 import climate_finance as cf
@@ -59,3 +61,28 @@ def test_table_refuses_names_outside_the_release_contract() -> None:
     with pytest.raises(KeyError, match="links"):
         snap.table("links")
     assert set(RELEASE_TABLES) <= set(snap.manifest.tables)
+
+
+@pytest.mark.parametrize("lazy", [False, True], ids=["new query", "lazy result"])
+def test_a_relative_path_reads_the_release_it_verified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lazy: bool
+) -> None:
+    copy_release(tmp_path / "a" / "release")
+    # Another directory's release, with every commitment ten times larger.
+    copy_release(
+        tmp_path / "b" / "release",
+        edits={
+            "commitments": lambda frame: frame.with_columns(pl.col("face_usd") * 10)
+        },
+    )
+    expected = cf.load(path=FIXTURE_DIR).spending(flow="commitments")
+    monkeypatch.chdir(tmp_path / "a")
+    snap = cf.load(path="release")
+    result = snap.spending(flow="commitments")
+
+    monkeypatch.chdir(tmp_path / "b")
+    other = cf.load(path="release").spending(flow="commitments")
+    assert not other.table.to_polars().equals(expected.table.to_polars())
+
+    table = result.table if lazy else snap.spending(flow="commitments").table
+    assert_frame_equal(table.to_polars(), expected.table.to_polars())

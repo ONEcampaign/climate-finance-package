@@ -59,7 +59,11 @@ class Meta(BaseModel):
 
 
 class Result:
-    """The answer to one `Spec`: a table, the rows behind it, and its provenance."""
+    """The answer to one `Spec`: a table, the rows behind it, and its provenance.
+
+    `table` takes amounts. Under `spec.measure="share_of_total"` the result divides
+    them by `totals`, so a result always holds the measure its spec names.
+    """
 
     def __init__(
         self,
@@ -71,7 +75,9 @@ class Result:
         spec: Spec,
         meta: Meta,
     ) -> None:
-        self.table = table
+        self.table = (
+            _shares(table, totals) if spec.measure == "share_of_total" else table
+        )
         self.modelled = modelled
         self.spec = spec
         self.meta = meta
@@ -130,29 +136,36 @@ class Result:
         attributed finance, divides by the sum over recipients. Totals cover every
         flow code, so under `oda_only` the share is ODA climate finance over all
         flows. A key missing from `total_flows` gives null shares. The rows and the
-        modelled line keep their amounts.
+        modelled line keep their amounts. The result's spec has
+        `measure="share_of_total"`, so rerunning it returns the same shares.
         """
-        keys = ["year", "provider_code", "recipient_code", "bi_multi"]
-        table = (
-            self.table._frame.join(
-                self._totals,
-                on=keys,
-                how="left",
-                nulls_equal=True,
-                validate="m:1",
-                maintain_order="left",
-            )
-            .with_columns(pl.col(name) / pl.col("total") for name in AMOUNTS)
-            .drop("total")
-        )
+        if self.spec.measure == "share_of_total":
+            return self
         return Result(
-            table=Table(table),
+            table=self.table,
             modelled=self.modelled,
             rows=self._rows,
             totals=self._totals,
-            spec=self.spec,
+            spec=self.spec.replace(measure="share_of_total"),
             meta=self.meta,
         )
+
+
+def _shares(table: Table, totals: pl.LazyFrame) -> Table:
+    """`table` with every amount divided by the total of its key in `totals`."""
+    keys = ["year", "provider_code", "recipient_code", "bi_multi"]
+    return Table(
+        table._frame.join(
+            totals,
+            on=keys,
+            how="left",
+            nulls_equal=True,
+            validate="m:1",
+            maintain_order="left",
+        )
+        .with_columns(pl.col(name) / pl.col("total") for name in AMOUNTS)
+        .drop("total")
+    )
 
 
 class Quality:
@@ -255,7 +268,15 @@ def explain(
         else ", converted with OECD DAC exchange rates and deflators by provider "
         "(the DAC total for providers without their own series)"
     )
-    lines.append(f"Amounts in {spec.currency} at {prices}{source}.")
+    units = f"{spec.currency} at {prices}{source}"
+    if spec.measure == "share_of_total":
+        lines.append(
+            "Values are shares of all CRS flows of the same flow, year, provider, "
+            "recipient and Bi_Multi code, every flow code included. The rows and the "
+            f"modelled table hold amounts in {units}."
+        )
+    else:
+        lines.append(f"Amounts in {units}.")
     return "\n".join(lines)
 
 
@@ -372,6 +393,8 @@ def _field_text(field: str, value: object) -> str:
             return label(value)
         case "oda_only", bool():
             return "ODA only" if value else "all flows"
+        case "measure", _:
+            return "share of total" if value == "share_of_total" else "amounts"
         case "prices", _:
             return f"{value} prices"
         case "view", _:
@@ -396,6 +419,8 @@ def _title(spec: Spec, *, release: str) -> str:
         ),
         f"{spec.currency} at {_field_text('prices', spec.prices)}",
     ]
+    if spec.measure == "share_of_total":
+        parts[-1] = f"share of total; rows in {parts[-1]}"
     if spec.oda_only:
         parts.append("ODA only")
     return f"Result: {'; '.join(parts)}; release {release}"

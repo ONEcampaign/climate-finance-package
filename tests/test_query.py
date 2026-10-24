@@ -117,6 +117,7 @@ def test_code_2_rows_leave_every_total_unchanged(
             oda_only=True,
         ),
         Spec(method=cf.methods.ONE.replace(significant=0.25), flow="grant_equivalent"),
+        Spec(view="provider", providers=(5,), measure="share_of_total"),
     ],
 )
 def test_a_spec_round_trips_through_json_and_reruns_identically(spec: Spec) -> None:
@@ -341,6 +342,41 @@ def test_share_of_total_divides_each_key_by_its_total_flows() -> None:
         60e6 * 0.36 / (4 * 60e6 * 0.95 / 3 + 1.5 * 60e6)
     )
     assert_frame_equal(shares.drop(AMOUNTS), result.table.to_polars().drop(AMOUNTS))
+
+
+def test_a_share_result_reruns_from_its_own_spec() -> None:
+    shares = SNAP.spending(view="provider", providers=5, years=2021).share_of_total()
+
+    assert shares.spec.measure == "share_of_total"
+    assert_frame_equal(
+        SNAP.spending(spec=shares.spec).table.to_polars(), shares.table.to_polars()
+    )
+    assert_frame_equal(
+        shares.share_of_total().table.to_polars(), shares.table.to_polars()
+    )
+
+
+@pytest.mark.parametrize(
+    ("measure", "expected", "absent"),
+    [
+        ("amount", "Amounts in USD at current prices.", "Values are shares"),
+        ("share_of_total", "Values are shares of all CRS flows", "Amounts in USD"),
+    ],
+)
+def test_explain_and_title_name_the_measure(
+    measure: str, expected: str, absent: str
+) -> None:
+    result = SNAP.spending(providers=5, years=2021, measure=measure)
+
+    assert expected in result.explain()
+    assert absent not in result.explain()
+    title = repr(result).splitlines()[0]
+    assert ("share of total" in title) == (measure == "share_of_total")
+
+
+def test_an_amount_spec_serialises_without_a_measure() -> None:
+    assert "measure" not in Spec(flow="commitments").model_dump_json()
+    assert "share_of_total" in Spec(measure="share_of_total").model_dump_json()
 
 
 @pytest.mark.parametrize(
