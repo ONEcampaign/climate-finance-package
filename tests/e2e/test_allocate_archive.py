@@ -70,15 +70,20 @@ COMPONENT_AWARDS_MOVED_BN = {
     "no_disbursement_record": -0.28,
     "not_traceable": 0.0,
 }
+# No row receives a record from before its CRDF year, which takes the earlier
+# records of Italian aggregate children, so it moves only the release rule.
+TIME_ORDER_MOVED_BN = {
+    "disbursed": 0.0,
+    "partly_disbursed": -0.08,
+    "no_disbursement_record": 0.08,
+    "not_traceable": 0.0,
+}
 # With aggregate children counted and their parents left out (the release rule).
-# The last complete year, the disbursement-side test and component awards move it
-# as above; the time order also takes 0.08 bn of Italian children's earlier
-# records, leaving no record.
 RELEASE_RULE_BN = {
-    "disbursed": 55.41,
-    "partly_disbursed": 105.25,
-    "no_disbursement_record": 28.17,
-    "not_traceable": 40.74,
+    "disbursed": 55.39,
+    "partly_disbursed": 105.09,
+    "no_disbursement_record": 33.98,
+    "not_traceable": 35.12,
 }
 # No-record value the key-repair rules move to partly or fully disbursed, counted
 # as the reference counts, by provider category (USD bn). A programme number links
@@ -86,11 +91,13 @@ RELEASE_RULE_BN = {
 # units exceed `MAX_COMMITMENTS` and the rules move USD 0.37 bn more bilateral
 # value. The exact tiers' `crs_key` already reaches USD 0.74 bn of bank value the
 # rules moved; the title rule's count of rounded numbers adds back USD 0.11 bn.
-# A number disbursed as well as committed in several countries counts as a
-# programme too, which keeps USD 0.57 bn of bank value from the rules. The EBRD's
-# rows that are not traceable leave USD 0.33 bn less to move, and the exact tiers
-# reach USD 0.07 bn of US component value before the rules do.
-REPAIR_MOVED_BN = {"bilateral": 1.24, "banks": 3.07}
+REPAIR_MOVED_BN = {"bilateral": 1.31, "banks": 3.91}
+# A number disbursed as well as committed in several countries is a programme too.
+REPAIR_PROGRAMMES_BN = {"bilateral": 0.0, "banks": -0.57}
+# The EBRD's no-record rows become not traceable, leaving the rules less to move.
+REPAIR_DISBURSEMENT_SIDE_BN = {"bilateral": 0.0, "banks": -0.33}
+# The exact tiers reach US component value before the rules do.
+REPAIR_COMPONENT_AWARDS_BN = {"bilateral": -0.07, "banks": 0.03}
 REPAIR_TOLERANCE_BN = 0.05
 _CATEGORY = {
     "DAC member": "bilateral",
@@ -204,7 +211,15 @@ def test_statuses_under_the_release_rule(base: Path) -> None:
         .all()
     )
     built = _by_status(rows.drop_nulls("status"))
-    assert built == pytest.approx(RELEASE_RULE_BN, abs=TOLERANCE_BN)
+    expected = {
+        status: usd_bn
+        + LAST_COMPLETE_YEAR_MOVED_BN[status]
+        + DISBURSEMENT_SIDE_MOVED_BN[status]
+        + COMPONENT_AWARDS_MOVED_BN[status]
+        + TIME_ORDER_MOVED_BN[status]
+        for status, usd_bn in RELEASE_RULE_BN.items()
+    }
+    assert built == pytest.approx(expected, abs=TOLERANCE_BN)
 
 
 @pytest.mark.parametrize("build_name", ["base", "repaired"])
@@ -277,8 +292,14 @@ def test_key_repair_moves_no_record_value(
         moved.group_by("category").agg(pl.col("climate_usd").sum() / 1e9).iter_rows()
     )
     for category, usd_bn in REPAIR_MOVED_BN.items():
+        moved_bn = (
+            usd_bn
+            + REPAIR_PROGRAMMES_BN[category]
+            + REPAIR_DISBURSEMENT_SIDE_BN[category]
+            + REPAIR_COMPONENT_AWARDS_BN[category]
+        )
         assert by_category[category] == pytest.approx(
-            usd_bn, abs=REPAIR_TOLERANCE_BN
+            moved_bn, abs=REPAIR_TOLERANCE_BN
         ), category
 
     links = pl.read_parquet(table_path(repaired, "link", "links"))

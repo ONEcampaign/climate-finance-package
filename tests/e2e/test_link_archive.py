@@ -52,13 +52,16 @@ _NOW_BY_PN = {
 }
 # Disbursement the key tiers link beyond the reference's tiers, by rule. The
 # reference's rules reproduce its total to the dollar.
-# `parent_id` reaches no parent for other donors' 11-digit sequence numbers. A
-# lettered record reaches its parent only in its recipient under its project
-# number (0.92bn less), and only EU contracts pass their floor (0.01bn less).
-PARENT_ID_USD = -3.008258137e9
-# `crs_key` keeps an id that names several projects within its recipient, a
-# missing project number counting as one more (0.03bn less).
-CRS_KEY_USD = -3.016440996e9
+# `parent_id` reaches no parent for other donors' 11-digit sequence numbers.
+PARENT_ID_USD = -2.075370018e9
+# A lettered record reaches its parent only in its recipient under its project
+# number, and only an EU contract passes its floor in the parent tier.
+LETTERED_PARENT_USD = -0.922428401e9
+EU_PARENT_FLOOR_USD = -0.010459718e9
+# `crs_key` keeps an id that names several projects within its recipient.
+CRS_KEY_USD = -2.985551496e9
+# A missing project number counts as one more project in `crs_key`.
+MISSING_PN_KEY_USD = -0.030889500e9
 # The project-number tiers hold for agencies whose ids persist.
 PN_EVERY_AGENCY_USD = 19.540454511e9
 # A floor naming no commitment under the disbursement's own crs id passes; 1.60bn
@@ -197,7 +200,10 @@ def test_key_tiers_link_the_reference_disbursements(
     assert linked["disbursement_usd"].sum() == pytest.approx(
         metrics["linked_disbursement_bn"] * 1e9
         + PARENT_ID_USD
+        + LETTERED_PARENT_USD
+        + EU_PARENT_FLOOR_USD
         + CRS_KEY_USD
+        + MISSING_PN_KEY_USD
         + PN_EVERY_AGENCY_USD
         + FLOOR_UNSEEN_USD
         + COMPONENT_AWARD_USD,
