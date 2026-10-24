@@ -48,7 +48,7 @@ A person or an agent can accept or reject any queued link, and a person's decisi
 
 A disbursement unit pools its records' disbursements and fills the commitments it reached, oldest first, in proportion to headroom within a year, capped at each commitment's face value. Certain groups fill before estimated groups of any year, so certain links take all available headroom first. A commitment takes only records of its own CRDF year or later. What no commitment can take is excess. Amounts stay at face value, and the query applies the climate share when it sums.
 
-The `unallocated` table holds, by provider and disbursement year, what the trace did not give to a release commitment: excess, money linked to CRS commitments with no CRDF row in the release, and Rio-marked disbursements with no link.
+The `unallocated` table holds, by provider and disbursement year, what the trace did not give to a release commitment: excess, money linked to CRS commitments with no CRDF row in the release, and Rio-marked disbursements with no link. Totals count the excess and the unlinked records as untraced disbursement, one row per CRS record in the `untraced` table, weighted by the record's own markers. They count in `value` and `high` and not in `low`, since no link carries them to a commitment. Money on CRS commitments with no CRDF row counts nowhere.
 
 ## Step 4 status
 

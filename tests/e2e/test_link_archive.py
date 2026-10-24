@@ -12,7 +12,6 @@ from climate_finance import schema
 from climate_finance.build.link import id_practice as practice
 from climate_finance.build.link.crdf_crs import link_within_year
 from climate_finance.build.link.id_practice import (
-    EU_DONOR,
     LETTER_SUFFIX_DONORS,
     classify_id_practice,
 )
@@ -23,6 +22,38 @@ from climate_finance.build.normalise.crs import normalise_crs, trace_population
 pytestmark = pytest.mark.slow
 
 _SHARES = ("id_share", "parent_share", "pn_share")
+# The references take every crs id longer than ten characters as a contract under
+# its first ten. Under the build's own rule, `parent_id` takes only EU decision ids
+# and `LETTER_SUFFIX_DONORS` letters, so these agencies continue less by parent id in
+# 2019-2022, and those in `_NOW_BY_PN` continue by project number instead.
+_FEWER_BY_PARENT = {
+    (1, 8),
+    (1, 9),
+    (1, 13),
+    (4, 2),
+    (4, 44),
+    (5, 2),
+    (6, 4),
+    (10, 6),
+    (68, 1),
+    (82, 1),
+    (301, 2),
+    (301, 3),
+    (742, 2),
+    (742, 99),
+    (820, 1),
+}
+_NOW_BY_PN = {
+    (1, 9),
+    (4, 2),
+    (6, 4),
+    (10, 6),
+    (68, 1),
+    (82, 1),
+    (301, 2),
+    (301, 3),
+    (742, 2),
+}
 # Disbursement the `wb_loan` tier links beyond the reference's tiers: World Bank
 # units whose loan reaches a commitment that no crs id or project number reaches.
 LOAN_TIER_LINKED_USD = 16.840693e9
@@ -60,8 +91,24 @@ KEY_RULES_LINKED_USD = {
     # A disbursement whose floor precedes the first CRS year links where its key
     # reaches a commitment placed no later than the floor (`floor_seen`).
     "floor_seen": 5.042315754e9,
+    # A lettered record reaches its parent only in its recipient under its project
+    # number (`_parent_key`), and only an EU contract passes its floor in the parent
+    # tier (`parent_floor_year`).
+    "lettered parent": -0.922428401e9,
+    "EU parent floor": -0.010459718e9,
+    # A missing project number counts as one more project in `crs_key`.
+    "crs_key on a missing project number": -0.030889500e9,
+    # A floor naming no commitment under the disbursement's own crs id passes
+    # (`same_crs_id`); 1.60bn of this is EU Institutions' disbursement under its
+    # decision ids.
+    "floor unseen": 1.819184508e9,
+    # A component award keys each component by purpose (`split_components`), so its
+    # key is unique and the project-number tiers reach it.
+    "component awards": 20.978664440e9,
 }
 _PERIOD_KEY = ["donor_code", "agency_code", "period"]
+# The CRS years the tests normalise; the first is the first year they load.
+CRS_YEARS = (2010, 2025)
 
 
 @pytest.fixture(scope="module")
@@ -73,7 +120,7 @@ def data() -> Path:
 def crs(data: Path) -> pl.DataFrame:
     # Slow: digests 3.8 million records.
     raw = pl.scan_parquet(data / "raw" / "oecd" / "CRS_v20261006.parquet")
-    return normalise_crs(raw, years=(2010, 2025)).collect()
+    return normalise_crs(raw, years=CRS_YEARS).collect()
 
 
 @pytest.fixture(scope="module")
@@ -115,8 +162,10 @@ def test_one_period_id_practice_reproduces_the_deterministic_reference(
         data / "prototypes" / "deterministic-bulk" / "agency_classes.csv",
         schema_overrides={"donor_code": pl.Int32, "agency": pl.Int32},
     ).rename({"agency": "agency_code"})
+    periods = {"2019-2022": (2019, 2022)}
+    own = classify_id_practice(units, periods=periods)
     monkeypatch.setattr(practice, "parent_id", _prototype_parent_id)
-    built = classify_id_practice(units, periods={"2019-2022": (2019, 2022)})
+    built = classify_id_practice(units, periods=periods)
     key = ["donor_code", "agency_code"]
     rows = _compare(reference, built, key)
 
@@ -141,6 +190,15 @@ def test_one_period_id_practice_reproduces_the_deterministic_reference(
     assert reclassed.select(
         "donor_code", "agency_code", "id_class", "id_class_built"
     ).rows() == [(951, 1, "neither", "pn_persistent")]
+    # The build's own parent rule moves only parent and project-number shares.
+    moves = _compare(built, own, key)
+    assert (moves["id_share"] == moves["id_share_built"]).all()
+    fewer = _moved(moves, "parent_share", key)
+    assert set(fewer.select(key).iter_rows()) == _FEWER_BY_PARENT
+    assert (fewer["parent_share_built"] < fewer["parent_share"]).all()
+    by_pn = _moved(moves, "pn_share", key)
+    assert set(by_pn.select(key).iter_rows()) == _NOW_BY_PN
+    assert (by_pn["pn_share_built"] > by_pn["pn_share"]).all()
 
 
 def test_id_practice_reproduces_the_three_period_reference(
@@ -169,7 +227,7 @@ def test_id_practice_reproduces_the_three_period_reference(
     # `LETTER_SUFFIX_DONORS`.
     assert (
         id_practice.filter(
-            ~pl.col("donor_code").is_in([EU_DONOR, *LETTER_SUFFIX_DONORS])
+            ~pl.col("donor_code").is_in([schema.EU_INSTITUTIONS, *LETTER_SUFFIX_DONORS])
         )["parent_share"]
         == 0.0
     ).all()
@@ -212,6 +270,22 @@ def test_id_practice_reproduces_the_three_period_reference(
         (914, 13, "2015-2018"),
     }
     assert (by_pn["pn_share_built"] < by_pn["pn_share"]).all()
+    # Under its own parent rule only `parent_id` moves a row: less continues by
+    # parent id, and some of it by project number.
+    moves = _compare(built, id_practice, _PERIOD_KEY)
+    for column in ("open_commitments", "id_share"):
+        assert (moves[column] == moves[f"{column}_built"]).all(), column
+    fewer = _moved(moves, "parent_share", _PERIOD_KEY)
+    assert fewer.height == 45
+    assert (fewer["parent_share_built"] < fewer["parent_share"]).all()
+    assert (moves["pn_share_built"] >= moves["pn_share"]).all()
+    reclassed = moves.filter(pl.col("id_class") != pl.col("id_class_built"))
+    assert reclassed.sort(_PERIOD_KEY).select(
+        *_PERIOD_KEY, "id_class", "id_class_built"
+    ).rows() == [
+        (4, 10, "2015-2018", "mixed", "id_persistent"),
+        (301, 9, "2010-2014", "parent_id_persistent", "neither"),
+    ]
 
 
 def test_key_tiers_link_the_reference_disbursements(
@@ -222,7 +296,7 @@ def test_key_tiers_link_the_reference_disbursements(
             data / "prototypes" / "a1-reference" / "dated_pnuniq" / "trace_metrics.json"
         ).read_text()
     )
-    links = link_by_keys(units, first_year=2010)
+    links = link_by_keys(units, first_year=CRS_YEARS[0])
     schema.validate(schema.LINKS, links)
     tiers = links.select("left_id", "link_method").unique()
     assert tiers["left_id"].is_unique().all()

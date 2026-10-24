@@ -37,6 +37,7 @@ or `stale_sample`. `waive_precision` lets precision and human_audit rows fail.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 import polars as pl
@@ -48,7 +49,12 @@ from climate_finance.build import evaluate
 from climate_finance.build.errors import GateFailedError
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
-from climate_finance.schema import ReleaseManifest, scan_table, withheld_record
+from climate_finance.schema import (
+    RELEASE_TABLES,
+    ReleaseManifest,
+    scan_table,
+    withheld_record,
+)
 
 GATES_YAML = Path(__file__).with_name("gates.yaml")
 GATES = (
@@ -229,7 +235,7 @@ def run_gates(
                 first_release=first_release,
                 config=gates.drift,
             ),
-            withheld_gate(released("disbursements")),
+            withheld_gate({name: released(name) for name in RELEASE_TABLES}),
         ]
     ).with_columns(
         waived=pl.col("gate").is_in(_WAIVABLE) & ~pl.col("passed") & waive_precision
@@ -739,11 +745,11 @@ def drift_gate(
     )
 
 
-def withheld_gate(disbursements: pl.LazyFrame) -> pl.DataFrame:
-    """The number of `disbursements` rows whose record comes from a source the
-    release withholds (`schema.withheld_record`). It fails on an empty
-    `disbursements`."""
-    if disbursements.select(pl.len()).collect().item() == 0:
+def withheld_gate(tables: Mapping[str, pl.LazyFrame]) -> pl.DataFrame:
+    """The number of rows of the release tables in `tables` that carry a
+    `record_id` and whose record comes from a source the release withholds
+    (`schema.withheld_record`). It fails on an empty `disbursements`."""
+    if tables["disbursements"].select(pl.len()).collect().item() == 0:
         return _row(
             "withheld_rows",
             value=None,
@@ -751,19 +757,27 @@ def withheld_gate(disbursements: pl.LazyFrame) -> pl.DataFrame:
             passed=False,
             detail="the release holds no disbursements: nothing to check",
         )
-    rows = (
-        disbursements.filter(withheld_record(pl.col("record_id")))
-        .select("record_id")
-        .collect()
-    )
-    records = rows["record_id"].unique().sort().to_list()
+    rows = pl.concat(
+        frame.filter(withheld_record(pl.col("record_id"))).select(
+            "record_id", table=pl.lit(name)
+        )
+        for name, frame in tables.items()
+        if "record_id" in frame.collect_schema()
+    ).collect()
+    records = [
+        f"{table} {record}"
+        for table, record in rows.select("table", "record_id")
+        .unique()
+        .sort(pl.all())
+        .iter_rows()
+    ]
     return _row(
         "withheld_rows",
         value=float(rows.height),
         threshold=0.0,
         passed=rows.is_empty(),
         detail=(
-            f"disbursements rows from withheld records: {_named(records)}"
+            f"rows from withheld records: {_named(records)}"
             if rows.height
             else "no release row comes from a withheld source"
         ),

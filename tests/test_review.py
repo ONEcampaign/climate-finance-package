@@ -8,9 +8,16 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from normalised import crdf_rows, crs_records
+from stage_runs import (
+    BUILD_TOML,
+    run_stage,
+    stage_context,
+    write_fetched_years,
+    write_inputs,
+)
 
 from climate_finance import schema
-from climate_finance.build import write_stage
 from climate_finance.build.allocate import (
     allocate,
     allocate_to_rows,
@@ -21,9 +28,12 @@ from climate_finance.build.allocate import (
 from climate_finance.build.config import Ledgers, load_config
 from climate_finance.build.link.crdf_crs import link_within_year
 from climate_finance.build.link.decisions import (
+    PAIR,
+    accepted_pairs,
     drop_pairs,
     import_labels,
     override_links,
+    read_decision_labels,
 )
 from climate_finance.build.link.keys import as_exact_links, build_units, link_by_keys
 from climate_finance.build.link.packet import packet_pairs_path, write_packet
@@ -33,50 +43,11 @@ from climate_finance.build.link.review import (
     review_queue,
     write_queue_packet,
 )
-from climate_finance.build.link.splink_models import read_decision_labels
-from climate_finance.build.stages import REGISTRY, StageContext, table_path
+from climate_finance.build.stages import table_path
 
-BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 FIRST_YEAR = 2010
 BAND = (0.3, 0.9)
 TOLERANCE = 1e-6
-
-CRS_COLUMNS = {
-    "record_id": pl.String,
-    "year": pl.Int16,
-    "donor_code": pl.Int32,
-    "agency_code": pl.Int32,
-    "crs_id": pl.String,
-    "project_number": pl.String,
-    "recipient_code": pl.Int32,
-    "purpose_code": pl.Int32,
-    "bi_multi": pl.Int8,
-    "commitment_usd": pl.Float64,
-    "disbursement_usd": pl.Float64,
-    "commitment_date": pl.Date,
-    "expected_start_date": pl.Date,
-    "completion_date": pl.Date,
-    "title": pl.String,
-    "short_description": pl.String,
-    "long_description": pl.String,
-    "channel_code": pl.Int32,
-    "flow_code": pl.Int32,
-}
-CRDF_COLUMNS = {
-    "row_id": pl.String,
-    "perspective": pl.String,
-    "provider_code": pl.Int32,
-    "crs_id": pl.String,
-    "project_number": pl.String,
-    "title": pl.String,
-    "recipient_code": pl.Int32,
-    "year": pl.Int16,
-    "purpose_code": pl.Int32,
-    "face_usd": pl.Float64,
-    "climate_usd": pl.Float64,
-    "parent_row_id": pl.String,
-    "repeat_of": pl.String,
-}
 
 
 def record(
@@ -135,8 +106,8 @@ class Linked:
     def __init__(
         self, records: Sequence[dict[str, object]], rows: Sequence[dict[str, object]]
     ) -> None:
-        self.crs = pl.DataFrame(list(records), schema=CRS_COLUMNS)
-        self.crdf = pl.DataFrame(list(rows), schema=CRDF_COLUMNS)
+        self.crs = crs_records(*records)
+        self.crdf = crdf_rows(*rows)
         self.units = build_units(self.crs.lazy()).collect()
         within = link_within_year(
             counted_rows(self.crdf.lazy()), units=self.units.lazy()
@@ -170,7 +141,7 @@ class Linked:
         """The allocate stage's allocations and commitments under `links`."""
         crs, rows = self.crs.lazy(), counted_rows(self.crdf.lazy())
         units = self.units.lazy()
-        pairs = allocate(units, crs=crs, links=links.lazy())
+        pairs = allocate(units, crs=crs, links=links.lazy(), crdf=rows)
         allocations = allocate_to_rows(
             pairs, crdf=rows, units=units, crs=crs, links=links.lazy()
         )
@@ -186,9 +157,7 @@ class Linked:
 
 
 def _empty(table: schema.TableSchema) -> pl.DataFrame:
-    return pl.DataFrame(
-        schema={name: column.dtype for name, column in table.columns.items()}
-    )
+    return pl.DataFrame(schema=table.dtypes)
 
 
 def no_labels() -> pl.DataFrame:
@@ -303,6 +272,7 @@ def test_a_row_is_pending_exactly_when_rejecting_its_queued_links_changes_it() -
         accepted,
         allocations=_allocations(case, links),
         links=links,
+        labels=no_labels(),
         units=case.units.lazy(),
         crs=case.crs.lazy(),
         crdf=counted_rows(case.crdf.lazy()),
@@ -318,7 +288,9 @@ def test_a_row_is_pending_exactly_when_rejecting_its_queued_links_changes_it() -
     expected = set()
     for group in queued["row_group"].unique():
         rejected = case.statuses(
-            drop_pairs(links, pairs=queued.filter(row_group=group))
+            drop_pairs(
+                links, pairs=queued.filter(row_group=group), accepted=no_labels()
+            )
         )
         rows = groups.filter(row_group=group)["row_id"]
         changed = (
@@ -342,16 +314,118 @@ def test_a_row_is_pending_exactly_when_rejecting_its_queued_links_changes_it() -
     )
 
 
+def test_a_build_without_decisions_passes_as_before() -> None:
+    # Every group is unsplit, so the split rank leading the pass key changes no pass.
+    case = linked()
+    pairs = allocate(
+        case.units.lazy(),
+        crs=case.crs.lazy(),
+        links=case.links.lazy(),
+        crdf=counted_rows(case.crdf.lazy()),
+    )
+    assert pairs.sort("pass", "record_id", nulls_last=True).select(
+        "pass", "record_id", "commitment_id", "allocated_usd"
+    ).rows() == [
+        (0, "d20", "c19", 100.0),
+        (1, "d20", "c18", 30.0),
+        (2, "k20", "c16", 10.0),
+        (4, "f21", "c18", 10.0),
+        (4, "g21", "h17", 50.0),
+        (None, "e21", None, 50.0),
+        (None, "f21", None, 40.0),
+    ]
+
+
+def test_rejecting_queued_links_keeps_the_links_people_accepted() -> None:
+    # d22's link to c19 is queued and d22b's accepted. Rejecting d22's leaves c19
+    # with d22b's 95 of its 100, disbursed as before; dropping d22b's too would
+    # leave c19 with nothing.
+    case = Linked(
+        [
+            *(row for row in GROUP if row["record_id"] != "d22b"),
+            record("d22b", 2022, "A", disburse=95.0, dated=2022),
+        ],
+        [crdf_row("row_c19", 2019, "A", 100.0), crdf_row("row_c21", 2021, "A", 100.0)],
+    )
+    unit = case.unit
+    links = flag_review(case.links, labels=no_labels(), band=BAND).with_columns(
+        review=(pl.col("left_id") == unit("d22")) & (pl.col("right_id") == unit("c19"))
+    )
+    labels = no_labels().vstack(
+        pl.DataFrame(
+            [("trace", unit("d22b"), unit("c19"), True, "human")],
+            schema=no_labels().schema,
+            orient="row",
+        )
+    )
+    statuses = case.statuses(links)
+
+    def pending(decided: pl.DataFrame) -> set[str]:
+        return set(
+            pending_rows(
+                statuses,
+                allocations=_allocations(case, links),
+                links=links,
+                labels=decided,
+                units=case.units.lazy(),
+                crs=case.crs.lazy(),
+                crdf=counted_rows(case.crdf.lazy()),
+            )["row_id"]
+        )
+
+    assert dict(statuses.select("row_id", "status").iter_rows())["row_c19"] == (
+        "disbursed"
+    )
+    assert pending(labels) == set()
+    assert pending(no_labels()) == {"row_c19"}
+
+
 def _allocations(case: Linked, links: pl.DataFrame) -> pl.DataFrame:
     crs, units = case.crs.lazy(), case.units.lazy()
-    pairs = allocate(units, crs=crs, links=links.lazy())
+    rows = counted_rows(case.crdf.lazy())
+    pairs = allocate(units, crs=crs, links=links.lazy(), crdf=rows)
     return allocate_to_rows(
         pairs,
-        crdf=counted_rows(case.crdf.lazy()),
+        crdf=rows,
         units=units,
         crs=crs,
         links=links.lazy(),
     )
+
+
+def human_labels(
+    case: Linked, decided: Sequence[tuple[tuple[str, str], bool]]
+) -> pl.DataFrame:
+    """People's labels on trace pairs given as ((disbursement, commitment), match)."""
+    return no_labels().vstack(
+        pl.DataFrame(
+            [
+                ("trace", case.unit(left), case.unit(right), is_match, "human")
+                for (left, right), is_match in decided
+            ],
+            schema=no_labels().schema,
+            orient="row",
+        )
+    )
+
+
+def one_group(
+    records: Sequence[dict[str, object]], rows: Sequence[dict[str, object]] = ()
+) -> Linked:
+    """`records` linked through one crs-id group, every disbursement record to every
+    commitment record."""
+    case = Linked(records, rows)
+    case.links = case.links.filter(task="crdf_crs")
+    commitments = [row["record_id"] for row in records if row["commitment_usd"]]
+    disbursements = [row["record_id"] for row in records if row["disbursement_usd"]]
+    case.add(
+        *(
+            (left, right, "g", "crs_id_purpose", 1.0)
+            for left in disbursements
+            for right in commitments
+        )
+    )
+    return case
 
 
 # d20 reaches c19, d22 and d22b reach c19 and c21, all through one crs-id group.
@@ -366,35 +440,204 @@ GROUP = [
 
 
 @pytest.mark.parametrize(
-    ("dropped", "left"),
+    ("dropped", "accepted", "left"),
     [
         # d20 reaches nothing else in the group, so only its link goes.
         (
             ("d20", "c19"),
+            None,
             {("d22", "c19"), ("d22", "c21"), ("d22b", "c19"), ("d22b", "c21")},
         ),
         # d22 keeps c21, so c19 leaves the group for every unit.
-        (("d22", "c19"), {("d22", "c21"), ("d22b", "c21")}),
+        (("d22", "c19"), None, {("d22", "c21"), ("d22b", "c21")}),
+        # d22b's accepted link to c19 stays, and d22b's part of the group, holding
+        # it, runs before d22's. d20, undecided, still loses c19.
+        (
+            ("d22", "c19"),
+            ("d22b", "c19"),
+            {("d22", "c21"), ("d22b", "c19"), ("d22b", "c21")},
+        ),
     ],
 )
-def test_dropping_a_pair_keeps_a_groups_units_reaching_the_same_commitments(
-    dropped: tuple[str, str], left: set[tuple[str, str]]
+def test_a_decision_keeps_a_groups_units_reaching_the_same_commitments(
+    dropped: tuple[str, str],
+    accepted: tuple[str, str] | None,
+    left: set[tuple[str, str]],
 ) -> None:
     case = Linked(GROUP, [])
     unit = case.unit
-    pair = pl.DataFrame(
-        {
-            "task": ["trace"],
-            "left_id": [unit(dropped[0])],
-            "right_id": [unit(dropped[1])],
-        }
-    )
 
-    kept = drop_pairs(case.links, pairs=pair)
+    decided = [(dropped, False)] + ([(accepted, True)] if accepted else [])
+    kept = override_links(case.links, labels=human_labels(case, decided))
 
     names = {unit(name): name for name in ("c19", "c21", "d20", "d22", "d22b")}
     assert {(names[a], names[b]) for a, b in pairs_of(kept)} == left
-    allocate(case.units.lazy(), crs=case.crs.lazy(), links=kept.lazy())
+    allocated = allocate(
+        case.units.lazy(),
+        crs=case.crs.lazy(),
+        links=kept.lazy(),
+        crdf=counted_rows(case.crdf.lazy()),
+    )
+    filled = allocated.drop_nulls("commitment_id")
+    by_commitment = filled.group_by("commitment_id").agg(pl.col("allocated_usd").sum())
+    face = case.crs.select(commitment_id="record_id", face="commitment_usd")
+    assert (
+        by_commitment.join(face, on="commitment_id")
+        .filter(pl.col("allocated_usd") > pl.col("face") + TOLERANCE)
+        .is_empty()
+    )
+    # Each linked record gives what it disbursed, excess included.
+    given = allocated.group_by("record_id").agg(pl.col("allocated_usd").sum())
+    disbursed = case.crs.join(given, on="record_id").select(
+        "record_id", "disbursement_usd"
+    )
+    assert dict(given.iter_rows()) == pytest.approx(dict(disbursed.iter_rows()))
+    if accepted:
+        # d22b claims c19 first, and d22 fills c21 with all it disbursed.
+        assert set(filled.select("record_id", "commitment_id").rows()) == {
+            ("d22b", "c19"),
+            ("d22", "c21"),
+        }
+        assert filled.filter(record_id="d22")["allocated_usd"].sum() == pytest.approx(
+            100.0
+        )
+
+
+@pytest.mark.parametrize(
+    ("d2_year", "d2_disagrees"),
+    [(2022, False), (2022, True), (2023, False)],
+)
+def test_the_part_holding_an_accepted_link_claims_its_commitments_first(
+    d2_year: int, d2_disagrees: bool
+) -> None:
+    # Rejecting d1 -> cA and accepting d2 -> cA splits the group. d2's part runs
+    # first, though its link to cC disagrees on its records or it disburses later.
+    years = {"cA": 2019, "cB": 2020, "cC": 2021}
+    case = one_group(
+        [
+            *(record(name, year, name, commit=100.0) for name, year in years.items()),
+            record("d1", 2022, "d1", disburse=150.0),
+            record("d2", d2_year, "d2", disburse=150.0),
+        ]
+    )
+    disagrees = (pl.col("left_id") == case.unit("d2")) & (
+        pl.col("right_id") == case.unit("cC")
+    )
+    case.links = case.links.with_columns(records_disagree=disagrees & d2_disagrees)
+    kept = override_links(
+        case.links,
+        labels=human_labels(case, [(("d1", "cA"), False), (("d2", "cA"), True)]),
+    )
+    allocated = allocate(
+        case.units.lazy(),
+        crs=case.crs.lazy(),
+        links=kept.lazy(),
+        crdf=counted_rows(case.crdf.lazy()),
+    )
+    filled = allocated.drop_nulls("commitment_id").sort("pass", "commitment_id")
+    assert filled.select("record_id", "commitment_id", "allocated_usd").rows() == [
+        ("d2", "cA", 100.0),
+        ("d2", "cB", 50.0),
+        ("d1", "cB", 50.0),
+        ("d1", "cC", 100.0),
+    ]
+
+
+# e1, e2 and d22 reach c19, c20 and c21 through one group. The link stage rejects
+# d22 -> c19 and keeps e1's and e2's accepted links to c19, which splits the group
+# into e1 and e2's part and d22's. e2 also holds an accepted link to c20.
+SPLIT_TWICE = [
+    record("c19", 2019, "c19", commit=60.0),
+    record("c20", 2020, "c20", commit=100.0),
+    record("c21", 2021, "c21", commit=100.0),
+    *(record(name, 2022, name, disburse=50.0) for name in ("e1", "e2", "d22")),
+]
+SPLIT_DECISIONS = [
+    (("d22", "c19"), False),
+    (("e1", "c19"), True),
+    (("e2", "c19"), True),
+    (("e2", "c20"), True),
+]
+
+
+def test_a_part_split_again_ranks_its_parts_inside_its_own_place() -> None:
+    case = one_group(SPLIT_TWICE)
+    labels = human_labels(case, SPLIT_DECISIONS)
+    once = override_links(case.links, labels=labels)
+    # The same decisions again change nothing.
+    assert override_links(once, labels=labels).equals(once)
+    # Rejecting e1 -> c20 splits e1 and e2's part: e2 keeps c20 by its acceptance.
+    queued = pl.DataFrame(
+        [("trace", case.unit("e1"), case.unit("c20"))],
+        schema=dict.fromkeys(PAIR, pl.String),
+        orient="row",
+    )
+    twice = drop_pairs(once, pairs=queued, accepted=accepted_pairs(labels))
+    names = {case.unit(name): name for name in ("e1", "e2", "d22")}
+    parts = {
+        names[left]: (group, path)
+        for left, group, path in twice.filter(task="trace")
+        .select("left_id", "group_id", "split_path")
+        .unique()
+        .iter_rows()
+    }
+    assert parts == {
+        "e2": ("g|split|0|split|0", [0, 0]),
+        "e1": ("g|split|0|split|1", [0, 1]),
+        "d22": ("g|split|1", [1]),
+    }
+    allocated = allocate(
+        case.units.lazy(),
+        crs=case.crs.lazy(),
+        links=twice.lazy(),
+        crdf=counted_rows(case.crdf.lazy()),
+    )
+    filled = allocated.drop_nulls("commitment_id").sort("pass", "commitment_id")
+    assert filled.select(
+        "pass", "record_id", "commitment_id", "allocated_usd"
+    ).rows() == [
+        (0, "e2", "c19", 50.0),
+        (1, "e1", "c19", 10.0),
+        (1, "e1", "c21", 40.0),
+        (2, "d22", "c20", 50.0),
+    ]
+
+
+def test_a_queued_link_into_a_split_group_reallocates_without_a_clash() -> None:
+    # e1 -> c20 disagrees on its records, so the queue holds it. Rejecting it splits
+    # e1 and e2's part a second time.
+    case = one_group(
+        SPLIT_TWICE,
+        [
+            crdf_row(f"row_{row['record_id']}", row["year"], row["crs_id"], face)
+            for row in SPLIT_TWICE
+            if (face := row["commitment_usd"])
+        ],
+    )
+    labels = human_labels(case, SPLIT_DECISIONS)
+    queued = (pl.col("left_id") == case.unit("e1")) & (
+        pl.col("right_id") == case.unit("c20")
+    )
+    links = flag_review(
+        override_links(case.links, labels=labels).with_columns(
+            records_disagree=queued.and_(pl.col("task") == "trace")
+        ),
+        labels=labels,
+        band=BAND,
+    )
+    assert links.filter("review").height == 1
+    pending = pending_rows(
+        case.statuses(links),
+        allocations=_allocations(case, links),
+        links=links,
+        labels=labels,
+        units=case.units.lazy(),
+        crs=case.crs.lazy(),
+        crdf=counted_rows(case.crdf.lazy()),
+    )
+    # Accepted, e1 and e2 give c20 the 40 that c19's 60 cannot take, and with d22's
+    # 50 it is disbursed. Rejected, e1 gives those 40 to c21, and c20 waits.
+    assert pending["row_id"].to_list() == ["row_c20"]
 
 
 def _release(
@@ -536,7 +779,7 @@ def test_decisions_round_trip_as_human_labels_and_exact_overrides(
 
 def _ledger() -> pl.DataFrame:
     """One IDA ledger row on a key no unit carries."""
-    columns = {name: column.dtype for name, column in schema.LEDGER.columns.items()}
+    columns = schema.LEDGER.dtypes
     row = {
         "publisher": "ida",
         "key": "IDA99999",
@@ -562,35 +805,32 @@ def test_the_review_stage_writes_tables_that_pass_their_schemas(
     links = case.links
     commitments = case.statuses(links)
     release_dir = tmp_path / "r"
-    for stage, table, frame in [
-        ("normalise", "crs", case.crs),
-        ("normalise", "crdf", case.crdf),
-        ("normalise", "ledger", _ledger().head(ledger_rows)),
-        ("link", "units", case.units),
-        ("link", "links", links),
-        ("link", "pair_scores", _empty(schema.PAIR_SCORES)),
-        ("fill", "allocations", _allocations(case, links)),
-        ("fill", "commitments", commitments),
-    ]:
-        path = table_path(release_dir, stage, table)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        frame.write_parquet(path)
+    normalised = {
+        "crs": case.crs,
+        "crdf": case.crdf,
+        "ledger": _ledger().head(ledger_rows),
+    }
+    write_inputs(release_dir, "normalise", normalised)
+    linked_tables = {
+        "units": case.units,
+        "links": links,
+        "pair_scores": _empty(schema.PAIR_SCORES),
+    }
+    write_inputs(release_dir, "link", linked_tables)
+    filled = {"allocations": _allocations(case, links), "commitments": commitments}
+    write_inputs(release_dir, "fill", filled)
+    ledgers = Ledgers(years=(2021, 2022), publishers=("ida",))
+    write_fetched_years(release_dir, ledgers=ledgers)
     config = load_config(BUILD_TOML)
     sources = config.sources.model_copy(
         update={
-            "ledgers": Ledgers(years=(2021, 2022), publishers=("ida",)),
+            "ledgers": ledgers,
             "review_decisions": tmp_path / "review_decisions.parquet",
         }
     )
-    context = StageContext(
-        release="r",
-        release_dir=release_dir,
-        config=config.model_copy(update={"review": True, "sources": sources}),
-        offline=True,
-    )
-    stage = next(entry for entry in REGISTRY if entry.name == "review")
+    context = stage_context(release_dir, config=config, review=True, sources=sources)
 
-    written = write_stage(stage, stage.run(context), release_dir)
+    written = run_stage("review", context)
 
     assert set(written) == set(schema.STAGE_TABLES["review"])
     status = pl.read_parquet(table_path(release_dir, "review", "commitments"))

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-from archive_build import archive_config, seed_release
+from archive_build import archive_config, seed_raw
 
 from climate_finance.build import BuildManifest, Stage, build
 from climate_finance.build.stages import REGISTRY, table_path
@@ -118,7 +118,7 @@ def without_crosswalk(tmp_path_factory: pytest.TempPathFactory, archive: Path) -
     config = archive_config(archive, key_repair=False, recoveries=True)
     config = config.model_copy(update={"skip_eib_routes": ("crosswalk",)})
     out = tmp_path_factory.mktemp("step_one")
-    seed_release(out / "r", archive=archive, config=config)
+    seed_raw(out / "r", archive=archive, config=config)
     stages = [Stage.FETCH, Stage.NORMALISE, Stage.LINK, Stage.ALLOCATE]
     return build(
         "r", config=config, out_dir=out, stages=stages, offline=True
@@ -199,7 +199,7 @@ def test_step_one_matches_the_target_plus_the_gef_crosswalk(
 
 def _build_release(out: Path, *, archive: Path, manifest: Path | None) -> BuildManifest:
     config = archive_config(archive, key_repair=True, recoveries=True)
-    seed_release(out / "r", archive=archive, config=config)
+    seed_raw(out / "r", archive=archive, config=config)
     if manifest is not None:
         shutil.copy(manifest, out / "r" / "fetch" / "raw_manifest.parquet")
     return build("r", config=config, out_dir=out, offline=True)

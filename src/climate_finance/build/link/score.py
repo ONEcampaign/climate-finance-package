@@ -5,7 +5,8 @@ carries the commitment's line id (`line_id`: the crs id, with a zero-padded line
 suffix unpadded and a UK copy's letters dropped), so those agencies' candidate pairs
 are labelled truth. A crs id that a later record files under another project number
 and an unrelated title names another project. A provider with at least
-`MIN_TRUE_PAIRS` true pairs among its training pairs is in the truth group: one
+`MIN_TRUE_PAIRS` true pairs among its training pairs is in the truth group, where
+the group's training pairs can be cross-fitted (`training_folds`): one
 gradient-boosted classifier, trained on the truth group's labelled pairs, scores the
 eligible pairs of its other agencies. Providers without that truth are scored by
 Splink, alone or, below `SPLINK_MIN_COMMITMENTS` open commitments or
@@ -26,13 +27,16 @@ or agency and then issues a new crs id, the new line continues what the records 
 bridge the change continue, and at the Adaptation Fund, which leaves no bridge, what
 its title continues (see `carried_continuations`).
 
-Labelled pairs split into halves by the md5 of their commitment's donor and line id
-(the unit id where it has none). The classifier trains on one half, with five folds
-grouped by the same key, and the other half measures it. The out-of-fold scores fit
-an isotonic map: the provider's own where it has at least `MIN_CALIBRATION_PAIRS`
-true and as many false training pairs, else the pooled one. The link threshold
-maximises F1 on out-of-fold scores calibrated by maps fitted on the other folds, so
-no map scores the pairs it was fitted on.
+A commitment from before `FIRST_MEASURED_YEAR` carries no labels: no period measures
+its agency's id practice, and the ids of those years do not persist as later ones do.
+Its pairs are `unlabelled` and the final model scores them. Other labelled pairs
+split into halves by the md5 of their commitment's donor and line id (the unit id
+where it has none). The classifier trains on one half, with up to
+`FOLDS` folds grouped by the same key, and the other half measures it. The
+out-of-fold scores fit an isotonic map: the provider's own where it has at least
+`MIN_CALIBRATION_PAIRS` true and as many false training pairs, else the pooled one.
+The link threshold maximises F1 on out-of-fold scores calibrated by maps fitted on
+the other folds, so no map scores the pairs it was fitted on.
 
 F1 is read on links, as `classifier_links` makes them: each disbursement unit's best
 pair (`best_commitments`) links when it reaches the threshold, and is right when it
@@ -65,7 +69,6 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from functools import cache
-from importlib.resources import files
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -74,15 +77,18 @@ import sklearn
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.isotonic import IsotonicRegression
 from sklearn.model_selection import GroupKFold
+from threadpoolctl import threadpool_limits
 
-from climate_finance import schema
+from climate_finance import catalogue, schema
 from climate_finance.build.link.id_practice import (
+    FIRST_MEASURED_YEAR,
     RENUMBERED_DONORS,
     line_id,
     period_of,
 )
 from climate_finance.build.link.keys import (
     floor_loaded,
+    links_frame,
     partner_recipient,
     separator_free_pn,
 )
@@ -103,6 +109,9 @@ MIN_CALIBRATION_PAIRS = 30
 SPLINK_MIN_COMMITMENTS = 300
 SPLINK_MIN_PAIRS = 2_000
 FOLDS = 5
+# The fewest folds that cross-fit the classifier: with fewer split keys the truth
+# group is not trained, and its providers are scored by Splink.
+MIN_FOLDS = 2
 THRESHOLDS = np.round(np.arange(0.01, 1.0, 0.01), 2)
 FEATURES = (
     *LEVELS,
@@ -110,6 +119,7 @@ FEATURES = (
     "log_ratio",
     "later_commit",
     "programme_level",
+    "sibling_lines",
     *DATE_FEATURES,
 )
 PARAMS = {
@@ -121,9 +131,17 @@ PARAMS = {
     "early_stopping": False,
     "random_state": 0,
 }
+# OpenMP threads per fit and prediction. scikit-learn builds each feature's
+# histogram on one thread and partitions samples stably, so the model does not
+# depend on the count. Every core would only add threads that wait on the slowest:
+# on the archive one fold fitted in 24 s at 18 threads and in 7 s at 8.
+FIT_THREADS = 6
 METHOD = "classifier"
 JEV_METHOD = "classifier_jev"
 MODEL_VERSION = f"truth_hgb/scikit-learn-{sklearn.__version__}"
+# A commitment's siblings: the other lines its donor, agency and project number
+# commit in its record year (`sibling_lines`).
+SIBLING_KEY = ("donor_code", "agency_code", "project_number", "year")
 # The values of a pair's `split`.
 TRAIN, HELDOUT, ELIGIBLE, UNLABELLED = "train", "heldout", "eligible", "unlabelled"
 _SIBLING = 1
@@ -179,6 +197,7 @@ def score_candidates(
     id_practice: pl.DataFrame,
     stems: pl.DataFrame,
     first_year: int,
+    rejected: pl.DataFrame | None = None,
 ) -> Scored:
     """Sort providers into scoring groups and link what the truth group scores.
 
@@ -190,6 +209,9 @@ def score_candidates(
         id_practice: each agency's class per period.
         stems: the programme stem rules.
         first_year: the first CRS year the build loads.
+        rejected: the trace pairs (`left_id`, `right_id`) review decisions
+            rejected, which never link (`linked_pairs`) and are never true pairs
+            (`id_truth`).
     """
     contradicted = contradicted_commitments(units, first_year=first_year)
     truth = id_truth(
@@ -199,12 +221,12 @@ def score_candidates(
         id_practice=id_practice,
         first_year=first_year,
         contradicted=contradicted,
+        rejected=rejected,
     )
     pairs = with_split(candidates, units=units, truth=truth)
     groups = scoring_groups(pairs)
     if not (groups["scoring_group"] == "truth").any():
-        columns = schema.LINKS.columns.items()
-        empty = pl.DataFrame(schema={name: column.dtype for name, column in columns})
+        empty = pl.DataFrame(schema=schema.LINKS.dtypes)
         return Scored(
             links=empty, profile=scoring_profile(groups, scores=None), scores=None
         )
@@ -219,50 +241,63 @@ def score_candidates(
     )
     features = comparison_levels(
         pairs, attributes=unit_attributes(compared, crs=crs, stems=stems)
-    )
+    ).join(sibling_lines(compared), on="right_id", how="left", maintain_order="left")
     scores = score_truth_group(features, groups=groups, truth=truth)
     return Scored(
-        links=classifier_links(scores),
+        links=classifier_links(scores, rejected=rejected),
         profile=scoring_profile(groups, scores=scores),
         scores=scores,
+    )
+
+
+def sibling_lines(units: pl.DataFrame) -> pl.DataFrame:
+    """Each commitment unit of `units` with a crs id and project number, as
+    `right_id`, and `sibling_lines`: how many other line ids (`line_id`) its
+    `SIBLING_KEY` commits.
+
+    A project that commits several lines in a year can give them one title,
+    recipient and purpose, so a later disbursement compares alike with each of
+    them and continues one.
+    """
+    return (
+        _with_lines(units)
+        .filter(pl.col("commitment_usd") > 0)
+        .drop_nulls(["crs_id", "project_number"])
+        .select(
+            right_id="unit_id",
+            sibling_lines=(pl.col("crs_id").n_unique().over(SIBLING_KEY) - 1).cast(
+                pl.Int16
+            ),
+        )
     )
 
 
 def confirmable_pairs(pairs: pl.DataFrame, *, units: pl.DataFrame) -> pl.DataFrame:
     """`pairs` (`with_split` candidates) less the eligible pairs of `private_donors`
     whose two units do not carry the same project number (`separator_free_pn`)."""
-    pn = separator_free_pn(pl.col("project_number"))
-    return (
-        pairs.join(
-            units.select(left_id="unit_id", pn_left=pn),
-            on="left_id",
-            how="left",
-            maintain_order="left",
+    numbers = units.select("unit_id", pn=separator_free_pn(pl.col("project_number")))
+    key = [*_PAIR, "donor_code", "split"]
+    dropped = (
+        pairs.filter(
+            pl.col("split") == ELIGIBLE, pl.col("donor_code").is_in(private_donors())
         )
+        .select(*key)
+        .join(numbers.rename({"unit_id": "left_id"}), on="left_id", how="left")
         .join(
-            units.select(right_id="unit_id", pn_right=pn),
+            numbers.rename({"unit_id": "right_id"}),
             on="right_id",
             how="left",
-            maintain_order="left",
+            suffix="_right",
         )
-        .filter(
-            (pl.col("split") != ELIGIBLE)
-            | ~pl.col("donor_code").is_in(private_donors())
-            | (pl.col("pn_left") == pl.col("pn_right")).fill_null(value=False)
-        )
-        .drop("pn_left", "pn_right")
+        .filter((pl.col("pn") == pl.col("pn_right")).fill_null(value=False).not_())
     )
+    return pairs.join(dropped, on=key, how="anti", maintain_order="left")
 
 
 @cache
 def private_donors() -> tuple[int, ...]:
     """The donor codes the OECD classes as private donors."""
-    donors = pl.read_csv(
-        (files("climate_finance") / "data" / "oecd_classification.csv").read_bytes(),
-        columns=["code", "type"],
-        schema_overrides={"code": pl.Int32},
-    )
-    return tuple(donors.filter(type="Private donor")["code"])
+    return tuple(catalogue.providers.list().filter(type="Private donor")["code"])
 
 
 def split_key(donor_code: pl.Expr, crs_id: pl.Expr, unit_id: pl.Expr) -> pl.Expr:
@@ -296,9 +331,11 @@ def id_truth(
     id_practice: pl.DataFrame,
     first_year: int,
     contradicted: pl.DataFrame,
+    rejected: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Every (disbursement, commitment) unit pair the ids say continues, blocked or
-    not, and the pairs whose continuation the ids leave open.
+    not, and the pairs whose continuation the ids leave open, less the pairs review
+    decisions rejected.
 
     Ids are compared as `line_id`s, so a UK copy and a zero-padded line suffix
     carry their line's id.
@@ -329,6 +366,8 @@ def id_truth(
     Args:
         crs: the CRS records the units sum, for their titles.
         contradicted: `contradicted_commitments`.
+        rejected: the trace pairs (`left_id`, `right_id`) review decisions
+            rejected. A labelled one then trains as a false pair (`with_split`).
 
     Returns:
         left_id, right_id, donor_code and ambiguous, sorted by pair.
@@ -439,14 +478,19 @@ def id_truth(
         continuations=found,
         commitments=commitments,
         titles=titles,
-        first_year=first_year,
+        later=disbursements,
     )
-    lines = purpose_lines(units, commitments=commitments, first_year=first_year)
-    return (
+    lines = purpose_lines(units, commitments=commitments, later=disbursements)
+    truth = (
         pl.concat([found, carried])
         .join(lines, on="left_id", how="anti")
         .vstack(lines)
         .sort(*_PAIR)
+    )
+    if rejected is None:
+        return truth
+    return truth.join(
+        rejected.select(*_PAIR), on=list(_PAIR), how="anti", maintain_order="left"
     )
 
 
@@ -456,7 +500,7 @@ def carried_continuations(
     continuations: pl.DataFrame,
     commitments: pl.DataFrame,
     titles: pl.DataFrame,
-    first_year: int,
+    later: pl.DataFrame,
 ) -> pl.DataFrame:
     """The commitments a new line continues, read from its project's earlier records
     or, at `RENUMBERED_DONORS`, from its title.
@@ -470,8 +514,8 @@ def carried_continuations(
     (agency 17). The records that bridge the change carry the new (donor, agency,
     project number, recipient) and continue the commitment.
 
-    A disbursement unit no pair of `continuations` holds, whose floor year is not
-    before `first_year` and whose crs id the donor never commits, continues each
+    A disbursement unit of `later` that no pair of `continuations` holds, and
+    whose crs id the donor never commits, continues each
     commitment of its recipient that a held pair continues from a disbursement unit
     of its donor, agency, project number and recipient in or before its record year,
     where the commitment's record year is before its crs id's first. A bridge from
@@ -498,13 +542,12 @@ def carried_continuations(
         commitments: the commitment units truth follows.
         titles: unit_id and title_toks (`title_words`) of at least the
             `RENUMBERED_DONORS` units.
+        later: `_later_lines` of `units`.
 
     Returns:
         left_id, right_id, donor_code and ambiguous.
     """
-    disbursements = _later_lines(units, first_year=first_year).drop_nulls(
-        ["crs_id", "project_number"]
-    )
+    disbursements = later.drop_nulls(["crs_id", "project_number"])
     history = (
         continuations.filter(~pl.col("ambiguous"))
         .join(
@@ -579,7 +622,7 @@ def carried_continuations(
 
 
 def purpose_lines(
-    units: pl.DataFrame, *, commitments: pl.DataFrame, first_year: int
+    units: pl.DataFrame, *, commitments: pl.DataFrame, later: pl.DataFrame
 ) -> pl.DataFrame:
     """The commitments a `PURPOSE_LINE_DONORS` disbursement unit continues on its
     own line: its project, recipient and purpose.
@@ -599,6 +642,7 @@ def purpose_lines(
     Args:
         units: the units, with `line_id`s.
         commitments: the commitment units truth follows.
+        later: `_later_lines` of `units`.
 
     Returns:
         left_id, right_id, donor_code and ambiguous.
@@ -613,7 +657,7 @@ def purpose_lines(
         .agg(placed=pl.col("year").min())
     )
     disbursements = (
-        _later_lines(units, first_year=first_year)
+        later.filter(pl.col("donor_code").is_in(PURPOSE_LINE_DONORS))
         .join(anchors, on=place, how="left")
         .select(
             "unit_id",
@@ -777,36 +821,46 @@ def with_split(
     its `line_id`) and `placed_year`.
 
     A labelled pair (`id_persistent`) is `unlabelled` when `truth` (`id_truth`)
-    holds it as ambiguous, else `train` or `heldout` by its split key. Any other
+    holds it as ambiguous or its commitment's record year is before
+    `FIRST_MEASURED_YEAR`, else `train` or `heldout` by its split key. Any other
     pair is `eligible`. `true_pair` says whether `truth` holds the pair and not as
     ambiguous.
     """
     line = line_id(pl.col("donor_code"), pl.col("crs_id"))
-    commitments = units.select(
+    commitments = units.join(
+        candidates.select(unit_id="right_id").unique(), on="unit_id", how="semi"
+    ).select(
         right_id="unit_id",
         split_key=split_key(pl.col("donor_code"), line, pl.col("unit_id")),
         placed_year="placed_year",
+        measured=pl.col("year") >= FIRST_MEASURED_YEAR,
     )
+    commitments = commitments.with_columns(heldout=is_heldout(commitments["split_key"]))
     held = truth.select(*_PAIR, "ambiguous")
-    pairs = (
+    return (
         candidates.join(commitments, on="right_id", how="left", maintain_order="left")
         .join(held, on=_PAIR, how="left", maintain_order="left")
-        .with_columns(true_pair=pl.col("ambiguous").not_().fill_null(value=False))
+        .with_columns(
+            true_pair=pl.col("ambiguous").not_().fill_null(value=False),
+            split=pl.when(~pl.col("id_persistent"))
+            .then(pl.lit(ELIGIBLE))
+            .when(pl.col("ambiguous").fill_null(value=False) | ~pl.col("measured"))
+            .then(pl.lit(UNLABELLED))
+            .when("heldout")
+            .then(pl.lit(HELDOUT))
+            .otherwise(pl.lit(TRAIN)),
+        )
+        .drop("ambiguous", "heldout", "measured")
     )
-    heldout = is_heldout(pairs["split_key"])
-    return pairs.with_columns(
-        split=pl.when(~pl.col("id_persistent"))
-        .then(pl.lit(ELIGIBLE))
-        .when(pl.col("ambiguous").fill_null(value=False))
-        .then(pl.lit(UNLABELLED))
-        .when(heldout)
-        .then(pl.lit(HELDOUT))
-        .otherwise(pl.lit(TRAIN))
-    ).drop("ambiguous")
 
 
 def scoring_groups(pairs: pl.DataFrame) -> pl.DataFrame:
     """Each provider's scoring group and the counts that set it.
+
+    A provider with at least `MIN_TRUE_PAIRS` true training pairs is in the truth
+    group when the training pairs of all such providers can be cross-fitted
+    (`training_folds`); otherwise none is, and each takes the Splink group its
+    eligible pairs set.
 
     Args:
         pairs: `with_split` candidates.
@@ -822,9 +876,20 @@ def scoring_groups(pairs: pl.DataFrame) -> pl.DataFrame:
         commitments=pl.col("right_id").filter(eligible).n_unique(),
         pairs=eligible.sum(),
     )
+    admitted = counts.filter(pl.col("true_pairs") >= MIN_TRUE_PAIRS)["provider_code"]
+    trainable = not admitted.is_empty() and (
+        training_folds(
+            pairs.filter(
+                pl.col("split") == TRAIN, pl.col("donor_code").is_in(admitted.implode())
+            ).sort(*_PAIR)
+        )
+        is not None
+    )
     return counts.select(
         "provider_code",
-        scoring_group=pl.when(pl.col("true_pairs") >= MIN_TRUE_PAIRS)
+        scoring_group=pl.when(
+            (pl.col("true_pairs") >= MIN_TRUE_PAIRS) & pl.lit(trainable)
+        )
         .then(pl.lit("truth"))
         .when(
             (pl.col("commitments") >= SPLINK_MIN_COMMITMENTS)
@@ -855,7 +920,10 @@ def score_truth_group(
     train = pairs.filter(split=TRAIN)
     x, y = _matrix(train), train["true_pair"].to_numpy()
     donors = train["donor_code"].to_numpy()
-    folds = list(GroupKFold(n_splits=FOLDS).split(x, y, train["split_key"].to_numpy()))
+    folds = training_folds(train)
+    if folds is None:
+        msg = "the truth group's training pairs cannot be cross-fitted"
+        raise ValueError(msg)
     raw = np.empty(len(y))
     for fit_rows, score_rows in folds:
         raw[score_rows] = _predict(_fit(x[fit_rows], y[fit_rows]), x[score_rows])
@@ -863,7 +931,8 @@ def score_truth_group(
     for fit_rows, score_rows in folds:
         fold_maps = _isotonic_maps(raw[fit_rows], y[fit_rows], donors[fit_rows])
         crossed[score_rows] = _calibrate(fold_maps, raw[score_rows], donors[score_rows])
-    best = best_commitments(train.with_columns(p_model=pl.Series(crossed)))
+    train = train.with_columns(p_model=pl.Series(crossed))
+    best = best_commitments(train)
     threshold = best_threshold(
         best["p_model"].to_numpy(),
         best["true_pair"].to_numpy(),
@@ -878,7 +947,7 @@ def score_truth_group(
     )
     scored = pl.concat(
         [
-            train.with_columns(p_model=pl.Series(crossed)),
+            train,
             rest.with_columns(p_model=pl.Series(p_rest)),
         ]
     ).sort(*_PAIR)
@@ -890,23 +959,50 @@ def score_truth_group(
     return TruthScores(pairs=scored, threshold=threshold, calibration=calibration)
 
 
+def training_folds(train: pl.DataFrame) -> list[tuple[np.ndarray, np.ndarray]] | None:
+    """The folds that cross-fit the classifier on `train`, the truth group's
+    training pairs: `FOLDS` grouped by split key, or one per key where there are
+    fewer, as (fitting rows, scoring rows). None when there are fewer than
+    `MIN_FOLDS` keys, or when a fold's fitting rows lack true or false pairs, as
+    no classifier is fitted on one outcome."""
+    # Dense ranks order the keys as the strings sort, so the folds are those of
+    # the keys themselves, at the cost of an integer sort.
+    keys = train["split_key"].rank("dense").to_numpy()
+    n_splits = min(FOLDS, len(np.unique(keys)))
+    if n_splits < MIN_FOLDS:
+        return None
+    y = train["true_pair"].to_numpy()
+    folds = list(GroupKFold(n_splits=n_splits).split(keys, y, keys))
+    if any(len(np.unique(y[fit_rows])) < 2 for fit_rows, _ in folds):
+        return None
+    return folds
+
+
 def best_commitments(
     pairs: pl.DataFrame, *, probability: str = "p_model"
 ) -> pl.DataFrame:
     """Each disbursement unit's best pair among `pairs` that are not siblings: the
     highest `probability`, ties to the earlier placed year, then the smaller
     commitment unit id."""
-    return (
-        pairs.filter(pl.col("programme_level") != _SIBLING)
-        .sort(
-            "left_id",
-            probability,
-            "placed_year",
-            "right_id",
-            descending=[False, True, False, False],
-        )
-        .unique("left_id", keep="first", maintain_order=True)
+    return first_pairs(ranked_pairs(pairs, probability=probability))
+
+
+def ranked_pairs(pairs: pl.DataFrame, *, probability: str = "p_model") -> pl.DataFrame:
+    """`pairs` that are not siblings, each disbursement unit's best first
+    (`best_commitments`)."""
+    return pairs.filter(pl.col("programme_level") != _SIBLING).sort(
+        "left_id",
+        probability,
+        "placed_year",
+        "right_id",
+        descending=[False, True, False, False],
     )
+
+
+def first_pairs(ranked: pl.DataFrame) -> pl.DataFrame:
+    """The first pair of each disbursement unit in `ranked` (`ranked_pairs`), or of
+    any subset of its rows."""
+    return ranked.unique("left_id", keep="first", maintain_order=True)
 
 
 def heldout_links(pairs: pl.DataFrame) -> pl.DataFrame:
@@ -915,6 +1011,10 @@ def heldout_links(pairs: pl.DataFrame) -> pl.DataFrame:
     the build weighs every pair of a unit. A best pair that is true and in the
     training half continues a commitment of that half and is dropped. A false one
     is the unit's link, wrong whichever half holds it.
+
+    Every score ranked is out-of-sample: a held-out pair takes the final model's,
+    and a training pair the model of the fold that scored it. The final model's
+    scores of training pairs would put in-sample scores into the ranking.
 
     Args:
         pairs: `TruthScores.pairs`.
@@ -937,32 +1037,69 @@ def true_disbursements(truth: pl.DataFrame, *, commitments: pl.Series) -> int:
     )
 
 
+def linked_pairs(
+    pairs: pl.DataFrame,
+    *,
+    threshold: float,
+    jev_threshold: float | None = None,
+    rejected: pl.DataFrame | None = None,
+) -> pl.DataFrame:
+    """Each disbursement unit's link among `pairs`: its best pair
+    (`best_commitments` on `probability`) among those that reach their threshold,
+    `jev_threshold` on `probability` where Jev answered (`p_jev` not null) and
+    `threshold` on `p_model` elsewhere. The pairs of `rejected` (`left_id`,
+    `right_id`), which review decisions rejected, are left out first, so a unit
+    whose best pair was rejected links its next best."""
+    if rejected is not None:
+        pairs = pairs.join(
+            rejected.select(*_PAIR), on=list(_PAIR), how="anti", maintain_order="left"
+        )
+    return best_commitments(
+        pairs.filter(reaches(threshold=threshold, jev_threshold=jev_threshold)),
+        probability="probability",
+    )
+
+
+def reaches(*, threshold: float, jev_threshold: float | None = None) -> pl.Expr:
+    """Whether a pair reaches its threshold (`linked_pairs`)."""
+    reached = pl.col("p_model") >= threshold
+    if jev_threshold is None:
+        return reached
+    return (
+        pl.when(pl.col("p_jev").is_not_null())
+        .then(pl.col("probability") >= jev_threshold)
+        .otherwise(reached)
+    )
+
+
 def classifier_links(
-    scores: TruthScores, *, jev: JevBand | None = None
+    scores: TruthScores,
+    *,
+    jev: JevBand | None = None,
+    rejected: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """The classifier's `trace` links, in the `links` schema.
 
     With `jev` (`jev.adjudicate_band`), an eligible pair Jev answered takes its
     combined probability and links at the combined threshold, as `classifier_jev`;
-    every other pair keeps the classifier's probability and threshold.
+    every other pair keeps the classifier's probability and threshold. No pair of
+    `rejected` links (`linked_pairs`).
     """
     eligible = scores.pairs.filter(pl.col("split") == ELIGIBLE)
     if jev is None:
-        taken = eligible.filter(pl.col("p_model") >= scores.threshold).with_columns(
+        weighed = eligible.with_columns(
             probability="p_model", p_jev=pl.lit(None, dtype=pl.Float64)
         )
     else:
-        answered = pl.col("p_jev").is_not_null()
-        taken = (
-            eligible.join(jev.answers, on=list(_PAIR), how="left")
-            .with_columns(probability=pl.coalesce("p_combined", "p_model"))
-            .filter(
-                pl.when(answered)
-                .then(pl.col("probability") >= jev.threshold)
-                .otherwise(pl.col("p_model") >= scores.threshold)
-            )
+        weighed = eligible.join(jev.answers, on=list(_PAIR), how="left").with_columns(
+            probability=pl.coalesce("p_combined", "p_model")
         )
-    best = best_commitments(taken, probability="probability")
+    best = linked_pairs(
+        weighed,
+        threshold=scores.threshold,
+        jev_threshold=None if jev is None else jev.threshold,
+        rejected=rejected,
+    )
     method = (
         pl.when(pl.col("p_jev").is_not_null())
         .then(pl.lit(JEV_METHOD))
@@ -986,10 +1123,7 @@ def classifier_links(
         given["jev_model"] = pl.when(pl.col("p_jev").is_not_null()).then(
             pl.lit(jev.model)
         )
-    return best.select(
-        given.get(name, pl.lit(None)).cast(column.dtype).alias(name)
-        for name, column in schema.LINKS.columns.items()
-    ).sort(*_PAIR)
+    return links_frame(best, given).sort(*_PAIR)
 
 
 def scoring_profile(
@@ -1046,28 +1180,36 @@ def _fit(x: np.ndarray, y: np.ndarray) -> HistGradientBoostingClassifier:
     model = HistGradientBoostingClassifier(
         categorical_features=list(range(len(LEVELS))), **PARAMS
     )
-    return model.fit(x, y)
+    with threadpool_limits(limits=FIT_THREADS, user_api="openmp"):
+        return model.fit(x, y)
 
 
 def _predict(model: HistGradientBoostingClassifier, x: np.ndarray) -> np.ndarray:
-    return model.predict_proba(x)[:, 1]
+    with threadpool_limits(limits=FIT_THREADS, user_api="openmp"):
+        return model.predict_proba(x)[:, 1]
 
 
 def _isotonic_maps(
     raw: np.ndarray, y: np.ndarray, donors: np.ndarray
 ) -> dict[int | None, IsotonicRegression]:
     """The pooled map (key None) and each donor's own where its pairs allow."""
-    maps = {None: _isotonic(raw, y)}
+    maps = {None: fit_isotonic(raw, y)}
     for donor in np.unique(donors):
         own = donors == donor
         true = int(y[own].sum())
         if min(true, int(own.sum()) - true) >= MIN_CALIBRATION_PAIRS:
-            maps[int(donor)] = _isotonic(raw[own], y[own])
+            maps[int(donor)] = fit_isotonic(raw[own], y[own])
     return maps
 
 
-def _isotonic(x: np.ndarray, y: np.ndarray) -> IsotonicRegression:
-    return IsotonicRegression(out_of_bounds="clip", y_min=0, y_max=1).fit(x, y)
+def fit_isotonic(
+    x: np.ndarray, y: np.ndarray, weight: np.ndarray | None = None
+) -> IsotonicRegression:
+    """A non-decreasing map from `x` to the rate of `y` in [0, 1], clipped outside
+    the fitted range."""
+    return IsotonicRegression(out_of_bounds="clip", y_min=0, y_max=1).fit(
+        x, y, sample_weight=weight
+    )
 
 
 def _calibrate(

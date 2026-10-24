@@ -1,4 +1,4 @@
-"""The source downloads write what the ledger readers parse, and refuse offline."""
+"""The source downloads write what the ledger readers parse."""
 
 import json
 from collections.abc import Callable
@@ -104,7 +104,7 @@ def test_finances_one_pages_each_year_end_and_feeds_the_reader(tmp_path: Path) -
     records = download_finances_one(
         tmp_path,
         years=[2021],
-        offline=False,
+        datasets=tuple(DATASETS),
         client=_client(counting),
         pause_seconds=0,
     )
@@ -135,7 +135,11 @@ def test_finances_one_saves_a_snapshot_sorted_by_loan(tmp_path: Path) -> None:
     )
 
     download_finances_one(
-        tmp_path, years=[2021], offline=False, client=_client(api), pause_seconds=0
+        tmp_path,
+        years=[2021],
+        datasets=tuple(DATASETS),
+        client=_client(api),
+        pause_seconds=0,
     )
 
     saved = json.loads(
@@ -158,7 +162,11 @@ def test_finances_one_refuses_pages_that_overlap(tmp_path: Path) -> None:
 
     with pytest.raises(SourceUnavailableError, match="DS00975-0999"):
         download_finances_one(
-            tmp_path, years=[2021], offline=False, client=_client(api), pause_seconds=0
+            tmp_path,
+            years=[2021],
+            datasets=tuple(DATASETS),
+            client=_client(api),
+            pause_seconds=0,
         )
     assert not (tmp_path / "ledgers").exists()
 
@@ -170,7 +178,11 @@ def test_finances_one_refuses_a_snapshot_short_of_its_count(tmp_path: Path) -> N
 
     with pytest.raises(SourceUnavailableError, match=r"served 3 rows .* counts 4"):
         download_finances_one(
-            tmp_path, years=[2021], offline=False, client=_client(api), pause_seconds=0
+            tmp_path,
+            years=[2021],
+            datasets=tuple(DATASETS),
+            client=_client(api),
+            pause_seconds=0,
         )
     assert not (tmp_path / "ledgers").exists()
 
@@ -188,7 +200,11 @@ def test_finances_one_retries_a_rate_limit(tmp_path: Path) -> None:
         return api(request)
 
     records = download_finances_one(
-        tmp_path, years=[2021], offline=False, client=_client(limited), pause_seconds=0
+        tmp_path,
+        years=[2021],
+        datasets=tuple(DATASETS),
+        client=_client(limited),
+        pause_seconds=0,
     )
 
     assert len(records) == 4
@@ -199,7 +215,7 @@ def test_finances_one_gives_up_on_a_persistent_server_fault(tmp_path: Path) -> N
         download_finances_one(
             tmp_path,
             years=[2021],
-            offline=False,
+            datasets=tuple(DATASETS),
             client=_client(lambda request: httpx.Response(503)),
             pause_seconds=0,
         )
@@ -210,23 +226,19 @@ def test_finances_one_refuses_a_year_end_the_api_does_not_have(tmp_path: Path) -
 
     with pytest.raises(SourceUnavailableError, match="no rows"):
         download_finances_one(
-            tmp_path, years=[2021], offline=False, client=_client(api), pause_seconds=0
+            tmp_path,
+            years=[2021],
+            datasets=tuple(DATASETS),
+            client=_client(api),
+            pause_seconds=0,
         )
 
 
-def test_finances_one_makes_no_request_offline(tmp_path: Path) -> None:
-    with pytest.raises(SourceUnavailableError, match="offline"):
-        download_finances_one(
-            tmp_path, years=[2021], offline=True, client=_client(_refuse)
-        )
-    assert not (tmp_path / "ledgers").exists()
-
-
-def test_finances_one_imports_a_local_archive_even_offline(tmp_path: Path) -> None:
+def test_finances_one_imports_a_local_archive_without_a_request(tmp_path: Path) -> None:
     records = download_finances_one(
         tmp_path,
         years=[2021, 2022],
-        offline=True,
+        datasets=tuple(DATASETS),
         archive=LEDGERS / "finances_one",
         client=_client(_refuse),
     )
@@ -246,7 +258,7 @@ def test_finances_one_archive_names_the_snapshot_it_lacks(tmp_path: Path) -> Non
         download_finances_one(
             tmp_path,
             years=[2020],
-            offline=True,
+            datasets=tuple(DATASETS),
             archive=LEDGERS / "finances_one",
         )
 
@@ -298,7 +310,6 @@ def test_iati_downloads_the_named_publishers_into_the_directories_readers_take(
     records = download_iati_ledgers(
         tmp_path,
         publishers=["asdb", "isdb"],
-        offline=False,
         client=_client(service),
         pause_seconds=0,
     )
@@ -325,16 +336,8 @@ def test_iati_names_a_publisher_the_index_lacks(tmp_path: Path) -> None:
         download_iati_ledgers(
             tmp_path,
             publishers=["usaid"],
-            offline=False,
             client=_client(service),
             pause_seconds=0,
-        )
-
-
-def test_iati_makes_no_request_offline(tmp_path: Path) -> None:
-    with pytest.raises(SourceUnavailableError, match="offline"):
-        download_iati_ledgers(
-            tmp_path, publishers=["asdb"], offline=True, client=_client(_refuse)
         )
 
 
@@ -342,7 +345,6 @@ def test_iati_imports_a_local_archive_of_publisher_directories(tmp_path: Path) -
     records = download_iati_ledgers(
         tmp_path,
         publishers=["bmz", "ec-intpa"],
-        offline=True,
         archive=LEDGERS / "iati",
     )
 
@@ -351,9 +353,7 @@ def test_iati_imports_a_local_archive_of_publisher_directories(tmp_path: Path) -
         "ledgers/iati/ec-intpa/ec-intpa-sample.xml",
     ]
     with pytest.raises(SourceUnavailableError, match="archive"):
-        download_iati_ledgers(
-            tmp_path, publishers=["usaid"], offline=True, archive=LEDGERS / "iati"
-        )
+        download_iati_ledgers(tmp_path, publishers=["usaid"], archive=LEDGERS / "iati")
 
 
 # GCF -----------------------------------------------------------------------------
@@ -366,9 +366,7 @@ def test_gcf_projects_are_saved_as_served_and_feed_the_reader(tmp_path: Path) ->
         assert str(request.url) == PROJECTS_URL
         return httpx.Response(200, content=body)
 
-    (record,) = download_gcf_projects(
-        tmp_path, offline=False, client=_client(api), pause_seconds=0
-    )
+    (record,) = download_gcf_projects(tmp_path, client=_client(api), pause_seconds=0)
 
     assert record["path"] == "external/gcf/projects.json"
     _manifest_row(record, tmp_path)
@@ -380,7 +378,6 @@ def test_gcf_projects_refuse_a_reply_that_is_not_a_list(tmp_path: Path) -> None:
     with pytest.raises(SourceUnavailableError, match="list"):
         download_gcf_projects(
             tmp_path,
-            offline=False,
             client=_client(lambda r: httpx.Response(200, json={"error": "x"})),
             pause_seconds=0,
         )
@@ -399,7 +396,7 @@ def test_gcf_readiness_is_cut_from_the_page_data(tmp_path: Path) -> None:
         return httpx.Response(200, text=html)
 
     (record,) = download_gcf_readiness(
-        tmp_path, offline=False, client=_client(library), pause_seconds=0
+        tmp_path, client=_client(library), pause_seconds=0
     )
 
     assert record["path"] == "ledgers/gcf/readiness.json"
@@ -412,26 +409,15 @@ def test_gcf_readiness_names_a_page_that_lost_its_table(tmp_path: Path) -> None:
     with pytest.raises(SourceUnavailableError, match="readiness table"):
         download_gcf_readiness(
             tmp_path,
-            offline=False,
             client=_client(lambda r: httpx.Response(200, text="<html></html>")),
             pause_seconds=0,
         )
 
 
-@pytest.mark.parametrize(
-    "download", [download_gcf_projects, download_gcf_readiness], ids=["api", "page"]
-)
-def test_gcf_downloads_make_no_request_offline(
-    download: Callable[..., list[files.RawFile]], tmp_path: Path
+def test_gcf_readiness_imports_a_local_archive_without_a_request(
+    tmp_path: Path,
 ) -> None:
-    with pytest.raises(SourceUnavailableError, match="offline"):
-        download(tmp_path, offline=True, client=_client(_refuse))
-
-
-def test_gcf_readiness_imports_a_local_archive_even_offline(tmp_path: Path) -> None:
-    (readiness,) = download_gcf_readiness(
-        tmp_path, offline=True, archive=LEDGERS / "gcf"
-    )
+    (readiness,) = download_gcf_readiness(tmp_path, archive=LEDGERS / "gcf")
 
     assert readiness["method"] == "manual"
     assert read_gcf_readiness(tmp_path / "ledgers" / "gcf" / "readiness.json").height
@@ -447,9 +433,7 @@ def test_sdr_rates_are_saved_as_served_and_feed_the_reader(tmp_path: Path) -> No
         assert str(request.url) == IMF_URL
         return httpx.Response(200, content=body)
 
-    (record,) = download_sdr_rates(
-        tmp_path, offline=False, client=_client(api), pause_seconds=0
-    )
+    (record,) = download_sdr_rates(tmp_path, client=_client(api), pause_seconds=0)
 
     assert record["path"] == "ledgers/imf/sdr_usd.xml"
     _manifest_row(record, tmp_path)
@@ -465,20 +449,16 @@ def test_sdr_rates_refuse_a_reply_without_observations(tmp_path: Path) -> None:
     with pytest.raises(SourceUnavailableError, match="no observations"):
         download_sdr_rates(
             tmp_path,
-            offline=False,
             client=_client(lambda r: httpx.Response(200, text="<html></html>")),
             pause_seconds=0,
         )
 
 
-def test_sdr_rates_make_no_request_offline_but_import_an_archive(
+def test_sdr_rates_import_an_archive_without_a_request(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(SourceUnavailableError, match="offline"):
-        download_sdr_rates(tmp_path, offline=True, client=_client(_refuse))
-
     (record,) = download_sdr_rates(
-        tmp_path, offline=True, archive=LEDGERS / "imf", client=_client(_refuse)
+        tmp_path, archive=LEDGERS / "imf", client=_client(_refuse)
     )
 
     assert record["method"] == "manual"

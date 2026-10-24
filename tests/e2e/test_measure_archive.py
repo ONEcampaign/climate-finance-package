@@ -9,15 +9,19 @@ import pytest
 from climate_finance import schema
 from climate_finance.build.measure import (
     agency_shares,
+    agency_spending,
     counted_commitments,
     load_provider_facts,
     modelled_ranges,
+    one_share_problems,
 )
 from climate_finance.build.normalise.aggregates import rebuild_aggregates
 from climate_finance.build.normalise.crdf import normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs, trace_population
 from climate_finance.build.normalise.vintages import mark_repeats
 from climate_finance.build.readers.imputed_shares import read_imputed_shares
+from climate_finance.methods import ONE
+from climate_finance.query import measured_shares
 
 pytestmark = pytest.mark.slow
 
@@ -58,14 +62,14 @@ def crdf(raw: Path, crs: pl.LazyFrame) -> pl.LazyFrame:
 
 
 def _climate(shares: pl.DataFrame) -> pl.DataFrame:
-    """Each channel, year and source's climate share: adaptation + mitigation -
+    """Each channel and year's OECD climate share: adaptation + mitigation -
     cross-cutting, or the unsplit share."""
 
     def part(objective: str) -> pl.Expr:
         return pl.col("share").filter(pl.col("objective") == objective).sum()
 
-    return shares.group_by("channel_code", "year", "source").agg(
-        climate=part("adaptation")
+    return shares.group_by("channel_code", "year").agg(
+        oecd=part("adaptation")
         + part("mitigation")
         - part("cross_cutting")
         + part("climate")
@@ -75,30 +79,42 @@ def _climate(shares: pl.DataFrame) -> pl.DataFrame:
 def test_one_shares_equal_the_oecds_for_component_banks(
     raw: Path, crs: pl.LazyFrame, crdf: pl.LazyFrame
 ) -> None:
+    agencies = load_provider_facts().agencies
+    spending = agency_spending(
+        crdf, crs=crs, agencies=agencies, years=(2015, 2024)
+    ).collect()
+    schema.validate(schema.AGENCY_SPENDING, spending)
     shares = agency_shares(
-        crdf,
-        crs=crs,
-        imputed_shares=read_imputed_shares(
-            raw / "oecd" / "Imputed_multilateral_shares.xlsx"
-        ).lazy(),
-        agencies=load_provider_facts().agencies,
+        read_imputed_shares(raw / "oecd" / "Imputed_multilateral_shares.xlsx").lazy(),
+        spending=spending.lazy(),
         years=(2015, 2024),
     ).collect()
     schema.validate(schema.AGENCY_SHARES, shares)
+    one = measured_shares(spending.lazy(), method=ONE).select(
+        "channel_code",
+        "year",
+        one=pl.col("share_adaptation")
+        + pl.col("share_mitigation")
+        - pl.col("share_overlap"),
+    )
 
     compared = (
-        _climate(shares)
+        _climate(shares.filter(pl.col("source") == "oecd"))
+        .join(one.collect(), on=["channel_code", "year"])
         .filter(
             pl.col("channel_code").is_in(COMPONENT_BANKS),
             pl.col("year").is_between(2021, 2022),
         )
-        .pivot(on="source", index=["channel_code", "year"], values="climate")
     )
 
     assert compared.height == 2 * len(COMPONENT_BANKS)
     # Both divide two years of climate commitments by two years of total
     # commitments; the OECD's own vintage of the files differs by a few rows.
     assert (compared["one"] - compared["oecd"]).abs().max() < 0.004
+    problems = one_share_problems(
+        spending.lazy(), crdf=crdf, crs=crs, agencies=agencies, years=(2015, 2024)
+    )
+    assert problems == []
 
 
 def test_modelled_ranges(crs: pl.LazyFrame, crdf: pl.LazyFrame) -> None:

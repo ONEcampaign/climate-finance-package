@@ -1,28 +1,35 @@
-"""The measure stage: agency climate shares and the modelled line.
+"""The measure stage: agency climate spending and the modelled line.
 
-`agency_shares` holds, per multilateral channel and year, the share of the agency's
-spending that is climate finance, from two sources. `oecd` copies the OECD's imputed
-shares. `one` is the agency's own climate commitments under the ONE method (the
-highest-marker rule, significant markers at 0.4, climate components as reported)
-over its total CRS commitments, both summed over the year and the year before. This
-is the OECD's imputed-share construction with ONE's coefficients. For the banks that
-report climate components, which both methods take as reported, the two agree within
+`agency_spending` holds, per multilateral channel and share year, the agency's CRDF
+commitments by Rio markers, and those reporting climate components, as fractions of
+its total CRS commitments, both summed over the year and the year before. The query
+weighs these rows with a method's coefficients into the agency's climate share,
+which is the OECD's imputed-share construction with that method's coefficients.
+Under ONE (the highest-marker rule, significant markers at 0.4, climate components
+as reported) the banks that report climate components agree with the OECD within
 0.004 in 2021 and 2022 (IBRD 0.310 and 0.309, IDA 0.313 and 0.313, AfDB 0.399 and
 0.398, CAF 0.224 and 0.226). Shares rest on commitments. Dividing matched
 disbursements by all disbursements would leave untraced disbursement in the
-denominator and push banks the trace cannot follow to zero. Adaptation and
-mitigation shares each include the cross-cutting share.
+denominator and push banks the trace cannot follow to zero. Where the span of a
+share year holds a year the CRDF does not measure adaptation in, its rows are not
+`adaptation_measured`, and the query's adaptation and cross-cutting shares are null.
+The stage refuses a table whose ONE shares differ from those summed row by row from
+the CRDF.
 
-A `one` share's `share_source` says where it comes from. `computed` shares are
-measured. A share year is measured once the agency's CRDF rows cover its span: from
-the year after its first CRDF year, or from that year itself when the agency
-committed nothing the year before, so that its first reporting year's one-year span
-stands in for two. A span whose
-CRS commitments fall below `SHARE_FLOOR_USD`, as the European Development Fund's do
-once it stops committing, keeps the last computed share as `held`. A channel and year
-with neither takes the OECD's imputed share as `oecd`: channels with no CRS reporter
-(the Asian Development Fund, the Montreal Protocol fund, the UNFCCC and the IPCC) and
-years before an agency's CRDF rows begin.
+A share's `share_source` says where it comes from. `computed` shares are measured.
+A share year is measured once the agency's CRDF rows cover its span: from the year
+after its first CRDF year, or from that year itself when the agency committed
+nothing the year before, so that its first reporting year's one-year span stands in
+for two. A span whose CRS commitments fall below `SHARE_FLOOR_USD`, as the European
+Development Fund's do once it stops committing, repeats the last computed year's
+rows as `held`. A channel and year with neither takes the OECD's imputed share as
+an `agency_shares` row of source `one`: channels with no CRS reporter (the Asian
+Development Fund, the Montreal Protocol fund, the UNFCCC and the IPCC) and years
+before an agency's CRDF rows begin.
+
+`agency_shares` holds the OECD's imputed shares, with source `oecd`, and those
+fallback rows. Adaptation and mitigation shares each include the cross-cutting
+share.
 
 `modelled` holds, for providers that publish no project disbursements, their CRDF
 climate commitments times a range of disbursement ratios, as `providers.toml` sets.
@@ -40,11 +47,13 @@ import polars as pl
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from climate_finance.build.allocate import counted_rows
-from climate_finance.build.errors import ConfigError
+from climate_finance.build.errors import ConfigError, ReleaseInvariantError
+from climate_finance.build.fetch import fetched_years, last_complete_year
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
 from climate_finance.methods import ONE, face_shares, weights
-from climate_finance.schema import AGENCY_SHARES, MODELLED, STATUSES
+from climate_finance.query import measured_shares
+from climate_finance.schema import AGENCY_SHARES, AGENCY_SPENDING, MODELLED, STATUSES
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -63,7 +72,12 @@ SHARE_YEARS = 2
 SHARE_FLOOR_USD = 100_000.0
 # A commitment cannot disburse more than its face value, so ratios stop here.
 RATIO_CAP = 1.0
-_OBJECTIVES = ("adaptation", "mitigation", "cross_cutting")
+# Shares under SHARE_TOLERANCE apart agree; shares are fractions of one total.
+SHARE_TOLERANCE = 1e-12
+_MARKERS = ("rio_adaptation", "rio_mitigation")
+_COMPONENTS = ("adaptation_usd", "mitigation_usd", "overlap_usd")
+# The columns of `query.measured_shares`, without their `share_` prefix.
+_SHARE_PARTS = ("adaptation", "mitigation", "overlap", "unsplit")
 
 
 class _Fact(BaseModel):
@@ -133,14 +147,15 @@ class ProviderFacts(_Fact):
 
     @model_validator(mode="after")
     def _one_channel_each(self) -> Self:
-        """Each agency reports for one channel, or its spending would count twice."""
-        by_provider: dict[int, list[AgencyChannel]] = {}
+        """Each agency's spending measures one share, or it would count in two. An
+        agency reports for one channel, or for several channels with the same
+        agencies, which then take the same share."""
+        by_provider: dict[int, set[tuple[int, ...] | None]] = {}
         for entry in self.agencies:
-            by_provider.setdefault(entry.provider_code, []).append(entry)
-        for provider, entries in by_provider.items():
-            codes = [code for entry in entries for code in entry.agency_codes or ()]
-            whole = any(entry.agency_codes is None for entry in entries)
-            if (whole and len(entries) > 1) or len(codes) != len(set(codes)):
+            by_provider.setdefault(entry.provider_code, set()).add(entry.agency_codes)
+        for provider, groups in by_provider.items():
+            codes = [code for group in groups for code in group or ()]
+            if (None in groups and len(groups) > 1) or len(codes) != len(set(codes)):
                 raise ValueError(f"provider {provider} reports for two channels")
         return self
 
@@ -161,26 +176,43 @@ def load_provider_facts(path: Path = PROVIDERS_TOML) -> ProviderFacts:
 
 
 def run_measure(context: StageContext) -> StageOutput:
-    """Write `agency_shares` and `modelled`.
+    """Write `agency_shares`, `agency_spending` and `modelled`.
 
-    Shares also read `crdf_span`, the CRDF rows of the year before the first share
-    year, so the first share year has its two-year span.
+    Share years are the fetched recipient CRDF years. Shares also read `crdf_span`,
+    the CRDF rows of the year before the first share year, so the first share year
+    has its two-year span.
+
+    Raises:
+        ReleaseInvariantError: when the ONE shares weighed from `agency_spending`
+            differ from those summed row by row from the CRDF.
     """
     facts = load_provider_facts()
     crdf = counted_commitments(context.read("normalise", "crdf"))
     crs = trace_population(context.read("normalise", "crs"))
-    span = counted_commitments(context.read("normalise", "crdf_span"))
-    shares = agency_shares(
-        pl.concat([span, crdf]),
+    spanned = pl.concat(
+        [counted_commitments(context.read("normalise", "crdf_span")), crdf]
+    )
+    years = fetched_years(context)["crdf_recipient"]
+    spending = agency_spending(
+        spanned, crs=crs, agencies=facts.agencies, years=years
+    ).collect()
+    if problems := one_share_problems(
+        spending.lazy(),
+        crdf=spanned,
         crs=crs,
-        imputed_shares=context.read("normalise", "imputed_shares"),
         agencies=facts.agencies,
-        years=context.config.years.crdf,
+        years=years,
+    ):
+        raise ReleaseInvariantError(problems)
+    shares = agency_shares(
+        context.read("normalise", "imputed_shares"),
+        spending=spending.lazy(),
+        years=years,
     ).collect()
     gaps = unshared_contributions(
-        shares.lazy(),
+        spending.lazy(),
+        shares=shares.lazy(),
         core_contributions=context.read("normalise", "core_contributions"),
-        agencies=facts.agencies,
     ).collect()
     for row in gaps.iter_rows(named=True):
         logger.warning(
@@ -191,13 +223,14 @@ def run_measure(context: StageContext) -> StageOutput:
             row["contribution_usd"] / 1e6,
         )
     return {
-        "agency_shares": shares.lazy(),
+        "agency_shares": shares,
+        "agency_spending": spending,
         "modelled": modelled_ranges(
             crdf,
             crs=crs,
             status=context.read("review", "commitments"),
             providers=facts.modelled,
-            last_year=context.config.years.crs_last_complete,
+            last_year=last_complete_year(context),
         ),
     }
 
@@ -209,79 +242,14 @@ def counted_commitments(crdf: pl.LazyFrame) -> pl.LazyFrame:
 
 
 def agency_shares(
-    crdf: pl.LazyFrame,
-    *,
-    crs: pl.LazyFrame,
-    imputed_shares: pl.LazyFrame,
-    agencies: Sequence[AgencyChannel],
-    years: tuple[int, int],
+    imputed_shares: pl.LazyFrame, *, spending: pl.LazyFrame, years: tuple[int, int]
 ) -> pl.LazyFrame:
-    """Each agency's climate share by channel, year and objective, ONE and OECD.
-
-    Args:
-        crdf: counted CRDF commitments. Rows of the year before `years` begin, when
-            present, give the first share year its two-year span.
-        crs: the CRS records the trace follows.
-        imputed_shares: the OECD's shares, copied with source `oecd`, and with
-            source `one` where ONE has no share.
-        agencies: the CRS reporter behind each channel.
-        years: the first and last share years.
-
-    Raises:
-        ConfigError: when an entry of `agencies` has no CRS commitments in the share
-            spans, or lists an agency with no CRDF rows and no reason for it.
-    """
+    """The OECD's imputed shares as `agency_shares` rows of source `oecd`, and of
+    source `one` for each channel and share year in `years` that `spending` does not
+    measure."""
     first, last = years
-    rows = _by_channel(crdf.filter(pl.col("year") <= last), agencies=agencies)
-    records = _by_channel(
-        crs.rename({"donor_code": "provider_code"}).filter(
-            pl.col("year").is_between(first - SHARE_YEARS + 1, last)
-        ),
-        agencies=agencies,
-    )
-    _check_agencies(rows, records=records, agencies=agencies)
-
-    committed = records.select(
-        "channel_code", "year", total=pl.col("commitment_usd").fill_null(0.0)
-    )
-    climate = _rolling_sum(_one_climate(rows), columns=_OBJECTIVES, years=years)
-    spans = _spans(
-        rows,
-        committed=committed,
-        channels={entry.channel_code for entry in agencies},
-        years=years,
-    )
-    computed = (
-        spans.filter("enough")
-        .join(climate, on=["channel_code", "year"], how="left")
-        .unpivot(
-            index=["channel_code", "year", "total"],
-            on=list(_OBJECTIVES),
-            variable_name="objective",
-            value_name="share",
-        )
-        .with_columns(share=pl.col("share").fill_null(0.0) / pl.col("total"))
-    )
-    held = (
-        spans.filter(~pl.col("enough"), pl.col("held_year").is_not_null())
-        .select("channel_code", "year", "held_year")
-        .join(
-            computed.select(
-                "channel_code", "objective", "share", held_year=pl.col("year")
-            ),
-            on=["channel_code", "held_year"],
-        )
-    )
-    one = pl.concat(
-        [
-            computed.with_columns(share_source=pl.lit("computed")),
-            held.with_columns(share_source=pl.lit("held")),
-        ],
-        how="diagonal",
-    )
-    imputed = imputed_shares.with_columns(share_source=pl.lit("oecd"))
-    fallback = imputed.filter(pl.col("year").is_between(first, last)).join(
-        one.select("channel_code", "year").unique(),
+    fallback = imputed_shares.filter(pl.col("year").is_between(first, last)).join(
+        spending.select("channel_code", "year").unique(),
         on=["channel_code", "year"],
         how="anti",
     )
@@ -289,9 +257,201 @@ def agency_shares(
     return pl.concat(
         [
             frame.with_columns(source=pl.lit(source)).select(columns)
-            for frame, source in ((one, "one"), (fallback, "one"), (imputed, "oecd"))
+            for frame, source in ((fallback, "one"), (imputed_shares, "oecd"))
         ]
     )
+
+
+def agency_spending(
+    crdf: pl.LazyFrame,
+    *,
+    crs: pl.LazyFrame,
+    agencies: Sequence[AgencyChannel],
+    years: tuple[int, int],
+) -> pl.LazyFrame:
+    """Each agency's CRDF commitments by Rio markers over its CRS commitments.
+
+    Per channel and measured share year (`_spans`), marker rows sum their face value
+    by `rio_adaptation`, `rio_mitigation` and `published`, a null marker counting as
+    0, and component rows sum their face value and climate components into the row
+    with null markers. Each sum is divided by the CRS commitments over the same
+    span. A measured share year with no CRDF commitment in its span holds one row at
+    markers 0 and 0 with no face value, so its share is 0. These rows are
+    `computed`. A later share year whose span rests on fewer than `SHARE_FLOOR_USD`
+    of CRS commitments repeats the rows of the last computed year as `held`.
+
+    Args:
+        crdf: counted CRDF commitments. Rows of the year before `years` begin, when
+            present, give the first share year its two-year span.
+        crs: the CRS records the trace follows.
+        agencies: the CRS reporter behind each channel.
+        years: the first and last share years. Rows are not `adaptation_measured`
+            where a year of the span has commitments with no adaptation amount,
+            which the CRDF does not measure there.
+
+    Raises:
+        ConfigError: when an entry of `agencies` has no CRS commitments in the share
+            spans, or lists an agency with no CRDF rows and no reason for it.
+    """
+    rows, spans = _share_spans(crdf, crs=crs, agencies=agencies, years=years)
+    component = pl.col("climate_share").is_not_null()
+    markers = _rolling_sum(
+        rows.filter(~component).with_columns(
+            pl.col(*_MARKERS).fill_null(0),
+            published=face_shares()["share_climate"],
+        ),
+        by=(*_MARKERS, "published"),
+        columns=("face_usd",),
+        years=years,
+    )
+    components = _rolling_sum(
+        rows.filter(component),
+        columns=("face_usd", *_COMPONENTS),
+        years=years,
+    ).with_columns(pl.lit(None, pl.Int8).alias(name) for name in _MARKERS)
+    keys = ["channel_code", "year"]
+    total = spans.filter("enough").select(*keys, "total")
+    measured = pl.concat([markers, components], how="diagonal")
+    empty = total.join(measured, on=keys, how="anti").select(
+        *keys,
+        *(pl.lit(0, pl.Int8).alias(name) for name in _MARKERS),
+        face_usd=pl.lit(0.0),
+    )
+    computed = (
+        pl.concat([measured, empty], how="diagonal")
+        .join(total, on=keys)
+        .join(_adaptation_unmeasured(crdf), on="year", how="left")
+        .select(
+            *keys,
+            *_MARKERS,
+            "published",
+            face_share=pl.col("face_usd") / pl.col("total"),
+            **{
+                f"{part.removesuffix('_usd')}_share": pl.col(part) / pl.col("total")
+                for part in _COMPONENTS
+            },
+            adaptation_measured=pl.col("_unmeasured").is_null(),
+            share_source=pl.lit("computed"),
+        )
+    )
+    held = (
+        spans.filter(~pl.col("enough"), pl.col("held_year").is_not_null())
+        .select(*keys, "held_year")
+        .join(
+            computed.rename({"year": "held_year"}),
+            on=["channel_code", "held_year"],
+        )
+        .with_columns(share_source=pl.lit("held"))
+    )
+    columns = list(AGENCY_SPENDING.columns)
+    return pl.concat([computed.select(columns), held.select(columns)])
+
+
+def one_share_problems(
+    spending: pl.LazyFrame,
+    *,
+    crdf: pl.LazyFrame,
+    crs: pl.LazyFrame,
+    agencies: Sequence[AgencyChannel],
+    years: tuple[int, int],
+) -> list[str]:
+    """Channels and years whose `computed` ONE shares weighed from `spending` by the
+    query differ by more than `SHARE_TOLERANCE` from the shares summed row by row
+    from `crdf` over the same measured share years, or that only one of the two
+    holds. Shares both leave unmeasured agree. An empty list means they agree."""
+    keys = ["channel_code", "year"]
+    weighed = measured_shares(
+        spending.filter(pl.col("share_source") == "computed"), method=ONE
+    ).rename({f"share_{part}": part for part in _SHARE_PARTS})
+    rows, spans = _share_spans(crdf, crs=crs, agencies=agencies, years=years)
+    summed = (
+        spans.filter("enough")
+        .select(*keys, "total")
+        .join(
+            _rolling_sum(_one_climate(rows), columns=_SHARE_PARTS, years=years),
+            on=keys,
+            how="left",
+        )
+        .join(_adaptation_unmeasured(crdf), on="year", how="left")
+        .select(
+            *keys,
+            *(pl.col(part).fill_null(0.0) / pl.col("total") for part in _SHARE_PARTS),
+            "_unmeasured",
+        )
+        .with_columns(
+            pl.when(pl.col("_unmeasured").is_null()).then(part)
+            for part in ("adaptation", "overlap")
+        )
+        .drop("_unmeasured")
+    )
+    compared = (
+        weighed.join(summed, on=keys, how="full", coalesce=True, suffix="_summed")
+        .sort(keys)
+        .collect()
+    )
+    problems = []
+    for row in compared.iter_rows(named=True):
+        label = f"agency_spending {row['channel_code']} {row['year']}"
+        if row["unsplit"] is None or row["unsplit_summed"] is None:
+            problems.append(f"{label}: a ONE share only one route measures")
+            continue
+        problems.extend(
+            f"{label}: ONE {part} share {row[part]!r} differs from "
+            f"{row[f'{part}_summed']!r}"
+            for part in _SHARE_PARTS
+            if _differ(row[part], row[f"{part}_summed"])
+        )
+    return problems
+
+
+def _differ(share: float | None, summed: float | None) -> bool:
+    """Whether two shares differ by more than `SHARE_TOLERANCE`, or only one is
+    measured."""
+    if share is None or summed is None:
+        return (share is None) != (summed is None)
+    return abs(share - summed) > SHARE_TOLERANCE
+
+
+def _share_spans(
+    crdf: pl.LazyFrame,
+    *,
+    crs: pl.LazyFrame,
+    agencies: Sequence[AgencyChannel],
+    years: tuple[int, int],
+) -> tuple[pl.LazyFrame, pl.LazyFrame]:
+    """The CRDF rows of `agencies` by channel up to the last share year, and per
+    channel and share year its span (`_spans`).
+
+    Raises:
+        ConfigError: as `_check_agencies` does.
+    """
+    first, last = years
+    rows = _by_channel(crdf.filter(pl.col("year") <= last), agencies=agencies)
+    # Collected once, as both the agency check and the spans read it and the CRS
+    # is the largest input.
+    records = (
+        _by_channel(
+            crs.rename({"donor_code": "provider_code"}).filter(
+                pl.col("year").is_between(first - SHARE_YEARS + 1, last)
+            ),
+            agencies=agencies,
+        )
+        .select(
+            "channel_code", "provider_code", "agency_code", "year", "commitment_usd"
+        )
+        .collect()
+        .lazy()
+    )
+    _check_agencies(rows, records=records, agencies=agencies)
+    spans = _spans(
+        rows,
+        committed=records.select(
+            "channel_code", "year", total=pl.col("commitment_usd").fill_null(0.0)
+        ),
+        channels={entry.channel_code for entry in agencies},
+        years=years,
+    )
+    return rows, spans
 
 
 def _spans(
@@ -383,32 +543,28 @@ def _check_agencies(
 
 
 def unshared_contributions(
-    shares: pl.LazyFrame,
+    spending: pl.LazyFrame,
     *,
+    shares: pl.LazyFrame,
     core_contributions: pl.LazyFrame,
-    agencies: Sequence[AgencyChannel],
 ) -> pl.LazyFrame:
-    """Disbursed core contributions to a channel that carries a share in some year,
-    in the years it has no `one` share, by channel and year."""
-    one = shares.filter(pl.col("source") == "one")
-    channels = pl.concat(
+    """Disbursed core contributions to every channel in the years neither `spending`
+    nor a `one` row of `shares` gives it a ONE share, by channel and year."""
+    keys = ["channel_code", "year"]
+    one = pl.concat(
         [
-            shares.select("channel_code"),
-            pl.LazyFrame(
-                {"channel_code": [entry.channel_code for entry in agencies]},
-                schema={"channel_code": pl.Int32},
-            ),
+            spending.select(keys),
+            shares.filter(pl.col("source") == "one").select(keys),
         ]
-    ).unique()
+    )
     return (
         core_contributions.filter(
             pl.col("flow") == "disbursements", pl.col("contribution_usd") > 0
         )
-        .join(channels, on="channel_code", how="semi")
-        .join(one, on=["channel_code", "year"], how="anti")
-        .group_by("channel_code", "year")
+        .join(one.unique(), on=keys, how="anti")
+        .group_by(keys)
         .agg(ordered_sum(pl.col("contribution_usd")))
-        .sort("channel_code", "year")
+        .sort(keys)
     )
 
 
@@ -441,11 +597,29 @@ def _by_channel(
     )
 
 
+def _adaptation_unmeasured(crdf: pl.LazyFrame) -> pl.LazyFrame:
+    """The share years whose span holds a commitment with no adaptation amount, with
+    a true `_unmeasured`."""
+    return (
+        crdf.filter(pl.col("adaptation_usd").is_null())
+        .select(
+            year=pl.int_ranges(
+                pl.col("year"), pl.col("year") + SHARE_YEARS, dtype=pl.Int16
+            )
+        )
+        .explode("year")
+        .unique()
+        .with_columns(_unmeasured=pl.lit(True))
+    )
+
+
 def _one_climate(crdf: pl.LazyFrame) -> pl.LazyFrame:
-    """Each commitment's inclusive adaptation, mitigation and cross-cutting value
-    under ONE, whose objectives are disjoint before the cross-cutting part is added
-    back to the other two. A marker weight stops at the climate share the provider
+    """Each commitment's inclusive adaptation and mitigation value under ONE, and
+    its overlap, whose objectives are disjoint before the overlap is added back to
+    the other two. A marker weight stops at the climate share the provider
     published, as IFAD's significant rows at 40% of face value."""
+    # An unmeasured adaptation part weighs as 0 here, and `one_share_problems` nulls
+    # the shares it would reach.
     weighted = crdf.with_columns(**face_shares()).with_columns(
         **weights(ONE, published=pl.col("share_climate"))
     )
@@ -455,15 +629,20 @@ def _one_climate(crdf: pl.LazyFrame) -> pl.LazyFrame:
         "year",
         adaptation=pl.col("face_usd") * (pl.col("adaptation") + cross_cutting),
         mitigation=pl.col("face_usd") * (pl.col("mitigation") + cross_cutting),
-        cross_cutting=pl.col("face_usd") * cross_cutting,
+        overlap=pl.col("face_usd") * cross_cutting,
+        unsplit=pl.lit(0.0),
     )
 
 
 def _rolling_sum(
-    frame: pl.LazyFrame, *, columns: Sequence[str], years: tuple[int, int]
+    frame: pl.LazyFrame,
+    *,
+    by: Sequence[str] = (),
+    columns: Sequence[str],
+    years: tuple[int, int],
 ) -> pl.LazyFrame:
-    """Per channel and share year in `years`, `columns` summed over the share year
-    and the `SHARE_YEARS - 1` years before it."""
+    """Per channel, share year in `years` and `by`, `columns` summed over the share
+    year and the `SHARE_YEARS - 1` years before it."""
     first, last = years
     return (
         frame.with_columns(
@@ -473,7 +652,7 @@ def _rolling_sum(
         )
         .explode("year")
         .filter(pl.col("year").is_between(first, last))
-        .group_by("channel_code", "year")
+        .group_by("channel_code", "year", *by)
         .agg(ordered_sum(pl.col(column)) for column in columns)
     )
 
@@ -517,9 +696,7 @@ def modelled_ranges(
     ]
     columns = list(MODELLED.columns)
     if not frames:
-        return pl.LazyFrame(
-            schema={name: column.dtype for name, column in MODELLED.columns.items()}
-        )
+        return pl.LazyFrame(schema=MODELLED.dtypes)
     return (
         pl.concat(frames)
         .group_by("provider_code", "year", "recipient_code", "basis")
@@ -564,15 +741,15 @@ def _modelled(
     rows = rows.with_columns(
         _low=pl.when(cancelled).then(0.0).otherwise(pl.min_horizontal(capped)),
         _high=pl.when(cancelled).then(0.0).otherwise(pl.max_horizontal(capped)),
-    )
+    ).collect()
 
-    missing = rows.filter(pl.col("_low").is_null()).select("row_id").collect()
+    missing = rows.filter(pl.col("_low").is_null())
     if missing.height:
         raise ConfigError(
             f"providers.toml: no disbursement ratio for provider "
             f"{provider.provider_code}'s rows {missing['row_id'].head(5).to_list()}"
         )
-    return rows.select(
+    return rows.lazy().select(
         provider_code=pl.lit(provider.provider_code, pl.Int32),
         year="year",
         recipient_code="recipient_code",
@@ -593,13 +770,18 @@ def _with_crs_ratios(
     year's vintage ratio. Recipient ratios replace portfolio ones where the run
     holds the recipient's commitments.
     """
-    records = records.select(
-        "year",
-        "project_number",
-        "recipient_code",
-        _portfolio=pl.lit(0),
-        com=pl.col("commitment_usd").fill_null(0.0),
-        dis=pl.col("disbursement_usd").fill_null(0.0),
+    # The provider's records are read once, then held for the several ratios.
+    records = (
+        records.select(
+            "year",
+            "project_number",
+            "recipient_code",
+            _portfolio=pl.lit(0),
+            com=pl.col("commitment_usd").fill_null(0.0),
+            dis=pl.col("disbursement_usd").fill_null(0.0),
+        )
+        .collect()
+        .lazy()
     )
     disbursing = (
         records.filter(pl.col("dis") > 0).select(pl.col("year").unique()).collect()

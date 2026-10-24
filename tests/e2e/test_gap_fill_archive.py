@@ -8,14 +8,16 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-from archive_build import archive_config, seed_release
+from archive_build import archive_config, seed_raw
+from normalised import record_fetch
 
 from climate_finance.build import build
 from climate_finance.build.allocate import counted_rows
-from climate_finance.build.config import Ledgers
+from climate_finance.build.config import BuildConfig, Ledgers
+from climate_finance.build.fetch import _ledger_files
 from climate_finance.build.link.gap_fill import FUND_PUBLISHERS
 from climate_finance.build.sources import finances_one, iati, imf
-from climate_finance.build.stages import table_path
+from climate_finance.build.stages import raw_dir, table_path
 from climate_finance.schema import (
     RAW_MANIFEST,
     RELEASE_TABLES,
@@ -90,16 +92,17 @@ def release_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     )
     out = tmp_path_factory.mktemp("gap_fill")
     release = out / "r"
-    seed_release(release, archive=archive, config=config)
-    _seed_ledgers(release, archive=archive / BANKS)
+    seed_raw(release, archive=archive, config=config)
+    _seed_ledgers(release, archive=archive / BANKS, config=config)
     # Slow: normalises 3.8 million CRS records and the bank ledgers, then runs every
     # stage, about two minutes.
     return build("r", config=config, out_dir=out, offline=True).release_dir
 
 
-def _seed_ledgers(release: Path, *, archive: Path) -> None:
+def _seed_ledgers(release: Path, *, archive: Path, config: BuildConfig) -> None:
     """Import the archived ledgers into the raw directory and its manifest, as a
-    fetch with `ledgers.archive` would."""
+    fetch with `ledgers.archive` under `config` would, each ledger file recording
+    the ledger years."""
     layout = release / "ledger_archive"
     for name in finances_one.snapshot_years(range(YEARS[0], YEARS[1] + 1)):
         for dataset in ("DS00975", "DS00976"):
@@ -112,24 +115,35 @@ def _seed_ledgers(release: Path, *, archive: Path) -> None:
         (layout / "iati" / publisher).mkdir(parents=True)
         for origin in sorted(archive.glob(pattern)):
             (layout / "iati" / publisher / origin.name).symlink_to(origin)
-    raw = release / "raw"
+    raw = raw_dir(release)
     files = [
         *finances_one.download_finances_one(
             raw,
             years=range(YEARS[0], YEARS[1] + 1),
-            offline=True,
+            datasets=("DS00975", "DS00976"),
             archive=layout / "finances_one",
         ),
         *iati.download_iati_ledgers(
-            raw, publishers=list(IATI_FILES), offline=True, archive=layout / "iati"
+            raw, publishers=list(IATI_FILES), archive=layout / "iati"
         ),
-        *imf.download_sdr_rates(raw, offline=True, archive=archive / SDR_DIR),
+        *imf.download_sdr_rates(raw, archive=archive / SDR_DIR),
     ]
     manifest_path = table_path(release, "fetch", "raw_manifest")
-    columns = {name: column.dtype for name, column in RAW_MANIFEST.columns.items()}
-    pl.concat(
-        [pl.read_parquet(manifest_path), pl.DataFrame(files, schema=columns)]
-    ).write_parquet(manifest_path)
+    ledger_files = sorted(_ledger_files(LEDGERS))
+    manifest = pl.concat(
+        [
+            pl.read_parquet(manifest_path),
+            pl.DataFrame(files, schema=RAW_MANIFEST.dtypes),
+        ]
+    ).with_columns(
+        pl.when(pl.col("source").is_in(ledger_files))
+        .then(pl.lit(year))
+        .otherwise(pl.col(column))
+        .cast(RAW_MANIFEST.dtypes[column])
+        .alias(column)
+        for column, year in zip(("first_year", "last_year"), LEDGERS.years, strict=True)
+    )
+    record_fetch(release, manifest, config=config)
 
 
 def _tables(release_dir: Path, stage: str, *tables: str) -> list[pl.DataFrame]:

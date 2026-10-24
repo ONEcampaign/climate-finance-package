@@ -325,30 +325,19 @@ def archive_files(archive_dir: Path) -> list[tuple[Path, str]]:
 
 
 def _raw_manifest(files: list[Path]) -> pl.DataFrame:
-    """One `raw_manifest` row per archived workbook."""
+    """One `raw_manifest` row per archived workbook, with no years."""
     return pl.DataFrame(
-        {
-            "source": ["unfccc_btr1"] * len(files),
-            "url": [None] * len(files),
-            "path": [str(path) for path in files],
-            "sha256": [schema.sha256_file(path) for path in files],
-            "etag": [None] * len(files),
-            "version": [None] * len(files),
-            "fetched_at": [
-                datetime.fromtimestamp(path.stat().st_mtime, tz=UTC) for path in files
-            ],
-            "method": ["manual"] * len(files),
-        },
-        schema={
-            "source": pl.String,
-            "url": pl.String,
-            "path": pl.String,
-            "sha256": pl.String,
-            "etag": pl.String,
-            "version": pl.String,
-            "fetched_at": pl.Datetime("us", "UTC"),
-            "method": pl.String,
-        },
+        [
+            {
+                "source": "unfccc_btr1",
+                "path": str(path),
+                "sha256": schema.sha256_file(path),
+                "fetched_at": datetime.fromtimestamp(path.stat().st_mtime, tz=UTC),
+                "method": "manual",
+            }
+            for path in files
+        ],
+        schema=schema.RAW_MANIFEST.dtypes,
     )
 
 

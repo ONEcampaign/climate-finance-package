@@ -7,33 +7,20 @@ allocate with key repair on, and pins the no-record value the rules move.
 """
 
 import os
-from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
 import pytest
+from archive_build import archive_config, seed_raw
 
-from climate_finance.build import Stage, build, write_table
-from climate_finance.build.config import BuildConfig, LocalFile, load_config
-from climate_finance.build.fetch import (
-    CRDF_FILES,
-    CRDF_SPAN_FILE,
-    CRS_FILE,
-    DAC_EXCHANGE_FILE,
-    GCF_FILE,
-    IATI_DIR,
-    IMPUTED_SHARES_FILE,
-    MULTISYSTEM_FILE,
-)
+from climate_finance.build import Stage, build
+from climate_finance.build.config import BuildConfig
 from climate_finance.build.normalise.crs import trace_population
-from climate_finance.build.stages import raw_dir, table_path
-from climate_finance.schema import KEY_REPAIR_METHODS, RAW_MANIFEST, sha256_file
+from climate_finance.build.stages import table_path
+from climate_finance.schema import KEY_REPAIR_METHODS, sha256_file
 
 pytestmark = pytest.mark.slow
 
-BUILD_TOML = Path(__file__).parents[2] / "build.toml"
-CRS_ARCHIVE = Path("oecd/CRS_v20261006.parquet")
-CRS_SHA256 = "d24840a5fad50e718da4eb5831c3e1e333e7c5ef6b46c158e3510c7497518f06"
 YEARS = (2021, 2022)
 # USD bn of 2021 to 2022 climate value per status.
 TOLERANCE_BN = 0.1
@@ -120,6 +107,38 @@ OWN_FIRST_RELEASE_MOVED_BN = {
     "no_disbursement_record": -0.14,
     "not_traceable": 0.0,
 }
+# Allocation reads CRS records up to `crs_last_complete`, so the early 2025 reports
+# no longer complete some 2021 to 2022 commitments.
+LAST_COMPLETE_YEAR_MOVED_BN = {
+    "disbursed": -0.12,
+    "partly_disbursed": 0.11,
+    "no_disbursement_record": 0.01,
+    "not_traceable": 0.0,
+}
+# An agency keying under `MIN_KEYED_DISBURSED` of its disbursement is not traceable:
+# the EBRD's 2019 to 2022 rows (5.17 bn) and IFAD's (0.51 bn).
+DISBURSEMENT_SIDE_MOVED_BN = {
+    "disbursed": 0.0,
+    "partly_disbursed": 0.0,
+    "no_disbursement_record": -5.68,
+    "not_traceable": 5.68,
+}
+# A component award's disbursement reaches its own component (`split_components`),
+# mostly US awards (0.28 bn) and IFAD's (0.06 bn).
+COMPONENT_AWARDS_MOVED_BN = {
+    "disbursed": 0.14,
+    "partly_disbursed": 0.14,
+    "no_disbursement_record": -0.28,
+    "not_traceable": 0.0,
+}
+# No row receives a record from before its CRDF year, which takes the earlier
+# records of Italian aggregate children, so it moves only the release rule.
+TIME_ORDER_MOVED_BN = {
+    "disbursed": 0.0,
+    "partly_disbursed": -0.08,
+    "no_disbursement_record": 0.08,
+    "not_traceable": 0.0,
+}
 # With aggregate children counted and their parents left out (the release rule).
 RELEASE_RULE_BN = {
     "disbursed": 56.37,
@@ -148,6 +167,10 @@ RELEASE_RULE_BN = {
 # full numbers, so `repair_afdb_scientific` links it to none (USD 0.05 bn).
 # `repair_stray_country` moves USD 0.01 bn of Canadian and Danish rows.
 REPAIR_MOVED_BN = {"bilateral": 0.85, "banks": 2.12}
+# The EBRD's no-record rows become not traceable, leaving the rules less to move.
+REPAIR_DISBURSEMENT_SIDE_BN = {"bilateral": 0.0, "banks": -0.33}
+# The exact tiers reach US component value before the rules do.
+REPAIR_COMPONENT_AWARDS_BN = {"bilateral": -0.07, "banks": 0.03}
 REPAIR_TOLERANCE_BN = 0.05
 _CATEGORY = {
     "DAC member": "bilateral",
@@ -165,79 +188,16 @@ def data() -> Path:
 
 @pytest.fixture(scope="module")
 def config(data: Path) -> BuildConfig:
-    config = load_config(BUILD_TOML)
-    sources = config.sources.model_copy(
-        update={
-            "crs_file": LocalFile(path=data / "raw" / CRS_ARCHIVE, sha256=CRS_SHA256),
-            "iati_archive": data / "raw" / "external" / "iati",
-            "btr_archive": None,
-        }
-    )
-    # The archive builds run offline with no Jev cache.
-    return config.model_copy(
-        update={
-            "key_repair": False,
-            "recoveries": False,
-            "jev_links": False,
-            "sources": sources,
-        }
-    )
-
-
-def _lay_out_raw(release_dir: Path, *, archive: Path, config: BuildConfig) -> None:
-    """Link the archive files into the raw layout and record them as a fetch would."""
-    places = {
-        "crs": [(CRS_ARCHIVE, CRS_FILE)],
-        **{
-            f"crdf_{perspective}": [(path, path)]
-            for perspective, path in CRDF_FILES.items()
-        },
-        "crdf_span": [(CRDF_SPAN_FILE, CRDF_SPAN_FILE)],
-        "multisystem": [(MULTISYSTEM_FILE, MULTISYSTEM_FILE)],
-        "imputed_shares": [(IMPUTED_SHARES_FILE, IMPUTED_SHARES_FILE)],
-        "gcf_projects": [(Path("external/gcf_api/projects.json"), GCF_FILE)],
-        "dac_exchange": [(DAC_EXCHANGE_FILE, DAC_EXCHANGE_FILE)],
-        **{
-            f"iati_{publisher}": [
-                (origin.relative_to(archive), IATI_DIR / publisher / origin.name)
-                for origin in sorted((archive / IATI_DIR / publisher).glob("*.xml"))
-            ]
-            for publisher in config.sources.iati_publishers
-        },
-    }
-    raw = raw_dir(release_dir)
-    rows = []
-    for source, files in places.items():
-        for origin, relative in files:
-            target = raw / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.symlink_to(archive / origin)
-            rows.append(
-                {
-                    "source": source,
-                    "path": relative.as_posix(),
-                    "sha256": CRS_SHA256 if source == "crs" else sha256_file(target),
-                    "version": config.sources.crs_version if source == "crs" else None,
-                    "fetched_at": datetime(2026, 10, 21, tzinfo=UTC),
-                    "method": "manual",
-                }
-            )
-    manifest = pl.DataFrame(rows).with_columns(
-        url=pl.lit(None, pl.String), etag=pl.lit(None, pl.String)
-    )
-    write_table(
-        manifest, RAW_MANIFEST, table_path(release_dir, "fetch", RAW_MANIFEST.name)
-    )
+    return archive_config(data / "raw", key_repair=False, recoveries=False)
 
 
 @pytest.fixture(scope="module")
 def base(
     tmp_path_factory: pytest.TempPathFactory, data: Path, config: BuildConfig
 ) -> Path:
-    # Slow: normalises 3.8 million CRS records and links and allocates them, about
-    # a minute.
+    # Slow: normalises 5.1 million CRS records and links and allocates them.
     out = tmp_path_factory.mktemp("allocate")
-    _lay_out_raw(out / "base", archive=data / "raw", config=config)
+    seed_raw(out / "base", archive=data / "raw", config=config)
     stages = [Stage.FETCH, Stage.NORMALISE, Stage.LINK, Stage.ALLOCATE]
     manifest = build("base", config=config, out_dir=out, stages=stages, offline=True)
     return manifest.release_dir
@@ -246,7 +206,7 @@ def base(
 @pytest.fixture(scope="module")
 def repaired(base: Path, config: BuildConfig) -> Path:
     release_dir = base.with_name("repaired")
-    for stage in ("raw", "fetch", "normalise"):
+    for stage in ("fetch", "normalise"):
         (release_dir / stage).parent.mkdir(parents=True, exist_ok=True)
         (release_dir / stage).symlink_to(base / stage, target_is_directory=True)
     build(
@@ -304,6 +264,9 @@ def test_statuses_reproduce_the_reference_without_recoveries(
         + DATE_TIER_MOVED_BN[status]
         + CLASSIFIER_MOVED_BN[status]
         + OWN_FIRST_MOVED_BN[status]
+        + LAST_COMPLETE_YEAR_MOVED_BN[status]
+        + DISBURSEMENT_SIDE_MOVED_BN[status]
+        + COMPONENT_AWARDS_MOVED_BN[status]
         for status, usd_bn in reference.select("status", "usd_bn").iter_rows()
     }
     assert built == pytest.approx(expected, abs=TOLERANCE_BN)
@@ -325,6 +288,10 @@ def test_statuses_under_the_release_rule(base: Path) -> None:
         + DATE_TIER_MOVED_BN[status]
         + CLASSIFIER_RELEASE_MOVED_BN[status]
         + OWN_FIRST_RELEASE_MOVED_BN[status]
+        + LAST_COMPLETE_YEAR_MOVED_BN[status]
+        + DISBURSEMENT_SIDE_MOVED_BN[status]
+        + COMPONENT_AWARDS_MOVED_BN[status]
+        + TIME_ORDER_MOVED_BN[status]
         for status, usd_bn in RELEASE_RULE_BN.items()
     }
     assert built == pytest.approx(expected, abs=TOLERANCE_BN)
@@ -332,12 +299,16 @@ def test_statuses_under_the_release_rule(base: Path) -> None:
 
 @pytest.mark.parametrize("build_name", ["base", "repaired"])
 def test_linked_disbursement_is_conserved(
-    build_name: str, request: pytest.FixtureRequest
+    build_name: str, request: pytest.FixtureRequest, config: BuildConfig
 ) -> None:
     release_dir: Path = request.getfixturevalue(build_name)
     units = pl.scan_parquet(table_path(release_dir, "link", "units"))
     links = pl.scan_parquet(table_path(release_dir, "link", "links"))
-    crs = trace_population(pl.scan_parquet(table_path(release_dir, "normalise", "crs")))
+    # Allocation reads CRS records up to the last complete year, as `run_allocate`
+    # does; later records are linked but give nothing.
+    crs = trace_population(
+        pl.scan_parquet(table_path(release_dir, "normalise", "crs"))
+    ).filter(pl.col("year") <= config.years.crs_last_complete)
     allocations = pl.scan_parquet(table_path(release_dir, "allocate", "allocations"))
     linked = (
         units.join(
@@ -396,8 +367,13 @@ def test_key_repair_moves_no_record_value(
         moved.group_by("category").agg(pl.col("climate_usd").sum() / 1e9).iter_rows()
     )
     for category, usd_bn in REPAIR_MOVED_BN.items():
+        moved_bn = (
+            usd_bn
+            + REPAIR_DISBURSEMENT_SIDE_BN[category]
+            + REPAIR_COMPONENT_AWARDS_BN[category]
+        )
         assert by_category[category] == pytest.approx(
-            usd_bn, abs=REPAIR_TOLERANCE_BN
+            moved_bn, abs=REPAIR_TOLERANCE_BN
         ), category
 
     links = pl.read_parquet(table_path(repaired, "link", "links"))

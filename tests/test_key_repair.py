@@ -5,12 +5,15 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from normalised import named_records
+from stage_runs import BUILD_TOML, registered, stage_context, write_normalised
 
 from climate_finance import schema
 from climate_finance.build import write_stage
 from climate_finance.build.allocate import allocate
 from climate_finance.build.config import load_config
 from climate_finance.build.link import run_link
+from climate_finance.build.link.decisions import PAIR, drop_pairs
 from climate_finance.build.link.key_repair import (
     MAX_COMMITMENTS,
     project_core,
@@ -18,73 +21,54 @@ from climate_finance.build.link.key_repair import (
     title_tokens,
     title_words,
 )
-from climate_finance.build.link.keys import build_units, link_by_keys, rounded_digits
-from climate_finance.build.normalise.crdf import normalise_crdf
-from climate_finance.build.normalise.crs import normalise_crs
-from climate_finance.build.stages import REGISTRY, StageContext, table_path
+from climate_finance.build.link.keys import build_units, link_by_keys
+from climate_finance.build.normalise.project_numbers import rounded_digits
 
-OECD = Path(__file__).parent / "fixtures" / "raw" / "oecd"
 FIRST_YEAR = 2010
-_RECORD = {
-    "donor_code": 913,
-    "agency_code": 1,
-    "crs_id": None,
-    "project_number": None,
-    "title": None,
-    "long_description": None,
-    "recipient_code": 238,
-    "purpose_code": 23210,
-    "year": 2020,
-    "commitment_date": None,
-    "commitment_usd": None,
-    "disbursement_usd": None,
-    "expected_start_date": None,
-    "completion_date": None,
-}
-_CRS_SCHEMA = {
-    "record_id": pl.String,
-    "donor_code": pl.Int32,
-    "agency_code": pl.Int32,
-    "crs_id": pl.String,
-    "project_number": pl.String,
-    "title": pl.String,
-    "long_description": pl.String,
-    "recipient_code": pl.Int32,
-    "purpose_code": pl.Int32,
-    "year": pl.Int16,
-    "commitment_date": pl.Date,
-    "commitment_usd": pl.Float64,
-    "disbursement_usd": pl.Float64,
-    "expected_start_date": pl.Date,
-    "completion_date": pl.Date,
-}
 
 
 def _crs(records: dict[str, dict[str, object]]) -> pl.LazyFrame:
-    return pl.LazyFrame(
-        [{**_RECORD, "record_id": name, **fields} for name, fields in records.items()],
-        schema=_CRS_SCHEMA,
+    """CRS records named by their record id."""
+    return named_records(
+        records, donor_code=913, recipient_code=238, purpose_code=23210, year=2020
     )
 
 
 def _links(
     records: dict[str, dict[str, object]],
+    *,
+    rejected: tuple[tuple[str, str], ...] = (),
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.LazyFrame]:
-    """Units, exact links plus key-repair links, and the CRS records."""
+    """Units, exact links plus key-repair links, and the CRS records, with the
+    (disbursement, commitment) record pairs of `rejected` rejected."""
     crs = _crs(records)
     units = build_units(crs).collect()
+    unit = dict(zip(units["record_ids"].list.first(), units["unit_id"], strict=True))
+    pairs = pl.DataFrame(
+        [("trace", unit[left], unit[right]) for left, right in rejected],
+        schema=dict.fromkeys(PAIR, pl.String),
+        orient="row",
+    )
     exact = link_by_keys(units, first_year=FIRST_YEAR)
-    repaired = repair_keys(units, crs=crs, links=exact, first_year=FIRST_YEAR)
+    repaired = repair_keys(
+        units,
+        crs=crs,
+        links=exact,
+        first_year=FIRST_YEAR,
+        decide=lambda rule: drop_pairs(rule, pairs=pairs, accepted=pairs.clear()),
+    )
     schema.validate(schema.LINKS, repaired)
     return units, pl.concat([exact, repaired]), crs
 
 
 def _repaired(
     records: dict[str, dict[str, object]],
+    *,
+    rejected: tuple[tuple[str, str], ...] = (),
 ) -> dict[str, dict[str, list[str]]]:
     """Each disbursement record the rules link, with the commitment records each
     rule reaches from it. Every test record is its own unit."""
-    units, links, _ = _links(records)
+    units, links, _ = _links(records, rejected=rejected)
     names = dict(zip(units["unit_id"], units["record_ids"].list.first(), strict=True))
     repaired: dict[str, dict[str, list[str]]] = {}
     for row in links.filter(
@@ -134,6 +118,12 @@ def _disbursement(**fields: object) -> dict[str, object]:
         (
             {"crs_id": "A", "title": "Rural water supply, phase two"},
             {"crs_id": "B", "title": "Phase two: rural water supply"},
+            "repair_title_recipient",
+        ),
+        # A USAID award renumbered under the same title.
+        (
+            {"crs_id": "A", "project_number": "76_57124", "title": "Feed the Future"},
+            {"crs_id": "B", "project_number": "76_57132", "title": "Feed the Future"},
             "repair_title_recipient",
         ),
     ],
@@ -244,7 +234,12 @@ def test_allocation_gives_a_sibling_line_what_a_line_disbursed_beyond_its_own() 
     units, links, crs = _links({"line": _LINE, "sibling": {**_SIBLING, **_SPARE}})
     assert not links.select("left_id", "right_id").is_duplicated().any()
 
-    pairs = allocate(units.lazy(), crs=crs, links=links.lazy())
+    pairs = allocate(
+        units.lazy(),
+        crs=crs,
+        links=links.lazy(),
+        crdf=pl.LazyFrame(schema=schema.CRDF.dtypes),
+    )
     filled = {
         (record, commitment): amount
         for record, commitment, amount in pairs.filter(
@@ -287,11 +282,26 @@ _KENYA = {**_PROGRAMME, "recipient_code": 248}
             },
             {"d_ken": {"repair_new_crs_id": ["c_ken", "c_ken2"]}},
         ),
-        # One loan under a stray recipient code, as at the IDB, links across it.
+        # One loan under a stray recipient code, as at the IDB, links across it. The
+        # loan commits under one purpose a year, so it is no component award and
+        # its links cross purposes too.
         (
             {"d_mwi": _disbursement(**_PROGRAMME, crs_id="D", recipient_code=253)},
             {
                 name: {"repair_new_crs_id": ["c_ken", "c_ken2", "c_ken_other"]}
+                for name in ("d_ken", "d_mwi")
+            },
+        ),
+        # The same loan committing two crs ids under two purposes in 2019 is a
+        # component award (`keys.split_components`), so the stray disbursement
+        # links within its purpose alone.
+        (
+            {
+                "c_ken_other": _commitment(**_KENYA, crs_id="B3", purpose_code=91010),
+                "d_mwi": _disbursement(**_PROGRAMME, crs_id="D", recipient_code=253),
+            },
+            {
+                name: {"repair_new_crs_id": ["c_ken", "c_ken2"]}
                 for name in ("d_ken", "d_mwi")
             },
         ),
@@ -304,11 +314,46 @@ def test_a_programme_number_links_only_within_the_disbursements_recipient(
     records = {
         "c_ken": _commitment(**_KENYA, crs_id="B"),
         "c_ken2": _commitment(**_KENYA, crs_id="B2", year=2020),
-        "c_ken_other": _commitment(**_KENYA, crs_id="B3", purpose_code=91010),
+        "c_ken_other": _commitment(
+            **_KENYA, crs_id="B3", purpose_code=91010, year=2018
+        ),
         "d_ken": _disbursement(**_KENYA, crs_id="C"),
         **others,
     }
     assert _repaired(records) == repaired
+
+
+@pytest.mark.parametrize(
+    ("components", "reached"),
+    [
+        # USAID award 76_48621 commits its components under their own crs ids and
+        # purposes, so the HIV/AIDS component (13040) fills none of them.
+        ({"c_gov": 15152, "c_trade": 33110}, {}),
+        # A disbursement of a committed component reaches that component alone.
+        (
+            {"c_gov": 15152, "c_trade": 33110, "c_hiv": 13040},
+            {"d": {"pn_recipient_purpose": ["c_hiv"]}},
+        ),
+        # An award that commits under one purpose links across purposes.
+        ({"c_gov": 15152}, {"d": {"pn_recipient": ["c_gov"]}}),
+    ],
+)
+def test_a_component_award_links_only_within_a_purpose(
+    components: dict[str, int], reached: dict[str, dict[str, list[str]]]
+) -> None:
+    award = {"donor_code": 302, "project_number": "76_48621", "year": 2015}
+    records = {
+        name: _commitment(**award, crs_id=f"20150146{index}", purpose_code=purpose)
+        for index, (name, purpose) in enumerate(components.items())
+    }
+    records["d"] = _disbursement(**award, crs_id="2015014629", purpose_code=13040)
+    units, links, _ = _links(records)
+    names = dict(zip(units["unit_id"], units["record_ids"].list.first(), strict=True))
+    linked: dict[str, dict[str, list[str]]] = {}
+    for row in links.sort("right_id").iter_rows(named=True):
+        by_method = linked.setdefault(names[row["left_id"]], {})
+        by_method.setdefault(row["link_method"], []).append(names[row["right_id"]])
+    assert linked == reached
 
 
 @pytest.mark.parametrize(
@@ -421,7 +466,17 @@ def test_the_record_year_and_floor_bound_the_commitments() -> None:
     assert repaired == {"d": {"repair_new_crs_id": ["c2020"]}}
 
 
-def test_each_unit_takes_the_first_rule_that_links_it() -> None:
+@pytest.mark.parametrize(
+    ("rejected", "linked"),
+    [
+        ((), {"d": {"repair_new_crs_id": ["c"]}}),
+        # With d's link rejected, c is free for the title rule, which links d2.
+        ((("d", "c"),), {"d2": {"repair_title_recipient": ["c"]}}),
+    ],
+)
+def test_each_unit_takes_the_first_rule_that_links_it(
+    rejected: tuple[tuple[str, str], ...], linked: dict[str, dict[str, list[str]]]
+) -> None:
     # d matches c on project number and on title, and d2 only on title, which
     # finds c taken. A later commitment under another crs id keeps the project
     # number from the exact tiers.
@@ -435,9 +490,10 @@ def test_each_unit_takes_the_first_rule_that_links_it() -> None:
                 crs_id="B", project_number="G-1", title="Coastal defences"
             ),
             "d2": _disbursement(crs_id="C", title="Coastal defences"),
-        }
+        },
+        rejected=rejected,
     )
-    assert repaired == {"d": {"repair_new_crs_id": ["c"]}}
+    assert repaired == linked
 
 
 def test_a_unit_carries_a_group_of_each_rule_that_links_it() -> None:
@@ -709,7 +765,12 @@ def test_allocation_fills_only_the_commitments_each_unit_links_to() -> None:
     units, links, crs = _links(records)
     assert links["link_method"].unique().to_list() == ["repair_afdb_scientific"]
 
-    pairs = allocate(units.lazy(), crs=crs, links=links.lazy())
+    pairs = allocate(
+        units.lazy(),
+        crs=crs,
+        links=links.lazy(),
+        crdf=pl.LazyFrame(schema=schema.CRDF.dtypes),
+    )
     filled = dict(
         pairs.filter(pl.col("commitment_id").is_not_null())
         .select("record_id", "commitment_id")
@@ -757,43 +818,24 @@ def test_title_words() -> None:
     assert words == "phase rural supply two water"
 
 
-def _context(release_dir: Path, **switches: bool) -> StageContext:
-    # The fixture has no truth group to set Jev's scale.
-    config = load_config(Path(__file__).parents[1] / "build.toml")
-    sources = config.sources.model_copy(update={"btr_archive": None})
-    return StageContext(
-        release="test",
-        release_dir=release_dir,
-        config=config.model_copy(
-            update={"jev_links": False, **switches, "sources": sources}
-        ),
-        offline=True,
-    )
-
-
 def test_run_link_adds_key_repair_links_when_on(tmp_path: Path) -> None:
-    crs = normalise_crs(
-        pl.scan_parquet(OECD / "CRS.parquet"), years=(2010, 2025)
-    ).collect()
-    crdf = normalise_crdf(
-        pl.scan_parquet(OECD / "crdf_recipient.parquet"),
-        perspective="recipient",
-        crs=crs.lazy(),
-    ).collect()
-    for name, frame in (("crs", crs), ("crdf", crdf)):
-        path = table_path(tmp_path, "normalise", name)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        frame.write_parquet(path)
-    link = next(stage for stage in REGISTRY if stage.name == "link")
+    write_normalised(tmp_path)
+    # The fixture has no truth group to set Jev's scale, and no BTR rows.
+    sources = load_config(BUILD_TOML).sources.model_copy(update={"btr_archive": None})
+    switches = {"jev_links": False, "recoveries": False, "sources": sources}
 
-    off = run_link(_context(tmp_path, key_repair=False, recoveries=False))["links"]
-    on = run_link(_context(tmp_path, key_repair=True, recoveries=False))
-    write_stage(link, on, tmp_path)
+    off = run_link(stage_context(tmp_path, key_repair=False, **switches))
+    on = run_link(stage_context(tmp_path, key_repair=True, **switches))
+    write_stage(registered("link"), on, tmp_path)
 
     added = (
         on["links"]
         .lazy()
         .collect()
-        .join(off.lazy().collect(), on=["task", "left_id", "right_id"], how="anti")
+        .join(
+            off["links"].lazy().collect(),
+            on=["task", "left_id", "right_id"],
+            how="anti",
+        )
     )
     assert set(added["link_method"]) <= set(schema.KEY_REPAIR_METHODS)

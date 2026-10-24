@@ -2,10 +2,15 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 
-from climate_finance.schema import EXTERNAL
+from climate_finance.build.readers.external import external_rows
+
+# The projects file feeds the external GCF reader and the GCF ledger, so it sits with
+# the external sources and every fetch writes it.
+PROJECTS_FILE = Path("external") / "gcf" / "projects.json"
 
 
 def read_gcf_projects(path: Path) -> pl.DataFrame:
@@ -24,12 +29,14 @@ def read_gcf_projects(path: Path) -> pl.DataFrame:
     rows = []
     for project in json.loads(path.read_text(encoding="utf-8")):
         base = {
+            "publisher": "gcf",
             "activity_id": project["ApprovedRef"],
             "title": project["ProjectName"],
             "recipient_iso": ",".join(
                 sorted({c["ISO3"] for c in project.get("Countries") or [] if c["ISO3"]})
             )
             or None,
+            "cumulative_declared": False,
         }
         rows.extend(
             {
@@ -42,6 +49,7 @@ def read_gcf_projects(path: Path) -> pl.DataFrame:
             for line in project.get("Funding") or []
             if line["Source"] == "GCF" and line["Budget"] is not None
         )
+        dated, _ = disbursements(project)
         rows.extend(
             {
                 **base,
@@ -50,38 +58,18 @@ def read_gcf_projects(path: Path) -> pl.DataFrame:
                 "currency": paid["Currency"],
                 "amount": paid["AmountDisbursed"],
             }
-            for paid in project.get("Disbursements") or []
-            if paid.get("DateEffective") and paid["AmountDisbursed"] is not None
+            for paid in dated
         )
-    return (
-        pl.DataFrame(
-            rows,
-            schema={
-                "activity_id": pl.String,
-                "title": pl.String,
-                "recipient_iso": pl.String,
-                "year": pl.Int16,
-                "transaction_type": pl.String,
-                "currency": pl.String,
-                "amount": pl.Float64,
-            },
-        )
-        .group_by(
-            "activity_id",
-            "title",
-            "recipient_iso",
-            "year",
-            "transaction_type",
-            "currency",
-            maintain_order=True,
-        )
-        .agg(pl.col("amount").sum())
-        .with_columns(
-            source=pl.lit("gcf"),
-            publisher=pl.lit("gcf"),
-            amount_usd=pl.when(pl.col("currency") == "USD").then(pl.col("amount")),
-            recipient_code=pl.lit(None, dtype=pl.Int32),
-            cumulative_declared=pl.lit(False),
-        )
-        .select(list(EXTERNAL.columns))
-    )
+    return external_rows(rows, source="gcf")
+
+
+def disbursements(project: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
+    """The disbursement lines of a `projects.json` project that carry an amount and
+    an effective date, and the count of those that carry an amount and no date."""
+    paid = [
+        line
+        for line in project.get("Disbursements") or []
+        if line["AmountDisbursed"] is not None
+    ]
+    dated = [line for line in paid if line.get("DateEffective")]
+    return dated, len(paid) - len(dated)

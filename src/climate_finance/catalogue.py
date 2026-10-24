@@ -31,7 +31,8 @@ _FLOWS = {
     "commitments": "CRDF commitments at face value, leaving out repeats across "
     "vintages and aggregate rows rebuilt into their parts.",
     "disbursements": "CRS disbursements allocated to the climate commitments they "
-    "pay, weighted by the commitment's markers or climate share.",
+    "pay, weighted by the commitment's markers or climate share, and Rio-marked CRS "
+    "disbursements that reach no commitment, weighted by their own markers.",
     "grant_equivalent": "The grant equivalent of those disbursements; records "
     "without one stay missing.",
 }

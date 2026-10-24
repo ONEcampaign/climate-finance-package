@@ -38,10 +38,10 @@ for row in result.table.to_polars().iter_rows(named=True):
 ```output
 2021 0.0 13.3
 2022 0.0 18.3
-2023 12.0 40.3
+2023 12.0 48.3
 ```
 
-`result.table` has one row per year, provider, recipient, and Bi_Multi code, with adaptation, mitigation, cross-cutting, and total climate `value` in USD. `value` counts every disbursement the build allocated to a climate commitment in the release, from the first CRDF year to the last complete CRS year. `low` counts only the money on links the build treats as certain by rule, from the CRDF row to its CRS commitment and from the commitment to the disbursement. Most rest on the donor's own ids. The parts of rebuilt aggregate rows, which match their CRS records by amount, count too. In the provider view `low` also counts attributed core contributions, because the bounds measure link certainty and a method's coefficients and agency shares weigh every bound alike. `result.rows()` returns the project rows behind the table, and `result.explain()` states the method, flow, and filters in words.
+`result.table` has one row per year, provider, recipient, and Bi_Multi code, with adaptation, mitigation, cross-cutting, and total climate `value` in USD. `value` counts every disbursement the build allocated to a climate commitment in the release, from the first CRDF year to the last complete CRS year, and the untraced disbursement: Rio-marked CRS disbursement that reaches no commitment, weighted by the record's own markers. `low` counts only the money on links the build treats as certain by rule, from the CRDF row to its CRS commitment and from the commitment to the disbursement. Most rest on the donor's own ids. The parts of rebuilt aggregate rows, which match their CRS records by amount, count too. In the provider view `low` also counts attributed core contributions, because the bounds measure link certainty and a method's coefficients and agency shares weigh every bound alike. `result.rows()` returns the project rows behind the table, and `result.explain()` states the method, flow, and filters in words.
 
 ## What you can ask
 

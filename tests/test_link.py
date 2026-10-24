@@ -1,18 +1,27 @@
 """Units, the exact key tiers, id practice and the within-year CRDF join."""
 
 import shutil
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import polars as pl
 import pytest
+from normalised import named_records
+from stage_runs import (
+    BUILD_TOML,
+    run_stage,
+    write_fetched_years,
+    write_inputs,
+    write_normalised,
+)
 
 from climate_finance import schema
-from climate_finance.build import write_stage
 from climate_finance.build.config import load_config
 from climate_finance.build.errors import StageInputMissingError
+from climate_finance.build.jev_client import JevClient
 from climate_finance.build.link import run_link
 from climate_finance.build.link.crdf_crs import link_within_year
+from climate_finance.build.link.decisions import PAIR, drop_pairs, override_links
 from climate_finance.build.link.disagreement import flag_disagreement
 from climate_finance.build.link.id_practice import (
     classify_id_practice,
@@ -20,50 +29,17 @@ from climate_finance.build.link.id_practice import (
     period_of,
 )
 from climate_finance.build.link.jev import JevFitError
-from climate_finance.build.link.keys import (
-    as_exact_links,
-    build_units,
-    link_by_keys,
-    normalise_pn,
-)
-from climate_finance.build.normalise.crdf import normalise_crdf
-from climate_finance.build.normalise.crs import normalise_crs
-from climate_finance.build.stages import REGISTRY, StageContext, table_path
+from climate_finance.build.link.keys import as_exact_links, build_units, link_by_keys
+from climate_finance.build.normalise.project_numbers import normalise_pn
+from climate_finance.build.stages import StageContext, table_path
 
-OECD = Path(__file__).parent / "fixtures" / "raw" / "oecd"
 FIRST_YEAR = 2010
-_RECORD = {
-    "donor_code": 5,
-    "agency_code": 1,
-    "crs_id": None,
-    "project_number": None,
-    "recipient_code": 238,
-    "purpose_code": 23210,
-    "year": 2020,
-    "commitment_date": None,
-    "commitment_usd": None,
-    "disbursement_usd": None,
-}
-_CRS_SCHEMA = {
-    "record_id": pl.String,
-    "donor_code": pl.Int32,
-    "agency_code": pl.Int32,
-    "crs_id": pl.String,
-    "project_number": pl.String,
-    "recipient_code": pl.Int32,
-    "purpose_code": pl.Int32,
-    "year": pl.Int16,
-    "commitment_date": pl.Date,
-    "commitment_usd": pl.Float64,
-    "disbursement_usd": pl.Float64,
-}
 
 
 def _crs(records: dict[str, dict[str, object]]) -> pl.LazyFrame:
-    """CRS records named by their record id, with `_RECORD`'s defaults."""
-    return pl.LazyFrame(
-        [{**_RECORD, "record_id": name, **fields} for name, fields in records.items()],
-        schema=_CRS_SCHEMA,
+    """CRS records named by their record id."""
+    return named_records(
+        records, donor_code=5, recipient_code=238, purpose_code=23210, year=2020
     )
 
 
@@ -71,14 +47,27 @@ def _units(records: dict[str, dict[str, object]]) -> pl.DataFrame:
     return build_units(_crs(records)).collect()
 
 
-def _trace(records: dict[str, dict[str, object]]) -> dict[str, tuple[str, list[str]]]:
-    """Each linked disbursement record's tier and the commitment records it reaches.
+def _trace(
+    records: dict[str, dict[str, object]], *, rejected: tuple[tuple[str, str], ...] = ()
+) -> dict[str, tuple[str, list[str]]]:
+    """Each linked disbursement record's tier and the commitment records it reaches,
+    with the (disbursement, commitment) record pairs of `rejected` rejected.
 
     Every test record is its own unit, so a unit is named by its one record.
     """
     units = _units(records)
     names = dict(zip(units["unit_id"], units["record_ids"].list.first(), strict=True))
-    links = link_by_keys(units, first_year=FIRST_YEAR)
+    unit = {name: unit_id for unit_id, name in names.items()}
+    pairs = pl.DataFrame(
+        [("trace", unit[left], unit[right]) for left, right in rejected],
+        schema=dict.fromkeys(PAIR, pl.String),
+        orient="row",
+    )
+    links = link_by_keys(
+        units,
+        first_year=FIRST_YEAR,
+        decide=lambda tier: drop_pairs(tier, pairs=pairs, accepted=pairs.clear()),
+    )
     schema.validate(schema.LINKS, links)
     traced: dict[str, tuple[str, list[str]]] = {}
     for row in links.iter_rows(named=True):
@@ -175,55 +164,77 @@ def _disbursement(**fields: object) -> dict[str, object]:
 
 
 @pytest.mark.parametrize(
-    ("commitment", "disbursement", "tier"),
+    ("commitment", "disbursement", "tier", "probability"),
     [
-        ({"crs_id": "A"}, {"crs_id": "A"}, "crs_id_purpose"),
+        ({"crs_id": "A"}, {"crs_id": "A"}, "crs_id_purpose", 1.0),
         # A line suffix with and without zero padding.
         (
             {"donor_code": 1601, "crs_id": "2021015528_06"},
             {"donor_code": 1601, "crs_id": "2021015528_6"},
             "crs_id_purpose",
+            1.0,
         ),
         # Another purpose under the same crs id.
-        ({"crs_id": "A"}, {"crs_id": "A", "purpose_code": 41010}, "crs_id"),
+        ({"crs_id": "A"}, {"crs_id": "A", "purpose_code": 41010}, "crs_id", 1.0),
         # An EU contract under its decision id, on another purpose.
         (
             {"donor_code": 918, "crs_id": "2019000001"},
             {"donor_code": 918, "crs_id": "2019000001042", "purpose_code": 41010},
             "crs_id_parent",
+            1.0,
         ),
         # A German record under its project's crs id plus a letter.
         (
             {"crs_id": "2019001320"},
             {"crs_id": "2019001320a", "purpose_code": 41010},
             "crs_id_parent",
+            1.0,
         ),
-        # A new crs id under the same project number.
+        # A new crs id under the same project number: estimated, so unscored.
         (
             {"crs_id": "A", "project_number": "P-1"},
             {"crs_id": "B", "project_number": "p-1"},
             "pn_recipient_purpose",
+            None,
         ),
         (
             {"crs_id": "A", "project_number": "P-1"},
             {"crs_id": "B", "project_number": "P-1", "purpose_code": 41010},
             "pn_recipient",
+            None,
         ),
         # The same project number written with and without separators.
         (
             {"crs_id": "A", "project_number": "01AB1907A1_L"},
             {"crs_id": "B", "project_number": "01-AB1907A1L"},
             "pn_recipient_purpose",
+            None,
         ),
     ],
 )
 def test_each_tier_links_what_the_tiers_before_it_miss(
-    commitment: dict[str, object], disbursement: dict[str, object], tier: str
+    commitment: dict[str, object],
+    disbursement: dict[str, object],
+    tier: str,
+    probability: float | None,
 ) -> None:
-    traced = _trace(
-        {"c": _commitment(**commitment), "d": _disbursement(**disbursement)}
-    )
-    assert traced == {"d": (tier, ["c"])}
+    records = {"c": _commitment(**commitment), "d": _disbursement(**disbursement)}
+    assert _trace(records) == {"d": (tier, ["c"])}
+    links = link_by_keys(_units(records), first_year=FIRST_YEAR)
+    assert links["probability"].to_list() == [probability]
+
+
+def test_a_rejected_link_leaves_its_unit_to_the_later_tiers() -> None:
+    # d continues c19 by crs id and c18 by project number under another crs id.
+    records = {
+        "c19": _commitment(crs_id="A"),
+        "c18": _commitment(crs_id="B", project_number="P-9", year=2018),
+        "d": _disbursement(crs_id="A", project_number="P-9"),
+    }
+    assert _trace(records) == {"d": ("crs_id_purpose", ["c19"])}
+    assert _trace(records, rejected=(("d", "c19"),)) == {
+        "d": ("pn_recipient_purpose", ["c18"])
+    }
 
 
 @pytest.mark.parametrize(
@@ -260,9 +271,22 @@ def test_a_disbursement_reaches_every_eligible_commitment_of_its_group() -> None
     assert traced == {"d": ("crs_id_purpose", ["c2018", "c2019"])}
 
 
-def test_a_unit_that_commits_and_disburses_links_to_itself() -> None:
-    traced = _trace({"cd": _commitment(crs_id="A", disbursement_usd=3.0)})
-    assert traced == {"cd": ("crs_id_purpose", ["cd"])}
+@pytest.mark.parametrize(
+    ("ids", "tier"),
+    [
+        ({"crs_id": "A"}, "crs_id_purpose"),
+        # A unit without a crs id reaches itself by project number, and its own
+        # records are still certain.
+        ({"project_number": "P-1"}, "pn_recipient_purpose"),
+    ],
+)
+def test_a_unit_that_commits_and_disburses_links_to_itself(
+    ids: dict[str, object], tier: str
+) -> None:
+    records = {"cd": _commitment(disbursement_usd=3.0, **ids)}
+    assert _trace(records) == {"cd": (tier, ["cd"])}
+    links = link_by_keys(_units(records), first_year=FIRST_YEAR)
+    assert links["probability"].to_list() == [1.0]
 
 
 def test_the_floor_holds_outside_the_parent_tier() -> None:
@@ -282,9 +306,38 @@ def test_the_floor_holds_outside_the_parent_tier() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("in_floor_year", "reached"),
+    [
+        # KfW's shape: the 2020 commitment, and disbursements under its crs id
+        # dated 2021, a year with no commitment of that crs id or project.
+        ({}, ["c2020"]),
+        # A 2021 commitment under the crs id is the one the date names.
+        ({"c2021": _commitment(crs_id="A", year=2021)}, ["c2021"]),
+    ],
+)
+def test_a_floor_naming_no_commitment_passes_under_the_commitments_own_crs_id(
+    in_floor_year: dict[str, dict[str, object]], reached: list[str]
+) -> None:
+    traced = _trace(
+        {
+            "c2020": _commitment(crs_id="A", project_number="P1", year=2020),
+            "d": _disbursement(
+                crs_id="A",
+                project_number="P1",
+                year=2022,
+                commitment_date=date(2021, 3, 1),
+            ),
+            **in_floor_year,
+        }
+    )
+    assert traced == {"d": ("crs_id_purpose", reached)}
+
+
 def test_a_floor_with_no_commitment_on_or_after_it_falls_through() -> None:
-    # The crs id's only commitment precedes the floor, so the tier misses, and the
-    # unique project number reaches a later commitment under a new id.
+    # The crs id's only commitment precedes the floor, and the floor year holds a
+    # commitment of the project under a new id, so the crs-id tiers miss and the
+    # unique project number reaches it.
     traced = _trace(
         {
             "old": _commitment(crs_id="A", year=2016),
@@ -510,6 +563,60 @@ def test_the_crs_id_tier_keeps_an_id_that_spans_countries_in_its_recipient(
     assert _trace(records) == traced
 
 
+_NAURU = {"donor_code": 915, "project_number": "TA9143-NAU", "recipient_code": 880}
+_INDIA = {
+    "donor_code": 915,
+    "project_number": "LN3375-IND",
+    "recipient_code": 645,
+    "purpose_code": 41010,
+}
+
+
+@pytest.mark.parametrize(
+    ("commitment", "disbursement", "traced"),
+    [
+        # The AsDB files an Indian loan under the crs id of a Nauru grant.
+        ({**_NAURU, "crs_id": "2018000001"}, {**_INDIA, "crs_id": "2018000001"}, {}),
+        # A missing or placeholder number is no evidence of one project.
+        (
+            {**_NAURU, "crs_id": "2018000001"},
+            {**_INDIA, "crs_id": "2018000001", "project_number": None},
+            {},
+        ),
+        (
+            {**_NAURU, "crs_id": "2018000001", "project_number": "N/A"},
+            {**_INDIA, "crs_id": "2018000001"},
+            {},
+        ),
+        # A lettered record continues its parent's project in its recipient only.
+        ({**_NAURU, "crs_id": "2018000001"}, {**_INDIA, "crs_id": "2018000001a"}, {}),
+        (
+            {**_INDIA, "crs_id": "2018000001"},
+            {**_INDIA, "crs_id": "2018000001a"},
+            {"d": ("crs_id_parent", ["c"])},
+        ),
+        (
+            {**_INDIA, "crs_id": "2018000001", "project_number": "LN3376-IND"},
+            {**_INDIA, "crs_id": "2018000001a"},
+            {},
+        ),
+        # The floor holds for a lettered record.
+        (
+            {**_INDIA, "crs_id": "2018000001", "year": 2017},
+            {**_INDIA, "crs_id": "2018000001a", "commitment_date": date(2019, 1, 1)},
+            {},
+        ),
+    ],
+)
+def test_a_crs_id_links_only_within_the_project_it_names(
+    commitment: dict[str, object],
+    disbursement: dict[str, object],
+    traced: dict[str, tuple[str, list[str]]],
+) -> None:
+    records = {"c": _commitment(**commitment), "d": _disbursement(**disbursement)}
+    assert _trace(records) == traced
+
+
 def test_a_line_passed_to_another_country_links_by_project_number() -> None:
     # Canada files Tanzania under line 7 in 2019 and Guinea under it in 2021, when
     # Guinea's line is 3.
@@ -592,6 +699,49 @@ def test_a_trace_link_records_whether_its_records_disagree(
         ("cd", "cd"): False,
         ("row", names[units["unit_id"][0]]): None,
     }
+
+
+@pytest.mark.parametrize(
+    ("number", "accepted", "probability"),
+    [
+        # The numbers agree, so the crs-id link stays certain.
+        ("prj 1", False, 1.0),
+        # A crs id shared by two agreements: the link is no longer certain.
+        ("AGR-002", False, None),
+        # A person accepted the link, so it is certain again.
+        ("AGR-002", True, 1.0),
+    ],
+)
+def test_a_certain_link_whose_records_disagree_is_certain_only_once_accepted(
+    number: str, accepted: bool, probability: float | None
+) -> None:
+    units = _units(
+        {
+            "c": _commitment(crs_id="A", project_number="PRJ-001"),
+            "d": _disbursement(crs_id="A", project_number=number, purpose_code=41010),
+        }
+    )
+    unit = dict(zip(units["record_ids"].list.first(), units["unit_id"], strict=True))
+    labels = pl.DataFrame(
+        {
+            "task": ["trace"],
+            "left_id": [unit["d"]],
+            "right_id": [unit["c"]],
+            "pair_label_source": ["human"],
+            "is_match": [True],
+        }
+    ).head(int(accepted))
+
+    links = override_links(
+        flag_disagreement(link_by_keys(units, first_year=FIRST_YEAR), units=units),
+        labels=labels,
+    )
+
+    schema.validate(schema.LINKS, links)
+    [link] = links.filter(left_id=unit["d"]).iter_rows(named=True)
+    assert link["link_method"] in schema.CERTAIN_METHODS
+    assert link["probability"] == probability
+    assert link["records_disagree"] is (probability is None)
 
 
 @pytest.mark.parametrize(
@@ -680,6 +830,25 @@ def test_id_practice_mixed_and_shares() -> None:
     assert row["parent_share"] == 0.0
 
 
+@pytest.mark.parametrize(
+    ("key", "share"),
+    [
+        ({"crs_id": "Z", "project_number": None}, 0.1),
+        ({"crs_id": "Z", "project_number": "N/A"}, 0.1),
+        ({"crs_id": "Z", "project_number": "P9"}, 1.0),
+        # A crs id one of the agency's commitments carries.
+        ({"crs_id": "7000000003", "project_number": None}, 1.0),
+    ],
+)
+def test_keyed_disbursement_share(key: dict[str, object], share: float) -> None:
+    # Ten keyed dollars disbursed in the commitments' own year, and 90 more.
+    records = _agency(7, n=10, follow=()) | {
+        "d": _disbursement(donor_code=918, agency_code=7, disbursement_usd=90.0, **key)
+    }
+    row = classify_id_practice(_units(records)).row(0, named=True)
+    assert row["keyed_disbursement_share"] == pytest.approx(share)
+
+
 def test_a_commitment_disbursed_in_its_own_year_is_not_open() -> None:
     records = _agency(7, n=10, follow=("id",))
     records["7c0"]["disbursement_usd"] = 9.6
@@ -748,50 +917,44 @@ def test_within_year_join() -> None:
     assert set(links["task"]) == {"crdf_crs"}
 
 
-def _normalised(release_dir: Path) -> None:
-    """Write the normalise stage's `crs` and `crdf` from the raw fixtures, and no
-    other table."""
-    crs = normalise_crs(
-        pl.scan_parquet(OECD / "CRS.parquet"), years=(2010, 2025)
-    ).collect()
-    crdf = pl.concat(
-        normalise_crdf(
-            pl.scan_parquet(OECD / f"crdf_{perspective}.parquet"),
-            perspective=perspective,
-            crs=crs.lazy(),
-        )
-        for perspective in ("recipient", "provider")
-    ).collect()
-    for name, frame in (("crs", crs), ("crdf", crdf)):
-        path = table_path(release_dir, "normalise", name)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        frame.write_parquet(path)
+class _NoJev(StageContext):
+    """A context that refuses to make a Jev client."""
+
+    @property
+    def jev(self) -> JevClient:
+        raise AssertionError("the link stage asked for Jev with jev_links off")
 
 
 def _context(
-    release_dir: Path, *, btr_archive: Path | None = None, **switches: bool
+    release_dir: Path,
+    decisions: Path | None = None,
+    *,
+    btr_archive: Path | None = None,
+    **switches: bool,
 ) -> StageContext:
     # The fixture has no truth group to set Jev's scale, so the Jev step is off
-    # unless a test turns it on.
-    config = load_config(Path(__file__).parents[1] / "build.toml")
-    sources = config.sources.model_copy(update={"btr_archive": btr_archive})
-    return StageContext(
-        release="test",
-        release_dir=release_dir,
-        config=config.model_copy(
-            update={"jev_links": False, **switches, "sources": sources}
-        ),
-        offline=True,
+    # unless a test turns it on. With it off, the context refuses to make a client.
+    config = load_config(BUILD_TOML).model_copy(update={"jev_links": False} | switches)
+    sources = config.sources.model_copy(
+        update={"btr_archive": btr_archive}
+        | ({} if decisions is None else {"review_decisions": decisions})
+    )
+    config = config.model_copy(update={"sources": sources})
+    return (StageContext if config.jev_links else _NoJev)(
+        release="test", release_dir=release_dir, config=config, offline=True
     )
 
 
-def test_run_link_writes_the_deterministic_tables(tmp_path: Path) -> None:
-    _normalised(tmp_path)
+def test_run_link_writes_the_deterministic_tables_reproducibly(
+    tmp_path: Path,
+) -> None:
+    write_normalised(tmp_path)
     context = _context(tmp_path, key_repair=False, recoveries=False)
-    link = next(stage for stage in REGISTRY if stage.name == "link")
 
-    hashes = write_stage(link, run_link(context), tmp_path)
+    hashes = run_stage("link", context)
+    shutil.rmtree(tmp_path / "link")
 
+    assert run_stage("link", context) == hashes
     assert set(hashes) == {
         "links",
         "units",
@@ -812,7 +975,7 @@ def test_run_link_writes_the_deterministic_tables(tmp_path: Path) -> None:
 
 
 def test_btr_rows_link_when_the_build_has_them(tmp_path: Path) -> None:
-    _normalised(tmp_path)
+    write_normalised(tmp_path)
     archive = tmp_path / "archive"
     with pytest.raises(StageInputMissingError):
         run_link(_context(tmp_path, btr_archive=archive, recoveries=False))
@@ -845,7 +1008,7 @@ def test_btr_rows_link_when_the_build_has_them(tmp_path: Path) -> None:
 
 def test_recoveries_read_their_inputs_only_when_on(tmp_path: Path) -> None:
     # Normalise wrote neither `external` nor `orgs`.
-    _normalised(tmp_path)
+    write_normalised(tmp_path)
     run_link(_context(tmp_path, key_repair=False, recoveries=False))
     with pytest.raises(StageInputMissingError):
         run_link(_context(tmp_path, key_repair=False, recoveries=True))
@@ -853,16 +1016,91 @@ def test_recoveries_read_their_inputs_only_when_on(tmp_path: Path) -> None:
 
 def test_the_jev_step_runs_only_when_on(tmp_path: Path) -> None:
     # The fixture has no truth group to set Jev's scale, so the step refuses.
-    _normalised(tmp_path)
+    write_normalised(tmp_path)
     run_link(_context(tmp_path, key_repair=False, recoveries=False))
     with pytest.raises(JevFitError):
         run_link(_context(tmp_path, key_repair=False, recoveries=False, jev_links=True))
 
 
-def test_run_link_reproduces_its_tables(tmp_path: Path) -> None:
-    _normalised(tmp_path)
-    link = next(stage for stage in REGISTRY if stage.name == "link")
-    context = _context(tmp_path, key_repair=False, recoveries=False)
-    first = write_stage(link, run_link(context), tmp_path)
-    shutil.rmtree(tmp_path / "link")
-    assert write_stage(link, run_link(context), tmp_path) == first
+def _table(table: schema.TableSchema, rows: list[dict[str, object]]) -> pl.DataFrame:
+    """`rows` in `table`'s columns, null where a row gives none."""
+    return pl.DataFrame(
+        [{name: row.get(name) for name in table.columns} for row in rows],
+        schema=table.dtypes,
+    )
+
+
+def _link(context: StageContext) -> dict[str, pl.DataFrame]:
+    """`run_link`'s tables, each collected."""
+    return {
+        name: frame.collect() if isinstance(frame, pl.LazyFrame) else frame
+        for name, frame in run_link(context).items()
+    }
+
+
+def test_a_rejected_key_link_frees_its_disbursement_and_stays_unlinked(
+    tmp_path: Path,
+) -> None:
+    # d22 continues c19 by project number under a new crs id: an exact tier links
+    # it, and key repair's `repair_new_crs_id` would link it again. c18 shares its
+    # recipient, purpose and title.
+    shared: dict[str, object] = {"agency_code": 10, "recipient_code": 289}
+    shared |= {"purpose_code": 23210, "title": "Solar grid phase one"}
+    lines = [
+        ("c19", 2019, "A", "P-1", 100.0, None),
+        ("c18", 2018, "B", "P-2", 100.0, None),
+        ("d22", 2022, "A2", "P-1", None, 30.0),
+    ]
+    crs = _table(
+        schema.CRS,
+        [
+            shared
+            | {"record_id": name, "year": year, "crs_id": crs_id}
+            | {"project_number": pn, "donor_code": 1, "bi_multi": 1, "flow_code": 11}
+            | {"commitment_usd": commit, "disbursement_usd": disburse}
+            for name, year, crs_id, pn, commit, disburse in lines
+        ],
+    )
+    crdf = _table(
+        schema.CRDF,
+        [
+            shared
+            | {"row_id": name, "perspective": "recipient", "provider_code": 1}
+            | {"year": year, "crs_id": crs_id, "project_number": pn}
+            | {"face_usd": commit, "climate_usd": commit / 4}
+            for name, year, crs_id, pn, commit, _ in lines
+            if commit is not None
+        ],
+    )
+    write_inputs(tmp_path, "normalise", {"crs": crs, "crdf": crdf})
+    write_fetched_years(tmp_path)
+    linked = _link(_context(tmp_path, recoveries=False))
+    unit = {
+        record_ids[0]: unit_id
+        for unit_id, record_ids in linked["units"]
+        .select("unit_id", "record_ids")
+        .iter_rows()
+    }
+    traced = linked["links"].filter(task="trace")
+    assert traced.select("left_id", "right_id", "link_method").rows() == [
+        (unit["d22"], unit["c19"], "pn_recipient_purpose")
+    ]
+    assert linked["candidates"].is_empty()
+
+    decisions = tmp_path / "review_decisions.parquet"
+    _table(
+        schema.REVIEW_DECISIONS,
+        [
+            {"task": "trace", "left_id": unit["d22"], "right_id": unit["c19"]}
+            | {"decision": "reject", "label_source": "human", "reviewer": "analyst"}
+            | {"review_reason": "band", "decided_at": datetime(2026, 1, 1, tzinfo=UTC)}
+        ],
+    ).write_parquet(decisions)
+    rejected = _link(_context(tmp_path, decisions, recoveries=False))
+
+    assert rejected["links"].filter(task="trace").is_empty()
+    candidates = rejected["candidates"].filter("eligible")
+    assert set(candidates.select("left_id", "right_id").rows()) == {
+        (unit["d22"], unit["c18"]),
+        (unit["d22"], unit["c19"]),
+    }

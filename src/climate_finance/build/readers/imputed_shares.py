@@ -24,49 +24,51 @@ _OBJECTIVES = {
     "Both mitigation and adaption": "cross_cutting",
 }
 
-# CRS channel code (codelist "Channel of delivery") of each agency name in column D.
+# CRS channel codes (codelist "Channel of delivery") of each agency name in column D.
 # A name outside this table stops the read, so a new agency gets a code on purpose.
-# `None` marks an agency with no channel code; its rows are left out.
-_CHANNEL_CODES: dict[str, int | None] = {
-    "Adaptation Fund": 47111,
-    "African Development Bank": 46002,
-    "African Development Fund": 46003,
-    "AsDB Concessional": 46005,
-    "AsDB regular OCR": 46004,
-    "Asian Infrastructure Investment Bank": 46026,
-    "Black Sea Trade & Development Bank": 46006,
-    "Caribbean Development Bank": 46009,
-    "Central American Bank for Economic Integration": 46007,
-    "CGIAR": 47015,
-    "Clean Technology Fund": 47134,
-    "Council of Europe Development Bank": 46024,
-    "Development Bank of Latin America": 46008,
-    "European Bank for Reconstruction and Development": 46015,
-    "European Investment Bank": 42004,
-    "Food and Agriculture Organisation": 41301,
-    "Fund for Special Operations (FSO)": 46013,
-    "GEF General Trust Fund": 47044,
+# An agency with no channel code has an empty tuple; its rows are left out. IDA's
+# share also covers its MDRI (44007) and HIPC (44003) channels, which members'
+# debt-relief contributions reach.
+_CHANNEL_CODES: dict[str, tuple[int, ...]] = {
+    "Adaptation Fund": (47111,),
+    "African Development Bank": (46002,),
+    "African Development Fund": (46003,),
+    "AsDB Concessional": (46005,),
+    "AsDB regular OCR": (46004,),
+    "Asian Infrastructure Investment Bank": (46026,),
+    "Black Sea Trade & Development Bank": (46006,),
+    "Caribbean Development Bank": (46009,),
+    "Central American Bank for Economic Integration": (46007,),
+    "CGIAR": (47015,),
+    "Clean Technology Fund": (47134,),
+    "Council of Europe Development Bank": (46024,),
+    "Development Bank of Latin America": (46008,),
+    "European Bank for Reconstruction and Development": (46015,),
+    "European Investment Bank": (42004,),
+    "Food and Agriculture Organisation": (41301,),
+    "Fund for Special Operations (FSO)": (46013,),
+    "GEF General Trust Fund": (47044,),
     # The Global Biodiversity Framework Fund has no code in the channel codelist.
-    "GEF Global Biodiversity Framework Fund (GBFF)": None,
-    "GEF Least Developed Countries Trust Fund (LDCF)": 47129,
-    "GEF Special Climate Change Trust Fund (SCCF)": 47130,
-    "Global Green Growth Institute": 47136,
-    "Green Climate Fund": 41317,
-    "IDB Invest": 46012,
-    "IMF Resilience and Sustainability Trust": 43007,
-    "Inter-American Development Bank": 46012,
-    "Inter-American Investment Corporation and Multilateral Investment Fund": 46012,
-    "Intergovernmental Panel on Climate Change": 47067,
-    "International Bank for Reconstruction and Development": 44001,
-    "International Development Association": 44002,
-    "International Finance Corporation": 44004,
-    "International Fund for Agricultural Development": 41108,
-    "Islamic Development Bank": 46025,
-    "Multilateral Fund for the Implementation of the Montreal Protocol": 47078,
-    "New Development Bank": 46028,
-    "Nordic Development Fund": 47128,
-    "Strategic Climate Fund": 47135,
-    "United Nations Framework Convention on Climate Change": 41316,
+    "GEF Global Biodiversity Framework Fund (GBFF)": (),
+    "GEF Least Developed Countries Trust Fund (LDCF)": (47129,),
+    "GEF Special Climate Change Trust Fund (SCCF)": (47130,),
+    "Global Green Growth Institute": (47136,),
+    "Green Climate Fund": (41317,),
+    "IDB Invest": (46012,),
+    "IMF Resilience and Sustainability Trust": (43007,),
+    "Inter-American Development Bank": (46012,),
+    "Inter-American Investment Corporation and Multilateral Investment Fund": (46012,),
+    "Intergovernmental Panel on Climate Change": (47067,),
+    "International Bank for Reconstruction and Development": (44001,),
+    "International Development Association": (44002, 44003, 44007),
+    "International Finance Corporation": (44004,),
+    "International Fund for Agricultural Development": (41108,),
+    "Islamic Development Bank": (46025,),
+    "Multilateral Fund for the Implementation of the Montreal Protocol": (47078,),
+    "New Development Bank": (46028,),
+    "Nordic Development Fund": (47128,),
+    "Strategic Climate Fund": (47135,),
+    "United Nations Framework Convention on Climate Change": (41316,),
 }
 
 
@@ -102,6 +104,7 @@ def read_imputed_shares(path: Path) -> pl.DataFrame:
     agency's climate finance in those years, column F of each year's sheet, over its
     whole climate share; a year without a sheet or without the agency adds nothing.
     The pooled share is then the group's climate finance over its total finance.
+    An agency with several channel codes, as IDA has, gives its rows to each.
 
     Args:
         path: The OECD workbook.
@@ -145,9 +148,11 @@ def read_imputed_shares(path: Path) -> pl.DataFrame:
         )
         .with_columns(
             channel_code=pl.col("name").replace_strict(
-                _CHANNEL_CODES, return_dtype=pl.Int32
+                {name: list(codes) for name, codes in _CHANNEL_CODES.items()},
+                return_dtype=pl.List(pl.Int32),
             )
         )
+        .explode("channel_code")
         .drop_nulls("channel_code")
         .group_by("channel_code", "year", "objective", maintain_order=True)
         .agg(

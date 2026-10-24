@@ -3,13 +3,13 @@ release doctored to break it."""
 
 import json
 from collections.abc import Callable
-from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
 import pytest
 from normalised import crdf_rows, crs_records
 from releases import copy_release
+from stage_runs import write_recorded, year_rows
 from typer.testing import CliRunner
 
 import climate_finance as cf
@@ -84,39 +84,6 @@ def _edit(path: Path, edit: Callable[[pl.DataFrame], pl.DataFrame]) -> None:
 def release_dir(tmp_path: Path) -> Path:
     """Release `r` built from hand-written fetch, normalise and measure tables."""
     release_dir = tmp_path / "r"
-    manifest = pl.DataFrame(
-        {
-            "source": ["crs"],
-            "url": [None],
-            "path": ["oecd/CRS.parquet"],
-            "sha256": ["0" * 64],
-            "etag": [None],
-            "version": ["v20261006"],
-            "fetched_at": [datetime(2026, 10, 21, tzinfo=UTC)],
-            "method": ["manual"],
-        },
-        schema={n: c.dtype for n, c in schema.RAW_MANIFEST.columns.items()},
-    )
-    _write(release_dir, "fetch", {"raw_manifest": manifest})
-    _write(
-        release_dir,
-        "normalise",
-        {
-            "crdf": CRDF,
-            "crs": CRS,
-            "core_contributions": CORE,
-            "imputed_shares": _empty(schema.IMPUTED_SHARES),
-            "external": _empty(schema.EXTERNAL),
-        },
-    )
-    _write(
-        release_dir,
-        "measure",
-        {
-            "agency_shares": _empty(schema.AGENCY_SHARES),
-            "modelled": _empty(schema.MODELLED),
-        },
-    )
     config = load_config(BUILD_TOML)
     # The hand-written normalise tables hold no BTR rows and no truth group to set
     # Jev's scale.
@@ -127,6 +94,34 @@ def release_dir(tmp_path: Path) -> Path:
             "jev_links": False,
             "sources": config.sources.model_copy(update={"btr_archive": None}),
         }
+    )
+    manifest = year_rows().with_columns(
+        version=pl.when(pl.col("source") == "crs").then(pl.lit("v20261006"))
+    )
+    write_recorded(release_dir, "fetch", {"raw_manifest": manifest}, config=config)
+    write_recorded(
+        release_dir,
+        "normalise",
+        {
+            "crdf": CRDF,
+            "crdf_span": _empty(schema.CRDF_SPAN),
+            "crs": CRS,
+            "core_contributions": CORE,
+            "imputed_shares": _empty(schema.IMPUTED_SHARES),
+            "external": _empty(schema.EXTERNAL),
+        },
+        config=config,
+        reads=("fetch",),
+    )
+    write_recorded(
+        release_dir,
+        "measure",
+        {
+            "agency_shares": _empty(schema.AGENCY_SHARES),
+            "agency_spending": _empty(schema.AGENCY_SPENDING),
+            "modelled": _empty(schema.MODELLED),
+        },
+        config=config,
     )
     run_stages(
         REGISTRY,
@@ -479,6 +474,12 @@ def _add_withheld_fill(frame: pl.DataFrame) -> pl.DataFrame:
     return pl.concat([frame, fill])
 
 
+def _add_withheld_untraced(frame: pl.DataFrame) -> pl.DataFrame:
+    return pl.concat(
+        [frame, frame.head(1).with_columns(record_id=pl.lit("ledger:gcf:FP002:2021"))]
+    )
+
+
 @pytest.mark.parametrize(
     ("stage", "table", "edit", "failing", "named"),
     [
@@ -504,6 +505,13 @@ def _add_withheld_fill(frame: pl.DataFrame) -> pl.DataFrame:
             _add_withheld_fill,
             ("withheld_rows", None),
             "FP001",
+        ),
+        (
+            "assemble",
+            "untraced",
+            _add_withheld_untraced,
+            ("withheld_rows", None),
+            "untraced ledger:gcf:FP002",
         ),
     ],
 )

@@ -10,9 +10,9 @@ import numpy as np
 import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
+from stage_runs import run_stage, stage_context, write_fetched_years, write_inputs
 
 from climate_finance import schema
-from climate_finance.build import write_stage
 from climate_finance.build.allocate import (
     _fill,
     allocate,
@@ -25,13 +25,11 @@ from climate_finance.build.allocate import (
     window_donors,
     years_since_commitment,
 )
-from climate_finance.build.config import load_config
 from climate_finance.build.errors import AllocationInputError
 from climate_finance.build.link.crdf_crs import link_within_year
 from climate_finance.build.link.keys import as_exact_links, build_units, link_by_keys
-from climate_finance.build.stages import REGISTRY, StageContext, table_path
+from climate_finance.build.stages import table_path
 
-BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 FIRST_YEAR = 2010
 TOLERANCE = 1e-6
 
@@ -140,8 +138,7 @@ def crdf_row(
 
 
 def no_classes() -> pl.DataFrame:
-    columns = schema.ID_PRACTICE.columns.items()
-    return pl.DataFrame(schema={name: column.dtype for name, column in columns})
+    return pl.DataFrame(schema=schema.ID_PRACTICE.dtypes)
 
 
 def link(
@@ -162,8 +159,10 @@ def run(
     dated: tuple[int, ...] = (),
     windowed: tuple[int, ...] = (),
 ) -> pl.DataFrame:
-    crs, _, units, links = link(records)
-    return allocate(units, crs=crs, links=links, dated=dated, windowed=windowed)
+    crs, crdf, units, links = link(records)
+    return allocate(
+        units, crs=crs, links=links, crdf=crdf, dated=dated, windowed=windowed
+    )
 
 
 def unit_of(units: pl.LazyFrame, record_id: str) -> str:
@@ -333,28 +332,35 @@ def test_a_disbursement_fills_the_commitment_whose_date_and_title_it_repeats(
     assert by_commitment(pairs) == pytest.approx(filled)
 
 
-def test_parent_id_links_ignore_the_records_date() -> None:
-    # An EU contract record carries the contract's date, not the decision's, so a
-    # parent-id link neither floors it nor reads it as a dated donor's year.
-    eu = 918
+@pytest.mark.parametrize(
+    ("donor", "crs_id", "filled"),
+    [
+        # An EU contract record carries the contract's date, not the decision's,
+        # so a parent-id link neither floors it nor reads it as a dated donor's
+        # year.
+        (918, "2019000001001", "c19"),
+        # A German lettered record keeps its own date.
+        (5, "2019000001a", "c21"),
+    ],
+)
+def test_only_eu_parent_id_links_ignore_the_records_date(
+    donor: int, crs_id: str, filled: str
+) -> None:
     contract = record(
-        "d21",
-        2021,
-        disburse=50.0,
-        donor=eu,
-        dated=2021,
-        crs_id="2019000001001",
-        purpose=999,
+        "d21", 2021, disburse=50.0, donor=donor, dated=2021, crs_id=crs_id, purpose=999
     )
-    pairs = run(
+    crs, crdf, units, links = link(
         [
-            record("c19", 2019, commit=100.0, donor=eu, dated=2019),
-            record("c21", 2021, commit=100.0, donor=eu, dated=2021),
+            record("c19", 2019, commit=100.0, donor=donor, dated=2019),
+            record("c21", 2021, commit=100.0, donor=donor, dated=2021),
             contract,
-        ],
-        dated=(eu,),
+        ]
     )
-    assert by_commitment(pairs) == pytest.approx({"c19": 50.0})
+    assert set(links.collect()["link_method"]) == {"crs_id_parent"}
+    pairs = allocate(
+        units, crs=crs, links=links, crdf=crdf, dated=(donor,), windowed=()
+    )
+    assert by_commitment(pairs) == pytest.approx({filled: 50.0})
 
 
 # A 2023 record falls in the 2022 phase's window, not the 2019 phase's.
@@ -388,7 +394,7 @@ def test_a_cancellation_leaves_face_value_whole_and_is_reported() -> None:
 
 
 def test_two_groups_of_one_pass_sharing_a_commitment_are_refused() -> None:
-    crs, _, units, links = link(
+    crs, crdf, units, links = link(
         [*PHASES, record("d22b", 2022, disburse=10.0, dated=2022)]
     )
     # d22b is its own unit (dated its own year) in d22's pass; give it a group of
@@ -400,7 +406,7 @@ def test_two_groups_of_one_pass_sharing_a_commitment_are_refused() -> None:
         .otherwise("group_id")
     )
     with pytest.raises(AllocationInputError, match="share a commitment"):
-        allocate(units, crs=crs, links=split)
+        allocate(units, crs=crs, links=split, crdf=crdf)
 
 
 def with_links(links: pl.LazyFrame, *added: tuple[str, str, str, str]) -> pl.LazyFrame:
@@ -422,17 +428,88 @@ CASCADE = [
 
 
 def test_a_later_group_takes_only_what_the_earlier_one_left() -> None:
-    crs, _, units, links = link(CASCADE)
+    crs, crdf, units, links = link(CASCADE)
     repair = (
         unit_of(units, "d20"),
         unit_of(units, "cB"),
         "repair|x",
         "repair_new_crs_id",
     )
-    pairs = allocate(units, crs=crs, links=with_links(links, repair))
+    pairs = allocate(units, crs=crs, links=with_links(links, repair), crdf=crdf)
     # The exact tier fills c19 first, though cB is older; cB takes the rest.
     assert by_commitment(pairs) == pytest.approx({"c19": 100.0, "cB": 50.0})
     assert excess_of(pairs) == {}
+
+
+def test_a_row_names_the_link_of_the_first_pass_that_filled_it() -> None:
+    # One CRDF row covers c19 and cB. The exact tier fills c19's 20 first; the
+    # repair pass then gives cB 80, more, but the row names the exact tier's link.
+    records = [{**CASCADE[0], "commitment_usd": 20.0}, *CASCADE[1:]]
+    crs, crdf, units, links = link(records)
+    rows = (("R", unit_of(units, "c19")), ("R", unit_of(units, "cB")))
+    links = pl.concat(
+        [
+            with_links(
+                links,
+                (
+                    unit_of(units, "d20"),
+                    unit_of(units, "cB"),
+                    "repair|x",
+                    "repair_new_crs_id",
+                ),
+            ),
+            as_exact_links(
+                pl.LazyFrame(
+                    [(*row, "g", "within_year") for row in rows],
+                    schema=["left_id", "right_id", "group_id", "link_method"],
+                    orient="row",
+                ),
+                task="crdf_crs",
+            ),
+        ]
+    )
+    crdf = counted_rows(crdf_frame([crdf_row("R", 2019, 100.0)]))
+    pairs = allocate(units, crs=crs, links=links, crdf=crdf)
+    table = allocate_to_rows(pairs, crdf=crdf, units=units, crs=crs, links=links)
+    assert pair(pairs, "cB", "d20") == pytest.approx(80.0)
+    carried = table.filter(pl.col("row_id") == "R")
+    assert carried.select("link_method", "commitment_unit_id").rows() == [
+        ("crs_id_purpose", unit_of(units, "c19"))
+    ]
+
+
+def test_a_row_names_the_link_that_carried_the_most_over_its_records() -> None:
+    # c19's unit sums two commitment records, which take 30 each from d22; c20's
+    # one record takes 50. The row covering both names c19's link, which carried 60.
+    records = [
+        record("c19a", 2019, commit=30.0),
+        record("c19b", 2019, commit=30.0),
+        record("c20", 2020, commit=50.0),
+        record("d22", 2022, disburse=110.0),
+    ]
+    crs, crdf, units, links = link(records)
+    covered = [
+        ("R", unit_of(units, name), "g", "within_year") for name in ("c19a", "c20")
+    ]
+    links = pl.concat(
+        [
+            links,
+            as_exact_links(
+                pl.LazyFrame(
+                    covered,
+                    schema=["left_id", "right_id", "group_id", "link_method"],
+                    orient="row",
+                ),
+                task="crdf_crs",
+            ),
+        ]
+    )
+    crdf = counted_rows(crdf_frame([crdf_row("R", 2019, 110.0)]))
+    pairs = allocate(units, crs=crs, links=links, crdf=crdf)
+    table = allocate_to_rows(pairs, crdf=crdf, units=units, crs=crs, links=links)
+    assert table.select("row_id", "allocated_usd", "commitment_unit_id").rows() == [
+        ("R", 110.0, unit_of(units, "c19a"))
+    ]
 
 
 @pytest.mark.parametrize(
@@ -466,7 +543,7 @@ def test_low_bounds_keep_only_what_certain_links_carried(
         .then(pl.lit(route))
         .otherwise("link_method"),
     )
-    pairs = allocate(units, crs=crs, links=links)
+    pairs = allocate(units, crs=crs, links=links, crdf=crdf)
     rows = allocate_to_rows(pairs, crdf=crdf, units=units, crs=crs, links=links)
     routed = route == "within_year"
     got = {
@@ -498,17 +575,17 @@ def test_low_bounds_keep_only_what_certain_links_carried(
 def test_a_unit_link_to_itself_is_certain_only_for_one_record(
     records: list[dict[str, object]], certain: bool
 ) -> None:
-    crs, _, units, links = link([{**rec, "crs_id": None} for rec in records])
+    crs, crdf, units, links = link([{**rec, "crs_id": None} for rec in records])
     unit = unit_of(units, "r1")
     links = with_links(links, (unit, unit, "aggregate|x", "aggregate_partition"))
-    pairs = allocate(units, crs=crs, links=links)
+    pairs = allocate(units, crs=crs, links=links, crdf=crdf)
     assert pairs.select("allocated_usd", "certain").rows() == [(40.0, certain)]
 
 
 def test_certain_links_fill_before_estimated_links_of_earlier_years() -> None:
     # d22 reaches c20 by crs id, a certain link; e21, a year earlier, only by a
     # repair link. The certain record fills c20 first, and e21 takes the rest.
-    crs, _, units, links = link(
+    crs, crdf, units, links = link(
         [
             record("c20", 2020, commit=10.0),
             record("d22", 2022, disburse=8.0),
@@ -521,7 +598,7 @@ def test_certain_links_fill_before_estimated_links_of_earlier_years() -> None:
         "repair|x",
         "repair_new_crs_id",
     )
-    pairs = allocate(units, crs=crs, links=with_links(links, repair))
+    pairs = allocate(units, crs=crs, links=with_links(links, repair), crdf=crdf)
     assert pair(pairs, "c20", "d22") == pytest.approx(8.0)
     assert pair(pairs, "c20", "e21") == pytest.approx(2.0)
     assert excess_of(pairs) == pytest.approx({"e21": 6.0})
@@ -529,14 +606,14 @@ def test_certain_links_fill_before_estimated_links_of_earlier_years() -> None:
 
 def test_a_record_with_nothing_left_gives_later_groups_nothing() -> None:
     records = [*CASCADE[:2], record("d20", 2020, disburse=60.0)]
-    crs, _, units, links = link(records)
+    crs, crdf, units, links = link(records)
     repair = (
         unit_of(units, "d20"),
         unit_of(units, "cB"),
         "repair|x",
         "repair_new_crs_id",
     )
-    pairs = allocate(units, crs=crs, links=with_links(links, repair))
+    pairs = allocate(units, crs=crs, links=with_links(links, repair), crdf=crdf)
     assert by_commitment(pairs) == pytest.approx({"c19": 60.0})
 
 
@@ -546,7 +623,7 @@ def test_the_remainder_passes_through_the_repair_rules_in_order() -> None:
         record("cC", 2017, commit=30.0, crs_id="C"),
         record("d", 2020, disburse=50.0, crs_id="D"),
     ]
-    crs, _, units, links = link(records)
+    crs, crdf, units, links = link(records)
     d = unit_of(units, "d")
     pairs = allocate(
         units,
@@ -556,6 +633,7 @@ def test_the_remainder_passes_through_the_repair_rules_in_order() -> None:
             (d, unit_of(units, "cC"), "title|x", "repair_title_recipient"),
             (d, unit_of(units, "cB"), "pn|x", "repair_new_crs_id"),
         ),
+        crdf=crdf,
     )
     assert by_commitment(pairs) == pytest.approx({"cB": 30.0, "cC": 20.0})
 
@@ -566,11 +644,12 @@ def test_classifier_links_take_what_the_key_rules_left() -> None:
         record("cE", 2016, commit=30.0, crs_id="E"),
         record("d", 2020, disburse=40.0, crs_id="D"),
     ]
-    crs, _, units, links = link(records)
+    crs, crdf, units, links = link(records)
     d = unit_of(units, "d")
     pairs = allocate(
         units,
         crs=crs,
+        crdf=crdf,
         links=with_links(
             links,
             (d, unit_of(units, "cE"), "classifier|x", "classifier"),
@@ -582,7 +661,7 @@ def test_classifier_links_take_what_the_key_rules_left() -> None:
 
 
 def test_two_groups_of_one_method_on_a_unit_are_refused() -> None:
-    crs, _, units, links = link(CASCADE)
+    crs, crdf, units, links = link(CASCADE)
     d20, cb = unit_of(units, "d20"), unit_of(units, "cB")
     bad = with_links(
         links,
@@ -590,33 +669,33 @@ def test_two_groups_of_one_method_on_a_unit_are_refused() -> None:
         (d20, cb, "repair|y", "repair_new_crs_id"),
     )
     with pytest.raises(AllocationInputError, match="two groups of one"):
-        allocate(units, crs=crs, links=bad)
+        allocate(units, crs=crs, links=bad, crdf=crdf)
 
 
 def test_a_group_spanning_two_methods_is_refused() -> None:
-    crs, _, units, links = link(CASCADE)
+    crs, crdf, units, links = link(CASCADE)
     group = links.collect().filter(task="trace")["group_id"].item()
     bad = with_links(
         links, (unit_of(units, "d20"), unit_of(units, "cB"), group, "repair_pn_variant")
     )
     with pytest.raises(AllocationInputError, match="span more than one"):
-        allocate(units, crs=crs, links=bad)
+        allocate(units, crs=crs, links=bad, crdf=crdf)
 
 
 def test_a_group_whose_units_reach_different_commitments_is_refused() -> None:
     records = [*CASCADE, record("e20", 2020, disburse=5.0, crs_id="2020000009")]
-    crs, _, units, links = link(records)
+    crs, crdf, units, links = link(records)
     bad = with_links(
         links,
         (unit_of(units, "d20"), unit_of(units, "cB"), "repair|x", "repair_new_crs_id"),
         (unit_of(units, "e20"), unit_of(units, "c19"), "repair|x", "repair_new_crs_id"),
     )
     with pytest.raises(AllocationInputError, match="reach different commitments"):
-        allocate(units, crs=crs, links=bad)
+        allocate(units, crs=crs, links=bad, crdf=crdf)
 
 
 def test_a_trace_link_from_a_unit_without_disbursement_is_refused() -> None:
-    crs, _, units, links = link(PHASES)
+    crs, crdf, units, links = link(PHASES)
     c21 = unit_of(units, "c21")
     bad = links.with_columns(
         left_id=pl.when(pl.col("task") == "trace")
@@ -624,7 +703,7 @@ def test_a_trace_link_from_a_unit_without_disbursement_is_refused() -> None:
         .otherwise("left_id")
     )
     with pytest.raises(AllocationInputError, match="not a positive"):
-        allocate(units, crs=crs, links=bad)
+        allocate(units, crs=crs, links=bad, crdf=crdf)
 
 
 def test_dated_donors_need_sixty_percent_of_dollars_dated_earlier() -> None:
@@ -678,7 +757,7 @@ def test_rows_split_a_commitment_by_face_and_never_give_more_than_it_received() 
         [record("c19", 2019, commit=100.0), record("d20", 2020, disburse=100.0)],
         [crdf_row("big", 2019, 80.0), crdf_row("small", 2019, 40.0)],
     )
-    pairs = allocate(units, crs=crs, links=links)
+    pairs = allocate(units, crs=crs, links=links, crdf=crdf)
     rows = allocate_to_rows(pairs, crdf=crdf, units=units, crs=crs, links=links)
     got = dict(rows.select("row_id", "allocated_usd").iter_rows())
     assert got == pytest.approx({"big": 200 / 3, "small": 100 / 3})
@@ -689,10 +768,36 @@ def test_rows_below_crs_face_leave_the_rest_to_the_crs_commitment() -> None:
         [record("c19", 2019, commit=100.0), record("d20", 2020, disburse=100.0)],
         [crdf_row("half", 2019, 50.0)],
     )
-    pairs = allocate(units, crs=crs, links=links)
+    pairs = allocate(units, crs=crs, links=links, crdf=crdf)
     rows = allocate_to_rows(pairs, crdf=crdf, units=units, crs=crs, links=links)
     got = dict(rows.select("row_id", "allocated_usd").iter_rows())
     assert got == pytest.approx({"half": 50.0, None: 50.0})
+
+
+def test_no_row_receives_a_record_from_before_its_year() -> None:
+    # Denmark's IFU dates its 2023 top-up under the crs id by the 2017 commitment,
+    # so both units sit in 2017. The 2019 record fills the 2017 row alone, and the
+    # 2023 record the top-up.
+    crs, crdf, units, links = link(
+        [
+            record("c17", 2017, commit=100.0),
+            record("c23", 2023, commit=50.0, dated=2017),
+            record("d19", 2019, disburse=120.0),
+            record("d23", 2023, disburse=50.0),
+        ],
+        [crdf_row("r17", 2017, 100.0), crdf_row("r23", 2023, 50.0)],
+    )
+    pairs = allocate(units, crs=crs, links=links, crdf=crdf)
+    rows = allocate_to_rows(pairs, crdf=crdf, units=units, crs=crs, links=links)
+    got = {
+        (row_id, record_id): amount
+        for row_id, record_id, amount in rows.select(
+            "row_id", "record_id", "allocated_usd"
+        ).iter_rows()
+    }
+    assert got == pytest.approx(
+        {("r17", "d19"): 100.0, (None, "d19"): 20.0, ("r23", "d23"): 50.0}
+    )
 
 
 @pytest.mark.parametrize(
@@ -713,7 +818,7 @@ def test_a_group_gives_its_allocation_to_its_first_row_and_not_its_repeat(
     )
     group = links.filter(pl.col("task") == "crdf_crs", pl.col("left_id") == "first")
     links = pl.concat([links, group.with_columns(left_id=pl.lit("repeat"))])
-    pairs = allocate(units, crs=crs, links=links)
+    pairs = allocate(units, crs=crs, links=links, crdf=crdf)
     rows = allocate_to_rows(pairs, crdf=crdf, units=units, crs=crs, links=links)
     got = dict(rows.select("row_id", "allocated_usd").iter_rows())
     assert got == pytest.approx({"first": disbursed})
@@ -749,7 +854,7 @@ def test_a_repeat_hands_its_allocation_to_its_first_row_up_to_face(
             {**crdf_row("repeat", 2022, 100.0, crs_id="B"), "repeat_of": "first"},
         ],
     )
-    pairs = allocate(units, crs=crs, links=links)
+    pairs = allocate(units, crs=crs, links=links, crdf=crdf)
     rows = allocate_to_rows(pairs, crdf=crdf, units=units, crs=crs, links=links)
     got = dict(rows.select("row_id", "allocated_usd").iter_rows())
     assert got == pytest.approx(expected)
@@ -837,30 +942,44 @@ def test_project_disbursing_marks_no_record_rows_whose_id_disburses() -> None:
 
 
 def test_status_basis_reads_links_id_practice_and_earlier_tranches() -> None:
+    # Donor 2's agency is classed `neither`; donor 3's keys 0.1 of its disbursement
+    # value and donor 4's 0.9.
     crs, crdf, units, links = link(
         [
             record("c19", 2019, commit=100.0),
             record("d20", 2020, disburse=100.0),
             record("c21", 2021, commit=100.0),
             record("n21", 2021, commit=100.0, crs_id="2021000009", donor=2),
+            record("u21", 2021, commit=100.0, crs_id="2021000003", donor=3),
+            record("p21", 2021, commit=100.0, crs_id="2021000033", donor=3),
+            record("p22", 2022, disburse=50.0, crs_id="2021000033", donor=3),
+            record("k21", 2021, commit=100.0, crs_id="2021000004", donor=4),
         ],
         [
             crdf_row("r19", 2019, 100.0),
             crdf_row("r21", 2021, 100.0),
             crdf_row("rn", 2021, 100.0, crs_id="2021000009", donor=2),
             crdf_row("r_unlinked", 2021, 100.0, crs_id="2021999999"),
+            crdf_row("r_unkeyed", 2021, 100.0, crs_id="2021000003", donor=3),
+            crdf_row("r_unkeyed_paid", 2021, 100.0, crs_id="2021000033", donor=3),
+            crdf_row("r_keyed", 2021, 100.0, crs_id="2021000004", donor=4),
         ],
     )
     id_practice = pl.LazyFrame(
         {
-            "donor_code": [2],
-            "agency_code": [10],
-            "period": ["2019-2022"],
-            "id_class": ["neither"],
+            "donor_code": [2, 3, 4],
+            "agency_code": [10, 10, 10],
+            "period": ["2019-2022"] * 3,
+            "id_class": ["neither", "mixed", "mixed"],
+            "keyed_disbursement_share": [None, 0.1, 0.9],
         },
-        schema_overrides={"donor_code": pl.Int32, "agency_code": pl.Int32},
+        schema_overrides={
+            "donor_code": pl.Int32,
+            "agency_code": pl.Int32,
+            "keyed_disbursement_share": pl.Float64,
+        },
     )
-    pairs = allocate(units, crs=crs, links=links)
+    pairs = allocate(units, crs=crs, links=links, crdf=crdf)
     facts = status_basis(
         crdf, units=units, crs=crs, links=links, pairs=pairs, id_practice=id_practice
     )
@@ -870,13 +989,11 @@ def test_status_basis_reads_links_id_practice_and_earlier_tranches() -> None:
         "r21": True,
         "rn": False,
         "r_unlinked": False,
+        "r_unkeyed": False,
+        "r_unkeyed_paid": False,
+        "r_keyed": True,
     }
-    assert {r: rows[r]["id_disbursing"] for r in rows} == {
-        "r19": False,
-        "r21": True,
-        "rn": False,
-        "r_unlinked": False,
-    }
+    assert [r for r in rows if rows[r]["id_disbursing"]] == ["r21"]
     status = compute_status(
         commitments=facts,
         allocations=allocate_to_rows(
@@ -888,6 +1005,9 @@ def test_status_basis_reads_links_id_practice_and_earlier_tranches() -> None:
         "r21": "no_disbursement_record",
         "rn": "not_traceable",
         "r_unlinked": "not_traceable",
+        "r_unkeyed": "not_traceable",
+        "r_unkeyed_paid": "partly_disbursed",
+        "r_keyed": "no_disbursement_record",
     }
     assert status.collect().filter("project_disbursing")["row_id"].to_list() == ["r21"]
 
@@ -915,7 +1035,7 @@ def test_a_row_linked_across_years_reads_status_over_the_crs_face() -> None:
         task="crdf_crs",
     )
     links = pl.concat([links, recovered])
-    pairs = allocate(units, crs=crs, links=links)
+    pairs = allocate(units, crs=crs, links=links, crdf=crdf)
     table = allocate_to_rows(pairs, crdf=crdf, units=units, crs=crs, links=links)
     facts = status_basis(
         crdf,
@@ -1121,6 +1241,7 @@ def _scenario(
         units,
         crs=crs,
         links=links,
+        crdf=rows,
         dated=DONORS[::2] if reorder else (),
         windowed=DONORS[1::2] if reorder else (),
     )
@@ -1135,7 +1256,14 @@ def _scenario(
     )
     unit_frame = units.collect()
     members = unit_frame.select("unit_id", record_id="record_ids").explode("record_id")
-    # Record-level trace pairs: (disbursement record, commitment record).
+    # Record-level trace pairs: (disbursement record, commitment record), and
+    # whether the record may fill the commitment, by not preceding its CRDF rows.
+    groups = links.filter(pl.col("task") == "crdf_crs").collect()
+    row_years = (
+        groups.join(rows.collect(), left_on="left_id", right_on="row_id")
+        .group_by(right_id="right_id")
+        .agg(row_year=pl.col("year").max())
+    )
     trace = (
         links.filter(pl.col("task") == "trace")
         .collect()
@@ -1143,6 +1271,12 @@ def _scenario(
         .join(
             members.rename({"unit_id": "right_id", "record_id": "commitment_id"}),
             on="right_id",
+        )
+        .join(unit_frame.select(left_id="unit_id", year="year"), on="left_id")
+        .join(row_years, on="right_id", how="left")
+        .with_columns(
+            eligible=pl.col("row_year").is_null()
+            | (pl.col("year") >= pl.col("row_year"))
         )
     )
     return {
@@ -1274,6 +1408,7 @@ def test_fifo_fills_an_older_commitment_before_a_newer_one(seed: int) -> None:
     assert reached.height > 0
     open_older = (
         case["trace"]
+        .filter("eligible")
         .select("record_id", "commitment_id")
         .join(left, on="commitment_id")
         .join(reached, on="record_id")
@@ -1287,11 +1422,6 @@ def test_fifo_fills_an_older_commitment_before_a_newer_one(seed: int) -> None:
 # The stage ---------------------------------------------------------------------
 
 
-def _write(path: Path, frame: pl.DataFrame) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.write_parquet(path)
-
-
 def test_run_allocate_writes_tables_that_pass_their_schemas(tmp_path: Path) -> None:
     records, crdf_rows = _random_records(np.random.default_rng(3))
     # One CRDF row becomes an aggregate child, so its parent drops out.
@@ -1301,19 +1431,18 @@ def test_run_allocate_writes_tables_that_pass_their_schemas(tmp_path: Path) -> N
     crs, rows, units, links = link(records, crdf.to_dicts())
 
     release_dir = tmp_path / "r"
-    _write(table_path(release_dir, "normalise", "crs"), crs.collect())
-    _write(table_path(release_dir, "normalise", "crdf"), crdf)
-    _write(table_path(release_dir, "link", "units"), units.collect())
-    _write(table_path(release_dir, "link", "links"), links.collect())
-    _write(table_path(release_dir, "link", "id_practice"), no_classes())
-    context = StageContext(
-        release="r",
-        release_dir=release_dir,
-        config=load_config(BUILD_TOML),
-        offline=True,
+    write_fetched_years(release_dir)
+    write_inputs(release_dir, "normalise", {"crs": crs.collect(), "crdf": crdf})
+    write_inputs(
+        release_dir,
+        "link",
+        {
+            "units": units.collect(),
+            "links": links.collect(),
+            "id_practice": no_classes(),
+        },
     )
-    stage = next(entry for entry in REGISTRY if entry.name == "allocate")
-    written = write_stage(stage, stage.run(context), release_dir)
+    written = run_stage("allocate", stage_context(release_dir))
     assert set(written) == set(schema.STAGE_TABLES["allocate"])
 
     status = pl.read_parquet(table_path(release_dir, "allocate", "commitments"))

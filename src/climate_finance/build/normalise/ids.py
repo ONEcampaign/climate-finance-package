@@ -16,11 +16,40 @@ def content_id(columns: Sequence[str], *, order_by: Sequence[str]) -> pl.Expr:
     Rows equal on `columns` are numbered by `order_by`, and the number enters the
     digest, so the ids are unique and do not depend on the order rows arrive in.
     """
-    key = pl.concat_str(
+    key = _identity(columns)
+    return _digest(key, pl.int_range(pl.len()).over(key, order_by=list(order_by)))
+
+
+def with_content_id(
+    frame: pl.LazyFrame, name: str, columns: Sequence[str], *, order_by: Sequence[str]
+) -> pl.LazyFrame:
+    """`frame` with `content_id(columns, order_by=order_by)` as column `name`.
+
+    Only rows whose identity repeats are numbered, and the rest take 0, as a group of
+    one numbers its row. On a table of millions of mostly distinct rows this spares
+    the window ordering every row.
+    """
+    frame = frame.with_columns(_key=_identity(columns)).with_row_index("_row")
+    repeated = frame.filter(pl.len().over("_key") > 1).select(
+        "_row", _occurrence=pl.int_range(pl.len()).over("_key", order_by=order_by)
+    )
+    return (
+        frame.join(repeated, on="_row", how="left", maintain_order="left")
+        .with_columns(
+            _digest(pl.col("_key"), pl.col("_occurrence").fill_null(0)).alias(name)
+        )
+        .drop("_key", "_row", "_occurrence")
+    )
+
+
+def _identity(columns: Sequence[str]) -> pl.Expr:
+    return pl.concat_str(
         [pl.col(name).cast(pl.String).fill_null(_NULL) for name in columns],
         separator=_SEPARATOR,
     )
-    occurrence = pl.int_range(pl.len()).over(key, order_by=list(order_by))
+
+
+def _digest(key: pl.Expr, occurrence: pl.Expr) -> pl.Expr:
     return pl.concat_str(
         [key, occurrence.cast(pl.String)], separator=_SEPARATOR
     ).map_batches(_blake2b, return_dtype=pl.String, is_elementwise=True)

@@ -6,14 +6,16 @@ sha256 per table. It writes a stage to a temporary directory and moves it into p
 once every table is written, so a stage that fails leaves the last good one intact. A
 build that died while writing left that temporary directory, and one that died while
 moving a stage into place left `<stage>.old`; the next build restores or removes both
-before any stage runs.
+before any stage runs. Each stage directory holds a `stage.json` recording what the
+stage was built from, and a stage that reads a stale one refuses it (see
+`provenance`).
 """
 
 import shutil
 import tempfile
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
-from functools import partial
+from functools import cache, partial
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -27,14 +29,22 @@ if _missing := [name for name in _BUILD_EXTRA if find_spec(name) is None]:
 
 import polars as pl  # noqa: E402
 
+from climate_finance import __version__  # noqa: E402
 from climate_finance.build.config import BuildConfig, load_config  # noqa: E402
 from climate_finance.build.errors import BuildError, StageOutputError  # noqa: E402
+from climate_finance.build.provenance import (  # noqa: E402
+    STAGE_RECORD,
+    Provenance,
+    StageRecord,
+    source_sha256,
+)
 from climate_finance.build.stages import (  # noqa: E402
     REGISTRY,
     Stage,
     StageContext,
     StageDef,
     StageOutput,
+    make_jev_client,
     stage_dir,
 )
 from climate_finance.schema import (  # noqa: E402
@@ -55,17 +65,24 @@ class BuildManifest:
 
 
 def write_table(frame: pl.DataFrame, table: TableSchema, path: Path) -> str:
-    """Write `frame` in schema column order, fully sorted; return its sha256."""
+    """Write `frame` in schema column order, fully sorted; return its sha256.
+
+    Rows sort by the schema's sort key, then by the remaining flat columns. When the
+    key is unique the remaining columns decide no position, so the sort leaves them
+    out, which spares it encoding every text column.
+    """
     ordered = frame.select(list(table.columns))
-    tiebreak = [
-        name
-        for name, dtype in ordered.schema.items()
-        if name not in table.sort_key and not dtype.is_nested()
-    ]
+    keys = list(table.sort_key)
+    if not ordered.select(pl.struct(keys).is_unique().all()).item():
+        keys += [
+            name
+            for name, dtype in ordered.schema.items()
+            if name not in table.sort_key and not dtype.is_nested()
+        ]
     path.parent.mkdir(parents=True, exist_ok=True)
-    ordered.sort(
-        [*table.sort_key, *tiebreak], nulls_last=True, maintain_order=True
-    ).write_parquet(path, compression="zstd", statistics=True)
+    ordered.sort(keys, nulls_last=True, maintain_order=True).write_parquet(
+        path, compression="zstd", statistics=True
+    )
     return sha256_file(path)
 
 
@@ -76,13 +93,16 @@ def write_stage(
     *,
     seal: Callable[[Mapping[str, pl.DataFrame], Mapping[str, str], Path], None]
     | None = None,
+    provenance: Provenance | None = None,
 ) -> dict[str, str]:
     """Validate every table `stage` returned, then write them all.
 
     The tables go to a temporary directory beside the stage's own. `seal`, given
-    the tables, their sha256 and that directory, may check them and add files
-    before the directory replaces `<release_dir>/<stage>/`. Nothing replaces it
-    when validation, writing or `seal` raises.
+    the tables, their sha256 and that directory, may check them and add files.
+    Then `stage.json` records the tables, the stages `provenance` saw the stage
+    read and the settings it declares, or no reads and no settings without it, and
+    the directory replaces `<release_dir>/<stage>/`.
+    Nothing replaces it when validation, writing or `seal` raises.
 
     Raises:
         StageOutputError: when the returned tables differ from the declared ones,
@@ -113,6 +133,19 @@ def write_stage(
         }
         if seal is not None:
             seal(frames, sha256, staging)
+        record = (
+            StageRecord(
+                stage=stage.name,
+                package_version=__version__,
+                source_sha256=source_sha256(),
+                tables=sha256,
+                inputs={},
+                settings={},
+            )
+            if provenance is None
+            else provenance.record(sha256)
+        )
+        (staging / STAGE_RECORD).write_text(record.model_dump_json(indent=2) + "\n")
         _replace_dir(staging, stage_dir(release_dir, stage.name))
     finally:
         shutil.rmtree(staging, ignore_errors=True)
@@ -171,27 +204,48 @@ def run_stages(
 ) -> BuildManifest:
     """Run the selected stages of `registry` in registry order.
 
+    `offline=True` sets the config's `offline`, which stages and `release.json`
+    read. The stages share one Jev client, made when a stage first asks Jev, so
+    the cost cap holds across the build.
+
     Raises:
         BuildError: when `stages` names a stage the registry lacks.
+        StaleStageError: when a stage reads an earlier stage built from other
+            inputs or settings than the current ones.
     """
     names = [stage.name for stage in registry]
     selected = set(names) if stages is None else set(stages)
     if unknown := sorted(selected - set(names)):
         raise BuildError(f"Unknown stages {unknown}; the stages are {names}")
+    if offline:
+        config = config.model_copy(update={"offline": True})
     recover_stage_dirs(registry, release_dir)
-    context = StageContext(
-        release=release, release_dir=release_dir, config=config, offline=offline
-    )
-    tables = {
-        stage.name: write_stage(
+    jev_client = cache(partial(make_jev_client, config, offline=config.offline))
+    tables = {}
+    for stage in registry:
+        if stage.name not in selected:
+            continue
+        provenance = Provenance(
+            stage=stage.name,
+            release_dir=release_dir,
+            config=config,
+            settings=stage.settings,
+        )
+        context = StageContext(
+            release=release,
+            release_dir=release_dir,
+            config=config,
+            offline=config.offline,
+            provenance=provenance,
+            jev_client=jev_client,
+        )
+        tables[stage.name] = write_stage(
             stage,
             stage.run(context),
             release_dir,
             seal=None if stage.seal is None else partial(stage.seal, context),
+            provenance=provenance,
         )
-        for stage in registry
-        if stage.name in selected
-    }
     return BuildManifest(release=release, release_dir=release_dir, tables=tables)
 
 
@@ -215,7 +269,7 @@ def build(
         release_dir=out_dir / release,
         config=build_config,
         stages=None if stages is None else [Stage(stage) for stage in stages],
-        offline=offline or build_config.offline,
+        offline=offline,
     )
 
 

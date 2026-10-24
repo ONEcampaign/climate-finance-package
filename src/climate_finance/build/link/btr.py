@@ -55,9 +55,12 @@ from splink import DuckDBAPI, Linker, SettingsCreator
 from splink.blocking_rule_library import CustomRule
 from splink.internals.comparison_creator import ComparisonCreator
 
-from climate_finance import schema
 from climate_finance.build.geo import recipient_code
-from climate_finance.build.link.keys import country_codes, regional_codes
+from climate_finance.build.link.keys import (
+    country_codes,
+    links_frame,
+    regional_codes,
+)
 from climate_finance.build.link.splink_models import (
     MIN_EM_PAIRS,
     isotonic_map,
@@ -807,7 +810,4 @@ def _as_links(pairs: pl.DataFrame) -> pl.DataFrame:
             if name in pairs.columns
         },
     }
-    return pairs.select(
-        given.get(name, pl.lit(None)).cast(column.dtype).alias(name)
-        for name, column in schema.LINKS.columns.items()
-    ).sort("left_id", "right_id")
+    return links_frame(pairs, given).sort("left_id", "right_id")

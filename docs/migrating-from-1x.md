@@ -24,7 +24,7 @@ print(data.columns.tolist()[-6:])
 ```
 
 ```output
-['unsplit', 'value', 'low', 'high', 'flow', 'source']
+['value', 'low', 'high', 'untraced', 'flow', 'source']
 ```
 
 ## Rewrite to the 2.0 API
@@ -60,7 +60,7 @@ print(len(data), "rows")
 | `methodology="ONE"` or `"OECD"` | `method=cf.methods.ONE` or `cf.methods.OECD` |
 | `set_custom_spending_methodology((0.5, 1.0), highest_marker=True)` | `method=cf.Method(significant=0.5, principal=1.0, highest_marker=True)` |
 | `flows="gross_disbursements"`, `"commitments"`, `"grant_equivalent"` | `flow="disbursements"`, `"commitments"`, `"grant_equivalent"` |
-| `source="OECD_CRS"`, `"OECD_CRS_ALLOCABLE"`, `"OECD_CRDF"`, `"OECD_CRDF_CRS"`, `"OECD_CRDF_CRS_ALLOCABLE"` | `view="recipient"`, the default. A release holds one traced source. |
+| `source="OECD_CRS"`, `"OECD_CRS_ALLOCABLE"`, `"OECD_CRDF"`, `"OECD_CRDF_CRS"`, `"OECD_CRDF_CRS_ALLOCABLE"` | `view="recipient"`, the default. A release holds one traced source, which includes disbursements from development banks' own ledgers, so `"OECD_CRS"` can return more than the CRS alone. The `_ALLOCABLE` names return the same rows as their plain names, without their former filter. |
 | `source="OECD_CRDF_DONOR"` | `view="provider"` |
 | `get_data()` | `result.table.to_pandas()`, `to_polars()`, or `to_arrow()` |
 | `as_share_of_total()`, `convert_to_shares()` | `result.share_of_total()` |
@@ -73,7 +73,7 @@ Releases hold gross disbursements only, so `net_disbursements` has no 2.0 equiva
 
 ## What else is different
 
-- The result is a polars table by default, with `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, and `high` columns. `result.rows()` returns the projects behind it.
+- The result is a polars table by default, with `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced` columns. `result.rows()` returns the projects behind it.
 - `value` is climate value only, in `ClimateData` too, and no row carries the 1.x indicator `not_climate_relevant`. A 1.x script that sums `value` over every indicator gets a different number and no error.
 - A result carries its `Spec`. `snap.spending(spec=result.spec)` reruns it.
 - Names and codes resolve through `cf.providers` and `cf.recipients`. A misspelt name raises an error that suggests close matches.

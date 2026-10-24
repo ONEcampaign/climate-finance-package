@@ -11,6 +11,7 @@ import httpx
 import numpy as np
 import polars as pl
 import pytest
+from stage_runs import JEV_MODEL
 
 from climate_finance import schema
 from climate_finance.build.errors import CostCapExceededError
@@ -21,6 +22,7 @@ from climate_finance.build.link.jev import (
     JevFitError,
     Logistic,
     adjudicate_band,
+    deployed_threshold,
     pair_request,
 )
 from climate_finance.build.link.levels import LEVELS
@@ -29,17 +31,13 @@ from climate_finance.build.link.score import (
     HELDOUT,
     TRAIN,
     TruthScores,
+    best_threshold,
     classifier_links,
 )
 
-MODEL = "jev-1.14.0"
 BAND = (0.3, 0.9)
-_UNITS = {name: column.dtype for name, column in schema.UNITS.columns.items()}
-_STEMS = pl.DataFrame(
-    schema={
-        name: column.dtype for name, column in schema.PROGRAMME_STEMS.columns.items()
-    }
-)
+_UNITS = schema.UNITS.dtypes
+_STEMS = pl.DataFrame(schema=schema.PROGRAMME_STEMS.dtypes)
 
 
 def _pair(
@@ -187,7 +185,7 @@ def _client(
 ) -> JevClient:
     monkeypatch.setenv("TYPESAFE_API_KEY", "test")
     return JevClient(
-        model=MODEL,
+        model=JEV_MODEL,
         cost_cap_usd=cost_cap_usd,
         cache_dir=cache_dir,
         offline=offline,
@@ -236,13 +234,13 @@ def test_jev_adjudicates_the_band_and_the_combination_links(
     # Jev carries the training labels, so both fits lean on it.
     assert band.combined.coefs[1] > 0
     assert band.scale.coefs[0] > 0
-    assert band.model == MODEL
+    assert band.model == JEV_MODEL
 
     # Jev lifts d061 over the combined threshold and drops d062 under it.
     links = classifier_links(_scores(rows), jev=band)
     schema.validate(schema.LINKS, links)
     assert links.select("left_id", "link_method", "jev_model").rows() == [
-        ("d061", "classifier_jev", MODEL),
+        ("d061", "classifier_jev", JEV_MODEL),
         ("d063", "classifier", None),
     ]
     assert links["probability"][0] == band.answers["p_combined"][0]
@@ -258,6 +256,38 @@ def test_jev_adjudicates_the_band_and_the_combination_links(
         band.scale,
         band.threshold,
     )
+
+
+def test_the_jev_threshold_is_tuned_on_the_links_the_build_makes() -> None:
+    # d1 and d2 each link their true pair over a false one; d3's true pair and d4's
+    # false one stand alone; d5's pair over the classifier's 0.5 outscores its true
+    # band pair.
+    rows = [
+        ("d1", "c1", 0.6, True),
+        ("d1", "c2", 0.5, False),
+        ("d2", "c3", 0.6, True),
+        ("d2", "c4", 0.5, False),
+        ("d3", "c5", 0.3, True),
+        ("d4", "c6", 0.2, False),
+        ("d5", "c7", 0.65, True),
+        ("d5", "c8", 0.95, False),
+    ]
+    pairs = pl.DataFrame(
+        rows, schema=["left_id", "right_id", "probability", "true_pair"], orient="row"
+    ).with_columns(
+        p_model="probability",
+        p_jev=pl.when(pl.col("right_id") != "c8").then(0.5),
+        programme_level=0,
+        placed_year=2018,
+    )
+    # The links of each disbursement peak at 0.21, where d3 links and d4 does not.
+    assert deployed_threshold(pairs, threshold=0.5) == 0.21
+    # F1 on band pairs counts false pairs that never link and a true one that never
+    # wins, and peaks at 0.51.
+    band = pairs.filter(pl.col("p_jev").is_not_null())
+    y = band["true_pair"].to_numpy()
+    p = band["probability"].to_numpy()
+    assert best_threshold(p, y, n_true=int(y.sum())) == 0.51
 
 
 def test_an_offline_build_refuses_a_cache_miss(
@@ -276,7 +306,7 @@ def test_the_cost_cap_refuses_the_whole_band(
     with pytest.raises(CostCapExceededError):
         _adjudicate(_rows(), client)
     assert client.live_calls == 0
-    assert not (tmp_path / f"{MODEL}.jsonl").exists()
+    assert not (tmp_path / f"{JEV_MODEL}.jsonl").exists()
 
 
 def test_too_few_training_outcomes_refuse_the_fit(

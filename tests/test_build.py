@@ -3,19 +3,32 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from normalised import IATI_PUBLISHERS, record_fetch, write_raw
+from reads import record_reads
+from stage_runs import BUILD_TOML
 
 import climate_finance.build
-from climate_finance.build import BuildConfig, build, load_config, run_stages
+from climate_finance.build import (
+    BuildConfig,
+    build,
+    load_config,
+    measure,
+    run_stages,
+)
 from climate_finance.build.errors import (
     BuildError,
     ConfigError,
     StageInputMissingError,
     StageOutputError,
 )
-from climate_finance.build.stages import REGISTRY, Stage, StageContext, StageDef
+from climate_finance.build.stages import (
+    REGISTRY,
+    Stage,
+    StageContext,
+    StageDef,
+    raw_dir,
+)
 from climate_finance.schema import STAGE_TABLES, Column, TableSchema
-
-BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 
 TABLE = TableSchema(
     name="numbers",
@@ -78,10 +91,10 @@ def test_offline_reaches_every_stage(
     argument: bool,
     configured: bool,
 ) -> None:
-    seen: list[bool] = []
+    seen: list[tuple[bool, bool]] = []
 
     def run(context: StageContext) -> dict[str, pl.DataFrame]:
-        seen.append(context.offline)
+        seen.append((context.offline, context.config.offline))
         return _numbers(["a"], [1.0])
 
     monkeypatch.setattr(
@@ -95,13 +108,79 @@ def test_offline_reaches_every_stage(
         offline=argument,
     )
 
-    assert seen == [True, True]
+    assert seen == [(True, True), (True, True)]
 
 
-def test_sorted_writes_hash_identically_whatever_the_row_order(
-    config: BuildConfig, tmp_path: Path
+# Settings read only on paths the raw fixtures cannot take: embeddings and the Jev
+# step need models and a truth group, the fill needs bank ledgers, and review and
+# the Jev labels are off in build.toml.
+UNREACHED = {
+    "link": {"embedding.model", "embedding.revision", "jev.band", "jev.model"},
+    "fill": {"sources.iati_publishers", "sources.ledgers", "years.crs_last_complete"},
+    "review": {"jev.band", "sources.ledgers", "sources.review_decisions"},
+    "label": {"jev.model"},
+}
+
+
+@pytest.mark.parametrize("switches", [False, True])
+def test_every_stage_reads_the_settings_it_declares_and_no_others(
+    config: BuildConfig,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    switches: bool,
 ) -> None:
-    keys = ["b", "a", "b", "c", "a"]
+    # An earlier fetch laid the raw fixtures out, so the build runs offline from
+    # fetch on, with no BTR archive, which the raw fixtures leave out. Measure reads
+    # no agency and models no provider, since the fixtures hold too few, and the
+    # fixtures hold no truth group to set Jev's scale.
+    config = config.model_copy(
+        update={
+            "offline": True,
+            "key_repair": switches,
+            "recoveries": switches,
+            "jev_links": False,
+            "sources": config.sources.model_copy(
+                update={
+                    "crs_file": None,
+                    "iati_publishers": IATI_PUBLISHERS,
+                    "btr_archive": None,
+                }
+            ),
+        }
+    )
+    manifest = write_raw(raw_dir(tmp_path))
+    record_fetch(tmp_path, manifest, config=config)
+    facts = measure.load_provider_facts()
+    monkeypatch.setattr(
+        measure,
+        "load_provider_facts",
+        lambda: facts.model_copy(update={"agencies": (), "modelled": ()}),
+    )
+    registry, reads = record_reads(monkeypatch, config, REGISTRY)
+
+    run_stages(registry, release="r", release_dir=tmp_path, config=config)
+
+    # Recoveries read the IATI publishers and the EIB routes to skip.
+    recoveries = set() if switches else {"sources.iati_publishers", "skip_eib_routes"}
+    unreached = UNREACHED | {"link": UNREACHED["link"] | recoveries}
+    assert reads == {
+        stage.name: set(stage.settings) - unreached.get(stage.name, set())
+        for stage in REGISTRY
+    }
+
+
+@pytest.mark.parametrize(
+    "keys",
+    [
+        # Repeated keys sort by their values too.
+        ["b", "a", "b", "c", "a"],
+        # Unique keys alone decide the order.
+        ["b", "a", "e", "c", "d"],
+    ],
+)
+def test_sorted_writes_hash_identically_whatever_the_row_order(
+    config: BuildConfig, tmp_path: Path, keys: list[str]
+) -> None:
     values = [2.0, 1.0, 0.5, 3.0, -1.0]
     shuffled = [4, 2, 0, 3, 1]
 
@@ -247,7 +326,13 @@ def test_config_resolves_paths_against_its_file(config: BuildConfig) -> None:
 @pytest.mark.parametrize(
     ("line", "replacement", "match"),
     [
-        ("crs_last_complete = 2024", "crs_last_complete = 2026", "crs_last_complete"),
+        (
+            'crdf = "all"',
+            "crdf = [2015, 2024]\ncrs = [2010, 2023]",
+            "crs_last_complete",
+        ),
+        ('crdf = "all"', "crdf = [2025, 2026]", "crs_last_complete"),
+        ('crdf = "all"', 'crdf = "every"', "crdf"),
         # Normalise reads only raw/, so no source names a table outside it.
         (
             'btr_archive = "data/raw/unfccc_btr1"',

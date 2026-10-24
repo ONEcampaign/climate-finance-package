@@ -11,8 +11,8 @@ different years, within one perspective and provider:
 - EIB bulk record: an EIB row without a CRS commitment of its own matches a bulk
   EIB commitment (`_match_eib`) whose key, or crs id, an EIB row of another year
   carries.
-- project id: same recipient and project number, different crs ids, face values
-  within 10%.
+- project id: same recipient and project number (`normalise_pn`, so placeholders
+  such as `UNKNOWN` name no project), different crs ids, face values within 10%.
 - title: same recipient and a specific title (at most three of the provider's rows
   carry it), different crs ids, face values within 10%.
 
@@ -26,7 +26,14 @@ group's first row by year and row id.
 import polars as pl
 
 from climate_finance.build.normalise.crdf import CRDFNormaliseError
-from climate_finance.build.normalise.crs import trace_population
+from climate_finance.build.normalise.crs import (
+    commitment_keys,
+    crs_ids,
+    trace_population,
+)
+from climate_finance.build.normalise.pairing import pair_one_to_one
+from climate_finance.build.normalise.project_numbers import normalise_pn
+from climate_finance.schema import EIB_AGENCY, EU_INSTITUTIONS, EURO_ISSUER
 
 # Face values of a project-id or title pair agree within this share of the larger.
 _FACE_TOLERANCE = 0.10
@@ -36,10 +43,6 @@ _TITLE_MIN_CHARS = 15
 _TITLE_MAX_ROWS = 3
 _PROJECT_ID_MIN_CHARS = 3
 
-# The EIB reports to the CRDF as agency 3 of EU Institutions (918).
-_EIB = {"donor_code": 918, "agency_code": 3}
-# DAC exchange rates are by country. The euro's is held by EU Institutions.
-_EURO_ISSUER = "EUI"
 # An EIB match needs euro amounts within 3%, and an equal project number, a title
 # overlap of at least 0.5 or an equal purpose. Purpose-only matches are dropped once
 # pairs are chosen, because they tie on round euro amounts.
@@ -110,7 +113,7 @@ def repeat_groups(
     """Every paired row's group, named by the smallest row id in it."""
     edges = pl.concat(
         [
-            _same_id_edges(rows, crs=crs),
+            _same_id_edges(rows),
             _eib_edges(rows, crs=crs, exchange=exchange),
             _similar_edges(rows, key="project_id"),
             _similar_edges(rows, key="title_key"),
@@ -119,66 +122,11 @@ def repeat_groups(
     return _union(edges)
 
 
-def commitment_keys(crs: pl.LazyFrame) -> pl.LazyFrame:
-    """The (provider, crs id, year, purpose) keys the CRS commits money under.
-
-    Records are summed by donor, agency, crs id, project number, recipient, purpose,
-    year and commitment year, and a key has a commitment when one of its sums is
-    positive.
-    """
-    units = [
-        "donor_code",
-        "agency_code",
-        "crs_id",
-        "project_number",
-        "recipient_code",
-        "purpose_code",
-        "year",
-        pl.col("commitment_date").dt.year().alias("commitment_year"),
-    ]
-    return (
-        _crs_units(crs)
-        .group_by(units)
-        .agg(pl.col("commitment_usd").sum().alias("unit_commitment"))
-        .filter(pl.col("unit_commitment") > 0, pl.col("crs_id").is_not_null())
-        .select(
-            provider_code="donor_code",
-            crs_id="crs_id",
-            year="year",
-            purpose_code="purpose_code",
-        )
-        .unique()
-    )
-
-
-def crs_ids(crs: pl.LazyFrame) -> pl.LazyFrame:
-    """Every (provider, crs id) the CRS reports in any year."""
-    return (
-        _crs_units(crs)
-        .filter(pl.col("crs_id").is_not_null())
-        .select(provider_code="donor_code", crs_id="crs_id")
-        .unique()
-    )
-
-
-def _crs_units(crs: pl.LazyFrame) -> pl.LazyFrame:
-    """Trace-population records that report a commitment or a disbursement."""
-    return trace_population(crs).filter(
-        pl.col("commitment_usd").is_not_null()
-        | pl.col("disbursement_usd").is_not_null()
-    )
-
-
 def _with_keys(rows: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
     """Add `backed`, `id_in_crs`, `project_id` and `title_key` to the rows."""
     backed = commitment_keys(crs).with_columns(backed=pl.lit(True)).collect()
     known = crs_ids(crs).with_columns(id_in_crs=pl.lit(True)).collect()
-    project_id = (
-        pl.col("project_number")
-        .str.replace(r"\.0$", "")
-        .str.strip_chars()
-        .str.to_uppercase()
-    )
+    project_id = normalise_pn(pl.col("project_number"))
     title_key = (
         pl.col("title").str.to_uppercase().str.extract_all(r"[A-Z0-9]+").list.join(" ")
     )
@@ -206,7 +154,7 @@ def _with_keys(rows: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
     )
 
 
-def _same_id_edges(rows: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
+def _same_id_edges(rows: pl.DataFrame) -> pl.DataFrame:
     """Rows whose id the CRS knows but commits nothing under, and earlier rows."""
     key = ["perspective", "provider_code", "crs_id", "purpose_code"]
     unbacked = rows.filter(pl.col("id_in_crs"), ~pl.col("backed"))
@@ -222,8 +170,8 @@ def _eib_edges(
 ) -> pl.DataFrame:
     """EIB rows paired through the bulk commitment one of them matches."""
     eib = rows.filter(
-        pl.col("provider_code") == _EIB["donor_code"],
-        pl.col("agency_code") == _EIB["agency_code"],
+        pl.col("provider_code") == EU_INSTITUTIONS,
+        pl.col("agency_code") == EIB_AGENCY,
     )
     matches = match_eib(eib.filter(~pl.col("backed")), crs=crs, exchange=exchange)
     carriers = eib.select(
@@ -251,19 +199,19 @@ def match_eib(
     """Each EIB row's bulk EIB commitment, one to one, best evidence first.
 
     A candidate is a commitment to the row's recipient in the row's year or later,
-    with euro amounts within 3%. It scores on an equal project number, how close the
-    amounts are, title overlap, an equal purpose and an equal year. Rows and
-    commitments pair best score first, and pairs that agree on purpose alone are then
-    dropped.
+    with euro amounts within 3%. It scores on an equal project number (`normalise_pn`
+    on both sides, so placeholders name no project), how close the amounts are,
+    title overlap, an equal purpose and an equal year. Rows and commitments pair best
+    score first, and pairs that agree on purpose alone are then dropped.
     """
-    rates = exchange.filter(pl.col("iso_code") == _EURO_ISSUER).select(
+    rates = exchange.filter(pl.col("iso_code") == EURO_ISSUER).select(
         year=pl.col("year").cast(pl.Int16), euro_per_usd=pl.col("exchange_rate")
     )
     records = (
         trace_population(crs)
         .filter(
-            pl.col("donor_code") == _EIB["donor_code"],
-            pl.col("agency_code") == _EIB["agency_code"],
+            pl.col("donor_code") == EU_INSTITUTIONS,
+            pl.col("agency_code") == EIB_AGENCY,
             pl.col("commitment_usd") > 0,
             pl.col("year") >= pl.lit(rows["year"].min(), pl.Int16),
         )
@@ -273,7 +221,7 @@ def match_eib(
             record_year="year",
             record_crs_id="crs_id",
             record_purpose="purpose_code",
-            record_project_number="project_number",
+            record_project_number=normalise_pn(pl.col("project_number")),
             record_title="title",
             record_commitment="commitment_usd",
         )
@@ -291,7 +239,7 @@ def match_eib(
         "recipient_code",
         "purpose_code",
         "face_usd",
-        project_id=pl.col("project_number").str.replace(r"\.0$", ""),
+        project_id=normalise_pn(pl.col("project_number")),
         tokens=_title_tokens("title"),
     )
     rows = _in_euro(rows, rates, year="year", amount="face_usd", into="euro")
@@ -435,26 +383,3 @@ def _union(edges: pl.DataFrame) -> pl.DataFrame:
         {"row_id": list(parent), "group": [find(row) for row in parent]},
         schema={"row_id": pl.String, "group": pl.String},
     )
-
-
-def pair_one_to_one(
-    candidates: pl.DataFrame, *, left: list[str], right: list[str]
-) -> pl.DataFrame:
-    """Keep each candidate whose two sides are both still free, in the given order.
-
-    `candidates` arrive sorted best first, ties broken by the sort.
-    """
-    taken_left: set[tuple[object, ...]] = set()
-    taken_right: set[tuple[object, ...]] = set()
-    keep: list[bool] = []
-    for a, b in zip(
-        candidates.select(left).iter_rows(),
-        candidates.select(right).iter_rows(),
-        strict=True,
-    ):
-        free = a not in taken_left and b not in taken_right
-        if free:
-            taken_left.add(a)
-            taken_right.add(b)
-        keep.append(free)
-    return candidates.filter(pl.Series(keep, dtype=pl.Boolean))

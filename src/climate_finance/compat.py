@@ -9,7 +9,12 @@ onto one `Snapshot.spending` call per source and flow:
   `flow="disbursements"`, `"commitments"` and `"grant_equivalent"`.
 - Every OECD source is answered from the release's traced commitments and
   disbursements in the recipient view, except "OECD_CRDF_DONOR", the provider
-  perspective, which maps to `view="provider"`.
+  perspective, which maps to `view="provider"`. The legacy names therefore select
+  the traced dataset, which includes disbursements from development banks' own
+  ledgers (`disbursement_source="bank_ledger"`), so "OECD_CRS" can return more than
+  the CRS alone. Disbursements also hold the Rio-marked CRS disbursement that
+  reaches no commitment, at the record's own markers. The "_ALLOCABLE" names return
+  the same rows as their plain names, without their former filter.
 - `prices="constant"` with `base_year` maps to `prices=base_year`; currency "CAN"
   maps to "CAD".
 - `set_only_oda` maps to `oda_only=True` and `set_update_data` to `refresh=True`.
@@ -22,13 +27,12 @@ replacement, or saying none exists. The module goes in 3.0.
 from __future__ import annotations
 
 import warnings
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Literal, NoReturn, Self
 
 import polars as pl
 
 from climate_finance.methods import OECD, ONE, Method
-from climate_finance.result import Table
 from climate_finance.snapshot import Snapshot, load
 from climate_finance.spec import Currency, Flow, View
 
@@ -70,6 +74,18 @@ _NO_EQUIVALENT = {
 }
 
 
+def _removed(call: str, replacement: str) -> Callable[..., NoReturn]:
+    """A 1.x call that 2.0 removed: it raises NotImplementedError naming
+    `replacement`."""
+
+    def removed(*args: object, **kwargs: object) -> NoReturn:
+        raise NotImplementedError(f"{call} is gone in 2.0; use {replacement}")
+
+    removed.__name__ = removed.__qualname__ = call
+    removed.__doc__ = f"Gone in 2.0; use {replacement}."
+    return removed
+
+
 class ClimateData:
     """The 1.2.3 constructor and methods, returning pandas.
 
@@ -98,7 +114,6 @@ class ClimateData:
         self.currency = _choice(currency, _CURRENCIES, what="currency")
         self.prices = _prices(prices, base_year=base_year)
         self._snapshot = snapshot
-        self._method = ONE
         self._custom: Method | None = None
         self._oda_only = False
         self._refresh = False
@@ -120,13 +135,11 @@ class ClimateData:
         return self
 
     def set_oecd_spending_methodology(self) -> Self:
-        """Use `methods.OECD`."""
-        self._method = OECD
+        """Do nothing, as in 1.2.3, where `load_spending_data(methodology=)` decides."""
         return self
 
     def set_one_spending_methodology(self) -> Self:
-        """Use `methods.ONE`."""
-        self._method = ONE
+        """Do nothing, as in 1.2.3, where `load_spending_data(methodology=)` decides."""
         return self
 
     def set_custom_spending_methodology(
@@ -134,14 +147,14 @@ class ClimateData:
         coefficients: tuple[float, float],
         highest_marker: bool = True,
     ) -> Self:
-        """Use a custom `Method` with (significant, principal) coefficients."""
+        """Set the (significant, principal) coefficients of
+        `load_spending_data(methodology="custom")`."""
         significant, principal = coefficients
         self._custom = Method(
             significant=significant,
             principal=principal,
             highest_marker=highest_marker,
         )
-        self._method = self._custom
         return self
 
     def load_spending_data(
@@ -160,25 +173,35 @@ class ClimateData:
                 "custom" without custom coefficients.
             NotImplementedError: for a flow or source with no 2.0 equivalent.
         """
-        self._method = self._methodology(methodology)
+        method = self._methodology(methodology)
+        chosen = [
+            (flow, _choice(flow, _FLOWS, what="flow")) for flow in _as_list(flows)
+        ]
+        views = {
+            name: _choice(name, _VIEWS, what="source") for name in _as_list(source)
+        }
         snapshot = self._snapshot or load(refresh=self._refresh)
-        for name in _as_list(source):
-            view = _choice(name, _VIEWS, what="source")
-            frames = []
-            for flow in _as_list(flows):
-                result = snapshot.spending(
-                    providers=self.providers,
-                    recipients=self.recipients,
-                    years=self.years,
-                    method=self._method,
-                    flow=_choice(flow, _FLOWS, what="flow"),
-                    view=view,
-                    currency=self.currency,
-                    prices=self.prices,
-                    oda_only=self._oda_only,
+        # Sources that share a view share one query per flow.
+        by_view: dict[View, pl.DataFrame] = {}
+        for name, view in views.items():
+            if view not in by_view:
+                by_view[view] = pl.concat(
+                    snapshot.spending(
+                        providers=self.providers,
+                        recipients=self.recipients,
+                        years=self.years,
+                        method=method,
+                        flow=spending_flow,
+                        view=view,
+                        currency=self.currency,
+                        prices=self.prices,
+                        oda_only=self._oda_only,
+                    )
+                    .table.to_polars()
+                    .with_columns(flow=pl.lit(flow))
+                    for flow, spending_flow in chosen
                 )
-                frames.append(result.table.to_polars().with_columns(flow=pl.lit(flow)))
-            self._tables[name] = pl.concat(frames)
+            self._tables[name] = by_view[view]
         return self
 
     def get_data(self) -> pd.DataFrame:
@@ -193,85 +216,56 @@ class ClimateData:
             table.with_columns(source=pl.lit(name))
             for name, table in self._tables.items()
         )
-        return Table(frame.lazy()).to_pandas()
+        return frame.to_pandas()
 
-    def get_multilateral_spending_shares(
-        self, *args: object, **kwargs: object
-    ) -> NoReturn:
-        """Gone in 2.0."""
-        _gone(
+    get_multilateral_spending_shares = staticmethod(
+        _removed(
             "get_multilateral_spending_shares",
             "spending(view='provider') attributes core contributions by each "
             "agency's climate share",
         )
-
-    def load_multilateral_imputations_data(
-        self, *args: object, **kwargs: object
-    ) -> NoReturn:
-        """Gone in 2.0."""
-        _gone(
+    )
+    load_multilateral_imputations_data = staticmethod(
+        _removed(
             "load_multilateral_imputations_data",
             "spending(view='provider', method=cf.methods.OECD) attributes core "
             "contributions by the OECD's imputed shares",
         )
-
-    def as_share_of_total(self, *args: object, **kwargs: object) -> NoReturn:
-        """Gone in 2.0."""
-        _gone("as_share_of_total", "spending(...).share_of_total()")
-
-    def convert_to_shares(self, *args: object, **kwargs: object) -> NoReturn:
-        """Gone in 2.0."""
-        _gone("convert_to_shares", "spending(...).share_of_total()")
-
-    @staticmethod
-    def available_methodologies() -> NoReturn:
-        """Gone in 2.0."""
-        _gone("available_methodologies", "climate_finance.methods.list()")
-
-    @staticmethod
-    def available_flows() -> NoReturn:
-        """Gone in 2.0."""
-        _gone("available_flows", "climate_finance.flows.list()")
-
-    @staticmethod
-    def available_sources() -> NoReturn:
-        """Gone in 2.0."""
-        _gone("available_sources", "a release, which holds one traced source")
-
-    @staticmethod
-    def available_prices() -> NoReturn:
-        """Gone in 2.0."""
-        _gone("available_prices", "prices='current' or a base year")
-
-    @staticmethod
-    def available_currencies() -> NoReturn:
-        """Gone in 2.0."""
-        _gone("available_currencies", "currency='USD', 'EUR', 'GBP' or 'CAD'")
-
-    @staticmethod
-    def available_providers(*args: object, **kwargs: object) -> NoReturn:
-        """Gone in 2.0."""
-        _gone("available_providers", "climate_finance.providers.list()")
-
-    @staticmethod
-    def get_dac_providers(*args: object, **kwargs: object) -> NoReturn:
-        """Gone in 2.0."""
-        _gone("get_dac_providers", _PROVIDERS_BY_TYPE)
-
-    @staticmethod
-    def get_non_dac_providers() -> NoReturn:
-        """Gone in 2.0."""
-        _gone("get_non_dac_providers", _PROVIDERS_BY_TYPE)
-
-    @staticmethod
-    def get_multilateral_providers(*args: object, **kwargs: object) -> NoReturn:
-        """Gone in 2.0."""
-        _gone("get_multilateral_providers", _PROVIDERS_BY_TYPE)
-
-    @staticmethod
-    def get_private_providers() -> NoReturn:
-        """Gone in 2.0."""
-        _gone("get_private_providers", _PROVIDERS_BY_TYPE)
+    )
+    as_share_of_total = staticmethod(
+        _removed("as_share_of_total", "spending(...).share_of_total()")
+    )
+    convert_to_shares = staticmethod(
+        _removed("convert_to_shares", "spending(...).share_of_total()")
+    )
+    available_methodologies = staticmethod(
+        _removed("available_methodologies", "climate_finance.methods.list()")
+    )
+    available_flows = staticmethod(
+        _removed("available_flows", "climate_finance.flows.list()")
+    )
+    available_sources = staticmethod(
+        _removed("available_sources", "a release, which holds one traced source")
+    )
+    available_prices = staticmethod(
+        _removed("available_prices", "prices='current' or a base year")
+    )
+    available_currencies = staticmethod(
+        _removed("available_currencies", "currency='USD', 'EUR', 'GBP' or 'CAD'")
+    )
+    available_providers = staticmethod(
+        _removed("available_providers", "climate_finance.providers.list()")
+    )
+    get_dac_providers = staticmethod(_removed("get_dac_providers", _PROVIDERS_BY_TYPE))
+    get_non_dac_providers = staticmethod(
+        _removed("get_non_dac_providers", _PROVIDERS_BY_TYPE)
+    )
+    get_multilateral_providers = staticmethod(
+        _removed("get_multilateral_providers", _PROVIDERS_BY_TYPE)
+    )
+    get_private_providers = staticmethod(
+        _removed("get_private_providers", _PROVIDERS_BY_TYPE)
+    )
 
     def _methodology(self, methodology: str) -> Method:
         if methodology == "ONE":
@@ -291,21 +285,11 @@ class ClimateData:
         return self._custom
 
 
-def set_climate_finance_data_path(path: object) -> NoReturn:
-    """Gone in 2.0."""
-    _gone(
-        "set_climate_finance_data_path",
-        "the CLIMATE_FINANCE_CACHE environment variable or load(cache_dir=...)",
-    )
-
-
-def get_unfccc_data(*args: object, **kwargs: object) -> NoReturn:
-    """Gone in 2.0."""
-    _gone("get_unfccc_data", "Snapshot.reconcile()")
-
-
-def _gone(call: str, replacement: str) -> NoReturn:
-    raise NotImplementedError(f"{call} is gone in 2.0; use {replacement}")
+set_climate_finance_data_path = _removed(
+    "set_climate_finance_data_path",
+    "the CLIMATE_FINANCE_CACHE environment variable or load(cache_dir=...)",
+)
+get_unfccc_data = _removed("get_unfccc_data", "Snapshot.reconcile()")
 
 
 def _listed(values: list[int | str] | int | str | None) -> list[int | str] | None:

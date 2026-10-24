@@ -16,7 +16,8 @@ pytestmark = pytest.mark.slow
 REPO = Path(__file__).parents[2]
 QUERIES = Path(__file__).parent / "base_only_queries.py"
 # Cumulative share of traceable climate value disbursed, by years since commitment.
-PROFILE_TARGET = {0: 0.23, 3: 0.46, 8: 0.70}
+# Year 8 pools the 2000 to 2016 vintages; the 2015 and 2016 vintages alone give 0.70.
+PROFILE_TARGET = {0: 0.23, 3: 0.46, 8: 0.66}
 PROFILE_TOLERANCE = 0.02
 
 

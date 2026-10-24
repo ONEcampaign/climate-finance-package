@@ -34,10 +34,15 @@ from climate_finance.build.allocate import (
     dated_donors,
     window_donors,
 )
-from climate_finance.build.link.decisions import PAIR, drop_pairs
+from climate_finance.build.link.decisions import (
+    CALIBRATION_REASON,
+    PAIR,
+    accepted_pairs,
+    drop_pairs,
+    read_decision_labels,
+)
 from climate_finance.build.link.ledger import run_ledger_check
 from climate_finance.build.link.packet import code_names, write_packet
-from climate_finance.build.link.splink_models import read_decision_labels
 from climate_finance.build.normalise.crs import trace_population
 
 if TYPE_CHECKING:
@@ -62,15 +67,17 @@ def run_review(context: StageContext) -> StageOutput:
             "links": context.read("link", "links"),
             "commitments": context.read("fill", "commitments"),
         }
-    checked, pair_labels = run_ledger_check(context)
+    # One collect shares the ledger check's joins between the links and the labels.
+    checked, pair_labels = pl.collect_all(run_ledger_check(context))
     decided = read_decision_labels(context.config.sources.review_decisions)
-    links = flag_review(checked.collect(), labels=decided, band=context.config.jev.band)
+    links = flag_review(checked, labels=decided, band=context.config.jev.band)
     commitments = context.read("fill", "commitments").collect()
     allocations = context.read("fill", "allocations").collect()
     pending = pending_rows(
         commitments,
         allocations=allocations,
         links=links,
+        labels=decided,
         units=context.read("link", "units"),
         crs=trace_population(context.read("normalise", "crs")),
         crdf=counted_rows(context.read("normalise", "crdf")),
@@ -137,15 +144,14 @@ def review_queue(
     labels: pl.DataFrame,
 ) -> pl.DataFrame:
     """The `review_queue` table: the links `flag_review` flagged, the Splink
-    calibration pairs that are not links, and the commitment rows allocated over
-    `OVER_FACE` times face, as `crdf_crs` rows with no right side, less the pairs
-    `labels` (`read_decision_labels`) holds.
+    calibration pairs that are not links, less the pairs `labels`
+    (`read_decision_labels`) holds, and the commitment rows allocated over
+    `OVER_FACE` times face, as `crdf_crs` rows with no right side. `flag_review`
+    flags no decided pair, and a decided pair has a right side.
 
     `field_weights` holds a scored pair's comparison levels as JSON.
     """
-    columns = {
-        name: column.dtype for name, column in schema.REVIEW_QUEUE.columns.items()
-    }
+    columns = schema.REVIEW_QUEUE.dtypes
     field_weights = pl.col("levels").struct.json_encode()
     flagged = links.filter("review").select(
         *PAIR,
@@ -156,7 +162,7 @@ def review_queue(
         field_weights=field_weights,
     )
     calibration = (
-        pair_scores.filter(review_reason="calibration")
+        pair_scores.filter(review_reason=CALIBRATION_REASON)
         .select(
             "left_id",
             "right_id",
@@ -166,6 +172,7 @@ def review_queue(
             field_weights=field_weights,
         )
         .join(links.select(PAIR), on=PAIR, how="anti")
+        .join(labels.select(PAIR), on=PAIR, how="anti")
     )
     face = pl.col("face_usd")
     over_face = commitments.filter(
@@ -177,13 +184,9 @@ def review_queue(
         review_reason=pl.lit("over_face"),
     )
     queue = pl.concat([flagged, calibration, over_face], how="diagonal_relaxed")
-    return (
-        queue.join(labels.select(PAIR), on=PAIR, how="anti")
-        .with_columns(
-            pl.lit(None).alias(name) for name in columns if name not in queue.columns
-        )
-        .select(pl.col(name).cast(dtype) for name, dtype in columns.items())
-    )
+    return queue.with_columns(
+        pl.lit(None).alias(name) for name in columns if name not in queue.columns
+    ).select(pl.col(name).cast(dtype) for name, dtype in columns.items())
 
 
 def pending_rows(
@@ -191,6 +194,7 @@ def pending_rows(
     *,
     allocations: pl.DataFrame,
     links: pl.DataFrame,
+    labels: pl.DataFrame,
     units: pl.LazyFrame,
     crs: pl.LazyFrame,
     crdf: pl.LazyFrame,
@@ -199,9 +203,10 @@ def pending_rows(
 
     A row's queued links are the flagged trace links into the units of its
     `crdf_crs` group. Accepting them all gives the row its status in
-    `commitments`. Rejecting them all (`drop_pairs`) gives the status a new
-    allocation gives it, with the fill stage's ledger and IATI allocations held.
-    The row is pending when the two differ.
+    `commitments`. Rejecting them all (`drop_pairs`), with the links people and
+    agents accepted kept, gives the status a new allocation gives it, with the fill
+    stage's ledger and IATI allocations held. The row is pending when the two
+    differ.
 
     Rejecting links changes allocation only within their connected component of
     trace links, `crdf_crs` links and repeat rows. Each round reallocates the
@@ -212,6 +217,7 @@ def pending_rows(
         commitments: the fill stage's `commitments`.
         allocations: the fill stage's `allocations`.
         links: the links with `review` set (`flag_review`).
+        labels: `read_decision_labels`, whose accepted pairs stay linked.
         units: the link stage's `units`.
         crs: the CRS trace population.
         crdf: the counted CRDF rows (`counted_rows`).
@@ -227,7 +233,8 @@ def pending_rows(
     )
     if queued.is_empty():
         return no_rows
-    component = _components(links, rows=crdf.select("row_id", "repeat_of").collect())
+    rows = crdf.collect()
+    component = _components(links, rows=rows)
     unit_component = component.filter(kind="unit").select(
         unit_id="id", component="component"
     )
@@ -247,46 +254,46 @@ def pending_rows(
     # Narrow the inputs once to the components some round reallocates.
     touched = rounds.select("component").unique()
     near_units = (
-        units.collect()
-        .join(unit_component, on="unit_id")
-        .join(touched, on="component", how="semi")
+        units.join(unit_component.lazy(), on="unit_id")
+        .join(touched.lazy(), on="component", how="semi")
+        .collect()
     )
     record_ids = near_units.select(pl.col("record_ids").explode().alias("record_id"))
     near_crs = crs.join(record_ids.lazy(), on="record_id", how="semi").collect().lazy()
-    near_rows = (
-        crdf.collect()
-        .join(
-            component.filter(kind="row").select(row_id="id", component="component"),
-            on="row_id",
-        )
-        .join(touched, on="component", how="semi")
-    )
+    near_rows = rows.join(
+        component.filter(kind="row").select(row_id="id", component="component"),
+        on="row_id",
+    ).join(touched, on="component", how="semi")
     near_links = links.join(
         unit_component.rename({"unit_id": "right_id"}), on="right_id"
     ).join(touched, on="component", how="semi")
 
     held = allocations.filter(pl.col("disbursement_source") != "crs")
     accepted = commitments.select("row_id", accepted="status")
+    decided = accepted_pairs(labels)
     pending = [no_rows]
     for these in rounds.sort("round").partition_by("round", maintain_order=True):
         own = these.select("component")
         rejected = drop_pairs(
             near_links.join(own, on="component", how="semi").drop("component"),
             pairs=queued.join(these, on="group_id"),
+            accepted=decided,
         ).lazy()
         round_units = (
             near_units.join(own, on="component", how="semi").drop("component").lazy()
         )
+        round_rows = near_rows.join(own, on="component", how="semi").lazy()
         pairs = allocate(
             round_units,
             crs=near_crs,
             links=rejected,
+            crdf=round_rows,
             dated=dated,
             windowed=windowed,
         )
         allocated = allocate_to_rows(
             pairs,
-            crdf=near_rows.join(own, on="component", how="semi").lazy(),
+            crdf=round_rows,
             units=round_units,
             crs=near_crs,
             links=rejected,

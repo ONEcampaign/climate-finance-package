@@ -1,17 +1,21 @@
-"""Bulk CRS records into the `crs` schema, in USD units."""
+"""Bulk CRS records into the `crs` schema, in USD units, and the lookups of CRS
+keys that the CRDF rules join on."""
+
+import logging
 
 import polars as pl
 
-from climate_finance.build.normalise.ids import content_id, text_digest
-from climate_finance.schema import CRS_UNSPECIFIED_RECIPIENT, UNSPECIFIED_RECIPIENT
+from climate_finance.build.normalise.ids import text_digest, with_content_id
+from climate_finance.schema import (
+    CORE_CONTRIBUTION,
+    CRS_UNSPECIFIED_RECIPIENT,
+    UNSPECIFIED_RECIPIENT,
+)
+
+logger = logging.getLogger(__name__)
 
 # The bulk file publishes amounts in USD million at current prices.
 _USD_PER_UNIT = 1e6
-# Bi_Multi 2 is a donor's core contribution to a multilateral agency. The agency's
-# own outflows (code 4) carry that money to recipients, so the trace leaves code 2
-# out. Provider totals count it only as core contributions.
-CORE_CONTRIBUTION = 2
-
 _AMOUNTS = {
     "commitment_usd": "usd_commitment",
     "disbursement_usd": "usd_disbursement",
@@ -49,8 +53,11 @@ def normalise_crs(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFrame:
 
     A record has an amount when its commitment, disbursement or grant equivalent is
     non-zero. Records with only a grant equivalent carry negative grant equivalents
-    and stay in. Bi_Multi is kept as published, core contributions included (see
-    `trace_population`), and missing Rio markers stay null.
+    and stay in. A negative grant equivalent on a positive disbursement is null, as
+    for a record the CRS does not value, so no disbursement carries a negative grant
+    equivalent; the count of such records is logged. Bi_Multi is kept as published,
+    core contributions included (see `trace_population`), and missing Rio markers
+    stay null.
 
     `record_id` digests the record's identifying fields, so it is the same in every
     build of the same file and survives a revision of the record's amounts. Records
@@ -60,15 +67,22 @@ def normalise_crs(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFrame:
     has_amount = pl.any_horizontal(
         pl.col(source).fill_null(0) != 0 for source in _AMOUNTS.values()
     )
-    return (
+    in_years = (
         raw.filter(pl.col("year").is_between(*years), has_amount)
         # Some ids carry trailing spaces (Germany's 2020 records), which no key
         # would match to the same id written without them.
         .with_columns(pl.col(_IDS).cast(pl.String).str.strip_chars())
-        .with_columns(
-            record_id=content_id(_IDENTITY, order_by=_OCCURRENCE),
-            text_hash=text_digest(_TEXT),
+    )
+    correction = _is_correction("usd_grant_equiv", "usd_disbursement")
+    if corrections := in_years.select(correction.sum()).collect().item():
+        logger.warning(
+            "%d CRS records with a negative grant equivalent on a positive "
+            "disbursement; their grant equivalent is null",
+            corrections,
         )
+    return (
+        with_content_id(in_years, "record_id", _IDENTITY, order_by=_OCCURRENCE)
+        .with_columns(text_hash=text_digest(_TEXT))
         .select(
             "record_id",
             pl.col("year").cast(pl.Int16),
@@ -99,9 +113,69 @@ def normalise_crs(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFrame:
             rio_mitigation=pl.col("climate_mitigation").cast(pl.Int8),
             text_hash=pl.col("text_hash"),
         )
+        .with_columns(
+            grant_equiv_usd=pl.when(
+                ~_is_correction("grant_equiv_usd", "disbursement_usd")
+            ).then(pl.col("grant_equiv_usd"))
+        )
     )
+
+
+def _is_correction(grant_equiv: str, disbursement: str) -> pl.Expr:
+    """A negative grant equivalent on a positive disbursement."""
+    return ((pl.col(grant_equiv) < 0) & (pl.col(disbursement) > 0)).fill_null(False)
 
 
 def trace_population(crs: pl.LazyFrame) -> pl.LazyFrame:
     """The records the trace follows: every record except core contributions."""
     return crs.filter(pl.col("bi_multi") != CORE_CONTRIBUTION)
+
+
+def commitment_keys(crs: pl.LazyFrame) -> pl.LazyFrame:
+    """The (provider, crs id, year, purpose) keys the CRS commits money under.
+
+    Records are summed by donor, agency, crs id, project number, recipient, purpose,
+    year and commitment year, and a key has a commitment when one of its sums is
+    positive.
+    """
+    units = [
+        "donor_code",
+        "agency_code",
+        "crs_id",
+        "project_number",
+        "recipient_code",
+        "purpose_code",
+        "year",
+        pl.col("commitment_date").dt.year().alias("commitment_year"),
+    ]
+    return (
+        _crs_units(crs)
+        .group_by(units)
+        .agg(pl.col("commitment_usd").sum().alias("unit_commitment"))
+        .filter(pl.col("unit_commitment") > 0, pl.col("crs_id").is_not_null())
+        .select(
+            provider_code="donor_code",
+            crs_id="crs_id",
+            year="year",
+            purpose_code="purpose_code",
+        )
+        .unique()
+    )
+
+
+def crs_ids(crs: pl.LazyFrame) -> pl.LazyFrame:
+    """Every (provider, crs id) the CRS reports in any year."""
+    return (
+        _crs_units(crs)
+        .filter(pl.col("crs_id").is_not_null())
+        .select(provider_code="donor_code", crs_id="crs_id")
+        .unique()
+    )
+
+
+def _crs_units(crs: pl.LazyFrame) -> pl.LazyFrame:
+    """Trace-population records that report a commitment or a disbursement."""
+    return trace_population(crs).filter(
+        pl.col("commitment_usd").is_not_null()
+        | pl.col("disbursement_usd").is_not_null()
+    )

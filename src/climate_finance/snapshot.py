@@ -33,7 +33,7 @@ from climate_finance.schema import (
     scan_table,
     sha256_file,
 )
-from climate_finance.spec import Currency, Flow, Spec, View
+from climate_finance.spec import Currency, Flow, Measure, Spec, View
 
 # The release index shipped in the wheel.
 RELEASE_INDEX = files("climate_finance") / "data" / "releases.json"
@@ -102,6 +102,8 @@ class Snapshot:
         currency: Currency = "USD",
         prices: int | Literal["current"] = "current",
         oda_only: bool = False,
+        measure: Measure = "amount",
+        untraced: bool = True,
         spec: Spec | None = None,
     ) -> Result:
         """Climate finance under `method`, or under `spec` when given.
@@ -119,6 +121,8 @@ class Snapshot:
                 currency=currency,
                 prices=prices,
                 oda_only=oda_only,
+                measure=measure,
+                untraced=untraced,
             )
         return query.spending(self, spec=spec)
 
@@ -180,6 +184,8 @@ def load(
     without network. Otherwise its pack downloads, its sha256 is checked against the
     index, and it unpacks into `cache_dir`. A cached copy that fails its check
     downloads again.
+    A relative `path` resolves against the working directory at load, so the
+    snapshot reads the files it verified after a later change of directory.
 
     Raises:
         ReleaseIntegrityError: when `release.json` is missing or malformed, a
@@ -190,7 +196,7 @@ def load(
         SourceUnavailableError: when the index or a pack cannot be downloaded.
     """
     if path is not None:
-        return _open(Path(path))
+        return _open(Path(path).resolve())
     index = _fetch_index() if refresh else _shipped_index()
     name = _resolve(index, release)
     cache = _cache_dir(cache_dir)

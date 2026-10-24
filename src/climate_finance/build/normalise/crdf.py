@@ -5,8 +5,13 @@ from typing import Literal
 
 import polars as pl
 
-from climate_finance.build.normalise.crs import CORE_CONTRIBUTION
 from climate_finance.build.normalise.ids import content_id
+from climate_finance.schema import (
+    ADAPTATION_FIRST_YEAR,
+    CORE_CONTRIBUTION,
+    EIB_AGENCY,
+    EU_INSTITUTIONS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +33,8 @@ _MARKERS: dict[str, int | None] = {
     "Imputed Multilateral Contribution": None,
 }
 _IMPUTED = "Imputed Multilateral Contribution"
+# The columns that measure adaptation, null before `ADAPTATION_FIRST_YEAR`.
+_ADAPTATION_COLUMNS = ("rio_adaptation", "adaptation_usd", "overlap_usd")
 # Text Excel writes in place of a formula it could not evaluate.
 _EXCEL_ERRORS = ("#NAME?", "#VALUE!", "#REF!", "#DIV/0!", "#N/A", "#NUM!", "#NULL!")
 # Excel read some `Donor project N°` cells (such as "1/2015" or "Aug-18") as dates,
@@ -40,7 +47,6 @@ _TEXT_COLUMNS = ("crs_id", "project_number", "project_title")
 # 2015, EIB serials (year and four digits, letters for components) to 2020, reporting
 # sequences (year and six digits, or year, "PSI" and a number) in 2019 to 2023, and
 # bulk CRS ids (year, agency 3, project number, suffix) from 2024.
-_EIB = {"provider_code": 918, "agency_code": 3}
 _EIB_SERIAL = r"^\d{8}[a-z]*$"
 _EIB_SEQUENCE = r"^\d{4}(\d{6}|PSI\d+)[a-z]*$"
 ID_SCHEMES = ("none", "eib_serial", "sequence", "bulk")
@@ -76,7 +82,12 @@ def normalise_crdf(
     """One perspective's `download_crdf` output in the `crdf` schema.
 
     Amounts are converted to USD units at current prices. `adaptation_usd` and
-    `mitigation_usd` each include `overlap_usd`, as published. Rio-marked rows carry
+    `mitigation_usd` each include `overlap_usd`, as published. Before
+    `ADAPTATION_FIRST_YEAR` adaptation is not measured: `rio_adaptation`,
+    `adaptation_usd` and `overlap_usd` are null, and the climate value is the
+    mitigation value: a Rio-marked row marked for adaptation alone keeps its face
+    value and objective with a climate value of 0, and a warning gives their count and
+    published climate value. Rio-marked rows carry
     the commitment's full value as `climate_usd` (IFAD's own 40% for significant
     projects aside), and component rows (development banks' climate components and
     imputed multilateral contributions) carry the climate part. `face_usd` is
@@ -122,9 +133,11 @@ def normalise_crdf(
             for name, source in _AMOUNTS.items()
         },
         published_share=_published_share(frame),
+    ).with_columns(
+        pl.when(pl.col("year") >= ADAPTATION_FIRST_YEAR).then(pl.col(name))
+        for name in _ADAPTATION_COLUMNS
     )
     frame = frame.with_columns(
-        objective=_objective(),
         face_usd=pl.when(pl.col("published_share").is_not_null())
         .then(pl.col("climate_usd") / pl.col("published_share"))
         .otherwise(pl.col("climate_usd")),
@@ -134,6 +147,7 @@ def normalise_crdf(
         id_scheme=_id_scheme(),
         vintage=pl.col("year").max().over("source_file").cast(pl.Int16),
     )
+    frame = _mitigation_only(frame).with_columns(objective=_objective())
     _check(frame)
     return frame.lazy().select(
         "row_id",
@@ -279,6 +293,34 @@ def _is_component() -> pl.Expr:
     return pl.col("rio_adaptation").is_null() & pl.col("rio_mitigation").is_null()
 
 
+def _mitigation_only(frame: pl.DataFrame) -> pl.DataFrame:
+    """`frame` with the climate value of Rio-marked rows before
+    `ADAPTATION_FIRST_YEAR` set to their mitigation value."""
+    unmeasured = (pl.col("year") < ADAPTATION_FIRST_YEAR) & pl.col(
+        "rio_mitigation"
+    ).is_not_null()
+    changed = frame.filter(
+        unmeasured, pl.col("climate_usd") != pl.col("mitigation_usd")
+    )
+    if changed.height:
+        logger.warning(
+            "%d Rio-marked CRDF rows before %d publish USD %.1fm of climate value "
+            "beyond their mitigation value; adaptation is not measured then, so it "
+            "counts as 0",
+            changed.height,
+            ADAPTATION_FIRST_YEAR,
+            changed.select(pl.col("climate_usd") - pl.col("mitigation_usd"))
+            .sum()
+            .item()
+            / 1e6,
+        )
+    return frame.with_columns(
+        climate_usd=pl.when(unmeasured)
+        .then(pl.col("mitigation_usd"))
+        .otherwise(pl.col("climate_usd"))
+    )
+
+
 def _objective() -> pl.Expr:
     adaptation = (pl.col("adaptation_usd") > 0) | (
         pl.col("rio_adaptation").fill_null(0) > 0
@@ -295,6 +337,10 @@ def _objective() -> pl.Expr:
         .then(pl.lit("mitigation"))
         .when(pl.col("climate_usd") != 0)
         .then(pl.lit("climate"))
+        # Before `ADAPTATION_FIRST_YEAR`, an adaptation mark the CRDF does not
+        # measure, on a row with no other part.
+        .when(_marker("adaptation_objective") > 0)
+        .then(pl.lit("adaptation"))
     )
 
 
@@ -302,10 +348,12 @@ def _id_scheme() -> pl.Expr:
     crs_id = pl.col("crs_id")
     bulk_prefix = pl.concat_str(
         pl.col("year").cast(pl.String),
-        pl.lit(str(_EIB["agency_code"])),
+        pl.lit(str(EIB_AGENCY)),
         pl.col("project_number"),
     )
-    is_eib = pl.all_horizontal(pl.col(k) == v for k, v in _EIB.items())
+    is_eib = (pl.col("provider_code") == EU_INSTITUTIONS) & (
+        pl.col("agency_code") == EIB_AGENCY
+    )
     return (
         pl.when(~is_eib.fill_null(False))
         .then(pl.lit(None, pl.String))

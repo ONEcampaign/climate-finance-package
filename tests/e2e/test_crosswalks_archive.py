@@ -5,7 +5,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-from archive_build import archive_config, seed_release
+from archive_build import archive_config, seed_raw
 
 from climate_finance.build import Stage, build
 from climate_finance.build.link.crosswalks import GEF_DONOR, crosswalk_profile
@@ -20,7 +20,7 @@ def linked(tmp_path_factory: pytest.TempPathFactory) -> Path:
     archive = Path(os.environ["CF_E2E_DATA"]) / "raw"
     config = archive_config(archive, key_repair=False, recoveries=True)
     out = tmp_path_factory.mktemp("crosswalks")
-    seed_release(out / "r", archive=archive, config=config)
+    seed_raw(out / "r", archive=archive, config=config)
     stages = [Stage.FETCH, Stage.NORMALISE, Stage.LINK]
     return build(
         "r", config=config, out_dir=out, stages=stages, offline=True

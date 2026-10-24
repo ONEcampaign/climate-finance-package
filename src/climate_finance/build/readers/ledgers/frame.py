@@ -20,7 +20,8 @@ def ledger_frame(rows: Iterable[Mapping[str, object]]) -> pl.DataFrame:
 
 
 def complete_ledger(frame: pl.DataFrame) -> pl.DataFrame:
-    """Add `year` and `amount_usd` to a frame holding the `LEDGER_SCHEMA` columns.
+    """Add `year` and `amount_usd` to a frame holding the `LEDGER_SCHEMA` columns,
+    and keep the `LEDGER` columns alone, in their order.
 
     `year` is the calendar year of `date` (null when `date` is). `amount_usd` is
     `amount` for USD rows and null for every other currency. The stage that holds the
@@ -29,16 +30,4 @@ def complete_ledger(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.with_columns(
         year=pl.col("date").dt.year().cast(pl.Int16),
         amount_usd=pl.when(pl.col("currency") == "USD").then(pl.col("amount")),
-    ).select(
-        "publisher",
-        "key",
-        "activity_id",
-        "transaction_type",
-        "date",
-        "year",
-        "currency",
-        "amount",
-        "amount_usd",
-        "title",
-        "other_ids",
-    )
+    ).select(list(LEDGER.columns))

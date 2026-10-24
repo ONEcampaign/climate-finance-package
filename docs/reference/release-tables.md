@@ -31,7 +31,7 @@ Key `row_id`. One row per recipient-perspective CRDF commitment, which is the po
 
 ## `disbursements`
 
-Key `row_id`, `record_id`, `year`. Allocations of CRS records, and of bank-ledger and IATI fills, to climate commitments, one row per allocation. Every row names a commitment. Records run to `crs_last_complete`. The table omits what the trace could not allocate, which `unallocated` sums:
+Key `row_id`, `record_id`, `year`. Allocations of CRS records, and of bank-ledger and IATI fills, to climate commitments, one row per allocation. Every row names a commitment. Records run to `crs_last_complete`. The table omits what the trace could not allocate. `untraced` holds the part of it that totals count, and `unallocated` sums all of it:
 
 - `row_id`, `record_id`, `year`: the commitment, the CRS record (or fill record), and the record's year.
 - `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_code`, `project_number`, `title`: the record's own fields. `flow_code` is the CRS flow, where 11 is ODA grants, 13 is ODA loans, and 19 is equity.
@@ -148,27 +148,43 @@ Key `provider_code`, `year`. Link and coverage statistics. Every amount is clima
 - `provider_code`, `year`, `commitments` (the count).
 - `climate_usd`: all counted commitments. `linked_usd` is the part that traces to at least one CRS record.
 - `certain_route_usd`: the part of `linked_usd` whose CRDF rows reach their CRS commitment through certain routes alone.
-- `linked_high_probability_usd`: the part of `linked_usd` whose most probable link is at least 0.8.
 - `disbursed_climate_usd`, `certain_disbursed_climate_usd`: the climate value of the commitments' disbursements in the high and low bounds.
 - `model_labelled_usd`, `report_labelled_usd`: the part labelled by a model or by the donor's report.
 - `repeat_climate_usd`: rows that repeat an earlier vintage, which the other amounts leave out.
 - `grant_equiv_coverage`: the part of the linked commitments' allocated value whose record has a grant equivalent, null where nothing is allocated.
 
+## `untraced`
+
+Key `record_id`. Rio-marked CRS disbursement that reaches no commitment in the release, one row per CRS record, at face value. Disbursement and grant-equivalent totals count it in `value` and `high` and not in `low`, weighted by the record's own markers. A record enters when its Bi_Multi code is in the recipient view, it disburses a positive amount in a year up to `crs_last_complete`, and it carries a Rio marker above 0:
+
+- `record_id`, `year`: the CRS record and its disbursement year.
+- `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_code`, `project_number`, `title`: the record's own fields, as on `disbursements`.
+- `rio_adaptation`, `rio_mitigation`: the record's own markers. Before 2010 `rio_adaptation` is null, as the CRDF's is, and the record counts mitigation alone.
+- `untraced_usd`: the face value that reaches no commitment.
+- `reason`: `excess` for a linked record's disbursement beyond what its commitments take, and `unlinked` for the whole disbursement of a record linked to no commitment.
+- `record_disbursement_usd`, `record_grant_equiv_usd`: as on `disbursements`. A query takes an untraced row's grant equivalent as `record_grant_equiv_usd` × `untraced_usd` ÷ `record_disbursement_usd`.
+
+A record's `disbursements` rows and its `untraced` row never share money: its allocations plus its `untraced_usd` are at most its disbursement. With `gap_fill` on, the funds whose commitments the build routes through their IATI files, the GEF and the GCF, keep their unlinked records out of `untraced`, since a fill may count the same money, and `unallocated.fund_unlinked_usd` holds them. Their excess stays in.
+
 ## `unallocated`
 
-Key `provider_code`, `year`. Rio-marked CRS disbursements that reach no commitment in the release, by provider and disbursement year, at face value. With the `disbursements` rows of CRS records, they sum to every Rio-marked CRS disbursement:
+Key `provider_code`, `year`. Rio-marked CRS disbursements that reach no commitment in the release, by provider and disbursement year, at face value. With the `disbursements` rows of Rio-marked CRS records, they sum to every Rio-marked CRS disbursement:
 
 - `provider_code`, `year`.
 - `excess_usd`: a linked record's disbursement beyond what its commitments take.
 - `outside_release_usd`: disbursements linked to CRS commitments with no CRDF row in the release.
 - `unlinked_marked_usd`: records linked to no commitment.
+- `fund_unlinked_usd`: the unlinked records of the funds the build routes through their IATI files, 0 with `gap_fill` off.
+
+`excess_usd` and `unlinked_marked_usd` equal the `untraced` sums by provider, year, and reason, and count in totals through it. No total counts `outside_release_usd` or `fund_unlinked_usd`.
 
 ## `total_flows`
 
-Key `provider_code`, `agency_code`, `recipient_code`, `year`, `bi_multi`, `flow`. Every CRS flow, across climate and non-climate records, up to `crs_last_complete`. It is the denominator of `Result.share_of_total()`:
+Key `provider_code`, `agency_code`, `recipient_code`, `year`, `bi_multi`, `flow`, `rio_marker`. Every CRS flow, across climate and non-climate records, up to `crs_last_complete`. It is the denominator of `Result.share_of_total()`, and the BTR reconciliation weights its climate disbursements by `rio_marker`:
 
 - `provider_code`, `recipient_code`, `year`, `bi_multi`, `flow`.
 - `agency_code`: the CRS agency, so a query can take out the EIB's flows where the EIB counts as a channel. Null on core contributions.
+- `rio_marker`: the higher of the record's two Rio markers, 0 for none.
 - `amount_usd`.
 
 ## `provider_coefficients`

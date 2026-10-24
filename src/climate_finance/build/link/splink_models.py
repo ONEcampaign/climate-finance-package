@@ -28,6 +28,8 @@ weight gives the probability: the model's own map when its labelled pairs hold
 `MIN_ISOTONIC_OUTCOMES` matches and as many non-matches, else a map pooled over the
 calibrated models. When people's labels hold under `MIN_JEV_SCALE_OUTCOMES` of either
 outcome, Jev's scale cannot be fitted, and their labels alone set m and the map.
+Without a Jev client, which the link stage passes only with `jev_links` on, people's
+labels alone set m and the map, and Jev is never asked.
 
 With `jev_links` on, a model with fewer than `CALIBRATION_LABELS` people's labels
 has its calibration sample answered instead (`jev.jev_answers`): Jev reads each pair,
@@ -48,7 +50,6 @@ import time
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import duckdb
@@ -63,15 +64,18 @@ from splink import DuckDBAPI, Linker, SettingsCreator
 # Splink's own reading of a comparison gives each level's number and the m it
 # scores with. Splink is pinned below 6.
 from splink.internals.comparison import Comparison
+from splink.internals.settings import Settings
 
 from climate_finance import schema
-from climate_finance.build.link.decisions import standing_decisions
+from climate_finance.build.link.candidates import MAX_PN_UNITS, MAX_TITLE_UNITS
+from climate_finance.build.link.decisions import CALIBRATION_REASON
 from climate_finance.build.link.jev import (
     CalibrationAnswers,
     ask_jev,
     fit_logistic,
     spread_sample,
 )
+from climate_finance.build.link.keys import links_frame
 from climate_finance.build.link.levels import (
     LEVELS,
     comparison_levels,
@@ -79,7 +83,7 @@ from climate_finance.build.link.levels import (
     levels_struct,
     unit_attributes,
 )
-from climate_finance.build.link.score import best_commitments
+from climate_finance.build.link.score import fit_isotonic, linked_pairs
 
 if TYPE_CHECKING:
     from climate_finance.build.jev_client import JevClient
@@ -87,9 +91,13 @@ if TYPE_CHECKING:
 # Splink puts the input with the smaller table name on the left.
 LEFT, RIGHT = "a_commit", "b_later"
 _LATER = "l.donor_code = r.donor_code and l.year < r.year"
+_SAME_PN = f"{_LATER} and l.pn_norm = r.pn_norm and l.pn_freq <= {MAX_PN_UNITS}"
+_SAME_TITLE = (
+    f"{_LATER} and l.title_norm = r.title_norm and l.title_freq <= {MAX_TITLE_UNITS}"
+)
 EM_RULES = (
-    f"{_LATER} and l.pn_norm = r.pn_norm and l.pn_freq <= 300",
-    f"{_LATER} and l.title_norm = r.title_norm and l.title_freq <= 100",
+    _SAME_PN,
+    _SAME_TITLE,
     f"{_LATER} and l.recipient_code = r.recipient_code "
     "and l.purpose_code = r.purpose_code",
 )
@@ -98,9 +106,8 @@ EM_RULES = (
 # only the raw EM probability, since the isotonic map reads the match weight and a
 # constant shift in it leaves the map's output unchanged.
 PRIOR_RULES = (
-    f"{_LATER} and l.pn_norm = r.pn_norm and l.pn_freq <= 300",
-    f"{_LATER} and l.title_norm = r.title_norm and l.title_freq <= 100 "
-    "and l.recipient_code = r.recipient_code",
+    _SAME_PN,
+    f"{_SAME_TITLE} and l.recipient_code = r.recipient_code",
 )
 PRIOR_RULE_RECALL = 0.963
 SEED = 42
@@ -124,7 +131,6 @@ MIN_JEV_SCALE_OUTCOMES = 5
 MIN_ISOTONIC_OUTCOMES = 30
 # Weight of EM's m in the labelled estimate, as in Splink's estimate from labels.
 M_PRIOR_WEIGHT = 1.0
-CALIBRATION_REASON = "calibration"
 # A calibrated pair links at this probability or more. The rest go to the review
 # queue. With each truth-group provider's ids hidden in turn on the archive, the two
 # models that reach 0.7 linked at precision 0.954 (France, 1,789 links) and 0.698
@@ -134,12 +140,30 @@ CALIBRATION_REASON = "calibration"
 LINK_THRESHOLD = 0.7
 LINK_METHOD = "splink_jev"
 _PAIR = ["left_id", "right_id"]
+# A model's calibration labels.
+_LABELS = {
+    "left_id": pl.String,
+    "right_id": pl.String,
+    "y": pl.Float64,
+    "stratified": pl.Boolean,
+}
 # The ten comparisons labels re-estimate; `donor` and `provider` keep EM's m.
 LEVEL_NAMES = tuple(name.removeprefix("gamma_") for name in LEVELS)
 
-SPLINK_SCORES = {
-    name: column.dtype for name, column in schema.PAIR_SCORES.columns.items()
-}
+# Splink 5 collects the term-frequency columns into a set, so the order of their
+# joins, and with it the order of EM's float sums, follows the process's hash seed.
+# Every Splink `Settings` returns them sorted by name instead. Splink builds and
+# copies its `Settings` itself, so the fix sits on the class, and the lookup raises
+# at import if Splink renames the property. ty reads the class attribute as the
+# property's value, so it refuses the assignment.
+_term_frequency_columns: property = Settings.__dict__["_term_frequency_columns"]
+Settings._term_frequency_columns = property(  # ty: ignore[invalid-assignment]
+    lambda settings: sorted(
+        _term_frequency_columns.__get__(settings), key=lambda column: column.name
+    )
+)
+
+SPLINK_SCORES = schema.PAIR_SCORES.dtypes
 
 _log = logging.getLogger(__name__)
 
@@ -189,7 +213,7 @@ def score_with_splink(
     stems: pl.DataFrame,
     provider_profile: pl.DataFrame,
     labels: pl.DataFrame,
-    client: JevClient,
+    client: JevClient | None,
     answer: CalibrationAnswers | None = None,
 ) -> SplinkResult:
     """Splink scores for the eligible candidate pairs of the providers in the
@@ -205,7 +229,8 @@ def score_with_splink(
         labels: pair labels in the `pair_labels` schema with `stratified`, as
             `read_decision_labels` gives them; the `human` and `agent` labels of
             task `trace` calibrate.
-        client: the build's Jev client.
+        client: the build's Jev client, which answers the stratified sample of a
+            calibrated model; None leaves calibration to people's labels alone.
         answer: what answers the calibration sample of a model with fewer than
             `CALIBRATION_LABELS` people's labels (`jev.jev_answers`); None leaves
             the sample to people.
@@ -228,9 +253,7 @@ def score_with_splink(
         units.filter(pl.col("unit_id").is_in(unit_ids.implode())), crs=crs, stems=stems
     )
     human = (
-        labels.filter(
-            pl.col("pair_label_source").is_in(["human", "agent"]), task="trace"
-        )
+        labels.filter(pl.col("pair_label_source").is_in(schema.DECIDERS), task="trace")
         .select(
             "left_id", "right_id", "stratified", y=pl.col("is_match").cast(pl.Float64)
         )
@@ -274,39 +297,6 @@ def score_with_splink(
     return SplinkResult(
         scores=_apply_maps(models).sort("left_id", "right_id"),
         models=[model.report for model in models],
-    )
-
-
-def read_decision_labels(path: Path) -> pl.DataFrame:
-    """People's and agents' queue decisions at `path` as `pair_labels` rows with
-    source `human` or `agent`, one per pair, and none when nothing has been decided yet.
-
-    A pair's standing decision is the one `decisions.standing_decisions` keeps.
-    A blind-sample decision (one with a `sample_id`) measures precision, so it is left
-    out of the labels. `stratified` marks the decisions on calibration pairs, which
-    `stratified_sample` drew, so only they take inverse-probability weights.
-    """
-    columns = {
-        name: column.dtype for name, column in schema.PAIR_LABELS.columns.items()
-    } | {"stratified": pl.Boolean()}
-    if not path.exists():
-        return pl.DataFrame(schema=columns)
-    pair = ["task", "left_id", "right_id"]
-    decided = (
-        pl.read_parquet(path)
-        .filter(pl.col("sample_id").is_null())
-        .drop_nulls("right_id")
-    )
-    return (
-        standing_decisions(decided, key=pair)
-        .sort(pair)
-        .select(
-            *pair,
-            is_match=pl.col("decision") == "accept",
-            pair_label_source="label_source",
-            stratified=pl.col("review_reason") == CALIBRATION_REASON,
-        )
-        .cast(columns)  # ty: ignore[invalid-argument-type]
     )
 
 
@@ -358,12 +348,20 @@ def _model(
     pairs: pl.DataFrame,
     attributes: pl.DataFrame,
     human: pl.DataFrame,
-    client: JevClient,
+    client: JevClient | None,
     answer: CalibrationAnswers | None,
     pooled: bool = False,
 ) -> _Model:
     """Fit the model for `donors`, score their pairs and calibrate it."""
     own_pairs = pairs.filter(pl.col("donor_code").is_in(donors))
+    attributes = attributes.join(
+        pl.concat([own_pairs["left_id"], own_pairs["right_id"]])
+        .unique()
+        .to_frame("unique_id"),
+        on="unique_id",
+        how="semi",
+        maintain_order="left",
+    )
     report = ModelReport(name=name, donors=donors, pairs=own_pairs.height)
     inputs = _register_inputs(con, pairs=own_pairs, attributes=attributes)
     report.commitments, report.later_records = (
@@ -392,14 +390,7 @@ def _model(
         time.perf_counter() - fitted,
     )
     labelled = scores.join(human, on=_PAIR)
-    answered = pl.DataFrame(
-        schema={
-            "left_id": pl.String,
-            "right_id": pl.String,
-            "y": pl.Float64,
-            "stratified": pl.Boolean,
-        }
-    )
+    answered = pl.DataFrame(schema=_LABELS)
     if labelled.height < CALIBRATION_LABELS:
         sample = stratified_sample(
             scores.join(labelled, on=_PAIR, how="anti"), n=CALIBRATION_LABELS
@@ -415,7 +406,7 @@ def _model(
             stratified=pl.lit(True)
         )
         by_people = given.filter(
-            pl.col("pair_label_source").is_in(["human", "agent"])
+            pl.col("pair_label_source").is_in(schema.DECIDERS)
         ).select(*_PAIR, "y", "stratified")
         labelled = pl.concat(
             [labelled.select(*_PAIR, "y", "stratified"), by_people],
@@ -437,7 +428,11 @@ def _model(
     weighted = _band_weights(scores, labels)
     rescored = _predict(
         con, inputs, model=with_labelled_m(model, weighted), pairs=own_pairs
-    ).with_columns(p_raw=scores["p_raw"], levels=scores["levels"])
+    ).with_columns(
+        p_raw=scores["p_raw"],
+        levels=scores["levels"],
+        review_reason=pl.lit(None, dtype=pl.String),
+    )
     return _Model(
         report=report,
         scores=rescored,
@@ -646,24 +641,28 @@ def _labels(
     human: pl.DataFrame,
     answered: pl.DataFrame,
     attributes: pl.DataFrame,
-    client: JevClient,
+    client: JevClient | None,
     report: ModelReport,
 ) -> tuple[pl.DataFrame, str]:
     """The labels that calibrate a model, `y` per pair, and what they hold.
 
     People's labels stand. Where Jev `answered` the calibration sample, its labels
-    join them as they are. Otherwise, with both outcomes among people's labels, Jev
-    answers the stratified sample and every labelled pair, and its answers on pairs
-    people did not label become labels through Jev's scale. `stratified` marks the
-    labels `stratified_sample` drew: people's on calibration pairs and all of Jev's.
+    join them as they are. Otherwise, with a `client` and both outcomes among
+    people's labels, Jev answers the stratified sample and every labelled pair, and
+    its answers on pairs people did not label become labels through Jev's scale.
+    `stratified` marks the labels `stratified_sample` drew: people's on calibration
+    pairs and all of Jev's.
     """
-    columns = ["left_id", "right_id", "y", "stratified"]
+    columns = list(_LABELS)
     if answered.height:
         report.jev_labels = answered.height
         labels = pl.concat([human.select(columns), answered])
         return labels, f"human:{human.height},jev:{answered.height}"
     outcomes = human["y"].sum()
-    if min(outcomes, human.height - outcomes) < MIN_JEV_SCALE_OUTCOMES:
+    if (
+        client is None
+        or min(outcomes, human.height - outcomes) < MIN_JEV_SCALE_OUTCOMES
+    ):
         return human.select(columns), f"human:{human.height}"
     asked = pl.concat(
         [
@@ -743,10 +742,10 @@ def isotonic_map(labelled: pl.DataFrame) -> IsotonicRegression:
     """A non-decreasing map from match weight to the labels' match rate, each label
     weighted by its inverse inclusion probability."""
     ordered = labelled.sort("match_weight", "y", "left_id", "right_id")
-    return IsotonicRegression(out_of_bounds="clip", y_min=0, y_max=1).fit(
+    return fit_isotonic(
         ordered["match_weight"].to_numpy(),
         ordered["y"].to_numpy(),
-        sample_weight=ordered["weight"].to_numpy(),
+        ordered["weight"].to_numpy(),
     )
 
 
@@ -775,9 +774,6 @@ def _apply_maps(models: list[_Model]) -> pl.DataFrame:
                 model=pl.lit(f"splink-{splink.__version__}:{model.report.name}"),
                 probability=probability,
                 label_set=pl.lit(model.label_set, dtype=pl.String),
-                review_reason=pl.col("review_reason")
-                if "review_reason" in model.scores.columns
-                else pl.lit(None, dtype=pl.String),
             ).select(list(SPLINK_SCORES))
         )
     return pl.concat(frames)
@@ -789,13 +785,14 @@ def splink_links(
     candidates: pl.DataFrame,
     units: pl.DataFrame,
     jev_model: str,
+    rejected: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """The calibrated Splink models' `trace` links, in the `links` schema.
 
     Each disbursement unit joins the commitment of its highest-probability pair at
-    or above `LINK_THRESHOLD` that is not a sibling, ties to the earlier placed
-    year, then the smaller unit id (`score.best_commitments`). A commitment's
-    links form one group.
+    or above `LINK_THRESHOLD` that is not a sibling and not in `rejected`, ties to
+    the earlier placed year, then the smaller unit id (`score.linked_pairs`). A
+    commitment's links form one group.
 
     Args:
         scores: `pair_scores` (`score_with_splink`).
@@ -803,13 +800,19 @@ def splink_links(
         units: the link stage's units, for each commitment's placed year.
         jev_model: the Jev model behind the calibration labels, recorded on the
             links of models whose labels Jev gave some of.
+        rejected: the trace pairs (`left_id`, `right_id`) review decisions
+            rejected.
     """
     taken = (
-        scores.filter(pl.col("probability") >= LINK_THRESHOLD)
+        scores.drop_nulls("probability")
         .join(candidates.select(*_PAIR, "programme_level"), on=_PAIR)
         .join(units.select("placed_year", right_id="unit_id"), on="right_id")
     )
-    best = best_commitments(taken, probability="probability")
+    best = linked_pairs(
+        taken.with_columns(p_model="probability"),
+        threshold=LINK_THRESHOLD,
+        rejected=rejected,
+    )
     given = {
         "task": pl.lit("trace"),
         "left_id": pl.col("left_id"),
@@ -827,7 +830,4 @@ def splink_links(
         "label_set": pl.col("label_set"),
         "review": pl.lit(value=False),
     }
-    return best.select(
-        given.get(name, pl.lit(None)).cast(column.dtype).alias(name)
-        for name, column in schema.LINKS.columns.items()
-    ).sort(*_PAIR)
+    return links_frame(best, given).sort(*_PAIR)

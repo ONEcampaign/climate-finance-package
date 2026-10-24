@@ -5,6 +5,9 @@ share a project number.
 """
 
 import json
+import os
+import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -15,27 +18,29 @@ import numpy as np
 import polars as pl
 import pytest
 import splink
+from stage_runs import JEV_MODEL
 
 from climate_finance import schema
 from climate_finance.build.jev_client import JevClient
 from climate_finance.build.link import splink_models
+from climate_finance.build.link.decisions import (
+    CALIBRATION_REASON,
+    read_decision_labels,
+)
 from climate_finance.build.link.jev import CalibrationAnswers, Logistic, jev_answers
 from climate_finance.build.link.score import ELIGIBLE, scoring_groups
 from climate_finance.build.link.splink_models import (
     CALIBRATION_LABELS,
-    CALIBRATION_REASON,
     JEV_SAMPLE,
     LINK_THRESHOLD,
     SplinkResult,
     isotonic_map,
-    read_decision_labels,
     score_with_splink,
     splink_links,
     stratified_sample,
     with_labelled_m,
 )
 
-MODEL = "jev-1.14.0"
 DONOR = 901
 OTHER_DONOR = 902
 _WORDS = (
@@ -44,15 +49,11 @@ _WORDS = (
     "fisheries", "drought", "flood", "climate", "nutrition", "markets", "finance",
     "power", "wind",
 )  # fmt: skip
-_UNIT_SCHEMA = {name: column.dtype for name, column in schema.UNITS.columns.items()}
-_LABEL_SCHEMA = {
-    name: column.dtype for name, column in schema.PAIR_LABELS.columns.items()
-} | {"stratified": pl.Boolean()}
-_STEMS = pl.DataFrame(
-    schema={
-        name: column.dtype for name, column in schema.PROGRAMME_STEMS.columns.items()
-    }
-)
+# Each donor's (code, seed, projects, noise) in `world`.
+WORLD = ((DONOR, 7, 160, 260), (OTHER_DONOR, 11, 90, 150))
+_UNIT_SCHEMA = schema.UNITS.dtypes
+_LABEL_SCHEMA = schema.PAIR_LABELS.dtypes | {"stratified": pl.Boolean()}
+_STEMS = pl.DataFrame(schema=schema.PROGRAMME_STEMS.dtypes)
 
 
 def _donor(donor: int, *, seed: int, projects: int, noise: int) -> list[dict]:
@@ -177,7 +178,7 @@ def _world(*donors: tuple[int, int, int, int]) -> dict[str, pl.DataFrame]:
 @pytest.fixture(scope="module")
 def world() -> dict[str, pl.DataFrame]:
     """A donor large enough for its own model and one that joins the pooled model."""
-    return _world((DONOR, 7, 160, 260), (OTHER_DONOR, 11, 90, 150))
+    return _world(*WORLD)
 
 
 def _responses(request: httpx.Request) -> httpx.Response:
@@ -225,10 +226,12 @@ def _run(
     labels: pl.DataFrame | None = None,
     providers: tuple[int, ...] = (DONOR, OTHER_DONOR),
     answer: Callable[[JevClient], CalibrationAnswers] | None = None,
+    *,
+    jev: bool = True,
 ) -> Run:
     """Score both donors, with Jev answering through `_responses` and `answer`,
-    given the client, answering calibration samples. `scores` adds each pair's
-    truth `y`."""
+    given the client, answering calibration samples. Without `jev`, scoring gets
+    no client. `scores` adds each pair's truth `y`."""
     weighed = []
     band_weights = splink_models._band_weights
 
@@ -240,7 +243,7 @@ def _run(
         patch.setenv("TYPESAFE_API_KEY", "test")
         patch.setattr(splink_models, "_band_weights", record)
         client = JevClient(
-            model=MODEL,
+            model=JEV_MODEL,
             cost_cap_usd=10.0,
             cache_dir=cache_dir,
             offline=False,
@@ -255,7 +258,7 @@ def _run(
                 world["candidates"].filter(pl.col("donor_code").is_in(providers))
             ),
             labels=pl.DataFrame(schema=_LABEL_SCHEMA) if labels is None else labels,
-            client=client,
+            client=client if jev else None,
             answer=None if answer is None else answer(client),
         )
     scores = result.scores.join(
@@ -342,6 +345,26 @@ def test_calibration_labels_give_monotone_probabilities(
     assert linked["y"].mean() > 0.9
 
 
+def test_without_a_client_people_s_labels_alone_calibrate(
+    world: dict[str, pl.DataFrame],
+    calibration_labels: pl.DataFrame,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    # Slow: one more run, about 5 s. The labels that let Jev set its scale in
+    # `calibrated` calibrate alone.
+    run = _run(
+        world, tmp_path_factory.mktemp("jev"), _labels(calibration_labels), jev=False
+    )
+    reports = {report.name: report for report in run.result.models}
+    own = reports[f"own_{DONOR}"]
+    assert own.calibrated
+    assert own.jev_labels == 0
+    assert run.client.live_calls == 0
+    scores = run.scores.filter(donor_code=DONOR)
+    assert scores["label_set"].unique().to_list() == [f"human:{2 * CALIBRATION_LABELS}"]
+    assert scores["probability"].null_count() == 0
+
+
 def test_a_provider_without_calibration_labels_stays_in_the_queue(
     calibrated: Run, calibration_labels: pl.DataFrame
 ) -> None:
@@ -382,16 +405,19 @@ def test_jev_answers_the_calibration_samples_and_the_models_link(
         programme_level=pl.lit(0, dtype=pl.Int8)
     )
     links = splink_links(
-        run.result.scores, candidates=candidates, units=world["units"], jev_model=MODEL
+        run.result.scores,
+        candidates=candidates,
+        units=world["units"],
+        jev_model=JEV_MODEL,
     )
     schema.validate(schema.LINKS, links)
-    assert set(links["jev_model"]) == {MODEL}
+    assert set(links["jev_model"]) == {JEV_MODEL}
     # A model calibrated on people's labels alone links with no Jev model.
     people = splink_links(
         run.result.scores.with_columns(label_set=pl.lit(f"human:{CALIBRATION_LABELS}")),
         candidates=candidates,
         units=world["units"],
-        jev_model=MODEL,
+        jev_model=JEV_MODEL,
     )
     assert people.height == links.height
     assert people["jev_model"].null_count() == people.height
@@ -402,6 +428,38 @@ def test_jev_answers_the_calibration_samples_and_the_models_link(
     right = links.join(world["candidates"], on=["left_id", "right_id"])["y"]
     assert links.height > 100
     assert right.mean() > 0.9
+
+
+def test_a_rejected_splink_pair_gives_way_to_the_next_best() -> None:
+    scores = pl.DataFrame(
+        {
+            "left_id": ["d1", "d1", "d1"],
+            "right_id": ["c1", "c2", "c3"],
+            "probability": [0.99, 0.95, LINK_THRESHOLD - 0.01],
+            "model": ["own_1"] * 3,
+            "label_set": ["human:100"] * 3,
+        }
+    ).with_columns(levels=pl.lit(None, dtype=schema.LINKS.columns["levels"].dtype))
+    candidates = scores.select("left_id", "right_id", programme_level=pl.lit(0))
+    units = pl.DataFrame(
+        {"unit_id": ["c1", "c2", "c3"], "placed_year": [2019, 2019, 2019]}
+    )
+
+    def linked(rejected: pl.DataFrame | None = None) -> list[str]:
+        links = splink_links(
+            scores,
+            candidates=candidates,
+            units=units,
+            jev_model=JEV_MODEL,
+            rejected=rejected,
+        )
+        return links["right_id"].to_list()
+
+    assert linked() == ["c1"]
+    c1 = pl.DataFrame({"left_id": ["d1"], "right_id": ["c1"]})
+    assert linked(c1) == ["c2"]
+    # Nothing else reaches the threshold.
+    assert linked(pl.concat([c1, c1.with_columns(right_id=pl.lit("c2"))])) == []
 
 
 def test_an_answer_for_people_calibrates_as_their_recorded_labels(
@@ -452,6 +510,50 @@ def test_two_runs_give_the_same_scores(
 ) -> None:
     again = _run(world, tmp_path_factory.mktemp("jev"))
     assert again.scores.equals(uncalibrated.scores)
+
+
+# Scores `world` without Jev, writes the scores to argv[1] and prints the
+# term-frequency columns in the order Splink joins them.
+_SCORE_WORLD = """
+import sys
+from pathlib import Path
+
+from test_splink_models import WORLD, _run, _world
+
+from climate_finance.build.link import splink_models
+
+run = _run(_world(*WORLD), Path(sys.argv[2]), jev=False)
+run.scores.write_parquet(sys.argv[1])
+settings = splink_models._settings(provider_u=None).get_settings("duckdb")
+print(*(column.name for column in settings._term_frequency_columns))
+"""
+
+
+# Slow: two fresh interpreters each import the package and fit two models, about
+# 10 s in all on an idle machine.
+def test_the_hash_seed_leaves_the_models_unchanged(tmp_path: Path) -> None:
+    # Hash seeds 0 and 1 put the term-frequency columns in a set in opposite orders.
+    runs = []
+    for seed in ("0", "1"):
+        scores = tmp_path / f"scores_{seed}.parquet"
+        done = subprocess.run(
+            [sys.executable, "-c", _SCORE_WORLD, str(scores), str(tmp_path / seed)],
+            capture_output=True,
+            text=True,
+            check=True,
+            env=os.environ
+            | {
+                "PYTHONHASHSEED": seed,
+                "PYTHONPATH": os.pathsep.join(
+                    [str(Path(__file__).parent), os.environ.get("PYTHONPATH", "")]
+                ),
+            },
+        )
+        runs.append((done.stdout.split(), pl.read_parquet(scores)))
+
+    (columns, scores), (other_columns, other_scores) = runs
+    assert columns == other_columns == ['"pn_norm"', '"title_norm"']
+    assert scores.equals(other_scores)
 
 
 def test_a_model_too_small_to_fit_scores_nothing(tmp_path: Path) -> None:

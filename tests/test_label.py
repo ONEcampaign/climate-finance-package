@@ -9,9 +9,9 @@ from pathlib import Path
 import polars as pl
 import pytest
 from normalised import crdf_rows, crs_records
+from stage_runs import BUILD_TOML, run_stage, stage_context, write_inputs
 
 from climate_finance import schema
-from climate_finance.build import write_stage
 from climate_finance.build.config import BuildConfig, load_config
 from climate_finance.build.fetch import ADAPTATION_LABELS_FILE
 from climate_finance.build.jev_client import JevClient, canonical_request
@@ -27,9 +27,8 @@ from climate_finance.build.label import (
     read_adaptation_labels,
     reported_objectives,
 )
-from climate_finance.build.stages import REGISTRY, StageContext, table_path
+from climate_finance.build.stages import StageContext, table_path
 
-BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 MODEL = "jev-1.14.0"
 
 
@@ -58,8 +57,16 @@ def _records() -> pl.DataFrame:
          "rio_mitigation": 2, "title": "Solar mini-grids"},
         {"record_id": "r_blank", "year": 2022, "rio_adaptation": None,
          "rio_mitigation": None},
+        # Its one allocation is excess, so it is untraced.
         {"record_id": "r_excess", "year": 2022, "rio_adaptation": 2,
-         "rio_mitigation": 2},
+         "rio_mitigation": 2, "disbursement_usd": 1.0,
+         "title": "Drought-tolerant seed"},
+        # Linked to nothing, so untraced. The GEF's is untraced too unless the build
+        # routes the GEF through its IATI files, which then count it.
+        {"record_id": "r_unlinked", "year": 2022, "rio_adaptation": 1,
+         "disbursement_usd": 1.0, "title": "Seawalls against sea level rise"},
+        {"record_id": "r_fund", "year": 2022, "donor_code": 811, "rio_adaptation": 1,
+         "disbursement_usd": 1.0, "title": "School meals"},
     )  # fmt: skip
 
 
@@ -86,7 +93,7 @@ def _allocations() -> pl.DataFrame:
             }
             for row_id, record_id in rows
         ],
-        schema={name: c.dtype for name, c in schema.ALLOCATIONS.columns.items()},
+        schema=schema.ALLOCATIONS.dtypes,
     )
 
 
@@ -121,18 +128,24 @@ def test_disbursements_inherit_the_commitments_markers_and_keep_their_own() -> N
     assert inherited.height == 5
 
 
-def test_reported_objectives_label_linked_records_once_per_source() -> None:
+def test_reported_objectives_label_counted_records_once_per_source() -> None:
     labels = reported_objectives(
-        _allocations().lazy(), commitments=_commitments().lazy(), crs=_records().lazy()
+        _allocations().lazy(),
+        commitments=_commitments().lazy(),
+        crs=_records().lazy(),
+        untraced=pl.LazyFrame({"record_id": ["r_excess"]}),
     ).collect()
 
     schema.validate(schema.OBJECTIVE_LABELS, labels)
     # The bank record fills two adaptation components and gets one crdf label; the
-    # unmarked records get no marker labels; the excess record gets none at all.
+    # unmarked records get no marker labels; the untraced excess record gets its own
+    # markers, and the records neither allocated nor untraced get nothing.
     assert sorted(
         labels.select("record_id", "objective", "level", "label_source").iter_rows()
     ) == [
         ("r_bank", "adaptation", 2, "crdf"),
+        ("r_excess", "adaptation", 2, "marker"),
+        ("r_excess", "mitigation", 2, "marker"),
         ("r_other", "adaptation", 0, "marker"),
         ("r_other", "mitigation", 2, "marker"),
         ("r_same", "adaptation", 1, "marker"),
@@ -140,31 +153,46 @@ def test_reported_objectives_label_linked_records_once_per_source() -> None:
     ]
 
 
+def test_reported_objectives_leave_out_adaptation_before_the_crs_measures_it() -> None:
+    records = crs_records(
+        {"record_id": "r_2009", "year": 2009, "rio_adaptation": 2, "rio_mitigation": 1},
+        {"record_id": "r_2010", "year": 2010, "rio_adaptation": 2, "rio_mitigation": 1},
+    )  # fmt: skip
+
+    labels = reported_objectives(
+        pl.LazyFrame(schema=schema.ALLOCATIONS.dtypes),
+        commitments=_commitments().lazy(),
+        crs=records.lazy(),
+        untraced=records.select("record_id").lazy(),
+    ).collect()
+
+    assert sorted(labels.select("record_id", "objective", "level").iter_rows()) == [
+        ("r_2009", "mitigation", 1),
+        ("r_2010", "adaptation", 2),
+        ("r_2010", "mitigation", 1),
+    ]
+
+
 def _context(tmp_path: Path, config: BuildConfig) -> StageContext:
     release_dir = tmp_path / "r"
-    for stage, table, frame in (
-        ("fill", "allocations", _allocations()),
-        ("normalise", "crdf", _commitments()),
-        ("normalise", "crs", _records()),
-    ):
-        path = table_path(release_dir, stage, table)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        frame.write_parquet(path)
-    return StageContext(
-        release="r", release_dir=release_dir, config=config, offline=True
-    )
+    write_inputs(release_dir, "fill", {"allocations": _allocations()})
+    write_inputs(release_dir, "normalise", {"crdf": _commitments(), "crs": _records()})
+    return stage_context(release_dir, config=config)
 
 
-def test_run_label_writes_tables_that_pass_their_schemas(tmp_path: Path) -> None:
-    context = _context(tmp_path, load_config(BUILD_TOML))
-    release_dir = context.release_dir
-    stage = next(entry for entry in REGISTRY if entry.name == "label")
+@pytest.mark.parametrize(("gap_fill", "untraced"), [(False, 3), (True, 2)])
+def test_run_label_writes_tables_that_pass_their_schemas(
+    tmp_path: Path, gap_fill: bool, untraced: int
+) -> None:
+    config = load_config(BUILD_TOML).model_copy(update={"gap_fill": gap_fill})
+    context = _context(tmp_path, config)
 
-    written = write_stage(stage, stage.run(context), release_dir)
+    written = run_stage("label", context)
 
     assert set(written) == set(schema.STAGE_TABLES["label"])
-    objectives = pl.read_parquet(table_path(release_dir, "label", "objectives"))
-    assert objectives.height == 5
+    objectives = pl.read_parquet(table_path(context.release_dir, "label", "objectives"))
+    # The five labels of the allocated records, and two markers per untraced one.
+    assert objectives.height == 5 + 2 * untraced
 
 
 # Jev's lenient answer, p(significant) and p(principal) by text.
@@ -292,7 +320,7 @@ def test_the_threshold_maximises_f1_and_takes_the_higher_cut_on_a_tie() -> None:
     assert fit_adaptation_threshold(fitted) == 0.8
 
 
-def test_jev_labels_only_records_on_commitments_marked_adaptation() -> None:
+def test_jev_labels_only_records_the_release_weighs_as_marked_adaptation() -> None:
     commitments = crdf_rows(
         {"row_id": "adaptation", "year": 2021, "rio_adaptation": 1},
         # Mitigation only, and unmarked: outside the human-coded projects.
@@ -308,12 +336,28 @@ def test_jev_labels_only_records_on_commitments_marked_adaptation() -> None:
     allocations = pl.DataFrame(
         {"row_id": ["adaptation", "mitigation", "unmarked"]}
     ).with_columns(record_id="r_" + pl.col("row_id"))
+    # Untraced records weigh by their own markers: adaptation 1, mitigation only,
+    # and adaptation 2 in 2009, before the CRS measures adaptation.
+    untraced = crs_records(
+        {"record_id": "u_adaptation", "year": 2022, "rio_adaptation": 1,
+         "title": "Project u_adaptation"},
+        {"record_id": "u_mitigation", "year": 2022, "rio_adaptation": 0,
+         "title": "Project u_mitigation"},
+        {"record_id": "u_2009", "year": 2009, "rio_adaptation": 2,
+         "title": "Project u_2009"},
+    )  # fmt: skip
 
     texts = jev_records(
-        allocations.lazy(), commitments=commitments.lazy(), crs=records.lazy()
+        allocations.lazy(),
+        commitments=commitments.lazy(),
+        crs=pl.concat([records, untraced]).lazy(),
+        untraced=untraced.select("record_id").lazy(),
     ).collect()
 
-    assert texts.rows() == [("r_adaptation", "Project adaptation")]
+    assert sorted(texts.rows()) == [
+        ("r_adaptation", "Project adaptation"),
+        ("u_adaptation", "Project u_adaptation"),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -342,12 +386,14 @@ def test_a_jev_label_reaches_adaptation_at_the_threshold(
     )
 
 
+@pytest.mark.parametrize(("gap_fill", "fund"), [(False, [("r_fund", 0)]), (True, [])])
 def test_run_label_labels_described_marker_records_with_one_shared_client(
-    tmp_path: Path,
+    tmp_path: Path, gap_fill: bool, fund: list[tuple[str, int]]
 ) -> None:
     config = load_config(BUILD_TOML)
     config = config.model_copy(
         update={
+            "gap_fill": gap_fill,
             "jev_labels": True,
             "jev": config.jev.model_copy(update={"cache_dir": tmp_path / "jev"}),
         }
@@ -360,19 +406,21 @@ def test_run_label_labels_described_marker_records_with_one_shared_client(
     labels = context.raw_dir / ADAPTATION_LABELS_FILE
     labels.parent.mkdir(parents=True)
     _write_human(labels)
-    stage = next(entry for entry in REGISTRY if entry.name == "label")
 
-    write_stage(stage, stage.run(context), context.release_dir)
+    run_stage("label", context)
 
     objectives = pl.read_parquet(table_path(context.release_dir, "label", "objectives"))
-    # The bank record has climate components, r_blank no text, r_excess no
-    # commitment, so Jev labels only r_same (its title and description) and
-    # r_other.
+    # The bank record has climate components and r_blank no text, so Jev labels
+    # r_same (its title and description) and r_other, which inherit adaptation, and
+    # the untraced r_excess and r_unlinked, marked adaptation themselves. The GEF's
+    # r_fund is untraced only without the IATI route.
     assert sorted(
         objectives.filter(pl.col("label_source") == "jev")
         .select("record_id", "level")
         .iter_rows()
-    ) == [("r_other", 0), ("r_same", 2)]
+    ) == sorted(
+        [("r_excess", 1), ("r_other", 0), ("r_same", 2), ("r_unlinked", 2), *fund]
+    )
     assert context.jev is context.jev
     assert context.jev.live_calls == 0
 

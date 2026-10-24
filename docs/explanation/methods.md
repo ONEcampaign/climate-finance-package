@@ -14,7 +14,7 @@ A donor scores each project 0, 1 (significant), or 2 (principal) for adaptation 
 
 `cf.methods.PROVIDER` uses the coefficients each provider applies when it reports to the UNFCCC, as the OECD's survey DCD/DAC/STAT(2024)28/REV1 records them. Ireland's coefficients before 2021 come from its own report, and Luxembourg's practice from its first BTR. Each provider has a significant and a principal coefficient, by agency and year, and Germany also has one for an activity significant on both objectives. Providers that assess each activity case by case, such as the UK, the US, France's AFD, and Luxembourg, take the method's 0.4 and 1.0, as do providers with no row, while Australia takes its stated default of 0.3. `result.explain()` names each provider's source.
 
-Where a provider publishes its climate share of face value, that share caps each marker weight under every method. IFAD publishes its significant rows at 40%, so no method counts them above that.
+Where a provider publishes its climate share of face value, that share caps each marker weight under every method. IFAD publishes its significant rows at 40%, so no method counts them above that. Untraced disbursement reaches no commitment, so no published share caps it: an IFAD record marked significant counts its untraced part at the method's own significant coefficient.
 
 `cf.methods.RANGE` runs the three together. For each row, `low` becomes the lowest of their `low` bounds, which count only disbursements on certain links, and `high` becomes the highest value any of them gives.
 
@@ -24,7 +24,7 @@ Development banks report a climate share (the climate components) for their proj
 
 ## Jev labels
 
-Where a release holds Jev's objective labels, `Method(relevance="jev")` reads Jev's adaptation level in place of the adaptation marker for disbursements whose CRS record Jev labelled. Jev labels only records whose commitment its donor marked adaptation and that carry no climate components. Mitigation, commitments, and unlabelled records keep their CRS markers. Jev labels a record adaptation when its answer to a lenient adaptation question passes a cut fitted on human-coded projects, at level 2 when it finds principal likelier than significant and at level 1 otherwise. A record below the cut reads level 0. The method weighs these levels at the same coefficients as donor markers.
+Where a release holds Jev's objective labels, `Method(relevance="jev")` reads Jev's adaptation level in place of the adaptation marker for disbursements whose CRS record Jev labelled. Jev labels only records whose commitment its donor marked adaptation and that carry no climate components, and untraced records that their own adaptation marker places among adaptation projects. A label replaces only the adaptation marker a row weighs by: the commitment's for a traced row and the record's own for an untraced one, where that marker is 1 or 2. Mitigation, commitments, and unlabelled records keep their CRS markers. Jev labels a record adaptation when its answer to a lenient adaptation question passes a cut fitted on human-coded projects, at level 2 when it finds principal likelier than significant and at level 1 otherwise. A record below the cut reads level 0. The method weighs these levels at the same coefficients as donor markers.
 
 ## Attribution to providers
 
@@ -73,9 +73,9 @@ for name, method in methods.items():
 ```
 
 ```output
-ONE 126.0
-OECD 150.0
-PROVIDER 135.3
+ONE 136.5
+OECD 160.5
+PROVIDER 145.8
 ```
 
 `cf.compare()` joins results on year, provider, recipient, and Bi_Multi code, and names each column after what sets the results apart.

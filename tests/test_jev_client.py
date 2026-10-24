@@ -4,6 +4,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from jev_import import PrototypeCache, import_prototype_cache
 
 from climate_finance.build.errors import CostCapExceededError
 from climate_finance.build.jev_client import (
@@ -11,10 +12,8 @@ from climate_finance.build.jev_client import (
     JevCacheMissError,
     JevClient,
     JevError,
-    PrototypeCache,
     canonical_hash,
     canonical_request,
-    import_prototype_cache,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "jev"

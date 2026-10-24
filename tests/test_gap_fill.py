@@ -5,11 +5,13 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from stage_runs import BUILD_TOML, stage_context, write_fetched_years, write_inputs
 
 from climate_finance import schema
 from climate_finance.build.allocate import compute_status
 from climate_finance.build.config import BuildConfig, Ledgers, load_config
 from climate_finance.build.errors import ConfigError
+from climate_finance.build.fetch import IATI_DIR
 from climate_finance.build.link.gap_fill import (
     bank_year_overlap,
     fill_from_ledgers,
@@ -18,11 +20,11 @@ from climate_finance.build.link.gap_fill import (
     route_funds,
     run_fill,
 )
-from climate_finance.build.stages import StageContext, table_path
+from climate_finance.build.stages import raw_dir, table_path
 
 GCF, GEF, IDA, IBRD, ADB, AFDB, GERMANY = 1016, 811, 905, 901, 915, 913, 5
 YEARS = (2021, 2022)
-REPO = Path(__file__).parents[1]
+LEDGERS = Ledgers(years=YEARS, publishers=("ida",))
 FIXTURE_IATI = Path(__file__).parent / "fixtures" / "raw" / "iati"
 
 CRDF_SCHEMA = {
@@ -442,13 +444,6 @@ def test_a_failed_bank_year_gets_no_fill() -> None:
 # --- The stage
 
 
-def _write(release_dir: Path, stage: str, tables: dict[str, pl.DataFrame]) -> None:
-    for table, frame in tables.items():
-        path = table_path(release_dir, stage, table)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        frame.write_parquet(path)
-
-
 def _stage_release(tmp_path: Path) -> Path:
     """A release with the allocate stage's tables for a GCF row, a GEF row and two
     IDA rows, the IDA ledger and the fixture GCF and GEF IATI files."""
@@ -478,6 +473,8 @@ def _stage_release(tmp_path: Path) -> Path:
             "allocated_high_usd": [20.0, 5.0],
             "rule": ["fifo", "excess"],
             "disbursement_source": ["crs", "crs"],
+            "link_method": ["crs_id", None],
+            "commitment_unit_id": ["u-commitment", None],
         },
         schema_overrides={"year": pl.Int16},
     )
@@ -501,34 +498,31 @@ def _stage_release(tmp_path: Path) -> Path:
         for i in range(300, 300 + KEYS)
         for year in YEARS
     ] + [("ida", "IDA00100", "x100", "disbursement", 2022, "USD", 30.0)]
-    _write(tmp_path, "normalise", {"crdf": rows, "ledger": _ledger(ledger)})
-    _write(tmp_path, "link", {"units": _frame(units, UNIT_SCHEMA)})
-    _write(
+    write_inputs(tmp_path, "normalise", {"crdf": rows, "ledger": _ledger(ledger)})
+    write_inputs(tmp_path, "link", {"units": _frame(units, UNIT_SCHEMA)})
+    write_inputs(
         tmp_path, "allocate", {"allocations": allocations, "commitments": commitments}
     )
     for publisher in ("gcf", "gef"):
         shutil.copytree(
-            FIXTURE_IATI / publisher, tmp_path / "raw" / "external" / "iati" / publisher
+            FIXTURE_IATI / publisher, raw_dir(tmp_path) / IATI_DIR / publisher
         )
+    write_fetched_years(tmp_path, ledgers=LEDGERS)
     return tmp_path
 
 
 def _config(**sources: object) -> BuildConfig:
-    base = load_config(REPO / "build.toml")
+    base = load_config(BUILD_TOML)
     return base.model_copy(
         update={
             "gap_fill": True,
-            "sources": base.sources.model_copy(
-                update={"ledgers": Ledgers(years=YEARS, publishers=("ida",))} | sources
-            ),
+            "sources": base.sources.model_copy(update={"ledgers": LEDGERS} | sources),
         }
     )
 
 
 def _run(release_dir: Path, config: BuildConfig) -> dict[str, pl.DataFrame]:
-    context = StageContext(
-        release="r", release_dir=release_dir, config=config, offline=True
-    )
+    context = stage_context(release_dir, config=config)
     return {table: frame.lazy().collect() for table, frame in run_fill(context).items()}
 
 

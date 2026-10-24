@@ -17,17 +17,17 @@ quality = snap.quality(providers=["Germany", "Japan"])
 
 ## Steps
 
-1. Read the link rate. `summary()` has one row per provider. `link_rate` is the share of the provider's climate value whose CRDF rows match a CRS commitment, and `linked_high_probability_share` is the part whose most probable link is at least 0.8.
+1. Read the link rate. `summary()` has one row per provider. `link_rate` is the share of the provider's climate value whose CRDF rows match a CRS commitment, and `certain_route_share` is the part whose CRDF rows all reach their CRS commitment through certain routes.
 
     ```python
     summary = quality.summary()
     for row in summary.iter_rows(named=True):
-        print(row["provider_code"], row["link_rate"], row["linked_high_probability_share"])
+        print(row["provider_code"], row["link_rate"], row["certain_route_share"])
     ```
 
     ```output
     5 1.0 1.0
-    701 1.0 1.0
+    701 1.0 0.8125
     ```
 
     A link rate counts the match to a CRS commitment, whether or not anything disbursed against it. A provider can read a `link_rate` of 1.0 and still hold every commitment in `not_traceable`, so read it beside the status split in the next step.

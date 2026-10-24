@@ -6,6 +6,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 from make_fixture import FIXTURE_DIR, IFC, write_fixture
+from pydantic import ValidationError
 
 from climate_finance.schema import (
     LINK_METHODS,
@@ -64,7 +65,10 @@ def test_regenerating_the_fixture_gives_the_same_tables(tmp_path: Path) -> None:
 INVARIANT_TABLES = (
     "commitments",
     "disbursements",
+    "untraced",
+    "unallocated",
     "agency_shares",
+    "agency_spending",
     "core_contributions",
     "btr",
     "btr_links",
@@ -140,6 +144,14 @@ def _overdraw_record(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def _negative_record_grant_equiv(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(
+        record_grant_equiv_usd=pl.when(pl.col("record_id") == "JPN-SPLIT")
+        .then(-1.0)
+        .otherwise(pl.col("record_grant_equiv_usd"))
+    )
+
+
 def _orphan_allocation(frame: pl.DataFrame) -> pl.DataFrame:
     orphan = frame.head(1).with_columns(
         row_id=pl.lit("NONE-1"), record_id=pl.lit("NONE-1-R0")
@@ -190,16 +202,37 @@ def _keep_an_aggregate_channel(frame: pl.DataFrame) -> pl.DataFrame:
 
 
 def _mix_share_sources(frame: pl.DataFrame) -> pl.DataFrame:
-    # One of IDA's 2021 ONE objective rows is held, the others computed.
+    # One of IDA's 2021 spending rows is held, the others computed.
     first = (
         (pl.col("channel_code") == 44002)
         & (pl.col("year") == 2021)
-        & (pl.col("source") == "one")
-        & (pl.col("objective") == "adaptation")
+        & (pl.col("rio_adaptation") == 2)
+        & (pl.col("rio_mitigation") == 0)
     )
     return frame.with_columns(
         share_source=pl.when(first).then(pl.lit("held")).otherwise("share_source")
     )
+
+
+def _measure_ida_twice(frame: pl.DataFrame) -> pl.DataFrame:
+    # IDA's 2021 share is measured in agency_spending; a `one` row would count it
+    # twice.
+    one = frame.filter(channel_code=44002, year=2021, source="oecd").with_columns(
+        source=pl.lit("one")
+    )
+    return pl.concat([frame, one])
+
+
+def _give_a_marker_row_components(frame: pl.DataFrame) -> pl.DataFrame:
+    is_row = (pl.col("channel_code") == 44002) & (pl.col("year") == 2021)
+    is_row &= (pl.col("rio_adaptation") == 2) & (pl.col("rio_mitigation") == 0)
+    return frame.with_columns(
+        adaptation_share=pl.when(is_row).then(0.06).otherwise("adaptation_share")
+    )
+
+
+def _repeat_a_components_row(frame: pl.DataFrame) -> pl.DataFrame:
+    return pl.concat([frame, frame.filter(channel_code=46002, year=2022)])
 
 
 def _null_disbursed(frame: pl.DataFrame) -> pl.DataFrame:
@@ -262,6 +295,32 @@ def _repeat_an_allocated_row(frame: pl.DataFrame) -> pl.DataFrame:
         repeat_of=pl.when(pl.col("row_id") == "DEU-1")
         .then(pl.lit("DEU-2"))
         .otherwise(pl.col("repeat_of"))
+    )
+
+
+def _edit_untraced(
+    record: str, /, **changes: object
+) -> Callable[[pl.DataFrame], pl.DataFrame]:
+    """An edit setting `changes` on `untraced` row `record`."""
+
+    def edit(frame: pl.DataFrame) -> pl.DataFrame:
+        is_row = pl.col("record_id") == record
+        return frame.with_columns(
+            pl.when(is_row)
+            .then(pl.lit(value, frame.schema[name]))
+            .otherwise(pl.col(name))
+            .alias(name)
+            for name, value in changes.items()
+        )
+
+    return edit
+
+
+def _overstate_excess(frame: pl.DataFrame) -> pl.DataFrame:
+    # Japan's 2023 excess is JPN-SPLIT's 8m.
+    is_row = (pl.col("provider_code") == 701) & (pl.col("year") == 2023)
+    return frame.with_columns(
+        excess_usd=pl.when(is_row).then(9e6).otherwise(pl.col("excess_usd"))
     )
 
 
@@ -337,18 +396,42 @@ def _coefficient_edit(
         ("commitments", _keep_a_parent_beside_its_child, "DEU-1"),
         ("disbursements", _code_unspecified_as_the_bulk_crs_does, "disbursements"),
         ("disbursements", _ship_a_gcf_fill, "disbursements"),
+        (
+            "untraced",
+            _edit_untraced("DEU-UNLINKED", record_id="ledger:gcf:FP001:2022"),
+            "untraced",
+        ),
         ("commitments", _withhold_a_shipped_fill, "AFDB-1"),
         ("disbursements", _break_record_grant_equiv, "JPN-SPLIT"),
         ("disbursements", _break_record_disbursement, "JPN-SPLIT"),
         ("disbursements", _overdraw_record, "JPN-SPLIT"),
+        ("disbursements", _negative_record_grant_equiv, "JPN-SPLIT"),
+        ("untraced", _edit_untraced("DEU-UNLINKED", rio_adaptation=0), "DEU-UNLINKED"),
+        ("untraced", _edit_untraced("DEU-UNLINKED", bi_multi=2), "DEU-UNLINKED"),
+        # An unlinked record whose allocations the release holds.
+        ("untraced", _edit_untraced("DEU-UNLINKED", record_id="DEU-1-R1"), "DEU-1-R1"),
+        (
+            "untraced",
+            _edit_untraced("FRA-UNLINKED", record_disbursement_usd=4e6),
+            "FRA-UNLINKED",
+        ),
+        (
+            "untraced",
+            _edit_untraced("JPN-SPLIT", record_disbursement_usd=31e6),
+            "JPN-SPLIT",
+        ),
+        ("unallocated", _overstate_excess, "701 2023"),
         ("agency_shares", _split_a_climate_only_share, "46002 2020 oecd"),
-        ("agency_shares", _mix_share_sources, "44002 2021 one"),
+        ("agency_spending", _mix_share_sources, "44002 2021"),
         ("commitments", _publish_more_climate_than_face, "DEU-1"),
         ("core_contributions", _keep_an_aggregate_channel, "44000"),
         ("core_contributions", _zero_remainder, "40000"),
         ("btr_totals", _restate_a_btr_total, "NOR"),
         ("btr_totals", _unlink_a_btr_total, "DEU 2021"),
         ("btr", _drop_a_btr_row, "DEU"),
+        ("agency_shares", _measure_ida_twice, "44002 2021"),
+        ("agency_spending", _give_a_marker_row_components, "44002 2021 2 0"),
+        ("agency_spending", _repeat_a_components_row, "46002 2022 None None"),
         # Japan's coefficients up to 2021 would also cover 2022.
         (
             "provider_coefficients",
@@ -382,3 +465,72 @@ def test_release_invariants_name_the_row_that_breaks_one(
 
     assert problems
     assert all(row_id in problem for problem in problems)
+
+
+def test_release_invariants_refuse_an_untraced_adaptation_marker_before_2010() -> None:
+    # DEU-UNLINKED, Germany's only untraced record of 2022, moves to 2009 in both
+    # tables and keeps its adaptation marker.
+    def to_2009(frame: pl.DataFrame) -> pl.DataFrame:
+        is_row = (pl.col("provider_code") == 5) & (pl.col("year") == 2022)
+        return frame.with_columns(
+            year=pl.when(is_row).then(pl.lit(2009, pl.Int16)).otherwise(pl.col("year"))
+        )
+
+    tables = {name: _read(name) for name in INVARIANT_TABLES}
+    tables["untraced"] = to_2009(tables["untraced"])
+    tables["unallocated"] = to_2009(tables["unallocated"])
+
+    assert release_invariants(tables) == [
+        "untraced DEU-UNLINKED: an adaptation marker before ADAPTATION_FIRST_YEAR"
+    ]
+
+
+@pytest.mark.parametrize(
+    "column", ["record_grant_equiv_usd", "record_disbursement_usd"]
+)
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_release_invariants_report_a_non_finite_amount_once(
+    column: str, value: float
+) -> None:
+    # AFDB-1-R1 is a one-row record, so no row of it can differ from another.
+    tables = {name: _read(name) for name in INVARIANT_TABLES}
+    tables["disbursements"] = tables["disbursements"].with_columns(
+        pl.when(pl.col("record_id") == "AFDB-1-R1")
+        .then(value)
+        .otherwise(pl.col(column))
+        .alias(column)
+    )
+
+    problems = release_invariants(tables)
+
+    assert len(problems) == 1
+    assert "AFDB-1-R1" in problems[0]
+    assert problems[0].endswith(f"{column} is not finite")
+
+
+def test_grant_equivalent_coverage_weights_records_by_allocated_value() -> None:
+    # AFDB-1 (AfDB, 2021) allocates three records of 11.67m, the first without a
+    # grant equivalent, and a 1m ledger fill without one: half its records, but
+    # 23.3m of its 36m allocated, carry a grant equivalent.
+    rows = _read("disbursements").filter(pl.col("row_id") == "AFDB-1")
+    valued = rows.filter(pl.col("record_grant_equiv_usd").is_not_null())
+    coverage = (
+        _read("quality")
+        .filter(pl.col("provider_code") == 913, pl.col("year") == 2021)[
+            "grant_equiv_coverage"
+        ]
+        .item()
+    )
+
+    assert valued.height / rows.height == 0.5
+    assert coverage == pytest.approx(
+        valued["allocated_usd"].sum() / rows["allocated_usd"].sum()
+    )
+
+
+def test_release_json_records_the_build_settings() -> None:
+    without = MANIFEST.model_dump(exclude={"settings"})
+
+    assert MANIFEST.settings["key_repair"] is True
+    with pytest.raises(ValidationError, match="settings"):
+        ReleaseManifest.model_validate(without)

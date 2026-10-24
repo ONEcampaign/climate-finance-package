@@ -16,9 +16,9 @@ from climate_finance.result import Reconciliation
 from climate_finance.schema import ReleaseManifest
 
 SNAP = cf.load(path=FIXTURE_DIR)
-# DEU 2022's same-year Bi_Multi 1 disbursements: 50.67m Principal and 16.67m
-# Significant, at Germany's weight of 0.5.
-DEU_2022_DISBURSED = 50.666667e6 + 0.5 * 16.666667e6
+# DEU 2022's same-year Bi_Multi 1 disbursements: 60.67m Principal, 10m of it from
+# the unlinked DEU-UNLINKED, and 16.67m Significant, at Germany's weight of 0.5.
+DEU_2022_DISBURSED = 60.666667e6 + 0.5 * 16.666667e6
 
 
 def _row(

@@ -6,19 +6,17 @@ from pathlib import Path
 
 import httpx
 
+from climate_finance.build.readers.ledgers.iati import FOLDER
 from climate_finance.build.sources.files import (
-    LEDGER_DIR,
     RawFile,
     get,
     http_client,
     import_archive,
-    require_online,
     save,
 )
 from climate_finance.errors import SourceUnavailableError
 
 SOURCE = "ledger_iati"
-FOLDER = Path(LEDGER_DIR) / "iati"
 INDEX = "https://bulk-data.iatistandard.org/datasets-minimal"
 
 
@@ -26,7 +24,6 @@ def download_iati_ledgers(
     raw_dir: Path,
     *,
     publishers: Sequence[str],
-    offline: bool,
     archive: Path | None = None,
     client: httpx.Client | None = None,
     pause_seconds: float = 1.0,
@@ -41,15 +38,14 @@ def download_iati_ledgers(
     Args:
         raw_dir: The raw directory.
         publishers: Short names on the service, such as `asdb`, `afdb` or `bmz`.
-        offline: Refuse to call the service. Ignored when `archive` is given.
         archive: A directory with one subdirectory of XML files per publisher. The
-            files are copied and no request is made.
+            files are placed (`files.place`) and no request is made.
         client: An HTTP client to use in place of the default.
         pause_seconds: The pause between requests.
 
     Raises:
-        SourceUnavailableError: when offline without an archive, or when a publisher
-            has no file in the index or the archive.
+        SourceUnavailableError: when a publisher has no file in the index or the
+            archive.
     """
     if archive is not None:
         records = []
@@ -63,7 +59,6 @@ def download_iati_ledgers(
                 source=source_name(publisher),
             )
         return records
-    require_online(SOURCE, offline=offline)
     records = []
     with http_client(client) as session:
         index = get(session, INDEX, pause_seconds=pause_seconds).json()["datasets"]

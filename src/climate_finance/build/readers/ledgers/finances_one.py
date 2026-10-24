@@ -10,10 +10,12 @@ from typing import Literal
 
 import polars as pl
 
-from climate_finance.build.readers.ledgers.frame import LEDGER_SCHEMA, complete_ledger
+from climate_finance.build.readers.ledgers import LEDGER_DIR
+from climate_finance.build.readers.ledgers.frame import complete_ledger
 from climate_finance.errors import SourceUnavailableError
 
 type Dataset = Literal["DS00975", "DS00976"]
+FOLDER = Path(LEDGER_DIR) / "finances_one"
 
 
 @dataclass(frozen=True)
@@ -91,9 +93,7 @@ def read_finances_one(
         _flow(cumulative[year - 1], cumulative[year], year=year, columns=columns)
         for year in years
     ]
-    return complete_ledger(pl.concat(flows).select(list(LEDGER_SCHEMA))).sort(
-        "key", "date"
-    )
+    return complete_ledger(pl.concat(flows)).sort("key", "date")
 
 
 def _read_snapshot(file: Path, *, dataset: Dataset) -> pl.DataFrame:

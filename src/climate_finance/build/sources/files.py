@@ -1,5 +1,7 @@
-"""What the source downloads share: the offline refusal, retries and manifest rows."""
+"""What the source downloads share: the HTTP client, retries and manifest rows."""
 
+import hashlib
+import shutil
 import time
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
@@ -12,8 +14,7 @@ import httpx
 from climate_finance.errors import SourceUnavailableError
 from climate_finance.schema import sha256_file
 
-LEDGER_DIR = "ledgers"
-_TIMEOUT = httpx.Timeout(60.0, read=300.0)
+_TIMEOUT = httpx.Timeout(30.0, read=300.0)
 _ATTEMPTS = 5
 # Rate limits and transient server faults; the World Bank catalogue answers 429.
 _RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
@@ -30,24 +31,24 @@ class RawFile(TypedDict):
     version: str | None
     fetched_at: datetime
     method: str
+    first_year: int | None
+    last_year: int | None
+    held_first_year: int | None
+    held_last_year: int | None
 
 
-def require_online(source: str, *, offline: bool) -> None:
-    """Refuse a download when the build runs offline."""
-    if offline:
-        raise SourceUnavailableError(
-            f"{source} needs a download and the build is offline; "
-            "fetch it online once, or point `archive` at a local copy."
-        )
+def new_client() -> httpx.Client:
+    """An HTTP client with the timeouts every download uses, following redirects."""
+    return httpx.Client(timeout=_TIMEOUT, follow_redirects=True)
 
 
 @contextmanager
 def http_client(client: httpx.Client | None) -> Generator[httpx.Client]:
-    """Yield `client`, or a client with explicit timeouts that is closed afterwards."""
+    """Yield `client`, or a `new_client` that is closed afterwards."""
     if client is not None:
         yield client
         return
-    with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as own:
+    with new_client() as own:
         yield own
 
 
@@ -91,16 +92,24 @@ def save(
     etag: str | None = None,
 ) -> RawFile:
     """Write a downloaded file under `raw_dir` and describe it for the manifest."""
-    return _write(content, raw_dir, relative, source, url, etag, method="http")
+    target(raw_dir, relative).write_bytes(content)
+    return describe(
+        relative,
+        source=source,
+        method="http",
+        url=url,
+        etag=etag,
+        sha256=hashlib.sha256(content).hexdigest(),
+    )
 
 
 def import_archive(
     files: Mapping[Path, Path], *, raw_dir: Path, source: str
 ) -> list[RawFile]:
-    """Copy local archive files into `raw_dir`.
+    """Place local archive files in `raw_dir` (`place`).
 
     Args:
-        files: Each destination, relative to `raw_dir`, and the archive file to copy.
+        files: Each destination, relative to `raw_dir`, and the archive file to place.
         raw_dir: The raw directory.
         source: The source name recorded in the manifest.
 
@@ -112,31 +121,57 @@ def import_archive(
         raise SourceUnavailableError(
             f"The {source} archive lacks {missing or 'any file to import'}."
         )
-    return [
-        _write(origin.read_bytes(), raw_dir, relative, source, None, None, "manual")
-        for relative, origin in files.items()
-    ]
+    records = []
+    for relative, origin in files.items():
+        place(origin, target(raw_dir, relative))
+        records.append(
+            describe(
+                relative,
+                source=source,
+                method="manual",
+                sha256=sha256_file(raw_dir / relative),
+            )
+        )
+    return records
 
 
-def _write(
-    content: bytes,
-    raw_dir: Path,
-    relative: Path,
-    source: str,
-    url: str | None,
-    etag: str | None,
-    method: str,
-) -> RawFile:
+def target(raw_dir: Path, relative: Path) -> Path:
+    """The path of `relative` under `raw_dir`, with its directory made."""
     path = raw_dir / relative
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(content)
+    return path
+
+
+def place(origin: Path, path: Path) -> None:
+    """Hard-link `origin` to `path`, or copy it where a link is refused."""
+    try:
+        path.hardlink_to(origin.resolve())
+    except OSError:
+        shutil.copyfile(origin, path)
+
+
+def describe(
+    relative: Path,
+    *,
+    source: str,
+    method: str,
+    sha256: str,
+    url: str | None = None,
+    etag: str | None = None,
+    version: str | None = None,
+) -> RawFile:
+    """The manifest row of the file at `relative`, fetched now, with no years."""
     return RawFile(
         source=source,
         url=url,
         path=relative.as_posix(),
-        sha256=sha256_file(path),
+        sha256=sha256,
         etag=etag,
-        version=None,
+        version=version,
         fetched_at=datetime.now(UTC),
         method=method,
+        first_year=None,
+        last_year=None,
+        held_first_year=None,
+        held_last_year=None,
     )

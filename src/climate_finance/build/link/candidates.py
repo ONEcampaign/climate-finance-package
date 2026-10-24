@@ -58,26 +58,26 @@ as inconsistent. Two units with different project numbers and the same programme
 siblings (`programme_level` 1).
 """
 
-from collections.abc import Callable
-
 import numpy as np
 import polars as pl
 
-from climate_finance.build.link.embed import neighbour_pairs, record_text
+from climate_finance.build.link.embed import Encoder, neighbour_pairs, record_text
 from climate_finance.build.link.id_practice import (
     ID_PERSISTENT_CLASSES,
     RENUMBERED_DONORS,
     line_id,
     period_of,
 )
-from climate_finance.build.link.keys import floor_loaded, normalise_pn
+from climate_finance.build.link.keys import floor_loaded
 from climate_finance.build.link.text import (
     NO_TITLE,
     clean_text,
     largest_record,
+    representative,
     text_words,
     word_share,
 )
+from climate_finance.build.normalise.project_numbers import normalise_pn
 
 MAX_PN_UNITS = 300
 MAX_TITLE_UNITS = 100
@@ -95,8 +95,6 @@ MIN_PAIRS = 20
 MAX_ERROR = 0.10
 MAX_FANOUT = 50
 MIN_SIMILARITY = 0.5
-# Texts to an (n, dimensions) array of their vectors, as `embed.TextEmbedder`.
-type Embedder = Callable[[list[str]], np.ndarray]
 # Blocking rules: a key the two units share, and the most later disbursement units
 # of the donor the key may hold for a commitment to pair through it.
 BLOCKING_RULES: tuple[tuple[tuple[str, ...], int | None], ...] = (
@@ -134,6 +132,8 @@ def learn_programme_stems(crs: pl.LazyFrame) -> pl.LazyFrame:
     `crs` holds the records the trace follows. Each (donor, agency, project number,
     recipient) takes the title of its largest record.
     """
+    # Collected once: the rules read the projects about eight times, and the
+    # streaming engine would evaluate the grouping again for each read.
     projects = (
         crs.with_columns(project_number=normalise_pn(pl.col("project_number")))
         .drop_nulls(["agency_code", "project_number"])
@@ -141,6 +141,8 @@ def learn_programme_stems(crs: pl.LazyFrame) -> pl.LazyFrame:
         .agg(largest_record("title"))
         .with_columns(words=text_words(pl.col("title")))
         .drop("title")
+        .collect()
+        .lazy()
     )
     scores = pl.concat(
         _score_stems(projects, segments=segments) for segments in STEM_SEGMENTS
@@ -249,7 +251,7 @@ def generate_candidates(
     id_practice: pl.DataFrame,
     stems: pl.DataFrame,
     first_year: int,
-    embedder: Embedder | None = None,
+    embedder: Encoder | None = None,
 ) -> pl.DataFrame:
     """Blocked unit pairs, in the `candidates` schema.
 
@@ -268,7 +270,20 @@ def generate_candidates(
         embedder: vectors of unit texts, which add embedding neighbours to the
             blocking rules. Without one, the other rules alone block.
     """
-    indexed = units.with_row_index("unit")
+    indexed = units.with_row_index("unit").select(
+        "unit",
+        "unit_id",
+        *_AGENCY,
+        "crs_id",
+        "project_number",
+        "recipient_code",
+        "purpose_code",
+        "year",
+        "placed_year",
+        "floor_year",
+        "disbursement_usd",
+        "record_ids",
+    )
     reached = links.filter(task="crdf_crs").select(unit_id="right_id")
     commitments = indexed.join(reached, on="unit_id", how="semi")
     disbursements = indexed.filter(
@@ -299,6 +314,13 @@ def generate_candidates(
         )
     # The blocking caps count every disbursement, template lines included.
     reference = sides.join(disbursements.select("unit"), on="unit", how="semi")
+    later_units = {
+        rule: reference.drop_nulls(rule)
+        .group_by("donor_code", *rule, "year")
+        .len("units")
+        for rule, cap in BLOCKING_RULES
+        if cap is not None
+    }
     lines = sides.filter(~pl.col("unit").is_in(template_lines(sides).implode()))
     commitments = lines.join(commitments.select("unit"), on="unit", how="semi")
     disbursements = lines.join(disbursements.select("unit"), on="unit", how="semi")
@@ -306,14 +328,14 @@ def generate_candidates(
     truth = _block(
         commitments.filter("id_persistent"),
         disbursements,
-        reference=reference,
+        later_units=later_units,
         renumbered=renumbered,
         vectors=vectors,
     )
     open_pairs = _block(
         commitments.filter(~pl.col("keyed_later"), ~pl.col("ids_persist")),
         disbursements.filter(~pl.col("taken"), ~pl.col("ids_persist")),
-        reference=reference,
+        later_units=later_units,
         renumbered=renumbered,
         vectors=vectors,
     )
@@ -421,22 +443,13 @@ def _sides(
     `ids_persist` holds when the agency's ids persist in the record year's period,
     and `id_persistent` when its class is `id_persistent`.
     """
-    titles = (
-        units.select("unit", record_id="record_ids")
-        .explode("record_id")
-        .lazy()
-        .join(
-            crs.select(
-                "record_id",
-                "commitment_usd",
-                "disbursement_usd",
-                title=pl.coalesce("title", "short_description"),
-                **({"text": record_text()} if texts else {}),
-            ),
-            on="record_id",
-        )
-        .group_by("unit")
-        .agg(largest_record("title", "text") if texts else largest_record("title"))
+    titles = representative(
+        units,
+        crs=crs,
+        fields=[
+            pl.coalesce("title", "short_description").alias("title"),
+            *([record_text().alias("text")] if texts else []),
+        ],
     )
     classes = id_practice.lazy().select(
         *_AGENCY,
@@ -452,7 +465,7 @@ def _sides(
         .filter(pl.col("year") > pl.col("year_commitment"))
         .get_column("right_id")
     )
-    title = clean_text(pl.col("title")).str.replace_all(" +", " ")
+    title = clean_text(pl.col("title"))
     words = text_words(pl.col("title"))
     return (
         with_programme(
@@ -470,7 +483,7 @@ def _sides(
             ),
             stems=stems.lazy(),
         )
-        .join(titles, on="unit", how="left")
+        .join(titles, on="unit_id", how="left")
         .with_columns(
             pn_block=pn_block(pl.col("project_number")),
             title_block=pl.when(~title.is_in(NO_TITLE)).then(title),
@@ -508,7 +521,7 @@ def _block(
     commitments: pl.DataFrame,
     disbursements: pl.DataFrame,
     *,
-    reference: pl.DataFrame,
+    later_units: dict[tuple[str, ...], pl.DataFrame],
     renumbered: pl.DataFrame,
     vectors: np.ndarray | None,
 ) -> pl.DataFrame:
@@ -517,9 +530,10 @@ def _block(
     (`embed.neighbour_pairs`) when `vectors` holds the units' text vectors.
 
     Under a capped rule a commitment pairs only when its key holds at most the cap of
-    the `reference` disbursement units of later years, so a common project number or
-    title adds no pairs. A commitment of a `renumbered` line (`_renumbered_lines`)
-    also takes each project number its line is filed under as its `pn_block`.
+    the reference disbursement units of later years, which `later_units` counts per
+    rule, key and year, so a common project number or title adds no pairs. A
+    commitment of a `renumbered` line (`_renumbered_lines`) also takes each project
+    number its line is filed under as its `pn_block`.
     """
     rules = [(commitments, rule, cap) for rule, cap in BLOCKING_RULES]
     bridged = commitments.drop_nulls("line").select(
@@ -537,7 +551,7 @@ def _block(
         key = ["donor_code", *rule]
         left = blocking.drop_nulls(rule).select("unit", "year", *key)
         if cap is not None:
-            narrow = _narrow_keys(left, reference.drop_nulls(rule), key=key, cap=cap)
+            narrow = _narrow_keys(left, later_units[rule], key=key, cap=cap)
             left = left.join(narrow, on=[*key, "year"], how="semi")
         blocked.append(
             left.join(
@@ -555,17 +569,17 @@ def _block(
 
 def _narrow_keys(
     commitments: pl.DataFrame,
-    disbursements: pl.DataFrame,
+    units: pl.DataFrame,
     *,
     key: list[str],
     cap: int,
 ) -> pl.DataFrame:
     """The (key, year) of `commitments` whose key holds at most `cap` disbursement
-    units of later years."""
+    units of later years, of which `units` holds the count per (key, year)."""
     later = (
-        disbursements.group_by(*key, "year")
-        .len("units")
-        .join(commitments.select(*key, "year").unique(), on=key, suffix="_commitment")
+        units.join(
+            commitments.select(*key, "year").unique(), on=key, suffix="_commitment"
+        )
         .filter(pl.col("year") > pl.col("year_commitment"))
         .group_by(*key, "year_commitment")
         .agg(pl.col("units").sum())

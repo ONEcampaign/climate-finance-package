@@ -53,9 +53,12 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 # `release` imports the gates, which import this module, so it is read at call time.
 from climate_finance.build import release
-from climate_finance.build.link.decisions import PAIR, standing_decisions
+from climate_finance.build.link.decisions import (
+    PAIR,
+    read_decision_labels,
+    standing_decisions,
+)
 from climate_finance.build.link.packet import code_names, write_packet
-from climate_finance.build.link.splink_models import read_decision_labels
 from climate_finance.build.sums import ordered_sum
 from climate_finance.schema import KEY_TIERS, scan_table
 
@@ -161,11 +164,14 @@ def allocated_pairs(release_dir: Path, *, decisions: Path) -> pl.DataFrame:
         pl.col("disbursement_source") == "crs",
     )
     units = scan("link", "units")
-    carried = release.carrying_links(
-        allocations,
-        crdf=scan("normalise", "crdf"),
-        units=units,
-        links=scan("review", "links"),
+    links = scan("review", "links")
+    pair = ["record_unit_id", "commitment_unit_id", "link_method"]
+    # An allocation counts only while the review stage still holds its carrier.
+    held = links.filter(pl.col("task") == "trace").select(
+        "link_method", record_unit_id="left_id", commitment_unit_id="right_id"
+    )
+    carried = release.with_carrying_links(allocations, units=units, links=links).join(
+        held, on=pair, how="semi"
     )
     accepted = (
         read_decision_labels(decisions)
@@ -183,17 +189,19 @@ def allocated_pairs(release_dir: Path, *, decisions: Path) -> pl.DataFrame:
         .otherwise(pl.lit("model"))
     )
     return (
-        allocations.join(carried, on=["row_id", "record_id"])
-        .group_by("d_unit", "c_unit", "link_method", "ledger_check")
+        carried.group_by(*pair, "ledger_check")
         .agg(pair_usd=ordered_sum(pl.col("allocated_usd")))
-        .join(units.select(d_unit="unit_id", provider_code="donor_code"), on="d_unit")
+        .join(
+            units.select(record_unit_id="unit_id", provider_code="donor_code"),
+            on="record_unit_id",
+        )
         .select(
             "provider_code",
             "link_method",
             "ledger_check",
             task=pl.lit("trace"),
-            left_id="d_unit",
-            right_id="c_unit",
+            left_id="record_unit_id",
+            right_id="commitment_unit_id",
             allocated_usd="pair_usd",
         )
         .join(accepted, on=PAIR, how="left")

@@ -9,14 +9,17 @@ import pytest
 
 from climate_finance import schema
 from climate_finance.build.errors import LabelPacketError, ReviewDecisionsError
-from climate_finance.build.link.decisions import import_labels, override_links
+from climate_finance.build.link.decisions import (
+    import_labels,
+    override_links,
+    read_decision_labels,
+)
 from climate_finance.build.link.keys import as_exact_links, build_units
 from climate_finance.build.link.packet import (
     MATCH_DEFINITION,
     packet_pairs_path,
     write_packet,
 )
-from climate_finance.build.link.splink_models import read_decision_labels
 
 CRS = {
     "record_id": pl.String,

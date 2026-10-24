@@ -65,6 +65,14 @@ def test_a_result_under_several_methods_gives_a_column_per_method() -> None:
     ]
 
 
+def test_compare_names_amounts_and_shares_apart() -> None:
+    amounts = SNAP.spending(providers=5)
+
+    table = cf.compare(amounts, amounts.share_of_total()).table.to_polars()
+
+    assert table.columns[len(KEYS) :] == ["amounts", "share of total"]
+
+
 def test_results_nothing_sets_apart_are_numbered() -> None:
     table = cf.compare(SNAP.spending(), SNAP.spending()).table.to_polars()
 
@@ -78,14 +86,14 @@ def test_compare_needs_a_result() -> None:
 
 RESULT_REPR = """\
 Result: ONE; disbursements; recipient view; providers Germany; years 2021; USD at current prices; release fixture
-shape: (1, 13)
-┌──────┬───────────────┬────────────────┬──────────┬────────┬──────────┬────────────┬────────────┬───────────────┬─────────┬──────────┬──────────┬────────┐
-│ year ┆ provider_code ┆ recipient_code ┆ bi_multi ┆ method ┆ amount   ┆ adaptation ┆ mitigation ┆ cross_cutting ┆ unsplit ┆ value    ┆ low      ┆ high   │
-│ ---  ┆ ---           ┆ ---            ┆ ---      ┆ ---    ┆ ---      ┆ ---        ┆ ---        ┆ ---           ┆ ---     ┆ ---      ┆ ---      ┆ ---    │
-│ i16  ┆ i32           ┆ i32            ┆ i8       ┆ str    ┆ f64      ┆ f64        ┆ f64        ┆ f64           ┆ f64     ┆ f64      ┆ f64      ┆ f64    │
-╞══════╪═══════════════╪════════════════╪══════════╪════════╪══════════╪════════════╪════════════╪═══════════════╪═════════╪══════════╪══════════╪════════╡
-│ 2021 ┆ 5             ┆ 248            ┆ 1        ┆ ONE    ┆ 1.2667e7 ┆ 1.2667e7   ┆ 0.0        ┆ 0.0           ┆ 0.0     ┆ 1.2667e7 ┆ 1.2667e7 ┆ 1.33e7 │
-└──────┴───────────────┴────────────────┴──────────┴────────┴──────────┴────────────┴────────────┴───────────────┴─────────┴──────────┴──────────┴────────┘"""  # noqa: E501 (a table snapshot)
+shape: (1, 14)
+┌──────┬───────────────┬────────────────┬──────────┬────────┬──────────┬────────────┬────────────┬───────────────┬─────────┬──────────┬──────────┬────────┬──────────┐
+│ year ┆ provider_code ┆ recipient_code ┆ bi_multi ┆ method ┆ amount   ┆ adaptation ┆ mitigation ┆ cross_cutting ┆ unsplit ┆ value    ┆ low      ┆ high   ┆ untraced │
+│ ---  ┆ ---           ┆ ---            ┆ ---      ┆ ---    ┆ ---      ┆ ---        ┆ ---        ┆ ---           ┆ ---     ┆ ---      ┆ ---      ┆ ---    ┆ ---      │
+│ i16  ┆ i32           ┆ i32            ┆ i8       ┆ str    ┆ f64      ┆ f64        ┆ f64        ┆ f64           ┆ f64     ┆ f64      ┆ f64      ┆ f64    ┆ f64      │
+╞══════╪═══════════════╪════════════════╪══════════╪════════╪══════════╪════════════╪════════════╪═══════════════╪═════════╪══════════╪══════════╪════════╪══════════╡
+│ 2021 ┆ 5             ┆ 248            ┆ 1        ┆ ONE    ┆ 1.2667e7 ┆ 1.2667e7   ┆ 0.0        ┆ 0.0           ┆ 0.0     ┆ 1.2667e7 ┆ 1.2667e7 ┆ 1.33e7 ┆ 0.0      │
+└──────┴───────────────┴────────────────┴──────────┴────────┴──────────┴────────────┴────────────┴───────────────┴─────────┴──────────┴──────────┴────────┴──────────┘"""  # noqa: E501 (a table snapshot)
 
 COMPARISON_REPR = """\
 Comparison of 2 results: ONE; OECD
@@ -129,12 +137,13 @@ def test_methods_print_as_models_and_render_their_description() -> None:
         "banks count their reported climate share and ignore the coefficients. In "
         "the provider view EU Institutions count as a channel: members' core "
         "contributions to the EU budget, the EDF and the EIB carry the EU's climate "
-        "share, and each EU agency's own rows leave a result in the years its channel "
-        "holds such an attribution, so EU spending counts once. The EIB's own lending "
-        "reaches members' totals only through their paid-in capital, as every "
-        "development bank's own lending does: under ONE, USD 0.035bn attributed "
-        "against 2.72bn the EIB disbursed in 2021 and 2022. It stays in the recipient "
-        "view, and quality() reports the EU rows left out."
+        "share, and each EU agency's own rows count times one minus the share of its "
+        "channel's attributed contributions that come from the providers in the query, "
+        "so EU spending counts once. The EIB's own lending reaches members' totals "
+        "only through their paid-in capital, as every development bank's own lending "
+        "does: under ONE, USD 0.035bn attributed against 2.72bn the EIB disbursed in "
+        "2021 and 2022. It stays in the recipient view, and quality() reports the EU "
+        "rows left out."
     )
     assert RANGE._repr_markdown_() == (
         "Methods ONE / OECD / PROVIDER, reported together; low is the lowest of "

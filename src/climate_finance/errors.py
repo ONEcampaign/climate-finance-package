@@ -52,6 +52,10 @@ class WithheldTableError(ClimateFinanceError, LookupError):
         super().__init__(f"The release leaves out {table!r}. {note}")
 
 
+class MissingLabelsError(ClimateFinanceError):
+    """A method reads labels the release does not hold."""
+
+
 class SchemaError(ClimateFinanceError):
     """A table does not match its schema. `problems` maps each bad column to why."""
 

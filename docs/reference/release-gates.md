@@ -38,7 +38,7 @@ Returns the largest relative move of a provider-year's climate commitments or di
 
 ## `withheld_rows`
 
-Returns the number of `disbursements` rows whose record comes from a withheld source. The threshold is 0. [How linking works](../explanation/how-linking-works.md) lists the withheld sources.
+Returns the number of rows, in every release table that carries a `record_id`, `disbursements` and `untraced` among them, whose record comes from a withheld source, and its detail names each table and record. The threshold is 0. [How linking works](../explanation/how-linking-works.md) lists the withheld sources.
 
 ## Next
 

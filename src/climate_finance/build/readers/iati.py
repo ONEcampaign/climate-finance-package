@@ -8,14 +8,14 @@ from pathlib import Path
 
 import polars as pl
 
-from climate_finance.schema import EXTERNAL
+from climate_finance.build.readers.external import external_rows
 
 logger = logging.getLogger(__name__)
 
 # Transaction types 2 and 3 of the IATI TransactionType codelist.
 _TRANSACTION_TYPES = {"2": "commitment", "3": "disbursement"}
 # GEF states in each activity's description that its disbursements are cumulative.
-_CUMULATIVE_NOTE = re.compile(
+CUMULATIVE_NOTE = re.compile(
     r"disbursement\s+data\b[^.]*\bis\s+cumulative", re.IGNORECASE
 )
 # Some publishers leave stray `<` in free text, which makes the whole file ill-formed,
@@ -55,7 +55,7 @@ def read_iati_activities(path: Path) -> pl.DataFrame:
         seen: set[str] = set()
         for file in sorted(directory.glob("*.xml")):
             for activity in _activities(file, skipped):
-                activity_id = _text(activity.find("iati-identifier"))
+                activity_id = element_text(activity.find("iati-identifier"))
                 if activity_id is None:
                     skipped["unparsed"] += 1
                     continue
@@ -68,40 +68,7 @@ def read_iati_activities(path: Path) -> pl.DataFrame:
                 )
     if any(skipped.values()):
         logger.warning("IATI rows skipped: %s", skipped)
-    return (
-        pl.DataFrame(
-            rows,
-            schema={
-                "publisher": pl.String,
-                "activity_id": pl.String,
-                "title": pl.String,
-                "recipient_iso": pl.String,
-                "currency": pl.String,
-                "cumulative_declared": pl.Boolean,
-                "year": pl.Int16,
-                "transaction_type": pl.String,
-                "amount": pl.Float64,
-            },
-        )
-        .group_by(
-            "publisher",
-            "activity_id",
-            "title",
-            "recipient_iso",
-            "currency",
-            "cumulative_declared",
-            "year",
-            "transaction_type",
-            maintain_order=True,
-        )
-        .agg(pl.col("amount").sum())
-        .with_columns(
-            source=pl.lit("iati"),
-            amount_usd=pl.when(pl.col("currency") == "USD").then(pl.col("amount")),
-            recipient_code=pl.lit(None, pl.Int32),
-        )
-        .select(list(EXTERNAL.columns))
-    )
+    return external_rows(rows, source="iati")
 
 
 def read_related_activities(path: Path) -> pl.DataFrame:
@@ -129,7 +96,7 @@ def read_related_activities(path: Path) -> pl.DataFrame:
         }
         for file in files
         for activity in _activities(file, skipped)
-        if (activity_id := _text(activity.find("iati-identifier")))
+        if (activity_id := element_text(activity.find("iati-identifier")))
         for related in activity.iterfind("related-activity")
         if (ref := related.get("ref", "").strip())
     ]
@@ -156,11 +123,13 @@ def _activities(file: Path, skipped: dict[str, int]) -> Iterator[ET.Element]:
 def _transactions(
     activity: ET.Element, publisher: str, activity_id: str, skipped: dict[str, int]
 ) -> Iterator[dict[str, object]]:
-    title = _text(activity.find("title/narrative")) or _text(activity.find("title"))
+    title = element_text(activity.find("title/narrative")) or element_text(
+        activity.find("title")
+    )
     default_currency = activity.get("default-currency")
     activity_recipients = _recipients(activity)
     cumulative_declared = any(
-        _CUMULATIVE_NOTE.search("".join(narrative.itertext()))
+        CUMULATIVE_NOTE.search("".join(narrative.itertext()))
         for narrative in activity.iterfind("description/narrative")
     )
     for transaction in activity.findall("transaction"):
@@ -172,7 +141,7 @@ def _transactions(
         )
         if kind is None:
             continue
-        amount = _number(_text(value))
+        amount = parse_number(element_text(value))
         year = _year(date.get("iso-date") if date is not None else None)
         currency = (value.get("currency") if value is not None else None) or (
             default_currency
@@ -202,13 +171,15 @@ def _recipients(element: ET.Element) -> str | None:
     return ",".join(sorted(codes - {""})) or None
 
 
-def _text(element: ET.Element | None) -> str | None:
+def element_text(element: ET.Element | None) -> str | None:
+    """The stripped text of `element`, or None when it is missing or blank."""
     if element is None:
         return None
     return (element.text or "").strip() or None
 
 
-def _number(text: str | None) -> float | None:
+def parse_number(text: str | None) -> float | None:
+    """`text` as a float, or None when it is missing or not a number."""
     try:
         return float(text) if text else None
     except ValueError:

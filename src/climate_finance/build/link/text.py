@@ -5,6 +5,8 @@ rules (`score`), the BTR link (`btr`), the review packet and allocate read title
 the same way. This module imports no other part of the package.
 """
 
+from collections.abc import Iterable
+
 import polars as pl
 
 # Words that say nothing about which project a title names.
@@ -76,10 +78,11 @@ def largest_record(*columns: str) -> pl.Expr:
 
 
 def representative(
-    units: pl.DataFrame, *, crs: pl.LazyFrame, fields: tuple[str, ...]
+    units: pl.DataFrame, *, crs: pl.LazyFrame, fields: Iterable[pl.Expr]
 ) -> pl.LazyFrame:
-    """`fields` of each unit's largest record (`largest_record`), as `rep_`
-    columns."""
+    """`fields`, expressions over CRS record columns, of each unit's largest record
+    (`largest_record`), under `unit_id`."""
+    fields = list(fields)
     return (
         units.lazy()
         .select("unit_id", record_id="record_ids")
@@ -89,7 +92,7 @@ def representative(
             on="record_id",
         )
         .group_by("unit_id")
-        .agg(largest_record(*fields).name.prefix("rep_"))
+        .agg(largest_record(*(field.meta.output_name() for field in fields)))
     )
 
 
@@ -108,7 +111,9 @@ def title_norm() -> pl.Expr:
 def title_words(units: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
     """Each unit's title words (`title_toks`), as `levels.unit_attributes` reads
     them: unit_id and title_toks, null where the unit has no title."""
-    fields = ("title", "short_description")
+    fields = [
+        pl.col(name).alias(f"rep_{name}") for name in ("title", "short_description")
+    ]
     return (
         representative(units, crs=crs, fields=fields)
         .select("unit_id", title_toks=text_words(title_norm()))

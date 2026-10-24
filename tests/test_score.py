@@ -5,13 +5,15 @@ from collections.abc import Iterator
 
 import polars as pl
 import pytest
-from threadpoolctl import threadpool_limits
 
 from climate_finance import schema
+from climate_finance.build.link import score
+from climate_finance.build.link.id_practice import FIRST_MEASURED_YEAR
 from climate_finance.build.link.keys import build_units
 from climate_finance.build.link.levels import LEVELS
 from climate_finance.build.link.score import (
     ELIGIBLE,
+    FOLDS,
     HELDOUT,
     MIN_TRUE_PAIRS,
     SPLINK_MIN_COMMITMENTS,
@@ -31,6 +33,7 @@ from climate_finance.build.link.score import (
     score_truth_group,
     scoring_groups,
     scoring_profile,
+    sibling_lines,
     split_key,
     with_split,
 )
@@ -41,6 +44,7 @@ _PAIRS_SCHEMA = {
     "donor_code": pl.Int32,
     "year_gap": pl.Int16,
     "programme_level": pl.Int8,
+    "sibling_lines": pl.Int16,
     "same_crs_id": pl.Boolean,
     "true_pair": pl.Boolean,
     "id_persistent": pl.Boolean,
@@ -112,6 +116,7 @@ def _pair(
         "donor_code": donor,
         "year_gap": 2,
         "programme_level": programme_level,
+        "sibling_lines": 0,
         "same_crs_id": same,
         "true_pair": same,
         "id_persistent": split != ELIGIBLE,
@@ -202,7 +207,8 @@ _TRUTH_SCHEMA = {
 def _one_thread() -> Iterator[None]:
     # OpenMP threads spin at barriers, so on a busy machine gradient boosting on a
     # few thousand pairs runs faster on one thread than on many.
-    with threadpool_limits(limits=1, user_api="openmp"):
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(score, "FIT_THREADS", 1)
         yield
 
 
@@ -239,39 +245,75 @@ def test_the_split_key_is_donor_and_crs_id_else_the_unit() -> None:
 
 
 def test_with_split_halves_labelled_pairs_by_their_commitment() -> None:
+    # c4 is from before `FIRST_MEASURED_YEAR`, so its true pair is unlabelled.
     units = pl.DataFrame(
         {
-            "unit_id": ["c1", "c2", "c3"],
-            "donor_code": [5, 5, 5],
-            "crs_id": ["ABC", "ABD", "ABE"],
-            "placed_year": [2019, 2020, 2021],
+            "unit_id": ["c1", "c2", "c3", "c4"],
+            "donor_code": [5, 5, 5, 5],
+            "crs_id": ["ABC", "ABD", "ABE", "ABF"],
+            "year": [2019, 2020, 2021, FIRST_MEASURED_YEAR - 1],
+            "placed_year": [2019, 2020, 2021, FIRST_MEASURED_YEAR - 1],
         },
         schema={
             "unit_id": pl.String,
             "donor_code": pl.Int32,
             "crs_id": pl.String,
+            "year": pl.Int16,
             "placed_year": pl.Int16,
         },
     )
     candidates = pl.DataFrame(
         {
-            "left_id": ["d1", "d2", "d3", "d4", "d5"],
-            "right_id": ["c1", "c2", "c1", "c3", "c3"],
-            "id_persistent": [True, True, False, True, False],
+            "left_id": ["d1", "d2", "d3", "d4", "d5", "d6"],
+            "right_id": ["c1", "c2", "c1", "c3", "c3", "c4"],
+            "id_persistent": [True, True, False, True, False, True],
         }
     )
     truth = pl.DataFrame(
         {
-            "left_id": ["d2", "d4"],
-            "right_id": ["c2", "c3"],
-            "donor_code": [5, 5],
-            "ambiguous": [False, True],
+            "left_id": ["d2", "d4", "d6"],
+            "right_id": ["c2", "c3", "c4"],
+            "donor_code": [5, 5, 5],
+            "ambiguous": [False, True, False],
         }
     )
     pairs = with_split(candidates, units=units, truth=truth)
-    assert pairs["split"].to_list() == [HELDOUT, TRAIN, ELIGIBLE, UNLABELLED, ELIGIBLE]
-    assert pairs["true_pair"].to_list() == [False, True, False, False, False]
-    assert pairs["placed_year"].to_list() == [2019, 2020, 2019, 2021, 2021]
+    assert pairs["split"].to_list() == [
+        HELDOUT,
+        TRAIN,
+        ELIGIBLE,
+        UNLABELLED,
+        ELIGIBLE,
+        UNLABELLED,
+    ]
+    assert pairs["true_pair"].to_list() == [False, True, False, False, False, True]
+    assert pairs["placed_year"].to_list() == [
+        2019,
+        2020,
+        2019,
+        2021,
+        2021,
+        FIRST_MEASURED_YEAR - 1,
+    ]
+
+
+def test_sibling_lines_counts_the_other_lines_of_a_project_and_year() -> None:
+    # P1 commits three lines in 2012, one of them twice, and one line in 2013; c5
+    # has no project number and d1 commits nothing.
+    units = pl.DataFrame(
+        {
+            "unit_id": ["c1", "c2", "c3", "c3b", "c4", "c5", "d1"],
+            "donor_code": [301] * 7,
+            "agency_code": [1] * 7,
+            "crs_id": ["L1", "L2", "L3", "L3", "L4", "L5", "L1"],
+            "project_number": ["P1", "P1", "P1", "P1", "P1", None, "P1"],
+            "year": [2012, 2012, 2012, 2012, 2013, 2012, 2014],
+            "commitment_usd": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
+        },
+        schema_overrides={"donor_code": pl.Int32, "agency_code": pl.Int32},
+    )
+    lines = dict(sibling_lines(units).iter_rows())
+    assert lines == {"c1": 2, "c2": 2, "c3": 2, "c3b": 2, "c4": 0}
 
 
 def test_a_private_donor_scores_only_pairs_under_one_project_number() -> None:
@@ -321,11 +363,16 @@ def test_scoring_groups(
         _pair(f"t{index}", f"c{index}", donor=7, split=TRAIN, same=True, levels={})
         for index in range(true_pairs)
     ]
-    # Held-out and unlabelled true pairs and a false training pair add no truth.
+    # Held-out and unlabelled true pairs and false training pairs add no truth.
     rows += [
         _pair("h", "ch", donor=7, split=HELDOUT, same=True, levels={}),
         _pair("u", "cu", donor=7, split=UNLABELLED, same=True, levels={}),
-        _pair("f", "cf", donor=7, split=TRAIN, same=False, levels={}),
+        *(
+            _pair(
+                f"f{index}", f"cf{index}", donor=7, split=TRAIN, same=False, levels={}
+            )
+            for index in range(FOLDS)
+        ),
     ]
     rows += [
         _pair(
@@ -341,6 +388,39 @@ def test_scoring_groups(
     profile = scoring_groups(_frame(rows)).row(0, named=True)
     assert profile["scoring_group"] == group
     assert profile["true_pairs"] == true_pairs
+
+
+@pytest.mark.parametrize(
+    ("true_keys", "false_keys", "group"),
+    [
+        # Four commitments allow four folds.
+        (4, 4, "truth"),
+        # One commitment allows no cross-fitting.
+        (1, 1, "pooled_splink"),
+        # The fold of the one commitment with false pairs fits on true pairs alone.
+        (4, 1, "pooled_splink"),
+    ],
+)
+def test_the_truth_group_trains_on_the_folds_its_commitments_allow(
+    true_keys: int, false_keys: int, group: str
+) -> None:
+    rows = [
+        _pair(f"t{i}", f"c{i % true_keys}", donor=7, split=TRAIN, same=True, levels={})
+        for i in range(40)
+    ]
+    rows += [
+        _pair(
+            f"f{i}", f"c{i % false_keys}", donor=7, split=TRAIN, same=False, levels={}
+        )
+        for i in range(40)
+    ]
+    rows.append(_pair("e", "o", donor=7, split=ELIGIBLE, same=False, levels={}))
+    pairs = _frame(rows)
+    groups = scoring_groups(pairs)
+    assert groups["scoring_group"].to_list() == [group]
+    if group == "truth":
+        scored = score_truth_group(pairs, groups=groups, truth=_truth(pairs))
+        assert scored.pairs["p_model"].is_not_null().all()
 
 
 def test_id_truth_follows_the_crs_id_into_later_disbursements() -> None:
@@ -415,6 +495,17 @@ def test_id_truth_follows_the_crs_id_into_later_disbursements() -> None:
         contradicted=_NONE_CONTRADICTED,
     )
     assert truth.select("left_id", "right_id").rows() == [(unit["d"], unit["c"])]
+    # A pair review decisions rejected is no true pair, whatever the ids say.
+    rejected = pl.DataFrame({"left_id": [unit["d"]], "right_id": [unit["c"]]})
+    assert id_truth(
+        units,
+        crs=crs,
+        links=links,
+        id_practice=id_practice,
+        first_year=2010,
+        contradicted=_NONE_CONTRADICTED,
+        rejected=rejected,
+    ).is_empty()
 
 
 _CRS_SCHEMA = {
@@ -1072,6 +1163,16 @@ def test_held_out_and_unlabelled_labels_never_reach_the_model(
     assert again.pairs["p_model"].equals(scores.pairs["p_model"])
 
 
+def test_the_thread_count_leaves_the_scores_unchanged(
+    scores: TruthScores, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(score, "FIT_THREADS", 4)
+    again = score_truth_group(
+        _FEATURES, groups=scoring_groups(_FEATURES), truth=_truth(_FEATURES)
+    )
+    assert again.pairs["p_model"].equals(scores.pairs["p_model"])
+
+
 def test_missed_truth_counts_against_recall(scores: TruthScores) -> None:
     # Many true pairs blocking never produced make each false link cheap against
     # the truth, so the threshold falls.
@@ -1168,21 +1269,20 @@ def _eligible(left: str, right: str, p: float, **fields: object) -> dict[str, ob
 
 
 def test_each_disbursement_links_its_best_commitment() -> None:
-    links = classifier_links(
-        _scores(
-            _eligible("d1", "c1", 0.6),
-            _eligible("d1", "c2", 0.8),
-            # Ties go to the earlier placed year.
-            _eligible("d2", "c3", 0.7, placed_year=2019),
-            _eligible("d2", "c4", 0.7, placed_year=2018),
-            # Exactly at the threshold links; below does not.
-            _eligible("d3", "c5", 0.5),
-            _eligible("d4", "c6", 0.49),
-            # Siblings never link.
-            _eligible("d5", "c7", 0.99, programme_level=1),
-            _eligible("d6", "c2", 0.9, programme_level=2),
-        )
+    scores = _scores(
+        _eligible("d1", "c1", 0.6),
+        _eligible("d1", "c2", 0.8),
+        # Ties go to the earlier placed year.
+        _eligible("d2", "c3", 0.7, placed_year=2019),
+        _eligible("d2", "c4", 0.7, placed_year=2018),
+        # Exactly at the threshold links; below does not.
+        _eligible("d3", "c5", 0.5),
+        _eligible("d4", "c6", 0.49),
+        # Siblings never link.
+        _eligible("d5", "c7", 0.99, programme_level=1),
+        _eligible("d6", "c2", 0.9, programme_level=2),
     )
+    links = classifier_links(scores)
     schema.validate(schema.LINKS, links)
     assert links.select("left_id", "right_id").rows() == [
         ("d1", "c2"),
@@ -1196,6 +1296,10 @@ def test_each_disbursement_links_its_best_commitment() -> None:
     ].to_list() == [1, 1, 1]
     assert set(links["link_method"]) == {"classifier"}
     assert links["probability"].to_list() == links["p_model"].to_list()
+    # A rejected best pair gives way to the unit's next best.
+    rejected = pl.DataFrame({"left_id": ["d1"], "right_id": ["c2"]})
+    again = classifier_links(scores, rejected=rejected)
+    assert again.filter(left_id="d1")["right_id"].to_list() == ["c1"]
 
 
 def test_training_and_held_out_pairs_never_link() -> None:
