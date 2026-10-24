@@ -421,6 +421,7 @@ ID_PRACTICE = _table(
     id_share=_f64(nullable=True),
     parent_share=_f64(nullable=True),
     pn_share=_f64(nullable=True),
+    keyed_disbursement_share=_f64(nullable=True),
 )
 
 PROGRAMME_STEMS = _table(

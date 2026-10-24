@@ -13,6 +13,14 @@ An agency is `unclassified` below `MIN_OPEN` open commitments, `neither` when un
 `PERSISTENT_SHARE` of the continued value (the parent class counting id and parent
 together, with parent the larger), else `mixed`. A disbursement takes the class of its
 record year's period. Later years reuse the last period.
+
+`keyed_disbursement_share` is the agency's disbursement value in the period on records
+with a usable key, over all its disbursement value there: a project number the
+normaliser accepts, or a crs id that a commitment of the same donor carries. Its
+disbursements fall in periods as its records do, by record year. An agency is
+`untraceable` in a period when it is classed `neither` or keys under
+`MIN_KEYED_DISBURSED` of its disbursement value, since the CRS cannot then show
+whether its commitments were paid.
 """
 
 from collections.abc import Mapping
@@ -34,6 +42,11 @@ OPEN_SHARE = 0.05
 PERSISTENT_SHARE = 0.8
 MIN_CONTINUED = 0.2
 MIN_OPEN = 10
+# On the archive, agencies with at least USD 1bn disbursed in a period split at this
+# share. In 2019 to 2022 IFAD keys 0.18 of its disbursement value, IDB Invest 0.32,
+# the EBRD 0.34 and the NDB 0.37; the next agency keys 0.53, and 90 of the 108 key
+# 0.8 or more. In 2015 to 2018 the gap runs from 0.35 to 0.57.
+MIN_KEYED_DISBURSED = 0.45
 
 # An EU contract's crs id is its 10-character decision id plus a contract number.
 _DECISION_ID_LENGTH = 10
@@ -84,12 +97,44 @@ def classify_id_practice(
     with no open commitment in a period gets no row for it.
     """
     disbursed = _disbursed(units)
-    return pl.concat(
-        _classify(units, disbursed, first=first, last=last).with_columns(
-            period=pl.lit(name)
+    return (
+        pl.concat(
+            _classify(units, disbursed, first=first, last=last).with_columns(
+                period=pl.lit(name)
+            )
+            for name, (first, last) in periods.items()
         )
-        for name, (first, last) in periods.items()
-    ).select(list(schema.ID_PRACTICE.columns))
+        .join(_keyed_shares(units), on=[*_AGENCY, "period"], how="left")
+        .select(list(schema.ID_PRACTICE.columns))
+    )
+
+
+def untraceable() -> pl.Expr:
+    """True for an `id_practice` row whose agency the CRS cannot trace: classed
+    `neither`, or keying under `MIN_KEYED_DISBURSED` of its disbursement value."""
+    return (pl.col("id_class") == "neither") | (
+        pl.col("keyed_disbursement_share") < MIN_KEYED_DISBURSED
+    ).fill_null(value=False)
+
+
+def _keyed_shares(units: pl.DataFrame) -> pl.DataFrame:
+    """`keyed_disbursement_share` by (donor, agency, period)."""
+    committed_ids = (
+        units.filter(pl.col("commitment_usd") > 0)
+        .drop_nulls("crs_id")
+        .select("donor_code", "crs_id")
+        .unique()
+        .with_columns(committed_id=pl.lit(value=True))
+    )
+    value = pl.col("disbursement_usd")
+    keyed = pl.col("project_number").is_not_null() | pl.col("committed_id")
+    return (
+        units.filter(value > 0)
+        .join(committed_ids, on=["donor_code", "crs_id"], how="left")
+        .with_columns(pl.col("committed_id").fill_null(value=False))
+        .group_by(*_AGENCY, period=period_of(pl.col("year")))
+        .agg(keyed_disbursement_share=value.filter(keyed).sum() / value.sum())
+    )
 
 
 @dataclass(frozen=True)

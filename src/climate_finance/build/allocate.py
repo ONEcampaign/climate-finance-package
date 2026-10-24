@@ -44,7 +44,7 @@ import numpy as np
 import polars as pl
 
 from climate_finance.build.errors import AllocationInputError
-from climate_finance.build.link.id_practice import period_of
+from climate_finance.build.link.id_practice import period_of, untraceable
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
 from climate_finance.schema import EU_INSTITUTIONS, LINK_METHODS
@@ -786,7 +786,8 @@ def status_basis(
     """The `compute_status` input, each CRDF row with the facts allocation fixes.
 
     `traceable` is false when the row reaches no commitment unit, or its commitment
-    unit's agency is classed `neither` in the period of the row's year.
+    unit's agency is `untraceable` in the period of the row's year: classed
+    `neither`, or keying too little of its disbursement value.
     `id_disbursing` is true when allocation gave disbursement to a commitment of the
     row's (donor, crs id) placed in a year before the row's commitment.
     `crs_face_usd` is the row's share of its linked CRS commitment's face, which
@@ -818,9 +819,9 @@ def status_basis(
         .join(group_facts, on="group_id", how="left")
         .with_columns(period=period_of(pl.col("year")))
     )
-    neither = (
-        id_practice.filter(pl.col("id_class") == "neither")
-        .select("donor_code", "agency_code", "period", neither=pl.lit(True))
+    untraced = (
+        id_practice.filter(untraceable())
+        .select("donor_code", "agency_code", "period", untraced=pl.lit(True))
         .collect()
     )
     disbursing_ids = (
@@ -845,13 +846,14 @@ def status_basis(
         .unique()
     )
     return (
-        rows.join(neither, on=["donor_code", "agency_code", "period"], how="left")
+        rows.join(untraced, on=["donor_code", "agency_code", "period"], how="left")
         .join(disbursing, on="row_id", how="left")
         .select(
             "row_id",
             "face_usd",
             "climate_usd",
-            traceable=pl.col("placed_year").is_not_null() & pl.col("neither").is_null(),
+            traceable=pl.col("placed_year").is_not_null()
+            & pl.col("untraced").is_null(),
             id_disbursing=pl.col("id_disbursing").fill_null(False),
             crs_face_usd=pl.col("crs_face_usd").fill_null(pl.col("face_usd")),
         )

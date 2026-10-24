@@ -426,6 +426,25 @@ def test_id_practice_mixed_and_shares() -> None:
     assert row["parent_share"] == 0.0
 
 
+@pytest.mark.parametrize(
+    ("key", "share"),
+    [
+        ({"crs_id": "Z", "project_number": None}, 0.1),
+        ({"crs_id": "Z", "project_number": "N/A"}, 0.1),
+        ({"crs_id": "Z", "project_number": "P9"}, 1.0),
+        # A crs id one of the agency's commitments carries.
+        ({"crs_id": "7000000003", "project_number": None}, 1.0),
+    ],
+)
+def test_keyed_disbursement_share(key: dict[str, object], share: float) -> None:
+    # Ten keyed dollars disbursed in the commitments' own year, and 90 more.
+    records = _agency(7, n=10, follow=()) | {
+        "d": _disbursement(donor_code=918, agency_code=7, disbursement_usd=90.0, **key)
+    }
+    row = classify_id_practice(_units(records)).row(0, named=True)
+    assert row["keyed_disbursement_share"] == pytest.approx(share)
+
+
 def test_a_commitment_disbursed_in_its_own_year_is_not_open() -> None:
     records = _agency(7, n=10, follow=("id",))
     records["7c0"]["disbursement_usd"] = 9.6

@@ -693,28 +693,42 @@ def test_project_disbursing_marks_no_record_rows_whose_id_disburses() -> None:
 
 
 def test_status_basis_reads_links_id_practice_and_earlier_tranches() -> None:
+    # Donor 2's agency is classed `neither`; donor 3's keys 0.1 of its disbursement
+    # value and donor 4's 0.9.
     crs, crdf, units, links = link(
         [
             record("c19", 2019, commit=100.0),
             record("d20", 2020, disburse=100.0),
             record("c21", 2021, commit=100.0),
             record("n21", 2021, commit=100.0, crs_id="2021000009", donor=2),
+            record("u21", 2021, commit=100.0, crs_id="2021000003", donor=3),
+            record("p21", 2021, commit=100.0, crs_id="2021000033", donor=3),
+            record("p22", 2022, disburse=50.0, crs_id="2021000033", donor=3),
+            record("k21", 2021, commit=100.0, crs_id="2021000004", donor=4),
         ],
         [
             crdf_row("r19", 2019, 100.0),
             crdf_row("r21", 2021, 100.0),
             crdf_row("rn", 2021, 100.0, crs_id="2021000009", donor=2),
             crdf_row("r_unlinked", 2021, 100.0, crs_id="2021999999"),
+            crdf_row("r_unkeyed", 2021, 100.0, crs_id="2021000003", donor=3),
+            crdf_row("r_unkeyed_paid", 2021, 100.0, crs_id="2021000033", donor=3),
+            crdf_row("r_keyed", 2021, 100.0, crs_id="2021000004", donor=4),
         ],
     )
     id_practice = pl.LazyFrame(
         {
-            "donor_code": [2],
-            "agency_code": [10],
-            "period": ["2019-2022"],
-            "id_class": ["neither"],
+            "donor_code": [2, 3, 4],
+            "agency_code": [10, 10, 10],
+            "period": ["2019-2022"] * 3,
+            "id_class": ["neither", "mixed", "mixed"],
+            "keyed_disbursement_share": [None, 0.1, 0.9],
         },
-        schema_overrides={"donor_code": pl.Int32, "agency_code": pl.Int32},
+        schema_overrides={
+            "donor_code": pl.Int32,
+            "agency_code": pl.Int32,
+            "keyed_disbursement_share": pl.Float64,
+        },
     )
     pairs = allocate(units, crs=crs, links=links)
     facts = status_basis(
@@ -726,13 +740,11 @@ def test_status_basis_reads_links_id_practice_and_earlier_tranches() -> None:
         "r21": True,
         "rn": False,
         "r_unlinked": False,
+        "r_unkeyed": False,
+        "r_unkeyed_paid": False,
+        "r_keyed": True,
     }
-    assert {r: rows[r]["id_disbursing"] for r in rows} == {
-        "r19": False,
-        "r21": True,
-        "rn": False,
-        "r_unlinked": False,
-    }
+    assert [r for r in rows if rows[r]["id_disbursing"]] == ["r21"]
     status = compute_status(
         commitments=facts,
         allocations=allocate_to_rows(
@@ -744,6 +756,9 @@ def test_status_basis_reads_links_id_practice_and_earlier_tranches() -> None:
         "r21": "no_disbursement_record",
         "rn": "not_traceable",
         "r_unlinked": "not_traceable",
+        "r_unkeyed": "not_traceable",
+        "r_unkeyed_paid": "partly_disbursed",
+        "r_keyed": "no_disbursement_record",
     }
     assert status.collect().filter("project_disbursing")["row_id"].to_list() == ["r21"]
 
