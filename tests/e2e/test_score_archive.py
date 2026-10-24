@@ -214,7 +214,8 @@ def test_the_classifier_meets_its_targets_on_the_prototype_years(
     scored: Scored,
     heldout: tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame],
 ) -> None:
-    threshold = _scores(scored).threshold
+    scores = _scores(scored)
+    threshold = scores.threshold
     prototype = _measure(
         heldout,
         where=pl.col("year").is_between(*PROTOTYPE_YEARS),
@@ -227,11 +228,12 @@ def test_the_classifier_meets_its_targets_on_the_prototype_years(
     # Id truth follows a line through its forms of id (`line_id`), Canada's
     # disbursements continue the commitments of their own purpose (`purpose_lines`),
     # and the classifier reads start and completion dates and no commitment date,
-    # which refits the threshold. Template lines (`template_lines`) leave the
+    # which refits the best threshold. Template lines (`template_lines`) leave the
     # training pairs, which refits it again. Truth starts in `FIRST_MEASURED_YEAR`,
     # and the classifier reads how many sibling lines a commitment has
-    # (`sibling_lines`), which refits it to 0.40.
+    # (`sibling_lines`), which refits it to 0.40. Pairs link at the fixed cut.
     assert threshold == 0.40
+    assert scores.best_threshold == 0.40
     assert prototype["f1"] >= F1_TARGET
     assert every_year["ece"] <= ECE_TARGET
     # Canada renumbers its lines from year to year, so it carries 356 of the 1,169

@@ -35,8 +35,13 @@ where it has none). The classifier trains on one half, with up to
 `FOLDS` folds grouped by the same key, and the other half measures it. The
 out-of-fold scores fit an isotonic map: the provider's own where it has at least
 `MIN_CALIBRATION_PAIRS` true and as many false training pairs, else the pooled one.
-The link threshold maximises F1 on out-of-fold scores calibrated by maps fitted on
-the other folds, so no map scores the pairs it was fitted on.
+Pairs link at a fixed cut on the calibrated probability, `LINK_THRESHOLD`. F1 is
+read on out-of-fold scores calibrated by maps fitted on the other folds, so no map
+scores the pairs it was fitted on. The grid threshold of highest F1
+(`best_threshold`) stays in the provider profile, and training stops with
+`LinkThresholdError` when F1 at the cut falls more than `F1_TOLERANCE` below it. On
+the archive, F1 varies by under 0.003 between 0.35 and 0.44, and flipping 2 of
+697,517 training labels moved the best threshold across that range.
 
 F1 is read on links, as `classifier_links` makes them: each disbursement unit's best
 pair (`best_commitments`) links when it reaches the threshold, and is right when it
@@ -80,6 +85,7 @@ from sklearn.model_selection import GroupKFold
 from threadpoolctl import threadpool_limits
 
 from climate_finance import catalogue, schema
+from climate_finance.build.errors import LinkThresholdError
 from climate_finance.build.link.id_practice import (
     FIRST_MEASURED_YEAR,
     RENUMBERED_DONORS,
@@ -113,6 +119,10 @@ FOLDS = 5
 # group is not trained, and its providers are scored by Splink.
 MIN_FOLDS = 2
 THRESHOLDS = np.round(np.arange(0.01, 1.0, 0.01), 2)
+# The calibrated probability at which a classifier pair links, and how far F1 at it
+# may fall below the best grid threshold's on the training pairs.
+LINK_THRESHOLD = 0.40
+F1_TOLERANCE = 0.005
 FEATURES = (
     *LEVELS,
     "year_gap",
@@ -168,12 +178,15 @@ class TruthScores:
 
     `pairs` holds the truth group's candidate pairs with their features, `split`
     and `p_model`: cross-fitted out-of-fold probabilities for training pairs, the
-    final model's for the others. `calibration` names, per truth-group provider,
-    the isotonic map its pairs took (`own` or `pooled`).
+    final model's for the others. `threshold` is the cut pairs link at
+    (`LINK_THRESHOLD`) and `best_threshold` the grid threshold of highest training
+    F1. `calibration` names, per truth-group provider, the isotonic map its pairs
+    took (`own` or `pooled`).
     """
 
     pairs: pl.DataFrame
     threshold: float
+    best_threshold: float
     calibration: pl.DataFrame
 
 
@@ -912,6 +925,10 @@ def score_truth_group(
         features: `with_split` candidates with `comparison_levels`.
         groups: `scoring_groups`.
         truth: `id_truth`, for the true pairs blocking missed.
+
+    Raises:
+        LinkThresholdError: F1 on the training pairs at `LINK_THRESHOLD` is more
+            than `F1_TOLERANCE` below its best on the grid.
     """
     members = groups.filter(scoring_group="truth")
     pairs = features.filter(
@@ -933,11 +950,15 @@ def score_truth_group(
         crossed[score_rows] = _calibrate(fold_maps, raw[score_rows], donors[score_rows])
     train = train.with_columns(p_model=pl.Series(crossed))
     best = best_commitments(train)
-    threshold = best_threshold(
-        best["p_model"].to_numpy(),
-        best["true_pair"].to_numpy(),
-        n_true=true_disbursements(truth, commitments=train["right_id"]),
-    )
+    p, correct = best["p_model"].to_numpy(), best["true_pair"].to_numpy()
+    n_true = true_disbursements(truth, commitments=train["right_id"])
+    best_cut = best_threshold(p, correct, n_true=n_true)
+    f1 = link_f1(p, correct, n_true=n_true, threshold=LINK_THRESHOLD)
+    best_f1 = link_f1(p, correct, n_true=n_true, threshold=best_cut)
+    if f1 < best_f1 - F1_TOLERANCE:
+        raise LinkThresholdError(
+            threshold=LINK_THRESHOLD, f1=f1, best_threshold=best_cut, best_f1=best_f1
+        )
 
     model = _fit(x, y)
     maps = _isotonic_maps(raw, y, donors)
@@ -956,7 +977,12 @@ def score_truth_group(
         "provider_code",
         calibration=pl.when(own).then(pl.lit("own")).otherwise(pl.lit("pooled")),
     )
-    return TruthScores(pairs=scored, threshold=threshold, calibration=calibration)
+    return TruthScores(
+        pairs=scored,
+        threshold=LINK_THRESHOLD,
+        best_threshold=best_cut,
+        calibration=calibration,
+    )
 
 
 def training_folds(train: pl.DataFrame) -> list[tuple[np.ndarray, np.ndarray]] | None:
@@ -1130,18 +1156,20 @@ def scoring_profile(
     groups: pl.DataFrame, *, scores: TruthScores | None
 ) -> pl.DataFrame:
     """The scoring columns of `provider_profile`: `groups` with each truth-group
-    provider's calibration and threshold. `scores` is None when the truth group is
-    empty."""
+    provider's calibration, threshold and best threshold. `scores` is None when the
+    truth group is empty."""
     if scores is None:
         profile = groups.with_columns(
             calibration=pl.lit(None, dtype=pl.String),
             threshold=pl.lit(None, dtype=pl.Float64),
+            best_threshold=pl.lit(None, dtype=pl.Float64),
         )
     else:
         truth = pl.col("scoring_group") == "truth"
         profile = groups.join(scores.calibration, on="provider_code", how="left")
         profile = profile.with_columns(
-            threshold=pl.when(truth).then(pl.lit(scores.threshold))
+            threshold=pl.when(truth).then(pl.lit(scores.threshold)),
+            best_threshold=pl.when(truth).then(pl.lit(scores.best_threshold)),
         )
     return profile.select(
         "provider_code",
@@ -1151,6 +1179,7 @@ def scoring_profile(
         "pairs",
         "calibration",
         "threshold",
+        "best_threshold",
     ).sort("provider_code")
 
 
@@ -1226,9 +1255,12 @@ def _calibrate(
 def best_threshold(p: np.ndarray, y: np.ndarray, *, n_true: int) -> float:
     """The grid threshold of highest F1, the lowest on ties, of links with
     probabilities `p` and correctness `y`, against `n_true` right links in all."""
-    true = y.astype(bool)
-    f1 = [
-        2 * int((p[true] >= t).sum()) / (int((p >= t).sum()) + n_true)
-        for t in THRESHOLDS
-    ]
+    f1 = [link_f1(p, y, n_true=n_true, threshold=float(t)) for t in THRESHOLDS]
     return float(THRESHOLDS[int(np.argmax(f1))])
+
+
+def link_f1(p: np.ndarray, y: np.ndarray, *, n_true: int, threshold: float) -> float:
+    """F1 of the links with probabilities `p` and correctness `y` that reach
+    `threshold`, against `n_true` right links in all."""
+    right = int((p[y.astype(bool)] >= threshold).sum())
+    return 2 * right / (int((p >= threshold).sum()) + n_true)

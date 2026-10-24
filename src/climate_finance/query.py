@@ -1272,6 +1272,11 @@ def _coefficients_by_year(snapshot: Snapshot, *, years: pl.LazyFrame) -> pl.Lazy
     """Each `provider_coefficients` row once for every year of `years` its span
     covers, with `citation` its source and locator.
 
+    The span is expanded into its years and matched on `year`, an equi-join. A
+    cross join filtered on the span would be rewritten by polars into an
+    inequality join, which polars 1.33 to 1.35 collect wrongly where the plan is
+    reused.
+
     Raises:
         ReleaseIntegrityError: when two rows of one provider and agency cover a
             year in common, as a release edited after its build may hold.
@@ -1282,11 +1287,22 @@ def _coefficients_by_year(snapshot: Snapshot, *, years: pl.LazyFrame) -> pl.Lazy
             f"release {snapshot.manifest.release!r} applies more than one "
             "coefficient to a year: " + "; ".join(overlaps)
         )
-    first, last, year = pl.col("first_year"), pl.col("last_year"), pl.col("year")
+    first, last = pl.col("first_year"), pl.col("last_year")
+    held = years.select("year").unique()
+    bounds = held.select(_low=pl.col("year").min(), _high=pl.col("year").max())
     return (
         coefficients.lazy()
-        .join(years.select("year").unique(), how="cross")
-        .filter(first.is_null() | (first <= year), last.is_null() | (year <= last))
+        .join(bounds, how="cross")
+        .with_columns(
+            year=pl.int_ranges(
+                first.fill_null(pl.col("_low")),
+                last.fill_null(pl.col("_high")) + 1,
+                dtype=pl.Int16,
+            )
+        )
+        .explode("year")
+        .drop("_low", "_high")
+        .join(held, on="year", how="semi")
         .with_columns(citation=pl.format("{}, {}", "source", "locator"))
     )
 
