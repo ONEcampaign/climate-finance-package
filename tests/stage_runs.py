@@ -17,6 +17,8 @@ from climate_finance.schema import RAW_MANIFEST
 
 BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 OECD = Path(__file__).parent / "fixtures" / "raw" / "oecd"
+# The Jev model build.toml pins, which the price table must know.
+JEV_MODEL = load_config(BUILD_TOML).jev.model
 
 
 def stage_context(

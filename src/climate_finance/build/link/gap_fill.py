@@ -31,7 +31,15 @@ from climate_finance.build.fetch import (
     last_complete_year,
     ledger_years,
 )
-from climate_finance.build.link.ledger import LEDGER_PUBLISHERS, ledger_key
+from climate_finance.build.link.ledger import (
+    GCF_PROJECT,
+    LEDGER_PUBLISHERS,
+    ledger_key,
+    ledger_units,
+    publisher_of,
+    within,
+    year_range,
+)
 from climate_finance.build.normalise.project_numbers import normalise_pn
 from climate_finance.build.readers.ledgers.iati import read_iati_ledger
 from climate_finance.build.sums import ordered_sum
@@ -43,10 +51,7 @@ logger = logging.getLogger(__name__)
 
 # The funds whose CRDF rows take their status from their own IATI files, by DAC
 # provider code, with the IATI publisher that holds the files.
-FUND_PUBLISHERS: Mapping[int, str] = {1016: "gcf", 811: "gef"}
-# A GCF funded activity or simplified approval number, which GCF project numbers
-# and titles carry and GCF IATI identifiers end with.
-GCF_PROJECT = r"\b((?:FP|SAP)\d{3})\b"
+FUND_PUBLISHERS: Mapping[int, str] = {1016: LEDGER_PUBLISHERS[1016], 811: "gef"}
 # A fund reports its disbursements when this share of its activities committed
 # before the last complete CRS year show one. A matched row with none is then
 # `no_disbursement_record`; otherwise it stays `not_traceable`.
@@ -96,7 +101,19 @@ def run_fill(context: StageContext) -> StageOutput:
             f"The fill stage routes GCF and GEF rows through their IATI files; add "
             f"{', '.join(missing)} to sources.iati_publishers in build.toml."
         )
-    crdf = counted_rows(context.read("normalise", "crdf")).collect()
+    crdf = (
+        counted_rows(context.read("normalise", "crdf"))
+        .select(
+            "row_id",
+            "provider_code",
+            "repeat_of",
+            "project_number",
+            "title",
+            "year",
+            "face_usd",
+        )
+        .collect()
+    )
     status = commitments.collect()
     units = context.read("link", "units")
     ledger = context.read("normalise", "ledger")
@@ -174,9 +191,7 @@ def route_funds(
         The `iati` allocation rows, and for each routed row the `traceable` and
         `crs_face_usd` that replace the allocate stage's.
     """
-    publisher = pl.col("provider_code").replace_strict(
-        FUND_PUBLISHERS, default=None, return_dtype=pl.String
-    )
+    publisher = publisher_of(pl.col("provider_code"), FUND_PUBLISHERS)
     amount = pl.col("amount_usd")
     own = (
         activities.filter(transaction_type="commitment")
@@ -195,39 +210,35 @@ def route_funds(
         .join(own, on=["publisher", "key"], how="left")
         .select("row_id", "publisher", "key", "face_usd", "commitment_usd")
     )
-    disbursed = (
-        activities.filter(
-            pl.col("transaction_type") == "disbursement",
-            pl.col("year") <= last_year,
-        )
-        .group_by("publisher", "key", "year")
-        .agg(disbursed_usd=ordered_sum(amount))
-    )
+    key = ["publisher", "key"]
     share = (
         (pl.col("disbursed_usd").cum_sum() / pl.col("commitment_usd"))
         .clip(upper_bound=1.0)
         .cum_max()
-        .over("row_id", order_by="year")
+        .over(key, order_by="year")
     )
-    previous = pl.col("share").shift(1, fill_value=0.0).over("row_id", order_by="year")
-    rise = pl.col("share") - pl.col("previous")
-    allocations = (
-        rows.join(disbursed, on=["publisher", "key"])
-        .with_columns(share=share)
-        .with_columns(previous=previous)
-        .filter(rise > 0)
-        .select(
-            "row_id",
-            record_id=pl.format("iati:{}:{}:{}", "publisher", "key", "year"),
-            year="year",
-            allocated_usd=rise * pl.col("face_usd"),
-            allocated_low_usd=rise * pl.col("face_usd"),
-            allocated_high_usd=rise * pl.col("face_usd"),
-            rule=pl.lit("iati"),
-            disbursement_source=pl.lit("iati"),
-            link_method=pl.lit(None, pl.String),
-            commitment_unit_id=pl.lit(None, pl.String),
+    # The share belongs to the key, so each key's rises are computed once.
+    rises = (
+        activities.filter(
+            pl.col("transaction_type") == "disbursement",
+            pl.col("year") <= last_year,
         )
+        .group_by(*key, "year")
+        .agg(disbursed_usd=ordered_sum(amount))
+        .join(own, on=key)
+        .with_columns(share=share)
+        .with_columns(
+            rise=pl.col("share")
+            - pl.col("share").shift(1, fill_value=0.0).over(key, order_by="year")
+        )
+        .filter(pl.col("rise") > 0)
+        .select(*key, "year", "rise")
+    )
+    allocations = fill_allocations(
+        rows.join(rises, on=key),
+        source="iati",
+        prefix="iati",
+        amount=pl.col("rise") * pl.col("face_usd"),
     )
     reports = _reporting_publishers(activities, committed_before=committed_before)
     basis = rows.select(
@@ -279,9 +290,30 @@ def _reporting_publishers(
     return shares.filter(pl.col("share") >= MIN_REPORTING_SHARE)["publisher"].to_list()
 
 
+def fill_allocations(
+    frame: pl.DataFrame, *, source: str, prefix: str, amount: pl.Expr
+) -> pl.DataFrame:
+    """`frame`'s (`row_id`, `publisher`, `key`, `year`) as allocation rows of rule
+    and `disbursement_source` `source`, with record id
+    `<prefix>:<publisher>:<key>:<year>` and `amount` as every allocated amount. A
+    filled row carries no link."""
+    return frame.select(
+        "row_id",
+        record_id=pl.format(f"{prefix}:{{}}:{{}}:{{}}", "publisher", "key", "year"),
+        year="year",
+        allocated_usd=amount,
+        allocated_low_usd=amount,
+        allocated_high_usd=amount,
+        rule=pl.lit(source),
+        disbursement_source=pl.lit(source),
+        link_method=pl.lit(None, pl.String),
+        commitment_unit_id=pl.lit(None, pl.String),
+    )
+
+
 def keyed_units(units: pl.LazyFrame, *, ledger: pl.LazyFrame) -> pl.LazyFrame:
-    """The units of the banks whose ledger `ledger` holds, with `publisher`, `key`
-    and `usable`: whether the key can name a ledger activity."""
+    """The units of the banks whose ledger `ledger` holds (`ledger.ledger_units`),
+    with `usable`: whether the key can name a ledger activity."""
     key = pl.col("key")
     usable = (
         pl.when(pl.col("publisher") == "afdb")
@@ -289,16 +321,7 @@ def keyed_units(units: pl.LazyFrame, *, ledger: pl.LazyFrame) -> pl.LazyFrame:
         .otherwise(key.is_not_null())
         .fill_null(False)
     )
-    return (
-        units.with_columns(
-            publisher=pl.col("donor_code").replace_strict(
-                LEDGER_PUBLISHERS, default=None, return_dtype=pl.String
-            )
-        )
-        .join(ledger.select("publisher").unique(), on="publisher", how="semi")
-        .with_columns(key=ledger_key(pl.col("publisher"), pl.col("project_number")))
-        .with_columns(usable=usable)
-    )
+    return ledger_units(units, ledger=ledger).with_columns(usable=usable)
 
 
 def counted_disbursements(ledger: pl.LazyFrame) -> pl.LazyFrame:
@@ -349,14 +372,7 @@ def bank_year_overlap(
         pl.col("year").is_between(first, last)
     )
     disbursement = pl.col("disbursement_usd")
-    banks = (
-        keyed.select("donor_code")
-        .unique()
-        .join(
-            pl.LazyFrame({"year": range(first, last + 1)}, schema={"year": pl.Int16}),
-            how="cross",
-        )
-    )
+    banks = keyed.select("donor_code").unique().join(year_range(years), how="cross")
     unkeyed = keyed.group_by("donor_code", "year").agg(
         unkeyed_usd=ordered_sum(disbursement.filter(~pl.col("usable"))),
         total_usd=ordered_sum(disbursement),
@@ -383,9 +399,8 @@ def bank_year_overlap(
             keys=pl.len().cast(pl.Int32),
             ledger_usd=ordered_sum(published),
             crs_usd=ordered_sum(crs),
-            share_keys_within_10pct=(
-                (published - crs).abs()
-                <= KEY_TOLERANCE * pl.max_horizontal(crs.abs(), pl.lit(1.0))
+            share_keys_within_10pct=within(
+                published, crs, tolerance=KEY_TOLERANCE
             ).mean(),
         )
     )
@@ -441,9 +456,7 @@ def fill_from_ledgers(
         Allocation rows of rule and `disbursement_source` `bank_ledger`, with record
         id `ledger:<publisher>:<key>:<year>`.
     """
-    publisher = pl.col("provider_code").replace_strict(
-        LEDGER_PUBLISHERS, default=None, return_dtype=pl.String
-    )
+    publisher = publisher_of(pl.col("provider_code"), LEDGER_PUBLISHERS)
     keyed = (
         crdf.filter(pl.col("repeat_of").is_null())
         .with_columns(publisher=publisher)
@@ -482,11 +495,11 @@ def fill_from_ledgers(
         .filter(pl.col("disbursement_usd") != 0, pl.col("year") >= first)
         .select(*on, "year")
         .unique()
-        .collect()
-        .join(windows.select(*on, "start"), on=on)
+        .join(windows.select(*on, "start").lazy(), on=on)
         .filter(in_window)
         .select(on)
         .unique()
+        .collect()
     )
     single = (
         ledger.select(*on, "activity_id")
@@ -500,9 +513,9 @@ def fill_from_ledgers(
     eligible = windows.join(single, on=on).join(crs_disbursing, on=on, how="anti")
     flows = (
         ledger_flows(ledger, years=years)
-        .collect()
-        .join(eligible, on=on)
+        .join(eligible.lazy(), on=on)
         .filter(in_window)
+        .collect()
         .join(
             overlap.filter("passed").select("provider_code", "year"),
             on=["provider_code", "year"],
@@ -533,22 +546,13 @@ def fill_from_ledgers(
         * (pl.col("face_usd") / pl.col("face"))
         * (pl.col("ledger_usd") / pl.col("window_usd"))
     )
-    return (
+    return fill_allocations(
         gaps.select("row_id", "face_usd", *on)
         .join(keys.select(*on, "face", "window_usd", "filled_usd"), on=on)
-        .join(flows.select(*on, "year", "ledger_usd"), on=on)
-        .select(
-            "row_id",
-            record_id=pl.format("ledger:{}:{}:{}", "publisher", "key", "year"),
-            year="year",
-            allocated_usd=amount,
-            allocated_low_usd=amount,
-            allocated_high_usd=amount,
-            rule=pl.lit("bank_ledger"),
-            disbursement_source=pl.lit("bank_ledger"),
-            link_method=pl.lit(None, pl.String),
-            commitment_unit_id=pl.lit(None, pl.String),
-        )
+        .join(flows.select(*on, "year", "ledger_usd"), on=on),
+        source="bank_ledger",
+        prefix="ledger",
+        amount=amount,
     )
 
 

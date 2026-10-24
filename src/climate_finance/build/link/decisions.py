@@ -3,7 +3,7 @@ link overrides.
 
 People and agents decide the pairs of a packet (`packet.write_packet`) and return a CSV
 that `import_labels` appends to the review-decisions table.
-`splink_models.read_decision_labels` reads the queue decisions back as `human` and
+`read_decision_labels` reads the queue decisions back as `human` and
 `agent` pair labels, leaving out blind-sample decisions, which only measure the links'
 precision. Decisions hold pair by pair: an accepted link stays at probability 1, and
 its records count as agreeing, and a rejected link leaves `links`, splitting its
@@ -26,8 +26,8 @@ PAIR = ["task", "left_id", "right_id"]
 # A labels CSV's columns, and what its `label` says of a pair.
 LABEL_COLUMNS = ("pair", "label", "confidence", "reason")
 LABELS = {"match": "accept", "no_match": "reject"}
-# The labels that decide pairs: people's and agents'.
-DECIDING_SOURCES = ("human", "agent")
+# The `review_reason` of the pairs people label to calibrate a Splink model.
+CALIBRATION_REASON = "calibration"
 # What a split trace group's `group_id` ends in, before the part's rank.
 SPLIT = "|split|"
 
@@ -45,7 +45,56 @@ def accepted_pairs(labels: pl.DataFrame) -> pl.DataFrame:
 
 
 def _decided(labels: pl.DataFrame) -> pl.DataFrame:
-    return labels.filter(pl.col("pair_label_source").is_in(DECIDING_SOURCES))
+    return labels.filter(pl.col("pair_label_source").is_in(schema.DECIDERS))
+
+
+def read_decision_labels(path: Path) -> pl.DataFrame:
+    """People's and agents' queue decisions at `path` as `pair_labels` rows with
+    source `human` or `agent`, one per pair, and none when nothing has been decided yet.
+
+    A person's decision on a pair stands over any agent's, whenever either was
+    imported, and the latest decision stands among people. Of an agent's decisions,
+    the latest round stands (`LABEL_ROUNDS` order), then the latest imported.
+    `decided_at` is the import time, so ordering people and agents by it would let
+    a re-imported agent round erase a person's verdict.
+    A blind-sample decision (one with a `sample_id`) measures precision, so it is not
+    used as a label. `stratified` marks the decisions on calibration pairs, which
+    `stratified_sample` drew, so only they take inverse-probability weights.
+    """
+    columns = schema.PAIR_LABELS.dtypes | {"stratified": pl.Boolean()}
+    if not path.exists():
+        return pl.DataFrame(schema=columns)
+    rounds = {name: rank for rank, name in enumerate(schema.LABEL_ROUNDS)}
+    decided = (
+        pl.read_parquet(path)
+        .filter(pl.col("sample_id").is_null())
+        .drop_nulls("right_id")
+        .with_columns(
+            rank=pl.col("round").replace_strict(rounds, default=0, return_dtype=pl.Int8)
+        )
+    )
+    agent = (
+        decided.filter(label_source="agent")
+        .sort("rank", "decided_at", maintain_order=True)
+        .unique(PAIR, keep="last", maintain_order=True)
+    )
+    human = (
+        decided.filter(label_source="human")
+        .sort("decided_at", maintain_order=True)
+        .unique(PAIR, keep="last", maintain_order=True)
+    )
+    return (
+        pl.concat([agent, human])
+        .unique(PAIR, keep="last", maintain_order=True)
+        .sort(PAIR)
+        .select(
+            *PAIR,
+            is_match=pl.col("decision") == "accept",
+            pair_label_source="label_source",
+            stratified=pl.col("review_reason") == CALIBRATION_REASON,
+        )
+        .cast(columns)  # ty: ignore[invalid-argument-type]
+    )
 
 
 def override_links(links: pl.DataFrame, *, labels: pl.DataFrame) -> pl.DataFrame:
@@ -96,6 +145,8 @@ def drop_pairs(
     one group may share a commitment. Applying the same decisions again changes
     nothing, as their rejected links are gone.
     """
+    if pairs.is_empty():
+        return links
     accepted = accepted.select(PAIR)
     dropped = links.join(pairs.select(PAIR), on=PAIR, how="semi")
     kept = links.join(dropped, on=PAIR, how="anti")
@@ -252,9 +303,6 @@ def import_labels(
             "a confidence from 0 to 1 that agrees with it (match at 0.5 or more, "
             f"no_match at 0.5 or less), such as pairs {bad['pair'].head(3).to_list()}"
         )
-    columns = {
-        name: column.dtype for name, column in schema.REVIEW_DECISIONS.columns.items()
-    }
     new = (
         given.join(pairs, on="pair")
         .select(
@@ -270,7 +318,10 @@ def import_labels(
             sample_id="sample_id",
             decided_at=pl.lit(datetime.now(UTC)),
         )
-        .select(pl.col(name).cast(dtype) for name, dtype in columns.items())
+        .select(
+            pl.col(name).cast(dtype)
+            for name, dtype in schema.REVIEW_DECISIONS.dtypes.items()
+        )
     )
     tags = pl.sum_horizontal(
         pl.col("review_reason").is_not_null(), pl.col("sample_id").is_not_null()

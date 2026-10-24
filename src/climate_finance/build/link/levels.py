@@ -48,11 +48,11 @@ from splink.internals.comparison_level_creator import ComparisonLevelCreator
 from climate_finance.build.link.candidates import (
     NO_TITLE,
     clean_text,
-    largest_record,
     pn_block,
     with_programme,
 )
 from climate_finance.build.link.candidates import title_words as words_of
+from climate_finance.build.link.keys import representative
 from climate_finance.schema import COMPARISON_LEVELS
 
 LEVELS = tuple(COMPARISON_LEVELS.to_schema())
@@ -67,6 +67,28 @@ _DATE_SQL = {
     "same_completion": "(completion_date_r = completion_date_l)::tinyint",
 }
 DATE_FEATURES = tuple(_DATE_SQL)
+# The `unit_attributes` columns that `comparisons()` and `_DATE_SQL` read.
+COMPARISON_COLUMNS = (
+    "unique_id",
+    "pn",
+    "prog",
+    "pn_norm",
+    "title_norm",
+    "title_toks",
+    "desc_norm",
+    "desc_toks",
+    "purpose_code",
+    "purpose3",
+    "recipient_code",
+    "channel_code",
+    "flow_code",
+    "finance_type_code",
+    "commitment_usd",
+    "disbursement_usd",
+    "record_year",
+    "expected_start_date",
+    "completion_date",
+)
 
 
 def unit_attributes(
@@ -97,7 +119,6 @@ def unit_attributes(
         "expected_start_date",
         "completion_date",
     )
-    title_toks = words_of(pl.col("title_norm"))
     return (
         with_programme(units.lazy().drop("record_ids"), stems=stems.lazy())
         .join(_representative(units, crs=crs, fields=fields), on="unit_id", how="left")
@@ -107,11 +128,8 @@ def unit_attributes(
             desc_norm=_text_norm(pl.col("rep_long_description")),
         )
         .with_columns(
-            title_toks=title_toks,
+            title_toks=words_of(pl.col("title_norm")),
             desc_toks=words_of(pl.col("desc_norm"), first=DESCRIPTION_WORDS),
-            title_key=pl.when(title_toks.list.len() >= 2).then(
-                title_toks.list.head(2).list.join(" ")
-            ),
         )
         .select(
             unique_id="unit_id",
@@ -136,7 +154,6 @@ def unit_attributes(
             title_toks="title_toks",
             desc_norm="desc_norm",
             desc_toks="desc_toks",
-            title_key="title_key",
             project_number="rep_project_number",
             title="rep_title",
             short_description="rep_short_description",
@@ -303,7 +320,7 @@ def comparison_levels(pairs: pl.DataFrame, *, attributes: pl.DataFrame) -> pl.Da
         attributes: `unit_attributes` of every unit the pairs name.
     """
     sides = {
-        side: ", ".join(f'"{name}" as "{name}_{side}"' for name in attributes.columns)
+        side: ", ".join(f'"{name}" as "{name}_{side}"' for name in COMPARISON_COLUMNS)
         for side in "lr"
     }
     query = f"""
@@ -322,7 +339,7 @@ def comparison_levels(pairs: pl.DataFrame, *, attributes: pl.DataFrame) -> pl.Da
     batches = list(keys.iter_slices(BATCH_PAIRS)) or [keys]
     levels = []
     with duckdb.connect() as con:
-        con.register("_attributes", attributes)
+        con.register("_attributes", attributes.select(COMPARISON_COLUMNS))
         con.sql(f"create table _commitments as select {sides['l']} from _attributes")
         con.sql(f"create table _disbursements as select {sides['r']} from _attributes")
         for batch in batches:
@@ -365,18 +382,10 @@ def _level_cases() -> list[str]:
 def _representative(
     units: pl.DataFrame, *, crs: pl.LazyFrame, fields: tuple[str, ...]
 ) -> pl.LazyFrame:
-    """`fields` of each unit's largest record (`candidates.largest_record`), as
-    `rep_` columns."""
-    return (
-        units.lazy()
-        .select("unit_id", record_id="record_ids")
-        .explode("record_id")
-        .join(
-            crs.select("record_id", "commitment_usd", "disbursement_usd", *fields),
-            on="record_id",
-        )
-        .group_by("unit_id")
-        .agg(largest_record(*fields).name.prefix("rep_"))
+    """`fields` of each unit's largest record (`keys.representative`), as `rep_`
+    columns."""
+    return representative(
+        units, crs=crs, fields=[pl.col(name).alias(f"rep_{name}") for name in fields]
     )
 
 

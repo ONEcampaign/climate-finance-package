@@ -6,6 +6,7 @@ from datetime import date
 import numpy as np
 import polars as pl
 import pytest
+from normalised import named_records
 
 from climate_finance import schema
 from climate_finance.build.link.candidates import (
@@ -13,62 +14,25 @@ from climate_finance.build.link.candidates import (
     MAX_PN_UNITS,
     MAX_TITLE_UNITS,
     MIN_PAIRS,
-    Embedder,
     generate_candidates,
     learn_programme_stems,
     project_shape,
     strip_segments,
     with_programme,
 )
-from climate_finance.build.link.embed import DIMENSIONS, NEIGHBOURS
+from climate_finance.build.link.embed import DIMENSIONS, NEIGHBOURS, Encoder
 from climate_finance.build.link.id_practice import RENUMBERED_DONORS
 from climate_finance.build.link.keys import build_units
 
 FIRST_YEAR = 2010
-_RECORD = {
-    "donor_code": 5,
-    "agency_code": 1,
-    "crs_id": None,
-    "project_number": None,
-    "title": None,
-    "short_description": None,
-    "long_description": None,
-    "recipient_code": 238,
-    "purpose_code": 23210,
-    "year": 2020,
-    "commitment_date": None,
-    "commitment_usd": None,
-    "disbursement_usd": None,
-}
-_CRS_SCHEMA = {
-    "record_id": pl.String,
-    "donor_code": pl.Int32,
-    "agency_code": pl.Int32,
-    "crs_id": pl.String,
-    "project_number": pl.String,
-    "title": pl.String,
-    "short_description": pl.String,
-    "long_description": pl.String,
-    "recipient_code": pl.Int32,
-    "purpose_code": pl.Int32,
-    "year": pl.Int16,
-    "commitment_date": pl.Date,
-    "commitment_usd": pl.Float64,
-    "disbursement_usd": pl.Float64,
-}
-_STEMS_SCHEMA = {
-    name: column.dtype for name, column in schema.PROGRAMME_STEMS.columns.items()
-}
-_CLASSES_SCHEMA = {
-    name: column.dtype for name, column in schema.ID_PRACTICE.columns.items()
-}
+_STEMS_SCHEMA = schema.PROGRAMME_STEMS.dtypes
+_CLASSES_SCHEMA = schema.ID_PRACTICE.dtypes
 
 
 def _crs(records: dict[str, dict[str, object]]) -> pl.LazyFrame:
-    """CRS records named by their record id, with `_RECORD`'s defaults."""
-    return pl.LazyFrame(
-        [{**_RECORD, "record_id": name, **fields} for name, fields in records.items()],
-        schema=_CRS_SCHEMA,
+    """CRS records named by their record id."""
+    return named_records(
+        records, donor_code=5, recipient_code=238, purpose_code=23210, year=2020
     )
 
 
@@ -114,7 +78,7 @@ def _candidates(
     trace: tuple[tuple[str, str], ...] = (),
     classes: pl.DataFrame | None = None,
     stems: pl.DataFrame | None = None,
-    embedder: Embedder | None = None,
+    embedder: Encoder | None = None,
 ) -> dict[tuple[str, str], dict[str, object]]:
     """Candidate rows by (disbursement, commitment) record name.
 
@@ -576,7 +540,7 @@ def test_a_unit_takes_its_largest_records_title() -> None:
     assert set(_candidates(records)) == {("d_large", "c")}
 
 
-def _embedder(vectors: Mapping[str, list[float]]) -> Embedder:
+def _embedder(vectors: Mapping[str, list[float]]) -> Encoder:
     """An embedder giving each text its vector in `vectors`, padded with zeros."""
 
     def embed(texts: list[str]) -> np.ndarray:

@@ -26,7 +26,12 @@ commitments and the part that links by key through a crosswalk, into
 
 import polars as pl
 
-from climate_finance.build.link.keys import as_exact_links, floor_seen
+from climate_finance.build.link.keys import (
+    as_exact_links,
+    floor_seen,
+    group_id,
+    placed_in_window,
+)
 from climate_finance.build.sums import ordered_sum
 
 GEF_DONOR = 811
@@ -110,25 +115,22 @@ def link_by_crosswalk(
         commitment="unit_id",
         gef_id=pl.col("project_number").str.extract(_GEF_PROJECT_NUMBER),
     )
-    eligible = (pl.col("placed_year") <= pl.col("year")) & (
-        pl.col("floor_year").is_null() | (pl.col("placed_year") >= pl.col("floor_year"))
-    )
     components = crosswalk.select("agency_id", "component").unique()
     projects = crosswalk.select("gef_id", "component").unique()
     pairs = (
         disbursements.join(components, on="agency_id")
-        .join(projects, on="component")
-        .join(commitments, on=["gef_id", "recipient_code"])
-        .filter(eligible)
+        .join(
+            commitments.join(projects, on="gef_id"),
+            on=["component", "recipient_code"],
+        )
+        .filter(placed_in_window(pl.col("placed_year")))
         .filter(
             floor_seen(pl.col("placed_year"), first_year=first_year, over=["unit_id"])
         )
         .select(
             left_id="unit_id",
             right_id="commitment",
-            group_id=pl.concat_str(
-                [pl.lit(METHOD), "component", "recipient_code"], separator="|"
-            ),
+            group_id=group_id(pl.lit(METHOD), "component", "recipient_code"),
             link_method=pl.lit(METHOD),
         )
         .unique()

@@ -18,27 +18,29 @@ import numpy as np
 import polars as pl
 import pytest
 import splink
+from stage_runs import JEV_MODEL
 
 from climate_finance import schema
 from climate_finance.build.jev_client import JevClient
 from climate_finance.build.link import splink_models
+from climate_finance.build.link.decisions import (
+    CALIBRATION_REASON,
+    read_decision_labels,
+)
 from climate_finance.build.link.jev import CalibrationAnswers, Logistic, jev_answers
 from climate_finance.build.link.score import ELIGIBLE, scoring_groups
 from climate_finance.build.link.splink_models import (
     CALIBRATION_LABELS,
-    CALIBRATION_REASON,
     JEV_SAMPLE,
     LINK_THRESHOLD,
     SplinkResult,
     isotonic_map,
-    read_decision_labels,
     score_with_splink,
     splink_links,
     stratified_sample,
     with_labelled_m,
 )
 
-MODEL = "jev-1.14.0"
 DONOR = 901
 OTHER_DONOR = 902
 _WORDS = (
@@ -49,15 +51,9 @@ _WORDS = (
 )  # fmt: skip
 # Each donor's (code, seed, projects, noise) in `world`.
 WORLD = ((DONOR, 7, 160, 260), (OTHER_DONOR, 11, 90, 150))
-_UNIT_SCHEMA = {name: column.dtype for name, column in schema.UNITS.columns.items()}
-_LABEL_SCHEMA = {
-    name: column.dtype for name, column in schema.PAIR_LABELS.columns.items()
-} | {"stratified": pl.Boolean()}
-_STEMS = pl.DataFrame(
-    schema={
-        name: column.dtype for name, column in schema.PROGRAMME_STEMS.columns.items()
-    }
-)
+_UNIT_SCHEMA = schema.UNITS.dtypes
+_LABEL_SCHEMA = schema.PAIR_LABELS.dtypes | {"stratified": pl.Boolean()}
+_STEMS = pl.DataFrame(schema=schema.PROGRAMME_STEMS.dtypes)
 
 
 def _donor(donor: int, *, seed: int, projects: int, noise: int) -> list[dict]:
@@ -247,7 +243,7 @@ def _run(
         patch.setenv("TYPESAFE_API_KEY", "test")
         patch.setattr(splink_models, "_band_weights", record)
         client = JevClient(
-            model=MODEL,
+            model=JEV_MODEL,
             cost_cap_usd=10.0,
             cache_dir=cache_dir,
             offline=False,
@@ -409,16 +405,19 @@ def test_jev_answers_the_calibration_samples_and_the_models_link(
         programme_level=pl.lit(0, dtype=pl.Int8)
     )
     links = splink_links(
-        run.result.scores, candidates=candidates, units=world["units"], jev_model=MODEL
+        run.result.scores,
+        candidates=candidates,
+        units=world["units"],
+        jev_model=JEV_MODEL,
     )
     schema.validate(schema.LINKS, links)
-    assert set(links["jev_model"]) == {MODEL}
+    assert set(links["jev_model"]) == {JEV_MODEL}
     # A model calibrated on people's labels alone links with no Jev model.
     people = splink_links(
         run.result.scores.with_columns(label_set=pl.lit(f"human:{CALIBRATION_LABELS}")),
         candidates=candidates,
         units=world["units"],
-        jev_model=MODEL,
+        jev_model=JEV_MODEL,
     )
     assert people.height == links.height
     assert people["jev_model"].null_count() == people.height
@@ -451,7 +450,7 @@ def test_a_rejected_splink_pair_gives_way_to_the_next_best() -> None:
             scores,
             candidates=candidates,
             units=units,
-            jev_model=MODEL,
+            jev_model=JEV_MODEL,
             rejected=rejected,
         )
         return links["right_id"].to_list()

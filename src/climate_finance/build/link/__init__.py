@@ -21,6 +21,7 @@ from climate_finance.build.link.decisions import (
     accepted_pairs,
     drop_pairs,
     override_links,
+    read_decision_labels,
     rejected_pairs,
 )
 from climate_finance.build.link.disagreement import flag_disagreement
@@ -35,7 +36,6 @@ from climate_finance.build.link.score import (
     score_candidates,
 )
 from climate_finance.build.link.splink_models import (
-    read_decision_labels,
     score_with_splink,
     splink_links,
 )

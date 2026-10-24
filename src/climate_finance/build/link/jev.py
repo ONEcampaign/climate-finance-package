@@ -46,7 +46,9 @@ from climate_finance.build.link.score import (
     THRESHOLDS,
     TRAIN,
     TruthScores,
-    linked_pairs,
+    first_pairs,
+    ranked_pairs,
+    reaches,
 )
 from climate_finance.build.normalise.ids import content_id
 
@@ -230,16 +232,13 @@ def adjudicate_band(
     )
     fitted = fit_on.join(answered, on=_PAIR).sort(_PAIR)
     combined = fit_logistic(fitted, inputs=["p_model", "p_jev"], y="y")
+    p_combined = combined(pl.col("p_model"), pl.col("p_jev"))
     tuned = labelled.join(
         fitted.select(*_PAIR, "p_jev"), on=_PAIR, how="left"
-    ).with_columns(
-        probability=pl.coalesce(combined(pl.col("p_model"), pl.col("p_jev")), "p_model")
-    )
+    ).with_columns(probability=pl.coalesce(p_combined, "p_model"))
     return JevBand(
         answers=eligible.join(answered, on=_PAIR)
-        .select(
-            *_PAIR, "p_jev", p_combined=combined(pl.col("p_model"), pl.col("p_jev"))
-        )
+        .select(*_PAIR, "p_jev", p_combined=p_combined)
         .sort(_PAIR),
         combined=combined,
         threshold=deployed_threshold(tuned, threshold=scores.threshold),
@@ -268,14 +267,15 @@ def deployed_threshold(pairs: pl.DataFrame, *, threshold: float) -> float:
     """
     n_true = pairs.filter("true_pair")["left_id"].n_unique()
     # A pair Jev did not answer and under the classifier's threshold never links.
-    pairs = pairs.filter(
-        pl.col("p_jev").is_not_null() | (pl.col("p_model") >= threshold)
+    # The pairs are ranked once; a threshold keeps a subset in the same order.
+    ranked = ranked_pairs(
+        pairs.filter(pl.col("p_jev").is_not_null() | (pl.col("p_model") >= threshold)),
+        probability="probability",
     )
     f1 = []
     for jev_threshold in THRESHOLDS:
-        links = linked_pairs(
-            pairs, threshold=threshold, jev_threshold=float(jev_threshold)
-        )
+        reached = reaches(threshold=threshold, jev_threshold=float(jev_threshold))
+        links = first_pairs(ranked.filter(reached))
         f1.append(2 * int(links["true_pair"].sum()) / (links.height + n_true))
     return float(THRESHOLDS[int(np.argmax(f1))])
 
@@ -390,7 +390,12 @@ def pair_requests(
 ) -> list[dict[str, object]]:
     """Jev's request for each (`left_id`, `right_id`) pair, in order: the
     commitment (right) is the earlier record."""
-    by_id = {row["unique_id"]: row for row in attributes.iter_rows(named=True)}
+    named = attributes.join(
+        pl.concat([pairs["left_id"], pairs["right_id"]]).to_frame("unique_id"),
+        on="unique_id",
+        how="semi",
+    )
+    by_id = {row["unique_id"]: row for row in named.iter_rows(named=True)}
     return [
         pair_request(by_id[right], by_id[left])
         for left, right in pairs.select(_PAIR).iter_rows()

@@ -33,7 +33,7 @@ from collections.abc import Callable, Collection
 import polars as pl
 
 from climate_finance.build.errors import LinkInputError
-from climate_finance.build.link.keys import as_exact_links
+from climate_finance.build.link.keys import as_exact_links, group_id
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.normalise.pairing import pair_one_to_one
 from climate_finance.build.normalise.project_numbers import normalise_pn
@@ -76,9 +76,7 @@ def link_within_year(crdf: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.LazyFrame
         .select(
             left_id="row_id",
             right_id="unit_id",
-            group_id=pl.concat_str(
-                [pl.lit("within_year"), *WITHIN_YEAR_KEY], separator="|"
-            ),
+            group_id=group_id(pl.lit("within_year"), *WITHIN_YEAR_KEY),
             link_method=pl.lit("within_year"),
         ),
         task="crdf_crs",
@@ -191,12 +189,7 @@ def _by_aggregate_record(crdf: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataF
     method = pl.lit("aggregate_partition")
     pairs = (
         children.join(commitments, on=key, nulls_equal=True)
-        .with_columns(
-            group_id=pl.concat_str(
-                [method, pl.col("unit_id").min().over(key)],
-                separator="|",
-            )
-        )
+        .with_columns(group_id=group_id(method, pl.col("unit_id").min().over(key)))
         .collect()
     )
     to_records = pairs.select(
@@ -207,7 +200,7 @@ def _by_aggregate_record(crdf: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataF
         .select(
             left_id="unit_id",
             right_id="unit_id",
-            group_id=pl.concat_str([method, pl.col("unit_id")], separator="|"),
+            group_id=group_id(method, "unit_id"),
             link_method=method,
         )
         .unique()
@@ -381,16 +374,14 @@ def _settle(
         .select("group_id", "row_id", method="link_method")
         .unique()
     )
-    group = pl.concat_str([pl.col("method"), pl.col("row_id")], separator="|")
+    group = group_id(pl.col("method"), "row_id")
     moved = links.join(taken, on="group_id").select(
         left_id="row_id", right_id="right_id", group_id=group, link_method="method"
     )
     new = claimed.select(
         left_id="row_id",
         right_id="unit_id",
-        group_id=pl.concat_str(
-            [pl.col("link_method"), pl.col("row_id")], separator="|"
-        ),
+        group_id=group_id(pl.col("link_method"), "row_id"),
         link_method="link_method",
     )
     moved_and_new = as_exact_links(pl.concat([moved, new]), task="crdf_crs")

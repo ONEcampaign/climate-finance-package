@@ -21,7 +21,7 @@ PLACEHOLDER_PNS = (
 )
 # A numeric project number at least this long can be one a spreadsheet rounded.
 ROUNDED_MIN_DIGITS = 10
-_LONG_NUMBER = rf"^\d{{{ROUNDED_MIN_DIGITS},}}$"
+LONG_NUMBER = rf"^\d{{{ROUNDED_MIN_DIGITS},}}$"
 _SCIENTIFIC = r"^(\d)\.(\d+)E\+(\d+)$"
 
 
@@ -49,7 +49,7 @@ def rounded_digits(project_number: pl.Expr) -> pl.Expr:
     project_number = _cleaned(project_number)
     scientific = project_number.str.extract_groups(_SCIENTIFIC)
     lead, rest, exponent = (scientific.struct.field(name) for name in ("1", "2", "3"))
-    zeros = project_number.str.contains(_LONG_NUMBER) & project_number.str.ends_with(
+    zeros = project_number.str.contains(LONG_NUMBER) & project_number.str.ends_with(
         "0000"
     )
     prefix = (

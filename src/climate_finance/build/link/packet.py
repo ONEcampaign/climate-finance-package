@@ -17,12 +17,12 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Callable, Mapping
-from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
 import polars as pl
 
+from climate_finance import catalogue
 from climate_finance.build.errors import LabelPacketError
 from climate_finance.build.link.candidates import word_share
 from climate_finance.build.link.levels import title_words
@@ -275,22 +275,14 @@ def _sides(
         .agg(pl.col("channel_code", "flow_code", *_TEXTS).first(), records=pl.len())
     )
     view = wanted.join(largest, on="unit_id", how="left")
-    data = files("climate_finance") / "data"
-    providers = pl.read_csv(
-        data.joinpath("oecd_classification.csv").read_bytes(),
-        columns=["code", "name"],
-        schema_overrides={"code": pl.Int32},
-    )
-    recipients = pl.read_csv(
-        data.joinpath("recipients.csv").read_bytes(),
-        schema_overrides={"code": pl.Int32},
-    )
     view = view.join(
-        providers.select(donor_code="code", donor_name="name"),
+        catalogue.providers.list().select(donor_code="code", donor_name="name"),
         on="donor_code",
         how="left",
     ).join(
-        recipients.select(recipient_code="code", recipient_name="name"),
+        catalogue.recipients.list().select(
+            recipient_code="code", recipient_name="name"
+        ),
         on="recipient_code",
         how="left",
     )

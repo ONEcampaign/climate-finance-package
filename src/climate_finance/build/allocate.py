@@ -735,22 +735,15 @@ def allocate(
         .drop("c_idx")
         .select(_PAIRS_SCHEMA.names())
     )
-    excess = (
-        records.select(
-            pl.lit(None).alias("pass"),
-            commitment_id=pl.lit(None),
-            record_id="record_id",
-            year="year",
-            allocated_usd=pl.Series(left),
-            rule=pl.lit("excess"),
-            certain=pl.lit(value=False),
-            link_method=pl.lit(None),
-            commitment_unit_id=pl.lit(None),
-        )
-        .filter(pl.col("allocated_usd") > 0)
-        .select(_PAIRS_SCHEMA.names())
-    )
-    return pl.concat([filled_pairs.cast(_PAIRS_SCHEMA), excess.cast(_PAIRS_SCHEMA)])
+    excess = records.select(
+        "record_id",
+        "year",
+        allocated_usd=pl.Series(left),
+        rule=pl.lit("excess"),
+        certain=pl.lit(value=False),
+    ).filter(pl.col("allocated_usd") > 0)
+    # Excess has no pass, commitment or link, which the diagonal concat leaves null.
+    return pl.concat([filled_pairs, excess], how="diagonal_relaxed").cast(_PAIRS_SCHEMA)
 
 
 def _fill(candidates: pl.DataFrame, headroom: np.ndarray) -> pl.DataFrame:
@@ -954,13 +947,14 @@ def allocate_to_rows(
         .group_by(row, maintain_order=True)
         .agg(pl.col("link_method", "commitment_unit_id").first())
     )
+    # `ordered_sum` fixes each sum's order, so only the output rows need a sort.
     return (
-        given.sort(*row, "commitment_id", "pass", "certain")
-        .group_by(row, maintain_order=True)
+        given.group_by(row)
         .agg(
             ordered_sum(amount),
             allocated_low_usd=ordered_sum(amount.filter(pl.col("certain"))),
         )
+        .sort(row)
         .join(carriers, on=row, nulls_equal=True, maintain_order="left")
         .select(
             "row_id",

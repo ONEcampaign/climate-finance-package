@@ -53,6 +53,9 @@ LEDGER_PUBLISHERS: Mapping[int, str] = {
 # list an activity's commitment and leave out its disbursements, as the AfDB's IATI
 # files do for some loans, so their silence on a key proves nothing.
 UNDISBURSED_PUBLISHERS = ("ibrd", "ida", "iadb")
+# A GCF funded activity or simplified approval number, which GCF project numbers
+# and titles carry and GCF IATI identifiers end with.
+GCF_PROJECT = r"\b((?:FP|SAP)\d{3})\b"
 
 
 def ledger_key(publisher: pl.Expr, project_number: pl.Expr) -> pl.Expr:
@@ -75,11 +78,42 @@ def ledger_key(publisher: pl.Expr, project_number: pl.Expr) -> pl.Expr:
         .when(publisher == "gcf")
         .then(
             pl.coalesce(
-                project_number.str.extract(r"\b((?:FP|SAP)\d{3})\b"),
+                project_number.str.extract(GCF_PROJECT),
                 project_number.str.extract(r"\b([A-Z]{3}-RS-\d{3})\b"),
             )
         )
         .otherwise(project_number)
+    )
+
+
+def publisher_of(code: pl.Expr, publishers: Mapping[int, str]) -> pl.Expr:
+    """The publisher `publishers` maps a DAC provider `code` to, else null."""
+    return code.replace_strict(publishers, default=None, return_dtype=pl.String)
+
+
+def ledger_units(units: pl.LazyFrame, *, ledger: pl.LazyFrame) -> pl.LazyFrame:
+    """The units of the banks whose ledger `ledger` holds, with `publisher` and the
+    ledger `key` their project number carries (`ledger_key`)."""
+    return (
+        units.with_columns(
+            publisher=publisher_of(pl.col("donor_code"), LEDGER_PUBLISHERS)
+        )
+        .join(ledger.select("publisher").unique(), on="publisher", how="semi")
+        .with_columns(key=ledger_key(pl.col("publisher"), pl.col("project_number")))
+    )
+
+
+def year_range(years: tuple[int, int]) -> pl.LazyFrame:
+    """One `year` row for each year from the first to the last of `years`."""
+    first, last = years
+    return pl.LazyFrame({"year": range(first, last + 1)}, schema={"year": pl.Int16})
+
+
+def within(value: pl.Expr, base: pl.Expr, *, tolerance: float) -> pl.Expr:
+    """Whether `value` lies within `tolerance` of `base`, or of one dollar where
+    `base` is smaller, of `base`."""
+    return (value - base).abs() <= tolerance * pl.max_horizontal(
+        base.abs(), pl.lit(1.0)
     )
 
 
@@ -142,15 +176,7 @@ def check_ledgers(
         bank can file one operation number for lines to several countries.
     """
     first, last = years
-    keyed = (
-        units.with_columns(
-            publisher=pl.col("donor_code").replace_strict(
-                LEDGER_PUBLISHERS, default=None, return_dtype=pl.String
-            )
-        )
-        .join(ledger.select("publisher").unique(), on="publisher", how="semi")
-        .with_columns(key=ledger_key(pl.col("publisher"), pl.col("project_number")))
-    )
+    keyed = ledger_units(units, ledger=ledger)
     key_years = _key_years(keyed, ledger=ledger, years=years)
     disbursements = keyed.select(
         left_id="unit_id",
@@ -158,55 +184,59 @@ def check_ledgers(
         year="year",
         left_recipient="recipient_code",
     )
-    commitments = keyed.select(
+    # Only a key the check lists can show no disbursement.
+    undisbursed = (
+        pl.col("listed").fill_null(value=False)
+        & pl.col("publisher").is_in(UNDISBURSED_PUBLISHERS)
+        & pl.col("placed_year").is_between(first, last)
+        & (
+            pl.col("last_active").is_null()
+            | (pl.col("last_active") < pl.col("placed_year"))
+        )
+    )
+    commitments = keyed.join(
+        _last_active(key_years).with_columns(listed=pl.lit(value=True)),
+        on=["publisher", "key"],
+        how="left",
+    ).select(
         right_id="unit_id",
         publisher="publisher",
         key="key",
-        placed_year="placed_year",
         recipient="recipient_code",
+        undisbursed=undisbursed,
     )
     columns = links.collect_schema().names()
 
+    trace = pl.col("task") == "trace"
     same_key = pl.col("left_key") == pl.col("key")
+    trace_check = (
+        pl.when(pl.col("publisher").is_null() | ~pl.col("year").is_between(first, last))
+        .then(pl.col("ledger_check"))
+        .when(same_key & pl.col("check").is_not_null())
+        .then(pl.col("check"))
+        .otherwise(pl.lit("none"))
+    )
+    # A `crdf_crs` link's left side is a CRDF row, so no disbursement unit joins it.
     checked = (
-        links.filter(task="trace")
-        .join(disbursements, on="left_id", how="left")
-        .join(commitments, on="right_id", how="left")
-        .join(key_years, on=["publisher", "key", "year"], how="left")
-        .with_columns(
-            ledger_check=pl.when(
-                pl.col("publisher").is_null() | ~pl.col("year").is_between(first, last)
-            )
-            .then(pl.col("ledger_check"))
-            .when(same_key & pl.col("check").is_not_null())
-            .then(pl.col("check"))
-            .otherwise(pl.lit("none"))
+        links.join(disbursements, on="left_id", how="left", maintain_order="left")
+        .join(commitments, on="right_id", how="left", maintain_order="left")
+        .join(
+            key_years,
+            on=["publisher", "key", "year"],
+            how="left",
+            maintain_order="left",
         )
-    )
-    trace = checked.select(columns)
-    undisbursed = (
-        commitments.join(_last_active(key_years), on=["publisher", "key"])
-        .filter(
-            pl.col("publisher").is_in(UNDISBURSED_PUBLISHERS),
-            pl.col("placed_year").is_between(first, last),
-            pl.col("last_active").is_null()
-            | (pl.col("last_active") < pl.col("placed_year")),
-        )
-        .select("right_id", undisbursed=pl.lit(True))
-    )
-    crdf_crs = (
-        links.filter(task="crdf_crs")
-        .join(undisbursed, on="right_id", how="left")
         .with_columns(
-            ledger_check=pl.when(pl.col("undisbursed"))
+            ledger_check=pl.when(trace)
+            .then(trace_check)
+            .when((pl.col("task") == "crdf_crs") & pl.col("undisbursed"))
             .then(pl.lit("confirmed_undisbursed"))
             .otherwise(pl.col("ledger_check"))
         )
-        .select(columns)
     )
-    rest = links.filter(~pl.col("task").is_in(["trace", "crdf_crs"]))
     labels = (
         checked.filter(
+            trace,
             pl.col("ledger_check") == "confirmed",
             partner_recipient(
                 commitment=pl.col("recipient"), disbursement=pl.col("left_recipient")
@@ -221,7 +251,7 @@ def check_ledgers(
         )
         .unique()
     )
-    return pl.concat([trace, crdf_crs, rest]), labels
+    return checked.select(columns), labels
 
 
 def _key_years(
@@ -231,17 +261,13 @@ def _key_years(
     ledger disbursement and `check`: `confirmed`, `contradicted`, or `none` when a
     ledger amount has no US dollar value. The ledger checks a key with a
     disbursement transaction, and every key of an `UNDISBURSED_PUBLISHERS` ledger."""
-    first, last = years
     disbursement = pl.col("transaction_type") == "disbursement"
     counted = ledger.filter(disbursement, pl.col("year").is_not_null())
     grid = (
         ledger.filter(disbursement | pl.col("publisher").is_in(UNDISBURSED_PUBLISHERS))
         .select("publisher", "key")
         .unique()
-        .join(
-            pl.LazyFrame({"year": range(first, last + 1)}, schema={"year": pl.Int16}),
-            how="cross",
-        )
+        .join(year_range(years), how="cross")
     )
     on = ["publisher", "key", "year"]
     crs = keyed.group_by(on).agg(crs_usd=ordered_sum(pl.col("disbursement_usd")))
@@ -250,9 +276,7 @@ def _key_years(
         converted=pl.col("amount_usd").is_not_null().all(),
     )
     crs_usd, ledger_usd = pl.col("crs_usd"), pl.col("ledger_usd")
-    agrees = (crs_usd - ledger_usd).abs() <= TOLERANCE * pl.max_horizontal(
-        ledger_usd.abs(), pl.lit(1.0)
-    )
+    agrees = within(crs_usd, ledger_usd, tolerance=TOLERANCE)
     return (
         grid.join(crs, on=on, how="left")
         .join(published, on=on, how="left")

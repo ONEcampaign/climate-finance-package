@@ -21,10 +21,10 @@ import pytest
 
 from climate_finance import schema
 from climate_finance.build.jev_client import JevClient
+from climate_finance.build.link.decisions import CALIBRATION_REASON
 from climate_finance.build.link.score import ELIGIBLE, scoring_groups
 from climate_finance.build.link.splink_models import (
     CALIBRATION_LABELS,
-    CALIBRATION_REASON,
     SplinkResult,
     score_with_splink,
 )

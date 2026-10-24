@@ -83,17 +83,20 @@ from rapidfuzz import fuzz
 from rapidfuzz.process import cpdist
 
 from climate_finance import schema
+from climate_finance.build.link.candidates import clean_text
 from climate_finance.build.link.id_practice import canonical_crs_id
 from climate_finance.build.link.keys import (
     Decide,
     as_exact_links,
     floor_seen,
+    group_id,
+    placed_in_window,
     regional_codes,
     separator_free_pn,
     split_components,
 )
 from climate_finance.build.normalise.project_numbers import (
-    ROUNDED_MIN_DIGITS,
+    LONG_NUMBER,
     rounded_digits,
 )
 
@@ -108,7 +111,6 @@ CORE_MIN_CHARS = 4
 # A number whose units sit in this many countries names a programme.
 PROGRAMME_COUNTRIES = 3
 
-_LONG_NUMBER = rf"^\d{{{ROUNDED_MIN_DIGITS},}}$"
 _PN = ("donor_code", "agency_code", "award")
 _CORE = ("donor_code", "agency_code", "core")
 _PLACE = ("donor_code", "agency_code", "recipient_code")
@@ -150,12 +152,7 @@ def project_core(project_number: pl.Expr) -> pl.Expr:
 def title_tokens(title: pl.Expr) -> pl.Expr:
     """A title lower-cased, with each run of anything but ASCII letters and digits
     as one space, or empty when there is no title."""
-    return (
-        title.fill_null("")
-        .str.to_lowercase()
-        .str.replace_all("[^a-z0-9]+", " ")
-        .str.strip_chars()
-    )
+    return clean_text(title.fill_null(""))
 
 
 def title_words(tokens: pl.Expr) -> pl.Expr:
@@ -197,7 +194,7 @@ def repair_keys(
     disbursements = facts.filter(
         pl.col("disbursement_usd") > 0,
         pl.col("disbursement_usd") > pl.col("commitment_usd"),
-    ).with_columns(reached=pl.col("unit_id").is_in(links["left_id"].implode()))
+    )
     closed = links.select(unit_id="right_id").join(
         _spare_lines(facts, links=links), on="unit_id", how="anti"
     )
@@ -213,7 +210,13 @@ def repair_keys(
         "repair_title_recipient": lambda d, c: _same_title(
             d, c.join(unique_titles, on=_TITLE_KEY)
         ),
-        "repair_stray_country": lambda d, c: _stray_country(d, c, committed=committed),
+        # It runs last, so `found` holds every earlier rule's links.
+        "repair_stray_country": lambda d, c: _stray_country(
+            d,
+            c,
+            committed=committed,
+            reached=pl.concat([links["left_id"], *(p["left_id"] for p in found)]),
+        ),
     }
     agreements = {"repair_stray_country": _AGREES | pl.col("records_agree")}
     if tuple(rules) != schema.KEY_REPAIR_METHODS:
@@ -222,7 +225,7 @@ def repair_keys(
     seen = floor_seen(
         pl.col("placed_year_c"), first_year=first_year, over=["left_id", "key"]
     )
-    found = []
+    found: list[pl.DataFrame] = []
     for method, rule in rules.items():
         pairs = as_exact_links(
             _settle(
@@ -237,10 +240,6 @@ def repair_keys(
         found.append(pairs)
         commitments = commitments.join(
             pairs.select(unit_id="right_id"), on="unit_id", how="anti"
-        )
-        disbursements = disbursements.with_columns(
-            reached=pl.col("reached")
-            | pl.col("unit_id").is_in(pairs["left_id"].implode())
         )
     return pl.concat(found)
 
@@ -403,11 +402,7 @@ def _within_cap(
         .select(when)
         .unique()
         .join(placed, on=list(on))
-        .filter(
-            pl.col("placed_year") <= pl.col("year"),
-            pl.col("floor_year").is_null()
-            | (pl.col("placed_year") >= pl.col("floor_year")),
-        )
+        .filter(placed_in_window(pl.col("placed_year")))
         .group_by(when)
         .agg(pl.col("placed").sum())
         .filter(pl.col("placed") > MAX_COMMITMENTS)
@@ -443,13 +438,8 @@ def _pairs(
     """
     return (
         disbursements.drop_nulls(on)
-        .join(commitments.drop_nulls(on), on=list(on), suffix="_c")
-        .filter(
-            pl.col("placed_year_c") <= pl.col("year"),
-            pl.col("floor_year").is_null()
-            | (pl.col("placed_year_c") >= pl.col("floor_year")),
-        )
-        .with_columns(pl.col(name).alias(f"{name}_c") for name in on)
+        .join(commitments.drop_nulls(on), on=list(on), suffix="_c", coalesce=False)
+        .filter(placed_in_window(pl.col("placed_year_c")))
         .rename({"unit_id": "left_id", "unit_id_c": "right_id"})
         .with_columns(key=pl.concat_str([pl.col(name) for name in key], separator="|"))
     )
@@ -465,7 +455,7 @@ def _rounded_numbers(
     full = pl.col("project_number_c")
     pairs = _candidates(
         disbursements.drop_nulls("rounded").unnest("rounded"),
-        commitments.filter(pl.col("project_number").str.contains(_LONG_NUMBER)),
+        commitments.filter(pl.col("project_number").str.contains(LONG_NUMBER)),
         on=_PLACE,
         key=(*_PLACE, "project_number_c"),
     ).filter(
@@ -521,18 +511,20 @@ def _stray_country(
     commitments: pl.DataFrame,
     *,
     committed: pl.DataFrame,
+    reached: pl.Series,
 ) -> pl.DataFrame:
     """Pairs equal on the canonical crs id in two recipients, grouped by it, for
-    disbursement units nothing reached and that hold no own line (`_own_lines`).
-    `committed` holds every commitment unit, linked or not.
+    disbursement units no link `reached` and that hold no own line (`_own_lines`).
+    `committed` holds every commitment unit, linked or not, and `reached` the
+    `left_id` of every link so far.
 
     `records_agree` marks the pairs whose project cores or long descriptions are
     equal."""
     columns = [*_columns(_LINE, "placed_year"), "project_number", "core", "description"]
     open_commitments = commitments.select(columns)
-    unreached = disbursements.filter(~pl.col("reached")).select(
-        *columns, "year", "floor_year"
-    )
+    unreached = disbursements.filter(
+        ~pl.col("unit_id").is_in(reached.implode())
+    ).select(*columns, "year", "floor_year")
     pairs = _pairs(
         _within_cap(unreached, open_commitments, on=_LINE),
         open_commitments,
@@ -606,9 +598,11 @@ def _settle(pairs: pl.DataFrame, *, method: str, agrees: pl.Expr) -> pl.DataFram
     """A rule's pairs as (left_id, right_id, group_id, link_method), for disbursement
     units that `agrees` holds for with every commitment of their group, that sit in
     one group and reach at most `MAX_COMMITMENTS` commitments. `agrees` reads the
-    pairs' `title_ratio` and the columns the rule gave them."""
+    pairs' `title_ratio`, kept where the rule scored it, and the columns the rule
+    gave them."""
+    scored = pairs if "title_ratio" in pairs.columns else _with_title_ratio(pairs)
     return (
-        _whole(_with_title_ratio(pairs), agrees)
+        _whole(scored, agrees)
         .filter(
             pl.col("key").n_unique().over("left_id") == 1,
             pl.col("right_id").n_unique().over("left_id") <= MAX_COMMITMENTS,
@@ -616,7 +610,7 @@ def _settle(pairs: pl.DataFrame, *, method: str, agrees: pl.Expr) -> pl.DataFram
         .select(
             "left_id",
             "right_id",
-            group_id=pl.concat_str([pl.lit(method), "key"], separator="|"),
+            group_id=group_id(pl.lit(method), "key"),
             link_method=pl.lit(method),
         )
     )

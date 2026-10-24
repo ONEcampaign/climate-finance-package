@@ -137,8 +137,14 @@ class TextEmbedder:
                     misses=missing.height, revision=self.revision
                 )
             cached = pl.concat([cached, self._embed(missing)])
-        vectors = wanted.join(cached, on="key", how="left", maintain_order="left")
-        return vectors["vector"].to_numpy().reshape(len(texts), DIMENSIONS)
+        # Each text's row in `cached`, so the vectors are copied once, in order.
+        rows = wanted.select("key").join(
+            cached.select("key").with_row_index("row"),
+            on="key",
+            how="left",
+            maintain_order="left",
+        )["row"]
+        return cached["vector"].to_numpy().reshape(-1, DIMENSIONS)[rows.to_numpy()]
 
     def _read(self, wanted: pl.DataFrame) -> pl.DataFrame:
         """The cached (key, vector) rows of `wanted`'s keys."""

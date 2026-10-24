@@ -6,14 +6,19 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-from stage_runs import write_fetched_years, write_inputs
+from normalised import named_records
+from stage_runs import (
+    BUILD_TOML,
+    run_stage,
+    stage_context,
+    write_inputs,
+    write_normalised,
+)
 
 from climate_finance import schema
-from climate_finance.build import write_stage
 from climate_finance.build.allocate import allocate
 from climate_finance.build.config import load_config
 from climate_finance.build.fetch import DAC_EXCHANGE_FILE, IATI_DIR
-from climate_finance.build.link import run_link
 from climate_finance.build.link.crosswalks import (
     GEF_DONOR,
     crosswalk_profile,
@@ -21,46 +26,12 @@ from climate_finance.build.link.crosswalks import (
     link_by_crosswalk,
 )
 from climate_finance.build.link.keys import build_units, link_by_keys
-from climate_finance.build.normalise.crdf import normalise_crdf
-from climate_finance.build.normalise.crs import normalise_crs
 from climate_finance.build.readers.iati import read_related_activities
-from climate_finance.build.stages import REGISTRY, StageContext, raw_dir, table_path
+from climate_finance.build.stages import raw_dir, table_path
 
 FIXTURES = Path(__file__).parent / "fixtures" / "raw" / "iati"
-OECD = FIXTURES.parent / "oecd"
 FIRST_YEAR = 2010
 GEF = "XI-BRIDGE-6385676864-"
-_RECORD = {
-    "donor_code": GEF_DONOR,
-    "agency_code": 11,
-    "crs_id": None,
-    "project_number": None,
-    "title": None,
-    "recipient_code": 238,
-    "purpose_code": 41010,
-    "year": 2019,
-    "commitment_date": None,
-    "commitment_usd": None,
-    "disbursement_usd": None,
-    "expected_start_date": None,
-    "completion_date": None,
-}
-_CRS_SCHEMA = {
-    "record_id": pl.String,
-    "donor_code": pl.Int32,
-    "agency_code": pl.Int32,
-    "crs_id": pl.String,
-    "project_number": pl.String,
-    "title": pl.String,
-    "recipient_code": pl.Int32,
-    "purpose_code": pl.Int32,
-    "year": pl.Int16,
-    "commitment_date": pl.Date,
-    "commitment_usd": pl.Float64,
-    "disbursement_usd": pl.Float64,
-    "expected_start_date": pl.Date,
-    "completion_date": pl.Date,
-}
 
 
 def _related(*pairs: tuple[str, str]) -> pl.DataFrame:
@@ -78,9 +49,14 @@ def _related(*pairs: tuple[str, str]) -> pl.DataFrame:
 
 
 def _crs(records: dict[str, dict[str, object]]) -> pl.LazyFrame:
-    return pl.LazyFrame(
-        [{**_RECORD, "record_id": name, **fields} for name, fields in records.items()],
-        schema=_CRS_SCHEMA,
+    """GEF CRS records named by their record id."""
+    return named_records(
+        records,
+        donor_code=GEF_DONOR,
+        agency_code=11,
+        recipient_code=238,
+        purpose_code=41010,
+        year=2019,
     )
 
 
@@ -360,21 +336,9 @@ def test_crosswalk_profile_measures_the_climate_value_a_crosswalk_reaches() -> N
 def test_run_link_writes_the_provider_profile_with_recoveries(
     tmp_path: Path, publishers: tuple[str, ...]
 ) -> None:
-    crs = normalise_crs(
-        pl.scan_parquet(OECD / "CRS.parquet"), years=(2010, 2025)
-    ).collect()
-    crdf = normalise_crdf(
-        pl.scan_parquet(OECD / "crdf_recipient.parquet"),
-        perspective="recipient",
-        crs=crs.lazy(),
-    ).collect()
-    external = pl.DataFrame(
-        schema={name: c.dtype for name, c in schema.EXTERNAL.columns.items()}
-    )
-    write_inputs(
-        tmp_path, "normalise", {"crs": crs, "crdf": crdf, "external": external}
-    )
-    write_fetched_years(tmp_path)
+    write_normalised(tmp_path)
+    external = pl.DataFrame(schema=schema.EXTERNAL.dtypes)
+    write_inputs(tmp_path, "normalise", {"external": external})
     raw = raw_dir(tmp_path)
     raw.mkdir(parents=True)
     if "gef" in publishers:
@@ -382,25 +346,18 @@ def test_run_link_writes_the_provider_profile_with_recoveries(
     pl.DataFrame(
         {"iso_code": ["EUI"] * 16, "year": range(2010, 2026), "exchange_rate": 0.8}
     ).write_parquet(raw / DAC_EXCHANGE_FILE)
-    config = load_config(Path(__file__).parents[1] / "build.toml")
+    config = load_config(BUILD_TOML)
     sources = config.sources.model_copy(update={"iati_publishers": publishers})
-    context = StageContext(
-        release="test",
-        release_dir=tmp_path,
-        # The fixture has no truth group to set Jev's scale.
-        config=config.model_copy(
-            update={
-                "key_repair": False,
-                "recoveries": True,
-                "jev_links": False,
-                "sources": sources,
-            }
-        ),
-        offline=True,
+    # The fixture has no truth group to set Jev's scale.
+    context = stage_context(
+        tmp_path,
+        key_repair=False,
+        recoveries=True,
+        jev_links=False,
+        sources=sources,
     )
-    link = next(stage for stage in REGISTRY if stage.name == "link")
 
-    hashes = write_stage(link, run_link(context), tmp_path)
+    hashes = run_stage("link", context)
 
     assert set(hashes) == {
         "links",
@@ -412,4 +369,6 @@ def test_run_link_writes_the_provider_profile_with_recoveries(
         "provider_profile",
     }
     profile = pl.read_parquet(table_path(tmp_path, "link", "provider_profile"))
-    assert set(profile["provider_code"]) == set(crdf["provider_code"])
+    crdf = pl.read_parquet(table_path(tmp_path, "normalise", "crdf"))
+    recipient = crdf.filter(perspective="recipient")
+    assert set(profile["provider_code"]) == set(recipient["provider_code"])

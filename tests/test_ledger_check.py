@@ -148,8 +148,7 @@ def _ledger() -> pl.LazyFrame:
         )
         for publisher, key, year, currency, amount, amount_usd in rows
     ]
-    columns = schema.LEDGER.columns
-    return pl.LazyFrame(rows, schema={name: c.dtype for name, c in columns.items()})
+    return pl.LazyFrame(rows, schema=schema.LEDGER.dtypes)
 
 
 def _checked() -> tuple[pl.DataFrame, pl.DataFrame]:

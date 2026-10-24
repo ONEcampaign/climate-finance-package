@@ -56,11 +56,7 @@ _SCHEMA = {
     "commitment_usd": pl.Float64,
     "disbursement_usd": pl.Float64,
 }
-_STEMS = pl.DataFrame(
-    schema={
-        name: column.dtype for name, column in schema.PROGRAMME_STEMS.columns.items()
-    }
-)
+_STEMS = pl.DataFrame(schema=schema.PROGRAMME_STEMS.dtypes)
 
 
 def _levels(

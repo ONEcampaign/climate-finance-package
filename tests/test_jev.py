@@ -11,6 +11,7 @@ import httpx
 import numpy as np
 import polars as pl
 import pytest
+from stage_runs import JEV_MODEL
 
 from climate_finance import schema
 from climate_finance.build.errors import CostCapExceededError
@@ -34,14 +35,9 @@ from climate_finance.build.link.score import (
     classifier_links,
 )
 
-MODEL = "jev-1.14.0"
 BAND = (0.3, 0.9)
-_UNITS = {name: column.dtype for name, column in schema.UNITS.columns.items()}
-_STEMS = pl.DataFrame(
-    schema={
-        name: column.dtype for name, column in schema.PROGRAMME_STEMS.columns.items()
-    }
-)
+_UNITS = schema.UNITS.dtypes
+_STEMS = pl.DataFrame(schema=schema.PROGRAMME_STEMS.dtypes)
 
 
 def _pair(
@@ -189,7 +185,7 @@ def _client(
 ) -> JevClient:
     monkeypatch.setenv("TYPESAFE_API_KEY", "test")
     return JevClient(
-        model=MODEL,
+        model=JEV_MODEL,
         cost_cap_usd=cost_cap_usd,
         cache_dir=cache_dir,
         offline=offline,
@@ -238,13 +234,13 @@ def test_jev_adjudicates_the_band_and_the_combination_links(
     # Jev carries the training labels, so both fits lean on it.
     assert band.combined.coefs[1] > 0
     assert band.scale.coefs[0] > 0
-    assert band.model == MODEL
+    assert band.model == JEV_MODEL
 
     # Jev lifts d061 over the combined threshold and drops d062 under it.
     links = classifier_links(_scores(rows), jev=band)
     schema.validate(schema.LINKS, links)
     assert links.select("left_id", "link_method", "jev_model").rows() == [
-        ("d061", "classifier_jev", MODEL),
+        ("d061", "classifier_jev", JEV_MODEL),
         ("d063", "classifier", None),
     ]
     assert links["probability"][0] == band.answers["p_combined"][0]
@@ -310,7 +306,7 @@ def test_the_cost_cap_refuses_the_whole_band(
     with pytest.raises(CostCapExceededError):
         _adjudicate(_rows(), client)
     assert client.live_calls == 0
-    assert not (tmp_path / f"{MODEL}.jsonl").exists()
+    assert not (tmp_path / f"{JEV_MODEL}.jsonl").exists()
 
 
 def test_too_few_training_outcomes_refuse_the_fit(

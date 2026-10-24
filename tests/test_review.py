@@ -8,10 +8,16 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-from stage_runs import write_fetched_years
+from normalised import crdf_rows, crs_records
+from stage_runs import (
+    BUILD_TOML,
+    run_stage,
+    stage_context,
+    write_fetched_years,
+    write_inputs,
+)
 
 from climate_finance import schema
-from climate_finance.build import write_stage
 from climate_finance.build.allocate import (
     allocate,
     allocate_to_rows,
@@ -27,6 +33,7 @@ from climate_finance.build.link.decisions import (
     drop_pairs,
     import_labels,
     override_links,
+    read_decision_labels,
 )
 from climate_finance.build.link.keys import as_exact_links, build_units, link_by_keys
 from climate_finance.build.link.packet import packet_pairs_path, write_packet
@@ -36,50 +43,11 @@ from climate_finance.build.link.review import (
     review_queue,
     write_queue_packet,
 )
-from climate_finance.build.link.splink_models import read_decision_labels
-from climate_finance.build.stages import REGISTRY, StageContext, table_path
+from climate_finance.build.stages import table_path
 
-BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 FIRST_YEAR = 2010
 BAND = (0.3, 0.9)
 TOLERANCE = 1e-6
-
-CRS_COLUMNS = {
-    "record_id": pl.String,
-    "year": pl.Int16,
-    "donor_code": pl.Int32,
-    "agency_code": pl.Int32,
-    "crs_id": pl.String,
-    "project_number": pl.String,
-    "recipient_code": pl.Int32,
-    "purpose_code": pl.Int32,
-    "bi_multi": pl.Int8,
-    "commitment_usd": pl.Float64,
-    "disbursement_usd": pl.Float64,
-    "commitment_date": pl.Date,
-    "expected_start_date": pl.Date,
-    "completion_date": pl.Date,
-    "title": pl.String,
-    "short_description": pl.String,
-    "long_description": pl.String,
-    "channel_code": pl.Int32,
-    "flow_code": pl.Int32,
-}
-CRDF_COLUMNS = {
-    "row_id": pl.String,
-    "perspective": pl.String,
-    "provider_code": pl.Int32,
-    "crs_id": pl.String,
-    "project_number": pl.String,
-    "title": pl.String,
-    "recipient_code": pl.Int32,
-    "year": pl.Int16,
-    "purpose_code": pl.Int32,
-    "face_usd": pl.Float64,
-    "climate_usd": pl.Float64,
-    "parent_row_id": pl.String,
-    "repeat_of": pl.String,
-}
 
 
 def record(
@@ -138,8 +106,8 @@ class Linked:
     def __init__(
         self, records: Sequence[dict[str, object]], rows: Sequence[dict[str, object]]
     ) -> None:
-        self.crs = pl.DataFrame(list(records), schema=CRS_COLUMNS)
-        self.crdf = pl.DataFrame(list(rows), schema=CRDF_COLUMNS)
+        self.crs = crs_records(*records)
+        self.crdf = crdf_rows(*rows)
         self.units = build_units(self.crs.lazy()).collect()
         within = link_within_year(
             counted_rows(self.crdf.lazy()), units=self.units.lazy()
@@ -189,9 +157,7 @@ class Linked:
 
 
 def _empty(table: schema.TableSchema) -> pl.DataFrame:
-    return pl.DataFrame(
-        schema={name: column.dtype for name, column in table.columns.items()}
-    )
+    return pl.DataFrame(schema=table.dtypes)
 
 
 def no_labels() -> pl.DataFrame:
@@ -813,7 +779,7 @@ def test_decisions_round_trip_as_human_labels_and_exact_overrides(
 
 def _ledger() -> pl.DataFrame:
     """One IDA ledger row on a key no unit carries."""
-    columns = {name: column.dtype for name, column in schema.LEDGER.columns.items()}
+    columns = schema.LEDGER.dtypes
     row = {
         "publisher": "ida",
         "key": "IDA99999",
@@ -839,19 +805,20 @@ def test_the_review_stage_writes_tables_that_pass_their_schemas(
     links = case.links
     commitments = case.statuses(links)
     release_dir = tmp_path / "r"
-    for stage, table, frame in [
-        ("normalise", "crs", case.crs),
-        ("normalise", "crdf", case.crdf),
-        ("normalise", "ledger", _ledger().head(ledger_rows)),
-        ("link", "units", case.units),
-        ("link", "links", links),
-        ("link", "pair_scores", _empty(schema.PAIR_SCORES)),
-        ("fill", "allocations", _allocations(case, links)),
-        ("fill", "commitments", commitments),
-    ]:
-        path = table_path(release_dir, stage, table)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        frame.write_parquet(path)
+    normalised = {
+        "crs": case.crs,
+        "crdf": case.crdf,
+        "ledger": _ledger().head(ledger_rows),
+    }
+    write_inputs(release_dir, "normalise", normalised)
+    linked_tables = {
+        "units": case.units,
+        "links": links,
+        "pair_scores": _empty(schema.PAIR_SCORES),
+    }
+    write_inputs(release_dir, "link", linked_tables)
+    filled = {"allocations": _allocations(case, links), "commitments": commitments}
+    write_inputs(release_dir, "fill", filled)
     ledgers = Ledgers(years=(2021, 2022), publishers=("ida",))
     write_fetched_years(release_dir, ledgers=ledgers)
     config = load_config(BUILD_TOML)
@@ -861,15 +828,9 @@ def test_the_review_stage_writes_tables_that_pass_their_schemas(
             "review_decisions": tmp_path / "review_decisions.parquet",
         }
     )
-    context = StageContext(
-        release="r",
-        release_dir=release_dir,
-        config=config.model_copy(update={"review": True, "sources": sources}),
-        offline=True,
-    )
-    stage = next(entry for entry in REGISTRY if entry.name == "review")
+    context = stage_context(release_dir, config=config, review=True, sources=sources)
 
-    written = write_stage(stage, stage.run(context), release_dir)
+    written = run_stage("review", context)
 
     assert set(written) == set(schema.STAGE_TABLES["review"])
     status = pl.read_parquet(table_path(release_dir, "review", "commitments"))

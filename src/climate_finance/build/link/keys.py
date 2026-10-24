@@ -43,7 +43,7 @@ no line, since donors write it as a placeholder for the year and 38% of CRS reco
 carry 31 December against the 0.3% a real date would.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from functools import cache
 from typing import overload
@@ -83,52 +83,43 @@ PLACEHOLDER_DAYS = ("01-01", "12-31")
 
 @dataclass(frozen=True)
 class Tier:
-    """A key tier. It holds the commitment key, the disbursement key it must equal,
-    whether it is a project-number tier, which reaches only commitment keys that
-    hold one value of `unique_by` (`_unique_pn`), the disbursement column holding
-    the floor it keeps, and whether its key holds the crs id, so that a
-    disbursement under the commitment's own crs id may pass its floor."""
+    """A key tier. It holds the commitment key, the disbursement key it must equal
+    where that differs (`parent_key`), the column whose values a project-number
+    tier's commitment keys must hold one of (`unique_by`, `_unique_pn`), the
+    disbursement column holding the floor it keeps, and whether its key holds the
+    crs id, so that a disbursement under the commitment's own crs id may pass its
+    floor."""
 
     name: str
     commitment_key: tuple[str, ...]
-    unit_key: tuple[str, ...]
-    project_number: bool = False
-    unique_by: str = "crs_id"
+    parent_key: tuple[str, ...] | None = None
+    unique_by: str | None = None
     floor: str = "floor_year"
     same_crs_id: bool = False
 
+    @property
+    def unit_key(self) -> tuple[str, ...]:
+        """The disbursement key that must equal `commitment_key`."""
+        return self.parent_key or self.commitment_key
+
 
 TIERS = (
-    Tier("wb_loan", ("donor_code", "loan"), ("donor_code", "loan")),
+    Tier("wb_loan", ("donor_code", "loan")),
     Tier(
         "crs_id_purpose",
         ("donor_code", "crs_id", "purpose_code", "recipient_code"),
-        ("donor_code", "crs_id", "purpose_code", "recipient_code"),
         same_crs_id=True,
     ),
-    Tier(
-        "crs_id", ("donor_code", "crs_key"), ("donor_code", "crs_key"), same_crs_id=True
-    ),
+    Tier("crs_id", ("donor_code", "crs_key"), same_crs_id=True),
     Tier(
         "crs_id_parent",
         ("donor_code", "parent_key"),
-        ("donor_code", "crs_parent"),
+        parent_key=("donor_code", "crs_parent"),
         floor="parent_floor_year",
     ),
-    Tier(
-        "pn_recipient_date",
-        (*AWARD_KEY, "line_date"),
-        (*AWARD_KEY, "line_date"),
-        project_number=True,
-        unique_by="unit_id",
-    ),
-    Tier(
-        "pn_recipient_purpose",
-        (*AWARD_KEY, "purpose_code"),
-        (*AWARD_KEY, "purpose_code"),
-        project_number=True,
-    ),
-    Tier("pn_recipient", AWARD_KEY, AWARD_KEY, project_number=True),
+    Tier("pn_recipient_date", (*AWARD_KEY, "line_date"), unique_by="unit_id"),
+    Tier("pn_recipient_purpose", (*AWARD_KEY, "purpose_code"), unique_by="crs_id"),
+    Tier("pn_recipient", AWARD_KEY, unique_by="crs_id"),
 )
 if tuple(tier.name for tier in TIERS) != schema.KEY_TIERS:
     raise RuntimeError("TIERS must follow schema.KEY_TIERS")
@@ -158,9 +149,6 @@ def build_units(crs: pl.LazyFrame) -> pl.LazyFrame:
     disbursements both sum to zero are left out.
     """
     dated = pl.col("commitment_year") < pl.col("year")
-    size = pl.col("commitment_usd").abs().fill_null(0) + pl.col(
-        "disbursement_usd"
-    ).abs().fill_null(0)
     return (
         crs.with_columns(
             project_number=normalise_pn(pl.col("project_number")),
@@ -171,10 +159,8 @@ def build_units(crs: pl.LazyFrame) -> pl.LazyFrame:
         # adds in whatever order threads finish, which changes the last bit.
         .agg(
             pl.col("commitment_usd", "disbursement_usd").sort_by("record_id"),
+            largest_record("commitment_date"),
             record_ids=pl.col("record_id").sort(),
-            commitment_date=pl.col("commitment_date")
-            .sort_by(size, "record_id", descending=[True, False])
-            .first(),
         )
         .with_columns(pl.col("commitment_usd", "disbursement_usd").list.sum())
         .filter((pl.col("commitment_usd") != 0) | (pl.col("disbursement_usd") != 0))
@@ -209,7 +195,7 @@ def link_by_keys(
         loan=loan_number(pl.col("donor_code"), pl.col("project_number")),
     )
     units = units.with_columns(
-        crs_key=crs_key(units),
+        crs_key=crs_key(),
         parent_key=_parent_key(pl.col("crs_id")),
         pn_key=_pn_key(units),
     )
@@ -229,9 +215,9 @@ def link_by_keys(
     for tier in TIERS:
         tier_pairs = _eligible_pairs(
             remaining.drop_nulls(tier.unit_key),
-            _unique_pn(commitments, key=tier.commitment_key, by=tier.unique_by)
-            if tier.project_number
-            else commitments,
+            commitments
+            if tier.unique_by is None
+            else _unique_pn(commitments, key=tier.commitment_key, by=tier.unique_by),
             tier=tier,
             first_year=first_year,
         )
@@ -272,8 +258,8 @@ def line_date(commitment_date: pl.Expr) -> pl.Expr:
     return pl.when(~placeholder).then(commitment_date)
 
 
-def crs_key(units: pl.DataFrame) -> pl.Series:
-    """Each unit's crs id, with its recipient code where the (donor, crs id) names
+def crs_key() -> pl.Expr:
+    """A unit's crs id, with its recipient code where the (donor, crs id) names
     several lines: units in more than one country, or in more than one recipient
     under more than one project number, a missing number counting as one more.
 
@@ -292,11 +278,11 @@ def crs_key(units: pl.DataFrame) -> pl.Series:
             & (pl.col("project_number").n_unique() > 1)
         )
     ).over("donor_code", "crs_id")
-    return units.select(
+    return (
         pl.when(several)
         .then(pl.concat_str("crs_id", "recipient_code", separator="|"))
         .otherwise(pl.col("crs_id"))
-    ).to_series()
+    )
 
 
 def partner_recipient(*, commitment: pl.Expr, disbursement: pl.Expr) -> pl.Expr:
@@ -446,10 +432,8 @@ def _eligible_pairs(
     disbursements whose floor the tier sees (`floor_seen`). In a tier keyed on the
     crs id, the floor holds only where it names a commitment (`_floor_held`)."""
     floor = pl.col(tier.floor)
-    passes = floor.is_null() | (pl.col("placed_year") >= floor)
     if tier.same_crs_id:
-        passes |= ~pl.col("floor_held")
-    eligible = (pl.col("placed_year") <= pl.col("year")) & passes
+        floor = pl.when(pl.col("floor_held")).then(floor)
     dates = dict.fromkeys(("year", "floor_year", tier.floor, "floor_held"))
     return (
         disbursements.select("unit_id", *dates, *tier.unit_key)
@@ -461,19 +445,72 @@ def _eligible_pairs(
             right_on=list(tier.commitment_key),
             suffix="_commitment",
         )
-        .filter(eligible)
+        .filter(placed_in_window(pl.col("placed_year"), floor=floor))
         .filter(
             floor_seen(pl.col("placed_year"), first_year=first_year, over=["unit_id"])
         )
         .select(
             left_id="unit_id",
             right_id="unit_id_commitment",
-            group_id=pl.concat_str(
-                [pl.lit(tier.name), *(pl.col(key) for key in tier.unit_key)],
-                separator="|",
-            ),
+            group_id=group_id(pl.lit(tier.name), *tier.unit_key),
             link_method=pl.lit(tier.name),
         )
+    )
+
+
+def placed_in_window(placed_year: pl.Expr, *, floor: pl.Expr | None = None) -> pl.Expr:
+    """Whether a commitment placed in `placed_year` falls no later than the
+    disbursement's record year (`year`) and no earlier than its `floor` (by default
+    `floor_year`), a null floor holding no commitment out."""
+    floor = pl.col("floor_year") if floor is None else floor
+    return (placed_year <= pl.col("year")) & (floor.is_null() | (placed_year >= floor))
+
+
+def group_id(method: pl.Expr, *key: str | pl.Expr) -> pl.Expr:
+    """A link group's id: its method and the values of its `key`, joined by `|`."""
+    return pl.concat_str([method, *key], separator="|")
+
+
+def largest_record(*columns: str) -> pl.Expr:
+    """`columns` of the group's largest record by commitment plus disbursement,
+    ties to the smaller record id."""
+    size = pl.col("commitment_usd").abs().fill_null(0) + pl.col(
+        "disbursement_usd"
+    ).abs().fill_null(0)
+    return pl.col(*columns).sort_by(size, "record_id", descending=[True, False]).first()
+
+
+def representative(
+    units: pl.DataFrame, *, crs: pl.LazyFrame, fields: Iterable[pl.Expr]
+) -> pl.LazyFrame:
+    """`fields`, expressions over CRS record columns, of each unit's largest record
+    (`largest_record`), under `unit_id`."""
+    fields = list(fields)
+    return (
+        units.lazy()
+        .select("unit_id", record_id="record_ids")
+        .explode("record_id")
+        .join(
+            crs.select("record_id", "commitment_usd", "disbursement_usd", *fields),
+            on="record_id",
+        )
+        .group_by("unit_id")
+        .agg(largest_record(*(field.meta.output_name() for field in fields)))
+    )
+
+
+@overload
+def links_frame(frame: pl.DataFrame, given: Mapping[str, pl.Expr]) -> pl.DataFrame: ...
+@overload
+def links_frame(frame: pl.LazyFrame, given: Mapping[str, pl.Expr]) -> pl.LazyFrame: ...
+def links_frame(
+    frame: pl.DataFrame | pl.LazyFrame, given: Mapping[str, pl.Expr]
+) -> pl.DataFrame | pl.LazyFrame:
+    """`frame` as `links` rows: each column of `schema.LINKS`, in its order and
+    type, from `given`, else null."""
+    return frame.select(
+        given.get(name, pl.lit(None)).cast(column.dtype).alias(name)
+        for name, column in schema.LINKS.columns.items()
     )
 
 
@@ -497,13 +534,13 @@ def as_exact_links(
     certain = pl.col("link_method").is_in(methods) | (
         pl.col("left_id") == pl.col("right_id")
     )
-    given = {name: pl.col(name) for name in pairs.collect_schema().names()}
-    fixed = {
-        "task": pl.lit(task),
-        "probability": pl.when(certain).then(1.0),
-        "review": pl.lit(False),
-    }
-    return pairs.select(
-        given.get(name, fixed.get(name, pl.lit(None, dtype=column.dtype))).alias(name)
-        for name, column in schema.LINKS.columns.items()
+    # A column `pairs` carries wins over the defaults.
+    return links_frame(
+        pairs,
+        {
+            "task": pl.lit(task),
+            "probability": pl.when(certain).then(1.0),
+            "review": pl.lit(False),
+            **{name: pl.col(name) for name in pairs.collect_schema().names()},
+        },
     )
