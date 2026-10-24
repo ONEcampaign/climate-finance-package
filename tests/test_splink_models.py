@@ -5,6 +5,9 @@ share a project number.
 """
 
 import json
+import os
+import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -44,6 +47,8 @@ _WORDS = (
     "fisheries", "drought", "flood", "climate", "nutrition", "markets", "finance",
     "power", "wind",
 )  # fmt: skip
+# Each donor's (code, seed, projects, noise) in `world`.
+WORLD = ((DONOR, 7, 160, 260), (OTHER_DONOR, 11, 90, 150))
 _UNIT_SCHEMA = {name: column.dtype for name, column in schema.UNITS.columns.items()}
 _LABEL_SCHEMA = {
     name: column.dtype for name, column in schema.PAIR_LABELS.columns.items()
@@ -177,7 +182,7 @@ def _world(*donors: tuple[int, int, int, int]) -> dict[str, pl.DataFrame]:
 @pytest.fixture(scope="module")
 def world() -> dict[str, pl.DataFrame]:
     """A donor large enough for its own model and one that joins the pooled model."""
-    return _world((DONOR, 7, 160, 260), (OTHER_DONOR, 11, 90, 150))
+    return _world(*WORLD)
 
 
 def _responses(request: httpx.Request) -> httpx.Response:
@@ -506,6 +511,50 @@ def test_two_runs_give_the_same_scores(
 ) -> None:
     again = _run(world, tmp_path_factory.mktemp("jev"))
     assert again.scores.equals(uncalibrated.scores)
+
+
+# Scores `world` without Jev, writes the scores to argv[1] and prints the
+# term-frequency columns in the order Splink joins them.
+_SCORE_WORLD = """
+import sys
+from pathlib import Path
+
+from test_splink_models import WORLD, _run, _world
+
+from climate_finance.build.link import splink_models
+
+run = _run(_world(*WORLD), Path(sys.argv[2]), jev=False)
+run.scores.write_parquet(sys.argv[1])
+settings = splink_models._settings(provider_u=None).get_settings("duckdb")
+print(*(column.name for column in settings._term_frequency_columns))
+"""
+
+
+# Slow: two fresh interpreters each import the package and fit two models, about
+# 10 s in all on an idle machine.
+def test_the_hash_seed_leaves_the_models_unchanged(tmp_path: Path) -> None:
+    # Hash seeds 0 and 1 put the term-frequency columns in a set in opposite orders.
+    runs = []
+    for seed in ("0", "1"):
+        scores = tmp_path / f"scores_{seed}.parquet"
+        done = subprocess.run(
+            [sys.executable, "-c", _SCORE_WORLD, str(scores), str(tmp_path / seed)],
+            capture_output=True,
+            text=True,
+            check=True,
+            env=os.environ
+            | {
+                "PYTHONHASHSEED": seed,
+                "PYTHONPATH": os.pathsep.join(
+                    [str(Path(__file__).parent), os.environ.get("PYTHONPATH", "")]
+                ),
+            },
+        )
+        runs.append((done.stdout.split(), pl.read_parquet(scores)))
+
+    (columns, scores), (other_columns, other_scores) = runs
+    assert columns == other_columns == ['"pn_norm"', '"title_norm"']
+    assert scores.equals(other_scores)
 
 
 def test_a_model_too_small_to_fit_scores_nothing(tmp_path: Path) -> None:

@@ -65,6 +65,7 @@ from splink import DuckDBAPI, Linker, SettingsCreator
 # Splink's own reading of a comparison gives each level's number and the m it
 # scores with. Splink is pinned below 6.
 from splink.internals.comparison import Comparison
+from splink.internals.settings import Settings
 
 from climate_finance import schema
 from climate_finance.build.link.jev import (
@@ -137,6 +138,19 @@ LINK_METHOD = "splink_jev"
 _PAIR = ["left_id", "right_id"]
 # The ten comparisons labels re-estimate; `donor` and `provider` keep EM's m.
 LEVEL_NAMES = tuple(name.removeprefix("gamma_") for name in LEVELS)
+
+# Splink 5 collects the term-frequency columns into a set, so the order of their
+# joins, and with it the order of EM's float sums, follows the process's hash seed.
+# Every Splink `Settings` returns them sorted by name instead. Splink builds and
+# copies its `Settings` itself, so the fix sits on the class, and the lookup raises
+# at import if Splink renames the property. ty reads the class attribute as the
+# property's value, so it refuses the assignment.
+_term_frequency_columns: property = Settings.__dict__["_term_frequency_columns"]
+Settings._term_frequency_columns = property(  # ty: ignore[invalid-assignment]
+    lambda settings: sorted(
+        _term_frequency_columns.__get__(settings), key=lambda column: column.name
+    )
+)
 
 SPLINK_SCORES = {
     name: column.dtype for name, column in schema.PAIR_SCORES.columns.items()

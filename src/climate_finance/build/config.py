@@ -169,6 +169,12 @@ class BuildConfig(_Section):
         return self
 
 
+# Settings that name a file a stage reads, as dotted paths. A stage's provenance
+# records the sha256 of the file's contents in place of the path, or None while
+# there is no file, so editing the file makes the stages that declare it stale and
+# moving it does not.
+FILE_SETTINGS = ("sources.review_decisions",)
+
 # The settings `release.json` records, as dotted paths: every switch, the EIB
 # recovery routes left out, and every year range.
 RELEASE_SETTINGS = (

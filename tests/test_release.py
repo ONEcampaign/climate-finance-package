@@ -149,10 +149,21 @@ def _raw_manifest(version: str) -> pl.DataFrame:
 
 
 @pytest.fixture
-def config() -> BuildConfig:
-    # The hand-written tables hold no truth group to set Jev's scale.
-    return load_config(BUILD_TOML).model_copy(
-        update={"key_repair": False, "recoveries": False, "jev_links": False}
+def config(tmp_path: Path) -> BuildConfig:
+    # The hand-written tables hold no truth group to set Jev's scale. No pair has
+    # been decided yet.
+    decisions = tmp_path / "decisions" / "review_decisions.parquet"
+    decisions.parent.mkdir()
+    _empty(schema.REVIEW_DECISIONS).write_parquet(decisions)
+    config = load_config(BUILD_TOML)
+    sources = config.sources.model_copy(update={"review_decisions": decisions})
+    return config.model_copy(
+        update={
+            "key_repair": False,
+            "recoveries": False,
+            "jev_links": False,
+            "sources": sources,
+        }
     )
 
 
@@ -677,6 +688,22 @@ def _drop_the_crs_file(release_dir: Path, config: BuildConfig) -> BuildConfig:
     )
 
 
+def _decide_a_pair(release_dir: Path, config: BuildConfig) -> BuildConfig:
+    decision = {
+        "task": "trace",
+        "left_id": "d20",
+        "right_id": "c19",
+        "decision": "accept",
+        "label_source": "human",
+        "reviewer": "reviewer",
+        "decided_at": datetime(2026, 11, 2, tzinfo=UTC),
+    }
+    pl.DataFrame([decision], schema=schema.REVIEW_DECISIONS.dtypes).write_parquet(
+        config.sources.review_decisions
+    )
+    return config
+
+
 def _retire_a_setting(release_dir: Path, config: BuildConfig) -> BuildConfig:
     path = record_path(release_dir, "fetch")
     record = StageRecord.model_validate_json(path.read_text())
@@ -694,6 +721,8 @@ def _retire_a_setting(release_dir: Path, config: BuildConfig) -> BuildConfig:
         (_move_last_complete_year, "allocate", "years.crs_last_complete = 2024"),
         # A setting that becomes None changes like any other.
         (_drop_the_crs_file, "fetch", "and the build config sets None"),
+        # Link read the decisions file, whose contents changed.
+        (_decide_a_pair, "link", "sources.review_decisions = "),
         (_retire_a_setting, "fetch", "sources.retired = 1, which the build config no"),
     ],
 )
@@ -753,6 +782,22 @@ def test_a_stage_reruns_after_its_inputs_change(
     run_stages(
         REGISTRY, release="r", release_dir=release_dir, config=changed,
         stages=LATER_STAGES,
+    )  # fmt: skip
+
+    assert cf.load(path=release_dir / "assemble").manifest.release == "r"
+
+
+def test_the_same_decisions_at_another_path_leave_every_stage_current(
+    release_dir: Path, config: BuildConfig
+) -> None:
+    moved = release_dir / "moved" / "decisions.parquet"
+    moved.parent.mkdir()
+    config.sources.review_decisions.rename(moved)
+    sources = config.sources.model_copy(update={"review_decisions": moved})
+
+    run_stages(
+        REGISTRY, release="r", release_dir=release_dir,
+        config=config.model_copy(update={"sources": sources}), stages=["assemble"],
     )  # fmt: skip
 
     assert cf.load(path=release_dir / "assemble").manifest.release == "r"
