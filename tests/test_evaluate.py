@@ -7,6 +7,7 @@ import pytest
 
 from climate_finance.build.evaluate import (
     PrecisionRule,
+    _stratum_sequence,
     estimate_precision,
     sample_design,
 )
@@ -82,6 +83,25 @@ def test_the_design_is_the_same_on_every_draw() -> None:
     assert first.sort("provider_code", "draw").equals(
         again.sort("provider_code", "draw")
     )
+
+
+def test_a_changed_population_draws_under_new_sample_ids() -> None:
+    pairs = _pairs()
+    changed = pairs.with_columns(
+        allocated_usd=pl.when(pl.col("left_id") == "d319")
+        .then(pl.col("allocated_usd") * 2)
+        .otherwise("allocated_usd")
+    )
+
+    first = sample_design(pairs, rule=RULE, release="r")
+    again = sample_design(changed, rule=RULE, release="r")
+
+    def ids(design: pl.DataFrame, provider: int) -> set[str]:
+        return set(design.filter(provider_code=provider)["sample_id"])
+
+    # d319 is provider 8's, so provider 4's population and ids stay.
+    assert ids(first, SMALL) == ids(again, SMALL)
+    assert not ids(first, LARGE) & ids(again, LARGE)
 
 
 def _draws(
@@ -207,3 +227,38 @@ def test_a_census_decides_only_once_complete_and_then_exactly() -> None:
         pytest.approx(0.95),
     ) * 3
     assert complete["decision"] == "pass"
+
+
+def test_futility_reads_the_strata_the_cap_will_draw() -> None:
+    # Four strata by value. Rounding gives the smallest-but-one 53 of the first 400
+    # draws and 67 of the 500, a larger share at the cap than at the look.
+    usd = np.array([4366.0, 3642.0, 659.0, 1333.0])
+    strata = _stratum_sequence(usd / usd.sum(), draws=RULE.cap)
+    counts = np.bincount(strata)
+    draw = np.arange(1, RULE.cap + 1)
+    # Its first 37 draws are wrong and every other draw is right.
+    wrong = np.flatnonzero(strata == 3)[:37] + 1
+    labels = pl.DataFrame(
+        {
+            "provider_code": np.zeros(RULE.cap, dtype=np.int32),
+            "draw": draw.astype(np.int32),
+            "correct": ~np.isin(draw, wrong),
+            "design": "pps",
+            "label_source": "human",
+            "stratum": strata.astype(str),
+            "weight_usd": usd[strata] / counts[strata],
+            "stratum_usd": usd[strata],
+        }
+    )
+
+    look = estimate_precision(
+        labels.with_columns(correct=pl.when(pl.col("draw") <= 400).then("correct")),
+        rule=RULE,
+    ).row(0, named=True)
+    cap = estimate_precision(labels, rule=RULE).row(0, named=True)
+
+    assert (np.bincount(strata[:400])[3], counts[3]) == (53, 67)
+    assert look["labels"] == 400
+    assert look["upper"] > RULE.threshold
+    assert look["decision"] == "continue"
+    assert cap["decision"] == "pass"

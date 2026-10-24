@@ -7,8 +7,8 @@ over-allocation:
 
 - `precision`: each provider's blind-sample estimate passes the sequential rule
   (`evaluate.estimate_precision`). Without a blind sample every provider fails, and
-  so does a provider with sampled pairs that the build does not allocate by the
-  same method in the same stratum.
+  so does a provider whose sample was drawn from another population of allocated
+  pairs (`evaluate.population_fingerprints`).
 - `human_audit`: at least `min_share` of the blind sample's draws carry a person's
   decision.
 - `conservation`: each linked CRS record's allocations, the unallocated excess
@@ -77,8 +77,6 @@ DRIFT_MEASURES = ("climate_usd", "disbursed_climate_usd")
 _SHOWN = 5
 # The gates `waive_precision` lets fail: both certify the blind sample.
 _WAIVABLE = ("precision", "human_audit")
-# The columns a sampled pair must match in the build it gates.
-_SAMPLED = ("provider_code", "task", "left_id", "right_id", "link_method", "stratum")
 
 
 class _Section(BaseModel):
@@ -291,9 +289,11 @@ def precision_gate(
     sampled draws (`labels`, from `evaluate.read_sample_labels`): its estimate and
     bounds, passing when the sequential rule decides `pass`.
 
-    A provider fails when any pair it sampled is not allocated in this build by the
-    same link method in the same stratum, since its labels then describe another
-    build. With no allocated pairs one row fails, as nothing is certified.
+    A provider fails unestimated when its sample's population fingerprint is not
+    that of its allocated pairs in this build (`evaluate.population_fingerprints`):
+    pairs were added or dropped, or changed method, stratum or value, so the sample
+    and its weights describe another population. With no allocated pairs one row
+    fails, as nothing is certified.
     """
     if pairs.is_empty():
         return _row(
@@ -304,21 +304,25 @@ def precision_gate(
             detail="no allocated pairs: nothing to certify",
         )
     if labels is None:
-        sampled = pl.DataFrame(schema=evaluate.DESIGN_SCHEMA).select(_SAMPLED)
-        estimates = pl.DataFrame(schema=evaluate.ESTIMATE_SCHEMA)
-    else:
-        sampled = labels.select(_SAMPLED).unique()
-        estimates = evaluate.estimate_precision(labels, rule=rule)
+        labels = pl.DataFrame(schema=evaluate.DESIGN_SCHEMA)
     stale = (
-        sampled.join(pairs, on=_SAMPLED, how="anti")
-        .group_by("provider_code")
-        .agg(stale=pl.len())
+        labels.select("provider_code", "population")
+        .unique()
         .join(
-            sampled.group_by("provider_code").agg(sampled=pl.len()), on="provider_code"
+            evaluate.population_fingerprints(pairs),
+            on=["provider_code", "population"],
+            how="anti",
         )
+        .select("provider_code", stale=pl.lit(value=True))
+    )
+    fresh = labels.join(stale, on="provider_code", how="anti")
+    estimates = (
+        evaluate.estimate_precision(fresh, rule=rule)
+        if fresh.height
+        else pl.DataFrame(schema=evaluate.ESTIMATE_SCHEMA)
     )
     providers = pl.concat(
-        [pairs.select("provider_code"), sampled.select("provider_code")]
+        [pairs.select("provider_code"), labels.select("provider_code")]
     ).unique()
     rows = (
         providers.join(estimates, on="provider_code", how="left")
@@ -328,11 +332,10 @@ def precision_gate(
     detail = (
         pl.when(pl.col("stale").is_not_null())
         .then(
-            pl.format(
-                "sample drawn from another build: {} of {} sampled pairs not "
-                "allocated here by the same method and stratum",
-                pl.col("stale"),
-                pl.col("sampled"),
+            pl.lit(
+                "stale sample: drawn from another population of allocated pairs, "
+                "as pairs, link methods, strata or allocated values changed; draw "
+                "a new sample"
             )
         )
         .when(pl.col("design").is_null())

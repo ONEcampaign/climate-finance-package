@@ -17,9 +17,11 @@ from climate_finance.build import load_config, run_stages, write_table
 from climate_finance.build.cli import app
 from climate_finance.build.errors import GateFailedError
 from climate_finance.build.evaluate import (
+    allocated_pairs,
     batch_packet_path,
     design_path,
     draw_blind_sample,
+    read_sample_labels,
 )
 from climate_finance.build.gate import (
     GATES,
@@ -27,6 +29,7 @@ from climate_finance.build.gate import (
     DriftCause,
     gate_results_json,
     load_gates,
+    precision_gate,
     run_gates,
 )
 from climate_finance.build.link.decisions import import_labels
@@ -283,32 +286,88 @@ def _units_of(release_dir: Path, record: str) -> pl.Series:
     return units.filter(pl.col("record_ids").list.contains(record))["unit_id"]
 
 
-@pytest.mark.parametrize("change", ["drop_pair", "change_method"])
+@pytest.mark.parametrize("change", ["drop_pair", "change_method", "change_value"])
 def test_precision_refuses_a_sample_drawn_from_another_build(
     release_dir: Path, change: str
 ) -> None:
     design = _label(release_dir, rejected=set())
     d21 = _units_of(release_dir, "d21")
     trace = (pl.col("task") == "trace") & pl.col("left_id").is_in(d21.implode())
-    _edit(
-        table_path(release_dir, "review", "links"),
-        lambda frame: (
-            frame.filter(~trace)
-            if change == "drop_pair"
-            else frame.with_columns(
-                link_method=pl.when(trace)
-                .then(pl.lit("classifier"))
-                .otherwise("link_method")
-            )
-        ),
-    )
+    if change == "change_value":
+        _edit(table_path(release_dir, "fill", "allocations"), _halve_d20)
+    else:
+        _edit(
+            table_path(release_dir, "review", "links"),
+            lambda frame: (
+                frame.filter(~trace)
+                if change == "drop_pair"
+                else frame.with_columns(
+                    link_method=pl.when(trace)
+                    .then(pl.lit("classifier"))
+                    .otherwise("link_method")
+                )
+            ),
+        )
 
     row = (
         _report(release_dir, sample=design).filter(gate="precision").row(0, named=True)
     )
 
     assert row["passed"] is False
-    assert "1 of 2 sampled pairs" in row["detail"]
+    assert (row["value"], row["lower"], row["upper"]) == (None, None, None)
+    assert row["detail"].startswith("stale sample")
+
+
+def test_precision_refuses_a_sample_after_the_population_grows(
+    release_dir: Path,
+) -> None:
+    design = _label(release_dir, rejected=set())
+    decisions = release_dir.parent / "decisions.parquet"
+    pairs = allocated_pairs(release_dir, decisions=decisions)
+    labels = read_sample_labels(design, decisions=decisions)
+    # A hundred more pairs, each carrying as much as the two the census labelled.
+    grown = pl.concat(
+        [
+            pairs,
+            pl.DataFrame(
+                {
+                    "provider_code": NOR,
+                    "task": "trace",
+                    "left_id": [f"new-d{i}" for i in range(100)],
+                    "right_id": [f"new-c{i}" for i in range(100)],
+                    "link_method": pairs["link_method"][0],
+                    "allocated_usd": pairs["allocated_usd"].max(),
+                    "stratum": pairs["stratum"][0],
+                },
+                schema=pairs.schema,
+            ),
+        ]
+    )
+
+    current = precision_gate(pairs, labels=labels, rule=GATES_CONFIG.precision)
+    stale = precision_gate(grown, labels=labels, rule=GATES_CONFIG.precision)
+
+    assert current["passed"].to_list() == [True]
+    assert stale["passed"].to_list() == [False]
+    assert stale["value"].to_list() == [None]
+    assert stale["detail"].str.starts_with("stale sample").to_list() == [True]
+
+
+def test_a_decision_counts_only_for_the_pair_it_decided(release_dir: Path) -> None:
+    design = _label(release_dir, rejected=set())
+    decisions = release_dir.parent / "decisions.parquet"
+    # A redraw that reuses both sample ids for the other pair each.
+    redrawn = release_dir.parent / "redrawn.parquet"
+    pl.read_parquet(design).with_columns(
+        pl.col("left_id", "right_id").reverse()
+    ).write_parquet(redrawn)
+
+    drawn = read_sample_labels(design, decisions=decisions)
+    swapped = read_sample_labels(redrawn, decisions=decisions)
+
+    assert drawn["correct"].to_list() == [True, True]
+    assert swapped["correct"].to_list() == [None, None]
+    assert swapped["label_source"].to_list() == [None, None]
 
 
 @pytest.mark.parametrize(

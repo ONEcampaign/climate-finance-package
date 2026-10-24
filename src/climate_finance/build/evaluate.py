@@ -13,13 +13,16 @@ first, then each draw goes to the stratum furthest below its share of allocated
 value. Within a stratum a draw picks a pair with probability proportional to its
 allocated value, with replacement, so a pair can be drawn more than once and is
 labelled once. Each draw's weight is its stratum's allocated value over the
-stratum's draws, so a provider's weights sum to its allocated value.
+stratum's draws, so a provider's weights sum to its allocated value. The design
+records each provider's population fingerprint (`population_fingerprints`), and the
+precision gate refuses a sample whose population the build no longer allocates.
 
 People or agents decide the sample from labelling packets (`packet.write_packet`),
 one per provider and batch, which show both units' ids and fields and no score,
 link method or stratum. Their decisions carry a `sample_id`, so they feed the
-precision estimate and create no pair labels or link overrides. The estimate counts an
-agent's decision as it counts a person's and reports the share agents decided.
+precision estimate and create no pair labels or link overrides. A decision counts
+for a draw only when its pair is the draw's pair. The estimate counts an agent's
+decision as it counts a person's and reports the share agents decided.
 
 The estimate is the share of allocated value whose pair is right: per stratum the
 weighted mean of the draws' decisions, combined by stratum value. Labelling runs in
@@ -28,14 +31,16 @@ whole batches. The bounds are a Wilson interval at the estimate's effective samp
 size, at `interim_z` before the cap and `final_z` at it. A provider passes when the
 lower bound reaches the threshold. It fails when the upper bound falls below the
 threshold, when the lower bound could not reach it by the cap even with every later
-draw right, or at the cap. With the thresholds in `gates.yaml`, a provider whose
-true precision is 0.90 passes 2.6% of the time. On a fail, the weakest stratum is
-dropped (reviewed pairs, then model links) and the rest is certified on a fresh
-sample.
+draw right (the cap's estimate is then one less the weight of the wrong draws read
+over the provider's allocated value), or at the cap. With the thresholds in
+`gates.yaml`, a provider whose true precision is 0.90 passes 2.6% of the time. On
+a fail, the weakest stratum is dropped (reviewed pairs, then model links) and the
+rest is certified on a fresh sample.
 """
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -70,6 +75,7 @@ DESIGN_SCHEMA = pl.Schema(
         "weight_usd": pl.Float64(),
         "stratum_usd": pl.Float64(),
         "stratum_pairs": pl.Int32(),
+        "population": pl.String(),
     }
 )
 ESTIMATE_SCHEMA = pl.Schema(
@@ -172,6 +178,33 @@ def allocated_pairs(release_dir: Path, *, decisions: Path) -> pl.DataFrame:
     )
 
 
+def population_fingerprints(pairs: pl.DataFrame) -> pl.DataFrame:
+    """Per provider in `pairs` (`allocated_pairs`), a sha256 of its allocated pairs:
+    each pair's identity, link method, stratum and allocated value.
+
+    The digest does not depend on the order of `pairs`, and any added, dropped or
+    changed pair changes it.
+
+    Returns:
+        A frame of `provider_code` and `population`, the hex digest.
+    """
+    columns = (*PAIR, "link_method", "stratum", "allocated_usd")
+    providers = pairs.select("provider_code", *columns).sort("provider_code", *columns)
+    digests = []
+    for (provider,), group in providers.partition_by(
+        "provider_code", as_dict=True, maintain_order=True
+    ).items():
+        digest = hashlib.sha256()
+        for row in group.select(columns).iter_rows():
+            digest.update(repr(row).encode())
+        digests.append((provider, digest.hexdigest()))
+    return pl.DataFrame(
+        digests,
+        schema={"provider_code": pl.Int32(), "population": pl.String()},
+        orient="row",
+    )
+
+
 def draw_blind_sample(
     *, release_dir: Path, out_dir: Path, decisions: Path, rule: PrecisionRule
 ) -> Path:
@@ -227,10 +260,12 @@ def sample_design(
 ) -> pl.DataFrame:
     """One row per draw of the blind sample of `pairs` (`allocated_pairs`).
 
-    A pair's `sample_id` is `<release>/<provider>/<first draw>`, shared by its
-    draws. Each provider draws from its own random stream, seeded by `rule.seed`
-    and its code, over its pairs in pair order, so a provider's draws do not
-    change with the order of `pairs` or with the other providers.
+    Each row carries its provider's `population` (`population_fingerprints`). A
+    pair's `sample_id` is `<release>/<provider>/<population>/<first draw>`, with the
+    population's first 12 hex digits, shared by its draws. Each provider draws
+    from its own random stream, seeded by `rule.seed` and its code, over its pairs
+    in pair order, so a provider's draws do not change with the order of `pairs`
+    or with the other providers.
     """
     parts = [
         _provider_draws(group, rule=rule, provider=int(provider))
@@ -243,11 +278,13 @@ def sample_design(
     first = pl.col("draw").min().over("provider_code", *PAIR)
     return (
         pl.concat(parts, how="diagonal")
+        .join(population_fingerprints(pairs), on="provider_code")
         .with_columns(
             sample_id=pl.format(
-                "{}/{}/{}",
+                "{}/{}/{}/{}",
                 pl.lit(release),
                 "provider_code",
+                pl.col("population").str.head(12),
                 first.cast(pl.String).str.zfill(3),
             )
         )
@@ -318,8 +355,10 @@ def read_sample_labels(design: Path, *, decisions: Path) -> pl.DataFrame:
     was accepted, and `label_source`, who decided it; both null while the pair is
     undecided.
 
-    A draw's standing decision is the one `decisions.standing_decisions` keeps, as
-    for the review queue's pairs.
+    A decision counts for a draw only when its `sample_id` and its pair (`task`,
+    `left_id`, `right_id`) are the draw's, so a pair drawn under a reused id stays
+    undecided. A draw's standing decision is the one `decisions.standing_decisions`
+    keeps among those, as for the review queue's pairs.
 
     Raises:
         FileNotFoundError: when `decisions` does not exist, since the sample's
@@ -327,15 +366,17 @@ def read_sample_labels(design: Path, *, decisions: Path) -> pl.DataFrame:
     """
     if not decisions.exists():
         raise FileNotFoundError(f"no review decisions at {decisions}")
-    sampled = pl.read_parquet(decisions).filter(pl.col("sample_id").is_not_null())
-    decided = standing_decisions(sampled, key="sample_id").select(
-        "sample_id",
+    drawn = pl.read_parquet(design)
+    key = ["sample_id", *PAIR]
+    sampled = pl.read_parquet(decisions).join(
+        drawn.select(key).unique(), on=key, how="semi"
+    )
+    decided = standing_decisions(sampled, key=key).select(
+        *key,
         correct=pl.col("decision") == "accept",
         label_source="label_source",
     )
-    return pl.read_parquet(design).join(
-        decided, on="sample_id", how="left", maintain_order="left"
-    )
+    return drawn.join(decided, on=key, how="left", maintain_order="left")
 
 
 def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataFrame:
@@ -361,6 +402,7 @@ def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataF
         unbroken=known.cast(pl.Int32).cum_min().over("provider_code"),
         pairs=pl.len().over("provider_code"),
         decided=known.sum().over("provider_code"),
+        provider_usd=pl.col("weight_usd").sum().over("provider_code"),
     )
     look = (pl.col("unbroken").sum() // rule.batch * rule.batch).clip(
         upper_bound=rule.cap
@@ -379,11 +421,12 @@ def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataF
         )
         .group_by("provider_code", "cell")
         .agg(
-            pl.col("design", "pairs", "decided", "cell_usd").first(),
+            pl.col("design", "pairs", "decided", "cell_usd", "provider_usd").first(),
             draws=pl.len(),
             agent_draws=(pl.col("label_source") == "agent").sum(),
             weight_total=ordered_sum(weight),
             right_total=ordered_sum(weight * right),
+            wrong_total=ordered_sum(weight * (1 - right)),
             square_total=ordered_sum(weight * weight),
             square_right=ordered_sum(weight * weight * right),
         )
@@ -408,8 +451,9 @@ def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataF
         cells.with_columns(p_cell=p_cell, v_cell=v_cell)
         .group_by("provider_code")
         .agg(
-            pl.col("pairs", "decided").first(),
+            pl.col("pairs", "decided", "provider_usd").first(),
             labels=draws.sum(),
+            wrong_usd=ordered_sum(pl.col("wrong_total")),
             agent_share=pl.col("agent_draws").sum() / draws.sum(),
             estimate=ordered_sum(cell_usd * pl.col("p_cell")) / ordered_sum(cell_usd),
             variance=ordered_sum(cell_usd**2 * pl.col("v_cell"))
@@ -438,8 +482,10 @@ def _decide(providers: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataFrame:
         .otherwise(n)
     )
     lower, upper = _wilson(p, effective, z)
-    # The best the cap can give: every draw after this look right.
-    best = (n * p + (rule.cap - n)) / rule.cap
+    # The best the cap can give: every draw after this look right. At the cap a
+    # stratum's draws carry its whole value, so the estimate is the share of the
+    # provider's value whose draws are right.
+    best = 1 - pl.col("wrong_usd") / pl.col("provider_usd")
     best_lower, _ = _wilson(best, pl.lit(float(rule.cap)), pl.lit(rule.final_z))
     threshold = rule.threshold
     bounded = providers.with_columns(
