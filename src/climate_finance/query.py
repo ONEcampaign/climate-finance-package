@@ -342,7 +342,7 @@ def _attributed_rows(snapshot: Snapshot, *, flow: Flow, method: Method) -> pl.La
     source = "oecd" if method.replace(eu=OECD.eu) == OECD else "one"
     shares = _fixed_shares(snapshot, source=source)
     if source == "one":
-        measured = _measured_shares(snapshot, method=method)
+        measured = measured_shares(snapshot.table("agency_spending"), method=method)
         shares = pl.concat(
             [measured, shares.join(measured, on=["channel_code", "year"], how="anti")]
         )
@@ -408,8 +408,9 @@ def _fixed_shares(snapshot: Snapshot, *, source: str) -> pl.LazyFrame:
     )
 
 
-def _measured_shares(snapshot: Snapshot, *, method: Method) -> pl.LazyFrame:
-    """Each agency's climate shares by channel and year from `agency_spending`.
+def measured_shares(spending: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
+    """Each agency's climate shares by channel and year from `spending`, an
+    `agency_spending` table.
 
     Each row weighs as a commitment of its markers or components would under
     `method`, with its `face_share` as the amount. Every measured share is split
@@ -426,8 +427,7 @@ def _measured_shares(snapshot: Snapshot, *, method: Method) -> pl.LazyFrame:
     # and the shares include it.
     added = overlap if method.highest_marker else pl.lit(0.0)
     return (
-        snapshot.table("agency_spending")
-        .with_columns(
+        spending.with_columns(
             climate_share=pl.col("adaptation_share")
             + pl.col("mitigation_share")
             - pl.col("overlap_share"),

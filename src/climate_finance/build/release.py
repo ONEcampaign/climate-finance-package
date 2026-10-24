@@ -26,9 +26,11 @@ import polars as pl
 
 from climate_finance import __version__
 from climate_finance.build.allocate import counted_rows, years_since_commitment
+from climate_finance.build.config import RELEASE_SETTINGS
 from climate_finance.build.errors import ReleaseInvariantError, StageInputMissingError
 from climate_finance.build.label import inherit_markers
 from climate_finance.build.normalise.crs import trace_population
+from climate_finance.build.provenance import setting_value
 from climate_finance.build.sums import ordered_sum
 from climate_finance.schema import (
     BTR,
@@ -75,7 +77,8 @@ def seal_release(
     sha256: Mapping[str, str],
     out_dir: Path,
 ) -> None:
-    """Check the written release tables and write `release.json` beside them.
+    """Check the written release tables and write `release.json` beside them,
+    with the `RELEASE_SETTINGS` of the build config.
 
     Raises:
         ReleaseInvariantError: when the tables break `schema.release_invariants`.
@@ -100,6 +103,10 @@ def seal_release(
             ),
         },
         gates={},
+        settings={
+            setting: setting_value(context.config, setting)
+            for setting in RELEASE_SETTINGS
+        },
     )
     (out_dir / "release.json").write_text(manifest.model_dump_json(indent=2) + "\n")
 
@@ -129,6 +136,7 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         "disbursements": disbursements,
         "objectives": objectives,
         "agency_shares": context.read("measure", "agency_shares").collect(),
+        "agency_spending": context.read("measure", "agency_spending").collect(),
         "modelled": context.read("measure", "modelled").collect(),
         "core_contributions": core_contributions(
             context.read("normalise", "core_contributions")

@@ -17,7 +17,7 @@ from pathlib import Path
 import polars as pl
 
 from climate_finance.build import allocate, fetch, label, measure, release
-from climate_finance.build.config import BuildConfig
+from climate_finance.build.config import RELEASE_SETTINGS, BuildConfig
 from climate_finance.build.errors import StageInputMissingError
 from climate_finance.build.link import gap_fill, review, run_link
 from climate_finance.build.normalise import run_normalise
@@ -158,7 +158,7 @@ REGISTRY: tuple[StageDef, ...] = (
             "embedding.model",
             "embedding.revision",
             "jev.model",
-            "years.crs_last_complete",
+            *RELEASE_SETTINGS,
         ),
     ),
 )

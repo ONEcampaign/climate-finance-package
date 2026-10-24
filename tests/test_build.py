@@ -91,10 +91,10 @@ def test_offline_reaches_every_stage(
     argument: bool,
     configured: bool,
 ) -> None:
-    seen: list[bool] = []
+    seen: list[tuple[bool, bool]] = []
 
     def run(context: StageContext) -> dict[str, pl.DataFrame]:
-        seen.append(context.offline)
+        seen.append((context.offline, context.config.offline))
         return _numbers(["a"], [1.0])
 
     monkeypatch.setattr(
@@ -108,7 +108,7 @@ def test_offline_reaches_every_stage(
         offline=argument,
     )
 
-    assert seen == [True, True]
+    assert seen == [(True, True), (True, True)]
 
 
 @pytest.mark.parametrize("switches", [False, True])
@@ -122,6 +122,7 @@ def test_every_stage_reads_the_settings_it_declares_and_no_others(
     # fetch on. Measure models no provider, since the fixtures hold too few.
     config = config.model_copy(
         update={
+            "offline": True,
             "key_repair": switches,
             "recoveries": switches,
             "sources": config.sources.model_copy(
@@ -139,7 +140,7 @@ def test_every_stage_reads_the_settings_it_declares_and_no_others(
     )
     registry, reads = record_reads(monkeypatch, config, REGISTRY)
 
-    run_stages(registry, release="r", release_dir=tmp_path, config=config, offline=True)
+    run_stages(registry, release="r", release_dir=tmp_path, config=config)
 
     assert reads == {stage.name: set(stage.settings) for stage in REGISTRY}
 

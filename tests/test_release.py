@@ -147,6 +147,7 @@ def config() -> BuildConfig:
 def _measure() -> dict[str, pl.DataFrame]:
     return {
         "agency_shares": _empty(schema.AGENCY_SHARES),
+        "agency_spending": _empty(schema.AGENCY_SPENDING),
         "modelled": _empty(schema.MODELLED),
     }
 
@@ -189,6 +190,17 @@ def test_the_release_opens_and_matches_release_json(release_dir: Path) -> None:
 
     assert snapshot.manifest.source_versions == {"crs": "v20261006"}
     assert set(snapshot.manifest.tables) == set(schema.RELEASE_TABLES)
+    # The config fixture turns key repair and recoveries off.
+    assert snapshot.manifest.settings == {
+        "offline": False,
+        "key_repair": False,
+        "recoveries": False,
+        "gap_fill": False,
+        "review": False,
+        "years.crdf": [2015, 2024],
+        "years.crs": [2010, 2025],
+        "years.crs_last_complete": 2024,
+    }
 
 
 def test_commitments_leave_out_parents_and_keep_repeats_and_revisions(

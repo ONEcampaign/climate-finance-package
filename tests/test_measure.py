@@ -17,10 +17,14 @@ from climate_finance.build.measure import (
     ProviderFacts,
     ReportRatio,
     agency_shares,
+    agency_spending,
     load_provider_facts,
     modelled_ranges,
+    one_share_problems,
 )
 from climate_finance.build.stages import table_path
+from climate_finance.methods import ONE
+from climate_finance.query import measured_shares
 
 ASDB, EU, ADAPTATION_FUND, CAF, IFC, NDB = 915, 918, 1012, 1015, 903, 1044
 PERU, MEXICO, AMERICA_REGIONAL, UNSPECIFIED = 454, 358, 498, 998
@@ -55,10 +59,16 @@ def _component(
     )
 
 
-def _shares(frame: pl.LazyFrame) -> dict[tuple[int, int, str, str], float]:
+def _one_shares(spending: pl.LazyFrame) -> dict[tuple[int, int, str], float]:
+    """The ONE shares the query weighs from `spending`, by channel, year and part."""
+    collected = spending.collect()
+    schema.validate(schema.AGENCY_SPENDING, collected)
     return {
-        (channel, year, objective, source): share
-        for channel, year, objective, share, source in frame.collect().iter_rows()
+        (row["channel_code"], row["year"], part): row[f"share_{part}"]
+        for row in measured_shares(collected.lazy(), method=ONE)
+        .collect()
+        .iter_rows(named=True)
+        for part in ("adaptation", "mitigation", "overlap")
     }
 
 
@@ -93,32 +103,75 @@ def test_one_shares_are_inclusive_two_year_shares_of_crs_commitments() -> None:
          "commitment_usd": 9e3},
     )  # fmt: skip
 
-    shares = _shares(
-        agency_shares(
-            crdf.lazy(),
-            crs=crs.lazy(),
-            imputed_shares=NO_IMPUTED,
-            agencies=AGENCIES,
-            years=(2020, 2021),
-        )
+    spending = agency_spending(
+        crdf.lazy(), crs=crs.lazy(), agencies=AGENCIES, years=(2020, 2021)
     )
+    shares = _one_shares(spending)
 
     # Only 2021 has its whole two-year span inside the years; the EU budget channel
     # has no CRS commitments, so no share.
     expected = {
-        (46004, 2021, "adaptation", "one"): 30.0 / 1000,
-        (46004, 2021, "mitigation", "one"): 70.0 / 1000,
-        (46004, 2021, "cross_cutting", "one"): 10.0 / 1000,
-        (47111, 2021, "adaptation", "one"): 4.0 / 20,
-        (47111, 2021, "mitigation", "one"): 0.0,
-        (47111, 2021, "cross_cutting", "one"): 0.0,
-        (42004, 2021, "adaptation", "one"): 0.0,
-        (42004, 2021, "mitigation", "one"): 20.0 / 80,
-        (42004, 2021, "cross_cutting", "one"): 0.0,
+        (46004, 2021, "adaptation"): 30.0 / 1000,
+        (46004, 2021, "mitigation"): 70.0 / 1000,
+        (46004, 2021, "overlap"): 10.0 / 1000,
+        (47111, 2021, "adaptation"): 4.0 / 20,
+        (47111, 2021, "mitigation"): 0.0,
+        (47111, 2021, "overlap"): 0.0,
+        (42004, 2021, "adaptation"): 0.0,
+        (42004, 2021, "mitigation"): 20.0 / 80,
+        (42004, 2021, "overlap"): 0.0,
     }
     assert shares.keys() == expected.keys()
     for key, share in expected.items():
         assert shares[key] == pytest.approx(share), key
+    assert (
+        one_share_problems(
+            spending, crdf=crdf.lazy(), crs=crs.lazy(), agencies=AGENCIES,
+            years=(2020, 2021),
+        )
+        == []
+    )  # fmt: skip
+
+
+def test_an_agency_with_commitments_and_no_climate_rows_measures_zero() -> None:
+    crs = crs_records(
+        {"record_id": "f21", "year": 2021, "donor_code": ADAPTATION_FUND,
+         "commitment_usd": 20.0},
+    )  # fmt: skip
+
+    shares = _one_shares(
+        agency_spending(
+            crdf_rows().lazy(), crs=crs.lazy(), agencies=AGENCIES, years=(2020, 2021)
+        )
+    )
+
+    assert shares == {
+        (47111, 2021, part): 0.0 for part in ("adaptation", "mitigation", "overlap")
+    }
+
+
+def test_measure_refuses_spending_whose_one_shares_differ_from_the_crdf() -> None:
+    crdf = crdf_rows(
+        _bank("f21", 2021, provider_code=ADAPTATION_FUND, rio_adaptation=1,
+              rio_mitigation=0, face_usd=10.0, climate_usd=10.0,
+              adaptation_usd=10.0, mitigation_usd=0.0),
+    )  # fmt: skip
+    crs = crs_records(
+        {"record_id": "f21", "year": 2021, "donor_code": ADAPTATION_FUND,
+         "commitment_usd": 20.0},
+    )  # fmt: skip
+    spending = agency_spending(
+        crdf.lazy(), crs=crs.lazy(), agencies=AGENCIES, years=(2020, 2021)
+    ).with_columns(face_share=pl.col("face_share") * 2)
+
+    problems = one_share_problems(
+        spending, crdf=crdf.lazy(), crs=crs.lazy(), agencies=AGENCIES,
+        years=(2020, 2021),
+    )  # fmt: skip
+
+    assert problems == [
+        "agency_spending 47111 2021: ONE adaptation share 0.4 differs from 0.2"
+    ]
 
 
 def test_oecd_shares_are_the_imputed_shares_unchanged() -> None:
@@ -131,15 +184,8 @@ def test_oecd_shares_are_the_imputed_shares_unchanged() -> None:
         },
         schema=schema.IMPUTED_SHARES.dtypes,
     )
-    crdf, crs = crdf_rows(), crs_records()
 
-    shares = agency_shares(
-        crdf.lazy(),
-        crs=crs.lazy(),
-        imputed_shares=imputed.lazy(),
-        agencies=AGENCIES,
-        years=(2015, 2024),
-    ).collect()
+    shares = agency_shares(imputed.lazy()).collect()
 
     schema.validate(schema.AGENCY_SHARES, shares)
     assert shares.drop("source").sort(pl.all()).equals(imputed.sort(pl.all()))
@@ -436,7 +482,7 @@ def test_core_contribution_rows_change_no_measure(tmp_path: Path) -> None:
     )  # fmt: skip
 
     assert baseline["modelled"].height == 4
-    assert not baseline["agency_shares"].is_empty()
+    assert not baseline["agency_spending"].is_empty()
     for table, frame in baseline.items():
         assert with_core[table].equals(frame), table
 
@@ -471,11 +517,9 @@ def _rerun_frames() -> tuple[pl.LazyFrame, pl.LazyFrame]:
     return crdf.lazy(), crs.lazy()
 
 
-def _rerun_agency_shares() -> pl.LazyFrame:
+def _rerun_agency_spending() -> pl.LazyFrame:
     crdf, crs = _rerun_frames()
-    return agency_shares(
-        crdf, crs=crs, imputed_shares=NO_IMPUTED, agencies=AGENCIES, years=(2020, 2021)
-    )
+    return agency_spending(crdf, crs=crs, agencies=AGENCIES, years=(2020, 2021))
 
 
 def _rerun_modelled_ranges() -> pl.LazyFrame:
@@ -495,7 +539,7 @@ def _rerun_modelled_ranges() -> pl.LazyFrame:
     )
 
 
-@pytest.mark.parametrize("table", [_rerun_agency_shares, _rerun_modelled_ranges])
+@pytest.mark.parametrize("table", [_rerun_agency_spending, _rerun_modelled_ranges])
 def test_measures_give_the_same_bits_on_every_run(
     table: Callable[[], pl.LazyFrame],
 ) -> None:

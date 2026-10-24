@@ -572,8 +572,9 @@ JEV_LEVEL_MAP = _table(
 )
 
 # Shares of the agency's spending by objective that hold under every method's
-# coefficients: the OECD's imputed shares (`oecd`), and under `one` the OECD's share
-# for a channel and year whose share `agency_spending` does not measure. The
+# coefficients: the OECD's imputed shares (`oecd`), which the build writes, and under
+# `one` a share the query reads for a channel and year that `agency_spending` does
+# not measure. The
 # adaptation and mitigation shares each include the cross_cutting share, as
 # `adaptation_usd`, `mitigation_usd` and `overlap_usd` do, so the climate share is
 # adaptation + mitigation - cross_cutting. A channel, year and source holds either
@@ -594,8 +595,9 @@ AGENCY_SHARES = _table(
 # climate share under any method's coefficients. A row with markers holds the face
 # value at those markers, with null component shares. The row with null markers holds
 # the face value and climate components of the commitments that report components,
-# adaptation and mitigation each including the overlap. A share year whose span
-# commits too little repeats the rows of the last year whose span did not.
+# adaptation and mitigation each including the overlap. A channel and share year
+# whose span has positive CRS commitments and no CRDF commitment holds one row at
+# markers 0 and 0 with no face value, so its share is 0.
 AGENCY_SPENDING = _table(
     "agency_spending",
     ("channel_code", "year", "rio_adaptation", "rio_mitigation"),
@@ -942,8 +944,11 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     earlier vintage, as allocate moves a repeat's allocations to its first row. No
     commitment is another's `parent_row_id`, and no table in `tables` holds the
     bulk CRS's `CRS_UNSPECIFIED_RECIPIENT`. A channel, year and source of
-    `agency_shares` holds either split rows or one `climate` row. An empty list
-    means every check passed.
+    `agency_shares` holds either split rows or one `climate` row. Each
+    `agency_spending` row holds both markers and no component shares, or neither
+    marker and all three component shares, and a channel, year and pair of markers
+    holds one row. A channel and year of `agency_spending` holds no `one` row of
+    `agency_shares`. An empty list means every check passed.
     """
     commitments, problems = _finite(tables["commitments"], name="commitments")
     disbursements, non_finite = _finite(tables["disbursements"], name="disbursements")
@@ -1027,6 +1032,9 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     problems.extend(_record_problems(disbursements))
     problems.extend(_share_problems(tables["agency_shares"]))
     problems.extend(
+        _spending_problems(tables["agency_spending"], shares=tables["agency_shares"])
+    )
+    problems.extend(
         f"{name}: {count} rows with recipient_code {CRS_UNSPECIFIED_RECIPIENT}, "
         f"which releases write as {UNSPECIFIED_RECIPIENT}"
         for name, frame in tables.items()
@@ -1060,6 +1068,49 @@ def _share_problems(agency_shares: pl.DataFrame) -> list[str]:
         f"agency_shares {row['channel_code']} {row['year']} {row['source']}: a "
         "climate row beside split rows"
         for row in mixed.iter_rows(named=True)
+    ]
+
+
+def _spending_problems(
+    agency_spending: pl.DataFrame, *, shares: pl.DataFrame
+) -> list[str]:
+    """`agency_spending` rows that mix markers and component shares, keys held
+    twice, and channels and years that `shares` also holds under `one`."""
+    key = AGENCY_SPENDING.sort_key
+    markers = pl.col("rio_adaptation", "rio_mitigation")
+    components = pl.col("adaptation_share", "mitigation_share", "overlap_share")
+    marker_row = pl.all_horizontal(markers.is_not_null()) & pl.all_horizontal(
+        components.is_null()
+    )
+    component_row = pl.all_horizontal(markers.is_null()) & pl.all_horizontal(
+        components.is_not_null()
+    )
+    mixed = agency_spending.filter(~(marker_row | component_row))
+    repeated = agency_spending.filter(pl.struct(key).is_duplicated()).unique(key)
+    both = (
+        agency_spending.select("channel_code", "year")
+        .unique()
+        .join(shares.filter(pl.col("source") == "one"), on=["channel_code", "year"])
+        .unique(["channel_code", "year"])
+    )
+
+    def label(row: Mapping[str, object]) -> str:
+        return " ".join(str(row[part]) for part in key)
+
+    return [
+        *(
+            f"agency_spending {label(row)}: markers and component shares mixed"
+            for row in mixed.sort(key, nulls_last=True).iter_rows(named=True)
+        ),
+        *(
+            f"agency_spending {label(row)}: held by more than one row"
+            for row in repeated.sort(key, nulls_last=True).iter_rows(named=True)
+        ),
+        *(
+            f"agency_spending {row['channel_code']} {row['year']}: also an "
+            "agency_shares row of source one"
+            for row in both.sort("channel_code", "year").iter_rows(named=True)
+        ),
     ]
 
 

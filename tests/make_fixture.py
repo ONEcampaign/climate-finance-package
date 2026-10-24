@@ -180,7 +180,11 @@ SETTINGS = {
     "offline": True,
     "key_repair": True,
     "recoveries": True,
-    "years": {"crdf": [2021, 2022], "crs": [2021, 2023]},
+    "gap_fill": False,
+    "review": False,
+    "years.crdf": [2021, 2022],
+    "years.crs": [2021, 2023],
+    "years.crs_last_complete": 2023,
 }
 
 

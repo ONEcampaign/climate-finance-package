@@ -112,6 +112,17 @@ class BuildConfig(_Section):
     embedding: Embedding
 
 
+# The settings `release.json` records, as dotted paths: every switch and year range.
+RELEASE_SETTINGS = (
+    *(
+        name
+        for name, field in BuildConfig.model_fields.items()
+        if field.annotation is bool
+    ),
+    *(f"years.{name}" for name in Years.model_fields),
+)
+
+
 def load_config(path: Path) -> BuildConfig:
     """Read `path` as a `BuildConfig`.
 

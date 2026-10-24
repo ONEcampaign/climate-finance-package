@@ -62,7 +62,7 @@ def test_regenerating_the_fixture_gives_the_same_tables(tmp_path: Path) -> None:
         assert pl.read_parquet(tmp_path / f"{table}.parquet").equals(_read(table))
 
 
-INVARIANT_TABLES = ("commitments", "disbursements", "agency_shares")
+INVARIANT_TABLES = ("commitments", "disbursements", "agency_shares", "agency_spending")
 
 
 def test_fixture_holds_the_release_invariants() -> None:
@@ -172,6 +172,27 @@ def _split_a_climate_only_share(frame: pl.DataFrame) -> pl.DataFrame:
     return pl.concat([frame, split])
 
 
+def _measure_ida_twice(frame: pl.DataFrame) -> pl.DataFrame:
+    # IDA's 2021 share is measured in agency_spending; a `one` row would count it
+    # twice.
+    one = frame.filter(channel_code=44002, year=2021, source="oecd").with_columns(
+        source=pl.lit("one")
+    )
+    return pl.concat([frame, one])
+
+
+def _give_a_marker_row_components(frame: pl.DataFrame) -> pl.DataFrame:
+    is_row = (pl.col("channel_code") == 44002) & (pl.col("year") == 2021)
+    is_row &= (pl.col("rio_adaptation") == 2) & (pl.col("rio_mitigation") == 0)
+    return frame.with_columns(
+        adaptation_share=pl.when(is_row).then(0.06).otherwise("adaptation_share")
+    )
+
+
+def _repeat_a_components_row(frame: pl.DataFrame) -> pl.DataFrame:
+    return pl.concat([frame, frame.filter(channel_code=46002, year=2022)])
+
+
 def _null_disbursed(frame: pl.DataFrame) -> pl.DataFrame:
     is_row = pl.col("row_id") == "DEU-1"
     return frame.with_columns(
@@ -229,6 +250,9 @@ def _repeat_an_allocated_row(frame: pl.DataFrame) -> pl.DataFrame:
         ("disbursements", _overdraw_record, "JPN-SPLIT"),
         ("disbursements", _negative_record_grant_equiv, "JPN-SPLIT"),
         ("agency_shares", _split_a_climate_only_share, "46002 2020 oecd"),
+        ("agency_shares", _measure_ida_twice, "44002 2021"),
+        ("agency_spending", _give_a_marker_row_components, "44002 2021 2 0"),
+        ("agency_spending", _repeat_a_components_row, "46002 2022 None None"),
     ],
 )
 def test_release_invariants_name_the_row_that_breaks_one(

@@ -192,6 +192,9 @@ def run_stages(
 ) -> BuildManifest:
     """Run the selected stages of `registry` in registry order.
 
+    `offline=True` sets the config's `offline`, which stages and `release.json`
+    read.
+
     Raises:
         BuildError: when `stages` names a stage the registry lacks.
         StaleStageError: when a stage reads an earlier stage built from other
@@ -201,6 +204,8 @@ def run_stages(
     selected = set(names) if stages is None else set(stages)
     if unknown := sorted(selected - set(names)):
         raise BuildError(f"Unknown stages {unknown}; the stages are {names}")
+    if offline:
+        config = config.model_copy(update={"offline": True})
     recover_stage_dirs(registry, release_dir)
     tables = {}
     for stage in registry:
@@ -216,7 +221,7 @@ def run_stages(
             release=release,
             release_dir=release_dir,
             config=config,
-            offline=offline,
+            offline=config.offline,
             provenance=provenance,
         )
         tables[stage.name] = write_stage(
@@ -249,7 +254,7 @@ def build(
         release_dir=out_dir / release,
         config=build_config,
         stages=None if stages is None else [Stage(stage) for stage in stages],
-        offline=offline or build_config.offline,
+        offline=offline,
     )
 
 

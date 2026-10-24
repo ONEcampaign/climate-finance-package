@@ -68,16 +68,17 @@
     "offline": true,
     "key_repair": true,
     "recoveries": true,
-    "years": {
-      "crdf": [
-        2021,
-        2022
-      ],
-      "crs": [
-        2021,
-        2023
-      ]
-    }
+    "gap_fill": false,
+    "review": false,
+    "years.crdf": [
+      2021,
+      2022
+    ],
+    "years.crs": [
+      2021,
+      2023
+    ],
+    "years.crs_last_complete": 2023
   },
   "precision_gate_waived": false,
   "previous_release": null
