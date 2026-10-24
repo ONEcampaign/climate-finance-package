@@ -9,7 +9,7 @@ The review stage runs when `build.toml` sets `review = true`. When `review = fal
 A link joins the queue with the first `review_reason` that applies:
 
 - `ledger_contradicted`, when a bank's ledger contradicts it.
-- `rule_disagreement`, when an exact-key or repair rule linked it though its records disagree on recipient or project number.
+- `rule_disagreement`, when its records disagree on recipient or project number.
 - `band`, when the classifier gave it a probability in the Jev band set by `jev.band` in `build.toml`.
 - `jev_band`, when Jev gave a Splink link a probability between 0.5 and 0.9.
 - `calibration`, when it belongs to a Splink model's calibration sample, which sets the model's probabilities.
@@ -43,9 +43,9 @@ The queue also holds every commitment row allocated more than 1.1 times its face
     cf-build import-labels queue.md agent-labels.csv --source agent --reviewer run-3 --model claude-opus-5-5 --round label
     ```
 
-    The CSV must answer each pair in the packet once, and the packet must match its pairs file. Otherwise the import raises `ReviewDecisionsError` and records nothing. Decisions append to `data/review_decisions.parquet`, or to the file `--decisions` names.
+    The CSV must answer each pair in the packet once, and the packet must match its pairs file. Otherwise the import raises `ReviewDecisionsError` and records nothing. Decisions append to `data/review_decisions.parquet`, or to the file `--decisions` names. The build, `sample`, and `gate` read decisions from `sources.review_decisions` in `build.toml`, so point both at the same file.
 
-5. Rebuild. The link stage reads the decisions, and `--offline` reuses the sources the first build fetched. An accepted link takes probability 1 and clears any record disagreement, so a flagged exact-key link becomes certain. A rejected link leaves `links`, and its money moves to the next link or to excess. Decisions on Splink calibration pairs set those models' probabilities.
+5. Rebuild. The link stage reads the decisions, and `--offline` reuses the sources the first build fetched. One decision stands for each pair. A person's decision stands over any agent's, whatever the import order, and among people the latest stands. Among agents, the latest round stands (`label`, then `second`, then `adjudicate`), then the latest import. An accepted link takes probability 1 and clears any record disagreement, so a flagged exact-key link becomes certain. A rejected link leaves `links`, and its money moves to the next link or to excess. Decisions on Splink calibration pairs set those models' probabilities.
 
     ```bash
     cf-build build 2026a --config build.toml --offline

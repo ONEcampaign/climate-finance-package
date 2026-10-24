@@ -17,7 +17,7 @@ quality = snap.quality(providers=["Germany", "Japan"])
 
 ## Steps
 
-1. Read the link rate. `summary()` has one row per provider. `link_rate` is the share of the provider's climate commitments that trace to at least one CRS record, and `linked_high_probability_share` is the part whose most probable link is at least 0.8.
+1. Read the link rate. `summary()` has one row per provider. `link_rate` is the share of the provider's climate value held in commitments that trace to at least one CRS record, and `linked_high_probability_share` is the part whose most probable link is at least 0.8.
 
     ```python
     summary = quality.summary()
@@ -48,7 +48,7 @@ quality = snap.quality(providers=["Germany", "Japan"])
     701 0.31 0.69
     ```
 
-3. Find the certain share. `quality.table` carries, by provider and year, the climate value of disbursements in the high bound (`disbursed_climate_usd`) and in the low bound (`certain_disbursed_climate_usd`). Their ratio is the share of the provider's disbursements that rests on links made certain by the donor's own identifiers.
+3. Find the certain share. `quality.table` carries, by provider and year, the climate value of disbursements in the high bound (`disbursed_climate_usd`) and in the low bound (`certain_disbursed_climate_usd`). Their ratio is the share of the provider's disbursements that rests on certain links, reached by certain routes.
 
     ```python
     table = quality.table.to_polars()
@@ -91,7 +91,7 @@ quality = snap.quality(providers=["Germany", "Japan"])
 
 ## Verify it worked
 
-Every provider you report appears in `summary()` and, for a gated release, in `quality.precision`. `snap.manifest.gates` holds the gate rows that `cf-build release` recorded, and `snap.manifest.precision_gate_waived` is true when a failed precision gate was waived.
+Every provider you report appears in `summary()` and, for a gated release, in `quality.precision`. `snap.manifest.gates` holds the gate rows that `cf-build release` recorded, and `snap.manifest.precision_gate_waived` is true when the release was packed with `--waive-precision`.
 
 ## Troubleshooting
 

@@ -24,12 +24,12 @@ Key `row_id`. One row per recipient-perspective CRDF commitment, which is the po
 - `disbursed_usd`, `disbursed_low_usd`, `disbursed_high_usd`: the sums of the commitment's allocations in `disbursements` plus `withheld_usd`, with `0 <= disbursed_low_usd <= disbursed_usd <= disbursed_high_usd <= face_usd`.
 - `withheld_usd`: the part of `disbursed_usd` that comes from fill records the release leaves out (the Green Climate Fund's ledger). It is excluded from `disbursements`.
 - `project_disbursing`: true when the commitment has no record of its own and its id disbursed against an earlier commitment.
-- `ledger_undisbursed`: true where the bank's ledger confirms the commitment disbursed nothing, and null where no ledger covers it or the ledger shows money moving. It is never false. A row whose `status` says disbursed while `ledger_undisbursed` is true points at a link to check.
+- `ledger_undisbursed`: true where the bank's ledger confirms the commitment disbursed nothing, and null where no ledger covers it or the ledger shows money moving. Only the IBRD, IDA, and IDB ledgers can set it, since they match the CRS closely enough to confirm a non-disbursement. A row whose `status` says disbursed while `ledger_undisbursed` is true points at a link to check.
 - `repeat_of`: the first row of a commitment republished in a later vintage. `parent_row_id` names the published aggregate row a rebuilt child came from.
 
 ## `disbursements`
 
-Key `row_id`, `record_id`, `year`. Climate-linked CRS records only, one row per allocation of a record to a commitment. Every row names a commitment. The table omits any unallocated excess on a record:
+Key `row_id`, `record_id`, `year`. Allocations of CRS records, and of bank-ledger and IATI fills, to climate commitments, one row per allocation. Every row names a commitment. The table omits any unallocated excess on a record:
 
 - `row_id`, `record_id`, `year`: the commitment, the CRS record (or fill record), and the record's year.
 - `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_code`, `project_number`, `title`: the record's own fields. `flow_code` is the CRS flow: 11 ODA grants, 13 ODA loans, and 19 equity.
@@ -71,7 +71,7 @@ Key `provider_code`, `year`, `recipient_code`. The modelled range for providers 
 
 ## `core_contributions`
 
-Key `provider_code`, `channel_code`, `year`, `flow`. Core contributions of a provider to a multilateral channel:
+Key `provider_code`, `channel_code`, `year`, `flow`. Core contributions of a provider to a multilateral channel. Rows sit on leaf channels, and the aggregate channels the OECD publishes beside them drop out. Where a provider's channel 40000 total for a year and flow exceeds its leaves, the remainder stays as a 40000 row. That row takes no agency share, so it keeps the provider's total whole and attributes nothing:
 
 - `provider_code`, `channel_code`, `year`.
 - `flow`: `commitments`, `disbursements`, or `grant_equivalent`.
@@ -92,7 +92,7 @@ Key `row_id`. Parsed rows of Biennial Transparency Reports, Table III.1:
 
 Key `row_id`, `record_id`. Links from BTR rows to same-year CRS records of the party, with the record's facts:
 
-- `row_id`, `record_id`, `link_method` (`btr_id` or `btr_splink`), `probability`.
+- `row_id`, `record_id`, `link_method` (`btr_id` or `btr_splink`), `probability`. A `btr_splink` probability comes from the party's own calibration map when its id-linked rows give at least 30 right and 30 wrong labels, and from a map pooled over every party otherwise, which needs as many. A row links at a probability of 0.5 or more, and a party with neither map links by ids alone.
 - `provider_code`, `year`, `recipient_code`, `project_number`, `title`: the record's fields.
 - `commitment_usd`, `disbursement_usd`: the record's amounts.
 - `rio_marker`: the higher of the record's two Rio markers.
@@ -140,7 +140,6 @@ Key `provider_code`. A provider's own coefficient for significant markers:
 - World Bank Finances One: the World Bank Data Catalog licence, CC BY 4.0 by default and set per dataset.
 - IMF: derivative works with attribution. Commercial use and automated bulk download need permission.
 - IATI files of banks and funds: the publisher's licence in the IATI Registry.
-- US foreignassistance.gov: US Government work, free of copyright.
 - UNFCCC Biennial Transparency Reports: the UNFCCC terms of use, public domain with the source acknowledged.
 - Green Climate Fund projects API and readiness list: commercial redistribution and derivative works require written consent. Its rows are withheld. Its IATI files are CC0 on the IATI Registry, and their rows ship.
 - Human-coded adaptation labels of Weikmans et al.: they fit the map behind Jev's adaptation levels. The release omits the rows.

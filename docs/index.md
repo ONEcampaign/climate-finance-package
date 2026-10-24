@@ -20,7 +20,7 @@ climate-finance 2.0 returns international public climate finance from OECD and U
 - [Python API](reference/python-api.md) documents `load`, `Snapshot`, `Spec`, `Method`, `Result`, `Quality`, `Reconciliation`, and the flow, view, currency, and scope arguments.
 - [Release tables](reference/release-tables.md) lists the files in a release, every table and column, and the terms for each source.
 - [cf-build](reference/cf-build.md) lists the build and release commands.
-- [Release gates](reference/release-gates.md) details the six checks a release passes.
+- [Release gates](reference/release-gates.md) details the seven checks a release passes.
 
 ## Understand
 

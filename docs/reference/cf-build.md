@@ -24,7 +24,7 @@ Runs the build stages and writes their tables.
 - `--stage` (repeatable) runs only the named stages. A stage that reads a table missing from earlier stages raises `StageInputMissingError`.
 - `--offline` refuses network access.
 
-`build.toml` switches are: `offline`, `key_repair` and `recoveries` (both on by default), `gap_fill`, `review`, `jev_labels`, `jev_links`, and `embed`. The sections `[years]`, `[sources]`, `[jev]`, and `[embedding]` set the years, the pinned source files and their sha256, the Jev model version, cost cap and band, and the embedding model.
+`build.toml` switches are: `offline`, `key_repair` and `recoveries` (both on by default), `gap_fill`, `review`, `jev_labels`, `jev_links`, and `embed`. `skip_eib_routes` names EIB recovery routes to leave out, so a test can measure what a route adds. A release builds with none. The sections `[years]`, `[sources]`, `[jev]`, and `[embedding]` set the years, the pinned source files and their sha256, the Jev model version, cost cap and band, and the embedding model.
 
 ## `cf-build sample`
 
@@ -32,7 +32,7 @@ Runs the build stages and writes their tables.
 cf-build sample RELEASE_DIR --out DIR [--config build.toml]
 ```
 
-Draws the stratified blind sample of a build's allocated links. It writes a labelling packet per provider and batch to `DIR/<provider>/batch-<NN>.md`, and the design, one row per draw, to `DIR/design.parquet`. The packets show both records of a pair and omit the score, link method, and stratum.
+Draws the stratified blind sample of a build's allocated links. It writes a labelling packet per provider and batch to `DIR/<provider>/batch-<NN>.md`, and the design, one row per draw, to `DIR/design.parquet`. The packets show both records of a pair and omit the score, link method, and stratum. The command reads earlier decisions from `sources.review_decisions` in the configuration, and a missing decisions file reads as none.
 
 ## `cf-build queue`
 
@@ -48,7 +48,7 @@ Writes the review queue as a labelling packet, with its pairs file beside it. `-
 cf-build import-labels PACKET LABELS --source human --reviewer NAME [--decisions data/review_decisions.parquet]
 ```
 
-Records a labels CSV that answers a packet. The CSV has the columns `pair`, `label` (`match` or `no_match`), `confidence` (0 to 1, on the label's side of 0.5), and `reason`, and answers each pair of the packet once.
+Records a labels CSV that answers a packet. The CSV has the columns `pair`, `label` (`match` or `no_match`), `confidence` (0 to 1, on the label's side of 0.5), and `reason`, and answers each pair of the packet once. A person's decision on a pair stands over any agent's, whatever the import order.
 
 - `--source` records who decided (`human` or `agent`).
 - `--reviewer` names the person or the agent run.
@@ -66,7 +66,7 @@ cf-build gate RELEASE_DIR [--config build.toml] [--sample FILE] [--previous DIR]
 
 Evaluates the [release gates](release-gates.md) and prints one line per gate row.
 
-- `--sample` passes the `design.parquet` that `sample` wrote. Without it, every provider fails precision.
+- `--sample` passes the `design.parquet` that `sample` wrote. Without it, every provider fails precision and the human audit fails. With it, the gate reads the sample's labels from `sources.review_decisions` in the configuration and raises `FileNotFoundError` when that file is missing.
 - `--previous` sets the previous release's directory for the drift gate.
 - `--first-release` passes the drift gate when no previous release exists.
 - `--report` prints failures and exits cleanly.
@@ -77,7 +77,7 @@ Evaluates the [release gates](release-gates.md) and prints one line per gate row
 cf-build ingest-unfccc ARCHIVE_DIR --out FILE
 ```
 
-Parses an archive of BTR workbooks listed in its manifest and writes the rows to `FILE`. Name the file in the build configuration's `btr_archive` entry so that the build carries BTR rows into the release.
+Parses an archive of BTR workbooks listed in its manifest and writes the rows to `FILE`, so you can inspect the parse. To carry BTR rows into a release, set `sources.btr_archive` in `build.toml` to the archive directory. The build reads the workbooks itself.
 
 ## `cf-build release`
 
@@ -87,7 +87,7 @@ cf-build release RELEASE [--config build.toml] [--out-dir releases] [--sample FI
 
 Builds, gates, and packs a release. It writes `<out-dir>/climate-finance-<RELEASE>.tar.zst`, which holds the release tables, `release.json` with the gate results, and `sources.json`. Members go in name order with fixed owners and the release's creation time, so one release packs to the same bytes.
 
-- `--waive-precision` packs despite a failed precision gate. The failed rows are marked `waived` and `release.json` records it.
+- `--waive-precision` packs despite failed precision and human-audit gates. The failed rows are marked `waived` and `release.json` records it.
 
 The command raises `GateFailedError` when a gate fails, and `BuildError` when a source lacks a licence entry.
 

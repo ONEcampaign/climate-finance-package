@@ -6,7 +6,7 @@ The examples run on the small synthetic release from the package tests, so the a
 
 ## Step 1. Load a release
 
-A release is a folder of parquet tables. `load()` opens the latest published release. On first run it downloads the files to `~/.cache/climate-finance` and checks each table's sha256 against `release.json`.
+A release is a folder of parquet tables. `load()` opens the latest release in the index shipped with the package, and `load(path=...)` opens a release directory on disk. On first run `load()` downloads the files to `~/.cache/climate-finance` and checks each table's sha256 against `release.json`.
 
 ```python
 import climate_finance as cf
@@ -41,7 +41,7 @@ for row in result.table.to_polars().iter_rows(named=True):
 2023 40.3 12.0
 ```
 
-The columns are year, climate `value` in USD million, and the `low` bound. In 2021 the value is 13.3 and the low bound is 0.0, because an estimated link connects the disbursement to its commitment. Reported IDs set the low bound. The table also holds a `high` bound, explained in [Low and high bounds](explanation/low-and-high-bounds.md).
+The columns are year, climate `value` in USD million, and the `low` bound. In 2021 the value is 13.3 and the low bound is 0.0, because an estimated link connects the disbursement to its commitment. Only certain links, which rest on the donor's own ids, count in the low bound. The table also holds a `high` bound, explained in [Low and high bounds](explanation/low-and-high-bounds.md).
 
 ## Step 3. See the records behind the figure
 
@@ -62,9 +62,9 @@ for row in result.rows(origin="disbursement").iter_rows(named=True):
 2023 JPN-SPLIT pn_recipient partly_disbursed
 ```
 
-Only `crs_id`, `crs_id_purpose`, `crs_id_parent`, and `wb_loan` links are certain. In this release only the 2023 `crs_id` link qualifies, which gives the 12.0 in the `low` column above. Every other method estimates the link from a project number, a title, a trained model, or a crosswalk. Estimated links count in `value` alone. [How linking works](explanation/how-linking-works.md) lists all methods.
+A link is certain when it is a `crs_id`, `crs_id_purpose`, `crs_id_parent`, or `wb_loan` link whose records agree on recipient and project number, or a record's link to its own commitment, and when the commitment's CRDF row reached its CRS commitment by a certain route. In this release only the 2023 `crs_id` link qualifies, which gives the 12.0 in the `low` column above. Every other method estimates the link from a project number, a title, a trained model, or a crosswalk, and counts in `value` alone. The synthetic release also carries `weak_classifier`, `programme_number`, and `title_recipient` as disbursement links, which the schema permits and no build writes. [How linking works](explanation/how-linking-works.md) lists the methods a build writes.
 
-`status` belongs to the commitment. `partly_disbursed` means its linked records cover less than 90% of its face value.
+`status` belongs to the commitment. `partly_disbursed` means its linked records cover less than 90% of the matched CRS commitment's face value.
 
 ## Step 4. Read the method
 

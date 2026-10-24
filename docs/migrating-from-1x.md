@@ -10,7 +10,7 @@ In climate-finance 1.2.3, `ClimateData` downloaded OECD files, matched them, and
 
 ## Keep 1.x code running
 
-`ClimateData`, `set_climate_finance_data_path`, and `get_unfccc_data` still import from `climate_finance`, with a `DeprecationWarning`, until 3.0. `ClimateData` is a wrapper that makes one `spending()` call per source and flow and returns pandas.
+`ClimateData` imports from `climate_finance` and runs, with a `DeprecationWarning`, until 3.0. It is a wrapper that makes one `spending()` call per source and flow and returns pandas. `set_climate_finance_data_path` and `get_unfccc_data` import with the same warning and raise `NotImplementedError` naming their replacement when called.
 
 ```python
 from climate_finance import ClimateData

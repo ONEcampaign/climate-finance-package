@@ -24,7 +24,7 @@ Cutting a release requires the `build` extra, a `build.toml`, and the OECD bulk 
     cf-build sample releases/2026a --out sample
     ```
 
-    `sample` writes one packet per provider and batch to `sample/<provider>/batch-<NN>.md` and saves the design to `sample/design.parquet`. Packets omit the score, link method, and stratum. Label them with the `import-labels` command covered in the review guide.
+    `sample` writes one packet per provider and batch to `sample/<provider>/batch-<NN>.md` and saves the design to `sample/design.parquet`. Packets omit the score, link method, and stratum. Label them with the `import-labels` command covered in the review guide, appending to the decisions file that `sources.review_decisions` names. At least one draw in ten needs a person's decision to pass the `human_audit` gate.
 
 4. Check the gates after each batch. `--report` prints failures without stopping.
 
@@ -40,7 +40,7 @@ Cutting a release requires the `build` extra, a `build.toml`, and the OECD bulk 
     cf-build release 2026a --config build.toml --out-dir releases --sample sample/design.parquet --previous releases/2025a/assemble
     ```
 
-    The command writes `releases/climate-finance-2026a.tar.zst` and records the gate rows in `release.json`. To pack with a failed precision gate, pass `--waive-precision`. That flag marks the failed rows `waived` and sets `precision_gate_waived` in `release.json`, which surfaces in `snap.quality().precision`.
+    The command writes `releases/climate-finance-2026a.tar.zst` and records the gate rows in `release.json`. To pack with failed precision or human-audit gates, pass `--waive-precision`. That flag marks the failed rows `waived` and sets `precision_gate_waived` in `release.json`, which surfaces in `snap.quality().precision`.
 
 6. Publish the pack and register it in `releases.json`, which maps each release name to its URL and sha256 and marks the latest release. Call `release.upload_release` and `release.add_to_index` in `climate_finance.build`. The pack's `sources.json` records each source's licence and the rows excluded from the release.
 
@@ -54,7 +54,7 @@ tar --zstd -xf releases/climate-finance-2026a.tar.zst -C unpacked
 python -c "import climate_finance as cf; print(list(cf.load(path='unpacked/climate-finance-2026a').manifest.gates))"
 ```
 
-`load()` verifies every table's sha256 against `release.json` and prints the six gate names.
+`load()` verifies every table's sha256 against `release.json`, and the command prints the seven gate names.
 
 ## Troubleshooting
 

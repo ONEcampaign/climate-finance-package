@@ -19,7 +19,7 @@ Requires Python 3.12 or later. To build a release, install the `build` extra wit
 
 ## Quickstart
 
-`load()` opens the latest published release. The examples in this repository use a small synthetic test release with invented amounts.
+`cf.load()` opens the latest release in `data/releases.json`, the release index shipped with the package. That index ships empty until the first 2.0 release is published, and until then `cf.load()` raises `UnknownNameError`. To open a release you built, pass its directory: `cf.load(path="releases/2026a/assemble")`. The examples in this repository use a small synthetic test release with invented amounts.
 
 ```python
 import climate_finance as cf
@@ -41,7 +41,7 @@ for row in result.table.to_polars().iter_rows(named=True):
 2023 12.0 40.3
 ```
 
-`result.table` has one row per year, provider, recipient, and Bi_Multi code, with adaptation, mitigation, cross-cutting, and total climate `value` in USD. `value` counts every disbursement the build linked to a climate commitment. `low` counts only links where the donor's own project id names the commitment. `result.rows()` returns the project rows behind the table, and `result.explain()` states the method, flow, and filters in words.
+`result.table` has one row per year, provider, recipient, and Bi_Multi code, with adaptation, mitigation, cross-cutting, and total climate `value` in USD. `value` counts every disbursement the build linked to a climate commitment. `low` counts only links that the donor's own ids make certain, from the CRDF row to its CRS commitment and from the commitment to the disbursement. `result.rows()` returns the project rows behind the table, and `result.explain()` states the method, flow, and filters in words.
 
 ## What you can ask
 
@@ -52,7 +52,7 @@ for row in result.table.to_polars().iter_rows(named=True):
 
 ## When to use something else
 
-The package reports public climate finance as donors file it, taking their Rio markers as given and excluding private finance. Where a provider files unusable project ids, its rows rest on estimated links, and the gap between `low` and `high` shows how many.
+The package reports public climate finance as donors file it, taking their Rio markers as given and excluding private-sector providers (Bi_Multi 6). Where a provider files unusable project ids, its rows rest on estimated links, and the gap between `low` and `high` shows how many.
 
 ## Documentation
 

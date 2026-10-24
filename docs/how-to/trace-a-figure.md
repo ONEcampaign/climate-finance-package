@@ -32,13 +32,11 @@ result = snap.spending(providers="Japan", years=[2023])
     JPN-2 Climate project JPN-2 6.3
     ```
 
-2. Split certain from estimated links. Rows where `link_method` is `crs_id`, `crs_id_purpose`, `crs_id_parent`, or `wb_loan` make up the `low` bound when their records agree on recipient and project number.
+2. Split certain from estimated links. Each row's `low` column holds the part of its value that certain links carried by certain routes, so the rows' `low` sums to the table's.
 
     ```python
-    CERTAIN = ["crs_id", "crs_id_purpose", "crs_id_parent", "wb_loan"]
-    certain = result.rows(origin="disbursement", link_method=CERTAIN)
     print(
-        round(certain["value"].sum() / 1e6, 1),
+        round(rows["low"].sum() / 1e6, 1),
         round(result.table.to_polars()["low"].sum() / 1e6, 1),
     )
     ```
@@ -47,7 +45,7 @@ result = snap.spending(providers="Japan", years=[2023])
     12.0 12.0
     ```
 
-    Group the rows by `link_method` to see which estimated methods carry the rest, and read `link_probability` for the build's confidence in each link.
+    Group the rows by `link_method` to see which methods carry the rest, and read `link_probability` for the build's confidence in each link. `link_method` alone does not reproduce `low`, since a certain link counts there only when its commitment's CRDF rows took a certain route.
 
 3. Check the status of each commitment. Group by `status` to see how much of the figure sits in fully and partly disbursed commitments.
 
@@ -107,4 +105,4 @@ True
 ## Next
 
 - [How to check link quality](check-link-quality.md) measures how much of a provider's money traces.
-- [Release tables](../reference/release-tables.md) describes the columns `rows()` carries over.
+- [Python API](../reference/python-api.md) lists the columns `rows()` returns.
