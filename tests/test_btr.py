@@ -12,10 +12,12 @@ from typer.testing import CliRunner
 
 from climate_finance import schema
 from climate_finance.build.cli import app
+from climate_finance.build.normalise import btr_at_dac_rates
 from climate_finance.build.readers.btr import (
     estimate_party_weights,
     ingest_unfccc,
     party_provider,
+    read_btr_archive,
     read_btr_workbook,
     write_party_weights,
 )
@@ -196,6 +198,31 @@ def test_amounts_contradicting_the_party_unit_are_refused(
         read_btr_workbook(BTR / name, party=party)
 
 
+def test_amounts_are_restated_at_the_dac_rate() -> None:
+    # The United Kingdom converts at 0.727 pounds a dollar, against a DAC rate of
+    # 0.8112; the United States leaves its 2021 domestic amounts empty.
+    btr = pl.concat([_read("GBR-table-1.xlsx"), _read("USA-table-1.xlsx")])
+    exchange = pl.DataFrame(
+        {"iso_code": ["GBR", "USA"], "year": [2021, 2021], "exchange_rate": [0.8112, 1]}
+    )
+
+    restated = btr_at_dac_rates(btr, exchange=exchange)
+
+    schema.validate(schema.BTR, restated)
+    got = {
+        row[0]: row[1:]
+        for row in restated.select(
+            "row_id", "dac_rate", "face_usd_at_dac", "grant_equiv_usd_at_dac"
+        ).iter_rows()
+    }
+    assert got["BTR-GBR-2021-00011"] == pytest.approx(
+        (0.8112, 0.727e6 / 0.8112, 0.727e6 / 0.8112)
+    )
+    assert got["BTR-USA-2021-00010"] == pytest.approx((1.0, 2e6, 1.5e6))
+    # No DAC rate for the year: the party's own USD stands.
+    assert got["BTR-USA-2022-00009"] == (None, 0.4e6, None)
+
+
 def _edited(tmp_path: Path, name: str, sheet: str, cells: dict[str, object]) -> Path:
     workbook = openpyxl.load_workbook(BTR / name)
     for cell, value in cells.items():
@@ -311,6 +338,73 @@ def test_ingest_refuses_two_sheets_for_one_party_year(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="Several sheets give one party's year"):
         ingest_unfccc(archive, out_path=tmp_path / "btr.parquet")
+
+
+def test_the_archive_counts_each_workbooks_rows_kept_and_dropped(
+    tmp_path: Path,
+) -> None:
+    archive = _archive(
+        tmp_path,
+        {
+            "Finland__FIN-table-1.xlsx": "Finland",
+            "Germany__V0.1_started__DEU-table-1.xlsx": "Germany",
+        },
+    )
+    # A party whose workbook holds support-received tables only.
+    empty = openpyxl.Workbook()
+    empty.active.title = "Table 7"
+    empty.save(archive / "Kenya__KEN.xlsx")
+    entries = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
+    entries.append(
+        {
+            "party": "Kenya",
+            "name": "Kenya__KEN.xlsx",
+            "ok": True,
+            "bytes": (archive / "Kenya__KEN.xlsx").stat().st_size,
+        }
+    )
+    (archive / "manifest.json").write_text(json.dumps(entries), encoding="utf-8")
+
+    read = read_btr_archive(archive)
+
+    schema.validate(schema.BTR_WORKBOOKS, read.workbooks)
+    counts = {row.pop("file"): row for row in read.workbooks.to_dicts()}
+    germany = "Germany__V0.1_started__DEU-table-1.xlsx"
+    assert counts == {
+        # A title with no amount, and a row of "UA".
+        "Finland__FIN-table-1.xlsx": {
+            "party": "FIN",
+            "sheets": ["Finland__FIN-table-1.xlsx#Table1_2021"],
+            "rows_kept": 3,
+            "dropped_blank": 1,
+            "dropped_notation": 1,
+            "dropped_total": 0,
+            "draft_marker": None,
+        },
+        # The total row, and on 2022 an empty activity and one of "NA".
+        germany: {
+            "party": "DEU",
+            "sheets": [f"{germany}#Table1_2021", f"{germany}#Table1_2022"],
+            "rows_kept": 2,
+            "dropped_blank": 1,
+            "dropped_notation": 1,
+            "dropped_total": 1,
+            "draft_marker": "started",
+        },
+        "Kenya__KEN.xlsx": {
+            "party": "KEN",
+            "sheets": [],
+            "rows_kept": 0,
+            "dropped_blank": 0,
+            "dropped_notation": 0,
+            "dropped_total": 0,
+            "draft_marker": None,
+        },
+    }
+    assert read.rows.group_by("party").len().sort("party").rows() == [
+        ("DEU", 2),
+        ("FIN", 3),
+    ]
 
 
 def _pairs(party: str, rows: list[tuple[float, float, int]]) -> pl.DataFrame:

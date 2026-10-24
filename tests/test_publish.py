@@ -29,7 +29,7 @@ from climate_finance.errors import (
     UnknownNameError,
     WithheldTableError,
 )
-from climate_finance.schema import ReleaseManifest, sha256_file
+from climate_finance.schema import BTR_WORKBOOKS, ReleaseManifest, sha256_file
 from climate_finance.snapshot import IndexEntry, ReleaseIndex
 
 PACK = "climate-finance-fixture.tar.zst"
@@ -145,6 +145,45 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
     ]
     assert sources[2]["version"] == "fixture"
     assert sources[2]["urls"] == ["https://example.org/crs"]
+
+
+def test_sources_list_each_btr_workbook_with_its_rows_kept_and_dropped(
+    tmp_path: Path,
+) -> None:
+    release_dir = built_release(tmp_path / "fixture")
+    workbooks = [
+        {
+            "file": "Bulgaria__BGR-CTF-FTC-2024-V1.1_started.xlsx",
+            "party": "BGR",
+            "sheets": [],
+            "rows_kept": 0,
+            "dropped_blank": 0,
+            "dropped_notation": 0,
+            "dropped_total": 0,
+            "draft_marker": "started",
+        },
+        {
+            "file": "Japan__JPN-CTF-FTC-20241031r.xlsx",
+            "party": "JPN",
+            "sheets": ["Japan__JPN-CTF-FTC-20241031r.xlsx#Table1_2022"],
+            "rows_kept": 4432,
+            "dropped_blank": 0,
+            "dropped_notation": 37,
+            "dropped_total": 1,
+            "draft_marker": None,
+        },
+    ]
+    (release_dir / "normalise").mkdir()
+    pl.DataFrame(
+        workbooks,
+        schema={name: column.dtype for name, column in BTR_WORKBOOKS.columns.items()},
+    ).write_parquet(release_dir / "normalise" / "btr_workbooks.parquet")
+
+    pack = release.pack_release(release_dir, out_path=tmp_path / PACK)
+
+    sources = json.loads(members(pack)["climate-finance-fixture/sources.json"])
+    btr = next(row for row in sources if row["source"] == "btr")
+    assert btr["workbooks"] == workbooks
 
 
 def test_a_published_release_holds_the_btr_totals_and_a_build_the_rows_too(

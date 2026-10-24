@@ -20,7 +20,7 @@ from climate_finance.build.fetch import (
 from climate_finance.build.normalise.aggregates import rebuild_aggregates
 from climate_finance.build.normalise.crdf import normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs
-from climate_finance.build.normalise.external import normalise_external
+from climate_finance.build.normalise.external import normalise_external, to_usd
 from climate_finance.build.normalise.ledgers import normalise_ledgers
 from climate_finance.build.normalise.orgs import org_names, resolve_orgs
 from climate_finance.build.normalise.vintages import mark_repeats
@@ -37,8 +37,11 @@ if TYPE_CHECKING:
 def run_normalise(context: StageContext) -> StageOutput:
     """Normalise the files fetch wrote under `raw/` into the normalise tables.
 
-    Reads only those files. `btr` holds the BTR workbooks' Table III.1 rows, and is
-    written only when the build config names a BTR archive. `crdf` marks rows
+    Reads only those files. `btr` holds the BTR workbooks' Table III.1 rows with the
+    DAC rate of each row's currency and year and their amounts restated at it, and
+    `btr_workbooks` what was read from
+    each workbook. Both are written only when the build config names a BTR archive.
+    `crdf` marks rows
     repeated across vintages (`repeat_of`) and gains child rows for the bilateral
     aggregate rows the bulk records rebuild (`parent_row_id`). `crdf_span` holds the
     recipient rows of the year before `years.crdf`, from
@@ -90,7 +93,9 @@ def run_normalise(context: StageContext) -> StageOutput:
         "external": external,
     }
     if context.config.sources.btr_archive is not None:
-        tables["btr"] = read_btr_archive(raw / BTR_DIR)
+        btr = read_btr_archive(raw / BTR_DIR)
+        tables["btr"] = btr_at_dac_rates(btr.rows, exchange=exchange)
+        tables["btr_workbooks"] = btr.workbooks
     if (ledgers := context.config.sources.ledgers) is not None:
         tables["ledger"] = normalise_ledgers(raw, ledgers=ledgers, exchange=exchange)
     if context.config.recoveries:
@@ -102,6 +107,31 @@ def run_normalise(context: StageContext) -> StageOutput:
             ),
         )
     return tables
+
+
+def btr_at_dac_rates(btr: pl.DataFrame, *, exchange: pl.DataFrame) -> pl.DataFrame:
+    """`btr` with `dac_rate`, the DAC rate of each row's currency and year in that
+    currency per USD as `to_usd` finds it, and the domestic amounts restated at it.
+    A row without the domestic amount or the rate keeps the party's USD."""
+    rates = to_usd(
+        btr.select("currency", "year")
+        .unique()
+        .with_columns(amount=pl.lit(1.0), amount_usd=pl.lit(None, pl.Float64)),
+        exchange=exchange,
+    ).select("currency", "year", dac_rate=1 / pl.col("amount_usd"))
+    return (
+        btr.drop("dac_rate")
+        .join(rates, on=["currency", "year"], how="left", nulls_equal=True)
+        .with_columns(
+            face_usd_at_dac=pl.coalesce(
+                pl.col("amount_domestic") / pl.col("dac_rate"), "face_usd"
+            ),
+            grant_equiv_usd_at_dac=pl.coalesce(
+                pl.col("grant_equiv_domestic") / pl.col("dac_rate"), "grant_equiv_usd"
+            ),
+        )
+        .select(btr.columns)
+    )
 
 
 def _span_rows(

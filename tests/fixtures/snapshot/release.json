@@ -28,7 +28,7 @@
       "rows": 2
     },
     "btr": {
-      "sha256": "63f557d92ab478bef345df2b48ccceffb9e3e39039d76bd3d57f947f4b8716c8",
+      "sha256": "1957b751bce9f84db2b6662b4131511da02707a41bc3fa8adb44589766804250",
       "rows": 4
     },
     "btr_links": {
@@ -52,7 +52,7 @@
       "rows": 12
     },
     "btr_totals": {
-      "sha256": "203da65ddc33f6548dca95ee1bbd3e2f276aaba1cf8da88009cfb4938d49534b",
+      "sha256": "43ca3ac9583f29514d192fac891a0c6be2633ef9cd18fc314eb15473dfb99208",
       "rows": 4
     },
     "total_flows": {

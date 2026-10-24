@@ -376,7 +376,12 @@ LEDGER = _table(
 )
 
 # `party` is the ISO 3 code; `provider_code` its DAC provider code, null for a party
-# that reports no CRS.
+# that reports no CRS. `amount_domestic` and `grant_equiv_domestic` are the face value
+# and grant equivalent in `currency`, and `face_usd` and `grant_equiv_usd` the party's
+# own conversion. `dac_rate` is the DAC annual rate of `currency` in the row's year,
+# in `currency` per USD, the rate the CRS amounts use; null without one.
+# `face_usd_at_dac` and `grant_equiv_usd_at_dac` restate the domestic amounts at it,
+# and keep the party's USD where the domestic amount or the rate is missing.
 BTR = _table(
     "btr",
     ("row_id",),
@@ -388,9 +393,13 @@ BTR = _table(
     recipient_code=_code(nullable=True),
     title=_str(nullable=True),
     amount_domestic=_f64(nullable=True),
+    grant_equiv_domestic=_f64(nullable=True),
     currency=_str(nullable=True),
     face_usd=_usd(nullable=True),
     grant_equiv_usd=_usd(nullable=True),
+    dac_rate=_f64(nullable=True),
+    face_usd_at_dac=_usd(nullable=True),
+    grant_equiv_usd_at_dac=_usd(nullable=True),
     status=_str(nullable=True, values=("committed", "disbursed")),
     channel=_str(nullable=True),
     funding_source=_str(nullable=True),
@@ -400,6 +409,22 @@ BTR = _table(
     additional_information=_str(nullable=True),
     is_aggregate=_bool(),
     source_file=_str(),
+)
+
+# One row per BTR workbook the archive lists: the Table III.1 sheets read, the rows
+# kept, the sheet rows dropped by reason, and the reporting tool's draft state in the
+# file name.
+BTR_WORKBOOKS = _table(
+    "btr_workbooks",
+    ("file",),
+    file=_str(),
+    party=_str(),
+    sheets=Column(pl.List(pl.String())),
+    rows_kept=_count(),
+    dropped_blank=_count(),
+    dropped_notation=_count(),
+    dropped_total=_count(),
+    draft_marker=_str(nullable=True, values=("started", "awaiting_submission")),
 )
 
 # One row per resolved organisation name and role. An agency name resolves within
@@ -914,7 +939,8 @@ BTR_LINKS = _table(
 # CRS record links them (`btr_links`): the reconciliation's BTR side in a release
 # that leaves out `btr` and `btr_links`. `funding` is `oda` or `oof` where the row's
 # funding source names only that flow, and `other` otherwise. `rows` counts the rows;
-# an amount is null where every row of the group lacks it.
+# an amount is null where every row of the group lacks it. `dac_rate` is the rows'
+# DAC rate, one per party and year.
 BTR_TOTALS = _table(
     "btr_totals",
     ("party", "year", "status", "funding", "currency", "linked"),
@@ -929,6 +955,9 @@ BTR_TOTALS = _table(
     face_usd=_usd(nullable=True),
     grant_equiv_usd=_usd(nullable=True),
     amount_domestic=_f64(nullable=True),
+    face_usd_at_dac=_usd(nullable=True),
+    grant_equiv_usd_at_dac=_usd(nullable=True),
+    dac_rate=_f64(nullable=True),
 )
 
 # For each BTR party's DAC provider and each year its BTR rows cover, the bilateral
@@ -989,6 +1018,7 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
         IMPUTED_SHARES,
         EXTERNAL,
         BTR,
+        BTR_WORKBOOKS,
         ORGS,
         LEDGER,
     ),
@@ -1011,13 +1041,14 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
     "assemble": RELEASE_TABLES,
 }
 # Tables a stage may leave out. A stage that reads one that was not written raises
-# StageInputMissingError. `orgs` is written when recoveries are on, `btr` when the build
-# config names an ingested BTR table, `ledger` when it names ledger sources.
+# StageInputMissingError. `orgs` is written when recoveries are on, `btr` and
+# `btr_workbooks` when the build config names a BTR archive, `ledger` when it
+# names ledger sources.
 # `bank_year_overlap` is written by the bank-ledger gap fill, `review_queue` by the
 # review queue and `pair_labels` by the ledger check. With their switches off the two
 # stages pass the tables they carry forward through unchanged.
 OPTIONAL_STAGE_TABLES: Mapping[str, frozenset[str]] = {
-    "normalise": frozenset({"btr", "orgs", "ledger"}),
+    "normalise": frozenset({"btr", "btr_workbooks", "orgs", "ledger"}),
     "fill": frozenset({"bank_year_overlap"}),
     "review": frozenset({"review_queue", "pair_labels"}),
 }
@@ -1304,7 +1335,13 @@ def _btr_problems(
 ) -> list[str]:
     """Where `totals` (`btr_totals`) differs from the `btr` rows it sums."""
     keys = ("party", "year", "status")
-    sums = [pl.col(name).sum() for name in ("face_usd", "grant_equiv_usd")]
+    amounts = (
+        "face_usd",
+        "grant_equiv_usd",
+        "face_usd_at_dac",
+        "grant_equiv_usd_at_dac",
+    )
+    sums = [pl.col(name).sum() for name in amounts]
     from_rows = (
         btr.with_columns(linked=pl.col("row_id").is_in(links["row_id"].implode()))
         .group_by(keys)
@@ -1337,7 +1374,7 @@ def _btr_problems(
         problems.extend(
             f"btr_totals {label}: {name} {row[f'{name}_totals']!r}, btr sums to "
             f"{row[name]!r}"
-            for name in ("face_usd", "grant_equiv_usd")
+            for name in amounts
             if abs(row[name] - row[f"{name}_totals"])
             > BTR_TOTALS_TOLERANCE * max(abs(row[name]), 1.0)
         )

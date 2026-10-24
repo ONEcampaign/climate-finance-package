@@ -60,6 +60,7 @@ from climate_finance.schema import (
     BTR_CRS_UNLINKED,
     BTR_LINKS,
     BTR_TOTALS,
+    BTR_WORKBOOKS,
     COMMITMENTS,
     CONTRIBUTION_KEY,
     CORE_CONTRIBUTIONS,
@@ -608,8 +609,15 @@ def btr_totals(btr: pl.LazyFrame, *, links: pl.LazyFrame) -> pl.LazyFrame:
                 name: pl.when(pl.col(name).is_not_null().any()).then(
                     ordered_sum(pl.col(name).drop_nulls())
                 )
-                for name in ("face_usd", "grant_equiv_usd", "amount_domestic")
+                for name in (
+                    "face_usd",
+                    "grant_equiv_usd",
+                    "amount_domestic",
+                    "face_usd_at_dac",
+                    "grant_equiv_usd_at_dac",
+                )
             },
+            dac_rate=pl.col("dac_rate").max(),
         )
         .select(list(BTR_TOTALS.columns))
     )
@@ -877,10 +885,12 @@ def pack_release(release_dir: Path, *, out_path: Path) -> Path:
     manifest = ReleaseManifest.model_validate_json(
         (assembled / "release.json").read_text()
     )
+    workbooks = release_dir / "normalise" / f"{BTR_WORKBOOKS.name}.parquet"
     sources = release_sources(
         pl.read_parquet(release_dir / "fetch" / "raw_manifest.parquet"),
         versions=manifest.source_versions,
         btr_rows=manifest.tables[BTR.name].rows,
+        btr_workbooks=pl.read_parquet(workbooks) if workbooks.exists() else None,
     )
     published = manifest.model_copy(
         update={
@@ -923,11 +933,21 @@ def pack_release(release_dir: Path, *, out_path: Path) -> Path:
 
 
 def release_sources(
-    raw_manifest: pl.DataFrame, *, versions: Mapping[str, str], btr_rows: int
+    raw_manifest: pl.DataFrame,
+    *,
+    versions: Mapping[str, str],
+    btr_rows: int,
+    btr_workbooks: pl.DataFrame | None,
 ) -> list[dict[str, object]]:
     """Each source in `raw_manifest`, and `btr` when `btr_rows` is positive, with its
     version from `versions`, its URLs and its licence, and as `note` `WITHHELD_NOTE`
     for a source in `WITHHELD_SOURCES` and `BTR_WITHHELD_NOTE` for `btr`.
+
+    The `btr` entry lists as `workbooks` each row of `btr_workbooks` (the normalise
+    stage's `btr_workbooks`): the workbook's file name, its party, the Table III.1
+    sheets read, the rows kept, the rows dropped for each reason, and the reporting
+    tool's draft state in the file name. A workbook giving no rows shows there, so a
+    party that reports nothing reads apart from one that was not loaded.
 
     Raises:
         BuildError: when a source has no entry in `SOURCE_LICENCES`.
@@ -947,6 +967,11 @@ def release_sources(
             "urls": urls[source],
             "licence": _licence(source),
             **({"note": note} if (note := _source_note(source)) else {}),
+            **(
+                {"workbooks": btr_workbooks.to_dicts()}
+                if source == BTR.name and btr_workbooks is not None
+                else {}
+            ),
         }
         for source in sorted(urls)
     ]

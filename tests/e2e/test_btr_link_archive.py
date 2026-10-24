@@ -11,6 +11,7 @@ import pytest
 
 from climate_finance import schema
 from climate_finance.build import release as assemble
+from climate_finance.build.fetch import DAC_EXCHANGE_FILE
 from climate_finance.build.link.btr import (
     LINK_PROBABILITY,
     btr_rows,
@@ -21,6 +22,7 @@ from climate_finance.build.link.btr import (
     linked_pairs,
     score_party,
 )
+from climate_finance.build.normalise import btr_at_dac_rates
 from climate_finance.build.normalise.crs import normalise_crs
 from climate_finance.build.readers.btr import estimate_party_weights, ingest_unfccc
 from climate_finance.result import Reconciliation
@@ -147,10 +149,19 @@ def reconciliation(
         suffix = ".json" if name == "release" else ".parquet"
         if (release / f"{name}{suffix}").exists():
             shutil.copyfile(release / f"{name}{suffix}", out / f"{name}{suffix}")
-    btr.collect().write_parquet(out / "btr.parquet")
-    assemble.btr_links(links.lazy(), crs=crs).collect().write_parquet(
-        out / "btr_links.parquet"
+    rows = btr_at_dac_rates(
+        btr.collect(),
+        exchange=pl.read_parquet(release.parent / "raw" / DAC_EXCHANGE_FILE),
     )
+    rows.write_parquet(out / "btr.parquet")
+    btr_links = assemble.btr_links(links.lazy(), crs=crs).collect()
+    btr_links.write_parquet(out / "btr_links.parquet")
+    assemble.btr_totals(rows.lazy(), links=btr_links.lazy()).collect().write_parquet(
+        out / "btr_totals.parquet"
+    )
+    assemble.btr_crs_unlinked(
+        crs, btr=rows.lazy(), links=links.lazy()
+    ).collect().write_parquet(out / "btr_crs_unlinked.parquet")
     # The CRS of 2021 and 2022, so the years compared.
     assemble.total_flows(crs).collect().write_parquet(out / "total_flows.parquet")
     pl.DataFrame(
@@ -171,15 +182,17 @@ def reconciliation(
 @pytest.mark.parametrize(
     ("party", "year", "comparator", "ratio"),
     [
-        ("EUU", 2021, "crdf_at_party_weight", 1.0032),
-        ("EUU", 2022, "crdf_at_party_weight", 1.0103),
+        # BTR amounts at the DAC rate; at the parties' own rates the EU reads 1.0032
+        # and 1.0103, the Netherlands 1.0059, Switzerland 1.0118 and Germany 0.9385.
+        ("EUU", 2021, "crdf_at_party_weight", 1.0025),
+        ("EUU", 2022, "crdf_at_party_weight", 1.0093),
         ("NOR", 2021, "crs_disbursed_at_party_weight", 1.0028),
         ("SWE", 2021, "crs_disbursed_at_party_weight", 1.0016),
-        ("NLD", 2021, "crs_disbursed_at_party_weight", 1.0059),
-        ("CHE", 2022, "crs_disbursed_at_party_weight", 1.0118),
+        ("NLD", 2021, "crs_disbursed_at_party_weight", 1.0056),
+        ("CHE", 2022, "crs_disbursed_at_party_weight", 1.0119),
         # 6.2% under, which the prototype's report rounds to 0.94. Its CRDF at 100%
         # is the same USD 12,411m.
-        ("DEU", 2022, "crdf_at_party_weight", 0.9385),
+        ("DEU", 2022, "crdf_at_party_weight", 0.9376),
     ],
 )
 def test_party_totals_agree_at_the_prototype_weights(
@@ -189,10 +202,9 @@ def test_party_totals_agree_at_the_prototype_weights(
     comparator: str,
     ratio: float,
 ) -> None:
-    row = (
-        reconciliation.table.to_polars()
-        .filter(party=party, year=year, method="ONE")
-        .row(0, named=True)
+    rows = reconciliation.table.to_polars().filter(
+        party=party, year=year, method="ONE", comparator=comparator
     )
 
-    assert row[f"btr_over_{comparator}"] == pytest.approx(ratio, abs=0.0005)
+    assert rows.height == 1
+    assert rows["btr_over_comparator"].item() == pytest.approx(ratio, abs=0.0005)

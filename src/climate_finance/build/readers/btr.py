@@ -9,12 +9,13 @@ import json
 import re
 import warnings
 import zipfile
+from collections import Counter
 from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from statistics import median
-from typing import IO
+from typing import IO, NamedTuple
 
 import openpyxl
 import polars as pl
@@ -190,6 +191,20 @@ type _Amounts = dict[str, float | None]
 LINKED_PAIRS_COLUMNS = ("party", "btr_usd", "crs_usd", "rio_marker")
 # The archive's list of workbooks.
 MANIFEST = "manifest.json"
+# Why a sheet row gives no `btr` row: a title with no amount, a notation key in an
+# amount cell, or a total.
+DROP_REASONS = ("blank", "notation", "total")
+# The UNFCCC reporting tool writes a workbook's state into the exported file name.
+# These two mark a workbook the party had not submitted when it was exported.
+_DRAFT = re.compile(r"(?<![a-z])(started|awaiting_submission)(?![a-z])", re.IGNORECASE)
+
+
+class BtrArchive(NamedTuple):
+    """The archive's rows in the `btr` schema, and one `btr_workbooks` row per
+    workbook saying what was read from it."""
+
+    rows: pl.DataFrame
+    workbooks: pl.DataFrame
 
 
 def read_btr_workbook(path: Path, *, party: str) -> pl.DataFrame:
@@ -202,7 +217,8 @@ def read_btr_workbook(path: Path, *, party: str) -> pl.DataFrame:
     Rows labelled as totals are dropped. Amounts of the parties in `_MILLIONS` are
     multiplied by a million. A USD amount the party leaves empty is filled from the
     domestic amount at the sheet's stated rate (domestic currency per USD). Status is
-    `committed` or `disbursed`; a notation key gives null.
+    `committed` or `disbursed`; a notation key gives null. `dac_rate` and the amounts
+    restated at it are null; the normalise stage fills them.
 
     Args:
         path: The workbook or zip as the archive holds it.
@@ -214,12 +230,7 @@ def read_btr_workbook(path: Path, *, party: str) -> pl.DataFrame:
             rate the sheet's own rows contradict, or a status is outside the
             vocabulary.
     """
-    rows = [
-        row
-        for member, handle in _workbooks(path)
-        for row in _workbook_rows(handle, party=party, source_file=member)
-    ]
-    return _frame(rows)
+    return _frame(_read_workbook(path, party=party)[0])
 
 
 def ingest_unfccc(archive_dir: Path, *, out_path: Path) -> Path:
@@ -234,7 +245,7 @@ def ingest_unfccc(archive_dir: Path, *, out_path: Path) -> Path:
         SourceUnavailableError: as `read_btr_archive`.
         ValueError: as `read_btr_archive`.
     """
-    btr = read_btr_archive(archive_dir)
+    btr = read_btr_archive(archive_dir).rows
     out_path.parent.mkdir(parents=True, exist_ok=True)
     btr.sort(schema.BTR.sort_key).write_parquet(out_path)
     manifest = _raw_manifest([path for path, _ in archive_files(archive_dir)])
@@ -245,27 +256,42 @@ def ingest_unfccc(archive_dir: Path, *, out_path: Path) -> Path:
     return out_path
 
 
-def read_btr_archive(archive_dir: Path) -> pl.DataFrame:
-    """Every workbook the archive manifest lists, as one `btr` table.
+def read_btr_archive(archive_dir: Path) -> BtrArchive:
+    """Every workbook the archive manifest lists, as one `btr` table, with what was
+    read from each workbook.
 
     Each party's year must come from one sheet. A draft and a final copy of a
-    workbook both giving rows stop the read.
+    workbook both giving rows stop the read. A workbook row of `btr_workbooks` names
+    its party, the Table III.1 sheets read (as `btr.source_file` names them, none for
+    a workbook without one), the rows kept, the sheet rows dropped for each of
+    `DROP_REASONS`, and `draft_marker`, the tool state in the file name that marks
+    an unsubmitted workbook.
 
     Raises:
         SourceUnavailableError: as `archive_files`.
         ValueError: for a party's year given by more than one sheet, or a sheet
             `read_btr_workbook` refuses.
     """
-    btr = pl.concat(
-        read_btr_workbook(path, party=party)
-        for path, party in archive_files(archive_dir)
-    )
+    read = [
+        _read_workbook(path, party=party) for path, party in archive_files(archive_dir)
+    ]
+    btr = pl.concat(_frame(rows) for rows, _ in read)
     sheets = btr.group_by("party", "year").agg(pl.col("source_file").unique().sort())
     repeated = sheets.filter(pl.col("source_file").list.len() > 1)
     if not repeated.is_empty():
         raise ValueError(f"Several sheets give one party's year: {repeated.rows()}")
     schema.validate(schema.BTR, btr)
-    return btr.sort(schema.BTR.sort_key)
+    workbooks = pl.DataFrame(
+        [entry for _, entry in read],
+        schema={
+            name: column.dtype for name, column in schema.BTR_WORKBOOKS.columns.items()
+        },
+    )
+    schema.validate(schema.BTR_WORKBOOKS, workbooks)
+    return BtrArchive(
+        rows=btr.sort(schema.BTR.sort_key),
+        workbooks=workbooks.sort(schema.BTR_WORKBOOKS.sort_key),
+    )
 
 
 def archive_files(archive_dir: Path) -> list[tuple[Path, str]]:
@@ -455,13 +481,31 @@ def _workbooks(path: Path) -> Iterator[tuple[str, IO[bytes]]]:
                 yield f"{path.name}/{member}", BytesIO(archive.read(member))
 
 
-def _workbook_rows(
-    handle: IO[bytes], *, party: str, source_file: str
-) -> Iterator[dict[str, object]]:
-    for title, year, sheet in _table_sheets(handle):
-        yield from _sheet_rows(
-            sheet, party=party, year=year, source_file=f"{source_file}#{title}"
-        )
+def _read_workbook(
+    path: Path, *, party: str
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    """A workbook's rows, and its `btr_workbooks` row."""
+    rows: list[dict[str, object]] = []
+    sheets: list[str] = []
+    dropped: Counter[str] = Counter()
+    for member, handle in _workbooks(path):
+        for title, year, sheet in _table_sheets(handle):
+            source_file = f"{member}#{title}"
+            kept, lost = _sheet_rows(
+                sheet, party=party, year=year, source_file=source_file
+            )
+            rows.extend(kept)
+            sheets.append(source_file)
+            dropped.update(lost)
+    draft = _DRAFT.search(path.name)
+    return rows, {
+        "file": path.name,
+        "party": party,
+        "sheets": sheets,
+        "rows_kept": len(rows),
+        **{f"dropped_{reason}": dropped[reason] for reason in DROP_REASONS},
+        "draft_marker": draft[1].lower() if draft else None,
+    }
 
 
 def _table_sheets(
@@ -493,19 +537,28 @@ def _sheet_rows(
     party: str,
     year: int | None,
     source_file: str,
-) -> list[dict[str, object]]:
-    """The activity rows of one Table III.1 sheet, amounts in USD units."""
+) -> tuple[list[dict[str, object]], Counter[str]]:
+    """The activity rows of one Table III.1 sheet, amounts in USD units, and the
+    count of rows dropped for each of `DROP_REASONS`. A row with neither a title
+    nor an amount, such as a footnote, is not counted."""
     header, first_data = _header_block(sheet, source_file=source_file)
     columns = _column_roles(sheet[header:first_data], source_file=source_file)
     rows: list[dict[str, object]] = []
     amount_rows: list[_Amounts] = []
+    dropped: Counter[str] = Counter()
     for number, cells in enumerate(sheet[first_data:], start=first_data + 1):
         record = {role: _cell(cells, column) for role, column in columns.items()}
-        amounts = {role: _number(record.pop(role)) for role in _AMOUNTS}
+        cells_read = {role: record.pop(role) for role in _AMOUNTS}
+        amounts = {role: _number(value) for role, value in cells_read.items()}
         labels = {role: _text(value) for role, value in record.items()}
         if all(amount is None for amount in amounts.values()):
+            if any(_is_notation(value) for value in cells_read.values()):
+                dropped["notation"] += 1
+            elif labels.get("title"):
+                dropped["blank"] += 1
             continue
         if any(_TOTAL.match(labels.get(role) or "") for role in ("recipient", "title")):
+            dropped["total"] += 1
             continue
         row_year = _number(labels.pop(_YEAR_ROLES.get(party, "year"), None)) or year
         labels.pop("year", None)
@@ -525,7 +578,8 @@ def _sheet_rows(
         _fill_usd(
             amount_rows, rate=_exchange_rate(sheet), party=party, sheet=source_file
         )
-    return [{**row, **amounts} for row, amounts in zip(rows, amount_rows, strict=True)]
+    kept = [{**row, **amounts} for row, amounts in zip(rows, amount_rows, strict=True)]
+    return kept, dropped
 
 
 def _header_block(
@@ -766,9 +820,13 @@ def _frame(rows: list[dict[str, object]]) -> pl.DataFrame:
         ),
         title="title",
         amount_domestic="face_domestic",
+        grant_equiv_domestic="grant_equiv_domestic",
         currency=pl.col("party").replace_strict(_CURRENCIES, return_dtype=pl.String),
         face_usd="face_usd",
         grant_equiv_usd="grant_equiv_usd",
+        dac_rate=pl.lit(None, dtype=pl.Float64),
+        face_usd_at_dac=pl.lit(None, dtype=pl.Float64),
+        grant_equiv_usd_at_dac=pl.lit(None, dtype=pl.Float64),
         status=pl.col("status")
         .str.to_lowercase()
         .replace_strict(_STATUSES, default=None, return_dtype=pl.String),
@@ -814,6 +872,10 @@ def _text(value: object) -> str | None:
     lines = [line.strip() for line in str(value).splitlines()]
     kept = [line for line in lines if line and line.upper() not in _NOTATION]
     return re.sub(r"\s+", " ", " ".join(kept)).strip() or None
+
+
+def _is_notation(value: object) -> bool:
+    return isinstance(value, str) and value.strip().upper() in _NOTATION
 
 
 def _number(value: object) -> float | None:

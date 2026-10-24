@@ -388,18 +388,27 @@ def test_run_normalise_writes_every_table_from_raw(
 
     hashes = write_stage(normalise, run_normalise(context), tmp_path)
 
-    # `orgs` is written with recoveries, and `ledger` and `btr` when the config
-    # names ledgers and a BTR archive.
-    expected = set(schema.STAGE_TABLES["normalise"]) - {"btr", "orgs", "ledger"}
+    # `orgs` is written with recoveries, and `ledger`, `btr` and `btr_workbooks`
+    # when the config names ledgers and a BTR archive.
+    btr_tables = {"btr", "btr_workbooks"}
+    expected = set(schema.STAGE_TABLES["normalise"]) - {"orgs", "ledger", *btr_tables}
     assert set(hashes) == (
         expected
         | ({"orgs"} if recoveries else set())
-        | ({"ledger", "btr"} if ledgers else set())
+        | ({"ledger", *btr_tables} if ledgers else set())
     )
     if ledgers:
         btr = pl.read_parquet(table_path(tmp_path, "normalise", "btr"))
         assert set(btr["party"]) == {"NLD"}
         assert set(btr["provider_code"]) == {7}
+        # The Netherlands converts at 1/1.183 euros a dollar; the fixture's DAC
+        # rate for the euro is 0.8.
+        assert btr["dac_rate"].to_list() == [0.8]
+        assert btr["face_usd_at_dac"].to_list() == pytest.approx([1.183e6 / 0.8])
+        assert btr["face_usd"].to_list() == pytest.approx([1.183e6 * 1.183])
+        assert btr["grant_equiv_usd_at_dac"].to_list() == pytest.approx([1.183e6 / 0.8])
+        workbooks = pl.read_parquet(table_path(tmp_path, "normalise", "btr_workbooks"))
+        assert workbooks.select("file", "rows_kept").rows() == [("NLD.xlsx", 1)]
     if ledgers:
         ledger = pl.read_parquet(table_path(tmp_path, "normalise", "ledger"))
         assert set(ledger["publisher"]) == {"ibrd", "ida", "ebrd", "afdb", "gcf"}

@@ -63,7 +63,7 @@ from climate_finance.result import (
     Result,
     Table,
 )
-from climate_finance.schema import FLOWS, SHARE_ORIGINS
+from climate_finance.schema import FLOWS, FUNDING_CLASSES, SHARE_ORIGINS
 from climate_finance.spec import Spec, View
 
 if TYPE_CHECKING:
@@ -288,6 +288,16 @@ COMPARATORS = (
     "traced_climate_value",
     "crs_disbursed_at_party_weight",
 )
+# Per BTR status, the comparators of its flow, the one it reads against first, and
+# the CRS flow `oecd_only_usd` sums.
+_STATUS_FLOWS = {
+    "committed": (COMPARATORS[:3], "commitments"),
+    "disbursed": (COMPARATORS[3:], "disbursements"),
+}
+# The comparator a party's BTR grant equivalent is set against.
+GRANT_EQUIVALENT_COMPARATOR = "crs_grant_equivalent_at_party_weight"
+# A comparator below this many USD is too small for its ratio to say much.
+THIN_COMPARATOR_USD = 10e6
 # The marker rule the CRDF comparators weight by, with the party's coefficient or 1.0
 # for Significant.
 _PARTY_RULE = Method(significant=1.0, principal=1.0, highest_marker=True)
@@ -302,15 +312,26 @@ def reconcile(
     method: Method | MethodRange,
 ) -> Reconciliation:
     """Each party's BTR Table III.1 total against OECD figures for its bilateral
-    finance, one row per party, year and method.
+    finance, one row per party, year, status and method.
 
-    A party-year is compared on its main status, the one carrying the most face
-    value (Denmark reports each activity both committed and disbursed). A party
-    whose rows carry no status is compared on all of them, with a null status.
-    `btr_face` and `btr_grant_equivalent` sum that status's rows, and
-    `unfccc_only_usd` the face value of those rows no CRS record links to. Each is
-    null when every row lacks the amount, and zero when the rows report zero or the
-    known face value is all linked.
+    The BTR side comes from `btr_totals`, so a release without the row-level `btr`
+    and `btr_links` reconciles alike. Each status has its own row, and rows without a
+    status one more: Japan reports loans as committed and grants as disbursed, and
+    Denmark each activity under both. `btr_face` and `btr_grant_equivalent` sum the
+    status's rows in USD at the DAC rate of the year, the rate the CRS amounts use:
+    each row's domestic amount over `dac_rate`, or the party's own USD where either
+    is missing. `btr_face_reported` sums the party's own USD face value, and
+    `party_rate` is the rate it implies in domestic currency per USD
+    (`dac_rate` times `btr_face` over `btr_face_reported`), with rows the party gave
+    in USD only counting at the DAC rate. `unfccc_only_usd` is the face value of the
+    rows no CRS record links to, split by funding source into `unfccc_only_oda_usd`,
+    `unfccc_only_oof_usd` and `unfccc_only_other_usd` (a source naming both flows
+    or neither). An unlinked row may be an activity no CRS
+    record carries or a link the build missed, so read it beside `oecd_only_usd`:
+    the face amounts of the status's CRS flow (commitments or disbursements) on the
+    party-year's bilateral climate-marked records that no BTR row links to, null for
+    rows without a status. Each BTR sum is null when every row lacks the amount, and
+    zero when the rows report zero or the known face value is all linked.
 
     The comparators sum the party's bilateral rows (`BILATERAL`) of the year, and of
     the CRDF its Rio-marked rows only. A party weight applies to markers, and a
@@ -320,38 +341,62 @@ def reconcile(
     (`provider_coefficients`, confirmed or not, as `weight_confirmed` says) and at
     100%; `traced_climate_value` the climate value `method` gives what those
     commitments disbursed; `crs_disbursed_at_party_weight` the year's CRS
-    disbursements on Rio-marked records, Significant at the party's weight. A party
-    that reports commitments reads against the first three, one that reports
-    disbursements against the last. A party without a weight has null weighted
-    comparators, and one without a DAC provider code null comparators. Each
-    `btr_over_<comparator>` divides `btr_face` by it.
+    disbursements on Rio-marked records, Significant at the party's weight; and
+    `crs_grant_equivalent_at_party_weight` their grant equivalent, weighted alike.
+    A party without a weight has null weighted comparators, and one without a DAC
+    provider code null comparators.
+
+    Each `btr_over_<comparator>` divides `btr_face` by it, and is null for a
+    comparator of the other flow: committed rows read against the first three,
+    disbursed rows against `crs_disbursed_at_party_weight`, and rows without a
+    status against all four. `comparator` names the one a status reads against
+    first, `crdf_at_party_weight` or `crs_disbursed_at_party_weight`, with its ratio
+    as `btr_over_comparator`, and `thin_comparator` is true where it is below
+    `THIN_COMPARATOR_USD`. `btr_grant_equivalent_over_crs_grant_equivalent` divides
+    `btr_grant_equivalent` by its comparator on every row.
     """
     years = tuple(years)
-    btr = snapshot.table("btr").filter(pl.col("year").is_in(years))
+    totals = snapshot.table("btr_totals").filter(pl.col("year").is_in(years))
     if parties is not None:
-        btr = btr.filter(pl.col("party").is_in(list(parties)))
-    links = snapshot.table("btr_links")
-    face = pl.col("face_usd")
-    main = (
-        btr.filter(pl.col("status").is_not_null())
-        .group_by(*_PARTY_YEAR, "status")
-        .agg(face=face.sum())
-        .sort("face", "status", descending=[True, False])
-        .group_by(_PARTY_YEAR)
-        .agg(main=pl.col("status").first())
+        totals = totals.filter(pl.col("party").is_in(list(parties)))
+    face = pl.col("face_usd_at_dac")
+    unlinked = ~pl.col("linked")
+
+    def unfccc_only(condition: pl.Expr) -> pl.Expr:
+        return pl.when(face.is_not_null().any()).then(face.filter(condition).sum())
+
+    flow = pl.col("status").replace_strict(
+        {status: flow for status, (_, flow) in _STATUS_FLOWS.items()},
+        default=None,
+        return_dtype=pl.String,
     )
-    linked = links.select("row_id").unique().with_columns(linked=pl.lit(value=True))
     reported = (
-        btr.join(main, on=_PARTY_YEAR, how="left")
-        .filter(pl.col("status").eq_missing(pl.col("main")))
-        .join(linked, on="row_id", how="left")
-        .group_by(*_PARTY_YEAR, "provider_code", "status")
+        totals.group_by(*_PARTY_YEAR, "provider_code", "status")
         .agg(
-            btr_face=_sum("face_usd"),
-            btr_grant_equivalent=_sum("grant_equiv_usd"),
-            unfccc_only_usd=pl.when(face.is_not_null().any()).then(
-                face.filter(pl.col("linked").is_null()).sum()
+            btr_face_reported=_sum("face_usd"),
+            btr_face=_sum("face_usd_at_dac"),
+            btr_grant_equivalent=_sum("grant_equiv_usd_at_dac"),
+            dac_rate=pl.col("dac_rate").max(),
+            unfccc_only_usd=unfccc_only(unlinked),
+            **{
+                f"unfccc_only_{funding}_usd": unfccc_only(
+                    unlinked & (pl.col("funding") == funding)
+                )
+                for funding in FUNDING_CLASSES
+            },
+        )
+        .with_columns(
+            party_rate=pl.when(pl.col("btr_face_reported") > 0).then(
+                pl.col("dac_rate") * pl.col("btr_face") / pl.col("btr_face_reported")
             ),
+            flow=flow,
+        )
+        .join(
+            snapshot.table("btr_crs_unlinked").select(
+                "provider_code", "year", "flow", oecd_only_usd="amount_usd"
+            ),
+            on=["provider_code", "year", "flow"],
+            how="left",
         )
         .join(
             snapshot.table("provider_coefficients").select(
@@ -365,15 +410,13 @@ def reconcile(
     )
     weight = pl.col("party_weight")
     bilateral = (pl.col("bi_multi").is_in(BILATERAL), pl.col("year").is_in(years))
+    weights_by_provider = reported.select("provider_code", "party_weight").unique()
     commitments = (
         _counted_commitments(snapshot)
         .filter(*bilateral, pl.col("climate_share").is_null())
         # Jev labels CRS records only, so a Jev method reads markers here.
         .with_columns(**face_shares(), jev_level=pl.lit(None, pl.Int8))
-        .join(
-            reported.select("provider_code", "party_weight").unique(),
-            on="provider_code",
-        )
+        .join(weights_by_provider, on="provider_code")
     )
 
     def crdf_at(significant: pl.Expr) -> pl.Expr:
@@ -387,24 +430,32 @@ def reconcile(
         crdf_at_100=crdf_at(pl.lit(1.0)),
     )
     marker = pl.col("rio_marker")
-    crs = (
-        snapshot.table("total_flows")
-        .filter(pl.col("flow") == "disbursements", *bilateral)
-        .join(
-            reported.select("provider_code", "party_weight").unique(),
-            on="provider_code",
+
+    def crs_at_party_weight(flow: str) -> pl.LazyFrame:
+        """The year's CRS `flow` on Rio-marked records, Significant at the party's
+        weight."""
+        return (
+            snapshot.table("total_flows")
+            .filter(pl.col("flow") == flow, *bilateral)
+            .join(weights_by_provider, on="provider_code")
+            .group_by("provider_code", "year")
+            .agg(
+                (
+                    pl.col("amount_usd")
+                    * pl.when(marker == 2)
+                    .then(1.0)
+                    .when(marker == 1)
+                    .then(weight)
+                    .otherwise(0.0)
+                ).sum()
+            )
         )
-        .group_by("provider_code", "year")
-        .agg(
-            crs_disbursed_at_party_weight=(
-                pl.col("amount_usd")
-                * pl.when(marker == 2)
-                .then(1.0)
-                .when(marker == 1)
-                .then(weight)
-                .otherwise(0.0)
-            ).sum()
-        )
+
+    crs = crs_at_party_weight("disbursements").rename(
+        {"amount_usd": "crs_disbursed_at_party_weight"}
+    )
+    grant_equivalent = crs_at_party_weight("grant_equivalent").rename(
+        {"amount_usd": GRANT_EQUIVALENT_COMPARATOR}
     )
     frames = []
     for each in method.methods if isinstance(method, MethodRange) else (method,):
@@ -419,9 +470,26 @@ def reconcile(
             reported.join(crdf, on=["provider_code", "year"], how="left")
             .join(traced, on=["provider_code", "year"], how="left")
             .join(crs, on=["provider_code", "year"], how="left")
+            .join(grant_equivalent, on=["provider_code", "year"], how="left")
             .with_columns(method=pl.lit(label(each)))
         )
-    weighted_comparators = ("crdf_at_party_weight", "crs_disbursed_at_party_weight")
+    weighted_comparators = (
+        "crdf_at_party_weight",
+        "crs_disbursed_at_party_weight",
+        GRANT_EQUIVALENT_COMPARATOR,
+    )
+    status = pl.col("status")
+
+    def reads(name: str) -> pl.Expr:
+        """Whether a row reads against comparator `name`."""
+        flows = [s for s, (names, _) in _STATUS_FLOWS.items() if name in names]
+        return status.is_null() | status.is_in(flows)
+
+    first = {s: names[0] for s, (names, _) in _STATUS_FLOWS.items()}
+    comparator_usd = pl.coalesce(
+        pl.when(status == s).then(pl.col(name)) for s, name in first.items()
+    )
+    ratios = [f"btr_over_{name}" for name in COMPARATORS]
     table = (
         pl.concat(frames)
         .with_columns(
@@ -429,8 +497,20 @@ def reconcile(
             for name in weighted_comparators
         )
         .with_columns(
-            (pl.col("btr_face") / pl.col(name)).alias(f"btr_over_{name}")
-            for name in COMPARATORS
+            *(
+                pl.when(reads(name))
+                .then(pl.col("btr_face") / pl.col(name))
+                .alias(f"btr_over_{name}")
+                for name in COMPARATORS
+            ),
+            comparator=status.replace_strict(
+                first, default=None, return_dtype=pl.String
+            ),
+            btr_over_comparator=pl.col("btr_face") / comparator_usd,
+            thin_comparator=comparator_usd < THIN_COMPARATOR_USD,
+            btr_grant_equivalent_over_crs_grant_equivalent=(
+                pl.col("btr_grant_equivalent") / pl.col(GRANT_EQUIVALENT_COMPARATOR)
+            ),
         )
         .select(
             "party",
@@ -441,15 +521,42 @@ def reconcile(
             "party_weight",
             "weight_confirmed",
             "btr_face",
+            "btr_face_reported",
+            "party_rate",
+            "dac_rate",
             "btr_grant_equivalent",
             "unfccc_only_usd",
+            *(f"unfccc_only_{funding}_usd" for funding in FUNDING_CLASSES),
+            "oecd_only_usd",
             *COMPARATORS,
-            *(f"btr_over_{name}" for name in COMPARATORS),
+            GRANT_EQUIVALENT_COMPARATOR,
+            "comparator",
+            "btr_over_comparator",
+            "thin_comparator",
+            *ratios,
+            "btr_grant_equivalent_over_crs_grant_equivalent",
         )
-        .sort("party", "year", "method")
+        .sort("party", "year", "status", "method", nulls_last=True)
     )
-    rows = (
-        btr.join(links, on="row_id", how="left", suffix="_crs")
+    return Reconciliation(
+        table=Table(table),
+        rows=lambda: _reconciliation_rows(snapshot, parties=parties, years=years),
+    )
+
+
+def _reconciliation_rows(
+    snapshot: Snapshot, *, parties: Sequence[str] | None, years: tuple[int, ...]
+) -> pl.LazyFrame:
+    """Each BTR row of `parties` and `years` with each CRS record linked to it.
+
+    Raises:
+        WithheldTableError: when the release leaves out `btr` or `btr_links`.
+    """
+    btr = snapshot.table("btr").filter(pl.col("year").is_in(years))
+    if parties is not None:
+        btr = btr.filter(pl.col("party").is_in(list(parties)))
+    return (
+        btr.join(snapshot.table("btr_links"), on="row_id", how="left", suffix="_crs")
         .select(
             "party",
             "year",
@@ -458,6 +565,7 @@ def reconcile(
             "recipient",
             "title",
             "face_usd",
+            "face_usd_at_dac",
             "grant_equiv_usd",
             "record_id",
             "link_method",
@@ -472,7 +580,6 @@ def reconcile(
         )
         .sort("party", "year", "row_id", "record_id", nulls_last=True)
     )
-    return Reconciliation(table=Table(table), rows=rows)
 
 
 def _attribution(

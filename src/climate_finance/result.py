@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from html import escape
 from typing import TYPE_CHECKING
 
@@ -347,20 +347,28 @@ _FLOWS = {
 class Reconciliation:
     """A party-by-year comparison of BTR reports with OECD data.
 
-    `table` holds one row per party, year and method (see `query.reconcile`).
+    `table` holds one row per party, year, status and method (see
+    `query.reconcile`).
     """
 
-    def __init__(self, *, table: Table, rows: pl.LazyFrame) -> None:
+    def __init__(self, *, table: Table, rows: Callable[[], pl.LazyFrame]) -> None:
         self.table = table
         self._rows = rows
 
     def rows(self, party: str, year: int) -> pl.DataFrame:
         """The project-level link behind one party and year: each BTR row of every
         status with each CRS record linked to it, the record's facts prefixed
-        `crs_`, and `unfccc_only` true for a row no record links to."""
-        return self._rows.filter(
-            pl.col("party") == party, pl.col("year") == year
-        ).collect()
+        `crs_`, and `unfccc_only` true for a row no record links to.
+
+        Raises:
+            WithheldTableError: when the release leaves out the row-level BTR
+                tables, as the published release does.
+        """
+        return (
+            self._rows()
+            .filter(pl.col("party") == party, pl.col("year") == year)
+            .collect()
+        )
 
 
 class Comparison:

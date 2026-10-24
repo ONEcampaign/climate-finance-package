@@ -481,10 +481,14 @@ def build_tables() -> dict[str, pl.DataFrame]:
                 "recipient_code": KEN,
                 "title": f"Adaptation programme {party} {year}",
                 "amount_domestic": amount,
+                "grant_equiv_domestic": amount,
                 "currency": currency,
                 "face_usd": amount * rate,
                 "grant_equiv_usd": amount * rate,
-                "status": "disbursed",
+                "dac_rate": 1 / rate,
+                "face_usd_at_dac": amount * rate,
+                "grant_equiv_usd_at_dac": amount * rate,
+                "status": status,
                 "channel": "bilateral",
                 "funding_source": "ODA",
                 "instrument": "grant",
@@ -494,9 +498,9 @@ def build_tables() -> dict[str, pl.DataFrame]:
                 "is_aggregate": False,
                 "source_file": f"{party}-BTR1.xlsx",
             }
-            for party, provider, currency, rate, amount in (
-                ("DEU", DEU, "EUR", 1.1, 20e6),
-                ("NOR", NOR, "NOK", 0.1, 150e6),
+            for party, provider, currency, rate, amount, status in (
+                ("DEU", DEU, "EUR", 1.1, 20e6, "committed"),
+                ("NOR", NOR, "NOK", 0.1, 150e6, "disbursed"),
             )
             for year in (2021, 2022)
         ],

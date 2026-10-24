@@ -568,8 +568,13 @@ def test_btr_totals_sum_the_rows_by_status_funding_currency_and_link() -> None:
             "face_usd": [row[3] for row in rows],
             "grant_equiv_usd": [row[4] for row in rows],
             "amount_domestic": [row[5] for row in rows],
+            # Norway's own rate is 10 crowns a dollar, the DAC rate 12.5.
+            "dac_rate": 12.5,
         },
         schema_overrides={"year": pl.Int16, "provider_code": pl.Int32},
+    ).with_columns(
+        face_usd_at_dac=pl.col("amount_domestic") / 12.5,
+        grant_equiv_usd_at_dac=pl.col("grant_equiv_usd") * 0.8,
     )
     links = pl.DataFrame({"row_id": ["N1", "N1", "N2"], "record_id": ["a", "b", "c"]})
 
@@ -584,6 +589,15 @@ def test_btr_totals_sum_the_rows_by_status_funding_currency_and_link() -> None:
         ("disbursed", "oda", False, 1, 1.0, 1.0, 10.0),
         ("disbursed", "oda", True, 2, 15.0, 9.0, 150.0),
         (None, "other", False, 1, None, 2.0, None),
+    ]
+    restated = totals.sort(key, nulls_last=True).select(
+        "face_usd_at_dac", "grant_equiv_usd_at_dac", "dac_rate"
+    )
+    assert restated.rows() == [
+        pytest.approx((5.6, 2.4, 12.5)),
+        pytest.approx((0.8, 0.8, 12.5)),
+        pytest.approx((12.0, 7.2, 12.5)),
+        (None, pytest.approx(1.6), 12.5),
     ]
 
 
