@@ -12,7 +12,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-from make_fixture import FIXTURE_DIR, LEDGER_RECORD
+from make_fixture import DEU, FIXTURE_DIR, FRA, GEF, JPN, LEDGER_RECORD
 from polars.testing import assert_frame_equal
 from releases import copy_release
 
@@ -344,13 +344,19 @@ def test_a_split_record_counts_its_grant_equivalent_once() -> None:
     rows = SNAP.spending(flow="grant_equivalent").rows(record_id="JPN-SPLIT")
 
     # JPN-SPLIT disburses 30m with an 18m grant equivalent: 12m to JPN-1, 10m to
-    # JPN-3, 8m excess. Each allocation takes its pro-rata grant equivalent.
+    # JPN-3, 8m excess, which is untraced. Each part takes its pro-rata grant
+    # equivalent.
     by_commitment = dict(zip(rows["row_id"], rows["amount"], strict=True))
     assert by_commitment == pytest.approx(
-        {"JPN-1": 18e6 * 12e6 / 30e6, "JPN-3": 18e6 * 10e6 / 30e6}
+        {
+            "JPN-1": 18e6 * 12e6 / 30e6,
+            "JPN-3": 18e6 * 10e6 / 30e6,
+            None: 18e6 * 8e6 / 30e6,
+        }
     )
-    # Both commitments are principal mitigation, so value equals amount.
-    assert rows["value"].sum() == pytest.approx(18e6 * (12e6 + 10e6) / 30e6)
+    # Both commitments and the record are principal mitigation, so the record's
+    # whole grant equivalent counts once.
+    assert rows["value"].sum() == pytest.approx(18e6)
 
 
 def test_bounds_follow_each_allocation_in_its_own_year() -> None:
@@ -464,7 +470,7 @@ def test_a_range_of_close_methods_counts_each_member_once() -> None:
 def test_the_recipient_view_counts_outflows_and_no_attribution() -> None:
     rows = SNAP.spending().rows()
 
-    assert set(rows["origin"]) == {"disbursement"}
+    assert set(rows["origin"]) == {"disbursement", "untraced"}
     assert 4 in set(rows["bi_multi"])
     assert set(rows["bi_multi"]) <= {*BILATERAL, 4}
 
@@ -661,7 +667,7 @@ def test_jev_relevance_leaves_records_jev_did_not_label_alone() -> None:
         return (
             SNAP.spending(method=method)
             .rows()
-            .filter(pl.col("record_id").ne_missing("JPN-2-R1"))
+            .filter(~pl.col("record_id").is_in(["JPN-2-R1", "DEU-UNLINKED"]))
             .drop("method")
         )
 
@@ -777,9 +783,14 @@ def test_explain_and_title_name_the_measure(
     assert ("share of total" in title) == (measure == "share_of_total")
 
 
-def test_an_amount_spec_serialises_without_a_measure() -> None:
-    assert "measure" not in Spec(flow="commitments").model_dump_json()
-    assert "share_of_total" in Spec(measure="share_of_total").model_dump_json()
+@pytest.mark.parametrize(
+    ("field", "value"), [("measure", "share_of_total"), ("untraced", False)]
+)
+def test_a_spec_serialises_only_the_later_fields_it_changes(
+    field: str, value: object
+) -> None:
+    assert f'"{field}"' not in Spec(flow="commitments").model_dump_json()
+    assert f'"{field}"' in Spec(**{field: value}).model_dump_json()
 
 
 SURVEY = "Fixture survey, p. 8"
@@ -1198,6 +1209,76 @@ def test_eu_own_rows_count_less_the_contributions_of_queried_members(
     assert value(None, EU_INSTITUTIONS) == 0
 
 
+# Untraced records of the EU budget (agency 1) and of the EIB (agency 3) in 2022,
+# 10m each and principal for mitigation.
+EU_UNTRACED_USD = 10e6
+
+
+def _with_eu_untraced(frame: pl.DataFrame) -> pl.DataFrame:
+    rows = pl.DataFrame(
+        [
+            {
+                "record_id": f"EU-UNTRACED-{agency}",
+                "year": 2022,
+                "provider_code": EU_INSTITUTIONS,
+                "agency_code": agency,
+                "recipient_code": 666,
+                "bi_multi": 1,
+                "rio_adaptation": 0,
+                "rio_mitigation": 2,
+                "untraced_usd": EU_UNTRACED_USD,
+                "reason": "unlinked",
+                "record_disbursement_usd": EU_UNTRACED_USD,
+            }
+            for agency in (1, EIB_AGENCY)
+        ],
+        schema_overrides=frame.schema,
+    )
+    return pl.concat([frame, rows], how="diagonal").select(frame.columns)
+
+
+@pytest.fixture(scope="module")
+def eu_untraced_snap(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
+    release = copy_release(
+        tmp_path_factory.mktemp("eu-untraced") / "release",
+        edits={
+            "core_contributions": _with_two_eu_members,
+            "agency_shares": _with_eu_shares,
+            "untraced": _with_eu_untraced,
+        },
+    )
+    return cf.load(path=release)
+
+
+@pytest.mark.parametrize(
+    ("method", "providers", "kept"),
+    [
+        # France funds a quarter of each EU channel, so a query naming it keeps three
+        # quarters of the EU's own untraced rows, and one naming every member none.
+        (cf.methods.ONE, (EU_INSTITUTIONS,), {1: 1.0, EIB_AGENCY: 1.0}),
+        (cf.methods.ONE, (EU_INSTITUTIONS, 4), {1: 0.75, EIB_AGENCY: 0.75}),
+        (cf.methods.ONE, None, {}),
+        # As a provider, the EU keeps the EU budget's rows whole and drops the EIB's.
+        (ONE_EU_AS_PROVIDER, (EU_INSTITUTIONS, 4), {1: 1.0}),
+    ],
+)
+def test_eu_untraced_rows_count_once_as_the_eus_own_rows_do(
+    eu_untraced_snap: Snapshot,
+    method: Method,
+    providers: tuple[int, ...] | None,
+    kept: dict[int, float],
+) -> None:
+    rows = eu_untraced_snap.spending(
+        view="provider", method=method, providers=providers, years=(2022,)
+    ).rows(origin="untraced", provider_code=EU_INSTITUTIONS)
+
+    assert dict(rows.select("agency_code", "value").rows()) == pytest.approx(
+        {agency: share * EU_UNTRACED_USD for agency, share in kept.items()}
+    )
+    assert rows["high"].to_list() == pytest.approx(rows["value"].to_list())
+    assert set(rows["low"]) <= {0.0}
+
+
 # NOR-1's records carry no grant equivalent, so the EU rows have none to divide.
 @pytest.mark.parametrize("flow", ["commitments", "disbursements"])
 @pytest.mark.parametrize("providers", [(EU_INSTITUTIONS,), (EU_INSTITUTIONS, 4)])
@@ -1496,3 +1577,179 @@ def test_explain_names_queried_years_without_attributed_finance(
     ]
 
     assert lines == named
+
+
+@pytest.mark.parametrize(
+    ("record_id", "method", "weight"),
+    [
+        # Germany's unlinked record is principal for adaptation.
+        ("DEU-UNLINKED", ONE, 1.0),
+        ("DEU-UNLINKED", OECD, 1.0),
+        # France's is significant for mitigation; its agency assesses case by case
+        # and states no default, so PROVIDER takes ONE's 0.4.
+        ("FRA-UNLINKED", ONE, 0.4),
+        ("FRA-UNLINKED", OECD, 1.0),
+        ("FRA-UNLINKED", cf.methods.PROVIDER, 0.4),
+        # JPN-SPLIT's 8m excess keeps the record's principal mitigation marker.
+        ("JPN-SPLIT", cf.methods.PROVIDER, 1.0),
+    ],
+)
+def test_untraced_rows_weigh_by_the_records_own_markers_in_value_and_high(
+    record_id: str, method: Method, weight: float
+) -> None:
+    row = SNAP.spending(method=method).rows(record_id=record_id, origin="untraced")
+
+    amount = {"DEU-UNLINKED": 2.5e6, "FRA-UNLINKED": 3e6, "JPN-SPLIT": 8e6}[record_id]
+    assert row.select("amount", "value", "low", "high", "untraced").row(0) == (
+        pytest.approx(amount),
+        pytest.approx(weight * amount),
+        0.0,
+        pytest.approx(weight * amount),
+        pytest.approx(weight * amount),
+    )
+    assert row["row_id"].to_list() == [None]
+
+
+def test_traced_only_leaves_the_untraced_rows_out() -> None:
+    spec = Spec(method=RANGE)
+    full = SNAP.spending(spec=spec)
+    traced = SNAP.spending(spec=spec.replace(untraced=False))
+
+    assert set(traced.rows()["origin"]) == {"disbursement"}
+    assert traced.table.to_polars()["untraced"].sum() == 0.0
+    sums = [
+        result._sums.to_polars().select(pl.col("value", "low", "untraced").sum()).row(0)
+        for result in (full, traced)
+    ]
+    # Untraced value moves out of value and leaves low where it was.
+    assert sums[1] == pytest.approx((sums[0][0] - sums[0][2], sums[0][1], 0.0))
+    assert "traced only" in repr(traced).splitlines()[0]
+    assert "Untraced disbursement" in traced.explain()
+    assert "is left out" in traced.explain()
+
+
+def test_explain_names_the_untraced_rows_of_disbursement_flows_only() -> None:
+    line = "Untraced: CRS disbursement with a Rio marker that reaches no commitment"
+
+    assert line in SNAP.spending().explain()
+    assert line in SNAP.spending(flow="grant_equivalent").explain()
+    assert "Untraced" not in SNAP.spending(flow="commitments").explain()
+
+
+def test_jev_relevance_reads_a_jev_level_on_an_untraced_record() -> None:
+    row = SNAP.spending(method=JEV_ONE).rows(record_id="DEU-UNLINKED")
+
+    # Jev reads the record as significant for adaptation, where its own marker is
+    # principal.
+    assert row["value"].item() == pytest.approx(0.4 * 2.5e6)
+
+
+def _before_adaptation(frame: pl.DataFrame) -> pl.DataFrame:
+    # In 2009, as the release writes it: no adaptation marker.
+    is_row = pl.col("record_id") == "DEU-UNLINKED"
+    return frame.with_columns(
+        year=pl.when(is_row).then(pl.lit(2009, pl.Int16)).otherwise(pl.col("year")),
+        rio_adaptation=pl.when(~is_row).then(pl.col("rio_adaptation")),
+    )
+
+
+@pytest.mark.parametrize("method", [ONE, JEV_ONE])
+def test_an_untraced_record_before_the_adaptation_marker_counts_mitigation(
+    tmp_path: Path, method: Method
+) -> None:
+    release = copy_release(tmp_path / "release", edits={"untraced": _before_adaptation})
+
+    row = cf.load(path=release).spending(method=method).rows(record_id="DEU-UNLINKED")
+
+    # DEU-UNLINKED marks adaptation alone, and its Jev label reads adaptation, which
+    # the CRS does not measure in 2009.
+    assert row.select("year", "adaptation", "cross_cutting", "value").row(0) == (
+        2009,
+        None,
+        None,
+        0.0,
+    )
+
+
+# JPN-SPLIT, with its traced rows on commitments marked 0 for both objectives and its
+# 8m excess marked adaptation principal alone, which Jev reads as significant.
+def _unmark_split_commitments(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(
+        inherited_rio_mitigation=pl.when(pl.col("record_id") == "JPN-SPLIT")
+        .then(pl.lit(0, pl.Int8))
+        .otherwise(pl.col("inherited_rio_mitigation"))
+    )
+
+
+def _mark_split_excess_adaptation(frame: pl.DataFrame) -> pl.DataFrame:
+    is_row = pl.col("record_id") == "JPN-SPLIT"
+    return frame.with_columns(
+        rio_adaptation=pl.when(is_row)
+        .then(pl.lit(2, pl.Int8))
+        .otherwise(pl.col("rio_adaptation")),
+        rio_mitigation=pl.when(is_row)
+        .then(pl.lit(0, pl.Int8))
+        .otherwise(pl.col("rio_mitigation")),
+    )
+
+
+def _label_split_record(frame: pl.DataFrame) -> pl.DataFrame:
+    label = pl.DataFrame(
+        {
+            "record_id": ["JPN-SPLIT"],
+            "objective": ["adaptation"],
+            "level": [1],
+            "label_source": ["jev"],
+            "probability": [0.6],
+        }
+    )
+    return pl.concat([frame, label.cast(frame.schema)])
+
+
+def test_a_jev_label_reaches_only_the_rows_a_record_weighs_as_adaptation(
+    tmp_path: Path,
+) -> None:
+    release = copy_release(
+        tmp_path / "release",
+        edits={
+            "disbursements": _unmark_split_commitments,
+            "untraced": _mark_split_excess_adaptation,
+            "objectives": _label_split_record,
+        },
+    )
+    snapshot = cf.load(path=release)
+
+    def values(method: Method) -> dict[str | None, float]:
+        rows = snapshot.spending(method=method).rows(record_id="JPN-SPLIT")
+        return dict(rows.select("row_id", "value").rows())
+
+    # The traced rows weigh by their commitments' 0 and count nothing, label or not.
+    # The excess weighs by its own adaptation marker, which the label replaces.
+    assert values(ONE) == pytest.approx({"JPN-1": 0.0, "JPN-3": 0.0, None: 8e6})
+    assert values(JEV_ONE) == pytest.approx(
+        {"JPN-1": 0.0, "JPN-3": 0.0, None: 0.4 * 8e6}
+    )
+
+
+def test_quality_reports_the_untraced_and_left_out_marked_disbursement() -> None:
+    untraced = SNAP.quality(method=OECD).untraced.to_polars()
+
+    assert untraced.select(
+        "provider_code",
+        "year",
+        "excess_usd",
+        "unlinked_marked_usd",
+        "outside_release_usd",
+        "fund_unlinked_usd",
+        "excess_climate_usd",
+        "unlinked_climate_usd",
+    ).rows() == [
+        (FRA, 2021, 0.0, 3e6, 0.0, 0.0, 0.0, 3e6),
+        (DEU, 2022, 0.0, 2.5e6, 4e6, 0.0, 0.0, 2.5e6),
+        (JPN, 2023, 8e6, 0.0, 0.0, 0.0, 8e6, 0.0),
+        (GEF, 2021, 0.0, 0.0, 0.0, 1.5e6, 0.0, 0.0),
+    ]
+    one = SNAP.quality(providers=["France"]).untraced.to_polars()
+    assert one.select("provider_code", "unlinked_climate_usd").rows() == [
+        (FRA, pytest.approx(1.2e6))
+    ]

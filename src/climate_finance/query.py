@@ -1,7 +1,7 @@
 """Queries as lazy polars plans over release tables, weighted at query time.
 
 `spending()` builds one row per counted amount, weights it under each method,
-converts it, and sums the rows into the result table. Rows have one of three origins:
+converts it, and sums the rows into the result table. Rows have one of four origins:
 
 - `commitment`: a CRDF commitment at face value (`flow="commitments"`). Rows that
   repeat an earlier vintage are left out, and `quality()` reports them.
@@ -13,6 +13,12 @@ converts it, and sums the rows into the result table. Rows have one of three ori
   `allocated_high_usd`, converted to grant equivalents the same way: `low` counts
   what certain links carried (`schema.CERTAIN_METHODS`) to rows reached by certain
   routes (`schema.CERTAIN_ROUTES`), and `high` everything allocated.
+- `untraced`: a Rio-marked CRS record's disbursement that reaches no commitment
+  (`untraced_usd`), the excess beyond a full commitment or the whole of a record
+  linked to none, converted to grant equivalents as a disbursement is. It weighs by
+  the record's own markers, with no published share to cap them. It counts in
+  `high` and not in `low`, which holds what certain links carry to commitments.
+  `spec.untraced=False` leaves these rows out.
 - `attribution`: under `view="provider"`, a provider's core contribution of the
   spec's flow to an agency times the agency's climate share. An agency share with no
   split by objective counts in `unsplit`, with the objectives 0. `share_source` says
@@ -28,15 +34,19 @@ nothing and count in EU Institutions' own rows, while the EIB is a channel: its 
 rows leave and contributions to it attribute.
 
 Every row holds `value` = adaptation + mitigation - cross_cutting + unsplit, or
-+ cross_cutting under the highest-marker rule, whose objectives are disjoint.
++ cross_cutting under the highest-marker rule, whose objectives are disjoint, and
+`untraced`, its value on an untraced row and 0 on any other.
 Where the CRDF does not measure adaptation (commitments before 2010, and agency
 shares whose span reaches one), adaptation and cross_cutting are null and `value`
 is the mitigation value. A table row's adaptation and cross_cutting are null when
 any of its rows with an amount has them null.
 
-A disbursement whose record Jev labelled shows `jev_level`, Jev's adaptation level
-(0, 1 or 2). Under `relevance="jev"` it replaces the adaptation marker the row
-inherits.
+A disbursement or untraced row whose record Jev labelled shows `jev_level`, Jev's
+adaptation level (0, 1 or 2), where the adaptation marker it weighs by is 1 or 2:
+the one a disbursement inherits, or an untraced row's own. Under `relevance="jev"`
+it replaces that marker. A label belongs to the record, and Jev reads only records
+that marker places among the human-coded adaptation projects, so a record's rows
+under another marker, or 0, keep their marker.
 
 The release's commitments are recipient-perspective CRDF rows only, so views filter
 on Bi_Multi alone and provider attribution comes only from core contributions.
@@ -71,11 +81,17 @@ from climate_finance.result import (
     Result,
     Table,
 )
-from climate_finance.schema import EIB_AGENCY, EU_INSTITUTIONS, FLOWS, SHARE_ORIGINS
-from climate_finance.spec import (
+from climate_finance.schema import (
+    ADAPTATION_FIRST_YEAR,
     BILATERAL,
     CORE_CONTRIBUTION,
-    MULTILATERAL_OUTFLOW,
+    EIB_AGENCY,
+    EU_INSTITUTIONS,
+    FLOWS,
+    RECIPIENT_VIEW,
+    SHARE_ORIGINS,
+)
+from climate_finance.spec import (
     ODA_FLOW_CATEGORY,
     ODA_FLOW_CODES,
     Flow,
@@ -131,6 +147,7 @@ ROW_COLUMNS: dict[str, pl.DataType] = {
     "record_rio_adaptation": pl.Int8(),
     "record_rio_mitigation": pl.Int8(),
     "marker_source": pl.String(),
+    "reason": pl.String(),
     "climate_share": pl.Float64(),
     "share_source": pl.String(),
     "link_method": pl.String(),
@@ -187,7 +204,9 @@ def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
             ),
         ]
     conditions = [*named, *others]
-    base = _base_rows(snapshot, flow=spec.flow, view=spec.view).filter(*conditions)
+    base = _base_rows(
+        snapshot, flow=spec.flow, view=spec.view, untraced=spec.untraced
+    ).filter(*conditions)
     weighted = []
     # Per method label, the part of each EU channel-year's own rows that counts.
     eu_kept: dict[str, pl.LazyFrame] = {}
@@ -253,7 +272,8 @@ def quality(
 
     The status split covers the commitments the trace follows: bilateral rows and
     multilateral outflows, without core contributions. `eu_left_out` holds the EU
-    Institutions rows an all-provider provider view leaves out under `method`.
+    Institutions rows an all-provider provider view leaves out under `method`, and
+    `untraced` the Rio-marked CRS disbursement that reaches no commitment.
     """
     years = None if years is None else tuple(years)
     conditions = _conditions(providers=providers, recipients=None, years=years)
@@ -275,6 +295,46 @@ def quality(
         attribution=Table(
             _attribution(snapshot, providers=providers, years=years, method=method)
         ),
+        untraced=Table(
+            _untraced(snapshot, conditions=conditions, method=method).sort(
+                "provider_code", "year"
+            )
+        ),
+    )
+
+
+def _untraced(
+    snapshot: Snapshot, *, conditions: Sequence[pl.Expr], method: Method
+) -> pl.LazyFrame:
+    """Per provider and disbursement year, the release's `unallocated` amounts at
+    face value, and the climate value of the untraced excess and unlinked
+    disbursement under `method` in the recipient view, in USD at current prices."""
+    reason = pl.col("reason")
+    value = pl.col("value")
+    climate = (
+        _weigh(
+            _coefficients(
+                snapshot,
+                _untraced_rows(snapshot, view="recipient", factor=pl.lit(1.0)),
+                method=method,
+            ),
+            method=method,
+        )
+        .filter(*conditions)
+        .group_by("provider_code", "year")
+        .agg(
+            excess_climate_usd=ordered_sum(value.filter(reason == "excess")),
+            unlinked_climate_usd=ordered_sum(value.filter(reason == "unlinked")),
+        )
+    )
+    key = ["provider_code", "year"]
+    return (
+        snapshot.table("unallocated")
+        .filter(*conditions)
+        .join(climate, on=key, how="left", validate="1:1")
+        .with_columns(
+            pl.col("excess_climate_usd", "unlinked_climate_usd").fill_null(0.0)
+        )
     )
 
 
@@ -320,7 +380,7 @@ def _eu_left_out(
     conditions = _conditions(providers=None, recipients=None, years=years)
 
     def by_agency(flow: Flow) -> pl.LazyFrame:
-        own = _base_rows(snapshot, flow=flow, view="provider").filter(
+        own = _base_rows(snapshot, flow=flow, view="provider", untraced=True).filter(
             pl.col("provider_code") == EU_INSTITUTIONS, *conditions
         )
         attributed = _attributed_rows(snapshot, flow=flow, method=method)
@@ -390,11 +450,15 @@ def _counted_commitments(snapshot: Snapshot) -> pl.LazyFrame:
 
 def _in_view(view: View) -> pl.Expr:
     """Rows of the Bi_Multi codes that `view` counts."""
-    codes = BILATERAL if view == "provider" else (*BILATERAL, MULTILATERAL_OUTFLOW)
+    codes = BILATERAL if view == "provider" else RECIPIENT_VIEW
     return pl.col("bi_multi").is_in(codes)
 
 
-def _base_rows(snapshot: Snapshot, *, flow: Flow, view: View) -> pl.LazyFrame:
+def _base_rows(
+    snapshot: Snapshot, *, flow: Flow, view: View, untraced: bool
+) -> pl.LazyFrame:
+    """The rows of `flow` that `view` counts, before weighting: commitments, or
+    disbursements and, with `untraced`, untraced rows."""
     shares = {
         **face_shares(),
         "share_unsplit": pl.lit(0.0),
@@ -440,7 +504,7 @@ def _base_rows(snapshot: Snapshot, *, flow: Flow, view: View) -> pl.LazyFrame:
     if flow == "grant_equivalent":
         record = pl.col("record_disbursement_usd")
         factor = pl.when(record != 0).then(pl.col("record_grant_equiv_usd") / record)
-    return _conform(
+    traced = _conform(
         disbursements.with_columns(
             origin=pl.lit("disbursement"),
             amount=allocated * factor,
@@ -448,9 +512,49 @@ def _base_rows(snapshot: Snapshot, *, flow: Flow, view: View) -> pl.LazyFrame:
             amount_high=pl.col("allocated_high_usd") * factor,
             rio_adaptation=pl.col("inherited_rio_adaptation"),
             rio_mitigation=pl.col("inherited_rio_mitigation"),
+            jev_level=_scoped_jev(pl.col("inherited_rio_adaptation")),
             **shares,
         )
     )
+    if not untraced:
+        return traced
+    return pl.concat([traced, _untraced_rows(snapshot, view=view, factor=factor)])
+
+
+def _untraced_rows(snapshot: Snapshot, *, view: View, factor: pl.Expr) -> pl.LazyFrame:
+    """The `untraced` rows `view` counts, at `factor` per USD disbursed, weighed by
+    the record's own markers.
+
+    No commitment publishes a share for them, so their shares stay null and cap no
+    marker weight. The CRS measures adaptation from `ADAPTATION_FIRST_YEAR`; before
+    it the release holds a null adaptation marker, as the CRDF does, and the row
+    counts mitigation alone.
+    """
+    amount = pl.col("untraced_usd") * factor
+    return _conform(
+        snapshot.table("untraced")
+        .filter(_in_view(view))
+        .join(_labels(snapshot), on="record_id", how="left")
+        .with_columns(
+            origin=pl.lit("untraced"),
+            amount=amount,
+            # Null where the amount is, as for a record without a grant equivalent.
+            amount_low=pl.when(amount.is_not_null()).then(0.0),
+            amount_high=amount,
+            record_rio_adaptation=pl.col("rio_adaptation"),
+            record_rio_mitigation=pl.col("rio_mitigation"),
+            jev_level=_scoped_jev(pl.col("rio_adaptation")),
+            marker_source=pl.lit("record"),
+            share_unsplit=pl.lit(0.0),
+            adaptation_measured=pl.col("year") >= ADAPTATION_FIRST_YEAR,
+        )
+    )
+
+
+def _scoped_jev(adaptation: pl.Expr) -> pl.Expr:
+    """A row's `jev_level` where `adaptation`, the marker it weighs by, is 1 or 2,
+    and null elsewhere."""
+    return pl.when(adaptation.is_in([1, 2])).then(pl.col("jev_level"))
 
 
 def _require_jev_labels(snapshot: Snapshot) -> None:
@@ -806,6 +910,9 @@ def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
         value=amount * climate,
         low=pl.col("amount_low") * climate,
         high=pl.col("amount_high") * climate,
+        untraced=pl.when(pl.col("origin") == "untraced")
+        .then(amount * climate)
+        .otherwise(0.0),
     ).drop(*_WEIGHT_INPUTS)
 
 

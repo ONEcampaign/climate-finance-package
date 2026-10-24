@@ -18,11 +18,13 @@ from climate_finance.methods import (
     label,
     uses_imputed_shares,
 )
-from climate_finance.schema import STATUSES
-from climate_finance.spec import (
+from climate_finance.schema import (
     BILATERAL,
     CORE_CONTRIBUTION,
     MULTILATERAL_OUTFLOW,
+    STATUSES,
+)
+from climate_finance.spec import (
     ODA_FLOW_CATEGORY,
     ODA_FLOW_CODES,
     Spec,
@@ -34,7 +36,7 @@ if TYPE_CHECKING:
 
 AMOUNTS = (
     "amount", "adaptation", "mitigation", "cross_cutting", "unsplit", "value", "low",
-    "high",
+    "high", "untraced",
 )  # fmt: skip
 # The keys of a result table's rows, before the method.
 ROW_KEYS = ("year", "provider_code", "recipient_code", "bi_multi")
@@ -248,13 +250,20 @@ class Quality:
     Add it back to compare with totals that count EU Institutions as a provider.
     `attribution` holds, by provider, year and flow, the value attributed through
     core contributions, split by the agency share's source into `computed_usd`,
-    `held_usd` and `oecd_usd`.
+    `held_usd` and `oecd_usd`. `untraced` holds, by provider and disbursement year,
+    the Rio-marked CRS disbursement outside `disbursements` at face value: the
+    excess and the unlinked records that disbursement totals count as untraced, with
+    their climate value under the method (`excess_climate_usd`,
+    `unlinked_climate_usd`), and the two amounts no total counts, allocations to
+    commitments with no CRDF row (`outside_release_usd`) and the route funds'
+    unlinked records (`fund_unlinked_usd`).
     """
 
     table: Table
     status: Table
     eu_left_out: Table
     attribution: Table
+    untraced: Table
 
     def summary(self) -> pl.DataFrame:
         """Per provider: link rate, certain-route share, label sources, status split.
@@ -352,6 +361,8 @@ def explain(
     if spec.view == "provider":
         lines.extend(_coverage(methods, queried=spec.years, years=years or {}))
     lines.append(_FLOWS[spec.flow])
+    if spec.flow != "commitments":
+        lines.append(_UNTRACED[spec.untraced])
     lines.append(
         "Commitments that repeat an earlier vintage are left out, and their "
         "disbursements count on the row they repeat; snap.quality() reports their "
@@ -571,13 +582,24 @@ _FLOWS = {
     "by the commitment's markers; low counts the disbursements linked by the "
     "donor's CRS id or World Bank loan number where the linked records agree, and "
     "bank-ledger and IATI fills in full, since they match on the publisher's own "
-    "id; high counts every linked disbursement. "
+    "id; high counts every linked disbursement and the untraced disbursement. "
     "Attributed finance counts core contributions disbursed. The modelled table "
     "holds a disbursement range for commitments whose disbursements no source "
     "reports.",
     "grant_equivalent": "Flow: grant equivalent of disbursements, shared across the "
     "commitments a record funds in proportion to the amount each receives; records "
     "without one stay missing, and snap.quality() reports coverage.",
+}
+
+
+_UNTRACED = {
+    True: "Untraced: CRS disbursement with a Rio marker that reaches no commitment, "
+    "the excess beyond a full commitment and records linked to none, weighted by "
+    "the record's own markers. It counts in value and high, not in low, and the "
+    "untraced column holds it; snap.quality() reports it with the marked "
+    "disbursement no total counts.",
+    False: "Untraced disbursement, Rio-marked CRS disbursement that reaches no "
+    "commitment, is left out.",
 }
 
 
@@ -672,6 +694,8 @@ def _field_text(field: str, value: object) -> str:
             return label(value)
         case "oda_only", bool():
             return "ODA only" if value else "all flows"
+        case "untraced", bool():
+            return "with untraced" if value else "traced only"
         case "measure", _:
             return "share of total" if value == "share_of_total" else "amounts"
         case "prices", _:
@@ -702,4 +726,6 @@ def _title(spec: Spec, *, release: str) -> str:
         parts[-1] = f"share of total; rows in {parts[-1]}"
     if spec.oda_only:
         parts.append("ODA only")
+    if not spec.untraced and spec.flow != "commitments":
+        parts.append("traced only")
     return f"Result: {'; '.join(parts)}; release {release}"

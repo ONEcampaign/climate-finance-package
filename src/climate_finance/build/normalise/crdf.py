@@ -5,9 +5,13 @@ from typing import Literal
 
 import polars as pl
 
-from climate_finance.build.normalise.crs import CORE_CONTRIBUTION
 from climate_finance.build.normalise.ids import content_id
-from climate_finance.schema import EIB_AGENCY, EU_INSTITUTIONS
+from climate_finance.schema import (
+    ADAPTATION_FIRST_YEAR,
+    CORE_CONTRIBUTION,
+    EIB_AGENCY,
+    EU_INSTITUTIONS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,15 +33,6 @@ _MARKERS: dict[str, int | None] = {
     "Imputed Multilateral Contribution": None,
 }
 _IMPUTED = "Imputed Multilateral Contribution"
-# The first year the CRDF measures adaptation: the DAC introduced the adaptation
-# marker for flows from 2010. Before it the recipient CRDF holds the rows its
-# mitigation marker selects and prints "Not targeted/Not screened" as their
-# adaptation marker. The few adaptation marks before 2010 predate the marker's start
-# and count as not measured: 1 row in 2007, 2 in 2008 and 10 of 2,962 in 2009 marked
-# principal or significant, and 49 climate-component rows in 2009, against 3,922 of
-# 6,371 rows marked in 2010. Four of the 2009 rows (Kuwait, USD 142m) are marked for
-# adaptation alone, so their climate value, the mitigation value, is 0.
-ADAPTATION_FIRST_YEAR = 2010
 # The columns that measure adaptation, null before `ADAPTATION_FIRST_YEAR`.
 _ADAPTATION_COLUMNS = ("rio_adaptation", "adaptation_usd", "overlap_usd")
 # Text Excel writes in place of a formula it could not evaluate.

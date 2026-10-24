@@ -12,8 +12,9 @@ onto one `Snapshot.spending` call per source and flow:
   perspective, which maps to `view="provider"`. The legacy names therefore select
   the traced dataset, which includes disbursements from development banks' own
   ledgers (`disbursement_source="bank_ledger"`), so "OECD_CRS" can return more than
-  the CRS alone. The "_ALLOCABLE" names return the same rows as their plain names,
-  without their former filter.
+  the CRS alone. Disbursements also hold the Rio-marked CRS disbursement that
+  reaches no commitment, at the record's own markers. The "_ALLOCABLE" names return
+  the same rows as their plain names, without their former filter.
 - `prices="constant"` with `base_year` maps to `prices=base_year`; currency "CAN"
   maps to "CAD".
 - `set_only_oda` maps to `oda_only=True` and `set_update_data` to `refresh=True`.

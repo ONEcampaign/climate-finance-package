@@ -65,6 +65,8 @@ def test_regenerating_the_fixture_gives_the_same_tables(tmp_path: Path) -> None:
 INVARIANT_TABLES = (
     "commitments",
     "disbursements",
+    "untraced",
+    "unallocated",
     "agency_shares",
     "agency_spending",
     "core_contributions",
@@ -275,6 +277,32 @@ def _repeat_an_allocated_row(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def _edit_untraced(
+    record: str, /, **changes: object
+) -> Callable[[pl.DataFrame], pl.DataFrame]:
+    """An edit setting `changes` on `untraced` row `record`."""
+
+    def edit(frame: pl.DataFrame) -> pl.DataFrame:
+        is_row = pl.col("record_id") == record
+        return frame.with_columns(
+            pl.when(is_row)
+            .then(pl.lit(value, frame.schema[name]))
+            .otherwise(pl.col(name))
+            .alias(name)
+            for name, value in changes.items()
+        )
+
+    return edit
+
+
+def _overstate_excess(frame: pl.DataFrame) -> pl.DataFrame:
+    # Japan's 2023 excess is JPN-SPLIT's 8m.
+    is_row = (pl.col("provider_code") == 701) & (pl.col("year") == 2023)
+    return frame.with_columns(
+        excess_usd=pl.when(is_row).then(9e6).otherwise(pl.col("excess_usd"))
+    )
+
+
 def _remainder(frame: pl.DataFrame, usd: float) -> pl.DataFrame:
     # A 40000 row holds the part of a provider's total no leaf itemises.
     first = frame.head(1).with_columns(
@@ -334,6 +362,21 @@ def _coefficient_edit(
         ("disbursements", _break_record_disbursement, "JPN-SPLIT"),
         ("disbursements", _overdraw_record, "JPN-SPLIT"),
         ("disbursements", _negative_record_grant_equiv, "JPN-SPLIT"),
+        ("untraced", _edit_untraced("DEU-UNLINKED", rio_adaptation=0), "DEU-UNLINKED"),
+        ("untraced", _edit_untraced("DEU-UNLINKED", bi_multi=2), "DEU-UNLINKED"),
+        # An unlinked record whose allocations the release holds.
+        ("untraced", _edit_untraced("DEU-UNLINKED", record_id="DEU-1-R1"), "DEU-1-R1"),
+        (
+            "untraced",
+            _edit_untraced("FRA-UNLINKED", record_disbursement_usd=4e6),
+            "FRA-UNLINKED",
+        ),
+        (
+            "untraced",
+            _edit_untraced("JPN-SPLIT", record_disbursement_usd=31e6),
+            "JPN-SPLIT",
+        ),
+        ("unallocated", _overstate_excess, "701 2023"),
         ("agency_shares", _split_a_climate_only_share, "46002 2020 oecd"),
         ("agency_spending", _mix_share_sources, "44002 2021"),
         ("commitments", _publish_more_climate_than_face, "DEU-1"),
@@ -375,6 +418,24 @@ def test_release_invariants_name_the_row_that_breaks_one(
 
     assert problems
     assert all(row_id in problem for problem in problems)
+
+
+def test_release_invariants_refuse_an_untraced_adaptation_marker_before_2010() -> None:
+    # DEU-UNLINKED, Germany's only untraced record of 2022, moves to 2009 in both
+    # tables and keeps its adaptation marker.
+    def to_2009(frame: pl.DataFrame) -> pl.DataFrame:
+        is_row = (pl.col("provider_code") == 5) & (pl.col("year") == 2022)
+        return frame.with_columns(
+            year=pl.when(is_row).then(pl.lit(2009, pl.Int16)).otherwise(pl.col("year"))
+        )
+
+    tables = {name: _read(name) for name in INVARIANT_TABLES}
+    tables["untraced"] = to_2009(tables["untraced"])
+    tables["unallocated"] = to_2009(tables["unallocated"])
+
+    assert release_invariants(tables) == [
+        "untraced DEU-UNLINKED: an adaptation marker before ADAPTATION_FIRST_YEAR"
+    ]
 
 
 @pytest.mark.parametrize(

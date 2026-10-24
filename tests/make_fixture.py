@@ -9,7 +9,8 @@ fill, cross-cutting agency shares measured from markers and from components, a
 climate share with no split by objective, core contributions for every flow,
 provider coefficients that change between years, split by agency, hold a
 both-significant coefficient or a case-by-case default, commitments reached through
-certain and estimated CRDF routes, and unallocated disbursements of each kind.
+certain and estimated CRDF routes, untraced excess and unlinked records, and
+unallocated disbursements of each kind.
 Amounts are invented.
 
 Run `uv run python tests/make_fixture.py --from-release <dir> [out_dir]` to sample a
@@ -45,6 +46,8 @@ RELEASE = "fixture"
 # DAC codes: Germany, France, Norway, Japan, IDA, AfDB. IFC has only a modelled line.
 # The EIB appears only in the sample of a real release.
 DEU, FRA, NOR, JPN, IDA, AFDB, IFC, EIB = 5, 4, 8, 701, 905, 913, 903, 918
+# The GEF reports only an unlinked record, in `unallocated`.
+GEF = 811
 IDA_CH, AFDB_CH = 44002, 46002
 KEN, BGD, IRQ, UNS = 248, 666, 543, 998
 NO_RECORD = "no_disbursement_record"
@@ -125,7 +128,7 @@ OTHER_OFFICIAL = {"AFDB-2"}
 GRANT_EQUIV_RATIO = {11: 1.0, 13: 0.6}
 
 # One CRS record split across JPN-1 and JPN-3. The rest of its disbursement is
-# excess, which reaches no commitment and so has no row.
+# excess, which reaches no commitment and so is untraced.
 SPLIT_RECORD = "JPN-SPLIT"
 SPLIT_YEAR = 2023
 SPLIT_DISBURSEMENT = 30e6
@@ -192,9 +195,19 @@ PROVIDER_COEFFICIENTS = (
 # The route by which a commitment's CRDF row reaches its CRS commitment, where it is
 # not `within_year`.
 CRDF_ROUTES = {"NOR-1": "crosswalk_amount", "JPN-3": "title_recipient"}
-# Rio-marked disbursements that reach no commitment: (provider, year,
-# outside_release_usd, unlinked_marked_usd). Excess comes from the records' rows.
-UNALLOCATED = ((DEU, 2022, 4e6, 2.5e6), (FRA, 2021, 0.0, 3e6))
+# Rio-marked CRS records linked to no commitment: (record_id, provider, agency,
+# recipient, year, flow_code, rio_adaptation, rio_mitigation, disbursement_usd,
+# grant_equiv_usd). Germany's is principal for adaptation and Jev labels it
+# significant; France's is significant for mitigation and has no grant equivalent.
+UNLINKED = (
+    ("DEU-UNLINKED", DEU, 52, KEN, 2022, 11, 2, 0, 2.5e6, 2.5e6),
+    ("FRA-UNLINKED", FRA, 1, IRQ, 2021, 13, 0, 1, 3e6, None),
+)
+# Rio-marked disbursements that no total counts: (provider, year,
+# outside_release_usd, fund_unlinked_usd). Excess and unlinked amounts come from
+# `untraced`.
+# The GEF, a route fund, has an unlinked record its IATI route covers.
+UNALLOCATED = ((DEU, 2022, 4e6, 0.0), (GEF, 2021, 0.0, 1.5e6))
 # The build settings the fixture claims, as `release.json` records them.
 SETTINGS = {
     "offline": True,
@@ -293,6 +306,22 @@ def _allocation(
         "disbursement_source": disbursement_source,
         "ledger_check": "confirmed" if commitment["provider_code"] == IDA else None,
     }
+
+
+# The facts an untraced excess row takes from its record's disbursements row.
+UNTRACED_FACTS = (
+    "record_id",
+    "year",
+    "provider_code",
+    "agency_code",
+    "recipient_code",
+    "channel_code",
+    "bi_multi",
+    "purpose_code",
+    "flow_code",
+    "project_number",
+    "title",
+)
 
 
 def _flow_code(commitment: dict[str, object]) -> int:
@@ -421,6 +450,54 @@ def build_tables() -> dict[str, pl.DataFrame]:
             rule="fifo",
         )
     objective_rows.extend(_objectives(commitments["JPN-1"], SPLIT_RECORD))
+    split = next(row for row in disbursement_rows if row["record_id"] == SPLIT_RECORD)
+    untraced_rows = [
+        {
+            **{column: split[column] for column in UNTRACED_FACTS},
+            "rio_adaptation": split["record_rio_adaptation"],
+            "rio_mitigation": split["record_rio_mitigation"],
+            "untraced_usd": SPLIT_DISBURSEMENT
+            - sum(allocated for _, allocated, *_ in SPLIT_ALLOCATIONS),
+            "reason": "excess",
+            "record_disbursement_usd": SPLIT_DISBURSEMENT,
+            "record_grant_equiv_usd": SPLIT_GRANT_EQUIV,
+        }
+    ]
+    for (
+        record_id, provider, agency, recipient, year, flow_code, rio_a, rio_m,
+        disbursement, grant_equiv,
+    ) in UNLINKED:  # fmt: skip
+        untraced_rows.append(
+            {
+                "record_id": record_id,
+                "year": year,
+                "provider_code": provider,
+                "agency_code": agency,
+                "recipient_code": recipient,
+                "channel_code": None,
+                "bi_multi": 1,
+                "purpose_code": 41010,
+                "flow_code": flow_code,
+                "project_number": f"PN-{record_id}",
+                "title": f"Climate project {record_id}",
+                "rio_adaptation": rio_a,
+                "rio_mitigation": rio_m,
+                "untraced_usd": disbursement,
+                "reason": "unlinked",
+                "record_disbursement_usd": disbursement,
+                "record_grant_equiv_usd": grant_equiv,
+            }
+        )
+        objective_rows.extend(
+            {
+                "record_id": record_id,
+                "objective": objective,
+                "level": level,
+                "label_source": "marker",
+                "probability": None,
+            }
+            for objective, level in (("adaptation", rio_a), ("mitigation", rio_m))
+        )
     allocate(
         commitments["AFDB-1"],
         record_id=LEDGER_RECORD,
@@ -435,19 +512,25 @@ def build_tables() -> dict[str, pl.DataFrame]:
     )
     disbursement_rows[-1]["ledger_check"] = None
     # A Jev label on a record of an adaptation-marked commitment: principal, where
-    # JPN-2 and the record mark adaptation significant.
-    objective_rows.append(
+    # JPN-2 and the record mark adaptation significant. Another on an untraced
+    # record: significant, where the record marks adaptation principal.
+    objective_rows.extend(
         {
-            "record_id": "JPN-2-R1",
+            "record_id": record_id,
             "objective": "adaptation",
-            "level": 2,
+            "level": level,
             "label_source": "jev",
-            "probability": 0.72,
+            "probability": probability,
         }
+        for record_id, level, probability in (
+            ("JPN-2-R1", 2, 0.72),
+            ("DEU-UNLINKED", 1, 0.64),
+        )
     )
 
     tables = {
         "disbursements": disbursement_rows,
+        "untraced": untraced_rows,
         "objectives": objective_rows,
         "agency_shares": [
             {
@@ -565,9 +648,16 @@ def build_tables() -> dict[str, pl.DataFrame]:
         list(commitments.values()), frames["disbursements"]
     )
     frames["quality"] = _quality(frames["commitments"], frames["disbursements"])
-    frames["unallocated"] = _unallocated(frames["disbursements"])
+    frames["unallocated"] = _unallocated(frames["untraced"])
     frames["total_flows"] = _total_flows(
-        frames["commitments"], frames["disbursements"], frames["core_contributions"]
+        frames["commitments"],
+        pl.concat(
+            [
+                frames["disbursements"].select(*TOTAL_KEYS, "allocated_usd"),
+                frames["untraced"].select(*TOTAL_KEYS, allocated_usd="untraced_usd"),
+            ]
+        ),
+        frames["core_contributions"],
     )
     return frames
 
@@ -596,6 +686,10 @@ def _polars_schema(table: str) -> pl.Schema:
     return pl.Schema(RELEASE_TABLES[table].dtypes)
 
 
+# The keys of `total_flows`.
+TOTAL_KEYS = ("provider_code", "agency_code", "recipient_code", "year", "bi_multi")
+
+
 def _total_flows(
     commitments: pl.DataFrame,
     disbursements: pl.DataFrame,
@@ -603,8 +697,9 @@ def _total_flows(
 ) -> pl.DataFrame:
     """All CRS flows: four times the climate rows' amounts (0.9 of that for grant
     equivalent), plus 1.5 times each flow's core contributions to unspecified
-    recipients, so every climate figure has a larger total."""
-    keys = ["provider_code", "agency_code", "recipient_code", "year", "bi_multi"]
+    recipients, so every climate figure has a larger total. `disbursements` holds
+    the traced and untraced disbursements' keys and amounts."""
+    keys = list(TOTAL_KEYS)
     committed = commitments.select(*keys, amount_usd=pl.col("face_usd") * 4)
     disbursed = disbursements.select(*keys, amount_usd=pl.col("allocated_usd") * 4)
     climate = {
@@ -680,21 +775,17 @@ def _quality(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataF
     )
 
 
-def _unallocated(disbursements: pl.DataFrame) -> pl.DataFrame:
-    """Per provider and disbursement year, each record's disbursement beyond its
-    allocations, with `UNALLOCATED`'s amounts outside the release and unlinked."""
-    excess = (
-        disbursements.group_by("provider_code", "year", "record_id")
-        .agg(
-            excess_usd=pl.col("record_disbursement_usd").first()
-            - pl.col("allocated_usd").sum()
-        )
-        .group_by("provider_code", "year")
-        .agg(pl.col("excess_usd").sum())
+def _unallocated(untraced: pl.DataFrame) -> pl.DataFrame:
+    """Per provider and disbursement year, the untraced excess and unlinked
+    amounts, with `UNALLOCATED`'s amounts outside the release and of route funds."""
+    amount = pl.col("untraced_usd")
+    excess = untraced.group_by("provider_code", "year").agg(
+        excess_usd=amount.filter(pl.col("reason") == "excess").sum(),
+        unlinked_marked_usd=amount.filter(pl.col("reason") == "unlinked").sum(),
     )
     other = pl.DataFrame(
         UNALLOCATED,
-        schema=["provider_code", "year", "outside_release_usd", "unlinked_marked_usd"],
+        schema=["provider_code", "year", "outside_release_usd", "fund_unlinked_usd"],
         orient="row",
     )
     columns = _polars_schema("unallocated")
@@ -744,7 +835,14 @@ SAMPLE_PER_KIND = 3
 SAMPLE_MIN_RECORDS = 8
 SAMPLE_SEED = 7
 # Tables sampled by provider. The rest are copied whole.
-BY_PROVIDER = ("core_contributions", "quality", "modelled", "total_flows")
+BY_PROVIDER = (
+    "core_contributions",
+    "quality",
+    "modelled",
+    "total_flows",
+    "untraced",
+    "unallocated",
+)
 
 
 def sample_release(release: Path) -> dict[str, pl.DataFrame]:
@@ -753,8 +851,8 @@ def sample_release(release: Path) -> dict[str, pl.DataFrame]:
     Each commitment keeps every allocation and each record its objective labels, so
     the commitments' disbursed amounts still sum from their allocations. Each repeat
     keeps the first row it repeats, which holds its allocations. `quality`,
-    `modelled`, `core_contributions` and `total_flows` keep the six providers' rows
-    for the whole release.
+    `modelled`, `core_contributions`, `total_flows`, `untraced` and `unallocated`
+    keep the six providers' rows for the whole release.
     """
     tables = {
         name: pl.read_parquet(release / f"{name}.parquet") for name in RELEASE_TABLES

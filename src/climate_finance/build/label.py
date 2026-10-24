@@ -7,15 +7,18 @@ climate share, which the weighting reads in place of markers), `commitment` wher
 the record's own markers match the inherited ones, and `record_differs` where they
 do not.
 
-Each linked record's reported objectives enter `objectives`: the CRDF objective of
-the climate-component commitments it fills (`crdf`, level 2), and the record's own
-Rio markers (`marker`).
+The labels cover the records the release counts: those allocated to a CRDF
+commitment, and the untraced ones (`allocate.untraced_records`), whose Rio-marked
+disbursement reaches no commitment. Each one's reported objectives enter
+`objectives`: the CRDF objective of the climate-component commitments it fills
+(`crdf`, level 2), and the record's own Rio markers (`marker`).
 
-With `jev_labels` on, Jev reads the title and long description of every record
-allocated to a commitment its donor marked adaptation (marker 1 or 2) without climate
-components, as the human-coded projects give them, and answers three adaptation
-questions in one request. Weikmans et al.'s human-coded projects are all
-donor-marked adaptation, so the labels cover that population only. Jev's answers to
+With `jev_labels` on, Jev reads the title and long description of every record the
+release weighs by a donor's adaptation marker of 1 or 2: a record allocated to a
+commitment its donor marked adaptation without climate components, and an untraced
+record marked adaptation itself, as the human-coded projects give them. It answers
+three adaptation questions in one request. Weikmans et al.'s human-coded projects are
+all donor-marked adaptation, so the labels cover that population only. Jev's answers to
 the same questions on those projects fit the cut on the lenient answer that labels a
 record adaptation. A label carries a Rio level, which the weighting reads like a
 donor's marker. Mitigation has no human-coded set, so Jev labels adaptation only.
@@ -28,8 +31,13 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from climate_finance.build.allocate import (
+    marked_records,
+    routed_funds,
+    untraced_records,
+)
 from climate_finance.build.fetch import ADAPTATION_LABELS_FILE
-from climate_finance.schema import OBJECTIVE_LABELS, OBJECTIVES
+from climate_finance.schema import OBJECTIVE_LABELS, OBJECTIVES, measured_adaptation
 
 if TYPE_CHECKING:
     from climate_finance.build.jev_client import JevClient
@@ -89,14 +97,25 @@ NO_TEXT = "(no text)"
 def run_label(context: StageContext) -> StageOutput:
     """Write `objectives`.
 
-    The objectives hold the CRDF and marker labels of linked records. With
-    `jev_labels` on they also hold Jev's adaptation labels, cut at the threshold
-    fitted on the human-coded labels fetch copied into `raw/`.
+    The objectives hold the CRDF and marker labels of the records the release
+    counts. With `jev_labels` on they also hold Jev's adaptation labels, cut at the
+    threshold fitted on the human-coded labels fetch copied into `raw/`.
     """
     allocations = context.read("fill", "allocations")
     commitments = context.read("normalise", "crdf")
     crs = context.read("normalise", "crs")
-    objectives = reported_objectives(allocations, commitments=commitments, crs=crs)
+    # The allocate stage checked the year against the CRS years it read.
+    untraced = untraced_records(
+        marked_records(
+            allocations,
+            crs=crs,
+            last_year=context.config.years.crs_last_complete,
+            routed=routed_funds(context.config),
+        )
+    )
+    objectives = reported_objectives(
+        allocations, commitments=commitments, crs=crs, untraced=untraced
+    )
     if not context.config.jev_labels:
         return {"objectives": objectives}
 
@@ -106,7 +125,9 @@ def run_label(context: StageContext) -> StageOutput:
         on="label_id",
         validate="1:1",
     )
-    records = jev_records(allocations, commitments=commitments, crs=crs).collect()
+    records = jev_records(
+        allocations, commitments=commitments, crs=crs, untraced=untraced
+    ).collect()
     labels = jev_objectives(
         ask_jev(records, client=context.jev),
         threshold=fit_adaptation_threshold(fitted),
@@ -158,19 +179,28 @@ def inherit_markers(
 
 
 def reported_objectives(
-    allocations: pl.LazyFrame, *, commitments: pl.LazyFrame, crs: pl.LazyFrame
+    allocations: pl.LazyFrame,
+    *,
+    commitments: pl.LazyFrame,
+    crs: pl.LazyFrame,
+    untraced: pl.LazyFrame,
 ) -> pl.LazyFrame:
     """CRDF and marker objective labels for every record allocated to a CRDF
-    commitment.
+    commitment and every record of `untraced` (`untraced_records`).
 
     A record filling climate-component commitments takes each one's CRDF objective
-    at `COMPONENT_LEVEL`, and every linked record takes its own Rio markers, where
-    set, as `marker` labels. A record holds one label per objective and source, at
-    the highest level.
+    at `COMPONENT_LEVEL`, and every counted record takes its own Rio markers, where
+    set, as `marker` labels. The adaptation marker counts from
+    `ADAPTATION_FIRST_YEAR` (`schema.measured_adaptation`), so no earlier record
+    shows an adaptation label the CRS does not measure. A record holds one label per
+    objective and source, at the highest level.
     """
     linked = allocations.filter(pl.col("row_id").is_not_null()).select(
         "row_id", "record_id"
     )
+    counted = pl.concat(
+        [linked.select("record_id"), untraced.select("record_id")]
+    ).unique()
     components = commitments.filter(
         pl.col("climate_share").is_not_null(), pl.col("objective").is_in(OBJECTIVES)
     ).select("row_id", "objective")
@@ -181,10 +211,13 @@ def reported_objectives(
         label_source=pl.lit("crdf"),
     )
     markers = (
-        linked.select("record_id")
-        .unique()
-        .join(
-            crs.select("record_id", "rio_adaptation", "rio_mitigation"), on="record_id"
+        counted.join(
+            crs.select(
+                "record_id",
+                "rio_mitigation",
+                rio_adaptation=measured_adaptation(pl.col("rio_adaptation")),
+            ),
+            on="record_id",
         )
         .unpivot(
             index="record_id",
@@ -238,29 +271,38 @@ def read_adaptation_labels(path: Path) -> pl.DataFrame:
 
 
 def jev_records(
-    allocations: pl.LazyFrame, *, commitments: pl.LazyFrame, crs: pl.LazyFrame
+    allocations: pl.LazyFrame,
+    *,
+    commitments: pl.LazyFrame,
+    crs: pl.LazyFrame,
+    untraced: pl.LazyFrame,
 ) -> pl.LazyFrame:
     """The records Jev labels, with their `project_text`.
 
-    A record qualifies when it is allocated to a commitment without climate
-    components whose adaptation marker, which the record inherits, is 1 or 2, and
-    has a title or long description. A commitment marked 0 lies outside the
-    human-coded projects, which are all marked adaptation.
+    A record qualifies when the release weighs it by an adaptation marker of 1 or 2
+    and it has a title or long description: allocated to a commitment without
+    climate components whose marker it inherits, or in `untraced`
+    (`untraced_records`) with a marker of its own from `ADAPTATION_FIRST_YEAR`,
+    before which the release treats adaptation as unmeasured. A record marked 0 lies
+    outside the human-coded projects, which are all marked adaptation.
     """
-    marked = commitments.filter(
-        pl.col("climate_share").is_null(), pl.col("rio_adaptation").is_in([1, 2])
-    ).select("row_id")
+    adaptation = pl.col("rio_adaptation").is_in([1, 2])
+    marked = commitments.filter(pl.col("climate_share").is_null(), adaptation).select(
+        "row_id"
+    )
+    text = crs.select(
+        "record_id",
+        text=project_text(pl.col("title"), pl.col("long_description")),
+    )
+    own_marked = crs.filter(
+        measured_adaptation(pl.col("rio_adaptation")).is_in([1, 2])
+    ).select("record_id")
+    traced = allocations.join(marked, on="row_id", how="semi").select("record_id")
+    own = untraced.join(own_marked, on="record_id", how="semi").select("record_id")
     return (
-        allocations.join(marked, on="row_id", how="semi")
-        .select("record_id")
+        pl.concat([traced, own])
         .unique()
-        .join(
-            crs.select(
-                "record_id",
-                text=project_text(pl.col("title"), pl.col("long_description")),
-            ),
-            on="record_id",
-        )
+        .join(text, on="record_id")
         .filter(pl.col("text").str.len_chars() > 0)
     )
 

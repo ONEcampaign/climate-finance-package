@@ -24,7 +24,14 @@ from climate_finance.build import (
     write_stage,
     write_table,
 )
-from climate_finance.build.allocate import allocate, allocate_to_rows, counted_rows
+from climate_finance.build.allocate import (
+    allocate,
+    allocate_to_rows,
+    counted_rows,
+    marked_records,
+    routed_funds,
+    untraced_records,
+)
 from climate_finance.build.errors import (
     ConfigError,
     ReleaseInvariantError,
@@ -38,11 +45,12 @@ from climate_finance.build.stages import REGISTRY, Stage, StageContext, table_pa
 from climate_finance.errors import SchemaError
 from climate_finance.schema import STAGE_TABLES
 
-NOR, IDA_CHANNEL = 8, 44002
+NOR, GEF, IDA_CHANNEL = 8, 811, 44002
 # Norway commits 100 in 2019 under crs id X1 and disburses 60 in 2020 and 70 in 2021,
 # so the commitment fills and 30 of 2021 is excess. Y1 commits 50 with no CRDF row
 # and disburses 20 to it; Z9 disburses 15 with no commitment, and Z8 disburses 5
-# with no Rio marker.
+# with no Rio marker. The GEF, a fund the fill stage can route through its IATI
+# files, disburses 7 under G1 with no commitment.
 CRS = crs_records(
     {"record_id": "c19", "year": 2019, "crs_id": "X1", "commitment_usd": 100.0},
     {"record_id": "d20", "year": 2020, "crs_id": "X1", "disbursement_usd": 60.0},
@@ -57,6 +65,13 @@ CRS = crs_records(
     {"record_id": "y19", "year": 2019, "crs_id": "Y1", "commitment_usd": 50.0},
     {"record_id": "y20", "year": 2020, "crs_id": "Y1", "disbursement_usd": 20.0},
     {"record_id": "z20", "year": 2020, "crs_id": "Z9", "disbursement_usd": 15.0},
+    {
+        "record_id": "g20",
+        "year": 2020,
+        "donor_code": GEF,
+        "crs_id": "G1",
+        "disbursement_usd": 7.0,
+    },
     {
         "record_id": "u20",
         "year": 2020,
@@ -485,28 +500,94 @@ def test_quality_counts_certain_routes_only_where_every_link_takes_one() -> None
     assert quality["grant_equiv_coverage"].to_list() == [None]
 
 
-def test_unallocated_and_release_rows_sum_to_the_marked_disbursement(
+def test_untraced_unallocated_and_release_rows_sum_to_the_marked_disbursement(
     release_dir: Path,
 ) -> None:
-    unallocated = _read(release_dir, "unallocated").sort("year")
+    unallocated = _read(release_dir, "unallocated").sort("provider_code", "year")
+    untraced = _read(release_dir, "untraced").sort("record_id")
     released = (
         _read(release_dir, "disbursements")
         .group_by("year")
         .agg(pl.col("allocated_usd").sum())
     )
-    marked = {2020: 60.0 + 20.0 + 15.0, 2021: 70.0}
+    marked = {2020: 60.0 + 20.0 + 15.0 + 7.0, 2021: 70.0}
 
-    assert unallocated.drop("provider_code").rows() == [
-        (2020, 0.0, 20.0, 15.0),
-        (2021, 30.0, 0.0, 0.0),
+    assert unallocated.rows() == [
+        (NOR, 2020, 0.0, 20.0, 15.0, 0.0),
+        (NOR, 2021, 30.0, 0.0, 0.0, 0.0),
+        (GEF, 2020, 0.0, 0.0, 7.0, 0.0),
     ]
-    totals = unallocated.join(released, on="year").select(
-        "year",
-        pl.sum_horizontal(
-            "allocated_usd", "excess_usd", "outside_release_usd", "unlinked_marked_usd"
-        ),
+    # The excess and the unlinked records count as untraced, with the record's own
+    # disbursement and grant equivalent. The build runs no gap fill, so no IATI
+    # route counts the GEF's record.
+    assert untraced.select(
+        "record_id",
+        "reason",
+        "untraced_usd",
+        "record_disbursement_usd",
+        "record_grant_equiv_usd",
+    ).rows() == [
+        ("d21", "excess", 30.0, 70.0, 35.0),
+        ("g20", "unlinked", 7.0, 7.0, None),
+        ("z20", "unlinked", 15.0, 15.0, None),
+    ]
+    totals = (
+        unallocated.group_by("year")
+        .agg(pl.sum_horizontal(pl.exclude("provider_code", "year")).sum())
+        .join(released, on="year")
+        .select("year", pl.sum_horizontal(pl.exclude("year")))
     )
     assert dict(totals.rows()) == marked
+
+
+@pytest.mark.parametrize(
+    ("gap_fill", "untraced", "fund_unlinked"),
+    [(False, ["d21", "g20", "z20"], 0.0), (True, ["d21", "z20"], 7.0)],
+)
+def test_a_routed_funds_unlinked_records_stay_out_of_untraced(
+    release_dir: Path,
+    config: BuildConfig,
+    gap_fill: bool,
+    untraced: list[str],
+    fund_unlinked: float,
+) -> None:
+    # With gap fill on, the fill stage gives the GEF's commitments the disbursements
+    # of its IATI files, which hold the money of its unlinked CRS records.
+    allocations = pl.scan_parquet(table_path(release_dir, "fill", "allocations"))
+    marked = marked_records(
+        allocations,
+        crs=CRS.lazy(),
+        last_year=2024,
+        routed=routed_funds(config.model_copy(update={"gap_fill": gap_fill})),
+    )
+
+    records = untraced_records(marked).collect()
+    ledger = release.unallocated(marked).filter(pl.col("provider_code") == GEF)
+
+    assert sorted(records["record_id"]) == untraced
+    assert ledger.select("unlinked_marked_usd", "fund_unlinked_usd").collect().row(
+        0
+    ) == (7.0 - fund_unlinked, fund_unlinked)
+
+
+def test_untraced_records_before_the_adaptation_marker_count_mitigation_alone() -> None:
+    # Two unlinked 2009 records marked adaptation principal: one alone, which no
+    # measured marker selects, and one with mitigation significant.
+    crs = crs_records(
+        {"record_id": "a09", "year": 2009, "rio_adaptation": 2, "rio_mitigation": 0,
+         "disbursement_usd": 5.0},
+        {"record_id": "b09", "year": 2009, "rio_adaptation": 2, "rio_mitigation": 1,
+         "disbursement_usd": 4.0},
+    ).lazy()  # fmt: skip
+    allocations = _empty(schema.ALLOCATIONS).lazy()
+
+    marked = marked_records(allocations, crs=crs, last_year=2024, routed=())
+    untraced = release.release_untraced(untraced_records(marked), crs=crs).collect()
+
+    assert untraced.select("record_id", "rio_adaptation", "rio_mitigation").rows() == [
+        ("b09", None, 1)
+    ]
+    assert release.unallocated(marked).collect()["unlinked_marked_usd"].sum() == 4.0
 
 
 def test_core_contributions_count_disbursements_as_grant_equivalent(
@@ -606,12 +687,15 @@ def test_core_contributions_read_an_empty_stage_table(
 def test_total_flows_sum_every_crs_record(release_dir: Path) -> None:
     totals = _read(release_dir, "total_flows")
 
-    assert sorted(totals.select("year", "bi_multi", "flow", "amount_usd").rows()) == [
-        (2019, 1, "commitments", 150.0),
-        (2020, 1, "disbursements", 100.0),
-        (2021, 1, "disbursements", 70.0),
-        (2021, 1, "grant_equivalent", 35.0),
-        (2021, 2, "disbursements", 9.0),
+    assert sorted(
+        totals.select("provider_code", "year", "bi_multi", "flow", "amount_usd").rows()
+    ) == [
+        (NOR, 2019, 1, "commitments", 150.0),
+        (NOR, 2020, 1, "disbursements", 100.0),
+        (NOR, 2021, 1, "disbursements", 70.0),
+        (NOR, 2021, 1, "grant_equivalent", 35.0),
+        (NOR, 2021, 2, "disbursements", 9.0),
+        (GEF, 2020, 1, "disbursements", 7.0),
     ]
 
 

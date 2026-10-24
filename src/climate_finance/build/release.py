@@ -11,8 +11,13 @@ that repeat an earlier vintage (`repeat_of`) stay in `commitments` with their
 amounts. `quality` and `disbursement_profile` leave them out of their totals, and
 `quality.repeat_climate_usd` reports them as their own line.
 
-`unallocated` reports the Rio-marked CRS disbursement `disbursements` leaves out:
-excess, allocations to commitments with no CRDF row, and records linked to nothing.
+`untraced` holds, per CRS record, the Rio-marked disbursement that reaches no
+commitment: excess beyond a full commitment, and records linked to nothing
+(`allocate.untraced_records`). The query counts it at the record's own markers.
+`unallocated` reports, by provider and year, the Rio-marked CRS disbursement outside
+`disbursements`: the two parts `untraced` holds, allocations to commitments with no
+CRDF row, and the unlinked records of the funds the build routes through their
+IATI files.
 """
 
 from __future__ import annotations
@@ -25,15 +30,21 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from climate_finance import __version__
-from climate_finance.build.allocate import counted_rows, years_since_commitment
+from climate_finance.build.allocate import (
+    counted_rows,
+    marked_records,
+    routed_funds,
+    untraced_records,
+    years_since_commitment,
+)
 from climate_finance.build.config import RELEASE_SETTINGS
 from climate_finance.build.errors import ReleaseInvariantError, StageInputMissingError
 from climate_finance.build.fetch import fetched_years, last_complete_year
 from climate_finance.build.label import inherit_markers
-from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.provenance import setting_value
 from climate_finance.build.sums import ordered_sum
 from climate_finance.schema import (
+    BILATERAL,
     BTR,
     CERTAIN_ROUTES,
     COMMITMENTS,
@@ -42,19 +53,22 @@ from climate_finance.schema import (
     DISBURSEMENT_PROFILE,
     DISBURSEMENTS,
     INVARIANT_TOLERANCE_USD,
+    MULTILATERAL_OUTFLOW,
     PROVIDER_COEFFICIENTS,
     QUALITY,
+    RECIPIENT_VIEW,
     RELEASE_TABLES,
     TOP_CHANNEL,
     TOTAL_FLOWS,
     UNALLOCATED,
+    UNTRACED,
     ReleaseManifest,
     TableEntry,
     TableSchema,
     aggregate_channel,
+    measured_adaptation,
     release_invariants,
 )
-from climate_finance.spec import BILATERAL, MULTILATERAL_OUTFLOW
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -64,7 +78,7 @@ if TYPE_CHECKING:
 # `disbursement_profile` groups and the Bi_Multi codes each pools. `all` holds the
 # codes the recipient view counts.
 PROFILE_GROUPS = {
-    "all": (*BILATERAL, MULTILATERAL_OUTFLOW),
+    "all": RECIPIENT_VIEW,
     "bilateral": BILATERAL,
     "multilateral": (MULTILATERAL_OUTFLOW,),
 }
@@ -147,6 +161,12 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
     allocations = context.read("fill", "allocations")
     status = context.read("review", "commitments")
     objectives = context.read("label", "objectives").collect()
+    marked = marked_records(
+        allocations,
+        crs=crs,
+        last_year=last_year,
+        routed=routed_funds(context.config),
+    )
 
     commitments = release_commitments(crdf, status=status, links=links).collect()
     disbursements = release_disbursements(
@@ -179,7 +199,8 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
             objectives=objectives.lazy(),
             links=links,
         ).collect(),
-        "unallocated": unallocated(allocations, crs=crs).collect(),
+        "untraced": release_untraced(untraced_records(marked), crs=crs).collect(),
+        "unallocated": unallocated(marked).collect(),
         "total_flows": total_flows(crs).collect(),
         # Provider coefficients come from the BTR link, which is not implemented.
         "provider_coefficients": pl.DataFrame(schema=PROVIDER_COEFFICIENTS.dtypes),
@@ -519,45 +540,55 @@ def quality(
     )
 
 
-def unallocated(allocations: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame:
-    """Rio-marked CRS disbursement outside `disbursements`, by provider and year.
-
-    A record enters when it is in the recipient view's Bi_Multi codes, disburses a
-    positive amount and carries an adaptation or mitigation marker. Its allocations
-    split its disbursement into the `disbursements` rows, `excess_usd`, and
-    `outside_release_usd` for commitments with no CRDF row (a null `row_id`). A
-    record with no allocation is linked to nothing and counts its whole
-    disbursement in `unlinked_marked_usd`. Years are disbursement years.
-    """
-    marked = trace_population(crs).filter(
-        pl.col("bi_multi").is_in(PROFILE_GROUPS["all"]),
-        pl.col("disbursement_usd") > 0,
-        (pl.col("rio_adaptation") > 0) | (pl.col("rio_mitigation") > 0),
+def release_untraced(untraced: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame:
+    """`untraced_records` rows with their CRS record's own facts and markers, the
+    adaptation marker null before `ADAPTATION_FIRST_YEAR`, and its disbursement and
+    grant equivalent as `disbursements` carries them."""
+    record = crs.select(
+        "record_id",
+        "year",
+        "agency_code",
+        "recipient_code",
+        "channel_code",
+        "bi_multi",
+        "purpose_code",
+        "flow_code",
+        "project_number",
+        "title",
+        "rio_adaptation",
+        "rio_mitigation",
+        provider_code="donor_code",
+        record_disbursement_usd="disbursement_usd",
+        record_grant_equiv_usd="grant_equiv_usd",
     )
-    excess = pl.col("rule") == "excess"
-    amount = pl.col("allocated_usd")
-    by_record = (
-        allocations.filter(pl.col("disbursement_source") == "crs")
-        .group_by("record_id")
-        .agg(
-            excess_usd=ordered_sum(amount.filter(excess)),
-            outside_release_usd=ordered_sum(
-                amount.filter(~excess, pl.col("row_id").is_null())
-            ),
-            allocated=pl.lit(True),
-        )
-    )
-    unlinked = pl.col("allocated").is_null()
     return (
-        marked.select(
-            "record_id", "year", "disbursement_usd", provider_code="donor_code"
-        )
-        .join(by_record, on="record_id", how="left")
-        .group_by("provider_code", "year")
+        untraced.join(record, on="record_id", how="left", validate="1:1")
+        .with_columns(rio_adaptation=measured_adaptation(pl.col("rio_adaptation")))
+        .select(list(UNTRACED.columns))
+    )
+
+
+def unallocated(marked: pl.LazyFrame) -> pl.LazyFrame:
+    """Rio-marked CRS disbursement outside `disbursements`, by provider and year,
+    from `marked_records`.
+
+    A linked record's allocations split its disbursement into the `disbursements`
+    rows, `excess_usd`, and `outside_release_usd` for commitments with no CRDF row.
+    An unlinked record counts its whole disbursement in `unlinked_marked_usd`, or in
+    `fund_unlinked_usd` for a routed fund, whose unlinked records `untraced_records`
+    leaves out. Years are disbursement years.
+    """
+    unlinked = ~pl.col("linked")
+    disbursement = pl.col("disbursement_usd")
+    return (
+        marked.group_by("provider_code", "year")
         .agg(
-            ordered_sum(pl.col("excess_usd", "outside_release_usd").drop_nulls()),
+            ordered_sum(pl.col("excess_usd", "outside_release_usd")),
             unlinked_marked_usd=ordered_sum(
-                pl.col("disbursement_usd").filter(unlinked)
+                disbursement.filter(unlinked, ~pl.col("route_fund"))
+            ),
+            fund_unlinked_usd=ordered_sum(
+                disbursement.filter(unlinked, pl.col("route_fund"))
             ),
         )
         .select(list(UNALLOCATED.columns))

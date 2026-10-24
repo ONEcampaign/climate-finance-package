@@ -17,7 +17,6 @@ Amounts are at face value, as allocation's are.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,6 +31,7 @@ from climate_finance.build.fetch import (
     ledger_years,
 )
 from climate_finance.build.link.ledger import (
+    FUND_PUBLISHERS,
     GCF_PROJECT,
     LEDGER_PUBLISHERS,
     ledger_key,
@@ -49,9 +49,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# The funds whose CRDF rows take their status from their own IATI files, by DAC
-# provider code, with the IATI publisher that holds the files.
-FUND_PUBLISHERS: Mapping[int, str] = {1016: LEDGER_PUBLISHERS[1016], 811: "gef"}
 # A fund reports its disbursements when this share of its activities committed
 # before the last complete CRS year show one. A matched row with none is then
 # `no_disbursement_record`; otherwise it stays `not_traceable`.

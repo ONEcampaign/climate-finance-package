@@ -11,16 +11,12 @@ from stage_runs import BUILD_TOML, OECD, run_stage, stage_context, write_inputs
 from climate_finance import schema
 from climate_finance.build.config import Ledgers, load_config
 from climate_finance.build.fetch import CRDF_FILES, CRS_FILE
-from climate_finance.build.normalise.crdf import (
-    ADAPTATION_FIRST_YEAR,
-    CRDFNormaliseError,
-    normalise_crdf,
-)
+from climate_finance.build.normalise.crdf import CRDFNormaliseError, normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs, trace_population
 from climate_finance.build.normalise.external import MULTI_COUNTRY
 from climate_finance.build.normalise.ids import content_id, with_content_id
 from climate_finance.build.stages import raw_dir, table_path
-from climate_finance.schema import sha256_file
+from climate_finance.schema import ADAPTATION_FIRST_YEAR, sha256_file
 
 YEARS = (2010, 2025)
 

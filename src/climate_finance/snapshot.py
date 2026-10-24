@@ -51,6 +51,7 @@ class Snapshot:
         prices: int | Literal["current"] = "current",
         oda_only: bool = False,
         measure: Measure = "amount",
+        untraced: bool = True,
         spec: Spec | None = None,
     ) -> Result:
         """Climate finance under `method`, or under `spec` when given.
@@ -69,6 +70,7 @@ class Snapshot:
                 prices=prices,
                 oda_only=oda_only,
                 measure=measure,
+                untraced=untraced,
             )
         return query.spending(self, spec=spec)
 

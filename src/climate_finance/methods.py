@@ -156,8 +156,10 @@ def describe(method: Method | MethodRange) -> str:
         text += (
             " Disbursements whose CRS record Jev labelled read Jev's adaptation "
             "level (none, significant or principal) in place of the adaptation "
-            "marker, at the same coefficients. Jev labels only records whose "
-            "commitment is marked adaptation. Mitigation keeps its marker, as do "
+            "marker, at the same coefficients, where that marker is significant or "
+            "principal. Jev labels only records whose "
+            "commitment is marked adaptation, and untraced records marked "
+            "adaptation themselves. Mitigation keeps its marker, as do "
             "commitments and records Jev did not label."
         )
     return text + _EU[method.eu]

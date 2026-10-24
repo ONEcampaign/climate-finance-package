@@ -47,6 +47,9 @@ LEDGER_PUBLISHERS: Mapping[int, str] = {
     910: "bcie",
     1016: "gcf",
 }
+# The funds whose CRDF rows take their status from their own IATI files, by DAC
+# provider code, with the IATI publisher that holds the files.
+FUND_PUBLISHERS: Mapping[int, str] = {1016: LEDGER_PUBLISHERS[1016], 811: "gef"}
 # The ledgers whose silence on a key counts as zero disbursement: they can confirm a
 # commitment undisbursed, and a key they list with no disbursement transaction is
 # checked. These three match the CRS for 99.7% to 100% of loan-years. The others can

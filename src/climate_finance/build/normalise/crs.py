@@ -6,17 +6,16 @@ import logging
 import polars as pl
 
 from climate_finance.build.normalise.ids import text_digest, with_content_id
-from climate_finance.schema import CRS_UNSPECIFIED_RECIPIENT, UNSPECIFIED_RECIPIENT
+from climate_finance.schema import (
+    CORE_CONTRIBUTION,
+    CRS_UNSPECIFIED_RECIPIENT,
+    UNSPECIFIED_RECIPIENT,
+)
 
 logger = logging.getLogger(__name__)
 
 # The bulk file publishes amounts in USD million at current prices.
 _USD_PER_UNIT = 1e6
-# Bi_Multi 2 is a donor's core contribution to a multilateral agency. The agency's
-# own outflows (code 4) carry that money to recipients, so the trace leaves code 2
-# out. Provider totals count it only as core contributions.
-CORE_CONTRIBUTION = 2
-
 _AMOUNTS = {
     "commitment_usd": "usd_commitment",
     "disbursement_usd": "usd_disbursement",
