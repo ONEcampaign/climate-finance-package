@@ -14,7 +14,8 @@ over-allocation:
 - `conservation`: each linked CRS record's allocations, the unallocated excess
   included, sum to its disbursement.
 - `over_allocation`: no commitment row is disbursed above its face value, and few
-  linked commitment units are linked to more than `raw_factor` times their face.
+  of the commitment units behind the release's commitment rows are linked to more
+  than `raw_factor` times their face.
 - `oecd_reconciliation`: release climate commitments by provider and year, rows
   that repeat an earlier vintage included, match the published CRDF.
 - `drift`: provider-year climate commitments and disbursements move by at most
@@ -465,8 +466,11 @@ def over_allocation_gate(
     `raw_factor` times their face. The share passes below `max_share`, and fails
     when no commitment unit is linked.
 
-    A commitment unit's raw linked disbursement spreads each disbursement unit
-    linked to it over every commitment unit that unit links to, by face, before
+    The share counts the CRS commitment units that a `commitments` row reaches
+    through a `crdf_crs` link, the climate commitments the release carries. CRS
+    commitments the release does not publish stay out of it. A commitment unit's
+    raw linked disbursement spreads each disbursement unit linked to it over every
+    commitment unit that unit links to, released or not, by face, before
     allocation's year order and face cap.
     """
     # No commitment row means no row above its face, so an empty `above` passes.
@@ -477,6 +481,12 @@ def over_allocation_gate(
         .filter(pl.col("excess") > config.tolerance_usd)
         .sort("excess", "row_id", descending=[True, False])
         .collect()
+    )
+    released = (
+        links.filter(task="crdf_crs")
+        .join(commitments.select(left_id="row_id"), on="left_id", how="semi")
+        .select(c_unit="right_id")
+        .unique()
     )
     trace = (
         links.filter(task="trace")
@@ -490,6 +500,7 @@ def over_allocation_gate(
         .with_columns(spread=pl.col("disbursed") * pl.col("face") / pl.col("reach"))
         .group_by("c_unit")
         .agg(pl.col("face").first(), raw_usd=ordered_sum(pl.col("spread")))
+        .join(released, on="c_unit", how="semi")
         .collect()
     )
     over = raw.filter(pl.col("raw_usd") > config.raw_factor * pl.col("face"))
@@ -515,10 +526,12 @@ def over_allocation_gate(
                 threshold=config.max_share,
                 passed=share is not None and share < config.max_share,
                 detail=(
-                    f"{over.height} of {raw.height} linked commitment units are "
-                    f"linked to more than {config.raw_factor} times their face"
+                    f"{over.height} of {raw.height} linked commitment units the "
+                    f"release carries are linked to more than {config.raw_factor} "
+                    "times their face"
                     if raw.height
-                    else "no linked commitment unit: nothing to measure"
+                    else "no linked commitment unit the release carries: nothing to "
+                    "measure"
                 ),
             ),
         ]

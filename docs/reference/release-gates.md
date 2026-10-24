@@ -26,7 +26,7 @@ Returns the largest gap between a linked CRS record's disbursement and its alloc
 
 ## `over_allocation`
 
-Returns two rows. The first is the largest amount by which a commitment row is disbursed above its face value, with a tolerance of USD 0.000001. The second is the share of linked commitment units whose links bring more than 1.1 times their face value before allocation caps them. The share must stay under the threshold of 0.03.
+Returns two rows. The first is the largest amount by which a commitment row is disbursed above its face value, with a tolerance of USD 0.000001. The second is the share of the release's linked commitment units, those a `commitments` row reaches, whose links bring more than 1.1 times their face value before allocation caps them. The share must stay under the threshold of 0.10.
 
 ## `oecd_reconciliation`
 

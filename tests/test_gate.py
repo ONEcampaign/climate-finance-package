@@ -452,6 +452,42 @@ def test_each_gate_fails_on_a_release_doctored_to_break_it(
     assert named in row["detail"]
 
 
+def test_raw_links_leave_out_commitments_the_release_does_not_carry(
+    release_dir: Path,
+) -> None:
+    # A CRS commitment of 10 with no CRDF row disburses 500 in its own record.
+    _edit(
+        table_path(release_dir, "link", "units"),
+        lambda frame: pl.concat(
+            [
+                frame,
+                frame.head(1).with_columns(
+                    unit_id=pl.lit("u_other"),
+                    crs_id=pl.lit("X2"),
+                    commitment_usd=pl.lit(10.0),
+                    disbursement_usd=pl.lit(500.0),
+                    record_ids=pl.lit(["other"]),
+                ),
+            ]
+        ),
+    )
+    _edit(
+        table_path(release_dir, "review", "links"),
+        lambda frame: pl.concat(
+            [
+                frame,
+                frame.filter(task="trace")
+                .head(1)
+                .with_columns(left_id=pl.lit("u_other"), right_id=pl.lit("u_other")),
+            ]
+        ),
+    )
+
+    row = _report(release_dir).filter(subject="raw_links").row(0, named=True)
+
+    assert (row["passed"], row["value"]) == (True, 0.0)
+
+
 def _drop_trace(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.filter(pl.col("task") != "trace")
 
