@@ -18,7 +18,8 @@ converts it, and sums the rows into the result table. Rows have one of three ori
 Under `view="provider"` the method's `eu` setting counts EU Institutions once. As a
 channel, EU Institutions' own rows leave a result in each year where it also
 attributes another provider's contribution to an EU channel. As a provider, the EU
-channels attribute nothing.
+budget and the EDF attribute nothing and count in EU Institutions' own rows, while
+the EIB is a channel: its own rows leave and contributions to it attribute.
 
 Every row holds `value` = adaptation + mitigation - cross_cutting + unsplit, or
 + cross_cutting under the highest-marker rule, whose objectives are disjoint.
@@ -66,8 +67,9 @@ if TYPE_CHECKING:
     from climate_finance.snapshot import Snapshot
 
 # The channels of EU Institutions: the EU budget, the EDF and the EIB, as
-# build/providers.toml maps them.
-EU_CHANNELS = (42001, 42003, 42004)
+# build/providers.toml maps them, and the EIB's agency code.
+EU_BUDGET_AND_EDF, EIB_CHANNEL, EIB_AGENCY = (42001, 42003), 42004, 3
+EU_CHANNELS = (*EU_BUDGET_AND_EDF, EIB_CHANNEL)
 # The objective label a record shows when several sources label it: the bank's own
 # climate components first, then Jev, then the donor's markers.
 LABEL_PRECEDENCE = {"crdf": 0, "jev": 1, "marker": 2}
@@ -143,6 +145,11 @@ def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
             ).filter(*conditions)
             if method.eu == "channel":
                 frame = _without_eu_own_rows(frame, attributed=attributed)
+            else:
+                frame = frame.filter(
+                    pl.col("provider_code").ne_missing(EU_INSTITUTIONS)
+                    | pl.col("agency_code").ne_missing(EIB_AGENCY)
+                )
             frame = pl.concat([frame, attributed])
         weighted.append(
             _weigh(_coefficients(snapshot, frame, method=method), method=method)
@@ -346,7 +353,8 @@ def _attributed_rows(snapshot: Snapshot, *, flow: Flow, method: Method) -> pl.La
     share with no split by objective (a `climate` row) is the unsplit share, and the
     three objective shares are 0. A null adaptation share is not measured, and its
     row counts mitigation alone. An agency without a share attributes nothing, and
-    neither do the EU channels when the method counts EU Institutions as a provider.
+    neither do the EU budget and the EDF when the method counts EU Institutions as a
+    provider.
     """
     source = "oecd" if uses_imputed_shares(method) else "one"
     shares = _fixed_shares(snapshot, source=source)
@@ -356,7 +364,7 @@ def _attributed_rows(snapshot: Snapshot, *, flow: Flow, method: Method) -> pl.La
             [measured, shares.join(measured, on=["channel_code", "year"], how="anti")]
         )
     if method.eu == "provider":
-        shares = shares.filter(~pl.col("channel_code").is_in(EU_CHANNELS))
+        shares = shares.filter(~pl.col("channel_code").is_in(EU_BUDGET_AND_EDF))
     return _conform(
         snapshot.table("core_contributions")
         .filter(pl.col("flow") == flow)

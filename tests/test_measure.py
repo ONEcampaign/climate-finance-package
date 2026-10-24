@@ -450,7 +450,7 @@ def test_the_shipped_provider_facts_load() -> None:
     facts = load_provider_facts()
 
     channels = {entry.channel_code for entry in facts.agencies}
-    assert {44001, 44002, 44004, 46008, 46012, 46028, 42004} <= channels
+    assert {44001, 44002, 44003, 44004, 44007, 46008, 46012, 46028, 42004} <= channels
     assert {entry.provider_code for entry in facts.modelled} == {
         IFC, CAF, 1019, NDB, EU,
     }  # fmt: skip
@@ -468,6 +468,39 @@ def test_the_shipped_provider_facts_load() -> None:
 def test_an_agency_reports_for_one_channel(agencies: list[dict[str, object]]) -> None:
     with pytest.raises(ValueError, match="two channels"):
         ProviderFacts.model_validate({"agencies": agencies, "modelled": []})
+
+
+def test_one_reporter_behind_several_channels_measures_one_share_for_each() -> None:
+    ida = 905
+    agencies = ProviderFacts.model_validate(
+        {
+            "agencies": [
+                {"channel_code": channel, "provider_code": ida}
+                for channel in (44002, 44007)
+            ],
+            "modelled": [],
+        }
+    ).agencies
+    crdf = crdf_rows(
+        _bank("i21", 2021, provider_code=ida, rio_adaptation=2, rio_mitigation=0,
+              face_usd=30.0, climate_usd=30.0, adaptation_usd=30.0,
+              mitigation_usd=0.0),
+    )  # fmt: skip
+    crs = crs_records(
+        {"record_id": "i21", "year": 2021, "donor_code": ida, "commitment_usd": 100.0},
+    )
+
+    shares = _one_shares(
+        agency_spending(
+            crdf.lazy(), crs=crs.lazy(), agencies=agencies, years=(2020, 2021)
+        )
+    )
+
+    assert shares == {
+        (channel, 2021, part): share
+        for channel in (44002, 44007)
+        for part, share in (("adaptation", 0.3), ("mitigation", 0.0), ("overlap", 0.0))
+    }
 
 
 def _measure(tmp_path: Path, crdf: pl.DataFrame, crs: pl.DataFrame) -> dict:

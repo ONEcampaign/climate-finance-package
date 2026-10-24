@@ -3,7 +3,8 @@
 # The CRS reporter behind each multilateral channel of delivery that core
 # contributions reach, for the agency's own climate share (agency_shares, source
 # "one"). Without `agency_codes`, every agency of the provider belongs to the
-# channel. Several reporters may share one channel; their spending pools.
+# channel. Several reporters may share one channel; their spending pools. One
+# reporter may stand behind several channels, which then take the same share.
 agencies = [
     { channel_code = 41108, provider_code = 988 },  # IFAD
     { channel_code = 41301, provider_code = 932 },  # FAO
@@ -13,7 +14,10 @@ agencies = [
     { channel_code = 42003, provider_code = 918, agency_codes = [2, 4, 5] },
     { channel_code = 42004, provider_code = 918, agency_codes = [3] },
     { channel_code = 44001, provider_code = 901 },  # IBRD
-    { channel_code = 44002, provider_code = 905 },  # IDA
+    # IDA, and its MDRI and HIPC channels for members' debt-relief contributions.
+    { channel_code = 44002, provider_code = 905 },
+    { channel_code = 44003, provider_code = 905 },
+    { channel_code = 44007, provider_code = 905 },
     { channel_code = 44004, provider_code = 903 },  # IFC
     { channel_code = 46002, provider_code = 913 },  # African Development Bank
     { channel_code = 46003, provider_code = 914 },  # African Development Fund

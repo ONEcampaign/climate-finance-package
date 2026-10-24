@@ -29,10 +29,13 @@ class Method(Frozen):
     `"channel"`, members' core contributions to the EU budget, the EDF and the EIB
     carry the EU's climate share, and 918's own rows leave a result in each year
     where it also holds such an attribution, so EU money counts once, inside its
-    members' totals.
-    As a `"provider"`, those three channels attribute nothing and 918 counts in its
-    own right, as the OECD counts it. Either way a query for 918 alone returns its
-    own spending.
+    members' totals. A query for 918 alone returns its own spending, the EIB's
+    included.
+    As a `"provider"`, 918 counts the EU budget and the EDF in its own right, and
+    contributions to them attribute nothing. The EIB is a channel, as the OECD counts
+    it: the EIB's own rows (agency 3) leave every result, and members' contributions
+    to it carry the EIB's climate share. A query for 918 alone returns the spending of
+    the EU budget and the EDF.
     """
 
     significant: float = Field(ge=0.0, le=1.0)
@@ -71,8 +74,9 @@ class MethodRange(Frozen):
 
 
 ONE = Method(significant=0.4, principal=1.0, highest_marker=True)
-# The OECD's imputed shares hold no EU channel, because it counts EU Institutions as
-# a provider. PROVIDER reads ONE's agency shares, so it keeps ONE's EU setting.
+# The OECD's imputed shares hold the EIB alone of the EU channels, because it counts
+# the EU budget and the EDF as a provider. PROVIDER reads ONE's agency shares, so it
+# keeps ONE's EU setting.
 OECD = Method(significant=1.0, principal=1.0, highest_marker=False, eu="provider")
 PROVIDER = Method(
     significant=0.4, principal=1.0, highest_marker=True, coefficients="provider"
@@ -151,11 +155,14 @@ def describe(method: Method | MethodRange) -> str:
 _EU = {
     "channel": " In the provider view EU Institutions count as a channel: members' "
     "core contributions to the EU budget, the EDF and the EIB carry the EU's climate "
-    "share, and EU Institutions' own rows leave a result in each year where it "
-    "holds such an attribution, so EU spending counts once.",
-    "provider": " In the provider view EU Institutions count as a provider: "
-    "contributions to the EU budget, the EDF and the EIB attribute nothing, and EU "
-    "Institutions' own rows count in their own right.",
+    "share, and EU Institutions' own rows, the EIB's lending among them, leave a "
+    "result in each year where it holds such an attribution, so EU spending counts "
+    "once.",
+    "provider": " In the provider view EU Institutions count as a provider and the "
+    "EIB as a channel: the rows of the EU budget and the EDF count in EU "
+    "Institutions' own right and contributions to them attribute nothing, while the "
+    "EIB's own rows leave and members' contributions to it carry the EIB's climate "
+    "share.",
 }
 
 

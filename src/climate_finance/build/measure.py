@@ -119,14 +119,15 @@ class ProviderFacts(_Fact):
 
     @model_validator(mode="after")
     def _one_channel_each(self) -> Self:
-        """Each agency reports for one channel, or its spending would count twice."""
-        by_provider: dict[int, list[AgencyChannel]] = {}
+        """Each agency's spending measures one share, or it would count in two. An
+        agency reports for one channel, or for several channels with the same
+        agencies, which then take the same share."""
+        by_provider: dict[int, set[tuple[int, ...] | None]] = {}
         for entry in self.agencies:
-            by_provider.setdefault(entry.provider_code, []).append(entry)
-        for provider, entries in by_provider.items():
-            codes = [code for entry in entries for code in entry.agency_codes or ()]
-            whole = any(entry.agency_codes is None for entry in entries)
-            if (whole and len(entries) > 1) or len(codes) != len(set(codes)):
+            by_provider.setdefault(entry.provider_code, set()).add(entry.agency_codes)
+        for provider, groups in by_provider.items():
+            codes = [code for group in groups for code in group or ()]
+            if (None in groups and len(groups) > 1) or len(codes) != len(set(codes)):
                 raise ValueError(f"provider {provider} reports for two channels")
         return self
 
