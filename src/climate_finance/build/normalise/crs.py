@@ -1,10 +1,14 @@
 """Bulk CRS records into the `crs` schema, in USD units, and the lookups of CRS
 keys that the CRDF rules join on."""
 
+import logging
+
 import polars as pl
 
 from climate_finance.build.normalise.ids import text_digest, with_content_id
 from climate_finance.schema import CRS_UNSPECIFIED_RECIPIENT, UNSPECIFIED_RECIPIENT
+
+logger = logging.getLogger(__name__)
 
 # The bulk file publishes amounts in USD million at current prices.
 _USD_PER_UNIT = 1e6
@@ -44,8 +48,11 @@ def normalise_crs(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFrame:
 
     A record has an amount when its commitment, disbursement or grant equivalent is
     non-zero; records with only a grant equivalent carry negative grant equivalents
-    and stay in. Bi_Multi is kept as published, core contributions included (see
-    `trace_population`), and missing Rio markers stay null.
+    and stay in. A negative grant equivalent on a positive disbursement is null, as
+    for a record the CRS does not value, so no disbursement carries a negative grant
+    equivalent; the count of such records is logged. Bi_Multi is kept as published,
+    core contributions included (see `trace_population`), and missing Rio markers
+    stay null.
 
     `record_id` digests the record's identifying fields, so it is the same in every
     build of the same file and survives a revision of the record's amounts.
@@ -54,6 +61,13 @@ def normalise_crs(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFrame:
         pl.col(source).fill_null(0) != 0 for source in _AMOUNTS.values()
     )
     in_years = raw.filter(pl.col("year").is_between(*years), has_amount)
+    correction = _is_correction("usd_grant_equiv", "usd_disbursement")
+    if corrections := in_years.select(correction.sum()).collect().item():
+        logger.warning(
+            "%d CRS records with a negative grant equivalent on a positive "
+            "disbursement; their grant equivalent is null",
+            corrections,
+        )
     return (
         with_content_id(
             in_years, "record_id", _IDENTITY, order_by=list(_AMOUNTS.values())
@@ -86,7 +100,17 @@ def normalise_crs(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFrame:
             rio_mitigation=pl.col("climate_mitigation").cast(pl.Int8),
             text_hash=pl.col("text_hash"),
         )
+        .with_columns(
+            grant_equiv_usd=pl.when(
+                ~_is_correction("grant_equiv_usd", "disbursement_usd")
+            ).then(pl.col("grant_equiv_usd"))
+        )
     )
+
+
+def _is_correction(grant_equiv: str, disbursement: str) -> pl.Expr:
+    """A negative grant equivalent on a positive disbursement."""
+    return ((pl.col(grant_equiv) < 0) & (pl.col(disbursement) > 0)).fill_null(False)
 
 
 def trace_population(crs: pl.LazyFrame) -> pl.LazyFrame:

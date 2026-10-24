@@ -32,7 +32,9 @@ from climate_finance.schema import STAGE_TABLES
 
 NOR, IDA_CHANNEL = 8, 44002
 # Norway commits 100 in 2019 under crs id X1 and disburses 60 in 2020 and 70 in 2021,
-# so the commitment fills and 30 of 2021 is excess.
+# so the commitment fills and 30 of 2021 is excess. Y1 commits 50 with no CRDF row
+# and disburses 20 to it; Z9 disburses 15 with no commitment, and Z8 disburses 5
+# with no Rio marker.
 CRS = crs_records(
     {"record_id": "c19", "year": 2019, "crs_id": "X1", "commitment_usd": 100.0},
     {"record_id": "d20", "year": 2020, "crs_id": "X1", "disbursement_usd": 60.0},
@@ -44,6 +46,16 @@ CRS = crs_records(
         "grant_equiv_usd": 35.0,
     },
     {"record_id": "core", "year": 2021, "bi_multi": 2, "disbursement_usd": 9.0},
+    {"record_id": "y19", "year": 2019, "crs_id": "Y1", "commitment_usd": 50.0},
+    {"record_id": "y20", "year": 2020, "crs_id": "Y1", "disbursement_usd": 20.0},
+    {"record_id": "z20", "year": 2020, "crs_id": "Z9", "disbursement_usd": 15.0},
+    {
+        "record_id": "u20",
+        "year": 2020,
+        "crs_id": "Z8",
+        "disbursement_usd": 5.0,
+        "rio_mitigation": 0,
+    },
 )
 # R1 is the commitment; R2 repeats it in a later vintage; P is an aggregate row
 # rebuilt into child C; N is a published downward revision.
@@ -239,7 +251,75 @@ def test_quality_counts_repeats_on_their_own_line(release_dir: Path) -> None:
     assert quality["climate_usd"] == 40.0 + 25.0 - 5.0
     assert quality["linked_usd"] == 40.0
     assert quality["repeat_climate_usd"] == 40.0
-    assert quality["grant_equiv_coverage"] == 0.5
+    # R1 reaches its CRS commitment in its own year.
+    assert quality["certain_route_usd"] == 40.0
+    # Of R1's 100 allocated, d21's 40 has a grant equivalent.
+    assert quality["grant_equiv_coverage"] == 0.4
+
+
+def test_quality_counts_certain_routes_only_where_every_link_takes_one() -> None:
+    commitments = pl.LazyFrame(
+        {
+            "row_id": ["A", "B", "C"],
+            "provider_code": [NOR] * 3,
+            "year": [2019] * 3,
+            "climate_usd": [1.0, 2.0, 4.0],
+            "repeat_of": [None, None, None],
+        },
+        schema_overrides={"repeat_of": pl.String},
+    )
+    links = pl.LazyFrame(
+        {
+            "task": ["crdf_crs"] * 4,
+            "left_id": ["A", "B", "B", "C"],
+            "probability": [1.0] * 4,
+            "link_method": ["within_year", "crosswalk", "crs_id_purpose", "iati"],
+        }
+    )
+    empty = pl.LazyFrame(
+        schema={
+            "row_id": pl.String,
+            "record_id": pl.String,
+            "allocated_usd": pl.Float64,
+            "record_grant_equiv_usd": pl.Float64,
+        }
+    )
+
+    quality = release.quality(
+        commitments,
+        disbursements=empty,
+        objectives=pl.LazyFrame(
+            schema={"record_id": pl.String, "label_source": pl.String}
+        ),
+        links=links,
+    ).collect()
+
+    assert quality.select("linked_usd", "certain_route_usd").row(0) == (7.0, 1.0)
+    assert quality["grant_equiv_coverage"].to_list() == [None]
+
+
+def test_unallocated_and_release_rows_sum_to_the_marked_disbursement(
+    release_dir: Path,
+) -> None:
+    unallocated = _read(release_dir, "unallocated").sort("year")
+    released = (
+        _read(release_dir, "disbursements")
+        .group_by("year")
+        .agg(pl.col("allocated_usd").sum())
+    )
+    marked = {2020: 60.0 + 20.0 + 15.0, 2021: 70.0}
+
+    assert unallocated.drop("provider_code").rows() == [
+        (2020, 0.0, 20.0, 15.0),
+        (2021, 30.0, 0.0, 0.0),
+    ]
+    totals = unallocated.join(released, on="year").select(
+        "year",
+        pl.sum_horizontal(
+            "allocated_usd", "excess_usd", "outside_release_usd", "unlinked_marked_usd"
+        ),
+    )
+    assert dict(totals.rows()) == marked
 
 
 def test_core_contributions_count_disbursements_as_grant_equivalent(
@@ -258,8 +338,8 @@ def test_total_flows_sum_every_crs_record(release_dir: Path) -> None:
     totals = _read(release_dir, "total_flows")
 
     assert sorted(totals.select("year", "bi_multi", "flow", "amount_usd").rows()) == [
-        (2019, 1, "commitments", 100.0),
-        (2020, 1, "disbursements", 60.0),
+        (2019, 1, "commitments", 150.0),
+        (2020, 1, "disbursements", 100.0),
         (2021, 1, "disbursements", 70.0),
         (2021, 1, "grant_equivalent", 35.0),
         (2021, 2, "disbursements", 9.0),
@@ -420,6 +500,28 @@ def test_a_stage_reruns_after_its_inputs_change(
     assert cf.load(path=release_dir / "assemble").manifest.release == "r"
 
 
+def test_years_after_the_last_complete_year_leave_the_release(
+    release_dir: Path, config: BuildConfig
+) -> None:
+    # With 2020 the last complete year, d21's 70 fills nothing and R1 holds d20's 60.
+    changed = config.model_copy(
+        update={"years": config.years.model_copy(update={"crs_last_complete": 2020})}
+    )
+    _write_stage(release_dir, "measure", _measure(), config=changed)
+
+    run_stages(
+        REGISTRY, release="r", release_dir=release_dir, config=changed,
+        stages=LATER_STAGES,
+    )  # fmt: skip
+
+    for table in ("disbursements", "total_flows", "unallocated"):
+        assert _read(release_dir, table)["year"].max() == 2020
+    r1 = _read(release_dir, "commitments").row(
+        by_predicate=pl.col("row_id") == "R1", named=True
+    )
+    assert (r1["status"], r1["disbursed_usd"]) == ("partly_disbursed", 60.0)
+
+
 @pytest.mark.parametrize(
     ("stage", "switch", "carried"),
     [
@@ -501,13 +603,19 @@ def _rerun_quality() -> pl.LazyFrame:
     return release.quality(
         commitments,
         disbursements=commitments.select(
-            "row_id", record_id="row_id", record_grant_equiv_usd="climate_usd"
+            "row_id",
+            record_id="row_id",
+            allocated_usd="climate_usd",
+            record_grant_equiv_usd="climate_usd",
         ),
         objectives=commitments.select(
             record_id="row_id", label_source=pl.lit("jev")
         ).head(RERUN_ROWS // 2),
         links=commitments.select(
-            task=pl.lit("crdf_crs"), left_id="row_id", probability=pl.lit(0.9)
+            task=pl.lit("crdf_crs"),
+            left_id="row_id",
+            probability=pl.lit(0.9),
+            link_method=pl.lit("within_year"),
         ),
     )
 

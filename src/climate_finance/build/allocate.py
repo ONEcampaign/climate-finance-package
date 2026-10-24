@@ -83,8 +83,15 @@ _PAIRS_SCHEMA = pl.Schema(
 
 
 def run_allocate(context: StageContext) -> StageOutput:
-    """Allocate linked CRS disbursement to commitments and set statuses."""
-    crs = trace_population(context.read("normalise", "crs"))
+    """Allocate linked CRS disbursement to commitments and set statuses.
+
+    Allocation reads CRS records up to `years.crs_last_complete`. Later years hold
+    early reports only, so they fill no commitment, and status, disbursed amounts
+    and the release tables agree on the years they cover.
+    """
+    crs = trace_population(context.read("normalise", "crs")).filter(
+        pl.col("year") <= context.config.years.crs_last_complete
+    )
     crdf = counted_rows(context.read("normalise", "crdf"))
     units = context.read("link", "units")
     links = context.read("link", "links")

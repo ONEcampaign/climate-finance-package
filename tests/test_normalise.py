@@ -70,6 +70,26 @@ def test_crs_writes_unspecified_recipients_as_the_crdf_does() -> None:
     assert _row(crs, crs_id="2022000601")["recipient_code"] == 998
 
 
+def test_crs_nulls_a_negative_grant_equivalent_on_a_disbursement(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The CRS publishes corrections as negative grant equivalents. On a record that
+    # disburses, one would give the record a negative value; on a record with only
+    # a grant equivalent, it stays.
+    raw = pl.read_parquet(OECD / "CRS.parquet").with_columns(
+        usd_grant_equiv=pl.when(pl.col("crs_id") == "2022000601")
+        .then(-1.0)
+        .otherwise(pl.col("usd_grant_equiv"))
+    )
+
+    with caplog.at_level("WARNING"):
+        crs = normalise_crs(raw.lazy(), years=YEARS).collect()
+
+    assert _row(crs, crs_id="2022000601")["grant_equiv_usd"] is None
+    assert _row(crs, crs_id="2021000555")["grant_equiv_usd"] == pytest.approx(-0.3e6)
+    assert [record.args for record in caplog.records] == [(1,)]
+
+
 def test_crs_keeps_the_expected_start_and_completion_dates() -> None:
     raw = pl.read_parquet(OECD / "CRS.parquet").with_columns(
         expected_start_date=pl.when(pl.col("crs_id") == "2022000102").then(
