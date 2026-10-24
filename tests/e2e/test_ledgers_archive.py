@@ -55,7 +55,7 @@ def test_gef_disbursements_for_2021_to_2024_under_each_reading(
 ) -> None:
     """GEF's 2021 to 2024 disbursements are USD 4.52bn as published, 2.24bn as the
     rise of the running peak (the reader's reading) and 1.61bn as year-end differences,
-    whose negative corrections reach USD 1.3bn; the CRS shows USD 1.91bn, in rows that
+    whose negative corrections reach USD 1.3bn. The CRS shows USD 1.91bn, in rows that
     carry agency ids and so allow no comparison by activity."""
     folder = _data() / "raw" / "external" / "iati" / "gef"
 

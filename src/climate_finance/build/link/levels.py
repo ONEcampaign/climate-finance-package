@@ -34,9 +34,9 @@ The features beside the levels are the year gap (a `candidates` column), log10 o
 the disbursement over the commitment, whether the disbursement unit also commits,
 and whether its start and completion dates equal the commitment's. A record that
 continues a project usually repeats them, and a new activity carries its own. The
-commitment date is left out: where an agency's ids persist, a disbursement record
-repeats its line's commitment date, so on the training pairs an equal date restates
-the crs-id label and misleads the model on the pairs it links.
+commitment date is left out because, where an agency's ids persist, a disbursement
+record repeats its line's commitment date, so on the training pairs an equal date
+restates the crs-id label and misleads the model on the pairs it links.
 """
 
 import duckdb
@@ -287,7 +287,7 @@ def comparison_levels(pairs: pl.DataFrame, *, attributes: pl.DataFrame) -> pl.Da
 
     Args:
         pairs: rows with `left_id` (a disbursement unit) and `right_id` (a
-            commitment unit), in any order; the output keeps it.
+            commitment unit), in any order, and the output keeps it.
         attributes: `unit_attributes` of every unit the pairs name.
     """
     sides = {

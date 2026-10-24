@@ -63,13 +63,13 @@ def read_finances_one(
 ) -> pl.DataFrame:
     """Calendar-year loan disbursements from the cumulative year-end snapshots.
 
-    The flow of a loan in a year is its cumulative disbursement at 31 December minus
-    the figure at the previous 31 December, with a loan absent from a snapshot
-    counted as zero. This reproduces the CRS at a ratio of 1.000 for 2021 to 2024;
-    the World Bank's fiscal-year flows match 14% to 18% of loans. Small negative
-    flows are the World Bank's own corrections and are kept. Every loan in either
-    snapshot gets a row, so a loan that did not disburse reads as zero rather than
-    as missing. Rows are dated 31 December and keyed by loan or credit number.
+    The flow of a loan in a year is its cumulative disbursement at 31 December minus the
+    figure at the previous 31 December, with a loan absent from a snapshot counted as
+    zero. This reproduces the CRS at a ratio of 1.000 for 2021 to 2024. The World Bank's
+    fiscal-year flows match 14% to 18% of loans. Small negative flows are the World
+    Bank's own corrections and are kept. Every loan in either snapshot gets a row, so a
+    loan that did not disburse reads as zero. Rows are dated 31 December and keyed by
+    loan or credit number.
 
     Args:
         path: A directory with the snapshot files named by `snapshot_file`.

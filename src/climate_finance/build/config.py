@@ -38,7 +38,7 @@ class Years(_Section):
     Fetch also reads the recipient CRDF of the year before `crdf`, which gives the
     first agency share year its two-year span.
 
-    `crs_last_complete` is the last CRS year every provider has reported; the CRS
+    `crs_last_complete` is the last CRS year every provider has reported. The CRS
     years after it hold early reports only. Disbursement observed over time and
     the modelled line's CRS series end there.
     """
@@ -129,7 +129,7 @@ class BuildConfig(_Section):
     """Every build setting.
 
     `skip_eib_routes` names EIB recovery routes the link stage leaves out when
-    `recoveries` is on. A release builds with none; an end-to-end test sets one to
+    `recoveries` is on. A release builds with none. An end-to-end test sets one to
     measure what that route adds. `jev_labels` has the label stage ask Jev about
     linked records and fit its adaptation cut on `sources.adaptation_labels`.
     `jev_links` has the link stage ask Jev about the classifier's pairs in

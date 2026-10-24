@@ -12,7 +12,7 @@ pooled model that completes fewer scores nothing. u and EM run on one DuckDB thr
 since a parallel sum adds in whatever order threads finish, and two builds must give
 the same model.
 
-Raw EM probabilities never link: on the prototype's id truth they reached precision
+Raw EM probabilities do not link. On the prototype's id truth they reached precision
 0.141 at p of 0.5 or more. A model is calibrated once people have labelled
 `CALIBRATION_LABELS` of its pairs. Until then it gives no probability, and its pairs
 enter the review queue only as its calibration sample: `CALIBRATION_LABELS` pairs
@@ -34,7 +34,7 @@ has its calibration sample answered instead (`jev.jev_answers`): Jev reads each 
 and a scale fitted on id truth turns its answer into a label. Those labels, with any
 of people's, set m and the map directly, since there are not enough people's labels
 to set Jev's scale for the model. Only labels of source `human` or `agent` are
-read from `labels`. Ledger-check labels never calibrate: they sit on key-linked
+read from `labels`. Ledger-check labels do not calibrate, since they sit on key-linked
 pairs, whose disbursements no model scores, and they hold no negatives.
 
 `splink_links` links each disbursement unit to its best calibrated pair at or above
@@ -61,7 +61,7 @@ from sklearn.isotonic import IsotonicRegression
 from splink import DuckDBAPI, Linker, SettingsCreator
 
 # Splink's own reading of a comparison gives each level's number and the m it
-# scores with; splink is pinned below 6.
+# scores with. Splink is pinned below 6.
 from splink.internals.comparison import Comparison
 
 from climate_finance import schema
@@ -95,7 +95,7 @@ EM_RULES = (
 )
 # Deterministic rules for the prior, and the share of id-truth continuations they
 # found on the prototype's 2021 to 2022 training half (7,759 pairs). The prior moves
-# only the raw EM probability: the isotonic map reads the match weight, and a
+# only the raw EM probability, since the isotonic map reads the match weight and a
 # constant shift in it leaves the map's output unchanged.
 PRIOR_RULES = (
     f"{_LATER} and l.pn_norm = r.pn_norm and l.pn_freq <= 300",
@@ -125,12 +125,12 @@ MIN_ISOTONIC_OUTCOMES = 30
 # Weight of EM's m in the labelled estimate, as in Splink's estimate from labels.
 M_PRIOR_WEIGHT = 1.0
 CALIBRATION_REASON = "calibration"
-# A calibrated pair links at this probability or more; the rest go to the review
+# A calibrated pair links at this probability or more. The rest go to the review
 # queue. With each truth-group provider's ids hidden in turn on the archive, the two
 # models that reach 0.7 linked at precision 0.954 (France, 1,789 links) and 0.698
 # (Denmark, 620) against id truth; at 0.5 they fell to 0.739 and 0.391, and the
 # pooled model linked at 0.442. Denmark's cut sits on one step of an isotonic map
-# fitted on 100 Jev labels: a draw that put the step at 0.69 gave 243 links at 0.905.
+# fitted on 100 Jev labels. A draw that put the step at 0.69 gave 243 links at 0.905.
 LINK_THRESHOLD = 0.7
 LINK_METHOD = "splink_jev"
 _PAIR = ["left_id", "right_id"]
@@ -279,7 +279,7 @@ def score_with_splink(
 
 def read_decision_labels(path: Path) -> pl.DataFrame:
     """People's and agents' queue decisions at `path` as `pair_labels` rows with
-    source `human` or `agent`, one per pair; none when nothing has been decided yet.
+    source `human` or `agent`, one per pair, and none when nothing has been decided yet.
 
     A pair's standing decision is the one `decisions.standing_decisions` keeps.
     A blind-sample decision (one with a `sample_id`) measures precision, so it never
@@ -521,7 +521,8 @@ def _fit(
             list(PRIOR_RULES), recall=PRIOR_RULE_RECALL
         )
     except ValueError as error:
-        # More rule matches than the recall allows: nearly every pair matches.
+        # The rules match more pairs than the recall allows, so nearly every pair
+        # matches.
         report.failed["prior"] = str(error).split(".")[0]
         return None
     report.prior = linker.misc.save_model_to_json()[
@@ -529,7 +530,7 @@ def _fit(
     ]
     if not 0 < report.prior < 1:
         return None
-    # One thread: u and EM sum floats, and only a fixed order keeps two builds
+    # One thread, since u and EM sum floats and only a fixed order keeps two builds
     # equal. Scoring sums nothing across pairs and runs on every thread.
     con.sql("set threads = 1")
     linker.training.estimate_u_using_random_sampling(
@@ -687,8 +688,8 @@ def _labels(
 def _band_weights(scores: pl.DataFrame, labels: pl.DataFrame) -> pl.DataFrame:
     """`labels` with their comparison levels and weights. A `stratified` label's
     inverse-probability weight is the pairs of its EM-weight band over the
-    stratified labels of that band. Any other label, chosen for review rather than
-    drawn, weighs 1."""
+    stratified labels of that band. Any other label, which review chose and
+    `stratified_sample` did not draw, weighs 1."""
     stratified = pl.col("stratified")
     return (
         scores.with_columns(band=_band())

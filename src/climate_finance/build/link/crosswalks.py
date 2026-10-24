@@ -11,13 +11,13 @@ disbursement unit whose project number is such an agency id, and which no exact
 key tier or key-repair rule links, to the commitment units of its GEF projects in
 the same recipient.
 
-A GEF commitment's project number is its GEF id, or in 2013 and 2014 the GEF id
-followed by a dash and a suffix. An agency id can stand for several GEF projects
-(19 do in the archive's GEF file), and allocation pools a group over every
-commitment it holds, so a group is a component: the GEF projects that GEF ids and
-agency ids connect, in one recipient. Every disbursement unit of a component
-reaches all its commitment units, less those its record year or floor rules out,
-and each commitment unit falls in one group.
+A GEF commitment's project number is its GEF id, or in 2013 and 2014 the GEF id followed
+by a dash and a suffix. An agency id can stand for several GEF projects (19 do in the
+archive's GEF file), and allocation pools a group over every commitment it holds, so a
+group is a component, meaning the GEF projects that GEF ids and agency ids connect, in
+one recipient. Every disbursement unit of a component reaches all its commitment units,
+less those its record year or floor rules out, and each commitment unit falls in one
+group.
 
 `crosswalk_profile` writes, per provider, the climate value of the counted CRDF
 commitments and the part that links by key through a crosswalk, into

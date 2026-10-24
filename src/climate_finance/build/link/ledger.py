@@ -5,12 +5,12 @@ project numbers carry, which `ledger_key` cuts from the trace unit's project num
 For every ledger key and calendar year, the check compares the CRS disbursement
 recorded under the key, summed over the trace units that carry it, with the ledger's
 disbursement transactions for the key in US dollars. They agree when the CRS is
-within `TOLERANCE` of the ledger. The CRS stays the disbursement record.
+within `TOLERANCE` of the ledger. The CRS is the disbursement record.
 
 The check compares CRS records, which agree with the ledger for 99.7% to 100% of the
 World Bank loan-years it lists in 2021 and 2022. The dollars allocation gives each
 link agree for 96% to 99.7%, since the `wb_loan` key tier keeps a loan's disbursement
-on its own loan but excess and cross-year timing still differ from the ledger.
+on its own loan but excess and cross-year timing differ from the ledger.
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ if TYPE_CHECKING:
 # one dollar where the ledger amount is smaller.
 TOLERANCE = 0.05
 # The ledger that checks each provider's CRS rows, by DAC provider code. The AfDB and
-# the African Development Fund publish one IATI ledger. The GEF is left out: the CRS
-# records its disbursements under its agencies' project ids, so no GEF key carries
+# the African Development Fund publish one IATI ledger. The GEF is left out because the
+# CRS records its disbursements under its agencies' project ids, so no GEF key carries
 # CRS disbursement to compare.
 LEDGER_PUBLISHERS: Mapping[int, str] = {
     901: "ibrd",
@@ -47,7 +47,7 @@ LEDGER_PUBLISHERS: Mapping[int, str] = {
     1016: "gcf",
 }
 # The ledgers that can confirm a commitment undisbursed. These three match the CRS
-# for 99.7% to 100% of loan-years; in the others a key-year with no disbursement can
+# for 99.7% to 100% of loan-years. In the others a key-year with no disbursement can
 # be a gap in the ledger's scope or timing, so silence proves nothing.
 UNDISBURSED_PUBLISHERS = ("ibrd", "ida", "iadb")
 

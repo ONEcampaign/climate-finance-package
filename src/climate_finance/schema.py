@@ -675,7 +675,7 @@ PAIR_LABELS = _table(
 )
 
 # Decisions on queued pairs and blind-sample pairs, appended over time. A decision
-# carries the queue's `review_reason` or the blind sample's `sample_id`, never both:
+# carries either the queue's `review_reason` or the blind sample's `sample_id`:
 # queue decisions become pair labels and link overrides, and blind-sample decisions
 # only measure precision. `label_source` says whether a person or an agent decided;
 # an agent's decision names its `model`, its `confidence` that the pair matches, and
@@ -782,7 +782,7 @@ COMMITMENTS = _table(
     # counts in full in both bounds, so it is the same part of all three.
     withheld_usd=_usd(),
     project_disbursing=_bool(),
-    # True or null, never false: true where the bank's ledger
+    # True or null: true where the bank's ledger
     # (`ledger.UNDISBURSED_PUBLISHERS`) confirms no disbursement; null where no
     # ledger covers the row or it shows money moving. It stands whatever `status`
     # says, so a row the allocation calls disbursed and the ledger does not points

@@ -47,7 +47,7 @@ links is left out of the later ones:
 - `repair_stray_country`: the same canonical crs id in another recipient, for a
   disbursement unit no exact tier and no earlier rule reached. Canada gives a line
   to another country from one year to the next and books a joint activity, as a
-  Jordan and Lebanon one, in one of its countries, which `crs_key` keeps apart; the
+  Jordan and Lebanon one, in one of its countries, which `crs_key` keeps apart. The
   GEF and the EU reuse a crs id across unrelated projects. A pair links only where
   the disbursement's recipient holds no commitment of the donor under either
   side's project number or the crs id (`_own_lines`), which would be its own line,

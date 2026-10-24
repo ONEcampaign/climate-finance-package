@@ -95,7 +95,7 @@ def _compare(
 
 
 def _prototype_parent_id(donor_code: pl.Expr, crs_id: pl.Expr) -> pl.Expr:
-    """The references' parent id: the first ten characters of any donor's longer crs
+    """The references' parent id, the first ten characters of any donor's longer crs
     id. The build reads one for the EU and `LETTER_SUFFIX_DONORS` alone
     (`parent_id`), so the tests class agencies under this rule to compare."""
     return pl.when(crs_id.str.len_chars() > 10).then(crs_id.str.slice(0, 10))

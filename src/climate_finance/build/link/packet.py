@@ -104,7 +104,7 @@ def write_packet(
         pairs: `left_id` (a disbursement unit) and `right_id` (a commitment unit),
             numbered from 1 in the order given, with any of `CARRIED`; `task`
             defaults to `trace`.
-        units: the link stage's `units`; the siblings count reads all of them.
+        units: the link stage's `units`. The siblings count reads all of them.
         crs: the CRS records the units sum, as the normalise stage writes them.
         out: the packet's path.
         title: the packet's heading.

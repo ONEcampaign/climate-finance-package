@@ -18,7 +18,7 @@ line no record commits. Where a project's later records contradict its ids this 
 (see `contradicted_commitments`), the project number and recipient take the id's
 place for lines the id cannot follow (see `id_truth`). Where the project committed
 two lines to one recipient in a year, a new line of that recipient continues one of
-them and nothing says which: those pairs are `unlabelled`, and neither train nor
+them and nothing says which. Those pairs are `unlabelled` and neither train nor
 measure the classifier. Canada also tells lines apart by purpose, so a Canadian
 disbursement continues the commitments of its own project, recipient and purpose
 where there are any (see `purpose_lines`). Where a donor changes a project's number
@@ -266,16 +266,16 @@ def private_donors() -> tuple[int, ...]:
 
 
 def split_key(donor_code: pl.Expr, crs_id: pl.Expr, unit_id: pl.Expr) -> pl.Expr:
-    """The key labelled pairs are halved and folded by: donor and crs id, else the
-    unit id."""
+    """The donor and crs id, else the unit id, as the key that halves and folds
+    labelled pairs."""
     return pl.concat_str(
         donor_code.cast(pl.String), pl.coalesce(crs_id, unit_id), separator="|"
     )
 
 
 def is_heldout(keys: pl.Series) -> pl.Series:
-    """Whether each split key falls in the held-out half: the md5 of the key, read
-    as a number from its first eight hex digits, is odd."""
+    """Whether each split key falls in the held-out half, which holds when the md5 of
+    the key, read as a number from its first eight hex digits, is odd."""
     distinct = keys.unique().sort()
     odd = [
         int(hashlib.md5(key.encode()).hexdigest()[:8], 16) % 2 == 1 for key in distinct
@@ -777,7 +777,7 @@ def with_split(
     its `line_id`) and `placed_year`.
 
     A labelled pair (`id_persistent`) is `unlabelled` when `truth` (`id_truth`)
-    holds it as ambiguous, else `train` or `heldout` by its split key; any other
+    holds it as ambiguous, else `train` or `heldout` by its split key. Any other
     pair is `eligible`. `true_pair` says whether `truth` holds the pair and not as
     ambiguous.
     """
@@ -913,7 +913,7 @@ def heldout_links(pairs: pl.DataFrame) -> pl.DataFrame:
     """The held-out half's links: each disbursement unit with a held-out pair takes
     its best pair (`best_commitments`) among its labelled pairs of both halves, as
     the build weighs every pair of a unit. A best pair that is true and in the
-    training half continues a commitment of that half and is dropped; a false one
+    training half continues a commitment of that half and is dropped. A false one
     is the unit's link, wrong whichever half holds it.
 
     Args:
@@ -996,7 +996,7 @@ def scoring_profile(
     groups: pl.DataFrame, *, scores: TruthScores | None
 ) -> pl.DataFrame:
     """The scoring columns of `provider_profile`: `groups` with each truth-group
-    provider's calibration and threshold; `scores` is None when the truth group is
+    provider's calibration and threshold. `scores` is None when the truth group is
     empty."""
     if scores is None:
         profile = groups.with_columns(

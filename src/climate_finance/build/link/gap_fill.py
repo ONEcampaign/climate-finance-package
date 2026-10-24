@@ -59,7 +59,7 @@ MIN_KEY_SHARE = 0.80
 MAX_UNKEYED_SHARE = 0.05
 # Statuses a ledger fill may change.
 GAP_STATUSES = ("no_disbursement_record", "not_traceable")
-# AfDB and AfDF keys are 13-digit ids; one ending in five zeros is a truncated float.
+# AfDB and AfDF keys are 13-digit ids. One ending in five zeros is a truncated float.
 _AFDB_KEY = r"^\d{13}$"
 _AFDB_TRUNCATED = "00000"
 
@@ -151,7 +151,7 @@ def route_funds(
     row, joins the fund's activities on its key (`fund_key`). It matches when the
     key's own commitments sum above zero. Its disbursed share by a year is the key's
     disbursements up to that year, to `last_year`, over that commitment, capped at 1
-    and never falling; each year's rise in the share, times the row's face value, is
+    and non-decreasing; each year's rise in the share, times the row's face value, is
     an allocation of rule `iati` with record id `iati:<publisher>:<key>:<year>`.
     Status reads that share against the row's face, so `crs_face_usd` becomes
     `face_usd`. A matched row with no disbursement is traceable when its fund

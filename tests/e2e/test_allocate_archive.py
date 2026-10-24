@@ -1,6 +1,6 @@
 """Fetch through allocate on the archived source files, with recoveries off.
 
-The fetch is offline: the archive files take their places in the raw layout, with a
+The fetch is offline. The archive files take their places in the raw layout, with a
 `raw_manifest` that records them. One build runs with key repair off and pins the
 2021 to 2022 statuses; a second reuses its fetch and normalise tables, runs link and
 allocate with key repair on, and pins the no-record value the rules move.
@@ -105,7 +105,7 @@ CLASSIFIER_RELEASE_MOVED_BN = {
 }
 # A record's own commitment fills before older commitments of its key group
 # (`_own_commitments`), so where a donor files a new module or yearly grant under a
-# reused crs id, the new record's money no longer fills the older module's headroom.
+# reused crs id, the new record's money stays out of the older module's headroom.
 # Mostly Dutch and British rows move from disbursed to partly disbursed, and own
 # commitments with no record take their records' money.
 OWN_FIRST_MOVED_BN = {
@@ -140,7 +140,7 @@ RELEASE_RULE_BN = {
 # (`Tier.unique_by`) already links USD 0.20 bn more US value in the build without
 # the rules. A unit that disbursed no more than its own commitment is no
 # disbursement unit to the rules, and a line's spare commitment (`_spare_lines`)
-# joins the commitments a number reaches, so some US numbers now reach more than
+# joins the commitments a number reaches, so some US numbers reach more than
 # `MAX_COMMITMENTS`. Between them the two take USD 0.07 bn of US rows out of the
 # figure. Rounded AfDB project numbers are null, so `repair_title_recipient` also
 # takes AfDB commitments that the rounded numbers reach, which carry USD 0.18 bn of
@@ -260,7 +260,7 @@ def repaired(base: Path, config: BuildConfig) -> Path:
 
 
 def _rows(release_dir: Path) -> pl.DataFrame:
-    """2021 to 2022 recipient-perspective CRDF rows with their status; an aggregate
+    """2021 to 2022 recipient-perspective CRDF rows with their status. An aggregate
     parent left out of allocation has none."""
     crdf = pl.read_parquet(table_path(release_dir, "normalise", "crdf"))
     status = pl.read_parquet(table_path(release_dir, "allocate", "commitments"))
@@ -405,7 +405,7 @@ def test_key_repair_moves_no_record_value(
 
 
 def test_units_rebuild_to_the_same_bits(base: Path, repaired: Path) -> None:
-    # The two builds form units from one normalise output, in separate runs; a
+    # The two builds form units from one normalise output, in separate runs. A
     # group sum that adds in thread order changes the last bit of some amounts.
     assert sha256_file(table_path(base, "link", "units")) == sha256_file(
         table_path(repaired, "link", "units")

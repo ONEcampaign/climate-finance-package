@@ -27,14 +27,13 @@ several methods enters one pass per group, in that order, and each later pass
 receives only what the earlier ones left: the exact key tiers first, then the
 key-repair rules. What the last pass leaves is excess.
 
-A disbursement record's own commitment in a group fills before the rest of the
-group (`_own_commitments`): the record itself where it also commits, else the one
-commitment record of the group whose real commitment date it carries and whose
-title shares at least `OWN_TITLE_SHARE` of its words. Each own commitment runs as a
-group of its own, in a pass just before the group's, so a donor that files a new
-module or phase under an old crs id keeps the new module's money on the new
-commitment, and the old module keeps its headroom. What the own commitment cannot
-take enters the group's pass.
+A disbursement record's own commitment in a group fills before the rest of the group
+(`_own_commitments`). That is the record itself where it also commits, else the one
+commitment record of the group whose real commitment date it carries and whose title
+shares at least `OWN_TITLE_SHARE` of its words. Each own commitment runs as a group of
+its own, in a pass just before the group's, so a donor that files a new module or phase
+under an old crs id keeps the new module's money on the new commitment, and the old
+module keeps its headroom. What the own commitment cannot take enters the group's pass.
 
 Two per-donor switches change the order. A dated donor's record dated in its own
 year fills that year's commitments first. A window donor's other records fill first
@@ -448,7 +447,7 @@ def _own_commitments(
     pairs: pl.DataFrame, *, commitments: pl.DataFrame, crs: pl.LazyFrame
 ) -> pl.DataFrame:
     """Each disbursement record's own commitment record in a group, as (group_id,
-    record_id, c_idx): the record itself where it also commits, else the one
+    record_id, c_idx). That is the record itself where it also commits, else the one
     commitment record of the group whose real commitment date (`line_date`) it
     carries and whose title shares at least `OWN_TITLE_SHARE` of its words
     (`word_share`). A record with two such commitments in a group has none there."""
