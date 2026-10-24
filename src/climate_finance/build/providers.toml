@@ -1,0 +1,102 @@
+# Hand-set provider facts that the measure stage reads. Codes are DAC codes.
+
+# The CRS reporter behind each multilateral channel of delivery that core
+# contributions reach, for the agency's own climate share (agency_shares, source
+# "one"). Without `agency_codes`, every agency of the provider belongs to the
+# channel. Several reporters may share one channel; their spending pools.
+agencies = [
+    { channel_code = 41108, provider_code = 988 },  # IFAD
+    { channel_code = 41301, provider_code = 932 },  # FAO
+    { channel_code = 41317, provider_code = 1016 },  # Green Climate Fund
+    # EU Institutions: the budget, the European Development Fund and the EIB.
+    { channel_code = 42001, provider_code = 918, agency_codes = [1] },
+    { channel_code = 42003, provider_code = 918, agency_codes = [2, 4, 5] },
+    { channel_code = 42004, provider_code = 918, agency_codes = [3] },
+    { channel_code = 44001, provider_code = 901 },  # IBRD
+    { channel_code = 44002, provider_code = 905 },  # IDA
+    { channel_code = 44004, provider_code = 903 },  # IFC
+    { channel_code = 46002, provider_code = 913 },  # African Development Bank
+    { channel_code = 46003, provider_code = 914 },  # African Development Fund
+    { channel_code = 46004, provider_code = 915 },  # Asian Development Bank
+    { channel_code = 46005, provider_code = 916 },  # Asian Development Fund
+    { channel_code = 46006, provider_code = 981 },  # Black Sea Trade and Development Bank
+    { channel_code = 46007, provider_code = 910 },  # CABEI
+    { channel_code = 46008, provider_code = 1015 },  # CAF
+    { channel_code = 46009, provider_code = 906 },  # Caribbean Development Bank
+    # The IDB's ordinary capital and IDB Invest share one channel. Its Fund for
+    # Special Operations has its own.
+    { channel_code = 46012, provider_code = 909, agency_codes = [1, 4, 5, 6, 15, 16, 17, 18, 20] },
+    { channel_code = 46012, provider_code = 1019 },
+    { channel_code = 46013, provider_code = 909, agency_codes = [2, 3, 11, 14] },
+    { channel_code = 46015, provider_code = 990 },  # EBRD
+    { channel_code = 46024, provider_code = 1013 },  # Council of Europe Development Bank
+    { channel_code = 46025, provider_code = 976 },  # Islamic Development Bank
+    { channel_code = 46026, provider_code = 1024 },  # AIIB
+    { channel_code = 46028, provider_code = 1044 },  # New Development Bank
+    # The GEF trust fund, the Least Developed Countries Fund and the Special Climate
+    # Change Fund.
+    { channel_code = 47044, provider_code = 811, agency_codes = [1, 11, 14, 15, 16] },
+    { channel_code = 47129, provider_code = 811, agency_codes = [12] },
+    { channel_code = 47130, provider_code = 811, agency_codes = [13] },
+    { channel_code = 47078, provider_code = 812 },  # Montreal Protocol fund
+    { channel_code = 47111, provider_code = 1012 },  # Adaptation Fund
+    { channel_code = 47128, provider_code = 104 },  # Nordic Development Fund
+    # The Climate Investment Funds: the Clean Technology Fund and the Strategic
+    # Climate Fund.
+    { channel_code = 47134, provider_code = 1011, agency_codes = [10] },
+    { channel_code = 47135, provider_code = 1011, agency_codes = [20, 21, 22, 23] },
+    { channel_code = 47136, provider_code = 1313 },  # Global Green Growth Institute
+]
+
+# Providers whose disbursements no source publishes by project. Their CRDF climate
+# commitments go on the "modelled, not reported" line as a range of disbursement
+# ratios, each capped at 1.0. CRS ratios come from the provider's aggregate
+# disbursement rows over its unbroken run of reporting years that ends at its
+# latest. The cumulative ratio pools the whole run, and the window ratio pools the
+# run from the commitment year. `by_recipient` computes them per recipient where the
+# CRS holds the recipient's commitments. `vintage` replaces both with the ratio of
+# the projects first committed in the commitment year, disbursed over committed.
+# `report_ratios` are disbursed-over-committed ratios from the provider's own
+# reports, each with its year and source. `statuses` limits the line to commitments
+# of those statuses. `cancelled_crs_ids` are projects the provider cancelled, set
+# to zero.
+
+[[modelled]]
+# IFC reports projects to the CRS with an empty disbursement column.
+provider_code = 903
+basis = "ifc_annual_report_2022"
+crs_ratios = false
+report_ratios = [
+    { ratio = 0.92, year = 2021, source = "IFC Annual Report 2022, Operational Highlights, printed p.12: own-account disbursed over committed, FY21" },
+    { ratio = 1.05, year = 2022, source = "IFC Annual Report 2022, Operational Highlights, printed p.12: own-account disbursed over committed, FY22" },
+]
+
+[[modelled]]
+# CAF's aggregate disbursement rows equal its Annual Report 2022, table 6, by
+# country to the million.
+provider_code = 1015
+basis = "crs_aggregates_by_recipient"
+by_recipient = true
+
+[[modelled]]
+# IDB Invest's CRDF holds one regional row a year, so its ratios are portfolio-wide.
+provider_code = 1019
+basis = "crs_aggregates"
+
+[[modelled]]
+# SABESP and Manaus water and wastewater are cancelled.
+provider_code = 1044
+basis = "crs_aggregates_by_recipient_and_annual_report_2022"
+by_recipient = true
+report_ratios = [
+    { ratio = 0.47, year = 2022, source = "NDB Annual Report 2022, p.41: USD 15.4bn disbursed of USD 32.8bn approved to the end of 2022" },
+]
+cancelled_crs_ids = ["2022900004", "2022900006"]
+
+[[modelled]]
+# The EIB's commitments that no route traces.
+provider_code = 918
+agency_code = 3
+basis = "crs_vintage"
+vintage = true
+statuses = ["not_traceable"]

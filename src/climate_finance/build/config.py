@@ -2,14 +2,16 @@
 
 import tomllib
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 
 from pydantic import (
     AfterValidator,
     BaseModel,
     ConfigDict,
+    StringConstraints,
     ValidationError,
     ValidationInfo,
+    model_validator,
 )
 
 from climate_finance.build.errors import ConfigError
@@ -23,6 +25,7 @@ def _resolve(path: Path, info: ValidationInfo) -> Path:
 
 
 ConfigPath = Annotated[Path, AfterValidator(_resolve)]
+Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 
 class _Section(BaseModel):
@@ -30,17 +33,50 @@ class _Section(BaseModel):
 
 
 class Years(_Section):
-    """Inclusive first and last years read from each source."""
+    """Inclusive first and last years read from each source.
+
+    `crs_last_complete` is the last CRS year every provider has reported; the CRS
+    years after it hold early reports only. Disbursement observed over time and
+    the modelled line's CRS series end there.
+    """
 
     crdf: tuple[int, int]
     crs: tuple[int, int]
+    crs_last_complete: int
+
+    @model_validator(mode="after")
+    def _complete_year_inside_crs(self) -> Self:
+        first, last = self.crs
+        if not first <= self.crs_last_complete <= last:
+            raise ValueError(
+                f"crs_last_complete {self.crs_last_complete} lies outside the CRS "
+                f"years {first} to {last}"
+            )
+        return self
+
+
+class LocalFile(_Section):
+    """A source file downloaded by hand, and the sha256 it must have."""
+
+    path: ConfigPath
+    sha256: Sha256
 
 
 class Sources(_Section):
-    """Pinned source versions and local source paths."""
+    """Pinned source versions and local source paths.
+
+    `crs_file` names a browser-downloaded bulk CRS parquet; without it, fetch
+    downloads the file with oda-reader. `crdf_etags`, when not empty, pins every
+    CRDF workbook fetch reads to the ETag it maps the workbook's name to.
+    `iati_archive` holds one directory of activity XML per publisher, and fetch
+    copies those of `iati_publishers`.
+    """
 
     crs_version: str
+    crs_file: LocalFile | None = None
     crdf_etags: dict[str, str]
+    iati_archive: ConfigPath
+    iati_publishers: tuple[str, ...]
     btr_archive: ConfigPath
     ledger_archive: ConfigPath
     review_decisions: ConfigPath
@@ -68,6 +104,8 @@ class BuildConfig(_Section):
     offline: bool = False
     key_repair: bool = True
     recoveries: bool = True
+    gap_fill: bool = False
+    review: bool = False
     years: Years
     sources: Sources
     jev: Jev

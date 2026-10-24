@@ -6,13 +6,26 @@ offline = false
 key_repair = true
 # Recovery routes: DFI aggregate rebuild, EIB project-list rules, GCF and GEF joins.
 recoveries = true
+# Bank-ledger gap fill and the GCF and GEF routes (the fill stage). Off passes
+# allocations and commitments through unchanged.
+gap_fill = false
+# Ledger check, review queue and pending status (the review stage). Off passes links
+# and commitments through unchanged.
+review = false
 
 [years]
 crdf = [2015, 2024]
 crs = [2010, 2025]
+# The last CRS year every provider has reported; later years hold early reports.
+crs_last_complete = 2024
 
 [sources]
 crs_version = "v20261006"
+# The bulk CRS parquet, downloaded by browser. Without it, fetch downloads the file.
+crs_file = { path = "data/raw/oecd/CRS_v20261006.parquet", sha256 = "d24840a5fad50e718da4eb5831c3e1e333e7c5ef6b46c158e3510c7497518f06" }
+# Archived IATI activity XML, one directory per publisher.
+iati_archive = "data/raw/external/iati"
+iati_publishers = ["caf", "eib", "gcf", "gef", "idbinvest", "ifcwbg"]
 btr_archive = "data/raw/unfccc_btr1"
 ledger_archive = "data/raw/ledgers"
 review_decisions = "data/review_decisions.parquet"

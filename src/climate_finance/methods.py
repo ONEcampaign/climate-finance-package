@@ -24,13 +24,24 @@ class Frozen(BaseModel):
 
 
 class Method(Frozen):
-    """Coefficients applied to face value by Rio marker level."""
+    """Coefficients applied to face value by Rio marker level.
+
+    `eu` sets how EU Institutions (provider 918) count in the provider view. As a
+    `"channel"`, members' core contributions to the EU budget, the EDF and the EIB
+    carry the EU's climate share, and 918's own rows leave a result in each year
+    where it also holds such an attribution, so EU money counts once, inside its
+    members' totals.
+    As a `"provider"`, those three channels attribute nothing and 918 counts in its
+    own right, as the OECD counts it. Either way a query for 918 alone returns its
+    own spending.
+    """
 
     significant: float = Field(ge=0.0, le=1.0)
     principal: float = Field(ge=0.0, le=1.0)
     highest_marker: bool
     coefficients: Literal["fixed", "provider"] = "fixed"
     relevance: Literal["markers", "jev"] = "markers"
+    eu: Literal["channel", "provider"] = "channel"
 
     def _repr_markdown_(self) -> str:
         return describe(self)
@@ -46,7 +57,9 @@ class MethodRange(Frozen):
 
 
 ONE = Method(significant=0.4, principal=1.0, highest_marker=True)
-OECD = Method(significant=1.0, principal=1.0, highest_marker=False)
+# The OECD's imputed shares hold no EU channel, because it counts EU Institutions as
+# a provider. PROVIDER reads ONE's agency shares, so it keeps ONE's EU setting.
+OECD = Method(significant=1.0, principal=1.0, highest_marker=False, eu="provider")
 PROVIDER = Method(
     significant=0.4, principal=1.0, highest_marker=True, coefficients="provider"
 )
@@ -64,10 +77,13 @@ def label(method: Method | MethodRange) -> str:
     for name, named in _NAMED.items():
         if method == named:
             return name
+        if method.replace(eu=named.eu) == named:
+            return f"{name}, EU as a {method.eu}"
     rule = "highest marker" if method.highest_marker else "each marker"
     return (
         f"significant {method.significant:g}, principal {method.principal:g}, {rule}"
         f", {method.coefficients} coefficients, {method.relevance} relevance"
+        f", EU as a {method.eu}"
     )
 
 
@@ -97,7 +113,18 @@ def describe(method: Method | MethodRange) -> str:
             " Each provider takes its own significant coefficient from the release, "
             f"or {method.significant:g} where it has no confirmed coefficient."
         )
-    return text
+    return text + _EU[method.eu]
+
+
+_EU = {
+    "channel": " In the provider view EU Institutions count as a channel: members' "
+    "core contributions to the EU budget, the EDF and the EIB carry the EU's climate "
+    "share, and EU Institutions' own rows leave a result in each year where it "
+    "holds such an attribution, so EU spending counts once.",
+    "provider": " In the provider view EU Institutions count as a provider: "
+    "contributions to the EU budget, the EDF and the EIB attribute nothing, and EU "
+    "Institutions' own rows count in their own right.",
+}
 
 
 def _coefficient(level: pl.Expr, method: Method, significant: pl.Expr) -> pl.Expr:

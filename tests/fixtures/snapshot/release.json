@@ -4,7 +4,7 @@
   "package_version": "2.0.0.dev0",
   "tables": {
     "disbursements": {
-      "sha256": "15ab83512a4485b8ae3b960fd99e620b8b0a0d0bb52042ebcc40a5fcf6403b29",
+      "sha256": "b8f18e0b651751ec4a9181a94ad4b48dd6157abd5b2562b140184397cb5ea153",
       "rows": 36
     },
     "objectives": {
@@ -12,16 +12,16 @@
       "rows": 69
     },
     "agency_shares": {
-      "sha256": "1af35490e05bb7510ba2802b6a0b84c41c81e21b0b39b87ed96c43efa84e2642",
-      "rows": 24
+      "sha256": "961970dd2ccc3f7558f9bc842f9a4dd8f0056f216c6910fc329afb5ac06cac0f",
+      "rows": 25
     },
     "modelled": {
       "sha256": "92784c29c5b001f8fe979ca655b262455bc68630aea6fef03d92e18b13227257",
       "rows": 3
     },
     "core_contributions": {
-      "sha256": "710184225fa326e3d8367e847f88a8ea82d877c20b222d441b68fb93aea50d96",
-      "rows": 18
+      "sha256": "0f0e22936884daaebd9c2bb821042a655a7803b8a586f2628fe9a96fecb23de2",
+      "rows": 21
     },
     "provider_coefficients": {
       "sha256": "1c3a3a0bfddaa4aef5eda6b8a70c5d82c6c5aea67712cbcabdf120dbbac2a906",
@@ -36,16 +36,16 @@
       "rows": 9
     },
     "commitments": {
-      "sha256": "6c867469c8a9f5b4442a4c0c6206010525d7a8506ff2adfd77f7cea60498b195",
+      "sha256": "5e6ae92144167eea737ffdb7b3809f96dff866d588f21c135f88feaa08c4ef55",
       "rows": 14
     },
     "quality": {
-      "sha256": "96562613c79c5b5102349ef0002657e86c6628253d05038de841138b8c2f0219",
+      "sha256": "91308a44355ba9c7b6c3f33f98531ff48f3d7ce7fbfce73742951a79a33d9f16",
       "rows": 12
     },
     "total_flows": {
-      "sha256": "86c54066aa5dddd4b64407eaa363b3cab1371583fada3533b14870c8494c34ea",
-      "rows": 89
+      "sha256": "7e5f2b374b36045ce00bc5817827fb1b6d63642242086b3f175c035cfebf6de9",
+      "rows": 92
     }
   },
   "source_versions": {

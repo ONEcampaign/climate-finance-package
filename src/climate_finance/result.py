@@ -18,7 +18,8 @@ if TYPE_CHECKING:
     import pyarrow as pa
 
 AMOUNTS = (
-    "amount", "adaptation", "mitigation", "cross_cutting", "value", "low", "high",
+    "amount", "adaptation", "mitigation", "cross_cutting", "unsplit", "value", "low",
+    "high",
 )  # fmt: skip
 
 
@@ -120,13 +121,24 @@ class Result:
             for method in self.spec.methods
             if method.coefficients == "provider"
         }
-        return explain(self.spec, release=self.meta.release, fallbacks=fallbacks)
+        unsplit = (
+            self._rows.filter(pl.col("origin") == "attribution", pl.col("unsplit") != 0)
+            .group_by("method")
+            .agg(pl.col("channel_code").unique().sort())
+            .collect()
+        )
+        return explain(
+            self.spec,
+            release=self.meta.release,
+            fallbacks=fallbacks,
+            unsplit=dict(unsplit.iter_rows()),
+        )
 
     def share_of_total(self) -> Result:
         """The same result with every amount divided by all CRS flows of its key.
 
         The denominator is the release's `total_flows` for the same flow, year,
-        provider, recipient and Bi_Multi code; a row without a recipient, such as
+        provider, recipient and Bi_Multi code. A row without a recipient, such as
         attributed finance, divides by the sum over recipients. Totals cover every
         flow code, so under `oda_only` the share is ODA climate finance over all
         flows. A key missing from `total_flows` gives null shares. The rows and the
@@ -169,11 +181,13 @@ class Quality:
     def summary(self) -> pl.DataFrame:
         """Per provider: link rate, linked share above 0.8, label sources, status split.
 
-        Shares are of the climate value of commitments. `link_rate` is the share that
-        traces to CRS records, and `linked_high_probability_share` the part of that
-        whose most probable link is at least 0.8. `grant_equiv_coverage` is the
-        share of linked records with a grant equivalent, weighted by linked climate
-        value over the years that have linked records.
+        Shares are of the climate value of counted commitments. `link_rate` is the
+        share that traces to CRS records, and `linked_high_probability_share` the
+        part of that whose most probable link is at least 0.8. `grant_equiv_coverage`
+        is the share of linked records with a grant equivalent, weighted by linked
+        climate value over the years that have linked records. `repeat_climate_usd`
+        is the climate value of rows that repeat an earlier vintage, which every
+        total leaves out. Their disbursements count on the row they repeat.
         """
         climate = pl.col("climate_usd").sum()
         linked = pl.col("linked_usd").sum()
@@ -182,6 +196,7 @@ class Quality:
         rates = self.table._frame.group_by("provider_code").agg(
             pl.col("commitments").sum(),
             climate_usd=climate,
+            repeat_climate_usd=pl.col("repeat_climate_usd").sum(),
             link_rate=linked / climate,
             linked_high_probability_share=pl.col("linked_high_probability_usd").sum()
             / linked,
@@ -210,13 +225,17 @@ def explain(
     *,
     release: str,
     fallbacks: Mapping[str, Sequence[int]] | None = None,
+    unsplit: Mapping[str, Sequence[int]] | None = None,
 ) -> str:
     """The method, view, flow, filters and units behind `spec`, in plain language.
 
     `fallbacks` maps each provider-coefficient method's label to the providers that
-    have no confirmed coefficient of their own in the release.
+    have no confirmed coefficient of their own in the release. `unsplit` maps a
+    method's label to the agency channel codes whose climate share has no split by
+    objective.
     """
     fallbacks = fallbacks or {}
+    unsplit = unsplit or {}
     methods = spec.methods
     lines = [f"Release {release}."]
     for method in methods:
@@ -226,10 +245,20 @@ def explain(
                 f"Provider coefficients: providers {', '.join(map(str, missing))} "
                 f"have no confirmed coefficient and take {method.significant:g}."
             )
+        if channels := unsplit.get(label(method)):
+            lines.append(
+                f"Channels {', '.join(map(str, channels))}: the climate share has no "
+                "split by objective, so their attributed value sits in unsplit."
+            )
     if len(methods) > 1:
         lines.append("low and high are the lowest and highest bound across methods.")
     lines.append(_VIEWS[spec.view])
     lines.append(_FLOWS[spec.flow])
+    lines.append(
+        "Commitments that repeat an earlier vintage are left out, and their "
+        "disbursements count on the row they repeat; snap.quality() reports their "
+        "value."
+    )
     filters = [
         f"{name} {', '.join(map(str, values))}"
         for name, values in (
@@ -271,7 +300,8 @@ _FLOWS = {
     "disbursements": "Flow: disbursements allocated to climate commitments, weighted "
     "by the commitment's markers; low and high scale by each allocation's bounds. "
     "Attributed finance counts core contributions disbursed. The modelled table "
-    "holds providers that report no disbursements.",
+    "holds a disbursement range for commitments whose disbursements no source "
+    "reports.",
     "grant_equivalent": "Flow: grant equivalent of disbursements, shared across the "
     "commitments a record funds in proportion to the amount each receives; records "
     "without one stay missing, and snap.quality() reports coverage.",

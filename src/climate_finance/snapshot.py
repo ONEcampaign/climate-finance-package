@@ -85,8 +85,14 @@ class Snapshot:
         raise NotImplementedError("slice S19b")
 
     def disbursement_profile(self) -> pl.DataFrame:
-        """Cumulative disbursed share of traceable value by years since commitment."""
-        raise NotImplementedError("slice S09c")
+        """Cumulative disbursed share of traceable climate value by years since
+        commitment.
+
+        One row per group (`all`, `bilateral`, `multilateral`) and year since
+        commitment, with `vintages`, the number of commitment years observed that
+        long.
+        """
+        return self.table("disbursement_profile").sort("group", "years_since").collect()
 
 
 def load(

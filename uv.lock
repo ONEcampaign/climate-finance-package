@@ -21,6 +21,19 @@ wheels = [
 ]
 
 [[package]]
+name = "anyio"
+version = "4.15.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "idna" },
+    { name = "typing-extensions", marker = "python_full_version < '3.15'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a9/d2/f4d173e22df740bc37b1db102b386ba719b66e95b0f0d751f556b387e6d2/anyio-4.15.1.tar.gz", hash = "sha256:9f28306018cbd6d329e64a36d58256edff76dd996fe423bc957326e578b82a94", size = 276966, upload-time = "2026-09-05T10:42:39.44Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/12/b8/4bd346e22b28902df4d651910f5242c28d84e4a5c2435ca5c3f797ed7e2e/anyio-4.15.1-py3-none-any.whl", hash = "sha256:6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101", size = 132079, upload-time = "2026-09-05T10:42:37.923Z" },
+]
+
+[[package]]
 name = "attrs"
 version = "25.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -119,6 +132,12 @@ dependencies = [
 
 [package.optional-dependencies]
 build = [
+    { name = "httpx" },
+    { name = "oda-reader" },
+    { name = "openpyxl" },
+    { name = "pyyaml" },
+    { name = "rapidfuzz" },
+    { name = "resolvekit" },
     { name = "rich" },
     { name = "typer" },
 ]
@@ -135,11 +154,17 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", marker = "extra == 'build'", specifier = ">=0.27.0" },
+    { name = "oda-reader", marker = "extra == 'build'", specifier = ">=1.12.0" },
+    { name = "openpyxl", marker = "extra == 'build'", specifier = ">=3.0.10" },
     { name = "pandas", marker = "extra == 'compat'", specifier = ">=2.2.2" },
     { name = "polars", specifier = ">=1.33.0" },
     { name = "pyarrow", specifier = ">=16.1.0" },
     { name = "pydantic", specifier = ">=2.10.0" },
     { name = "pydeflate", specifier = ">=2.6.2" },
+    { name = "pyyaml", marker = "extra == 'build'", specifier = ">=6.0.1" },
+    { name = "rapidfuzz", marker = "extra == 'build'", specifier = ">=3.8.0" },
+    { name = "resolvekit", marker = "extra == 'build'", specifier = ">=0.1.13" },
     { name = "rich", marker = "extra == 'build'", specifier = ">=13.8.0" },
     { name = "typer", marker = "extra == 'build'", specifier = ">=0.16.0" },
 ]
@@ -177,6 +202,43 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d8/28/3893324bcadf8f89b1616637468d766af3f625008c0735bf704fdfa86617/filelock-4.2.4.tar.gz", hash = "sha256:c6d8663535e1650ee430507b4ffbac7b464dd64b7647ea0112a9f406499d163d", size = 652444, upload-time = "2026-10-19T01:57:51.001Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e0/1b/5e74289a1878e666bb4b65fe5805a04cafcac2aa5f519ef1ead67ef91c56/filelock-4.2.4-py3-none-any.whl", hash = "sha256:301241438c57936ef93f4243a94f2559022268bfcf9b375a9a72eb0f8db8358e", size = 162475, upload-time = "2026-10-19T01:57:49.419Z" },
+]
+
+[[package]]
+name = "h11"
+version = "0.16.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/01/ee/02a2c011bdab74c6fb3c75474d40b3052059d95df7e73351460c8588d963/h11-0.16.0.tar.gz", hash = "sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1", size = 101250, upload-time = "2025-04-24T03:35:25.427Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl", hash = "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86", size = 37515, upload-time = "2025-04-24T03:35:24.344Z" },
+]
+
+[[package]]
+name = "httpcore"
+version = "1.0.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi" },
+    { name = "h11" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/06/94/82699a10bca87a5556c9c59b5963f2d039dbd239f25bc2a63907a05a14cb/httpcore-1.0.9.tar.gz", hash = "sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8", size = 85484, upload-time = "2025-04-24T22:06:22.219Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl", hash = "sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55", size = 78784, upload-time = "2025-04-24T22:06:20.566Z" },
+]
+
+[[package]]
+name = "httpx"
+version = "0.28.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "certifi" },
+    { name = "httpcore" },
+    { name = "idna" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b1/df/48c586a5fe32a0f01324ee087459e112ebb7224f646c0b5023f5e79e9956/httpx-0.28.1.tar.gz", hash = "sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc", size = 141406, upload-time = "2024-12-06T15:37:23.222Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl", hash = "sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad", size = 73517, upload-time = "2024-12-06T15:37:21.509Z" },
 ]
 
 [[package]]
@@ -365,7 +427,7 @@ wheels = [
 
 [[package]]
 name = "oda-reader"
-version = "1.11.4"
+version = "1.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
@@ -378,9 +440,9 @@ dependencies = [
     { name = "requests" },
     { name = "requests-cache" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2f/14/61180b9e947f64ed9b3a635c9fa3f33dd1a2961780428ad8186165c6649e/oda_reader-1.11.4.tar.gz", hash = "sha256:9fc00d5f84959e16977704ac24a5c98be8ce5ebd3a12a9e2dae3a08d18f02e98", size = 122403, upload-time = "2026-10-21T10:34:39.883Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/98/45/60f239ca860b4519f335dacf3ffc1f2b8f90428797d384287b80914e1033/oda_reader-1.12.0.tar.gz", hash = "sha256:ed08cd45ca38b9f39c713b78c1aeec63f73df2e90b1ae32a7c90b7ac4dff0216", size = 137671, upload-time = "2026-10-21T15:51:21.075Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/54/92/8f615ebee6a1131b11fb5e0e1dc48823eda8096309ba2bd9317e2f2dabfd/oda_reader-1.11.4-py3-none-any.whl", hash = "sha256:f72985bb0d2dff90d4e41495736119fc60f731d131a4b372127a9486ea66c447", size = 141748, upload-time = "2026-10-21T10:34:38.581Z" },
+    { url = "https://files.pythonhosted.org/packages/71/ab/b94218232c82397054cbd859f9b69f55bf6924a49b25c0638d2003a4bfea/oda_reader-1.12.0-py3-none-any.whl", hash = "sha256:309eedfde4af86f29ab877c3ea44e381ad1590d0b9332b9c465c392519c6cf12", size = 158155, upload-time = "2026-10-21T15:51:20.017Z" },
 ]
 
 [[package]]

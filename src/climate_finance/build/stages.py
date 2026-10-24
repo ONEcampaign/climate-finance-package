@@ -2,7 +2,8 @@
 
 A stage function takes a `StageContext` and returns its tables by name. It reads
 earlier stages' tables through `StageContext.read`, and the runner validates, sorts
-and writes what it returns to `<out_dir>/<release>/<stage>/<table>.parquet`.
+and writes what it returns to `<out_dir>/<release>/<stage>/<table>.parquet`. A
+stage's `seal` runs on the written tables before they replace the stage's directory.
 """
 
 from collections.abc import Callable, Mapping
@@ -36,9 +37,19 @@ class Stage(StrEnum):
     ASSEMBLE = "assemble"
 
 
+def stage_dir(release_dir: Path, stage: str) -> Path:
+    """Where `stage` writes its tables."""
+    return release_dir / stage
+
+
 def table_path(release_dir: Path, stage: str, table: str) -> Path:
     """Where `stage` writes `table`."""
-    return release_dir / stage / f"{table}.parquet"
+    return stage_dir(release_dir, stage) / f"{table}.parquet"
+
+
+def raw_dir(release_dir: Path) -> Path:
+    """Where fetch writes the raw source files that normalise reads."""
+    return release_dir / "raw"
 
 
 @dataclass(frozen=True)
@@ -49,6 +60,11 @@ class StageContext:
     release_dir: Path
     config: BuildConfig
     offline: bool
+
+    @property
+    def raw_dir(self) -> Path:
+        """Where fetch writes the raw source files that normalise reads."""
+        return raw_dir(self.release_dir)
 
     def read(self, stage: str, table: str) -> pl.LazyFrame:
         """Scan a table an earlier stage wrote.
@@ -62,17 +78,32 @@ class StageContext:
         return pl.scan_parquet(path)
 
 
+type Seal = Callable[
+    [StageContext, Mapping[str, pl.DataFrame], Mapping[str, str], Path], None
+]
+
+
 @dataclass(frozen=True)
 class StageDef:
-    """One registry entry: a stage name, its function and the tables it writes."""
+    """One registry entry: a stage name, its function and the tables it writes.
+
+    `seal` takes the context, the validated tables, their sha256 and the temporary
+    directory they were written to. It may raise to refuse them or add files.
+    """
 
     name: str
     run: Callable[[StageContext], StageOutput]
     tables: Mapping[str, TableSchema]
+    seal: Seal | None = None
 
 
-def _entry(stage: Stage, run: Callable[[StageContext], StageOutput]) -> StageDef:
-    return StageDef(name=stage, run=run, tables=STAGE_TABLES[stage])
+def _entry(
+    stage: Stage,
+    run: Callable[[StageContext], StageOutput],
+    *,
+    seal: Seal | None = None,
+) -> StageDef:
+    return StageDef(name=stage, run=run, tables=STAGE_TABLES[stage], seal=seal)
 
 
 REGISTRY: tuple[StageDef, ...] = (
@@ -84,5 +115,5 @@ REGISTRY: tuple[StageDef, ...] = (
     _entry(Stage.REVIEW, review.run_review),
     _entry(Stage.LABEL, label.run_label),
     _entry(Stage.MEASURE, measure.run_measure),
-    _entry(Stage.ASSEMBLE, release.run_assemble),
+    _entry(Stage.ASSEMBLE, release.assemble, seal=release.seal_release),
 )
