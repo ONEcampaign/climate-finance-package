@@ -300,7 +300,8 @@ def test_with_split_halves_labelled_pairs_by_their_commitment() -> None:
 
 def test_sibling_lines_counts_the_other_lines_of_a_project_and_year() -> None:
     # P1 commits three lines in 2012, one of them twice, and one line in 2013; c5
-    # has no project number and d1 commits nothing.
+    # has no project number and d1 commits nothing. c2 and c3b are in no pair and
+    # still count as c1's siblings.
     units = pl.DataFrame(
         {
             "unit_id": ["c1", "c2", "c3", "c3b", "c4", "c5", "d1"],
@@ -313,8 +314,12 @@ def test_sibling_lines_counts_the_other_lines_of_a_project_and_year() -> None:
         },
         schema_overrides={"donor_code": pl.Int32, "agency_code": pl.Int32},
     )
-    lines = dict(sibling_lines(units).iter_rows())
-    assert lines == {"c1": 2, "c2": 2, "c3": 2, "c3b": 2, "c4": 0}
+    pairs = pl.DataFrame(
+        {"left_id": ["d1"] * 5, "right_id": ["c4", "c1", "c3", "c5", "c1"]}
+    )
+    out = sibling_lines(pairs, units=units)
+    assert out.select("left_id", "right_id").equals(pairs)
+    assert out["sibling_lines"].to_list() == [0, 2, 2, None, 2]
 
 
 def test_a_private_donor_scores_only_pairs_under_one_project_number() -> None:
