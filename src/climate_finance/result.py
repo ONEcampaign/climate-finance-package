@@ -26,6 +26,7 @@ from climate_finance.spec import (
     ODA_FLOW_CODES,
     Spec,
 )
+from climate_finance.sums import ordered_sum
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -243,26 +244,28 @@ class Quality:
         vintage, which every total leaves out. Their disbursements count on the row
         they repeat.
         """
-        climate = pl.col("climate_usd").sum()
-        linked = pl.col("linked_usd").sum()
+        climate = ordered_sum(pl.col("climate_usd"))
+        linked = ordered_sum(pl.col("linked_usd"))
         coverage = pl.col("grant_equiv_coverage")
         known = coverage.is_not_null()
         rates = self.table._frame.group_by("provider_code").agg(
+            # A count, and an integer sum is exact in any order.
             pl.col("commitments").sum(),
             climate_usd=climate,
             repeat_climate_usd=pl.col("repeat_climate_usd").sum(),
             link_rate=linked / climate,
-            certain_route_share=pl.col("certain_route_usd").sum() / climate,
-            model_labelled_share=pl.col("model_labelled_usd").sum() / climate,
-            report_labelled_share=pl.col("report_labelled_usd").sum() / climate,
+            certain_route_share=ordered_sum(pl.col("certain_route_usd")) / climate,
+            model_labelled_share=ordered_sum(pl.col("model_labelled_usd")) / climate,
+            report_labelled_share=ordered_sum(pl.col("report_labelled_usd")) / climate,
             grant_equiv_coverage=pl.when(known.any()).then(
-                (coverage * pl.col("linked_usd")).sum()
-                / pl.col("linked_usd").filter(known).sum()
+                ordered_sum(coverage * pl.col("linked_usd"))
+                / ordered_sum(pl.col("linked_usd").filter(known))
             ),
         )
         split = self.status._frame.group_by("provider_code").agg(
             (
-                pl.col("climate_usd").filter(pl.col("status") == status).sum() / climate
+                ordered_sum(pl.col("climate_usd").filter(pl.col("status") == status))
+                / climate
             ).alias(f"{status}_share")
             for status in STATUSES
         )
