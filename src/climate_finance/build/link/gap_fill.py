@@ -220,6 +220,8 @@ def route_funds(
             allocated_high_usd=rise * pl.col("face_usd"),
             rule=pl.lit("iati"),
             disbursement_source=pl.lit("iati"),
+            link_method=pl.lit(None, pl.String),
+            commitment_unit_id=pl.lit(None, pl.String),
         )
     )
     reports = _reporting_publishers(activities, committed_before=committed_before)
@@ -539,6 +541,8 @@ def fill_from_ledgers(
             allocated_high_usd=amount,
             rule=pl.lit("bank_ledger"),
             disbursement_source=pl.lit("bank_ledger"),
+            link_method=pl.lit(None, pl.String),
+            commitment_unit_id=pl.lit(None, pl.String),
         )
     )
 

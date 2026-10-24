@@ -478,6 +478,8 @@ def _stage_release(tmp_path: Path) -> Path:
             "allocated_high_usd": [20.0, 5.0],
             "rule": ["fifo", "excess"],
             "disbursement_source": ["crs", "crs"],
+            "link_method": ["crs_id", None],
+            "commitment_unit_id": ["u-commitment", None],
         },
         schema_overrides={"year": pl.Int16},
     )

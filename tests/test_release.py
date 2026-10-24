@@ -3,7 +3,7 @@ from link to assemble, and the fill and review pass-through."""
 
 import shutil
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import numpy as np
@@ -20,7 +20,10 @@ from climate_finance.build import (
     run_stages,
     write_table,
 )
+from climate_finance.build.allocate import allocate, allocate_to_rows, counted_rows
 from climate_finance.build.errors import ConfigError, ReleaseInvariantError
+from climate_finance.build.link.keys import build_units, link_by_keys
+from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.stages import REGISTRY, Stage, StageContext, table_path
 from climate_finance.errors import SchemaError
 from climate_finance.schema import STAGE_TABLES
@@ -228,54 +231,77 @@ def test_a_fill_takes_its_commitments_facts_and_its_records_total() -> None:
     assert rows.columns == list(schema.DISBURSEMENTS.columns)
 
 
-def test_an_allocation_moved_from_a_repeat_keeps_the_repeats_link() -> None:
-    # R2 repeats R1 and sits in the crdf_crs group that traced record d20; allocate
-    # moved d20's allocation from R2 to R1, which has no group of its own.
-    links = pl.LazyFrame(
+def test_a_disbursement_carries_the_ledger_check_of_the_link_that_filled_it() -> None:
+    # One CRDF row covers m1 and m2. d22 repeats m2's date and title, so its own
+    # commitment m2 takes all 60, and the row carries the ledger's check of that
+    # link, though m1's unit sorts first.
+    crs = crs_records(
         {
-            "task": ["crdf_crs", "trace"],
-            "left_id": ["R2", "u-d20"],
-            "right_id": ["u-c19", "u-c19"],
-            "group_id": ["g", None],
-            "probability": [1.0, 0.9],
-            "link_method": ["crs_id_purpose", "within_year"],
-            "ledger_check": [None, None],
-        }
+            "record_id": "m1",
+            "year": 2021,
+            "crs_id": "X2",
+            "commitment_usd": 100.0,
+            "commitment_date": date(2021, 6, 30),
+            "title": "Module one: rural water",
+        },
+        {
+            "record_id": "m2",
+            "year": 2022,
+            "crs_id": "X2",
+            "commitment_usd": 100.0,
+            "commitment_date": date(2022, 6, 30),
+            "title": "Module two: feeder roads",
+        },
+        {
+            "record_id": "d22",
+            "year": 2022,
+            "crs_id": "X2",
+            "disbursement_usd": 60.0,
+            "commitment_date": date(2022, 6, 30),
+            "title": "Feeder roads, module two",
+        },
     )
-    units = pl.LazyFrame({"unit_id": ["u-d20"], "record_ids": [["d20"]]})
-    allocated = pl.LazyFrame({"row_id": ["R1"], "record_id": ["d20"]})
+    crdf = counted_rows(
+        crdf_rows(
+            {"row_id": "R", "year": 2021, "crs_id": "X2", "face_usd": 200.0}
+        ).lazy()
+    )
+    units = build_units(crs.lazy()).collect()
+    m1, m2 = (
+        units.filter(pl.col("record_ids").list.contains(record))["unit_id"].item()
+        for record in ("m1", "m2")
+    )
+    assert m1 < m2
+    trace = link_by_keys(units, first_year=2010).with_columns(
+        ledger_check=pl.when(pl.col("right_id") == m2).then(pl.lit("confirmed"))
+    )
+    links = pl.concat(
+        [
+            trace,
+            trace.select(
+                task=pl.lit("crdf_crs"),
+                left_id=pl.lit("R"),
+                right_id="right_id",
+                group_id=pl.lit("g"),
+                probability=pl.lit(1.0),
+                link_method=pl.lit("within_year"),
+            ),
+        ],
+        how="diagonal",
+    ).lazy()
+    population = trace_population(crs.lazy())
+    pairs = allocate(units.lazy(), crs=population, links=links)
+    allocations = allocate_to_rows(
+        pairs, crdf=crdf, units=units.lazy(), crs=population, links=links
+    )
 
-    carried = release.carrying_links(
-        allocated, crdf=CRDF.lazy(), units=units, links=links
+    rows = release.release_disbursements(
+        allocations.lazy(), crdf=crdf, crs=crs.lazy(), units=units.lazy(), links=links
     ).collect()
 
-    assert carried.select("row_id", "record_id", "link_method").rows() == [
-        ("R1", "d20", "within_year")
+    assert rows.select("row_id", "allocated_usd", "ledger_check").rows() == [
+        ("R", 60.0, "confirmed")
     ]
-
-
-def test_a_pair_under_two_methods_is_carried_by_the_one_allocation_runs_first() -> None:
-    # Key repair runs before the crosswalk, so it carries the pair even where the
-    # crosswalk's link is the more probable.
-    links = pl.LazyFrame(
-        {
-            "task": ["crdf_crs", "trace", "trace"],
-            "left_id": ["R1", "u-d20", "u-d20"],
-            "right_id": ["u-c19", "u-c19", "u-c19"],
-            "group_id": ["g", "crosswalk|1|1", "repair|1"],
-            "probability": [1.0, 1.0, 0.9],
-            "link_method": ["within_year", "crosswalk", "repair_title_recipient"],
-            "ledger_check": [None, None, None],
-        }
-    )
-    units = pl.LazyFrame({"unit_id": ["u-d20"], "record_ids": [["d20"]]})
-    allocated = pl.LazyFrame({"row_id": ["R1"], "record_id": ["d20"]})
-
-    carried = release.carrying_links(
-        allocated, crdf=CRDF.lazy(), units=units, links=links
-    ).collect()
-
-    assert carried["link_method"].to_list() == ["repair_title_recipient"]
 
 
 def test_quality_counts_repeats_on_their_own_line(release_dir: Path) -> None:

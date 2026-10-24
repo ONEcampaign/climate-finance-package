@@ -35,7 +35,6 @@ from climate_finance.schema import (
     DISBURSEMENT_PROFILE,
     DISBURSEMENTS,
     INVARIANT_TOLERANCE_USD,
-    LINK_METHODS,
     PROVIDER_COEFFICIENTS,
     QUALITY,
     RELEASE_TABLES,
@@ -202,7 +201,7 @@ def release_disbursements(
 
     A CRS allocation carries the record's own facts, the markers it inherits from
     the commitment (`label.inherit_markers`), and the link that carried it (see
-    `carrying_links`). A fill (`fill_disbursements`) has no CRS record or link.
+    `with_carrying_links`). A fill (`fill_disbursements`) has no CRS record or link.
     """
     allocated = allocations.filter(
         pl.col("row_id").is_not_null(), pl.col("rule") != "excess"
@@ -223,14 +222,12 @@ def release_disbursements(
         record_grant_equiv_usd="grant_equiv_usd",
     )
     traced = (
-        inherit_markers(from_crs, commitments=crdf, crs=crs)
-        .join(record, on="record_id", how="left", validate="m:1")
-        .join(
-            carrying_links(from_crs, crdf=crdf, units=units, links=links),
-            on=["row_id", "record_id"],
-            how="left",
-            validate="m:1",
+        inherit_markers(
+            with_carrying_links(from_crs, units=units, links=links),
+            commitments=crdf,
+            crs=crs,
         )
+        .join(record, on="record_id", how="left", validate="m:1")
         .select(list(DISBURSEMENTS.columns))
     )
     filled = fill_disbursements(
@@ -286,66 +283,31 @@ def fill_disbursements(fills: pl.LazyFrame, *, crdf: pl.LazyFrame) -> pl.LazyFra
     )
 
 
-def carrying_links(
-    allocated: pl.LazyFrame,
-    *,
-    crdf: pl.LazyFrame,
-    units: pl.LazyFrame,
-    links: pl.LazyFrame,
+def with_carrying_links(
+    allocated: pl.LazyFrame, *, units: pl.LazyFrame, links: pl.LazyFrame
 ) -> pl.LazyFrame:
-    """Per allocation's (row_id, record_id), the link that carried it.
-
-    That is the `trace` link from the record's unit to a commitment unit of a
-    `crdf_crs` group of the row or of a row that repeats it whose method comes
-    first in `LINK_METHODS`, since allocation runs that method's pass first, then
-    the most probable, then the lowest unit id. Allocate moves a repeat's
-    allocations to its first row (`repeat_of`), so the link can sit in the
-    repeat's group.
-    """
-    record_units = units.select(d_unit="unit_id", record_id="record_ids").explode(
+    """CRS allocations with the `link_probability` and `ledger_check` of the
+    `trace` link that allocation names as their carrier, from the record's unit to
+    `commitment_unit_id` under `link_method`."""
+    record_units = units.select(left_id="unit_id", record_id="record_ids").explode(
         "record_id"
     )
-    groups = links.filter(pl.col("task") == "crdf_crs")
-    first_rows = crdf.select("row_id", first_row=pl.coalesce("repeat_of", "row_id"))
-    row_units = (
-        groups.select(row_id="left_id", group_id="group_id")
-        .unique()
-        .join(first_rows, on="row_id", how="left")
-        .select(row_id=pl.coalesce("first_row", "row_id"), group_id="group_id")
-        .unique()
-        .join(
-            groups.select(c_unit="right_id", group_id="group_id").unique(),
-            on="group_id",
-        )
-        .drop("group_id")
-    )
     trace = links.filter(pl.col("task") == "trace").select(
+        "left_id",
         "link_method",
         "ledger_check",
-        method_rank=pl.col("link_method").replace_strict(
-            {method: rank for rank, method in enumerate(LINK_METHODS)},
-            return_dtype=pl.Int16,
-        ),
-        d_unit="left_id",
-        c_unit="right_id",
+        commitment_unit_id="right_id",
         link_probability="probability",
     )
     return (
-        allocated.select("row_id", "record_id")
-        .unique()
-        .join(record_units, on="record_id")
-        .join(row_units, on="row_id")
-        .join(trace, on=["d_unit", "c_unit"])
-        .sort(
-            "row_id",
-            "record_id",
-            "method_rank",
-            "link_probability",
-            "c_unit",
-            descending=[False, False, False, True, False],
+        allocated.join(record_units, on="record_id", how="left", validate="m:1")
+        .join(
+            trace,
+            on=["left_id", "commitment_unit_id", "link_method"],
+            how="left",
+            validate="m:1",
         )
-        .group_by("row_id", "record_id", maintain_order=True)
-        .agg(pl.col("link_method", "link_probability", "ledger_check").first())
+        .drop("left_id")
     )
 
 

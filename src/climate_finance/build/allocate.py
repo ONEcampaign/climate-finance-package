@@ -107,6 +107,9 @@ _PAIRS_SCHEMA = pl.Schema(
         "allocated_usd": pl.Float64(),
         "rule": pl.String(),
         "certain": pl.Boolean(),
+        "pass": pl.UInt32(),
+        "link_method": pl.String(),
+        "commitment_unit_id": pl.String(),
     }
 )
 
@@ -375,6 +378,7 @@ def _trace_pairs(
             "c_unit",
             "year",
             "certain",
+            "method",
             rank=rank,
             class_year=pl.coalesce(floor, pl.when(same_year).then(year)),
             order=order,
@@ -448,6 +452,7 @@ def _trace_pairs(
         "order",
         "rule",
         "certain",
+        "method",
     )
     return pairs, commitments
 
@@ -537,12 +542,14 @@ def allocate(
         windowed: window donors (see `window_donors`).
 
     Returns:
-        One row per (commitment record, disbursement record) that received an
-        amount: `commitment_id` (the commitment's CRS record_id), `record_id`,
-        `year` (the record's), `allocated_usd`, `rule` and `certain`, whether a
-        certain pair carried it. It also holds a `rule="excess"` row, not certain,
-        with a null `commitment_id` for each record its groups could not take in
-        full.
+        One row per pass and (commitment record, disbursement record) that received
+        an amount: `commitment_id` (the commitment's CRS record_id), `record_id`,
+        `year` (the record's), `allocated_usd`, `rule`, `certain`, whether a
+        certain pair carried it, and the trace link that carried it: `pass`, in
+        run order, its `link_method`, and `commitment_unit_id`, the commitment's
+        unit, which the link joins to the record's unit. It also holds a
+        `rule="excess"` row, not certain, with a null `commitment_id`, pass and
+        link for each record its groups could not take in full.
 
     Raises:
         AllocationInputError: when the links break the contract in the module
@@ -618,23 +625,34 @@ def allocate(
             )
         )
 
-    commitment_ids = commitments.select("c_idx", commitment_id="record_id")
-    certain = pairs.select("pass", "record_id", "c_idx", "certain")
+    commitment_ids = commitments.select(
+        "c_idx", commitment_id="record_id", commitment_unit_id="unit_id"
+    )
+    carried = pairs.select(
+        "pass", "record_id", "c_idx", "certain", link_method="method"
+    )
     filled_pairs = (
         pl.concat(allocated)
-        .join(certain, on=["pass", "record_id", "c_idx"], validate="1:1")
+        .join(carried, on=["pass", "record_id", "c_idx"], validate="1:1")
         .join(commitment_ids, on="c_idx")
         .drop("c_idx")
         .select(_PAIRS_SCHEMA.names())
     )
-    excess = records.select(
-        commitment_id=pl.lit(None, dtype=pl.String),
-        record_id="record_id",
-        year="year",
-        allocated_usd=pl.Series(left),
-        rule=pl.lit("excess"),
-        certain=pl.lit(value=False),
-    ).filter(pl.col("allocated_usd") > 0)
+    excess = (
+        records.select(
+            pl.lit(None).alias("pass"),
+            commitment_id=pl.lit(None),
+            record_id="record_id",
+            year="year",
+            allocated_usd=pl.Series(left),
+            rule=pl.lit("excess"),
+            certain=pl.lit(value=False),
+            link_method=pl.lit(None),
+            commitment_unit_id=pl.lit(None),
+        )
+        .filter(pl.col("allocated_usd") > 0)
+        .select(_PAIRS_SCHEMA.names())
+    )
     return pl.concat([filled_pairs.cast(_PAIRS_SCHEMA), excess.cast(_PAIRS_SCHEMA)])
 
 
@@ -776,7 +794,10 @@ def allocate_to_rows(
     gave it, excess included. A repeat row's share then moves to the row it repeats
     (see `_to_first_rows`). `allocated_low_usd` sums the amounts certain pairs
     carried to rows of groups whose `crdf_crs` links all take certain routes, and
-    `allocated_high_usd` equals `allocated_usd`.
+    `allocated_high_usd` equals `allocated_usd`. `link_method` and
+    `commitment_unit_id` name the trace link that carried the row's allocation:
+    that of the first pass to carry any of it, and within that pass the pair that
+    carried the most, then the lowest commitment unit.
     """
     weights, spread, unit_groups = _commitment_groups(
         crdf, units=units, crs=crs, links=links
@@ -793,6 +814,7 @@ def allocate_to_rows(
         .select(commitment_id="record_id", group_id="group_id")
     )
     grouped = pairs.join(record_groups, on="commitment_id", how="left")
+    carrier = ("pass", "link_method", "commitment_unit_id")
     to_rows = (
         grouped.join(weights, on="group_id")
         .join(routes, on="group_id")
@@ -802,28 +824,39 @@ def allocate_to_rows(
             "year",
             "rule",
             "commitment_id",
+            *carrier,
             certain=pl.col("certain") & pl.col("route_certain"),
             allocated_usd=pl.col("allocated_usd") * pl.col("weight"),
         )
     )
     to_rows = _to_first_rows(to_rows, crdf=crdf)
     rest = grouped.join(spread, on="group_id", how="left").select(
-        row_id=pl.lit(None, dtype=pl.String),
-        record_id="record_id",
-        year="year",
-        rule="rule",
-        commitment_id="commitment_id",
-        certain="certain",
+        pl.lit(None, dtype=pl.String).alias("row_id"),
+        "record_id",
+        "year",
+        "rule",
+        "commitment_id",
+        *carrier,
+        "certain",
         allocated_usd=pl.col("allocated_usd") * (1.0 - pl.col("spread").fill_null(0.0)),
     )
     amount = pl.col("allocated_usd")
     return (
         pl.concat([to_rows, rest])
         .filter(amount > 0)
-        .sort("row_id", "record_id", "year", "rule", "commitment_id", "certain")
+        .sort("row_id", "record_id", "year", "rule", "commitment_id", "pass", "certain")
         .group_by("row_id", "record_id", "year", "rule", maintain_order=True)
         .agg(
             ordered_sum(amount),
+            pl.col("link_method", "commitment_unit_id")
+            .sort_by(
+                "pass",
+                amount,
+                "commitment_unit_id",
+                descending=[False, True, False],
+                nulls_last=True,
+            )
+            .first(),
             allocated_low_usd=ordered_sum(amount.filter(pl.col("certain"))),
         )
         .select(
@@ -832,9 +865,11 @@ def allocate_to_rows(
             "year",
             "allocated_usd",
             "allocated_low_usd",
-            allocated_high_usd=amount,
-            rule="rule",
-            disbursement_source=pl.lit("crs"),
+            amount.alias("allocated_high_usd"),
+            "rule",
+            pl.lit("crs").alias("disbursement_source"),
+            "link_method",
+            "commitment_unit_id",
         )
     )
 
@@ -867,6 +902,7 @@ def _to_first_rows(to_rows: pl.DataFrame, *, crdf: pl.LazyFrame) -> pl.DataFrame
             "year",
             "rule",
             "commitment_id",
+            "pass",
             "certain",
         )
         .with_columns(before=amount.cum_sum().over("first") - amount)
@@ -876,7 +912,16 @@ def _to_first_rows(to_rows: pl.DataFrame, *, crdf: pl.LazyFrame) -> pl.DataFrame
             .otherwise(amount)
         )
     )
-    columns = ("record_id", "year", "rule", "commitment_id", "certain")
+    columns = (
+        "record_id",
+        "year",
+        "rule",
+        "commitment_id",
+        "pass",
+        "link_method",
+        "commitment_unit_id",
+        "certain",
+    )
     return pl.concat(
         [
             ordered.select(

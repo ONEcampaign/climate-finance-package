@@ -435,6 +435,43 @@ def test_a_later_group_takes_only_what_the_earlier_one_left() -> None:
     assert excess_of(pairs) == {}
 
 
+def test_a_row_names_the_link_of_the_first_pass_that_filled_it() -> None:
+    # One CRDF row covers c19 and cB. The exact tier fills c19's 20 first; the
+    # repair pass then gives cB 80, more, but the row names the exact tier's link.
+    records = [{**CASCADE[0], "commitment_usd": 20.0}, *CASCADE[1:]]
+    crs, _, units, links = link(records)
+    rows = (("R", unit_of(units, "c19")), ("R", unit_of(units, "cB")))
+    links = pl.concat(
+        [
+            with_links(
+                links,
+                (
+                    unit_of(units, "d20"),
+                    unit_of(units, "cB"),
+                    "repair|x",
+                    "repair_new_crs_id",
+                ),
+            ),
+            as_exact_links(
+                pl.LazyFrame(
+                    [(*row, "g", "within_year") for row in rows],
+                    schema=["left_id", "right_id", "group_id", "link_method"],
+                    orient="row",
+                ),
+                task="crdf_crs",
+            ),
+        ]
+    )
+    crdf = counted_rows(crdf_frame([crdf_row("R", 2019, 100.0)]))
+    pairs = allocate(units, crs=crs, links=links)
+    table = allocate_to_rows(pairs, crdf=crdf, units=units, crs=crs, links=links)
+    assert pair(pairs, "cB", "d20") == pytest.approx(80.0)
+    carried = table.filter(pl.col("row_id") == "R")
+    assert carried.select("link_method", "commitment_unit_id").rows() == [
+        ("crs_id_purpose", unit_of(units, "c19"))
+    ]
+
+
 @pytest.mark.parametrize(
     ("disagree", "route"),
     [(False, "within_year"), (True, "within_year"), (False, "eib_list")],

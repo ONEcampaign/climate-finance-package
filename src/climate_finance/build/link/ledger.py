@@ -46,9 +46,11 @@ LEDGER_PUBLISHERS: Mapping[int, str] = {
     910: "bcie",
     1016: "gcf",
 }
-# The ledgers that can confirm a commitment undisbursed. These three match the CRS
-# for 99.7% to 100% of loan-years. In the others a key-year with no disbursement can
-# be a gap in the ledger's scope or timing, so silence proves nothing.
+# The ledgers whose silence on a key counts as zero disbursement: they can confirm a
+# commitment undisbursed, and a key they list with no disbursement transaction is
+# checked. These three match the CRS for 99.7% to 100% of loan-years. The others can
+# list an activity's commitment and leave out its disbursements, as the AfDB's IATI
+# files do for some loans, so their silence on a key proves nothing.
 UNDISBURSED_PUBLISHERS = ("ibrd", "ida", "iadb")
 
 
@@ -116,8 +118,9 @@ def check_ledgers(
     the ledger agree, `contradicted` when they do not, and `none` when the ledger
     does not list the key or holds an amount with no US dollar value that year, or
     when the disbursement unit carries another key or none, so the ledger cannot
-    speak to the pair. A key the ledger lists reads as zero in a year it shows no
-    disbursement.
+    speak to the pair. A key with a disbursement transaction reads as zero in a year
+    it shows none. So does a key an `UNDISBURSED_PUBLISHERS` ledger lists under any
+    transaction type.
 
     A `crdf_crs` link to a commitment of an `UNDISBURSED_PUBLISHERS` bank placed in
     `years` whose key shows no disbursement in either source from that year to the
@@ -127,7 +130,8 @@ def check_ledgers(
     Args:
         links: `links` rows.
         units: the link stage's `units`.
-        ledger: the `ledger` table, of which the `disbursement` rows count.
+        ledger: the `ledger` table, of which the `disbursement` rows count, and
+            every row of an `UNDISBURSED_PUBLISHERS` ledger lists its key.
         years: the first and last calendar years checked.
 
     Returns:
@@ -223,15 +227,16 @@ def check_ledgers(
 def _key_years(
     keyed: pl.LazyFrame, *, ledger: pl.LazyFrame, years: tuple[int, int]
 ) -> pl.LazyFrame:
-    """Each key the ledger lists, in each of `years`, with its CRS and ledger
-    amounts and `check`: `confirmed`, `contradicted`, or `none` when a ledger amount
-    has no US dollar value."""
+    """Each key the ledger checks, in each of `years`, with its CRS amount, its
+    ledger disbursement and `check`: `confirmed`, `contradicted`, or `none` when a
+    ledger amount has no US dollar value. The ledger checks a key with a
+    disbursement transaction, and every key of an `UNDISBURSED_PUBLISHERS` ledger."""
     first, last = years
-    counted = ledger.filter(
-        pl.col("transaction_type") == "disbursement", pl.col("year").is_not_null()
-    )
+    disbursement = pl.col("transaction_type") == "disbursement"
+    counted = ledger.filter(disbursement, pl.col("year").is_not_null())
     grid = (
-        counted.select("publisher", "key")
+        ledger.filter(disbursement | pl.col("publisher").is_in(UNDISBURSED_PUBLISHERS))
+        .select("publisher", "key")
         .unique()
         .join(
             pl.LazyFrame({"year": range(first, last + 1)}, schema={"year": pl.Int16}),

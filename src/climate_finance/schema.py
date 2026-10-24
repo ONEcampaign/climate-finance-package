@@ -583,6 +583,12 @@ ALLOCATIONS = _table(
     allocated_high_usd=_usd(),
     rule=_str(values=ALLOCATION_RULES),
     disbursement_source=_str(values=DISBURSEMENT_SOURCES),
+    # The trace link that carried the allocation, from the record's unit to
+    # `commitment_unit_id` under `link_method`. Where several carried parts of it,
+    # the one of allocation's first pass that carried the most. Null under rule
+    # `excess` and on fills.
+    link_method=_str(nullable=True, values=LINK_METHODS),
+    commitment_unit_id=_str(nullable=True),
 )
 
 # Status uses the linked CRS commitment's face. disbursed_usd is in the dollars

@@ -8,7 +8,7 @@ import pytest
 from climate_finance import schema
 from climate_finance.build.link.ledger import check_ledgers
 
-IDA, IBRD, AFDB, GERMANY = 905, 901, 913, 5
+IDA, IBRD, AFDB, IDB, GERMANY = 905, 901, 913, 909, 5
 KENYA, ETHIOPIA, AFRICA = 248, 238, 298
 YEARS = (2021, 2022)
 
@@ -35,6 +35,14 @@ UNITS = {
     "d_afdb6": (AFDB, "2100150000006", 2021, 2021, 15.0, KENYA),
     # An AfDB loan committed in 2021 that its ledger shows undisbursed.
     "c_afdb8": (AFDB, "2100150000008", 2021, 2021, 0.0, KENYA),
+    # An IDB loan committed in 2021 whose ledger lists its commitment alone.
+    "c_idb9": (IDB, "AR-L9009", 2021, 2021, 0.0, KENYA),
+    # An IDB loan the CRS shows disbursing and its ledger lists undisbursed.
+    "c_idb10": (IDB, "AR-L9010", 2020, 2020, 0.0, KENYA),
+    "d_idb10": (IDB, "AR-L9010", 2021, 2021, 15.0, KENYA),
+    # An AfDB loan the CRS shows disbursing and its ledger lists by commitment alone.
+    "c_afdb11": (AFDB, "2100150000011", 2020, 2020, 0.0, KENYA),
+    "d_afdb11": (AFDB, "2100150000011", 2021, 2021, 20.0, KENYA),
     # A provider with no ledger.
     "c_deu7": (GERMANY, "DE7", 2020, 2020, 0.0, KENYA),
     "d_deu7": (GERMANY, "DE7", 2021, 2021, 9.0, KENYA),
@@ -51,11 +59,14 @@ LINKS = [
     ("trace", "d_ida3", "c_ida3"),
     ("trace", "d_afdb6", "c_afdb6"),
     ("trace", "d_deu7", "c_deu7"),
+    ("trace", "d_idb10", "c_idb10"),
+    ("trace", "d_afdb11", "c_afdb11"),
     ("crdf_crs", "row_ibrd4", "c_ibrd4"),
     ("crdf_crs", "row_ibrd5", "c_ibrd5"),
     ("crdf_crs", "row_ida1", "c_ida1"),
     ("crdf_crs", "row_deu7", "c_deu7"),
     ("crdf_crs", "row_afdb8", "c_afdb8"),
+    ("crdf_crs", "row_idb9", "c_idb9"),
 ]
 
 # (publisher, key, year, currency, amount, amount_usd)
@@ -69,6 +80,12 @@ LEDGER = [
     ("ibrd", "IBRD50050", 2022, "USD", 10.0, 10.0),
     ("afdb", "2100150000006", 2021, "XDR", 11.0, None),
     ("afdb", "2100150000008", 2021, "USD", 0.0, 0.0),
+]
+# Commitment transactions, in the same form.
+LEDGER_COMMITMENTS = [
+    ("iadb", "AR-L9009", 2021, "USD", 80.0, 80.0),
+    ("iadb", "AR-L9010", 2020, "USD", 50.0, 50.0),
+    ("afdb", "2100150000011", 2020, "USD", 40.0, 40.0),
 ]
 
 
@@ -116,7 +133,7 @@ def _ledger() -> pl.LazyFrame:
             "publisher": publisher,
             "key": key,
             "activity_id": key,
-            "transaction_type": "disbursement",
+            "transaction_type": transaction_type,
             "date": date(year, 12, 31),
             "year": year,
             "currency": currency,
@@ -125,7 +142,11 @@ def _ledger() -> pl.LazyFrame:
             "title": None,
             "other_ids": [],
         }
-        for publisher, key, year, currency, amount, amount_usd in LEDGER
+        for transaction_type, rows in (
+            ("disbursement", LEDGER),
+            ("commitment", LEDGER_COMMITMENTS),
+        )
+        for publisher, key, year, currency, amount, amount_usd in rows
     ]
     columns = schema.LEDGER.columns
     return pl.LazyFrame(rows, schema={name: c.dtype for name, c in columns.items()})
@@ -159,10 +180,16 @@ def _check(links: pl.DataFrame, left_id: str, right_id: str) -> str | None:
         ("d_ida3", "c_ida3", "none"),
         # The ledger amount has no US dollar value.
         ("d_afdb6", "c_afdb6", "none"),
+        # 15 against a listed key with no disbursement.
+        ("d_idb10", "c_idb10", "contradicted"),
+        # The AfDB's silence on a key proves nothing.
+        ("d_afdb11", "c_afdb11", "none"),
         # No ledger for the provider.
         ("d_deu7", "c_deu7", None),
         # A commitment that disburses in neither source from its year on.
         ("row_ibrd4", "c_ibrd4", "confirmed_undisbursed"),
+        # The ledger lists the loan with a commitment and no disbursement.
+        ("row_idb9", "c_idb9", "confirmed_undisbursed"),
         ("row_ibrd5", "c_ibrd5", None),
         ("row_ida1", "c_ida1", None),
         ("row_deu7", "c_deu7", None),
