@@ -3,15 +3,23 @@
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass
 from html import escape
 from typing import TYPE_CHECKING
 
 import polars as pl
 from pydantic import BaseModel, ConfigDict
 
+from climate_finance.convert import Conversion
 from climate_finance.methods import Method, MethodRange, describe, label
 from climate_finance.schema import STATUSES
-from climate_finance.spec import Spec
+from climate_finance.spec import (
+    BILATERAL,
+    CORE_CONTRIBUTION,
+    MULTILATERAL_OUTFLOW,
+    ODA_FLOW_CODES,
+    Spec,
+)
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -21,6 +29,8 @@ AMOUNTS = (
     "amount", "adaptation", "mitigation", "cross_cutting", "unsplit", "value", "low",
     "high",
 )  # fmt: skip
+# The keys of a result table's rows, before the method.
+ROW_KEYS = ("year", "provider_code", "recipient_code", "bi_multi")
 
 
 class Table:
@@ -49,7 +59,11 @@ class Table:
 
 
 class Meta(BaseModel):
-    """Where a result came from: release, package and source versions."""
+    """Where a result came from: release, package and source versions.
+
+    `conversion` identifies the pydeflate version and exchange-rate or deflator factors
+    behind a converted result; it is None for USD at current prices.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -57,10 +71,15 @@ class Meta(BaseModel):
     package_version: str
     source_versions: dict[str, str]
     model_versions: dict[str, str]
+    conversion: Conversion | None = None
 
 
 class Result:
-    """The answer to one `Spec`: a table, the rows behind it, and its provenance."""
+    """The answer to one `Spec`: a table, the rows behind it, and its provenance.
+
+    `table` takes amounts. Under `spec.measure="share_of_total"` the result divides
+    them by `totals`, so a result always holds the measure its spec names.
+    """
 
     def __init__(
         self,
@@ -72,7 +91,9 @@ class Result:
         spec: Spec,
         meta: Meta,
     ) -> None:
-        self.table = table
+        self.table = (
+            _shares(table, totals) if spec.measure == "share_of_total" else table
+        )
         self.modelled = modelled
         self.spec = spec
         self.meta = meta
@@ -103,24 +124,28 @@ class Result:
             else pl.col(name) == value
             for name, value in filters.items()
         ]
-        rows = self._rows.filter(*conditions) if conditions else self._rows
-        return rows.collect()
+        return self._rows.filter(*conditions).collect()
 
     def explain(self) -> str:
         """A plain-language account of the method, flow and filters applied."""
-        fallbacks = {
-            label(method): self._rows.filter(
-                pl.col("method") == label(method),
-                pl.col("climate_share").is_null(),
-                pl.col("coefficient_basis").is_null(),
-            )
-            .select(pl.col("provider_code").unique().sort())
-            .collect()
-            .to_series()
-            .to_list()
+        provider = [
+            label(method)
             for method in self.spec.methods
             if method.coefficients == "provider"
-        }
+        ]
+        fallbacks = {}
+        if provider:
+            fallbacks = dict(
+                self._rows.filter(
+                    pl.col("method").is_in(provider),
+                    pl.col("climate_share").is_null(),
+                    pl.col("coefficient_basis").is_null(),
+                )
+                .group_by("method")
+                .agg(pl.col("provider_code").unique().sort())
+                .collect()
+                .iter_rows()
+            )
         unsplit = (
             self._rows.filter(pl.col("origin") == "attribution", pl.col("unsplit") != 0)
             .group_by("method")
@@ -132,6 +157,7 @@ class Result:
             release=self.meta.release,
             fallbacks=fallbacks,
             unsplit=dict(unsplit.iter_rows()),
+            conversion=self.meta.conversion,
         )
 
     def share_of_total(self) -> Result:
@@ -142,31 +168,38 @@ class Result:
         attributed finance, divides by the sum over recipients. Totals cover every
         flow code, so under `oda_only` the share is ODA climate finance over all
         flows. A key missing from `total_flows` gives null shares. The rows and the
-        modelled line keep their amounts.
+        modelled line keep their amounts. The result's spec has
+        `measure="share_of_total"`, so rerunning it returns the same shares.
         """
-        keys = ["year", "provider_code", "recipient_code", "bi_multi"]
-        table = (
-            self.table._frame.join(
-                self._totals,
-                on=keys,
-                how="left",
-                nulls_equal=True,
-                validate="m:1",
-                maintain_order="left",
-            )
-            .with_columns(pl.col(name) / pl.col("total") for name in AMOUNTS)
-            .drop("total")
-        )
+        if self.spec.measure == "share_of_total":
+            return self
         return Result(
-            table=Table(table),
+            table=self.table,
             modelled=self.modelled,
             rows=self._rows,
             totals=self._totals,
-            spec=self.spec,
+            spec=self.spec.replace(measure="share_of_total"),
             meta=self.meta,
         )
 
 
+def _shares(table: Table, totals: pl.LazyFrame) -> Table:
+    """`table` with every amount divided by the total of its key in `totals`."""
+    return Table(
+        table._frame.join(
+            totals,
+            on=ROW_KEYS,
+            how="left",
+            nulls_equal=True,
+            validate="m:1",
+            maintain_order="left",
+        )
+        .with_columns(pl.col(name) / pl.col("total") for name in AMOUNTS)
+        .drop("total")
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
 class Quality:
     """Link, coverage and status statistics for part of a release.
 
@@ -174,9 +207,8 @@ class Quality:
     climate value by provider and commitment status.
     """
 
-    def __init__(self, *, table: Table, status: Table) -> None:
-        self.table = table
-        self.status = status
+    table: Table
+    status: Table
 
     def summary(self) -> pl.DataFrame:
         """Per provider: link rate, linked share above 0.8, label sources, status split.
@@ -226,13 +258,14 @@ def explain(
     release: str,
     fallbacks: Mapping[str, Sequence[int]] | None = None,
     unsplit: Mapping[str, Sequence[int]] | None = None,
+    conversion: Conversion | None = None,
 ) -> str:
     """The method, view, flow, filters and units behind `spec`, in plain language.
 
     `fallbacks` maps each provider-coefficient method's label to the providers that
     have no confirmed coefficient of their own in the release. `unsplit` maps a
     method's label to the agency channel codes whose climate share has no split by
-    objective.
+    objective. `conversion` names the conversion factors of a converted result.
     """
     fallbacks = fallbacks or {}
     unsplit = unsplit or {}
@@ -260,13 +293,9 @@ def explain(
         "value."
     )
     filters = [
-        f"{name} {', '.join(map(str, values))}"
-        for name, values in (
-            ("providers", spec.providers),
-            ("recipients", spec.recipients),
-            ("years", spec.years),
-        )
-        if values is not None
+        _field_text(field, getattr(spec, field))
+        for field in ("providers", "recipients", "years")
+        if getattr(spec, field) is not None
     ]
     if filters:
         lines.append(f"Filtered to {'; '.join(filters)}.")
@@ -274,8 +303,8 @@ def explain(
         lines.append("Attributed finance has no recipient, so it drops out.")
     if spec.oda_only:
         lines.append(
-            "ODA only: flow codes 11, 13 and 19; rows without a flow code drop out, "
-            "and core contributions count as ODA."
+            f"ODA only: flow codes {_listing(ODA_FLOW_CODES)}; rows without a flow "
+            "code drop out, and core contributions count as ODA."
         )
     prices = "current prices" if spec.prices == "current" else f"{spec.prices} prices"
     source = (
@@ -284,16 +313,36 @@ def explain(
         else ", converted with OECD DAC exchange rates and deflators by provider "
         "(the DAC total for providers without their own series)"
     )
-    lines.append(f"Amounts in {spec.currency} at {prices}{source}.")
+    units = f"{spec.currency} at {prices}{source}"
+    if spec.measure == "share_of_total":
+        lines.append(
+            "Values are shares of all CRS flows of the same flow, year, provider, "
+            "recipient and Bi_Multi code, every flow code included. The rows and the "
+            f"modelled table hold amounts in {units}."
+        )
+    else:
+        lines.append(f"Amounts in {units}.")
+    if conversion is not None:
+        lines.append(
+            f"Conversion factors: pydeflate {conversion.pydeflate_version}, "
+            f"SHA-256 {conversion.factors_sha256}."
+        )
     return "\n".join(lines)
 
 
+def _listing(codes: Sequence[int]) -> str:
+    """`codes` as running text, such as "1, 3, 7 and 8"."""
+    *rest, last = map(str, codes)
+    return f"{', '.join(rest)} and {last}"
+
+
 _VIEWS = {
-    "recipient": "Recipient view: bilateral flows (Bi_Multi 1, 3, 7 and 8) and "
-    "multilateral outflows (code 4); core contributions (code 2) are left out.",
-    "provider": "Provider view: bilateral flows (Bi_Multi 1, 3, 7 and 8) plus each "
-    "provider's core contributions times the agency's climate share; code 2 and "
-    "code 4 rows are left out.",
+    "recipient": f"Recipient view: bilateral flows (Bi_Multi {_listing(BILATERAL)}) "
+    f"and multilateral outflows (code {MULTILATERAL_OUTFLOW}); core contributions "
+    f"(code {CORE_CONTRIBUTION}) are left out.",
+    "provider": f"Provider view: bilateral flows (Bi_Multi {_listing(BILATERAL)}) "
+    "plus each provider's core contributions times the agency's climate share; "
+    f"code {CORE_CONTRIBUTION} and code {MULTILATERAL_OUTFLOW} rows are left out.",
 }
 _FLOWS = {
     "commitments": "Flow: commitments at face value; low and high equal value.",
@@ -317,15 +366,15 @@ class Reconciliation:
 
     def rows(self, party: str, year: int) -> pl.DataFrame:
         """The project-level link behind one party and year."""
-        raise NotImplementedError("slice S19b")
+        raise NotImplementedError("BTR reconciliation is not implemented")
 
 
+@dataclass(frozen=True, kw_only=True)
 class Comparison:
     """Several results side by side, as a long table with one column per result."""
 
-    def __init__(self, *, table: Table, results: tuple[Result, ...]) -> None:
-        self.table = table
-        self.results = results
+    table: Table
+    results: tuple[Result, ...]
 
     def __repr__(self) -> str:
         return f"{self._title()}\n{self.table!r}"
@@ -334,13 +383,10 @@ class Comparison:
         return f"<p>{escape(self._title())}</p>{self.table._repr_html_()}"
 
     def _title(self) -> str:
-        columns = self.table._frame.collect_schema().names()[len(COMPARE_KEYS) :]
+        columns = self.table._frame.collect_schema().names()[len(ROW_KEYS) :]
         count = len(self.results)
         results = "result" if count == 1 else "results"
         return f"Comparison of {count} {results}: {'; '.join(columns)}"
-
-
-COMPARE_KEYS = ("year", "provider_code", "recipient_code", "bi_multi")
 
 
 def compare(*results: Result) -> Comparison:
@@ -364,16 +410,16 @@ def compare(*results: Result) -> Comparison:
             column = name if len(methods) == 1 else f"{name}: {method}"
             frames.append(
                 result.table._frame.filter(pl.col("method") == method).select(
-                    *COMPARE_KEYS, pl.col("value").alias(column)
+                    *ROW_KEYS, pl.col("value").alias(column)
                 )
             )
     table = frames[0]
     for frame in frames[1:]:
         table = table.join(
-            frame, on=COMPARE_KEYS, how="full", nulls_equal=True, coalesce=True
+            frame, on=ROW_KEYS, how="full", nulls_equal=True, coalesce=True
         )
     return Comparison(
-        table=Table(table.sort(COMPARE_KEYS, nulls_last=True)), results=results
+        table=Table(table.sort(ROW_KEYS, nulls_last=True)), results=results
     )
 
 
@@ -384,7 +430,7 @@ def _result_names(specs: Sequence[Spec]) -> list[str]:
     differing = [
         field
         for field in Spec.model_fields
-        if len({repr(getattr(spec, field)) for spec in specs}) > 1
+        if len({getattr(spec, field) for spec in specs}) > 1
     ] or ["method"]
     names = [
         ", ".join(_field_text(field, getattr(spec, field)) for field in differing)
@@ -402,6 +448,8 @@ def _field_text(field: str, value: object) -> str:
             return label(value)
         case "oda_only", bool():
             return "ODA only" if value else "all flows"
+        case "measure", _:
+            return "share of total" if value == "share_of_total" else "amounts"
         case "prices", _:
             return f"{value} prices"
         case "view", _:
@@ -426,6 +474,8 @@ def _title(spec: Spec, *, release: str) -> str:
         ),
         f"{spec.currency} at {_field_text('prices', spec.prices)}",
     ]
+    if spec.measure == "share_of_total":
+        parts[-1] = f"share of total; rows in {parts[-1]}"
     if spec.oda_only:
         parts.append("ODA only")
     return f"Result: {'; '.join(parts)}; release {release}"

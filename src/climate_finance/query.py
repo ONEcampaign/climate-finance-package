@@ -9,7 +9,8 @@ converts it, and sums the rows into the result table. Rows have one of three ori
   (`allocated_usd`, or for `flow="grant_equivalent"` the record's grant equivalent
   times allocated_usd over the record's disbursement),
   weighted by the markers and climate share it inherits from that commitment. `low`
-  and `high` scale by the allocation's own bounds.
+  and `high` weight the allocation's own bounds, `allocated_low_usd` and
+  `allocated_high_usd`, converted to grant equivalents the same way.
 - `attribution`: under `view="provider"`, a provider's core contribution of the
   spec's flow to an agency times the agency's climate share. An agency share with no
   split by objective counts in `unsplit`, with the objectives 0.
@@ -35,18 +36,29 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from climate_finance import catalogue
-from climate_finance.convert import convert
+from climate_finance.convert import convert, provenance
 from climate_finance.methods import OECD, Method, label, weights
-from climate_finance.result import AMOUNTS, Meta, Quality, Result, Table
-from climate_finance.spec import Spec, View
+from climate_finance.result import (
+    AMOUNTS,
+    ROW_KEYS,
+    Meta,
+    Quality,
+    Result,
+    Table,
+)
+from climate_finance.spec import (
+    BILATERAL,
+    CORE_CONTRIBUTION,
+    MULTILATERAL_OUTFLOW,
+    ODA_FLOW_CODES,
+    Flow,
+    Spec,
+    View,
+)
 
 if TYPE_CHECKING:
     from climate_finance.snapshot import Snapshot
 
-BILATERAL = (1, 3, 7, 8)
-MULTILATERAL_OUTFLOW = 4
-CORE_CONTRIBUTION = 2
-ODA_FLOW_CODES = (11, 13, 19)
 # EU Institutions and their channels: the EU budget, the EDF and the EIB, as
 # build/providers.toml maps them.
 EU_INSTITUTIONS = 918
@@ -55,7 +67,7 @@ EU_CHANNELS = (42001, 42003, 42004)
 # climate components first, then Jev, then the donor's markers.
 LABEL_PRECEDENCE = {"crdf": 0, "jev": 1, "marker": 2}
 
-KEYS = ("year", "provider_code", "recipient_code", "bi_multi", "method")
+KEYS = (*ROW_KEYS, "method")
 ROW_COLUMNS: dict[str, pl.DataType] = {
     "origin": pl.String(),
     "row_id": pl.String(),
@@ -91,8 +103,8 @@ _WEIGHT_INPUTS: dict[str, pl.DataType] = {
     "share_mitigation": pl.Float64(),
     "share_overlap": pl.Float64(),
     "share_unsplit": pl.Float64(),
-    "low_ratio": pl.Float64(),
-    "high_ratio": pl.Float64(),
+    "amount_low": pl.Float64(),
+    "amount_high": pl.Float64(),
     "significant": pl.Float64(),
 }
 
@@ -101,26 +113,28 @@ def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
     """Climate finance for `spec` from `snapshot`'s release tables."""
     methods = spec.methods
     if any(method.relevance == "jev" for method in methods):
-        raise NotImplementedError("relevance='jev' needs jev_level_map: slice S18b")
-
-    conditions = _conditions(
-        providers=spec.providers, recipients=spec.recipients, years=spec.years
-    )
-    if spec.oda_only:
-        conditions.append(
-            pl.col("flow_code").is_in(ODA_FLOW_CODES)
-            | (pl.col("origin") == "attribution")
+        raise NotImplementedError(
+            "relevance='jev' is not supported: releases carry no Jev level map"
         )
 
-    def filtered(frame: pl.LazyFrame) -> pl.LazyFrame:
-        return frame.filter(*conditions) if conditions else frame
-
-    base = filtered(_base_rows(snapshot, spec=spec))
+    filters = _conditions(
+        providers=spec.providers, recipients=spec.recipients, years=spec.years
+    )
+    conditions = filters
+    if spec.oda_only:
+        conditions = [
+            *filters,
+            pl.col("flow_code").is_in(ODA_FLOW_CODES)
+            | (pl.col("origin") == "attribution"),
+        ]
+    base = _base_rows(snapshot, flow=spec.flow, view=spec.view).filter(*conditions)
     weighted = []
     for method in methods:
         frame = base
         if spec.view == "provider":
-            attributed = filtered(_attributed_rows(snapshot, spec=spec, method=method))
+            attributed = _attributed_rows(
+                snapshot, flow=spec.flow, method=method
+            ).filter(*conditions)
             if method.eu == "channel":
                 frame = _without_eu_own_rows(frame, attributed=attributed)
             frame = pl.concat([frame, attributed])
@@ -139,15 +153,16 @@ def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
     )  # fmt: skip
     return Result(
         table=Table(_aggregate(rows)),
-        modelled=Table(_modelled(snapshot, spec=spec)),
+        modelled=Table(_modelled(snapshot, spec=spec, conditions=filters)),
         rows=rows,
-        totals=_totals(snapshot, spec=spec),
+        totals=_totals(snapshot, spec=spec, conditions=filters),
         spec=spec,
         meta=Meta(
             release=snapshot.manifest.release,
             package_version=version("climate-finance"),
             source_versions=snapshot.manifest.source_versions,
             model_versions=snapshot.manifest.model_versions,
+            conversion=provenance(currency=spec.currency, prices=spec.prices),
         ),
     )
 
@@ -167,12 +182,10 @@ def quality(
     table = snapshot.table("quality")
     status = (
         _counted_commitments(snapshot)
-        .filter(_in_view("recipient"))
+        .filter(_in_view("recipient"), *conditions)
         .select("provider_code", "year", "status", "climate_usd")
     )
-    if conditions:
-        table, status = table.filter(*conditions), status.filter(*conditions)
-    return Quality(table=Table(table), status=Table(status))
+    return Quality(table=Table(table.filter(*conditions)), status=Table(status))
 
 
 def _codes(values: Sequence[str | int], *, listing: catalogue.Catalogue) -> list[int]:
@@ -222,21 +235,21 @@ def _share(part: str) -> pl.Expr:
     return pl.when(face != 0).then(pl.col(part) / face).otherwise(0.0)
 
 
-def _base_rows(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
+def _base_rows(snapshot: Snapshot, *, flow: Flow, view: View) -> pl.LazyFrame:
     shares = {
         "share_adaptation": _share("adaptation_usd"),
         "share_mitigation": _share("mitigation_usd"),
         "share_overlap": _share("overlap_usd"),
         "share_unsplit": pl.lit(0.0),
     }
-    if spec.flow == "commitments":
-        commitments = _counted_commitments(snapshot).filter(_in_view(spec.view))
+    if flow == "commitments":
+        commitments = _counted_commitments(snapshot).filter(_in_view(view))
         return _conform(
             commitments.with_columns(
                 origin=pl.lit("commitment"),
                 amount=pl.col("face_usd"),
-                low_ratio=pl.lit(1.0),
-                high_ratio=pl.lit(1.0),
+                amount_low=pl.col("face_usd"),
+                amount_high=pl.col("face_usd"),
                 **shares,
             )
         )
@@ -250,33 +263,29 @@ def _base_rows(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
         "overlap_usd",
     )
     allocated = pl.col("allocated_usd")
+    record_allocated = allocated.sum().over("record_id")
     disbursements = (
         snapshot.table("disbursements")
         .with_columns(
-            allocation_weight=allocated / allocated.sum().over("record_id"),
-            low_ratio=pl.when(allocated > 0)
-            .then(pl.col("allocated_low_usd") / allocated)
-            .otherwise(1.0),
-            high_ratio=pl.when(allocated > 0)
-            .then(pl.col("allocated_high_usd") / allocated)
-            .otherwise(1.0),
+            allocation_weight=pl.when(record_allocated != 0).then(
+                allocated / record_allocated
+            )
         )
         .join(commitments, on="row_id", how="inner", validate="m:1")
-        .filter(_in_view(spec.view))
+        .filter(_in_view(view))
         .join(_labels(snapshot), on="record_id", how="left")
     )
-    amount = allocated
-    if spec.flow == "grant_equivalent":
+    # Grant equivalents per USD disbursed, null where the record has neither.
+    factor = pl.lit(1.0)
+    if flow == "grant_equivalent":
         record = pl.col("record_disbursement_usd")
-        amount = (
-            pl.when(record != 0)
-            .then(pl.col("record_grant_equiv_usd") * allocated / record)
-            .otherwise(None)
-        )
+        factor = pl.when(record != 0).then(pl.col("record_grant_equiv_usd") / record)
     return _conform(
         disbursements.with_columns(
             origin=pl.lit("disbursement"),
-            amount=amount,
+            amount=allocated * factor,
+            amount_low=pl.col("allocated_low_usd") * factor,
+            amount_high=pl.col("allocated_high_usd") * factor,
             rio_adaptation=pl.col("inherited_rio_adaptation"),
             rio_mitigation=pl.col("inherited_rio_mitigation"),
             **shares,
@@ -315,8 +324,8 @@ def _labels(snapshot: Snapshot) -> pl.LazyFrame:
     )
 
 
-def _attributed_rows(snapshot: Snapshot, *, spec: Spec, method: Method) -> pl.LazyFrame:
-    """Core contributions of `spec.flow` times the agency's climate share by objective.
+def _attributed_rows(snapshot: Snapshot, *, flow: Flow, method: Method) -> pl.LazyFrame:
+    """Core contributions of `flow` times the agency's climate share by objective.
 
     Under OECD, with either EU setting, the share is the OECD's imputed share. Under
     any other method it is the agency's own climate spending. The adaptation and
@@ -341,18 +350,18 @@ def _attributed_rows(snapshot: Snapshot, *, spec: Spec, method: Method) -> pl.La
     )
     return _conform(
         snapshot.table("core_contributions")
-        .filter(pl.col("flow") == spec.flow)
+        .filter(pl.col("flow") == flow)
         .join(shares, on=["channel_code", "year"], how="inner")
         .with_columns(
             origin=pl.lit("attribution"),
             bi_multi=pl.lit(CORE_CONTRIBUTION, pl.Int8),
             amount=pl.col("contribution_usd"),
+            amount_low=pl.col("contribution_usd"),
+            amount_high=pl.col("contribution_usd"),
             climate_share=pl.col("share_adaptation")
             + pl.col("share_mitigation")
             - pl.col("share_overlap")
             + pl.col("share_unsplit"),
-            low_ratio=pl.lit(1.0),
-            high_ratio=pl.lit(1.0),
         )
     )
 
@@ -420,21 +429,17 @@ def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
     amount = pl.col("amount")
     fractions = weights(method, significant=pl.col("significant"))
     unsplit = pl.col("share_unsplit")
-    return (
-        frame.with_columns(
-            method=pl.lit(label(method)),
-            adaptation=amount * fractions["adaptation"],
-            mitigation=amount * fractions["mitigation"],
-            cross_cutting=amount * fractions["cross_cutting"],
-            unsplit=amount * unsplit,
-            value=amount * (fractions["climate"] + unsplit),
-        )
-        .with_columns(
-            low=pl.col("value") * pl.col("low_ratio"),
-            high=pl.col("value") * pl.col("high_ratio"),
-        )
-        .drop(*_WEIGHT_INPUTS)
-    )
+    climate = fractions["climate"] + unsplit
+    return frame.with_columns(
+        method=pl.lit(label(method)),
+        adaptation=amount * fractions["adaptation"],
+        mitigation=amount * fractions["mitigation"],
+        cross_cutting=amount * fractions["cross_cutting"],
+        unsplit=amount * unsplit,
+        value=amount * climate,
+        low=pl.col("amount_low") * climate,
+        high=pl.col("amount_high") * climate,
+    ).drop(*_WEIGHT_INPUTS)
 
 
 def _sum(name: str) -> pl.Expr:
@@ -444,31 +449,28 @@ def _sum(name: str) -> pl.Expr:
 
 def _aggregate(rows: pl.LazyFrame) -> pl.LazyFrame:
     """Sum rows by `KEYS`. `low` and `high` then span every method for the same key."""
-    across_methods = [key for key in KEYS if key != "method"]
     return (
         rows.group_by(KEYS)
         .agg(_sum(name).alias(name) for name in AMOUNTS)
         .with_columns(
-            low=pl.col("low").min().over(across_methods),
-            high=pl.col("high").max().over(across_methods),
+            low=pl.col("low").min().over(ROW_KEYS),
+            high=pl.col("high").max().over(ROW_KEYS),
         )
         .sort(KEYS, nulls_last=True)
     )
 
 
-def _totals(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
-    """All CRS flows of `spec.flow` by the table's keys, plus a row per provider, year
-    and Bi_Multi code with a null recipient that sums every recipient, for rows such
-    as attribution that have none.
+def _totals(
+    snapshot: Snapshot, *, spec: Spec, conditions: Sequence[pl.Expr]
+) -> pl.LazyFrame:
+    """All CRS flows of `spec.flow` by `ROW_KEYS`, plus a row per provider, year and
+    Bi_Multi code with a null recipient that sums every recipient, for rows such as
+    attribution that have none.
 
     CRDF commitments carry their provider's class, Bi_Multi 1 for a bilateral
     provider, where the CRS splits bilateral flows over codes 1, 3, 7 and 8, so
     commitment totals count those four codes as 1.
     """
-    keys = ["year", "provider_code", "recipient_code", "bi_multi"]
-    conditions = _conditions(
-        providers=spec.providers, recipients=spec.recipients, years=spec.years
-    )
     flows = snapshot.table("total_flows").filter(
         pl.col("flow") == spec.flow, *conditions
     )
@@ -478,12 +480,12 @@ def _totals(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
             .then(pl.lit(BILATERAL[0], pl.Int8))
             .otherwise(pl.col("bi_multi"))
         )
-    by_recipient = flows.group_by(keys).agg(total=pl.col("amount_usd").sum())
+    by_recipient = flows.group_by(ROW_KEYS).agg(total=pl.col("amount_usd").sum())
     all_recipients = (
         flows.group_by("year", "provider_code", "bi_multi")
         .agg(total=pl.col("amount_usd").sum())
         .with_columns(recipient_code=pl.lit(None, pl.Int32))
-        .select(*keys, "total")
+        .select(*ROW_KEYS, "total")
     )
     return convert(
         pl.concat([by_recipient, all_recipients]),
@@ -493,7 +495,9 @@ def _totals(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
     )
 
 
-def _modelled(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
+def _modelled(
+    snapshot: Snapshot, *, spec: Spec, conditions: Sequence[pl.Expr]
+) -> pl.LazyFrame:
     """The "modelled, not reported" line, shown for recipient-view disbursements."""
     modelled = snapshot.table("modelled").select(
         "year",
@@ -505,11 +509,9 @@ def _modelled(snapshot: Snapshot, *, spec: Spec) -> pl.LazyFrame:
     )
     if spec.flow != "disbursements" or spec.view != "recipient" or spec.oda_only:
         return modelled.clear()
-    conditions = _conditions(
-        providers=spec.providers, recipients=spec.recipients, years=spec.years
-    )
-    if conditions:
-        modelled = modelled.filter(*conditions)
     return convert(
-        modelled, columns=("low", "high"), currency=spec.currency, prices=spec.prices
+        modelled.filter(*conditions),
+        columns=("low", "high"),
+        currency=spec.currency,
+        prices=spec.prices,
     ).sort("provider_code", "year", "recipient_code", nulls_last=True)

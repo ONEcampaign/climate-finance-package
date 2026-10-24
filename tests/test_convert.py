@@ -1,11 +1,11 @@
 """Conversion joins one DAC factor per provider and year, with the DAC total as
-the series for providers that have none."""
+the series for providers that have none. Provenance identifies the factors used."""
 
 import polars as pl
 import pytest
 
 from climate_finance import convert as convert_module
-from climate_finance.convert import DAC_TOTAL, convert
+from climate_finance.convert import DAC_TOTAL, convert, factors_hash, provenance
 from climate_finance.errors import SourceUnavailableError
 
 GERMANY, IDA = 5, 905
@@ -58,6 +58,41 @@ def test_usd_at_current_prices_returns_the_plan_unchanged() -> None:
     frame = _amounts((IDA, 2030, 1.0))
 
     assert convert(frame, columns=["value"], currency="USD", prices="current") is frame
+
+
+def _factors(germany: float) -> pl.DataFrame:
+    return pl.DataFrame(
+        {"entity_code": [GERMANY], "year": [2022], "factor": [germany]},
+        schema=FACTORS.schema,
+    )
+
+
+def test_factor_hash_follows_the_factors_and_ignores_row_order() -> None:
+    assert factors_hash(_factors(0.8)) == factors_hash(_factors(0.8))
+    assert factors_hash(_factors(0.8)) != factors_hash(_factors(0.9))
+    assert factors_hash(FACTORS) == factors_hash(FACTORS.reverse())
+
+
+def test_provenance_changes_when_the_dac_factors_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hashes = []
+    for germany in (0.8, 0.8, 0.9):
+        monkeypatch.setattr(
+            convert_module,
+            "dac_factors",
+            lambda *, germany=germany, **_: _factors(germany),
+        )
+        conversion = provenance(currency="EUR", prices=2024)
+        assert conversion is not None
+        hashes.append(conversion.factors_sha256)
+
+    assert hashes[0] == hashes[1] != hashes[2]
+    assert conversion.pydeflate_version
+
+
+def test_usd_at_current_prices_has_no_provenance() -> None:
+    assert provenance(currency="USD", prices="current") is None
 
 
 @pytest.mark.integration

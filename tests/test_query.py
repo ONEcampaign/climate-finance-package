@@ -4,6 +4,7 @@ Golden tables live in tests/golden/; set CF_UPDATE_GOLDEN=1 to rewrite them afte
 deliberate change, then review the diff.
 """
 
+import inspect
 import itertools
 import os
 import tomllib
@@ -16,7 +17,8 @@ from polars.testing import assert_frame_equal
 from releases import copy_release
 
 import climate_finance as cf
-from climate_finance.methods import OECD, RANGE, Method, MethodRange, label
+from climate_finance import convert as convert_module
+from climate_finance.methods import OECD, ONE, RANGE, Method, MethodRange, label
 from climate_finance.query import BILATERAL, EU_CHANNELS, EU_INSTITUTIONS
 from climate_finance.result import AMOUNTS
 from climate_finance.snapshot import Snapshot
@@ -98,12 +100,14 @@ def test_value_stays_within_face_and_between_its_bounds(flow: str, view: str) ->
         assert (known["value"] <= known["high"]).all()
 
 
-def _without_code_2(tmp_path: Path) -> Snapshot:
+@pytest.fixture(scope="module")
+def without_code_2(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
+    """The fixture release without its Bi_Multi 2 commitments and their rows."""
     code_2 = SNAP.table("commitments").filter(pl.col("bi_multi") == 2).collect()
     assert code_2.height, "the fixture needs a Bi_Multi 2 commitment"
     keep = ~pl.col("row_id").is_in(code_2["row_id"].implode())
     release = copy_release(
-        tmp_path / "release",
+        tmp_path_factory.mktemp("without_code_2") / "release",
         edits={
             "commitments": lambda frame: frame.filter(keep),
             "disbursements": lambda frame: frame.filter(keep),
@@ -115,14 +119,14 @@ def _without_code_2(tmp_path: Path) -> Snapshot:
 @pytest.mark.parametrize("flow", FLOWS)
 @pytest.mark.parametrize("view", VIEWS)
 def test_code_2_rows_leave_every_total_unchanged(
-    tmp_path: Path, flow: str, view: str
+    without_code_2: Snapshot, flow: str, view: str
 ) -> None:
     spec = Spec(method=cf.methods.RANGE, flow=flow, view=view)
-    stripped = _without_code_2(tmp_path)
-
     with_code_2 = SNAP.spending(spec=spec).table.to_polars()
 
-    assert_frame_equal(with_code_2, stripped.spending(spec=spec).table.to_polars())
+    assert_frame_equal(
+        with_code_2, without_code_2.spending(spec=spec).table.to_polars()
+    )
     bilateral = with_code_2.filter(pl.col("bi_multi").is_in(BILATERAL))
     assert bilateral.height
 
@@ -141,6 +145,7 @@ def test_code_2_rows_leave_every_total_unchanged(
         ),
         Spec(method=cf.methods.ONE.replace(significant=0.25), flow="grant_equivalent"),
         Spec(method=cf.methods.ONE.replace(eu="provider"), view="provider"),
+        Spec(view="provider", providers=(5,), measure="share_of_total"),
     ],
 )
 def test_a_spec_round_trips_through_json_and_reruns_identically(spec: Spec) -> None:
@@ -158,6 +163,16 @@ def test_keyword_arguments_build_the_same_spec() -> None:
     result = SNAP.spending(providers=5, years=range(2021, 2023), view="provider")
 
     assert result.spec == Spec(providers=(5,), years=(2021, 2022), view="provider")
+
+
+def test_spending_defaults_match_the_spec_defaults() -> None:
+    parameters = inspect.signature(Snapshot.spending).parameters
+    fields = Spec.model_fields
+
+    assert set(fields) <= set(parameters)
+    assert {name: parameters[name].default for name in fields} == {
+        name: field.default for name, field in fields.items()
+    }
 
 
 @pytest.mark.parametrize("flow", FLOWS)
@@ -279,6 +294,41 @@ def test_bounds_follow_each_allocation_in_its_own_year() -> None:
     assert rows["high"].to_list() == pytest.approx([allocated * 1.05] * 3)
 
 
+def test_a_zero_central_allocation_keeps_its_upper_bound(tmp_path: Path) -> None:
+    def zero_central(frame: pl.DataFrame) -> pl.DataFrame:
+        record = pl.col("record_id") == "DEU-1-R0"
+        return frame.with_columns(
+            pl.when(record).then(0.0).otherwise(pl.col(name)).alias(name)
+            for name in ("allocated_low_usd", "allocated_usd")
+        )
+
+    release = copy_release(tmp_path / "release", edits={"disbursements": zero_central})
+    row = cf.load(path=release).spending().rows(record_id="DEU-1-R0")
+
+    # DEU-1 is principal-marked, so the 13.3m upper allocation counts in full. The
+    # record allocates nothing at the centre, so its allocation weight is unknown.
+    assert row.select("value", "low", "high").row(0) == pytest.approx(
+        (0.0, 0.0, 13.3e6)
+    )
+    assert row["allocation_weight"].to_list() == [None]
+
+
+def test_a_range_of_close_methods_counts_each_member_once() -> None:
+    close = (ONE.replace(significant=0.5000001), ONE.replace(significant=0.5000002))
+    spec = Spec(providers=(5,), recipients=(248,), years=(2022,))
+
+    together = SNAP.spending(spec=spec.replace(method=MethodRange(methods=close)))
+
+    values = together.table.to_polars().group_by("method").agg(pl.col("value").sum())
+    assert values.height == 2
+    for method in close:
+        alone = SNAP.spending(spec=spec.replace(method=method)).table.to_polars()
+        expected = alone["value"].sum()
+        assert values.filter(pl.col("method") == label(method))["value"].item() == (
+            pytest.approx(expected)
+        )
+
+
 def test_the_recipient_view_counts_outflows_and_no_attribution() -> None:
     rows = SNAP.spending().rows()
 
@@ -341,6 +391,28 @@ def test_explain_names_the_method_view_and_units() -> None:
     assert "USD at current prices" in text
 
 
+@pytest.mark.parametrize(
+    ("spec", "converted"),
+    [({}, False), ({"currency": "EUR"}, True), ({"prices": 2024}, True)],
+)
+def test_converted_results_carry_conversion_provenance(
+    monkeypatch: pytest.MonkeyPatch, spec: dict[str, object], converted: bool
+) -> None:
+    factors = pl.DataFrame(
+        {"entity_code": [5, 20001], "year": [2022, 2022], "factor": [0.8, 0.5]},
+        schema={"entity_code": pl.Int32, "year": pl.Int16, "factor": pl.Float64},
+    )
+    monkeypatch.setattr(convert_module, "dac_factors", lambda **_: factors)
+
+    result = SNAP.spending(years=2022, **spec)
+
+    assert (result.meta.conversion is not None) is converted
+    if converted:
+        assert result.meta.conversion.factors_sha256 in result.explain()
+    else:
+        assert "Conversion factors" not in result.explain()
+
+
 def test_share_of_total_divides_each_key_by_its_total_flows() -> None:
     result = SNAP.spending(view="provider", providers=5, years=2021)
 
@@ -359,6 +431,41 @@ def test_share_of_total_divides_each_key_by_its_total_flows() -> None:
         60e6 * 0.36 / (4 * 60e6 * 0.95 / 3 + 1.5 * 60e6)
     )
     assert_frame_equal(shares.drop(AMOUNTS), result.table.to_polars().drop(AMOUNTS))
+
+
+def test_a_share_result_reruns_from_its_own_spec() -> None:
+    shares = SNAP.spending(view="provider", providers=5, years=2021).share_of_total()
+
+    assert shares.spec.measure == "share_of_total"
+    assert_frame_equal(
+        SNAP.spending(spec=shares.spec).table.to_polars(), shares.table.to_polars()
+    )
+    assert_frame_equal(
+        shares.share_of_total().table.to_polars(), shares.table.to_polars()
+    )
+
+
+@pytest.mark.parametrize(
+    ("measure", "expected", "absent"),
+    [
+        ("amount", "Amounts in USD at current prices.", "Values are shares"),
+        ("share_of_total", "Values are shares of all CRS flows", "Amounts in USD"),
+    ],
+)
+def test_explain_and_title_name_the_measure(
+    measure: str, expected: str, absent: str
+) -> None:
+    result = SNAP.spending(providers=5, years=2021, measure=measure)
+
+    assert expected in result.explain()
+    assert absent not in result.explain()
+    title = repr(result).splitlines()[0]
+    assert ("share of total" in title) == (measure == "share_of_total")
+
+
+def test_an_amount_spec_serialises_without_a_measure() -> None:
+    assert "measure" not in Spec(flow="commitments").model_dump_json()
+    assert "share_of_total" in Spec(measure="share_of_total").model_dump_json()
 
 
 @pytest.mark.parametrize(

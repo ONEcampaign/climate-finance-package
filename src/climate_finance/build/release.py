@@ -26,7 +26,6 @@ from climate_finance.build.allocate import counted_rows, years_since_commitment
 from climate_finance.build.errors import ReleaseInvariantError, StageInputMissingError
 from climate_finance.build.label import inherit_markers
 from climate_finance.build.sums import ordered_sum
-from climate_finance.query import BILATERAL, MULTILATERAL_OUTFLOW
 from climate_finance.schema import (
     BTR,
     COMMITMENTS,
@@ -42,6 +41,7 @@ from climate_finance.schema import (
     TableSchema,
     release_invariants,
 )
+from climate_finance.spec import BILATERAL, MULTILATERAL_OUTFLOW
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
