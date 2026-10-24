@@ -465,9 +465,12 @@ JEV_LEVEL_MAP = _table(
     level=_f64(),
 )
 
-# Shares of the agency's spending by objective. The adaptation and mitigation shares
-# each include the cross_cutting share, as `adaptation_usd`, `mitigation_usd` and
-# `overlap_usd` do, so the climate share is adaptation + mitigation - cross_cutting.
+# Shares of the agency's spending by objective that hold under every method's
+# coefficients: the OECD's imputed shares (`oecd`), and under `one` the OECD's share
+# for a channel and year whose share `agency_spending` does not measure. The
+# adaptation and mitigation shares each include the cross_cutting share, as
+# `adaptation_usd`, `mitigation_usd` and `overlap_usd` do, so the climate share is
+# adaptation + mitigation - cross_cutting.
 AGENCY_SHARES = _table(
     "agency_shares",
     ("channel_code", "year", "objective", "source"),
@@ -476,6 +479,26 @@ AGENCY_SHARES = _table(
     objective=_str(values=OBJECTIVES),
     share=_f64(),
     source=_str(values=SHARE_SOURCES),
+)
+
+# Each agency's CRDF commitments over a share year's span by Rio markers, as fractions
+# of its CRS commitments over the span, from which the query weighs the agency's
+# climate share under any method's coefficients. A row with markers holds the face
+# value at those markers, with null component shares. The row with null markers holds
+# the face value and climate components of the commitments that report components,
+# adaptation and mitigation each including the overlap. A share year whose span
+# commits too little repeats the rows of the last year whose span did not.
+AGENCY_SPENDING = _table(
+    "agency_spending",
+    ("channel_code", "year", "rio_adaptation", "rio_mitigation"),
+    channel_code=_code(),
+    year=_year(),
+    rio_adaptation=_rio(),
+    rio_mitigation=_rio(),
+    face_share=_f64(),
+    adaptation_share=_f64(nullable=True),
+    mitigation_share=_f64(nullable=True),
+    overlap_share=_f64(nullable=True),
 )
 
 MODELLED = _table(
@@ -647,6 +670,7 @@ RELEASE_TABLES = _by_name(
     DISBURSEMENTS,
     OBJECTIVE_LABELS,
     AGENCY_SHARES,
+    AGENCY_SPENDING,
     MODELLED,
     CORE_CONTRIBUTIONS,
     BTR,
@@ -669,7 +693,7 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
     "fill": _by_name(ALLOCATIONS, COMMITMENT_STATUS, BANK_YEAR_OVERLAP),
     "review": _by_name(LINKS, REVIEW_QUEUE, PAIR_LABELS, COMMITMENT_STATUS),
     "label": _by_name(OBJECTIVE_LABELS, JEV_LEVEL_MAP),
-    "measure": _by_name(AGENCY_SHARES, MODELLED),
+    "measure": _by_name(AGENCY_SHARES, AGENCY_SPENDING, MODELLED),
     "assemble": RELEASE_TABLES,
 }
 

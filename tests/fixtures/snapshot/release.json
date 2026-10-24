@@ -12,8 +12,12 @@
       "rows": 69
     },
     "agency_shares": {
-      "sha256": "1af35490e05bb7510ba2802b6a0b84c41c81e21b0b39b87ed96c43efa84e2642",
-      "rows": 24
+      "sha256": "c7ec641f1ed4357764a300b4e6628960831ebb365f92ad04c94e012edc9b68f1",
+      "rows": 12
+    },
+    "agency_spending": {
+      "sha256": "c087deadb5c46726afcae35f7c0cc7b07ba6d86a2c40c850fc545ee005e1a180",
+      "rows": 12
     },
     "modelled": {
       "sha256": "92784c29c5b001f8fe979ca655b262455bc68630aea6fef03d92e18b13227257",

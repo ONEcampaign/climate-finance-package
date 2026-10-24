@@ -309,25 +309,21 @@ def _labels(snapshot: Snapshot) -> pl.LazyFrame:
 def _attributed_rows(snapshot: Snapshot, *, flow: Flow, method: Method) -> pl.LazyFrame:
     """Core contributions of `flow` times the agency's climate share by objective.
 
-    Under OECD the share is the OECD's imputed share; under any other method it is
-    the agency's own climate spending. The adaptation and mitigation shares each
-    include the cross-cutting share. An agency without a share attributes nothing.
+    Under OECD the share is the OECD's imputed share. Under any other method it is
+    the agency's own climate spending in `agency_spending`, weighed with the method's
+    coefficients, so agency shares follow the method's coefficients as bilateral
+    rows do. Under provider coefficients agencies take the method's significant
+    coefficient, since no agency has a confirmed one. Where `agency_spending`
+    measures no share, the `one` rows of `agency_shares` stand in. The adaptation
+    and mitigation shares each include the cross-cutting share. An agency without a
+    share attributes nothing.
     """
-    source = "oecd" if method == OECD else "one"
-
-    def share(objective: str) -> pl.Expr:
-        return pl.col("share").filter(pl.col("objective") == objective).sum()
-
-    shares = (
-        snapshot.table("agency_shares")
-        .filter(pl.col("source") == source)
-        .group_by("channel_code", "year")
-        .agg(
-            share_adaptation=share("adaptation"),
-            share_mitigation=share("mitigation"),
-            share_overlap=share("cross_cutting"),
+    shares = _fixed_shares(snapshot, source="oecd" if method == OECD else "one")
+    if method != OECD:
+        measured = _measured_shares(snapshot, method=method)
+        shares = pl.concat(
+            [measured, shares.join(measured, on=["channel_code", "year"], how="anti")]
         )
-    )
     return _conform(
         snapshot.table("core_contributions")
         .filter(pl.col("flow") == flow)
@@ -341,6 +337,59 @@ def _attributed_rows(snapshot: Snapshot, *, flow: Flow, method: Method) -> pl.La
             climate_share=pl.col("share_adaptation")
             + pl.col("share_mitigation")
             - pl.col("share_overlap"),
+        )
+    )
+
+
+def _fixed_shares(snapshot: Snapshot, *, source: str) -> pl.LazyFrame:
+    """The `agency_shares` of `source` by channel and year."""
+
+    def share(objective: str) -> pl.Expr:
+        return pl.col("share").filter(pl.col("objective") == objective).sum()
+
+    return (
+        snapshot.table("agency_shares")
+        .filter(pl.col("source") == source)
+        .group_by("channel_code", "year")
+        .agg(
+            share_adaptation=share("adaptation"),
+            share_mitigation=share("mitigation"),
+            share_overlap=share("cross_cutting"),
+        )
+    )
+
+
+def _measured_shares(snapshot: Snapshot, *, method: Method) -> pl.LazyFrame:
+    """Each agency's climate shares by channel and year from `agency_spending`.
+
+    Each row weighs as a commitment of its markers or components would under
+    `method`, with its `face_share` as the amount.
+    """
+    face = pl.col("face_share")
+
+    def part(name: str) -> pl.Expr:
+        return pl.when(face != 0).then(pl.col(f"{name}_share") / face).otherwise(0.0)
+
+    fractions = weights(method)
+    overlap = fractions["cross_cutting"]
+    # The highest-marker rule takes the overlap out of adaptation and mitigation,
+    # and the shares include it.
+    added = overlap if method.highest_marker else pl.lit(0.0)
+    return (
+        snapshot.table("agency_spending")
+        .with_columns(
+            climate_share=pl.col("adaptation_share")
+            + pl.col("mitigation_share")
+            - pl.col("overlap_share"),
+            share_adaptation=part("adaptation"),
+            share_mitigation=part("mitigation"),
+            share_overlap=part("overlap"),
+        )
+        .group_by("channel_code", "year")
+        .agg(
+            share_adaptation=(face * (fractions["adaptation"] + added)).sum(),
+            share_mitigation=(face * (fractions["mitigation"] + added)).sum(),
+            share_overlap=(face * overlap).sum(),
         )
     )
 

@@ -4,10 +4,10 @@ Run `uv run python tests/make_fixture.py [out_dir]`. The snapshot is schema-vali
 passes `release_invariants`, and covers six providers, a Bi_Multi 2 row, Bi_Multi 4
 rows, an id-less multilateral row, a modelled-line provider, every status, every link
 method, a CRS record split across two commitments with excess, a bank-ledger gap
-fill, cross-cutting agency shares, core contributions for every flow, a confirmed
-and an unconfirmed provider coefficient, commitments reached through certain and
-estimated CRDF routes, and unallocated disbursements of each kind. Amounts are
-invented.
+fill, cross-cutting agency shares measured from markers and from components, core
+contributions for every flow, a confirmed and an unconfirmed provider coefficient,
+commitments reached through certain and estimated CRDF routes, and unallocated
+disbursements of each kind. Amounts are invented.
 """
 
 import itertools
@@ -120,13 +120,23 @@ SPLIT_ALLOCATIONS = (
 LEDGER_RECORD = "AFDB-1-LEDGER"
 LEDGER_ALLOCATED = 1e6
 
-# Agency shares of climate spending by objective, (adaptation, mitigation,
-# cross_cutting), adaptation and mitigation each including cross_cutting.
-AGENCY_SHARES = {
-    (IDA_CH, "oecd"): (0.20, 0.25, 0.05),
-    (IDA_CH, "one"): (0.18, 0.22, 0.04),
-    (AFDB_CH, "oecd"): (0.30, 0.35, 0.10),
-    (AFDB_CH, "one"): (0.27, 0.30, 0.08),
+# The OECD's imputed agency shares of climate spending by objective, (adaptation,
+# mitigation, cross_cutting), adaptation and mitigation each including cross_cutting.
+AGENCY_SHARES = {IDA_CH: (0.20, 0.25, 0.05), AFDB_CH: (0.30, 0.35, 0.10)}
+# Each agency's commitments by Rio markers as fractions of its spending, with the
+# components of rows that report them: (rio_adaptation, rio_mitigation, face_share,
+# (adaptation_share, mitigation_share, overlap_share) or None). Under ONE the IDA's
+# markers give shares of 0.18, 0.22 and 0.04: significant markers at 0.4 of 0.2 + 0.2
+# + 0.1, principal ones at 1.0 of 0.06 + 0.1. The AfDB reports components alone.
+AGENCY_SPENDING = {
+    IDA_CH: (
+        (2, 0, 0.06, None),
+        (1, 0, 0.2, None),
+        (0, 2, 0.1, None),
+        (0, 1, 0.2, None),
+        (1, 1, 0.1, None),
+    ),
+    AFDB_CH: ((None, None, 0.6, (0.27, 0.30, 0.08)),),
 }
 # Core contributions disbursed each year, and each flow's amount as a multiple.
 CORE_CONTRIBUTIONS = ((DEU, IDA_CH, 60e6), (FRA, AFDB_CH, 25e6), (NOR, IDA_CH, 15e6))
@@ -373,13 +383,32 @@ def build_tables() -> dict[str, pl.DataFrame]:
                 "year": year,
                 "objective": objective,
                 "share": share,
-                "source": source,
+                "source": "oecd",
             }
-            for (channel, source), shares in AGENCY_SHARES.items()
+            for channel, shares in AGENCY_SHARES.items()
             for year in (2021, 2022)
             for objective, share in zip(
                 ("adaptation", "mitigation", "cross_cutting"), shares, strict=True
             )
+        ],
+        "agency_spending": [
+            {
+                "channel_code": channel,
+                "year": year,
+                "rio_adaptation": rio_a,
+                "rio_mitigation": rio_m,
+                "face_share": face,
+                **dict(
+                    zip(
+                        ("adaptation_share", "mitigation_share", "overlap_share"),
+                        components or (None, None, None),
+                        strict=True,
+                    )
+                ),
+            }
+            for channel, rows in AGENCY_SPENDING.items()
+            for year in (2021, 2022)
+            for rio_a, rio_m, face, components in rows
         ],
         "modelled": [
             {
