@@ -178,9 +178,9 @@ def load(
     downloads again.
 
     Raises:
-        ReleaseIntegrityError: when `release.json` or a release table is missing, a
-            table's sha256 differs from `release.json`, or a pack's sha256 differs
-            from the index.
+        ReleaseIntegrityError: when `release.json` is missing or malformed, a
+            release table is missing, a table's sha256 differs from `release.json`,
+            or a pack's sha256 differs from the index.
         UnknownNameError: when the index lists no release named `release`.
         SourceUnavailableError: when the index or a pack cannot be downloaded.
     """
@@ -204,7 +204,10 @@ def _open(path: Path, *, release: str | None = None) -> Snapshot:
     manifest_path = path / "release.json"
     if not manifest_path.is_file():
         raise ReleaseIntegrityError(f"{path} has no release.json")
-    manifest = ReleaseManifest.model_validate_json(manifest_path.read_text())
+    try:
+        manifest = ReleaseManifest.model_validate_json(manifest_path.read_text())
+    except ValueError as error:  # bad JSON, bad fields or undecodable bytes
+        raise ReleaseIntegrityError(f"{manifest_path} is malformed: {error}") from error
     problems = [
         f"{name}: not in release.json"
         for name in RELEASE_TABLES

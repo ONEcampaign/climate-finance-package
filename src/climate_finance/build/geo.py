@@ -59,6 +59,14 @@ def recipient_code(name: str) -> int | None:
 
 @cache
 def provider_code(iso3: str) -> int | None:
-    """The DAC provider code of the country with ISO 3166 alpha-3 code `iso3`."""
-    code = resolver().resolve(iso3, from_system="iso3", to="oecd:provider")
+    """The DAC provider code of the country with ISO 3166 alpha-3 code `iso3`, or
+    None when no country has that code or the country is not a DAC provider (Armenia,
+    China and Kenya are recipients only)."""
+    result = resolver().resolve(
+        iso3, from_system="iso3", as_result=True, include_entity=True
+    )
+    if result.entity is None:
+        return None
+    codes = {code.system: code.value for code in result.entity.codes}
+    code = codes.get("oecd:provider")
     return None if code is None else int(code)

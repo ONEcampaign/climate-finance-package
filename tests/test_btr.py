@@ -15,6 +15,7 @@ from climate_finance.build.cli import app
 from climate_finance.build.readers.btr import (
     estimate_party_weights,
     ingest_unfccc,
+    party_provider,
     read_btr_workbook,
     write_party_weights,
 )
@@ -164,6 +165,24 @@ def test_rows_keep_title_party_currency_and_recipient_code() -> None:
     codes = _read("FRA-table-1.xlsx")["recipient_code"].to_list()
     assert codes == [71, 610]
     assert frame["recipient_code"].is_null().all()
+
+
+@pytest.mark.parametrize(
+    ("party", "code"),
+    [("DEU", 5), ("EUU", 918), ("ARM", None), ("CHN", None), ("KEN", None)],
+)
+def test_a_party_that_is_no_dac_provider_has_no_provider_code(
+    party: str, code: int | None
+) -> None:
+    assert party_provider(party) == code
+
+
+def test_rows_of_a_party_without_a_provider_code_are_kept() -> None:
+    frame = read_btr_workbook(BTR / "FRA-table-1.xlsx", party="ARM")
+
+    schema.validate(schema.BTR, frame)
+    assert frame.height == 2
+    assert frame["provider_code"].is_null().all()
 
 
 @pytest.mark.parametrize(

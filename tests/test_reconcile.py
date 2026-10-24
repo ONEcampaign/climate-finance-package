@@ -111,6 +111,33 @@ def test_a_party_year_reads_on_its_main_status(tmp_path: Path) -> None:
     assert unknown["btr_face"] == pytest.approx(15e6)
 
 
+def _norway_misses_amounts(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(
+        face_usd=pl.when(pl.col("row_id") == "BTR-NOR-2021").then(None).otherwise(0.0),
+        grant_equiv_usd=pl.when(pl.col("row_id") == "BTR-NOR-2022")
+        .then(None)
+        .otherwise(pl.col("grant_equiv_usd")),
+    )
+
+
+def test_a_missing_btr_amount_stays_null_and_a_reported_zero_stays_zero(
+    tmp_path: Path,
+) -> None:
+    release = copy_release(tmp_path / "r", edits={"btr": _norway_misses_amounts})
+
+    reconciliation = cf.load(path=release).reconcile(parties="NOR")
+
+    no_face = _row(reconciliation, "NOR", 2021)
+    assert no_face["btr_face"] is None
+    assert no_face["btr_grant_equivalent"] == pytest.approx(15e6)
+    assert no_face["unfccc_only_usd"] is None
+    assert no_face["btr_over_crdf_at_100"] is None
+    zero_face = _row(reconciliation, "NOR", 2022)
+    assert zero_face["btr_face"] == 0
+    assert zero_face["btr_grant_equivalent"] is None
+    assert zero_face["unfccc_only_usd"] == 0
+
+
 def test_a_release_with_no_btr_rows_reconciles_to_an_empty_table(
     tmp_path: Path,
 ) -> None:

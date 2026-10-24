@@ -308,7 +308,9 @@ def reconcile(
     value (Denmark reports each activity both committed and disbursed). A party
     whose rows carry no status is compared on all of them, with a null status.
     `btr_face` and `btr_grant_equivalent` sum that status's rows, and
-    `unfccc_only_usd` the face value of those rows no CRS record links to.
+    `unfccc_only_usd` the face value of those rows no CRS record links to. Each is
+    null when every row lacks the amount, and zero when the rows report zero or the
+    known face value is all linked.
 
     The comparators sum the party's bilateral rows (`BILATERAL`) of the year, and of
     the CRDF its Rio-marked rows only. A party weight applies to markers, and a
@@ -345,9 +347,11 @@ def reconcile(
         .join(linked, on="row_id", how="left")
         .group_by(*_PARTY_YEAR, "provider_code", "status")
         .agg(
-            btr_face=face.sum(),
-            btr_grant_equivalent=pl.col("grant_equiv_usd").sum(),
-            unfccc_only_usd=face.filter(pl.col("linked").is_null()).sum(),
+            btr_face=_sum("face_usd"),
+            btr_grant_equivalent=_sum("grant_equiv_usd"),
+            unfccc_only_usd=pl.when(face.is_not_null().any()).then(
+                face.filter(pl.col("linked").is_null()).sum()
+            ),
         )
         .join(
             snapshot.table("provider_coefficients").select(

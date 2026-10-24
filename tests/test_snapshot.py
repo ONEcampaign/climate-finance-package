@@ -1,6 +1,7 @@
 """`load(path=)` opens a release only when every table matches `release.json`."""
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -8,8 +9,10 @@ from make_fixture import FIXTURE_DIR
 from releases import copy_release
 
 import climate_finance as cf
+from climate_finance import snapshot
 from climate_finance.errors import ReleaseIntegrityError
 from climate_finance.schema import RELEASE_TABLES
+from climate_finance.snapshot import IndexEntry, ReleaseIndex, release_dirname
 
 
 @pytest.mark.parametrize("as_path", [Path, str])
@@ -51,6 +54,47 @@ def test_a_release_table_absent_from_the_manifest_fails(tmp_path: Path) -> None:
 def test_a_directory_without_release_json_fails(tmp_path: Path) -> None:
     with pytest.raises(ReleaseIntegrityError, match=r"no release\.json"):
         cf.load(path=tmp_path)
+
+
+@pytest.mark.parametrize(
+    "damaged",
+    [b'{"release": "fixt', b"\xff\xfe", b'{"release": "fixture"}'],
+    ids=["truncated-json", "undecodable-bytes", "missing-fields"],
+)
+def test_a_malformed_manifest_is_an_integrity_error(
+    tmp_path: Path, damaged: bytes
+) -> None:
+    release = copy_release(tmp_path / "release")
+    (release / "release.json").write_bytes(damaged)
+
+    with pytest.raises(ReleaseIntegrityError, match="malformed"):
+        cf.load(path=release)
+
+
+def test_a_cached_release_with_a_malformed_manifest_downloads_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache = tmp_path / "cache"
+    name = release_dirname("fixture")
+    shutil.copytree(FIXTURE_DIR, cache / name)
+    (cache / name / "release.json").write_text('{"release": "fixt')
+    index = ReleaseIndex(
+        latest="fixture",
+        releases={"fixture": IndexEntry(url="https://example.org/pack", sha256="0")},
+    )
+    downloads = []
+
+    def download(entry: IndexEntry, *, target: Path) -> None:
+        downloads.append(entry.url)
+        shutil.copytree(FIXTURE_DIR, target)
+
+    monkeypatch.setattr(snapshot, "_shipped_index", lambda: index)
+    monkeypatch.setattr(snapshot, "_download", download)
+
+    snap = cf.load(cache_dir=cache)
+
+    assert downloads == ["https://example.org/pack"]
+    assert snap.manifest.release == "fixture"
 
 
 def test_table_refuses_names_outside_the_release_contract() -> None:
