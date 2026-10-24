@@ -21,6 +21,7 @@ from climate_finance.schema import (
 MANIFEST = ReleaseManifest.model_validate_json(
     (FIXTURE_DIR / "release.json").read_text()
 )
+INVARIANT_TABLES = ("commitments", "disbursements", "provider_coefficients")
 
 
 def _read(table: str) -> pl.DataFrame:
@@ -63,7 +64,7 @@ def test_regenerating_the_fixture_gives_the_same_tables(tmp_path: Path) -> None:
 
 
 def test_fixture_holds_the_release_invariants() -> None:
-    tables = {name: _read(name) for name in ("commitments", "disbursements")}
+    tables = {name: _read(name) for name in INVARIANT_TABLES}
 
     assert release_invariants(tables) == []
 
@@ -136,6 +137,26 @@ def _orphan_allocation(frame: pl.DataFrame) -> pl.DataFrame:
     return pl.concat([frame, orphan])
 
 
+def _coefficient_edit(
+    provider: int, first_year: int | None, **changes: object
+) -> Callable[[pl.DataFrame], pl.DataFrame]:
+    """An edit setting `changes` on the provider's general row from `first_year`."""
+    first = pl.col("first_year")
+    is_row = (
+        (pl.col("provider_code") == provider)
+        & pl.col("agency_code").is_null()
+        & (first.is_null() if first_year is None else first == first_year)
+    )
+
+    def edit(frame: pl.DataFrame) -> pl.DataFrame:
+        return frame.with_columns(
+            pl.when(is_row).then(pl.lit(value)).otherwise(pl.col(name)).alias(name)
+            for name, value in changes.items()
+        )
+
+    return edit
+
+
 @pytest.mark.parametrize(
     ("table", "edit", "row_id"),
     [
@@ -147,12 +168,33 @@ def _orphan_allocation(frame: pl.DataFrame) -> pl.DataFrame:
         ("disbursements", _break_record_disbursement, "JPN-SPLIT"),
         ("disbursements", _overdraw_record, "JPN-SPLIT"),
         ("disbursements", _negative_record_grant_equiv, "JPN-SPLIT"),
+        # Japan's coefficients up to 2021 would also cover 2022.
+        (
+            "provider_coefficients",
+            _coefficient_edit(701, None, last_year=2022),
+            "701 None 2022",
+        ),
+        (
+            "provider_coefficients",
+            _coefficient_edit(701, 2022, last_year=2021),
+            "701 None 2022",
+        ),
+        (
+            "provider_coefficients",
+            _coefficient_edit(5, None, significant=None),
+            "5 None None",
+        ),
+        (
+            "provider_coefficients",
+            _coefficient_edit(5, None, both_significant=1.5),
+            "5 None None",
+        ),
     ],
 )
 def test_release_invariants_name_the_row_that_breaks_one(
     table: str, edit: Callable[[pl.DataFrame], pl.DataFrame], row_id: str
 ) -> None:
-    tables = {name: _read(name) for name in ("commitments", "disbursements")}
+    tables = {name: _read(name) for name in INVARIANT_TABLES}
     tables[table] = edit(tables[table])
 
     problems = release_invariants(tables)
@@ -169,7 +211,7 @@ def test_release_invariants_report_a_non_finite_amount_once(
     column: str, value: float
 ) -> None:
     # AFDB-1-R1 is a one-row record, so no row of it can differ from another.
-    tables = {name: _read(name) for name in ("commitments", "disbursements")}
+    tables = {name: _read(name) for name in INVARIANT_TABLES}
     tables["disbursements"] = tables["disbursements"].with_columns(
         pl.when(pl.col("record_id") == "AFDB-1-R1")
         .then(value)

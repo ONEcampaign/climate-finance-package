@@ -32,7 +32,7 @@ result.table.to_polars()
 
 Each query takes these arguments:
 
-- `method`: how Rio markers become climate value. `cf.methods.ONE` counts significant markers at 40% and principal markers at 100%, with each activity under its higher marker. `cf.methods.OECD` counts both at 100%. `cf.methods.PROVIDER` is ONE with each provider's own significant coefficient where the release has one. `cf.methods.RANGE` reports all three, and `low` and `high` become the lowest and highest value across them.
+- `method`: how Rio markers become climate value. `cf.methods.ONE` counts significant markers at 40% and principal markers at 100%, with each activity under its higher marker. `cf.methods.OECD` counts both at 100%. `cf.methods.PROVIDER` is ONE with the coefficients each provider applies when it reports to the UNFCCC, by year and agency, where the release records them; `explain()` names each provider's source. `cf.methods.RANGE` reports all three, and `low` and `high` become the lowest and highest value across them.
 - `flow`: `"commitments"`, `"disbursements"` (the default) or `"grant_equivalent"`.
 - `view`: `"recipient"` (the default) or `"provider"`, which adds core contributions to multilateral agencies in proportion to each agency's climate share.
 - `currency` and `prices`: `"USD"`, `"EUR"`, `"GBP"` or `"CAD"`, at current prices or at a base year, converted with OECD DAC exchange rates and deflators. A converted result's `meta.conversion` holds the pydeflate version and a SHA-256 of the factors used, because pydeflate refreshes its DAC data every 30 days.

@@ -650,14 +650,27 @@ TOTAL_FLOWS = _table(
     amount_usd=_usd(),
 )
 
-# Each provider's own significant-marker coefficient, from BTR-to-CRS amount ratios.
+# The coefficients each provider applies to Rio-marked activities when it reports to
+# the UNFCCC, as the document `source` states them at `locator` (a page, note or
+# paragraph). A row covers `first_year` to `last_year`, null for no bound. It covers
+# the agency `agency_code`, or with a null agency every agency of the provider without
+# a row of its own. `both_significant` is the coefficient for an activity significant
+# for adaptation and mitigation alike, null where it is `significant`. A provider that
+# assesses each activity's climate share (`case_by_case`) has null coefficients, or
+# the default its source gives for an activity whose share is unknown.
 PROVIDER_COEFFICIENTS = _table(
     "provider_coefficients",
-    ("provider_code",),
+    ("provider_code", "agency_code", "first_year"),
     provider_code=_code(),
-    significant=_f64(),
-    basis=_str(),
-    confirmed=_bool(),
+    agency_code=_code(nullable=True),
+    first_year=_year(nullable=True),
+    last_year=_year(nullable=True),
+    significant=_f64(nullable=True, minimum=0.0),
+    principal=_f64(nullable=True, minimum=0.0),
+    both_significant=_f64(nullable=True, minimum=0.0),
+    case_by_case=_bool(),
+    source=_str(),
+    locator=_str(),
 )
 
 
@@ -782,7 +795,8 @@ def _exceeds(smaller: str, larger: str) -> pl.Expr:
 
 
 def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
-    """Problems with the amounts in a release's `commitments` and `disbursements`.
+    """Problems with the amounts in a release's `commitments` and `disbursements`, and
+    with its `provider_coefficients`.
 
     Every amount is finite or null; the other checks skip a non-finite amount, so it
     is reported once, as non-finite. Every disbursements row holds
@@ -792,7 +806,8 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     0 <= disbursed_low <= disbursed <= disbursed_high <= face. A record's rows share
     one `record_disbursement_usd` and one `record_grant_equiv_usd` (all null or all
     set), and its allocated amounts sum to at most `record_disbursement_usd`. Amounts
-    compare within `INVARIANT_TOLERANCE_USD`. An empty list means every check passed.
+    compare within `INVARIANT_TOLERANCE_USD`. The `provider_coefficients` checks are
+    those of `_coefficient_problems`. An empty list means every check passed.
     """
     commitments, problems = _finite(tables["commitments"], name="commitments")
     disbursements, non_finite = _finite(tables["disbursements"], name="disbursements")
@@ -836,6 +851,53 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
             for row_id in failing["row_id"]
         )
     problems.extend(_record_problems(disbursements))
+    problems.extend(_coefficient_problems(tables["provider_coefficients"]))
+    return problems
+
+
+_COEFFICIENTS = ("significant", "principal", "both_significant")
+
+
+def _coefficient_problems(coefficients: pl.DataFrame) -> list[str]:
+    """Rows of `provider_coefficients` that the query could not apply as one rule.
+
+    Coefficients lie between 0 and 1. A row that is not `case_by_case` holds a
+    significant and a principal coefficient. A row's `first_year` is at most its
+    `last_year`, and no two rows of a provider and agency cover the same year.
+    """
+    key = ("provider_code", "agency_code")
+    rows = coefficients.sort(*key, "first_year", nulls_last=False).with_columns(
+        _previous_last=pl.col("last_year").shift().over(key),
+        _later=pl.int_range(pl.len()).over(key) > 0,
+    )
+
+    def name(row: dict[str, object]) -> str:
+        return (
+            f"provider_coefficients {row['provider_code']} {row['agency_code']} "
+            f"{row['first_year']}"
+        )
+
+    problems = []
+    for row in rows.iter_rows(named=True):
+        problems.extend(
+            f"{name(row)}: {column} {row[column]!r} above 1"
+            for column in _COEFFICIENTS
+            if row[column] is not None and row[column] > 1.0
+        )
+        if not row["case_by_case"] and None in (row["significant"], row["principal"]):
+            problems.append(f"{name(row)}: no significant or principal coefficient")
+        if None not in (row["first_year"], row["last_year"]) and (
+            row["first_year"] > row["last_year"]
+        ):
+            problems.append(f"{name(row)}: first_year after last_year")
+        # Sorted with nulls first, a later row overlaps the one before it unless
+        # that row ends before this one starts.
+        if row["_later"] and (
+            row["first_year"] is None
+            or row["_previous_last"] is None
+            or row["_previous_last"] >= row["first_year"]
+        ):
+            problems.append(f"{name(row)}: covers a year of an earlier row")
     return problems
 
 

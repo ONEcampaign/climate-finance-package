@@ -84,6 +84,7 @@ ROW_COLUMNS: dict[str, pl.DataType] = {
     "label_source": pl.String(),
     "amount": pl.Float64(),
     "coefficient_basis": pl.String(),
+    "coefficient_source": pl.String(),
 }
 # Inputs to the weighting that the rows do not show.
 _WEIGHT_INPUTS: dict[str, pl.DataType] = {
@@ -93,6 +94,7 @@ _WEIGHT_INPUTS: dict[str, pl.DataType] = {
     "amount_low": pl.Float64(),
     "amount_high": pl.Float64(),
     "significant": pl.Float64(),
+    "principal": pl.Float64(),
 }
 
 
@@ -312,8 +314,8 @@ def _attributed_rows(snapshot: Snapshot, *, flow: Flow, method: Method) -> pl.La
     Under OECD the share is the OECD's imputed share. Under any other method it is
     the agency's own climate spending in `agency_spending`, weighed with the method's
     coefficients, so agency shares follow the method's coefficients as bilateral
-    rows do. Under provider coefficients agencies take the method's significant
-    coefficient, since no agency has a confirmed one. Where `agency_spending`
+    rows do. Under provider coefficients agencies take the method's coefficients,
+    since `provider_coefficients` holds the providers' own. Where `agency_spending`
     measures no share, the `one` rows of `agency_shares` stand in. The adaptation
     and mitigation shares each include the cross-cutting share. An agency without a
     share attributes nothing.
@@ -406,32 +408,87 @@ def _conform(frame: pl.LazyFrame) -> pl.LazyFrame:
 def _coefficients(
     snapshot: Snapshot, frame: pl.LazyFrame, *, method: Method
 ) -> pl.LazyFrame:
-    """Set `significant` and `coefficient_basis` for `method`.
+    """Set `significant`, `principal`, `coefficient_basis` and `coefficient_source`
+    for `method`.
 
-    Under provider coefficients a provider with a confirmed row in
-    `provider_coefficients` takes its own significant coefficient and that row's
-    basis; any other provider takes the method's, with a null basis.
+    Under provider coefficients each row takes the `provider_coefficients` row of its
+    provider, year and agency, or of its provider and year for an agency without a
+    row of its own. An activity significant for both objectives takes the row's
+    `both_significant`. Where the row gives no coefficient, because the provider
+    assesses each activity case by case or has no row, the row takes the method's.
+    `coefficient_basis` is `provider` for the provider's flat coefficients, `default`
+    for the default share of a provider that assesses case by case, `case_by_case`
+    where such a provider gives no default, and null where the release holds no row.
     """
     if method.coefficients == "fixed":
-        return frame.with_columns(significant=pl.lit(method.significant))
-    own = (
-        snapshot.table("provider_coefficients")
-        .filter(pl.col("confirmed"))
-        .select("provider_code", _own="significant", _basis="basis")
-    )
-    return (
-        frame.join(own, on="provider_code", how="left", validate="m:1")
-        .with_columns(
-            significant=pl.col("_own").fill_null(method.significant),
-            coefficient_basis=pl.col("_basis"),
+        return frame.with_columns(
+            significant=pl.lit(method.significant),
+            principal=pl.lit(method.principal),
         )
-        .drop("_own", "_basis")
+    first, last, year = pl.col("first_year"), pl.col("last_year"), pl.col("year")
+    held = (
+        snapshot.table("provider_coefficients")
+        .join(frame.select("year").unique(), how="cross")
+        .filter(first.is_null() | (first <= year), last.is_null() | (year <= last))
+        .select(
+            "provider_code",
+            "agency_code",
+            "year",
+            _significant="significant",
+            _principal="principal",
+            _both="both_significant",
+            _basis=pl.when(~pl.col("case_by_case"))
+            .then(pl.lit("provider"))
+            .when(
+                pl.col("significant").is_not_null() | pl.col("principal").is_not_null()
+            )
+            .then(pl.lit("default"))
+            .otherwise(pl.lit("case_by_case")),
+            _source=pl.format("{}, {}", "source", "locator"),
+        )
+    )
+    columns = ("_significant", "_principal", "_both", "_basis", "_source")
+    by_agency = held.filter(pl.col("agency_code").is_not_null())
+    by_provider = held.filter(pl.col("agency_code").is_null()).drop("agency_code")
+    own_agency = pl.col("_source").is_not_null()
+
+    def pick(name: str) -> pl.Expr:
+        return pl.when(own_agency).then(pl.col(name)).otherwise(pl.col(f"{name}_all"))
+
+    rio_a, rio_m = pl.col("rio_adaptation"), pl.col("rio_mitigation")
+    significant = pl.col("_significant").fill_null(method.significant)
+    return (
+        frame.join(
+            by_agency,
+            on=["provider_code", "agency_code", "year"],
+            how="left",
+            validate="m:1",
+        )
+        .join(
+            by_provider,
+            on=["provider_code", "year"],
+            how="left",
+            validate="m:1",
+            suffix="_all",
+        )
+        .with_columns(pick(name).alias(name) for name in columns)
+        .with_columns(
+            significant=pl.when((rio_a == 1) & (rio_m == 1))
+            .then(pl.col("_both").fill_null(significant))
+            .otherwise(significant),
+            principal=pl.col("_principal").fill_null(method.principal),
+            coefficient_basis=pl.col("_basis"),
+            coefficient_source=pl.col("_source"),
+        )
+        .drop(*columns, *(f"{name}_all" for name in columns))
     )
 
 
 def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
     amount = pl.col("amount")
-    fractions = weights(method, significant=pl.col("significant"))
+    fractions = weights(
+        method, significant=pl.col("significant"), principal=pl.col("principal")
+    )
     return frame.with_columns(
         method=pl.lit(label(method)),
         adaptation=amount * fractions["adaptation"],
