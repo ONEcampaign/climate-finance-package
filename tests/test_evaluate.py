@@ -4,6 +4,7 @@ simulated labels."""
 import numpy as np
 import polars as pl
 import pytest
+from pydantic import ValidationError
 
 from climate_finance.build.evaluate import (
     PrecisionRule,
@@ -199,6 +200,68 @@ def test_strata_combine_by_allocated_value() -> None:
     assert row["estimate"] == pytest.approx(0.9 * 0.75 + 0.1 * 1.0)
     assert row["lower"] < row["estimate"] < row["upper"]
     assert row["decision"] == "fail"
+
+
+def test_each_stratum_reports_its_own_precision_beside_the_providers() -> None:
+    # Key draws hold 900 of value and are all right; model draws hold 100 and are
+    # right every other time.
+    correct = np.ones(RULE.cap, dtype=bool)
+    correct[450::2] = False
+    key_draw = pl.col("draw") <= 450
+    labels = _draws(correct[np.newaxis], weight=2.0).with_columns(
+        stratum=pl.when(key_draw).then(pl.lit("key")).otherwise("stratum"),
+        stratum_usd=pl.when(key_draw).then(900.0).otherwise(100.0),
+    )
+
+    row = estimate_precision(labels, rule=RULE).row(0, named=True)
+    key, model = row["strata"]
+
+    assert row["estimate"] == pytest.approx(0.95)
+    assert (key["stratum"], key["labels"], key["estimate"]) == ("key", 450, 1.0)
+    assert (model["stratum"], model["allocated_usd"], model["labels"]) == (
+        "model",
+        100.0,
+        50,
+    )
+    assert model["estimate"] == pytest.approx(0.5)
+    assert model["lower"] < 0.5 < model["upper"] < row["lower"]
+
+
+def test_a_stratum_with_no_draw_read_is_listed_unestimated() -> None:
+    labels = _draws(np.ones((1, RULE.batch), dtype=bool)).vstack(
+        _draws(np.ones((1, 1), dtype=bool), stratum="reviewed").with_columns(
+            draw=pl.lit(RULE.batch + 1, dtype=pl.Int32),
+            correct=pl.lit(None, dtype=pl.Boolean),
+        )
+    )
+
+    strata = estimate_precision(labels, rule=RULE).row(0, named=True)["strata"]
+
+    assert [(row["stratum"], row["labels"], row["estimate"]) for row in strata] == [
+        ("model", RULE.batch, 1.0),
+        ("reviewed", 0, None),
+    ]
+
+
+def test_a_stratum_read_from_one_draw_keeps_the_bounds_finite() -> None:
+    # Every draw is right, and the first look reads one draw of the small stratum,
+    # whose spread cannot be measured.
+    labels = _draws(np.ones((1, RULE.batch), dtype=bool)).with_columns(
+        stratum=pl.when(pl.col("draw") == 1).then(pl.lit("key")).otherwise("stratum"),
+        stratum_usd=pl.when(pl.col("draw") == 1).then(1.0).otherwise(49.0),
+    )
+
+    row = estimate_precision(labels, rule=RULE).row(0, named=True)
+    bounds = [row["lower"]] + [stratum["lower"] for stratum in row["strata"]]
+
+    assert row["estimate"] == 1.0
+    assert all(0 < bound < RULE.threshold for bound in bounds)
+    assert row["decision"] == "continue"
+
+
+def test_interim_bounds_are_at_least_as_wide_as_the_final_ones() -> None:
+    with pytest.raises(ValidationError, match="interim_z"):
+        RULE.model_validate(RULE.model_dump() | {"interim_z": 1.5})
 
 
 def test_a_census_decides_only_once_complete_and_then_exactly() -> None:

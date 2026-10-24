@@ -1,6 +1,7 @@
 """Release gates on a small build run through the stage runner, each failing on a
 release doctored to break it."""
 
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -277,6 +278,16 @@ def test_precision_reads_the_blind_sample_by_allocated_value(
     # d20 carried 60 of the 100 allocated; a complete census is exact.
     assert row["value"] == pytest.approx(estimate)
     assert row["lower"] == row["upper"] == row["value"]
+    assert row["strata"] == [
+        {
+            "stratum": "key",
+            "allocated_usd": pytest.approx(100.0),
+            "labels": 2,
+            "estimate": pytest.approx(estimate),
+            "lower": pytest.approx(estimate),
+            "upper": pytest.approx(estimate),
+        }
+    ]
     assert row["passed"] is passed
     assert ("100% decided by agents" in row["detail"]) is (label_source == "agent")
 
@@ -286,7 +297,9 @@ def _units_of(release_dir: Path, record: str) -> pl.Series:
     return units.filter(pl.col("record_ids").list.contains(record))["unit_id"]
 
 
-@pytest.mark.parametrize("change", ["drop_pair", "change_method", "change_value"])
+@pytest.mark.parametrize(
+    "change", ["drop_pair", "change_method", "change_value", "drop_population"]
+)
 def test_precision_refuses_a_sample_drawn_from_another_build(
     release_dir: Path, change: str
 ) -> None:
@@ -295,6 +308,9 @@ def test_precision_refuses_a_sample_drawn_from_another_build(
     trace = (pl.col("task") == "trace") & pl.col("left_id").is_in(d21.implode())
     if change == "change_value":
         _edit(table_path(release_dir, "fill", "allocations"), _halve_d20)
+    elif change == "drop_population":
+        # A design drawn before designs recorded their population.
+        _edit(design, lambda frame: frame.drop("population"))
     else:
         _edit(
             table_path(release_dir, "review", "links"),
@@ -315,6 +331,7 @@ def test_precision_refuses_a_sample_drawn_from_another_build(
 
     assert row["passed"] is False
     assert (row["value"], row["lower"], row["upper"]) == (None, None, None)
+    assert row["code"] == "stale_sample"
     assert row["detail"].startswith("stale sample")
 
 
@@ -751,7 +768,9 @@ def test_quality_shows_each_providers_precision_interval(
     (release / "release.json").write_text(gated.model_dump_json())
 
     precision = cf.load(path=release).quality().precision.to_polars()
+    recorded = json.loads((release / "release.json").read_text())["gates"]
 
+    assert recorded["precision"][0]["strata"][0]["estimate"] == pytest.approx(0.4)
     assert precision.select("provider_code", "estimate", "lower", "passed").rows() == [
         (NOR, pytest.approx(0.4), pytest.approx(0.4), False)
     ]

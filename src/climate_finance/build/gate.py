@@ -6,9 +6,10 @@ in `GATES` order, with a row per provider for precision and one per check for
 over-allocation:
 
 - `precision`: each provider's blind-sample estimate passes the sequential rule
-  (`evaluate.estimate_precision`). Without a blind sample every provider fails, and
-  so does a provider whose sample was drawn from another population of allocated
-  pairs (`evaluate.population_fingerprints`).
+  (`evaluate.estimate_precision`), and its row lists each stratum's estimate and
+  interval in `strata`. Without a blind sample every provider fails, and so does a
+  provider whose sample was drawn from another population of allocated pairs
+  (`evaluate.population_fingerprints`) or whose design records no population.
 - `human_audit`: at least `min_share` of the blind sample's draws carry a person's
   decision.
 - `conservation`: each linked CRS record's allocations, the unallocated excess
@@ -21,16 +22,17 @@ over-allocation:
 - `drift`: provider-year climate commitments and disbursements move by at most
   `max_move` from the previous release, unless a recorded cause covers the move.
 - `withheld_rows`: no release row comes from a source the release withholds, such
-  as the Green Climate Fund's ledger, whose terms bar redistribution
-  (`schema.withheld_record`).
+  as the Green Climate Fund's ledger, whose terms allow only private study, research
+  and teaching (`schema.withheld_record`).
 
 Every value is a largest gap, a count or a share. A row passes at or below its
 threshold, except that the raw-links share passes below it, and precision's lower
 bound and the human-audit share pass at or above it. A gate with nothing to
 measure fails: no allocated pairs, no linked record with a disbursement, no linked
 commitment unit, no provider-year in the release or the published CRDF, no
-disbursement row, or an empty sample. `waive_precision` lets precision and
-human_audit rows fail.
+disbursement row, or an empty sample. A precision or human_audit row that could
+not estimate says why in `code`: `no_allocated_pairs`, `no_sample`, `empty_sample`
+or `stale_sample`. `waive_precision` lets precision and human_audit rows fail.
 """
 
 from __future__ import annotations
@@ -69,6 +71,8 @@ RESULT_SCHEMA = pl.Schema(
         "passed": pl.Boolean(),
         "waived": pl.Boolean(),
         "detail": pl.String(),
+        "code": pl.String(),
+        "strata": pl.List(evaluate.STRATUM_ESTIMATE),
     }
 )
 # The provider-year totals the drift gate compares, from the `quality` table.
@@ -77,6 +81,15 @@ DRIFT_MEASURES = ("climate_usd", "disbursed_climate_usd")
 _SHOWN = 5
 # The gates `waive_precision` lets fail: both certify the blind sample.
 _WAIVABLE = ("precision", "human_audit")
+# The details of a `stale_sample` precision row.
+_STALE = (
+    "stale sample: drawn from another population of allocated pairs, as pairs, link "
+    "methods, strata or allocated values changed; draw a new sample"
+)
+_UNFINGERPRINTED = (
+    "stale sample: the design records no population fingerprint, so nothing ties it "
+    "to this build's allocated pairs; draw a new sample"
+)
 
 
 class _Section(BaseModel):
@@ -251,6 +264,7 @@ def _row(
     passed: bool,
     detail: str,
     subject: str | None = None,
+    code: str | None = None,
 ) -> pl.DataFrame:
     return pl.DataFrame(
         [
@@ -264,6 +278,8 @@ def _row(
                 "passed": passed,
                 "waived": False,
                 "detail": detail,
+                "code": code,
+                "strata": None,
             }
         ],
         schema=RESULT_SCHEMA,
@@ -289,11 +305,13 @@ def precision_gate(
     sampled draws (`labels`, from `evaluate.read_sample_labels`): its estimate and
     bounds, passing when the sequential rule decides `pass`.
 
-    A provider fails unestimated when its sample's population fingerprint is not
-    that of its allocated pairs in this build (`evaluate.population_fingerprints`):
-    pairs were added or dropped, or changed method, stratum or value, so the sample
-    and its weights describe another population. With no allocated pairs one row
-    fails, as nothing is certified.
+    A provider fails unestimated, coded `stale_sample`, when its sample's population
+    fingerprint is not that of its allocated pairs in this build
+    (`evaluate.population_fingerprints`): pairs were added or dropped, or changed
+    method, stratum or value, so the sample and its weights describe another
+    population. So does every provider of a design that records no population, as
+    nothing ties it to this build. With no allocated pairs one row fails, as nothing
+    is certified.
     """
     if pairs.is_empty():
         return _row(
@@ -302,19 +320,27 @@ def precision_gate(
             threshold=rule.threshold,
             passed=False,
             detail="no allocated pairs: nothing to certify",
+            code="no_allocated_pairs",
         )
     if labels is None:
         labels = pl.DataFrame(schema=evaluate.DESIGN_SCHEMA)
-    stale = (
-        labels.select("provider_code", "population")
-        .unique()
-        .join(
-            evaluate.population_fingerprints(pairs),
-            on=["provider_code", "population"],
-            how="anti",
+    if "population" in labels.columns:
+        stale = (
+            labels.select("provider_code", "population")
+            .unique()
+            .join(
+                evaluate.population_fingerprints(pairs),
+                on=["provider_code", "population"],
+                how="anti",
+            )
+            .select("provider_code", stale=pl.lit(_STALE))
         )
-        .select("provider_code", stale=pl.lit(value=True))
-    )
+    else:
+        stale = (
+            labels.select("provider_code")
+            .unique()
+            .with_columns(stale=pl.lit(_UNFINGERPRINTED))
+        )
     fresh = labels.join(stale, on="provider_code", how="anti")
     estimates = (
         evaluate.estimate_precision(fresh, rule=rule)
@@ -331,13 +357,7 @@ def precision_gate(
     )
     detail = (
         pl.when(pl.col("stale").is_not_null())
-        .then(
-            pl.lit(
-                "stale sample: drawn from another population of allocated pairs, "
-                "as pairs, link methods, strata or allocated values changed; draw "
-                "a new sample"
-            )
-        )
+        .then("stale")
         .when(pl.col("design").is_null())
         .then(pl.lit("no blind sample"))
         .otherwise(
@@ -369,6 +389,11 @@ def precision_gate(
         ),
         waived=pl.lit(value=False),
         detail=detail,
+        code=pl.when(pl.col("stale").is_not_null())
+        .then(pl.lit("stale_sample"))
+        .when(pl.col("design").is_null())
+        .then(pl.lit("no_sample")),
+        strata="strata",
     ).cast(RESULT_SCHEMA)
 
 
@@ -385,6 +410,7 @@ def human_audit_gate(
             threshold=config.min_share,
             passed=False,
             detail="no blind sample" if labels is None else "the blind sample is empty",
+            code="no_sample" if labels is None else "empty_sample",
         )
     people = int((labels["label_source"] == "human").sum())
     share = people / labels.height

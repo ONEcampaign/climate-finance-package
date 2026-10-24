@@ -11,12 +11,11 @@ that repeat an earlier vintage (`repeat_of`) stay in `commitments` with their
 amounts. `quality` and `disbursement_profile` leave them out of their totals, and
 `quality.repeat_climate_usd` reports them as their own line.
 
-The release leaves out the Green Climate Fund's own records, whose terms bar
-redistribution: `disbursements` drops its fill rows (`schema.withheld_record`), and
-each commitment they reached states their amount as `withheld_usd`, so its
-disbursed amounts and `quality` keep them. `sources.json` notes the sources whose
-rows stay out (`WITHHELD_SOURCES`).
-
+The release leaves out the Green Climate Fund's own records, whose terms allow only
+private study, research and teaching: `disbursements` drops its fill rows
+(`schema.withheld_record`), and each commitment they reached states their amount as
+`withheld_usd`, so its disbursed amounts and `quality` keep them. `sources.json`
+notes the sources whose rows stay out (`WITHHELD_SOURCES`).
 The packed release, the one published, also leaves out the row-level BTR tables
 `btr` and `btr_links` (`WITHHELD_TABLES`) until the UNFCCC confirms its terms cover
 them. Its `btr_totals` holds what the reconciliation reads. A build keeps both
@@ -52,6 +51,7 @@ from climate_finance.build.errors import (
     StageInputMissingError,
 )
 from climate_finance.build.label import inherit_markers
+from climate_finance.build.measure import load_provider_facts
 from climate_finance.build.readers.btr import party_provider
 from climate_finance.build.sums import ordered_sum
 from climate_finance.query import BILATERAL, MULTILATERAL_OUTFLOW
@@ -68,6 +68,7 @@ from climate_finance.schema import (
     DISBURSEMENTS,
     INVARIANT_TOLERANCE_USD,
     LINK_METHODS,
+    MODELLED,
     PROVIDER_COEFFICIENTS,
     QUALITY,
     RELEASE_TABLES,
@@ -84,7 +85,7 @@ from climate_finance.schema import (
 from climate_finance.snapshot import IndexEntry, ReleaseIndex, load, release_dirname
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Collection, Mapping, Sequence
 
     from climate_finance.build.stages import StageContext
 
@@ -103,8 +104,11 @@ PROFILE_GROUPS = {
 # The terms each source's data comes under, by `raw_manifest` source name or the
 # start of one. The longest matching start wins.
 _OECD = (
-    "OECD Terms and Conditions; dataset terms in each dataset's metadata, "
-    "https://www.oecd.org/en/about/terms-conditions.html"
+    "OECD Terms and Conditions, https://www.oecd.org/en/about/terms-conditions.html, "
+    "and the dataset terms in each dataset's metadata. This is an adaptation of an "
+    "original work by the OECD. The opinions expressed and arguments employed in "
+    "the adaptation should not be reported as representing the official views of "
+    "the OECD or of its member countries."
 )
 _WORLD_BANK = (
     "World Bank Data Catalog licence (CC BY 4.0 by default; per dataset), "
@@ -112,13 +116,17 @@ _WORLD_BANK = (
 )
 _IATI = "the publisher's licence in the IATI Registry, https://iatiregistry.org"
 _GCF = (
-    "Green Climate Fund terms: no commercial redistribution or derivative works "
-    "without written consent, https://www.greenclimate.fund/terms-and-conditions"
+    "Green Climate Fund website terms: private study, research and teaching only, "
+    "and no commercial derivative works without written consent; the projects API "
+    "states no terms of its own, https://www.greenclimate.fund/terms-and-conditions"
 )
 _UNFCCC = (
-    "UNFCCC terms of use: public domain with source acknowledged, "
-    "https://unfccc.int/this-site/terms-of-use"
+    "UNFCCC terms of use: public domain if no change to the content is introduced "
+    "and the source is acknowledged, https://unfccc.int/this-site/terms-of-use"
 )
+# The `sources.json` entry citing the annual reports behind `providers.toml`'s
+# `report_ratios`.
+REPORTS_SOURCE = "provider_reports"
 SOURCE_LICENCES = {
     "crs": _OECD,
     "crdf": _OECD,
@@ -136,14 +144,17 @@ SOURCE_LICENCES = {
     "adaptation_labels": "Weikmans et al.; fits the adaptation cut, no rows ship",
     "btr": _UNFCCC,
     "unfccc": _UNFCCC,
+    REPORTS_SOURCE: "single figures quoted from each provider's annual report, "
+    "cited by title, year and page in `citations`; the publisher's terms apply",
 }
 # Sources whose rows the release leaves out (`schema.WITHHELD_RECORD_PREFIXES`), by
 # `raw_manifest` source name or the start of one, and the note `sources.json` gives
 # them.
 WITHHELD_SOURCES = ("gcf_projects", "ledger_gcf")
 WITHHELD_NOTE = (
-    "Green Climate Fund rows are left out of the release, as its terms bar "
-    "redistribution; `cf-build` rebuilds them from the GCF's API."
+    "Green Climate Fund rows are left out of the release, as its terms allow only "
+    "private study, research and teaching; `cf-build` rebuilds them from the GCF's "
+    "API."
 )
 # Release tables the pack leaves out, and the note `release.json` and `sources.json`
 # give them.
@@ -886,10 +897,11 @@ def pack_release(release_dir: Path, *, out_path: Path) -> Path:
     tables but those in `WITHHELD_TABLES`, `release.json` and `sources.json`. Its
     `release.json` is the build's with the withheld tables moved from `tables` to
     `withheld_tables`. `sources.json` lists every source the fetch stage recorded,
-    and `btr` when the release holds BTR rows, each with its version, URLs and
-    licence, and a note on each source whose rows the release leaves out. Members go
-    in name order with fixed owners and the release's creation time, so one release
-    packs to the same bytes.
+    `btr` when the release holds BTR rows, and `REPORTS_SOURCE` when its
+    `modelled` rows use a provider's report ratios, each with its version, URLs
+    and licence, and a note on each source whose rows the release leaves out.
+    Members go in name order with fixed owners and the release's creation time,
+    so one release packs to the same bytes.
 
     Raises:
         BuildError: when a source has no entry in `SOURCE_LICENCES`.
@@ -904,6 +916,11 @@ def pack_release(release_dir: Path, *, out_path: Path) -> Path:
         versions=manifest.source_versions,
         btr_rows=manifest.tables[BTR.name].rows,
         btr_workbooks=pl.read_parquet(workbooks) if workbooks.exists() else None,
+        citations=report_citations(
+            set(
+                pl.read_parquet(assembled / f"{MODELLED.name}.parquet")["provider_code"]
+            )
+        ),
     )
     published = manifest.model_copy(
         update={
@@ -951,10 +968,12 @@ def release_sources(
     versions: Mapping[str, str],
     btr_rows: int,
     btr_workbooks: pl.DataFrame | None,
+    citations: Sequence[str],
 ) -> list[dict[str, object]]:
-    """Each source in `raw_manifest`, and `btr` when `btr_rows` is positive, with its
-    version from `versions`, its URLs and its licence, and as `note` `WITHHELD_NOTE`
-    for a source in `WITHHELD_SOURCES` and `BTR_WITHHELD_NOTE` for `btr`.
+    """Each source in `raw_manifest`, `btr` when `btr_rows` is positive and
+    `REPORTS_SOURCE` with its `citations` when there are any, with its version from
+    `versions`, its URLs and its licence, and as `note` `WITHHELD_NOTE` for a
+    source in `WITHHELD_SOURCES` and `BTR_WITHHELD_NOTE` for `btr`.
 
     The `btr` entry lists as `workbooks` each row of `btr_workbooks` (the normalise
     stage's `btr_workbooks`): the workbook's file name, its party, the Table III.1
@@ -971,6 +990,8 @@ def release_sources(
     }
     if btr_rows:
         urls["btr"] = []
+    if citations:
+        urls[REPORTS_SOURCE] = []
     if unlicensed := sorted(source for source in urls if _licence(source) is None):
         raise BuildError(f"Sources without a licence in SOURCE_LICENCES: {unlicensed}")
     return [
@@ -985,6 +1006,7 @@ def release_sources(
                 if source == BTR.name and btr_workbooks is not None
                 else {}
             ),
+            **({"citations": list(citations)} if source == REPORTS_SOURCE else {}),
         }
         for source in sorted(urls)
     ]
@@ -994,6 +1016,19 @@ def _source_note(source: str) -> str | None:
     if source.startswith(WITHHELD_SOURCES):
         return WITHHELD_NOTE
     return BTR_WITHHELD_NOTE if source == BTR.name else None
+
+
+def report_citations(providers: Collection[int]) -> list[str]:
+    """The sources `providers.toml` cites for the report ratios of `providers`'s
+    modelled ranges, each once, in order."""
+    return sorted(
+        {
+            ratio.source
+            for entry in load_provider_facts().modelled
+            if entry.provider_code in providers
+            for ratio in entry.report_ratios
+        }
+    )
 
 
 def _licence(source: str) -> str | None:

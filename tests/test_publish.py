@@ -9,6 +9,7 @@ import json
 import shutil
 import tarfile
 import threading
+import tomllib
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +24,7 @@ import climate_finance as cf
 from climate_finance import snapshot
 from climate_finance.build import gate, release
 from climate_finance.build.errors import BuildError, GateFailedError
+from climate_finance.build.measure import PROVIDERS_TOML
 from climate_finance.errors import (
     ReleaseIntegrityError,
     SourceUnavailableError,
@@ -130,12 +132,14 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
         built.model_dump(exclude={"tables", "withheld_tables"})
     )
     sources = json.loads(packed["climate-finance-fixture/sources.json"])
-    # The fixture holds BTR rows, so `btr` is listed beside the fetched sources.
+    # The fixture holds BTR rows and IFC's modelled range, so `btr` and IFC's
+    # annual report are listed beside the fetched sources.
     assert [(row["source"], row["licence"]) for row in sources] == [
         ("btr", release.SOURCE_LICENCES["btr"]),
         ("crdf_recipient", release.SOURCE_LICENCES["crdf"]),
         ("crs", release.SOURCE_LICENCES["crs"]),
         ("ledger_iati_44000", release.SOURCE_LICENCES["ledger_iati"]),
+        (release.REPORTS_SOURCE, release.SOURCE_LICENCES[release.REPORTS_SOURCE]),
     ]
     assert [row.get("note") for row in sources] == [
         release.BTR_WITHHELD_NOTE,
@@ -145,6 +149,33 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
     ]
     assert sources[2]["version"] == "fixture"
     assert sources[2]["urls"] == ["https://example.org/crs"]
+    assert [citation.split(",")[0] for citation in sources[4]["citations"]] == [
+        "IFC Annual Report 2022"
+    ] * 2
+
+
+def test_sources_json_cites_every_report_providers_toml_cites(tmp_path: Path) -> None:
+    facts = tomllib.loads(PROVIDERS_TOML.read_text())["modelled"]
+    cited = {
+        ratio["source"] for entry in facts for ratio in entry.get("report_ratios", [])
+    }
+    release_dir = built_release(tmp_path / "fixture")
+    modelled = release_dir / "assemble" / "modelled.parquet"
+    pl.concat(
+        [
+            pl.read_parquet(modelled)
+            .head(1)
+            .with_columns(provider_code=pl.lit(entry["provider_code"], dtype=pl.Int32))
+            for entry in facts
+        ]
+    ).write_parquet(modelled)
+
+    pack = release.pack_release(release_dir, out_path=tmp_path / PACK)
+
+    sources = json.loads(members(pack)["climate-finance-fixture/sources.json"])
+    reports = [row for row in sources if row["source"] == release.REPORTS_SOURCE]
+    assert {"IFC", "NDB"} <= {citation.split()[0] for citation in cited}
+    assert [sorted(row["citations"]) for row in reports] == [sorted(cited)]
 
 
 def test_sources_list_each_btr_workbook_with_its_rows_kept_and_dropped(

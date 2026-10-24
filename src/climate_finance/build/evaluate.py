@@ -33,19 +33,23 @@ lower bound reaches the threshold. It fails when the upper bound falls below the
 threshold, when the lower bound could not reach it by the cap even with every later
 draw right (the cap's estimate is then one less the weight of the wrong draws read
 over the provider's allocated value), or at the cap. With the thresholds in
-`gates.yaml`, a provider whose true precision is 0.90 passes 2.6% of the time. On
-a fail, the weakest stratum is dropped (reviewed pairs, then model links) and the
-rest is certified on a fresh sample.
+`gates.yaml`, a provider whose true precision is 0.90 passes 2.6% of the time.
+The rule reads the provider's estimate, which blends its strata by value, so each
+stratum's estimate and interval at the same look are reported beside it: a
+provider whose value is mostly key-tier links can pass while its model links are
+far less precise. On a fail, the weakest stratum is dropped (reviewed pairs, then
+model links) and the rest is certified on a fresh sample.
 """
 
 from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import Self
 
 import numpy as np
 import polars as pl
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 # `release` imports the gates, which import this module, so it is read at call time.
 from climate_finance.build import release
@@ -78,6 +82,17 @@ DESIGN_SCHEMA = pl.Schema(
         "population": pl.String(),
     }
 )
+# Each stratum's estimate at its provider's look, in `ESTIMATE_SCHEMA`'s `strata`.
+STRATUM_ESTIMATE = pl.Struct(
+    {
+        "stratum": pl.String(),
+        "allocated_usd": pl.Float64(),
+        "labels": pl.Int32(),
+        "estimate": pl.Float64(),
+        "lower": pl.Float64(),
+        "upper": pl.Float64(),
+    }
+)
 ESTIMATE_SCHEMA = pl.Schema(
     {
         "provider_code": pl.Int32(),
@@ -88,6 +103,7 @@ ESTIMATE_SCHEMA = pl.Schema(
         "upper": pl.Float64(),
         "decision": pl.String(),
         "agent_share": pl.Float64(),
+        "strata": pl.List(STRATUM_ESTIMATE),
     }
 )
 
@@ -104,6 +120,16 @@ class PrecisionRule(BaseModel):
     final_z: float
     census_below: int
     seed: int
+
+    @model_validator(mode="after")
+    def _interim_bounds_are_wider(self) -> Self:
+        """Interim looks read the sample several times, so their bounds are at
+        least as wide as the final one's."""
+        if self.interim_z < self.final_z:
+            raise ValueError(
+                f"interim_z {self.interim_z} is below final_z {self.final_z}"
+            )
+        return self
 
 
 def design_path(out_dir: Path) -> Path:
@@ -381,7 +407,7 @@ def read_sample_labels(design: Path, *, decisions: Path) -> pl.DataFrame:
 
 def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataFrame:
     """Per provider, the precision estimate at its latest look and the rule's
-    decision (`pass`, `fail` or `continue`).
+    decision (`pass`, `fail` or `continue`), with each stratum's estimate beside it.
 
     Args:
         labels: draws in `DESIGN_SCHEMA` with a Boolean `correct` and the
@@ -394,13 +420,18 @@ def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataF
         `estimate`, `lower` and `upper` are null before the first look. A census
         reads every decided pair and decides once all are decided, when its
         estimate is exact. `agent_share` is the share of the draws read that an
-        agent decided.
+        agent decided. `strata` lists the provider's strata in `STRATUM_ESTIMATE`,
+        largest allocated value first: the draws the look reads in each, their
+        weighted share right and its Wilson bounds at the provider's `z`. A census
+        stratum with every pair decided is exact, and a stratum with no draw read
+        has null estimate and bounds.
     """
     census = pl.col("design") == "census"
     known = pl.col("correct").is_not_null()
     ordered = labels.sort("provider_code", "draw").with_columns(
         unbroken=known.cast(pl.Int32).cum_min().over("provider_code"),
         pairs=pl.len().over("provider_code"),
+        stratum_pairs=pl.len().over("provider_code", "stratum"),
         decided=known.sum().over("provider_code"),
         provider_usd=pl.col("weight_usd").sum().over("provider_code"),
     )
@@ -411,25 +442,67 @@ def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataF
         pl.when(census).then(known).otherwise(pl.col("draw") <= pl.col("look"))
     )
 
-    weight, right = pl.col("weight_usd"), pl.col("correct").cast(pl.Float64)
-    cells = (
+    # A census reads its decided pairs as one cell, a sample each stratum.
+    cells = _cells(
         read.with_columns(
             cell=pl.when(census).then(pl.lit("all")).otherwise("stratum"),
             cell_usd=pl.when(census)
             .then(pl.col("weight_usd").sum().over("provider_code"))
             .otherwise("stratum_usd"),
+            cell_pairs="pairs",
         )
-        .group_by("provider_code", "cell")
-        .agg(
-            pl.col("design", "pairs", "decided", "cell_usd", "provider_usd").first(),
-            draws=pl.len(),
-            agent_draws=(pl.col("label_source") == "agent").sum(),
-            weight_total=ordered_sum(weight),
-            right_total=ordered_sum(weight * right),
-            wrong_total=ordered_sum(weight * (1 - right)),
-            square_total=ordered_sum(weight * weight),
-            square_right=ordered_sum(weight * weight * right),
-        )
+    )
+    draws = pl.col("draws")
+    cell_usd = pl.col("cell_usd")
+    providers = cells.group_by("provider_code").agg(
+        pl.col("pairs", "decided", "provider_usd").first(),
+        labels=draws.sum(),
+        wrong_usd=ordered_sum(pl.col("wrong_total")),
+        agent_share=pl.col("agent_draws").sum() / draws.sum(),
+        estimate=ordered_sum(cell_usd * pl.col("p_cell")) / ordered_sum(cell_usd),
+        variance=ordered_sum(cell_usd**2 * pl.col("v_cell"))
+        / ordered_sum(cell_usd) ** 2,
+    )
+    providers = (
+        labels.select("provider_code", "design")
+        .unique()
+        .join(providers, on="provider_code", how="left")
+    )
+    strata = _stratum_estimates(
+        labels,
+        cells=_cells(
+            read.with_columns(
+                cell="stratum", cell_usd="stratum_usd", cell_pairs="stratum_pairs"
+            )
+        ),
+        providers=providers,
+        rule=rule,
+    )
+    return (
+        _decide(providers, rule=rule)
+        .join(strata, on="provider_code", how="left", maintain_order="left")
+        .select(ESTIMATE_SCHEMA.names())
+        .cast(ESTIMATE_SCHEMA)
+    )
+
+
+def _cells(read: pl.DataFrame) -> pl.DataFrame:
+    """Per provider and `cell`, the draws `read` holds, their weighted share right
+    (`p_cell`) and its variance (`v_cell`). A census cell of `cell_pairs` pairs
+    shrinks the variance by the share of them read."""
+    weight, right = pl.col("weight_usd"), pl.col("correct").cast(pl.Float64)
+    census = pl.col("design") == "census"
+    cells = read.group_by("provider_code", "cell").agg(
+        pl.col(
+            "design", "pairs", "decided", "cell_usd", "cell_pairs", "provider_usd"
+        ).first(),
+        draws=pl.len(),
+        agent_draws=(pl.col("label_source") == "agent").sum(),
+        weight_total=ordered_sum(weight),
+        right_total=ordered_sum(weight * right),
+        wrong_total=ordered_sum(weight * (1 - right)),
+        square_total=ordered_sum(weight * weight),
+        square_right=ordered_sum(weight * weight * right),
     )
     p_cell = pl.col("right_total") / pl.col("weight_total")
     # The sum of w^2 (y - p)^2 over 0/1 decisions, over the squared weight total.
@@ -437,7 +510,7 @@ def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataF
         pl.col("square_right") * (1 - 2 * p_cell) + pl.col("square_total") * p_cell**2
     ) / pl.col("weight_total") ** 2
     draws = pl.col("draws")
-    sampled = pl.when(census).then(draws / pl.col("pairs")).otherwise(0.0)
+    sampled = pl.when(census).then(draws / pl.col("cell_pairs")).otherwise(0.0)
     # A cell read from one draw has no spread to measure, so it takes the largest.
     v_cell = (
         pl.when(draws > 1)
@@ -446,26 +519,55 @@ def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataF
         .then(0.25)
         .otherwise(0.0)
     )
-    cell_usd = pl.col("cell_usd")
-    providers = (
-        cells.with_columns(p_cell=p_cell, v_cell=v_cell)
-        .group_by("provider_code")
-        .agg(
-            pl.col("pairs", "decided", "provider_usd").first(),
-            labels=draws.sum(),
-            wrong_usd=ordered_sum(pl.col("wrong_total")),
-            agent_share=pl.col("agent_draws").sum() / draws.sum(),
-            estimate=ordered_sum(cell_usd * pl.col("p_cell")) / ordered_sum(cell_usd),
-            variance=ordered_sum(cell_usd**2 * pl.col("v_cell"))
-            / ordered_sum(cell_usd) ** 2,
+    return cells.with_columns(p_cell=p_cell, v_cell=v_cell)
+
+
+def _stratum_estimates(
+    labels: pl.DataFrame,
+    *,
+    cells: pl.DataFrame,
+    providers: pl.DataFrame,
+    rule: PrecisionRule,
+) -> pl.DataFrame:
+    """Per provider, `strata`: each stratum of the design `labels` with its
+    allocated value and its estimate from `cells` (`_cells` by stratum), bounded at
+    the `z` of its provider's look in `providers`."""
+    p = pl.col("p_cell")
+    exact = (pl.col("design") == "census") & (pl.col("draws") == pl.col("cell_pairs"))
+    lower, upper = _interval(
+        p, pl.col("draws").cast(pl.Float64), pl.col("v_cell"), _look_z(rule)
+    )
+    estimates = cells.join(
+        providers.select("provider_code", "labels"), on="provider_code"
+    ).select(
+        "provider_code",
+        stratum="cell",
+        labels="draws",
+        estimate=p,
+        lower=pl.when(exact).then(p).otherwise(lower),
+        upper=pl.when(exact).then(p).otherwise(upper),
+    )
+    return (
+        labels.group_by("provider_code", "stratum")
+        .agg(allocated_usd=pl.col("stratum_usd").first())
+        .join(estimates, on=["provider_code", "stratum"], how="left")
+        .with_columns(pl.col("labels").fill_null(0))
+        .sort(
+            "provider_code", "allocated_usd", "stratum", descending=[False, True, False]
         )
+        .group_by("provider_code", maintain_order=True)
+        .agg(strata=pl.struct(field.name for field in STRATUM_ESTIMATE.fields))
     )
-    return _decide(
-        labels.select("provider_code", "design")
-        .unique()
-        .join(providers, on="provider_code", how="left"),
-        rule=rule,
-    )
+
+
+def _at_cap(rule: PrecisionRule) -> pl.Expr:
+    """Whether a provider's sample has read every draw to the cap."""
+    return (pl.col("design") == "pps") & (pl.col("labels") >= rule.cap)
+
+
+def _look_z(rule: PrecisionRule) -> pl.Expr:
+    """The interval width at a provider's look: `final_z` at the cap."""
+    return pl.when(_at_cap(rule)).then(rule.final_z).otherwise(rule.interim_z)
 
 
 def _decide(providers: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataFrame:
@@ -473,15 +575,8 @@ def _decide(providers: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataFrame:
     p, n = pl.col("estimate"), pl.col("labels").cast(pl.Float64)
     pps = pl.col("design") == "pps"
     complete = ~pps & (pl.col("decided") == pl.col("pairs"))
-    at_cap = pps & (pl.col("labels") >= rule.cap)
-    z = pl.when(at_cap).then(rule.final_z).otherwise(rule.interim_z)
-    variance = pl.col("variance")
-    effective = (
-        pl.when(variance > 0)
-        .then(pl.min_horizontal(p * (1 - p) / variance, n))
-        .otherwise(n)
-    )
-    lower, upper = _wilson(p, effective, z)
+    at_cap = _at_cap(rule)
+    lower, upper = _interval(p, n, pl.col("variance"), _look_z(rule))
     # The best the cap can give: every draw after this look right. At the cap a
     # stratum's draws carry its whole value, so the estimate is the share of the
     # provider's value whose draws are right.
@@ -503,12 +598,23 @@ def _decide(providers: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataFrame:
         .then(pl.lit("fail"))
         .otherwise(pl.lit("continue"))
     )
-    return (
-        bounded.with_columns(decision=decision, labels=pl.col("labels").fill_null(0))
-        .select(ESTIMATE_SCHEMA.names())
-        .cast(ESTIMATE_SCHEMA)
-        .sort("provider_code")
+    return bounded.with_columns(
+        decision=decision, labels=pl.col("labels").fill_null(0)
+    ).sort("provider_code")
+
+
+def _interval(
+    p: pl.Expr, n: pl.Expr, variance: pl.Expr, z: pl.Expr
+) -> tuple[pl.Expr, pl.Expr]:
+    """Wilson bounds on `p` from `n` draws whose estimate has `variance`: at the
+    effective sample size `p (1 - p) / variance`, at most `n`. At a `p` of 0 or 1
+    that size is 0 whatever the variance, so the bounds take `n`."""
+    effective = (
+        pl.when((variance > 0) & (p * (1 - p) > 0))
+        .then(pl.min_horizontal(p * (1 - p) / variance, n))
+        .otherwise(n)
     )
+    return _wilson(p, effective, z)
 
 
 def _wilson(p: pl.Expr, n: pl.Expr, z: pl.Expr) -> tuple[pl.Expr, pl.Expr]:
