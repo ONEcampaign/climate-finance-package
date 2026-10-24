@@ -6,6 +6,7 @@ deliberate change, then review the diff.
 
 import inspect
 import itertools
+import math
 import os
 import tomllib
 from pathlib import Path
@@ -33,6 +34,7 @@ from climate_finance.result import AMOUNTS, ROW_KEYS
 from climate_finance.schema import ReleaseManifest
 from climate_finance.snapshot import Snapshot
 from climate_finance.spec import Spec
+from climate_finance.sums import ordered_sum
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
 SNAP = cf.load(path=FIXTURE_DIR)
@@ -449,6 +451,18 @@ def test_sums_do_not_depend_on_row_order() -> None:
     first = summed([0, 1, 2])
     for order in ([0, 2, 1], [1, 0, 2], [2, 0, 1]):
         assert_frame_equal(first, summed(order), check_exact=True)
+
+
+@pytest.mark.parametrize(
+    "groups", [None, [1, 1], [1, 2]], ids=["select", "one_group", "several_groups"]
+)
+def test_an_empty_sum_is_positive_zero(groups: list[int] | None) -> None:
+    frame = pl.LazyFrame({"group": groups or [1, 1], "value": [1.0, 2.0]})
+    total = ordered_sum(pl.col("value").filter(pl.col("value") < 0))
+    sums = frame.select(total) if groups is None else frame.group_by("group").agg(total)
+
+    signs = [math.copysign(1.0, value) for value in sums.collect()["value"]]
+    assert signs == [1.0] * len(signs)
 
 
 def test_a_range_of_close_methods_counts_each_member_once() -> None:
