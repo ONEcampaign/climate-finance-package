@@ -115,13 +115,13 @@ def _seed_ledgers(release: Path, *, archive: Path, config: BuildConfig) -> None:
         *finances_one.download_finances_one(
             raw,
             years=range(YEARS[0], YEARS[1] + 1),
-            offline=True,
+            datasets=("DS00975", "DS00976"),
             archive=layout / "finances_one",
         ),
         *iati.download_iati_ledgers(
-            raw, publishers=list(IATI_FILES), offline=True, archive=layout / "iati"
+            raw, publishers=list(IATI_FILES), archive=layout / "iati"
         ),
-        *imf.download_sdr_rates(raw, offline=True, archive=archive / SDR_DIR),
+        *imf.download_sdr_rates(raw, archive=archive / SDR_DIR),
     ]
     manifest_path = table_path(release, "fetch", "raw_manifest")
     ledger_files = sorted(_ledger_files(LEDGERS))

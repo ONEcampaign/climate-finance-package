@@ -61,7 +61,7 @@ class FakeSources:
         monkeypatch.setitem(sys.modules, "pydeflate", pydeflate)
         transport = httpx.MockTransport(self.gcf)
         monkeypatch.setattr(
-            fetch, "_http_client", lambda: httpx.Client(transport=transport)
+            fetch, "new_client", lambda: httpx.Client(transport=transport)
         )
 
     def bulk_download_crs(self, *, save_to_path: Path) -> None:
@@ -327,7 +327,7 @@ def test_offline_fetch_rewrites_its_stage_unchanged_with_no_network_call(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = _config(crs_file=crs_file)
+    config = _config(crs_file=crs_file, ledgers=LEDGERS)
     release = _fetch(config, tmp_path / "out")
     online = sha256_file(release / MANIFEST)
     # The fetch stage's identity, which every later stage records.
@@ -339,6 +339,8 @@ def test_offline_fetch_rewrites_its_stage_unchanged_with_no_network_call(
 
     monkeypatch.setattr(socket.socket, "connect", refuse)
     monkeypatch.setattr(socket, "getaddrinfo", refuse)
+    # Every download, ledgers included, runs on the client `run_fetch` builds.
+    monkeypatch.setattr(fetch, "new_client", refuse)
 
     _fetch(config, tmp_path / "out", offline=True)
 

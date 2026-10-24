@@ -10,12 +10,18 @@ from pathlib import Path
 
 import polars as pl
 
-from climate_finance.build.readers.iati import _CUMULATIVE_NOTE
+from climate_finance.build.readers.iati import (
+    CUMULATIVE_NOTE,
+    element_text,
+    parse_number,
+)
+from climate_finance.build.readers.ledgers import LEDGER_DIR
 from climate_finance.build.readers.ledgers.frame import LEDGER_SCHEMA, complete_ledger
 from climate_finance.errors import SourceUnavailableError
 
 logger = logging.getLogger(__name__)
 
+FOLDER = Path(LEDGER_DIR) / "iati"
 _TRANSACTION_TYPES = {"2": "commitment", "3": "disbursement", "4": "expenditure"}
 # The part of an IATI identifier that comes before the id the CRS project number
 # carries, by publisher short name on the IATI Bulk Data Service. Other publishers,
@@ -96,7 +102,7 @@ def read_iati_ledger(path: Path, *, publisher: str) -> pl.DataFrame:
     frame = pl.DataFrame(rows, schema=_FRAME_SCHEMA).unique(
         subset=_DUPLICATE_KEY, keep="first", maintain_order=True
     )
-    return complete_ledger(_to_period_flows(frame).select(list(LEDGER_SCHEMA))).sort(
+    return complete_ledger(_to_period_flows(frame)).sort(
         "key", "date", "transaction_type", "amount"
     )
 
@@ -147,11 +153,13 @@ def _activities(file: Path, skipped: Counter[str]) -> Iterator[ET.Element]:
 def _transactions(
     activity: ET.Element, publisher: str, skipped: Counter[str]
 ) -> Iterator[dict[str, object]]:
-    activity_id = _text(activity.find("iati-identifier"))
+    activity_id = element_text(activity.find("iati-identifier"))
     if activity_id is None:
         skipped["activity without identifier"] += 1
         return
-    title = _text(activity.find("title/narrative")) or _text(activity.find("title"))
+    title = element_text(activity.find("title/narrative")) or element_text(
+        activity.find("title")
+    )
     default_currency = activity.get("default-currency")
     other_ids = [
         ref
@@ -159,7 +167,7 @@ def _transactions(
         if (ref := other.get("ref"))
     ]
     cumulative = any(
-        _CUMULATIVE_NOTE.search("".join(narrative.itertext()))
+        CUMULATIVE_NOTE.search("".join(narrative.itertext()))
         for narrative in activity.iterfind("description/narrative")
     )
     for transaction in activity.findall("transaction"):
@@ -173,29 +181,20 @@ def _transactions(
             skipped["co-financing commitment"] += 1
             continue
         value = transaction.find("value")
-        currency = (
-            (
-                (value.get("currency") if value is not None else None)
-                or default_currency
-                or ""
-            )
-            .strip()
-            .upper()
+        stated = (value.get("currency") if value is not None else None) or (
+            default_currency
         )
-        amount = _number(_text(value))
+        currency = (stated or "").strip().upper()
+        amount = parse_number(element_text(value))
         when = _date(transaction)
         key = _key(publisher, activity_id, transaction)
-        missing = [
-            name
-            for name, found in (
-                ("amount", amount),
-                ("date", when),
-                ("currency", currency),
-                ("key", key),
-            )
-            if found is None or found == ""
-        ]
-        if missing:
+        found = {
+            "amount": amount is not None,
+            "date": when is not None,
+            "currency": bool(currency),
+            "key": bool(key),
+        }
+        if missing := [name for name, present in found.items() if not present]:
             skipped[f"transaction without {' or '.join(missing)}"] += 1
             continue
         yield {
@@ -243,16 +242,3 @@ def _date(transaction: ET.Element) -> date | None:
         except ValueError:
             continue
     return None
-
-
-def _text(element: ET.Element | None) -> str | None:
-    if element is None:
-        return None
-    return (element.text or "").strip() or None
-
-
-def _number(text: str | None) -> float | None:
-    try:
-        return float(text) if text else None
-    except ValueError:
-        return None

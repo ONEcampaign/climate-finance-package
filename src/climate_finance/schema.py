@@ -1197,8 +1197,7 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     for smaller, larger in _ALLOCATION_ORDER:
         failing = disbursements.filter(_exceeds(smaller, larger))
         problems.extend(
-            f"disbursements {row['row_id']} {row['record_id']} {row['year']}: "
-            f"{smaller} > {larger}"
+            f"disbursements {_row_label(row)}: {smaller} > {larger}"
             for row in failing.iter_rows(named=True)
         )
     unlinked = disbursements.filter(
@@ -1322,9 +1321,16 @@ def _oecd_problems(commitments: pl.DataFrame) -> list[str]:
     from climate_finance.methods import OECD, face_shares, weights
 
     oecd = weights(OECD, published=pl.col("share_climate"))["climate"]
-    failing = commitments.with_columns(**face_shares()).filter(
-        (pl.col("face_usd") * oecd - pl.col("climate_usd")).abs()
-        > INVARIANT_TOLERANCE_USD
+    # Lazy, so only the columns the check reads are copied.
+    failing = (
+        commitments.lazy()
+        .with_columns(**face_shares())
+        .filter(
+            (pl.col("face_usd") * oecd - pl.col("climate_usd")).abs()
+            > INVARIANT_TOLERANCE_USD
+        )
+        .select("row_id")
+        .collect()
     )
     return [
         f"commitments {row_id}: the OECD method's value differs from climate_usd"

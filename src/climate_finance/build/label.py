@@ -291,24 +291,22 @@ def ask_jev(texts: pl.DataFrame, *, client: JevClient) -> pl.DataFrame:
             for text in unique["text"]
         ]
     )
-    answers = unique.with_columns(
-        lenient=pl.Series([_answer(r, "lenient")["noul"] for r in responses]),
-        p_significant=pl.Series([_level(r, "significant") for r in responses]),
-        p_principal=pl.Series([_level(r, "principal") for r in responses]),
+    columns: dict[str, list[object]] = {
+        "lenient": [],
+        "p_significant": [],
+        "p_principal": [],
+    }
+    for response in responses:
+        answers = response["answers"]
+        assert isinstance(answers, dict)
+        level = answers["level"]["probabilities"]
+        columns["lenient"].append(answers["lenient"]["noul"])
+        columns["p_significant"].append(float(level["significant"]))
+        columns["p_principal"].append(float(level["principal"]))
+    answered = unique.with_columns(
+        pl.Series(name, values) for name, values in columns.items()
     )
-    return texts.join(answers, on="text", how="left", validate="m:1").drop("text")
-
-
-def _answer(response: dict[str, object], question: str) -> dict[str, object]:
-    answers = response["answers"]
-    assert isinstance(answers, dict)
-    return answers[question]
-
-
-def _level(response: dict[str, object], option: str) -> float:
-    probabilities = _answer(response, "level")["probabilities"]
-    assert isinstance(probabilities, dict)
-    return float(probabilities[option])
+    return texts.join(answered, on="text", how="left", validate="m:1").drop("text")
 
 
 def fit_adaptation_threshold(fitted: pl.DataFrame) -> float:

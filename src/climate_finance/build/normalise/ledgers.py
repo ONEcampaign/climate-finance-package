@@ -6,8 +6,9 @@ from pathlib import Path
 
 import polars as pl
 
-from climate_finance.build.fetch import GCF_FILE
 from climate_finance.build.normalise.external import to_usd
+from climate_finance.build.readers.gcf import PROJECTS_FILE
+from climate_finance.build.readers.ledgers import finances_one, iati
 from climate_finance.build.readers.ledgers.finances_one import (
     PUBLISHERS as FINANCES_ONE_PUBLISHERS,
 )
@@ -16,15 +17,17 @@ from climate_finance.build.readers.ledgers.gcf import (
     PUBLISHER as GCF_PUBLISHER,
 )
 from climate_finance.build.readers.ledgers.gcf import (
+    READINESS_FILE,
     READINESS_PUBLISHER,
     read_gcf_disbursements,
     read_gcf_readiness,
 )
 from climate_finance.build.readers.ledgers.iati import read_iati_ledger
-from climate_finance.build.readers.ledgers.imf import read_sdr_rates
-from climate_finance.build.sources import finances_one, iati
-from climate_finance.build.sources.gcf import READINESS_FILE
-from climate_finance.build.sources.imf import SDR_FILE, XDR_PUBLISHERS
+from climate_finance.build.readers.ledgers.imf import (
+    SDR_FILE,
+    needs_sdr,
+    read_sdr_rates,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +61,7 @@ def normalise_ledgers(
         for publisher in publishers
     ]
     ledger = to_usd(pl.concat(frames), exchange=exchange)
-    if XDR_PUBLISHERS & set(publishers):
+    if needs_sdr(publishers):
         ledger = _sdr_to_usd(ledger, rates=read_sdr_rates(raw / SDR_FILE))
     unconverted = ledger.filter(pl.col("amount_usd").is_null())
     if unconverted.height:
@@ -96,7 +99,7 @@ def _read(raw: Path, *, publisher: str, years: range) -> pl.DataFrame:
             years=years,
         )
     if publisher == GCF_PUBLISHER:
-        return read_gcf_disbursements(raw / GCF_FILE)
+        return read_gcf_disbursements(raw / PROJECTS_FILE)
     if publisher == READINESS_PUBLISHER:
         return read_gcf_readiness(raw / READINESS_FILE)
     return read_iati_ledger(raw / iati.FOLDER / publisher, publisher=publisher)

@@ -11,7 +11,7 @@ from climate_finance.build.config import Ledgers
 from climate_finance.build.fetch import DAC_EXCHANGE_FILE
 from climate_finance.build.link.ledger import check_ledgers
 from climate_finance.build.normalise.ledgers import normalise_ledgers
-from climate_finance.build.sources.finances_one import FOLDER
+from climate_finance.build.readers.ledgers.finances_one import FOLDER
 from climate_finance.build.stages import raw_dir, table_path
 
 pytestmark = pytest.mark.slow

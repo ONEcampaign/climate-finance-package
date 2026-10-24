@@ -16,12 +16,9 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import pytest
+from jev_import import PrototypeCache, import_prototype_cache
 
-from climate_finance.build.jev_client import (
-    JevClient,
-    PrototypeCache,
-    import_prototype_cache,
-)
+from climate_finance.build.jev_client import JevClient
 from climate_finance.build.label import (
     ADAPTATION_QUESTIONS,
     WEIKMANS_LEVEL,

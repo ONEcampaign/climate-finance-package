@@ -30,19 +30,13 @@ class Method(Frozen):
 
     `eu` sets how EU Institutions (provider 918) count in the provider view. As a
     `"channel"`, members' core contributions to the EU budget, the EDF and the EIB
-    carry the EU's climate share. Each EU agency's own rows count times one minus the
-    share of its channel's attributed contributions in that year that come from the
-    providers in the query, so EU money counts once: an all-provider result leaves
-    them out, and a query for 918 alone keeps them in full. The EIB's own lending
-    then reaches members' totals only through their paid-in capital, as every
-    development bank's own lending does: under ONE, USD 0.035bn attributed against
-    2.72bn the EIB disbursed in 2021 and 2022. It stays in the recipient view, and
-    `quality()` reports the rows an all-provider result leaves out.
-    As a `"provider"`, 918 counts the EU budget and the EDF in its own right, and
-    contributions to them attribute nothing. The EIB is a channel, as the OECD counts
-    it: the EIB's own rows (agency 3) leave every result, and members' contributions
-    to it carry the EIB's climate share. A query for 918 alone returns the spending of
-    the EU budget and the EDF.
+    carry the EU's climate share, and each EU agency's own rows count times one minus
+    the share of its channel's attributed contributions that year that come from the
+    providers in the query, so EU money counts once. As a `"provider"`, 918 counts the
+    EU budget and the EDF in its own right, and the EIB is a channel, as the OECD
+    counts it.
+    `describe` states each rule in full, and `quality()` reports the rows an
+    all-provider result leaves out.
     """
 
     significant: float = Field(ge=0.0, le=1.0)

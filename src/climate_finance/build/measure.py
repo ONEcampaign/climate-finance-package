@@ -427,11 +427,20 @@ def _share_spans(
     """
     first, last = years
     rows = _by_channel(crdf.filter(pl.col("year") <= last), agencies=agencies)
-    records = _by_channel(
-        crs.rename({"donor_code": "provider_code"}).filter(
-            pl.col("year").is_between(first - SHARE_YEARS + 1, last)
-        ),
-        agencies=agencies,
+    # Collected once, as both the agency check and the spans read it and the CRS
+    # is the largest input.
+    records = (
+        _by_channel(
+            crs.rename({"donor_code": "provider_code"}).filter(
+                pl.col("year").is_between(first - SHARE_YEARS + 1, last)
+            ),
+            agencies=agencies,
+        )
+        .select(
+            "channel_code", "provider_code", "agency_code", "year", "commitment_usd"
+        )
+        .collect()
+        .lazy()
     )
     _check_agencies(rows, records=records, agencies=agencies)
     spans = _spans(

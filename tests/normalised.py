@@ -19,7 +19,6 @@ from climate_finance.build.fetch import (
     CRDF_FILES,
     CRS_FILE,
     DAC_EXCHANGE_FILE,
-    GCF_FILE,
     IATI_DIR,
     IMPUTED_SHARES_FILE,
     MULTISYSTEM_FILE,
@@ -28,7 +27,8 @@ from climate_finance.build.fetch import (
     resolve_years,
 )
 from climate_finance.build.provenance import Provenance, record_path
-from climate_finance.build.sources.files import LEDGER_DIR
+from climate_finance.build.readers.gcf import PROJECTS_FILE
+from climate_finance.build.readers.ledgers import LEDGER_DIR
 from climate_finance.build.stages import REGISTRY, Stage, table_path
 from climate_finance.schema import sha256_file
 
@@ -143,7 +143,7 @@ def write_raw(
             RAW_FIXTURES / "imputed_shares" / "Imputed_multilateral_shares.xlsx",
             IMPUTED_SHARES_FILE,
         ),
-        ("gcf_projects", RAW_FIXTURES / "gcf" / "projects.json", GCF_FILE),
+        ("gcf_projects", RAW_FIXTURES / "gcf" / "projects.json", PROJECTS_FILE),
         *(
             (f"iati_{publisher}", xml, IATI_DIR / publisher / xml.name)
             for publisher in IATI_PUBLISHERS

@@ -9,24 +9,22 @@ import httpx
 
 from climate_finance.build.readers.ledgers.finances_one import (
     DATASETS,
+    FOLDER,
     Dataset,
     repeated_keys,
     snapshot_file,
     snapshot_years,
 )
 from climate_finance.build.sources.files import (
-    LEDGER_DIR,
     RawFile,
     get,
     http_client,
     import_archive,
-    require_online,
     save,
 )
 from climate_finance.errors import SourceUnavailableError
 
 SOURCE = "ledger_finances_one"
-FOLDER = Path(LEDGER_DIR) / "finances_one"
 API = "https://datacatalogapi.worldbank.org/dexapps/fone/api/apiservice"
 _RESOURCE = "RS00905"
 _PAGE = 1000
@@ -36,8 +34,7 @@ def download_finances_one(
     raw_dir: Path,
     *,
     years: Iterable[int],
-    offline: bool,
-    datasets: Sequence[Dataset] = tuple(DATASETS),
+    datasets: Sequence[Dataset],
     archive: Path | None = None,
     client: httpx.Client | None = None,
     pause_seconds: float = 1.5,
@@ -58,18 +55,16 @@ def download_finances_one(
         raw_dir: The raw directory.
         years: The calendar years to read; each needs its own and the previous
             year-end.
-        offline: Refuse to call the API. Ignored when `archive` is given.
-        datasets: The datasets to save, IBRD (`DS00975`) and IDA (`DS00976`) by
-            default.
+        datasets: The datasets to save, of IBRD (`DS00975`) and IDA (`DS00976`).
         archive: A directory holding the snapshot files, named as the download names
-            them. They are copied and no request is made.
+            them. They are placed (`files.place`) and no request is made.
         client: An HTTP client to use in place of the default.
         pause_seconds: The pause between requests.
 
     Raises:
-        SourceUnavailableError: when offline without an archive, when the archive
-            lacks a snapshot, or when the API returns none for a year-end, other
-            than its own count of rows, or one loan twice.
+        SourceUnavailableError: when the archive lacks a snapshot, or when the API
+            returns none for a year-end, other than its own count of rows, or one
+            loan twice.
     """
     wanted = [(dataset, year) for dataset in datasets for year in snapshot_years(years)]
     if archive is not None:
@@ -82,7 +77,6 @@ def download_finances_one(
                 source=source_name(dataset, year),
             )
         return records
-    require_online(SOURCE, offline=offline)
     records = []
     with http_client(client) as session:
         for dataset, year in wanted:

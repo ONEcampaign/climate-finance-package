@@ -2,10 +2,15 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 
 from climate_finance.build.readers.external import external_rows
+
+# The projects file feeds the external GCF reader and the GCF ledger, so it sits with
+# the external sources and every fetch writes it.
+PROJECTS_FILE = Path("external") / "gcf" / "projects.json"
 
 
 def read_gcf_projects(path: Path) -> pl.DataFrame:
@@ -44,6 +49,7 @@ def read_gcf_projects(path: Path) -> pl.DataFrame:
             for line in project.get("Funding") or []
             if line["Source"] == "GCF" and line["Budget"] is not None
         )
+        dated, _ = disbursements(project)
         rows.extend(
             {
                 **base,
@@ -52,7 +58,18 @@ def read_gcf_projects(path: Path) -> pl.DataFrame:
                 "currency": paid["Currency"],
                 "amount": paid["AmountDisbursed"],
             }
-            for paid in project.get("Disbursements") or []
-            if paid.get("DateEffective") and paid["AmountDisbursed"] is not None
+            for paid in dated
         )
     return external_rows(rows, source="gcf")
+
+
+def disbursements(project: dict[str, Any]) -> tuple[list[dict[str, Any]], int]:
+    """The disbursement lines of a `projects.json` project that carry an amount and
+    an effective date, and the count of those that carry an amount and no date."""
+    paid = [
+        line
+        for line in project.get("Disbursements") or []
+        if line["AmountDisbursed"] is not None
+    ]
+    dated = [line for line in paid if line.get("DateEffective")]
+    return dated, len(paid) - len(dated)

@@ -6,13 +6,13 @@ from pathlib import Path
 
 import httpx
 
+from climate_finance.build.readers.gcf import PROJECTS_FILE
+from climate_finance.build.readers.ledgers.gcf import READINESS_FILE
 from climate_finance.build.sources.files import (
-    LEDGER_DIR,
     RawFile,
     get,
     http_client,
     import_archive,
-    require_online,
     save,
 )
 from climate_finance.errors import SourceUnavailableError
@@ -21,10 +21,6 @@ PROJECTS_SOURCE = "gcf_projects"
 READINESS_SOURCE = "ledger_gcf_readiness"
 PROJECTS_URL = "https://api.gcfund.org/v1/projects"
 READINESS_URL = "https://data.greenclimate.fund/public/data/readiness"
-# The projects file feeds the external GCF reader and the GCF ledger, so it sits with
-# the external sources and every fetch writes it.
-PROJECTS_FILE = Path("external") / "gcf" / "projects.json"
-READINESS_FILE = Path(LEDGER_DIR) / "gcf" / "readiness.json"
 # The readiness page is server-rendered with its full table in this script tag.
 _PAGE_DATA = re.compile(
     r'<script id="__NEXT_DATA__"[^>]*>(?P<json>.*?)</script>', re.DOTALL
@@ -34,7 +30,6 @@ _PAGE_DATA = re.compile(
 def download_gcf_projects(
     raw_dir: Path,
     *,
-    offline: bool,
     client: httpx.Client | None = None,
     pause_seconds: float = 1.0,
 ) -> list[RawFile]:
@@ -45,15 +40,13 @@ def download_gcf_projects(
 
     Args:
         raw_dir: The raw directory.
-        offline: Refuse to call the API.
         client: An HTTP client to use in place of the default.
         pause_seconds: The pause before a retry.
 
     Raises:
-        SourceUnavailableError: when offline, or when the API answers with anything
-            but a JSON list of projects.
+        SourceUnavailableError: when the API answers with anything but a JSON list
+            of projects.
     """
-    require_online(PROJECTS_SOURCE, offline=offline)
     with http_client(client) as session:
         response = get(session, PROJECTS_URL, pause_seconds=pause_seconds)
     try:
@@ -77,7 +70,6 @@ def download_gcf_projects(
 def download_gcf_readiness(
     raw_dir: Path,
     *,
-    offline: bool,
     archive: Path | None = None,
     client: httpx.Client | None = None,
     pause_seconds: float = 1.0,
@@ -90,14 +82,13 @@ def download_gcf_readiness(
 
     Args:
         raw_dir: The raw directory.
-        offline: Refuse to load the page. Ignored when `archive` is given.
-        archive: A directory holding `readiness.json`, which is copied.
+        archive: A directory holding `readiness.json`, which is placed (`files.place`).
         client: An HTTP client to use in place of the default.
         pause_seconds: The pause before a retry.
 
     Raises:
-        SourceUnavailableError: when offline without an archive, or when the page no
-            longer holds the table where this expects it.
+        SourceUnavailableError: when the page no longer holds the table where this
+            expects it.
     """
     if archive is not None:
         return import_archive(
@@ -105,7 +96,6 @@ def download_gcf_readiness(
             raw_dir=raw_dir,
             source=READINESS_SOURCE,
         )
-    require_online(READINESS_SOURCE, offline=offline)
     with http_client(client) as session:
         page = get(session, READINESS_URL, pause_seconds=pause_seconds)
     grants = _grants(page.text)

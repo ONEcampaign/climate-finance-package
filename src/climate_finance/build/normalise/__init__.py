@@ -10,7 +10,6 @@ from climate_finance.build.fetch import (
     CRDF_FILES,
     CRS_FILE,
     DAC_EXCHANGE_FILE,
-    GCF_FILE,
     IATI_DIR,
     IMPUTED_SHARES_FILE,
     MULTISYSTEM_FILE,
@@ -24,7 +23,7 @@ from climate_finance.build.normalise.external import normalise_external
 from climate_finance.build.normalise.ledgers import normalise_ledgers
 from climate_finance.build.normalise.orgs import org_names, resolve_orgs
 from climate_finance.build.normalise.vintages import mark_repeats
-from climate_finance.build.readers.gcf import read_gcf_projects
+from climate_finance.build.readers.gcf import PROJECTS_FILE, read_gcf_projects
 from climate_finance.build.readers.iati import read_iati_activities
 from climate_finance.build.readers.imputed_shares import read_imputed_shares
 from climate_finance.build.readers.multisystem import read_multisystem
@@ -82,7 +81,10 @@ def run_normalise(context: StageContext) -> StageOutput:
     )
     external = normalise_external(
         pl.concat(
-            [read_iati_activities(raw / IATI_DIR), read_gcf_projects(raw / GCF_FILE)]
+            [
+                read_iati_activities(raw / IATI_DIR),
+                read_gcf_projects(raw / PROJECTS_FILE),
+            ]
         ),
         exchange=exchange,
     )

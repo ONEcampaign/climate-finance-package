@@ -20,7 +20,6 @@ from climate_finance.build.fetch import (
     CRDF_FILES,
     CRS_FILE,
     DAC_EXCHANGE_FILE,
-    GCF_FILE,
     IATI_DIR,
     IMPUTED_SHARES_FILE,
     MULTISYSTEM_FILE,
@@ -28,6 +27,7 @@ from climate_finance.build.fetch import (
     held_years,
     resolve_years,
 )
+from climate_finance.build.readers.gcf import PROJECTS_FILE
 from climate_finance.build.stages import raw_dir
 from climate_finance.schema import RAW_MANIFEST, sha256_file
 
@@ -87,7 +87,7 @@ def seed_raw(release_dir: Path, *, archive: Path, config: BuildConfig) -> None:
     links = {
         "crs": [(CRS_ARCHIVE, CRS_FILE)],
         "imputed_shares": [(IMPUTED_SHARES_FILE, IMPUTED_SHARES_FILE)],
-        "gcf_projects": [(Path("external/gcf_api/projects.json"), GCF_FILE)],
+        "gcf_projects": [(Path("external/gcf_api/projects.json"), PROJECTS_FILE)],
         "dac_exchange": [(DAC_EXCHANGE_FILE, DAC_EXCHANGE_FILE)],
         **{
             f"iati_{publisher}": [

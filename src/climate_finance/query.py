@@ -45,7 +45,7 @@ on Bi_Multi alone and provider attribution comes only from core contributions.
 from __future__ import annotations
 
 import tomllib
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from importlib.metadata import version
 from importlib.resources import files
 from typing import TYPE_CHECKING
@@ -281,12 +281,12 @@ def _attribution(
     """Per provider, year and flow, the value `method` attributes through core
     contributions, in one column per share source, in USD at current prices."""
     conditions = _conditions(providers=providers, recipients=None, years=years)
-    parts = []
-    for flow in FLOWS:
+
+    def by_provider(flow: Flow) -> pl.LazyFrame:
         attributed = _attributed_rows(snapshot, flow=flow, method=method).filter(
             *conditions
         )
-        parts.append(
+        return (
             _weigh(_coefficients(snapshot, attributed, method=method), method=method)
             .group_by("provider_code", "year")
             .agg(
@@ -295,10 +295,10 @@ def _attribution(
                 ).alias(f"{origin}_usd")
                 for origin in SHARE_ORIGINS
             )
-            .with_columns(flow=pl.lit(flow))
         )
+
     return (
-        pl.concat(parts)
+        _per_flow(by_provider)
         .select("provider_code", "year", "flow", *(f"{o}_usd" for o in SHARE_ORIGINS))
         .sort("provider_code", "year", "flow")
     )
@@ -311,25 +311,25 @@ def _eu_left_out(
     rows that a provider view of every provider leaves out under `method`, in USD at
     current prices. Empty when the method counts EU Institutions as a provider."""
     conditions = _conditions(providers=None, recipients=None, years=years)
-    parts = []
-    for flow in FLOWS:
+
+    def by_agency(flow: Flow) -> pl.LazyFrame:
         own = _base_rows(snapshot, flow=flow, view="provider").filter(
             pl.col("provider_code") == EU_INSTITUTIONS, *conditions
         )
         attributed = _attributed_rows(snapshot, flow=flow, method=method)
         kept = _eu_kept(attributed=attributed, everyone=attributed)
         left_out = _with_eu_kept(own, kept=kept).filter(pl.col("eu_kept") == 0)
-        parts.append(
+        return (
             _weigh(
                 _coefficients(snapshot, left_out.drop("eu_kept"), method=method),
                 method=method,
             )
             .group_by("agency_code", "year")
             .agg(value=ordered_sum(pl.col("value")))
-            .with_columns(flow=pl.lit(flow))
         )
+
     left_out = (
-        pl.concat(parts)
+        _per_flow(by_agency)
         .with_columns(
             channel_code=pl.col("agency_code").replace_strict(
                 EU_AGENCY_CHANNELS, return_dtype=pl.Int32
@@ -339,6 +339,11 @@ def _eu_left_out(
         .sort("agency_code", "year", "flow")
     )
     return left_out if method.eu == "channel" else left_out.clear()
+
+
+def _per_flow(build: Callable[[Flow], pl.LazyFrame]) -> pl.LazyFrame:
+    """`build`'s frame for each of `FLOWS`, with its `flow`, stacked."""
+    return pl.concat(build(flow).with_columns(flow=pl.lit(flow)) for flow in FLOWS)
 
 
 def _codes(values: Sequence[str | int], *, listing: catalogue.Catalogue) -> list[int]:

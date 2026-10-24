@@ -7,12 +7,15 @@ from pathlib import Path
 
 import polars as pl
 
+from climate_finance.build.readers.gcf import disbursements
+from climate_finance.build.readers.ledgers import LEDGER_DIR
 from climate_finance.build.readers.ledgers.frame import ledger_frame
 
 logger = logging.getLogger(__name__)
 
 PUBLISHER = "gcf"
 READINESS_PUBLISHER = "gcf_readiness"
+READINESS_FILE = Path(LEDGER_DIR) / "gcf" / "readiness.json"
 
 
 def read_gcf_disbursements(path: Path) -> pl.DataFrame:
@@ -31,25 +34,22 @@ def read_gcf_disbursements(path: Path) -> pl.DataFrame:
     rows = []
     undated = 0
     for project in json.loads(path.read_text(encoding="utf-8")):
-        for paid in project.get("Disbursements") or []:
-            if paid["AmountDisbursed"] is None:
-                continue
-            if not paid.get("DateEffective"):
-                undated += 1
-                continue
-            rows.append(
-                {
-                    "publisher": PUBLISHER,
-                    "key": project["ApprovedRef"],
-                    "activity_id": project["ApprovedRef"],
-                    "transaction_type": "disbursement",
-                    "date": date.fromisoformat(paid["DateEffective"][:10]),
-                    "currency": paid["Currency"],
-                    "amount": paid["AmountDisbursed"],
-                    "title": project["ProjectName"],
-                    "other_ids": [],
-                }
-            )
+        dated, lacking = disbursements(project)
+        undated += lacking
+        rows.extend(
+            {
+                "publisher": PUBLISHER,
+                "key": project["ApprovedRef"],
+                "activity_id": project["ApprovedRef"],
+                "transaction_type": "disbursement",
+                "date": date.fromisoformat(paid["DateEffective"][:10]),
+                "currency": paid["Currency"],
+                "amount": paid["AmountDisbursed"],
+                "title": project["ProjectName"],
+                "other_ids": [],
+            }
+            for paid in dated
+        )
     if undated:
         logger.warning("GCF disbursements without an effective date: %d", undated)
     return ledger_frame(rows).sort("key", "date", "amount")

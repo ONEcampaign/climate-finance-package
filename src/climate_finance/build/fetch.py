@@ -24,11 +24,9 @@ from __future__ import annotations
 
 import shutil
 from collections.abc import Collection
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-import httpx
 import polars as pl
 
 from climate_finance.build.errors import (
@@ -37,6 +35,7 @@ from climate_finance.build.errors import (
     StaleStageError,
 )
 from climate_finance.build.provenance import read_record, setting_value
+from climate_finance.build.readers.ledgers import LEDGER_DIR
 from climate_finance.build.readers.ledgers.finances_one import (
     PUBLISHERS as FINANCES_ONE_PUBLISHERS,
 )
@@ -45,14 +44,21 @@ from climate_finance.build.readers.ledgers.gcf import (
     PUBLISHER as GCF_PUBLISHER,
 )
 from climate_finance.build.readers.ledgers.gcf import (
+    READINESS_FILE,
     READINESS_PUBLISHER,
 )
+from climate_finance.build.readers.ledgers.imf import SDR_FILE, needs_sdr
 from climate_finance.build.sources import finances_one, iati, imf
-from climate_finance.build.sources.files import LEDGER_DIR, RawFile
+from climate_finance.build.sources.files import (
+    RawFile,
+    describe,
+    import_archive,
+    new_client,
+    place,
+    target,
+)
 from climate_finance.build.sources.gcf import (
-    PROJECTS_FILE,
     PROJECTS_SOURCE,
-    READINESS_FILE,
     READINESS_SOURCE,
     download_gcf_projects,
     download_gcf_readiness,
@@ -63,6 +69,7 @@ from climate_finance.schema import RAW_MANIFEST, sha256_file
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    import httpx
     import pandas as pd
 
     from climate_finance.build.config import BuildConfig, Ledgers, LocalFile, Years
@@ -108,13 +115,11 @@ type YearRange = tuple[int, int]
 MULTISYSTEM_FIRST_YEAR = 2011
 IMPUTED_SHARES_NAME = "Imputed_multilateral_shares.xlsx"
 IMPUTED_SHARES_FILE = Path("oecd") / IMPUTED_SHARES_NAME
-GCF_FILE = PROJECTS_FILE
 IATI_DIR = Path("external/iati")
 DAC_EXCHANGE_FILE = Path("dac_exchange.parquet")
 ADAPTATION_LABELS_FILE = Path("labels/adaptation_labels.csv")
 
 CRDF_URL = "https://webfs.oecd.org/climate/"
-_TIMEOUT = httpx.Timeout(30.0, read=300.0)
 
 
 def run_fetch(context: StageContext) -> StageOutput:
@@ -152,7 +157,7 @@ def run_fetch(context: StageContext) -> StageOutput:
 
     partial = _partial_dir(context.release_dir)
     shutil.rmtree(partial, ignore_errors=True)
-    with _http_client() as client:
+    with new_client() as client:
         files = fetch_sources(partial, config=context.config, client=client)
     return {RAW_MANIFEST.name: pl.DataFrame(files, schema=RAW_MANIFEST.dtypes)}
 
@@ -175,7 +180,7 @@ def seal_fetch(
             context.raw_dir,
             out_dir / RAW,
             symlinks=True,
-            copy_function=lambda origin, target: _place(Path(origin), Path(target)),
+            copy_function=lambda origin, linked: place(Path(origin), Path(linked)),
         )
     else:
         _partial_dir(context.release_dir).rename(out_dir / RAW)
@@ -242,29 +247,23 @@ def fetch_sources(
         *crdf,
         _download_multisystem(raw, years=years["multisystem"]),
         _download_imputed_shares(raw),
-        *download_gcf_projects(raw, offline=False, client=client),
+        *download_gcf_projects(raw, client=client),
         _download_dac_exchange(raw),
         *_copy_iati(
             raw, archive=sources.iati_archive, publishers=sources.iati_publishers
         ),
-        *(
-            [
-                _link_local(
-                    raw,
-                    local=labels,
-                    relative=ADAPTATION_LABELS_FILE,
-                    source="adaptation_labels",
-                )
-            ]
-            if (labels := _pinned_files(config).get("adaptation_labels"))
-            else []
-        ),
-        *(
-            _fetch_ledgers(raw, ledgers=sources.ledgers, client=client)
-            if sources.ledgers is not None
-            else []
-        ),
     ]
+    if labels := _pinned_files(config).get("adaptation_labels"):
+        files.append(
+            _link_local(
+                raw,
+                local=labels,
+                relative=ADAPTATION_LABELS_FILE,
+                source="adaptation_labels",
+            )
+        )
+    if sources.ledgers is not None:
+        files.extend(_fetch_ledgers(raw, ledgers=sources.ledgers, client=client))
     held = held_in(raw, asked=years, crdf=listing)
     for file in files:
         if (name := file["source"]) in held:
@@ -674,51 +673,6 @@ def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> Non
         )
 
 
-def _http_client() -> httpx.Client:
-    return httpx.Client(timeout=_TIMEOUT, follow_redirects=True)
-
-
-def _record(
-    raw: Path,
-    relative: Path,
-    *,
-    source: str,
-    method: str,
-    url: str | None = None,
-    etag: str | None = None,
-    version: str | None = None,
-    sha256: str | None = None,
-) -> RawFile:
-    return RawFile(
-        source=source,
-        url=url,
-        path=relative.as_posix(),
-        sha256=sha256 or sha256_file(raw / relative),
-        etag=etag,
-        version=version,
-        fetched_at=datetime.now(UTC),
-        method=method,
-        first_year=None,
-        last_year=None,
-        held_first_year=None,
-        held_last_year=None,
-    )
-
-
-def _target(raw: Path, relative: Path) -> Path:
-    path = raw / relative
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def _place(origin: Path, target: Path) -> None:
-    """Hard-link `origin` to `target`, or copy it where a link is refused."""
-    try:
-        target.hardlink_to(origin.resolve())
-    except OSError:
-        shutil.copyfile(origin, target)
-
-
 _DESCRIPTIONS = {"crs": "CRS file", "adaptation_labels": "adaptation label file"}
 
 
@@ -745,14 +699,9 @@ def _link_local(
         raise SourceUnavailableError(
             f"{local.path} has sha256 {actual}, and build.toml expects {local.sha256}."
         )
-    _place(local.path, _target(raw, relative))
-    return _record(
-        raw,
-        relative,
-        source=source,
-        method="manual",
-        version=version,
-        sha256=local.sha256,
+    place(local.path, target(raw, relative))
+    return describe(
+        relative, source=source, method="manual", version=version, sha256=local.sha256
     )
 
 
@@ -766,8 +715,8 @@ def _download_crs(raw: Path) -> RawFile:
     import oda_reader
     from oda_reader.crs import get_full_crs_parquet_url
 
-    target = _target(raw, CRS_FILE)
-    download = target.with_name("crs.download")
+    path = target(raw, CRS_FILE)
+    download = path.with_name("crs.download")
     download.mkdir()
     try:
         oda_reader.bulk_download_crs(save_to_path=download)
@@ -777,10 +726,14 @@ def _download_crs(raw: Path) -> RawFile:
             "under [sources] in build.toml."
         ) from error
     [saved] = download.iterdir()
-    saved.rename(target)
+    saved.rename(path)
     download.rmdir()
-    return _record(
-        raw, CRS_FILE, source="crs", method="http", url=get_full_crs_parquet_url()
+    return describe(
+        CRS_FILE,
+        source="crs",
+        method="http",
+        url=get_full_crs_parquet_url(),
+        sha256=sha256_file(path),
     )
 
 
@@ -815,13 +768,14 @@ def _download_crdf(
                 f"CRDF workbooks differ from the ETags pinned in build.toml: {unpinned}"
             )
     relative = CRDF_FILES[perspective]
-    frame.to_parquet(_target(raw, relative), index=False)
-    return _record(
-        raw,
+    path = target(raw, relative)
+    frame.to_parquet(path, index=False)
+    return describe(
         relative,
         source=f"crdf_{perspective}",
         method="http",
         url=CRDF_URL,
+        sha256=sha256_file(path),
     )
 
 
@@ -832,22 +786,24 @@ def _download_multisystem(raw: Path, *, years: tuple[int, int]) -> RawFile:
     frame = oda_reader.download_multisystem(
         start_year=first, end_year=last, pre_process=True, dotstat_codes=True
     )
-    frame.to_parquet(_target(raw, MULTISYSTEM_FILE), index=False)
-    return _record(raw, MULTISYSTEM_FILE, source="multisystem", method="http")
+    path = target(raw, MULTISYSTEM_FILE)
+    frame.to_parquet(path, index=False)
+    return describe(
+        MULTISYSTEM_FILE, source="multisystem", method="http", sha256=sha256_file(path)
+    )
 
 
 def _download_imputed_shares(raw: Path) -> RawFile:
     import oda_reader
 
-    oda_reader.download_crdf_file(
-        IMPUTED_SHARES_NAME, _target(raw, IMPUTED_SHARES_FILE)
-    )
-    return _record(
-        raw,
+    path = target(raw, IMPUTED_SHARES_FILE)
+    oda_reader.download_crdf_file(IMPUTED_SHARES_NAME, path)
+    return describe(
         IMPUTED_SHARES_FILE,
         source="imputed_shares",
         method="http",
         url=f"{CRDF_URL}{IMPUTED_SHARES_NAME}",
+        sha256=sha256_file(path),
     )
 
 
@@ -861,8 +817,14 @@ def _download_dac_exchange(raw: Path) -> RawFile:
     rates = pydeflate.get_oecd_dac_exchange_rates(
         source_currency="USA", target_currency="LCU"
     )
-    rates.to_parquet(_target(raw, DAC_EXCHANGE_FILE), index=False)
-    return _record(raw, DAC_EXCHANGE_FILE, source="dac_exchange", method="http")
+    path = target(raw, DAC_EXCHANGE_FILE)
+    rates.to_parquet(path, index=False)
+    return describe(
+        DAC_EXCHANGE_FILE,
+        source="dac_exchange",
+        method="http",
+        sha256=sha256_file(path),
+    )
 
 
 def _copy_iati(
@@ -880,12 +842,11 @@ def _copy_iati(
             raise SourceUnavailableError(
                 f"The IATI archive {archive} holds no XML for publisher {publisher!r}."
             )
-        for origin in origins:
-            relative = IATI_DIR / publisher / origin.name
-            _place(origin, _target(raw, relative))
-            files.append(
-                _record(raw, relative, source=f"iati_{publisher}", method="manual")
-            )
+        files += import_archive(
+            {IATI_DIR / publisher / origin.name: origin for origin in origins},
+            raw_dir=raw,
+            source=f"iati_{publisher}",
+        )
     return files
 
 
@@ -911,7 +872,6 @@ def _fetch_ledgers(
             raw,
             years=range(first, last + 1),
             datasets=datasets,
-            offline=False,
             archive=archived(finances_one.FOLDER),
             client=client,
         )
@@ -919,17 +879,16 @@ def _fetch_ledgers(
         files += iati.download_iati_ledgers(
             raw,
             publishers=publishers,
-            offline=False,
             archive=archived(iati.FOLDER),
             client=client,
         )
     if READINESS_PUBLISHER in ledgers.publishers:
         files += download_gcf_readiness(
-            raw, offline=False, archive=archived(READINESS_FILE.parent), client=client
+            raw, archive=archived(READINESS_FILE.parent), client=client
         )
-    if imf.XDR_PUBLISHERS & set(ledgers.publishers):
+    if needs_sdr(ledgers.publishers):
         files += imf.download_sdr_rates(
-            raw, offline=False, archive=archived(imf.FOLDER), client=client
+            raw, archive=archived(SDR_FILE.parent), client=client
         )
     return files
 
@@ -948,7 +907,7 @@ def _ledger_sources(ledgers: Ledgers) -> list[str]:
             for publisher in iati_ledger_publishers(ledgers.publishers)
         ),
         *([READINESS_SOURCE] if READINESS_PUBLISHER in ledgers.publishers else []),
-        *([imf.SOURCE] if imf.XDR_PUBLISHERS & set(ledgers.publishers) else []),
+        *([imf.SOURCE] if needs_sdr(ledgers.publishers) else []),
     ]
 
 
