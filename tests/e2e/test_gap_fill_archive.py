@@ -64,7 +64,7 @@ TARGET_BN = {
         "not_traceable": 0.3245,
     },
 }
-# The prototype adds GEF's cumulative disbursements as published; the build reads
+# The prototype adds GEF's cumulative disbursements as published and the build reads
 # them as rises of their running peak, which moves eight GEF rows below 0.9.
 RUNNING_PEAK_MOVED_BN = {"disbursed": -0.0083, "partly_disbursed": 0.0083}
 TOLERANCE_BN = 0.001

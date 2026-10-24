@@ -84,15 +84,15 @@ def normalise_crdf(
     published, and `climate_share` is set on component rows only, as climate over
     face.
 
-    `objective` is cross-cutting when a row has both an adaptation and a mitigation
-    part (by amount or marker), else the one it has, and `climate` for imputed rows
-    that publish only a climate total. `vintage` is the latest data year of the
-    workbook that holds the row. `bi_multi` is not published: imputed multilateral
-    rows are core contributions (2), and every other row takes its provider's most
-    common Bi_Multi among the provider's non-core records in `crs`. `id_scheme`
-    classifies every EIB row's id and is null for every other row.
+    `objective` is cross-cutting when a row has both an adaptation and a mitigation part
+    (by amount or marker), else the one it has, and `climate` for imputed rows that
+    publish only a climate total. `vintage` is the latest data year of the workbook that
+    holds the row. The CRDF does not publish `bi_multi`. Imputed multilateral rows are
+    core contributions (2), and every other row takes its provider's most common
+    Bi_Multi among the provider's non-core records in `crs`. `id_scheme` classifies
+    every EIB row's id and is null for every other row.
 
-    Excel damage is repaired or nulled, with counts logged: error text such as
+    Excel damage is repaired or nulled, with counts logged. Error text such as
     `#NAME?` becomes null, and a project number Excel turned into a date takes the
     record's project number in `crs` (same donor, crs id and year) when exactly one
     exists, else null. Crs ids and project numbers lose leading and trailing
@@ -218,7 +218,7 @@ def _bi_multi(frame: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.Series:
     the 2015 to 2024 data the derived class equals the linked CRS record's class on
     every row that links by provider, crs_id and year: 89.7% of recipient value and
     96.3% of provider value. Four providers (Japan, Korea, Denmark, Hungary) have
-    non-core records in two classes; each has a few private-class (6) records among
+    non-core records in two classes. Each has a few private-class (6) records among
     thousands of bilateral ones and comes out bilateral.
     """
     modal = (

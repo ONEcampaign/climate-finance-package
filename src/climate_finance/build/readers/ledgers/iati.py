@@ -61,7 +61,7 @@ def read_iati_ledger(path: Path, *, publisher: str) -> pl.DataFrame:
     `key` is the id the CRS project number carries for that publisher, upper case and
     without spaces; `other_ids` lists the activity's other identifiers.
 
-    A commitment whose description names co-financing is left out: the GCF lists
+    A commitment whose description names co-financing is left out. The GCF lists
     its co-financiers' commitments under its own activities, USD 57.7bn of its
     77.8bn. A transaction repeated exactly within an activity is counted once: 186 IDB
     activities repeat transactions, which would add 4.8% to IDB's 2023 disbursements.
@@ -73,7 +73,7 @@ def read_iati_ledger(path: Path, *, publisher: str) -> pl.DataFrame:
     no comparison by activity.
 
     Transactions are skipped, and counted in the log, when they have no amount, no
-    full date, no currency or no key; an activity that does not parse costs only
+    full date, no currency or no key. An activity that does not parse costs only
     itself.
 
     Args:

@@ -648,7 +648,7 @@ def _reporting_run(years: set[int]) -> tuple[int, int]:
 
 
 def _ratio(flows: pl.LazyFrame, *, by: Sequence[str]) -> pl.LazyFrame:
-    """Disbursed over committed per `by`; null where commitments are not positive.
+    """Disbursed over committed per `by`.
 
     The ratio is null where commitments are not positive, and the group stays in the
     result. With a cached input, polars 2.0 pushes a filter on a sum below the

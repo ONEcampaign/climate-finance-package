@@ -55,7 +55,7 @@ def run_link(context: StageContext) -> StageOutput:
     blocking pairs the units the key, repair and crosswalk links left for scoring,
     with embedding neighbours when `embed` is on.
     The provider profile measures each provider's climate value and what its
-    crosswalk reaches, and sorts providers into scoring groups; the truth group's
+    crosswalk reaches, and sorts providers into scoring groups. The truth group's
     classifier links what it scores at or above its threshold. Splink scores the
     other groups' pairs into `pair_scores`, calibrated by people's recorded
     decisions and Jev. With `jev_links` on, Jev adjudicates the classifier's band,

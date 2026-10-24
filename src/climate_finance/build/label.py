@@ -18,7 +18,7 @@ questions in one request. Weikmans et al.'s human-coded projects are all
 donor-marked adaptation, so the labels cover that population only. Jev's answers to
 the same questions on those projects fit the cut on the lenient answer that labels a
 record adaptation. A label carries a Rio level, which the weighting reads like a
-donor's marker. Mitigation has no human-coded set yet, so Jev labels adaptation only.
+donor's marker. Mitigation has no human-coded set, so Jev labels adaptation only.
 """
 
 from __future__ import annotations

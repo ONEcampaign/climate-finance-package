@@ -2,8 +2,8 @@
 
 Jev (`jev.model` in `build.toml`) reads both units' records with the facts derived
 from them and answers the frozen v1 `relation` question: are the two records the
-same activity? Its p(same activity) is evidence, not a probability, because its
-scale shifts between tasks and wording, so id truth or people's labels set it. Each
+same activity? Its p(same activity) is evidence whose scale shifts between tasks and
+wording, so id truth or people's labels set the probability. Each
 request is built from the canonical bulk fields of `levels.unit_attributes`, and the
 client's cache keys on its canonical text.
 
@@ -19,8 +19,8 @@ training-half pairs of single-id donors (`single_id_donors`), labelled by id tru
   is the scale that turns Jev's answers on a Splink model's calibration sample into
   labels (`jev_answers`). A Splink calibration sample spreads over EM match weight,
   from pairs that share nothing to pairs that share everything, so the scale is
-  fitted on pairs spread the same way. Fitted on band pairs alone, where Jev
-  separates weakly, its slope was 0.31 and no Splink probability reached 0.9.
+  fitted on pairs spread the same way. Band pairs alone, where Jev separates
+  weakly, give a slope of 0.31 and no Splink probability reaches 0.9.
 
 Every request goes to the client in one batch, so the cost cap refuses all of it or
 none. Siblings (`programme_level` 1) never link, so Jev is not asked about band
@@ -50,7 +50,7 @@ from climate_finance.build.normalise.ids import content_id
 if TYPE_CHECKING:
     from climate_finance.build.jev_client import JevClient
 
-# Jev's pair questions, wording v1, as the prototypes asked them.
+# Jev's pair questions, wording v1.
 RELATION_QUESTION = (
     "Each record is one yearly line of a donor's aid database (OECD CRS). The earlier "
     "record carries a commitment; the later record is from a later year. How do the "

@@ -95,7 +95,7 @@ FLOOR_SEEN_MOVED_BN = {
 }
 # A record's own commitment fills before older commitments of its key group
 # (`_own_commitments`), so where a donor files a new module or yearly grant under a
-# reused crs id, the new record's money no longer fills the older module's headroom.
+# reused crs id, the new record's money stays out of the older module's headroom.
 # 470 rows change status, mostly Dutch and British rows that leave disbursed.
 OWN_FIRST_MOVED_BN = {
     "disbursed": -0.4945,

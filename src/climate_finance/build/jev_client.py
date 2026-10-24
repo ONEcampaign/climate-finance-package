@@ -30,7 +30,7 @@ API_URL = "https://api.typesafe.ai/v1/systemone"
 API_KEY_ENV = "TYPESAFE_API_KEY"
 API_KEY_PATH = Path.home() / ".config" / "typesafe" / "api_key"
 
-# Input tokens are billed; output tokens are free (docs.typesafe.ai/models).
+# Input tokens are billed. Output tokens are free (docs.typesafe.ai/models).
 USD_PER_INPUT_TOKEN = {"jev-1.13.0": 0.042e-6, "jev-1.14.0": 0.042e-6}
 # Upper bound on input tokens per character of the canonical request. Over the
 # 58,144 imported prototype responses the ratio ran from 0.241 to 0.497, median
@@ -153,7 +153,7 @@ class JevClient:
     """Jev calls for one build, replayed from cache first, capped in cost.
 
     One client serves a whole build, so the cap counts every live call its
-    stages make; `spent_usd` and `live_calls` report them.
+    stages make. `spent_usd` and `live_calls` report them.
     """
 
     def __init__(

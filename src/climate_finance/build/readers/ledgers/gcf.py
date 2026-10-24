@@ -20,9 +20,9 @@ def read_gcf_disbursements(path: Path) -> pl.DataFrame:
 
     Rows are keyed by the project's approved reference (`FP001`, `SAP001`), which the
     CRS project number carries for 96% of GCF disbursement value. Amounts are in the
-    currency the API reports them in; the API's own dollar figure is at the exchange
+    currency the API reports them in. The API's own dollar figure is at the exchange
     rate of the day it was served, so the stage that holds the DAC annual rates
-    converts the euro lines instead. Disbursements without an effective date are
+    converts the euro lines. Disbursements without an effective date are
     skipped and counted in the log.
 
     Args:
@@ -60,7 +60,7 @@ def read_gcf_readiness(path: Path) -> pl.DataFrame:
 
     Readiness grants are absent from the projects API. Each grant gives its approved
     amount as a `commitment` dated by approval, and its disbursed amount as
-    `disbursed_to_date`: the list carries no disbursement dates, so that row has no
+    `disbursed_to_date`. The list carries no disbursement dates, so that row has no
     date or year and no calendar-year check can use it. Rows are keyed by the grant's
     agreement reference (`MLI-RS-001`), which the CRS project number carries. Grants
     without an agreement reference are skipped and counted in the log.

@@ -48,7 +48,7 @@ def normalise_crs(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFrame:
     """Records of `years` (inclusive) with an amount, in the `crs` schema.
 
     A record has an amount when its commitment, disbursement or grant equivalent is
-    non-zero; records with only a grant equivalent carry negative grant equivalents
+    non-zero. Records with only a grant equivalent carry negative grant equivalents
     and stay in. Bi_Multi is kept as published, core contributions included (see
     `trace_population`), and missing Rio markers stay null.
 

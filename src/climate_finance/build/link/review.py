@@ -98,7 +98,7 @@ def flag_review(
 
     Args:
         links: `links` rows, with the ledger check's `ledger_check`.
-        labels: `read_decision_labels`; a pair people or agents decided is not
+        labels: `read_decision_labels`. A pair people or agents decided is not
             queued.
         band: the classifier probabilities queued, low inclusive.
     """

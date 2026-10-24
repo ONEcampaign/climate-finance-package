@@ -1,13 +1,12 @@
 """Decisions on review pairs: imported from labelling packets, applied as exact
 link overrides.
 
-People and agents decide the pairs of a packet (`packet.write_packet`) and return a
-CSV that `import_labels` appends to the review-decisions table.
+People and agents decide the pairs of a packet (`packet.write_packet`) and return a CSV
+that `import_labels` appends to the review-decisions table.
 `splink_models.read_decision_labels` reads the queue decisions back as `human` and
-`agent` pair labels, leaving out blind-sample decisions, which measure the links'
-precision and so neither calibrate a model nor change a link. An accepted link takes
-probability 1, and its records no longer count as disagreeing. A rejected link
-leaves `links` (`drop_pairs`).
+`agent` pair labels, leaving out blind-sample decisions, which only measure the links'
+precision. An accepted link takes probability 1, and its records count as agreeing. A
+rejected link leaves `links` (`drop_pairs`).
 """
 
 from datetime import UTC, datetime
@@ -53,8 +52,8 @@ def drop_pairs(links: pl.DataFrame, *, pairs: pl.DataFrame) -> pl.DataFrame:
     Allocation pools a trace group's disbursement units over the commitments they
     all reach. A dropped trace link whose disbursement unit keeps another link in
     its group therefore takes its commitment out of the group for every unit of the
-    group, so they still reach the same commitments. A unit whose only link in the
-    group is dropped just leaves it.
+    group, so they all reach the same commitments. A unit whose only link in the
+    group is dropped leaves the group.
     """
     dropped = links.join(pairs.select(PAIR), on=PAIR, how="semi")
     kept = links.join(dropped, on=PAIR, how="anti")
@@ -93,9 +92,9 @@ def import_labels(
         decisions_path: the review-decisions parquet.
         label_source: `human` or `agent`.
         reviewer: the person, or the agent run, that decided.
-        model: the agent's model; an agent's decisions need it, a person's take none.
+        model: the agent's model. An agent's decisions need it, a person's take none.
         label_round: the agent's labelling round (`schema.LABEL_ROUNDS`), `label`
-            when not given; a person's decisions take none.
+            when not given. A person's decisions take none.
 
     Returns:
         `decisions_path`.

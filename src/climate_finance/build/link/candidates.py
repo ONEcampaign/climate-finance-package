@@ -21,42 +21,41 @@ reaches the commitment by key, the disbursement's floor year is at or before the
 commitment's placed year, and the ids of neither unit's agency persist in its record
 year's period. Where an agency's ids persist, the id is the only evidence, and a
 later record under another id does not continue the commitment. Those agencies'
-commitments carry the id truth instead: a pair is a true continuation when the two
-units share a crs id. The table keeps eligible pairs and the pairs of commitments
+commitments carry the id truth. A pair is a true continuation when the two units
+share a crs id. The table keeps eligible pairs and the pairs of commitments
 whose agency is `id_persistent`, which train and test the truth-group classifier.
 
-A template line enters no candidate pair, eligible or training (`template_lines`):
-a unit with no project number whose title its donor gives, with no project number,
-to units of at least `TEMPLATE_RECIPIENTS` recipients in at least `TEMPLATE_YEARS`
-record years. Such a title names a reporting category, not an activity: the New
-Development Bank's "Aggregate" line per country and year, which sums every project
-the bank funds there, a credit-line or "aggregated disbursements" line, a sector or
+A template line enters no candidate pair, eligible or training (`template_lines`). A
+template line is a unit with no project number whose title its donor gives, with no
+project number, to units of at least `TEMPLATE_RECIPIENTS` recipients in at least
+`TEMPLATE_YEARS` record years. Such a title names a reporting category. Examples are the
+New Development Bank's "Aggregate" line per country and year, which sums every project
+the bank funds there, a credit-line or "aggregated disbursements" line, and a sector or
 purpose name. An aggregate sums several activities, so no link to one commitment is
-right, and a category title says nothing of which activity a line continues. A title
-whose lines carry identity is no template: when at least `TEMPLATE_IDENTITY_UNITS`
-of its units, and `TEMPLATE_IDENTITY_SHARE` of them, are id-persistent units whose
-crs id an id-persistent unit of the donor carries in another record year, the title
-names one activity per country, as Japan's "The Economic and Social Development
-Programme" does. Key tiers and repair rules run before candidates and keep any link
-they give such a line. On the archive, 701 template titles hold 244,740 units. They
-leave out 6,346 of 1,346,917 eligible pairs, from 37 titles of 10 providers, and
-5,827,107 of 7,213,658 training pairs, none of them true and 5,813,108 of them
-Japan's "TC aggregated activities". Three recipients would also catch regional road
-corridors.
+right, and a category title says nothing of which activity a line continues. A title is
+no template when at least `TEMPLATE_IDENTITY_UNITS` of its units, and
+`TEMPLATE_IDENTITY_SHARE` of them, are id-persistent units whose crs id an id-persistent
+unit of the donor carries in another record year. It names one activity per country, as
+Japan's "The Economic and Social Development Programme" does. Key tiers and repair rules
+run before candidates and keep any link they give such a line. On the archive, 701
+template titles hold 244,740 units. They leave out 6,346 of 1,346,917 eligible pairs,
+from 37 titles of 10 providers, and 5,827,107 of 7,213,658 training pairs, none of them
+true and 5,813,108 of them Japan's "TC aggregated activities". Three recipients would
+also catch regional road corridors.
 
 A programme stem maps a component's project number to its programme's. A project
-number's shape replaces each digit run by 9 and each letter run by A, so
-7F-10454.01.03 has shape 9A-9.9.9. A rule says, for one (donor, agency, shape), how
-many trailing segments to strip: one maps 7F-10454.01.03 to 7F-10454.01. Rules are
+number's shape replaces each digit run by 9 and each letter run by A, so 7F-10454.01.03
+has shape 9A-9.9.9. A rule says, for one (donor, agency, shape), how many trailing
+segments to strip. A count of one maps 7F-10454.01.03 to 7F-10454.01. Rules are
 relearned from the CRS each release. A candidate rule merges, within (donor, agency,
-stem, recipient), the numbers it strips with each other and with a number equal to
-the stem. A merged pair is consistent when the two titles share at least
-`MIN_SIMILARITY` of their words (Jaccard). A rule needs `MIN_PAIRS` merged pairs and
-at most `MAX_ERROR` of them inconsistent, and per shape the passing segment count
-with the lowest error wins, the smaller count on ties. A stem that gathers more than
-`MAX_FANOUT` project numbers over all recipients is a budget line or portfolio code,
-and every pair it merges counts as inconsistent. Two units with different project
-numbers and the same programme key are siblings (`programme_level` 1).
+stem, recipient), the numbers it strips with each other and with a number equal to the
+stem. A merged pair is consistent when the two titles share at least `MIN_SIMILARITY` of
+their words (Jaccard). A rule needs `MIN_PAIRS` merged pairs and at most `MAX_ERROR` of
+them inconsistent, and per shape the passing segment count with the lowest error wins,
+the smaller count on ties. A stem that gathers more than `MAX_FANOUT` project numbers
+over all recipients is a budget line or portfolio code, and every pair it merges counts
+as inconsistent. Two units with different project numbers and the same programme key are
+siblings (`programme_level` 1).
 """
 
 from collections.abc import Callable
@@ -81,7 +80,7 @@ TEMPLATE_RECIPIENTS = 4
 TEMPLATE_YEARS = 2
 # A title is no template when at least this many of its units, and this share of
 # them, continue a crs id across record years under persistent ids. On the archive
-# any share from 0.01 to 0.25 keeps every id-truth pair; 0.3 loses 49.
+# any share from 0.01 to 0.25 keeps every id-truth pair. A share of 0.3 loses 49.
 TEMPLATE_IDENTITY_UNITS = 2
 TEMPLATE_IDENTITY_SHARE = 0.1
 STEM_SEGMENTS = (1, 2)
@@ -142,7 +141,7 @@ def project_shape(pn: pl.Expr) -> pl.Expr:
 
 
 def strip_segments(pn: pl.Expr, segments: int) -> pl.Expr:
-    """`pn` without its last `segments` segments and their separators; null when
+    """`pn` without its last `segments` segments and their separators, or null when
     fewer segments remain to strip or none would be left."""
     stem = pn.str.strip_chars_end(_SEPARATORS)
     for _ in range(segments):
@@ -153,7 +152,7 @@ def strip_segments(pn: pl.Expr, segments: int) -> pl.Expr:
 
 def title_words(title: pl.Expr, *, first: int | None = None) -> pl.Expr:
     """The distinct words of `title`, or of its first `first` words, that can tell
-    projects apart, in order: three letters or more and not in `STOPWORDS`."""
+    projects apart (three letters or more, not in `STOPWORDS`), in order."""
     words = clean_text(title).str.split(" ")
     if first is not None:
         words = words.list.head(first)
@@ -222,7 +221,8 @@ def _score_stems(projects: pl.LazyFrame, *, segments: int) -> pl.LazyFrame:
         .agg(pl.col("stripped").any(), pl.col("words").first())
         .with_columns(fanout=pl.col("project_number").n_unique().over(group[:-1]))
     )
-    # Every pair under a wide stem counts as inconsistent, so it is counted, not built.
+    # Every pair under a wide stem counts as inconsistent, so the count comes from group
+    # sizes and no pair is built.
     members = pl.len().cast(pl.Int64)
     unstripped = members - pl.col("stripped").sum()
     wide = (
@@ -255,7 +255,7 @@ def _score_stems(projects: pl.LazyFrame, *, segments: int) -> pl.LazyFrame:
 
 def with_programme(units: pl.LazyFrame, *, stems: pl.LazyFrame) -> pl.LazyFrame:
     """`units` with `programme`: the project number's stem under its (donor, agency,
-    shape)'s rule, else the project number itself; null without a project number."""
+    shape)'s rule, else the project number itself, and null without a project number."""
     pn = pl.col("project_number")
     stem = pl.coalesce(
         *(
@@ -405,8 +405,8 @@ def template_lines(sides: pl.DataFrame) -> pl.Series:
     and a title their donor gives to units with no project number in at least
     `TEMPLATE_RECIPIENTS` recipients and `TEMPLATE_YEARS` record years, unless at
     least `TEMPLATE_IDENTITY_UNITS` and `TEMPLATE_IDENTITY_SHARE` of the title's
-    units continue a crs id: the unit's ids persist, and an id-persistent unit of the
-    donor carries its crs id in another record year."""
+    units continue a crs id, meaning the unit's ids persist and an id-persistent unit
+    of the donor carries its crs id in another record year."""
     bare = sides.filter(
         pl.col("project_number").is_null(), pl.col("title_block").is_not_null()
     )
@@ -611,7 +611,7 @@ def _narrow_keys(
 
 def pn_block(project_number: pl.Expr) -> pl.Expr:
     """`project_number` lower-cased, with every character other than a to z and
-    digits and leading zeros dropped; null when it names no project or keeps under
+    digits and leading zeros dropped, or null when it names no project or keeps under
     three characters."""
     pn = (
         project_number.str.to_lowercase()
@@ -645,7 +645,7 @@ def clean_text(text: pl.Expr) -> pl.Expr:
 
 
 def word_share(left: pl.Expr, right: pl.Expr) -> pl.Expr:
-    """Shared words over all words of two word lists; null when either is null or
+    """Shared words over all words of two word lists, or null when either is null or
     both are empty."""
     union = left.list.set_union(right).list.len()
     return pl.when(union > 0).then(left.list.set_intersection(right).list.len() / union)

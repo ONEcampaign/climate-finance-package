@@ -34,7 +34,7 @@ def _gef(profile: pl.DataFrame) -> tuple[float, float, float]:
 
 def test_the_gef_crosswalk_reaches_a_tenth_of_gef_climate_value(linked: Path) -> None:
     """Over 2015 to 2024 the crosswalk reaches USD 1.080bn of GEF's 8.674bn, almost
-    all of it committed before 2021: the GEF IATI file names agency ids for few
+    all of it committed before 2021. The GEF IATI file names agency ids for few
     recent projects. USD 126.3m of it comes from 2024 disbursements whose crs id
     the GEF reuses for another country's commitment; `crs_key` keys such an id by
     recipient, so the crosswalk links them to their own country's project."""

@@ -5,7 +5,7 @@ out. The rest split by distinct text: 20% of the sorted distinct texts, drawn wi
 the prototype's seed, fit the threshold, and no held-out project shares a text with
 them, since the build asks Jev once per text. Jev's answers replay offline from the
 prototype's cached responses. The labels' dollar total at fixed weights is reported
-with a bootstrap interval, as a figure: 4,000 projects cannot resolve it to 5%.
+with a bootstrap interval, as a figure, since 4,000 projects cannot resolve it to 5%.
 Needs CF_E2E_DATA pointing at the scoping `data/`.
 """
 

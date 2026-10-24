@@ -8,7 +8,7 @@ replace `<release_dir>/assemble/`, the directory `cf.load(path=...)` opens.
 `commitments` holds the CRDF rows the trace follows: recipient-perspective rows,
 with an aggregate parent left out where its rebuilt children stand in for it. Rows
 that repeat an earlier vintage (`repeat_of`) stay in `commitments` with their
-amounts; `quality` and `disbursement_profile` leave them out of their totals, and
+amounts. `quality` and `disbursement_profile` leave them out of their totals, and
 `quality.repeat_climate_usd` reports them as their own line.
 """
 
@@ -155,9 +155,9 @@ def release_commitments(
 ) -> pl.LazyFrame:
     """The CRDF rows allocation follows, with their status and disbursed amounts.
 
-    `ledger_undisbursed` is true or null, never false: true where the bank's ledger
-    confirms no disbursement, as `confirmed_undisbursed` on every `crdf_crs` link
-    of the row; null where no ledger covers the row or it shows money moving.
+    `ledger_undisbursed` is true where the bank's ledger confirms no disbursement,
+    as `confirmed_undisbursed` on every `crdf_crs` link of the row, and null where
+    no ledger covers the row or it shows money moving. It takes no other value.
     """
     undisbursed = (
         links.filter(pl.col("task") == "crdf_crs")
@@ -246,7 +246,7 @@ def fill_disbursements(fills: pl.LazyFrame, *, crdf: pl.LazyFrame) -> pl.LazyFra
     Bi_Multi, purpose, project number, title, markers and climate share from the
     commitment it fills, and its flow code is null. Its record is the fill's key and
     year (`ledger:<publisher>:<key>:<year>` or `iati:...`), whose disbursement is
-    what the fill gives every commitment on it; there is no grant equivalent. Markers
+    what the fill gives every commitment on it. There is no grant equivalent. Markers
     come from the commitment (`components` where it has a climate share), and the
     method, probability and ledger check are null.
     """
@@ -297,7 +297,7 @@ def carrying_links(
 
     That is the `trace` link from the record's unit to a commitment unit of a
     `crdf_crs` group of the row or of a row that repeats it whose method comes
-    first in `LINK_METHODS`, since allocation runs that method's pass first; then
+    first in `LINK_METHODS`, since allocation runs that method's pass first, then
     the most probable, then the lowest unit id. Allocate moves a repeat's
     allocations to its first row (`repeat_of`), so the link can sit in the
     repeat's group.
@@ -602,16 +602,16 @@ def _empty(table: TableSchema) -> pl.DataFrame:
 
 def pack_release(release_dir: Path, *, out_path: Path) -> Path:
     """Pack a release as `.tar.zst` with its sources and licences file."""
-    raise NotImplementedError("slice S10b")
+    raise NotImplementedError("packing a release")
 
 
 def cut_release(
     release: str, *, config: Path, out_dir: Path, waive_precision: bool = False
 ) -> Path:
     """Build, gate and pack `release`; record a precision waiver in release.json."""
-    raise NotImplementedError("slice S10b")
+    raise NotImplementedError("cutting a release")
 
 
 def upload_release(pack: Path, *, target: str) -> str:
     """Upload a packed release to `target`; return its URL."""
-    raise NotImplementedError("slice S10b")
+    raise NotImplementedError("uploading a release")

@@ -1,7 +1,7 @@
 """Programme stems and blocking recall on the archived OECD files, against the
 end-to-end prototype under `prototypes/` in CF_E2E_DATA.
 
-Id truth follows the prototype: a commitment a CRDF row reaches, of an agency classed
+Id truth follows the prototype. A commitment a CRDF row reaches, of an agency classed
 `id_persistent` in its record year's period, with a crs id, continues in every
 disbursement unit of the same donor and crs id from a later record year. Blocking
 recall is the share of those pairs blocking produces.
@@ -181,7 +181,7 @@ def test_programme_stems_overlap_the_prototype_rules(
     data: Path, stems: pl.DataFrame
 ) -> None:
     schema.validate(schema.PROGRAMME_STEMS, stems)
-    # The prototype learned its rules on the training half; the build learns on
+    # The prototype learned its rules on the training half and the build learns on
     # every record, so more candidate rules reach MIN_PAIRS.
     prototype = pl.read_csv(
         data / "prototypes" / "end-to-end" / "rules" / "rules.csv",
@@ -201,7 +201,7 @@ def test_candidates_hold_eligible_and_training_pairs(
 ) -> None:
     schema.validate(schema.CANDIDATES, candidates)
     counts = dict(candidates.group_by("eligible").len().iter_rows())
-    # `repair_stray_country` takes 6,784 eligible pairs, 6,777 of them Canada's: in
+    # `repair_stray_country` takes 6,784 eligible pairs, 6,777 of them Canada's. In
     # 6,724 it links the commitment, in 60 only the disbursement. `floor_seen` gives
     # pre-2010-floor commitments their self links, which closes them to key repair,
     # so 5 British and German disbursements lose repair links and add 9 pairs. The
@@ -223,7 +223,7 @@ def test_blocking_recall_on_id_truth(truth: pl.DataFrame) -> None:
     assert truth.filter("blocked")["same_crs_id"].all()
     assert prototype_years.height == 14_605
     assert prototype_years["blocked"].mean() >= RECALL_TARGET
-    # Over the build's CRDF years recall just meets the target: five crs ids, four
+    # Over the build's CRDF years recall just meets the target. Five crs ids, four
     # of them Canada's, hold 360 of the 867 missed pairs. The `short_description`
     # fallback blocks 21 more, New Zealand pairs with an untitled side.
     assert crdf_years.height == 57_870

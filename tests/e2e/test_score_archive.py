@@ -69,7 +69,7 @@ def archive() -> Path:
 
 @pytest.fixture(scope="module")
 def release_dir(tmp_path_factory: pytest.TempPathFactory, archive: Path) -> Path:
-    # Slow: normalises 3.8 million CRS records, then links and scores them; about
+    # Slow: normalises 3.8 million CRS records, then links and scores them, about
     # five minutes on an idle machine.
     config = archive_config(archive, key_repair=True, recoveries=True)
     out = tmp_path_factory.mktemp("score")
@@ -224,7 +224,7 @@ def test_the_classifier_meets_its_targets_on_the_prototype_years(
     assert prototype["f1"] >= F1_TARGET
     assert every_year["ece"] <= ECE_TARGET
     # Canada renumbers its lines from year to year, so it carries 384 of the 1,297
-    # held-out misses over the build's CRDF years; without it the ECE is 0.0054.
+    # held-out misses over the build's CRDF years. Without it the ECE is 0.0054.
     assert every_year == pytest.approx(
         {"precision": 0.91708, "recall": 0.93079, "f1": 0.92388, "ece": 0.00851},
         abs=1e-5,
@@ -290,12 +290,12 @@ def test_the_link_stage_writes_the_classifier_links_and_profile(
     # take units the classifier would otherwise link, and the private-donor rule
     # (`confirmable_pairs`) drops some of donor 1624's pairs.
     assert written.height == 1_164
-    # The AsDB (915) sat at `SPLINK_MIN_COMMITMENTS`, with 300 commitments in
-    # eligible pairs. Key repair now links 40 of them, lines whose spare commitment
-    # is open to it, and the disbursements that reach them, so 265 remain and the
-    # AsDB scores with the pooled model. `template_lines` takes every eligible pair
-    # of the Development Bank of Latin America and the New Development Bank, and
-    # leaves the EBRD too few commitments for a model of its own.
+    # The AsDB (915) has 300 commitments in eligible pairs, at `SPLINK_MIN_COMMITMENTS`.
+    # Key repair links 40 of them, lines whose spare commitment is open to it, and the
+    # disbursements that reach them, so 265 remain and the AsDB scores with the pooled
+    # model. `template_lines` takes every eligible pair of the Development Bank of Latin
+    # America and the New Development Bank, and leaves the EBRD too few commitments for
+    # a model of its own.
     assert dict(scoring.group_by("scoring_group").len().iter_rows()) == {
         "truth": 25,
         "splink": 4,

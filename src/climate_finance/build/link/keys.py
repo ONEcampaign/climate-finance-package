@@ -19,21 +19,20 @@ financing booked under the parent project's number.
 The project-number tiers come last, so they see only what the crs-id tiers left, and
 each links only where its own key maps to one crs id on the commitment side
 (`_unique_pn`). Shared framework numbers are right 43% of the time at the (number,
-recipient) key and unique keys 84.5%. A key with the purpose or the commitment date
-is narrower, so the tiers that use one do not inherit the coarser key's refusal: the
-AsDB books one loan number under a new crs id each year, and Canada files one line
-of a recipient under several crs ids split by purpose. They compare project numbers
-without `-` and `_` (`pn_key`). They hold for every agency: one whose ids mostly
-persist, such as Korea's EDCF or KfW, still files some projects under a new crs id
-each year.
+recipient) key and unique keys 84.5%. A key with the purpose or the commitment date is
+narrower, so the tiers that use one do not inherit the coarser key's refusal: the AsDB
+books one loan number under a new crs id each year, and Canada files one line of a
+recipient under several crs ids split by purpose. They compare project numbers without
+`-` and `_` (`pn_key`). They hold for every agency, since one whose ids mostly persist,
+such as Korea's EDCF or KfW, still files some projects under a new crs id each year.
 
 The first project-number tier adds the commitment date (`line_date`). A disbursement
 record that repeats its line's commitment date continues that line, where the
 project number and recipient alone reach the project's later lines too. The tier
 links only where its key reaches one commitment unit, since a line split by purpose
 under one date is left to the purpose tier. A date on 1 January or 31 December names
-no line: donors write it as a placeholder for the year, and 38% of CRS records carry
-31 December against the 0.3% a real date would.
+no line, since donors write it as a placeholder for the year and 38% of CRS records
+carry 31 December against the 0.3% a real date would.
 """
 
 from dataclasses import dataclass

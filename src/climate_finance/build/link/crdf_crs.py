@@ -41,7 +41,8 @@ WITHIN_YEAR_KEY = ("donor_code", "crs_id", "year", "purpose_code")
 
 _EIB_DONOR = 918
 _EIB_AGENCY = 3
-# The EIB's IATI activity id: its project serial, then one finance contract number.
+# The EIB's IATI activity id carries its project serial, then one finance contract
+# number.
 _EIB_ACTIVITY = r"^XM-DAC-918-3-(?<serial>\d{8})-(?<contract>\d{5})$"
 # DAC exchange rates are by country, and the euro's is held by EU Institutions.
 _EURO_ISSUER = "EUI"

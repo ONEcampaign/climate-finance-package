@@ -92,7 +92,7 @@ def test_without_decisions_splink_only_asks_for_calibration_labels(
     # those providers' eligible candidates, blocked on trimmed ids and on project
     # numbers with rounded ones null, less the disbursements the key tiers link. The
     # GEF reuses a crs id across projects, so `crs_key` leaves most of its
-    # disbursements to scoring; its own model then completes one EM session, its
+    # disbursements to scoring. Its own model then completes one EM session, its
     # project numbers block one pair and EM drives a recipient-and-purpose m to zero,
     # so it joins the pooled model. `template_lines` takes every pair of the
     # Development Bank of Latin America and the New Development Bank, and the EBRD's
@@ -226,8 +226,8 @@ def test_calibrated_splink_against_id_truth(tables: LinkTables) -> None:
     # The pooled model's providers (68, 1624, 76) link nothing at 0.5. The
     # `short_description` fallback adds 172 New Zealand pairs (21 true) and 15
     # Danish ones to the pool, and `template_lines` takes 2,908 French and 548
-    # Danish ones out, so the calibration samples of New Zealand, Denmark and France
-    # changed; `SIMULATION_CACHE` holds Jev's answers for every pair they now draw.
+    # Danish ones out. `SIMULATION_CACHE` holds Jev's answers for every pair the
+    # calibration samples of New Zealand, Denmark and France draw.
     assert at_half == {
         1: (1633, 0.662, 0.791),
         3: (886, 0.613, 0.457),

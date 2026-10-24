@@ -339,7 +339,7 @@ class Reconciliation:
 
     def rows(self, party: str, year: int) -> pl.DataFrame:
         """The project-level link behind one party and year."""
-        raise NotImplementedError("slice S19b")
+        raise NotImplementedError("BTR link rows")
 
 
 class Comparison:
