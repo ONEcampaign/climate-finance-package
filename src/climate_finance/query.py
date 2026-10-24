@@ -425,27 +425,19 @@ def _coefficients(
             significant=pl.lit(method.significant),
             principal=pl.lit(method.principal),
         )
-    first, last, year = pl.col("first_year"), pl.col("last_year"), pl.col("year")
-    held = (
-        snapshot.table("provider_coefficients")
-        .join(frame.select("year").unique(), how="cross")
-        .filter(first.is_null() | (first <= year), last.is_null() | (year <= last))
-        .select(
-            "provider_code",
-            "agency_code",
-            "year",
-            _significant="significant",
-            _principal="principal",
-            _both="both_significant",
-            _basis=pl.when(~pl.col("case_by_case"))
-            .then(pl.lit("provider"))
-            .when(
-                pl.col("significant").is_not_null() | pl.col("principal").is_not_null()
-            )
-            .then(pl.lit("default"))
-            .otherwise(pl.lit("case_by_case")),
-            _source=pl.format("{}, {}", "source", "locator"),
-        )
+    held = _coefficients_by_year(snapshot, years=frame).select(
+        "provider_code",
+        "agency_code",
+        "year",
+        _significant="significant",
+        _principal="principal",
+        _both="both_significant",
+        _basis=pl.when(~pl.col("case_by_case"))
+        .then(pl.lit("provider"))
+        .when(pl.col("significant").is_not_null() | pl.col("principal").is_not_null())
+        .then(pl.lit("default"))
+        .otherwise(pl.lit("case_by_case")),
+        _source=pl.format("{}, {}", "source", "locator"),
     )
     columns = ("_significant", "_principal", "_both", "_basis", "_source")
     by_agency = held.filter(pl.col("agency_code").is_not_null())
@@ -481,6 +473,34 @@ def _coefficients(
             coefficient_source=pl.col("_source"),
         )
         .drop(*columns, *(f"{name}_all" for name in columns))
+    )
+
+
+def _coefficients_by_year(snapshot: Snapshot, *, years: pl.LazyFrame) -> pl.LazyFrame:
+    """Each `provider_coefficients` row once for every year of `years` its span
+    covers.
+
+    The span is expanded into its years and matched on `year`, an equi-join. A
+    cross join filtered on the span would be rewritten by polars into an
+    inequality join, which polars 1.33 to 1.35 collect wrongly where the plan is
+    reused.
+    """
+    first, last = pl.col("first_year"), pl.col("last_year")
+    held = years.select("year").unique()
+    bounds = held.select(_low=pl.col("year").min(), _high=pl.col("year").max())
+    return (
+        snapshot.table("provider_coefficients")
+        .join(bounds, how="cross")
+        .with_columns(
+            year=pl.int_ranges(
+                first.fill_null(pl.col("_low")),
+                last.fill_null(pl.col("_high")) + 1,
+                dtype=pl.Int16,
+            )
+        )
+        .explode("year")
+        .drop("_low", "_high")
+        .join(held, on="year", how="semi")
     )
 
 
