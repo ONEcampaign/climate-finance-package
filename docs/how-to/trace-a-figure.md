@@ -37,7 +37,7 @@ result = release.spending(providers="Japan", years=[2023])
     ```python
     print(
         round(rows["low"].sum() / 1e6, 1),
-        round(result.table.to_polars()["low"].sum() / 1e6, 1),
+        round(result.table["low"].sum() / 1e6, 1),
     )
     ```
 
@@ -67,7 +67,7 @@ result = release.spending(providers="Japan", years=[2023])
     ```python
     saved = result.spec.model_dump_json()
     rerun = release.run(cf.Spec.model_validate_json(saved))
-    print(rerun.table.to_polars().equals(result.table.to_polars()))
+    print(rerun.table.equals(result.table))
     ```
 
     ```output
@@ -79,7 +79,7 @@ result = release.spending(providers="Japan", years=[2023])
 6. Express the figure as a share of all flows. `share_of_total()` divides every amount by all CRS flows with the same flow, year, provider, recipient, and Bi_Multi code.
 
     ```python
-    shares = result.share_of_total().table.to_polars()
+    shares = result.share_of_total().table
     print(shares.select("recipient_code", "value").rows())
     ```
 
@@ -92,10 +92,7 @@ result = release.spending(providers="Japan", years=[2023])
 For a single method, the rows sum to the table total.
 
 ```python
-print(
-    round(result.rows()["value"].sum())
-    == round(result.table.to_polars()["value"].sum())
-)
+print(round(result.rows()["value"].sum()) == round(result.table["value"].sum()))
 ```
 
 ```output

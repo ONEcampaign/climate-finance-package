@@ -31,7 +31,7 @@ result = release.spending(
     years=range(2021, 2024),
     method=cf.methods.ONE,
 )
-for row in result.table.to_polars().iter_rows(named=True):
+for row in result.table.iter_rows(named=True):
     print(row["year"], round(row["low"] / 1e6, 1), round(row["value"] / 1e6, 1))
 ```
 

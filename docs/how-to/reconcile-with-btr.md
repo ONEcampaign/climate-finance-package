@@ -20,7 +20,7 @@ release = cf.load()
 
    ```python
    reconciliation = release.reconcile(providers=["Germany", "Norway"], years=[2021, 2022])
-   table = reconciliation.table.to_polars()
+   table = reconciliation.table
    for row in table.iter_rows(named=True):
        ratio = row["btr_over_comparator"]
        print(

@@ -68,7 +68,7 @@ def test_commitment_shares_of_total_find_a_total_for_each_bilateral_key(
     shares = (
         release.spending(flow="commitments", providers=["Germany", "France", "Japan"])
         .share_of_total()
-        .table.to_polars()
+        .table
     )
 
     assert shares.height

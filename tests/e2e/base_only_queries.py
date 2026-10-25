@@ -28,11 +28,7 @@ BUILD_ONLY = ("typer", "httpx")
 
 def totals(result: cf.Result) -> dict[str, dict[str, float]]:
     """Per method: value, low and high summed over the result table."""
-    table = (
-        result.table.to_polars()
-        .group_by("method")
-        .agg(pl.col("value", "low", "high").sum())
-    )
+    table = result.table.group_by("method").agg(pl.col("value", "low", "high").sum())
     return {row.pop("method"): row for row in table.iter_rows(named=True)}
 
 
@@ -45,7 +41,7 @@ results = {
     for method in (cf.methods.ONE, cf.methods.OECD, cf.methods.RANGE)
 }
 rows = results["ONE"].rows(year=2022)
-comparison = cf.compare(results["ONE"], results["OECD"]).table.to_polars()
+comparison = cf.compare(results["ONE"], results["OECD"]).table
 quality = release.quality(providers="Germany").summary()
 profile = release.disbursement_profile().filter(group="all")
 repeats = (

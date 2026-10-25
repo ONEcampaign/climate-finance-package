@@ -28,7 +28,7 @@ def _row(
     year: int,
     status: str | None = "any",
 ) -> dict:
-    rows = reconciliation.table.to_polars().filter(party=party, year=year)
+    rows = reconciliation.table.filter(party=party, year=year)
     if status != "any":
         rows = rows.filter(pl.col("status").eq_missing(status))
     assert rows.height == 1
@@ -51,13 +51,13 @@ def test_providers_name_a_party_in_any_form(germany: str | int) -> None:
     reconciliation = SNAP.reconcile(providers=germany)
     rows = reconciliation.rows(provider=germany, year=2021)
 
-    assert set(reconciliation.table.to_polars()["party"]) == {"DEU"}
+    assert set(reconciliation.table["party"]) == {"DEU"}
     assert set(rows["party"]) == {"DEU"}
 
 
 def test_years_take_one_year_and_none_takes_every_year() -> None:
-    assert set(SNAP.reconcile(years=2022).table.to_polars()["year"]) == {2022}
-    assert set(SNAP.reconcile().table.to_polars()["year"]) == {2021, 2022}
+    assert set(SNAP.reconcile(years=2022).table["year"]) == {2022}
+    assert set(SNAP.reconcile().table["year"]) == {2021, 2022}
 
 
 @pytest.mark.parametrize(
@@ -257,7 +257,7 @@ def test_overlapping_coefficient_rows_refuse_to_reconcile(tmp_path: Path) -> Non
         ReleaseIntegrityError,
         match="5 None 2020: covers 2020 to every later year",
     ):
-        cf.load(path=release).reconcile(providers="DEU").table.to_polars()
+        _ = cf.load(path=release).reconcile(providers="DEU").table
 
 
 def _without_a_default(frame: pl.DataFrame) -> pl.DataFrame:
@@ -312,7 +312,7 @@ def test_a_party_without_a_coefficient_row_reads_at_provider_coefficients(
 def test_each_method_gives_its_traced_value() -> None:
     table = SNAP.reconcile(
         providers=["DEU"], years=[2022], method=MethodRange(methods=(ONE, OECD))
-    ).table.to_polars()
+    ).table
 
     assert dict(table.select("method", "traced_climate_value").iter_rows()) == {
         "ONE": pytest.approx(5e6),
@@ -421,7 +421,7 @@ def test_a_release_with_no_btr_rows_reconciles_to_an_empty_table(
         ),
     )
 
-    assert cf.load(path=release).reconcile().table.to_polars().is_empty()
+    assert cf.load(path=release).reconcile().table.is_empty()
 
 
 def test_unlinked_rows_are_unfccc_only() -> None:
@@ -542,7 +542,7 @@ def test_grant_equivalent_counts_rows_without_a_status_or_a_face_value(
     release = _btr_release(tmp_path / "r", germany)
     reconciliation = cf.load(path=release).reconcile(providers="DEU", years=[2022])
 
-    table = reconciliation.table.to_polars()
+    table = reconciliation.table
     assert table["btr_grant_equivalent"].sum() == pytest.approx(22e6 + 3e6 + 5e6)
     assert _row(reconciliation, "DEU", 2022, None)["btr_face"] == 0
 
@@ -571,6 +571,6 @@ def test_a_release_without_btr_rows_reconciles_from_its_totals(
 
     reconciliation = cf.load(path=release).reconcile()
 
-    assert reconciliation.table.to_polars().equals(SNAP.reconcile().table.to_polars())
+    assert reconciliation.table.equals(SNAP.reconcile().table)
     with pytest.raises(WithheldTableError, match="btr"):
         reconciliation.rows(provider="DEU", year=2021)

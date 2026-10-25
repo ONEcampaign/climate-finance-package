@@ -840,7 +840,7 @@ def test_quality_shows_each_providers_precision_interval(
     gated = manifest.model_copy(update={"gates": gate_results_json(results)})
     (release / "release.json").write_text(gated.model_dump_json())
 
-    precision = cf.load(path=release).quality().precision.to_polars()
+    precision = cf.load(path=release).quality().precision
     recorded = json.loads((release / "release.json").read_text())["gates"]
 
     assert recorded["precision"][0]["strata"][0]["estimate"] == pytest.approx(0.4)

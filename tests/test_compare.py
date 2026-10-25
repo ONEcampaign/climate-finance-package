@@ -20,14 +20,14 @@ def _fixed_table_width() -> Iterator[None]:
 
 
 def _values(result: cf.Result) -> pl.DataFrame:
-    return result.table.to_polars().select(*KEYS, "value")
+    return result.table.select(*KEYS, "value")
 
 
 def test_compare_sets_one_value_column_per_result_on_shared_keys() -> None:
     one = SNAP.spending(view="provider")
     oecd = SNAP.spending(view="provider", method=cf.methods.OECD)
 
-    table = cf.compare(one, oecd).table.to_polars()
+    table = cf.compare(one, oecd).table
 
     assert table.columns == [*KEYS, "ONE", "OECD"]
     # Attribution rows have no recipient. Their null key must match across results.
@@ -46,7 +46,7 @@ def test_a_key_one_result_lacks_is_null_in_its_column() -> None:
     germany = SNAP.spending(providers="Germany")
     france = SNAP.spending(providers="France")
 
-    table = cf.compare(germany, france).table.to_polars()
+    table = cf.compare(germany, france).table
 
     assert table.columns == [*KEYS, "providers Germany", "providers France"]
     assert table.height == _values(germany).height + _values(france).height
@@ -56,7 +56,7 @@ def test_a_key_one_result_lacks_is_null_in_its_column() -> None:
 def test_a_result_under_several_methods_gives_a_column_per_method() -> None:
     table = cf.compare(SNAP.spending(), SNAP.spending(method=RANGE)).table
 
-    assert table.to_polars().columns == [
+    assert table.columns == [
         *KEYS,
         "ONE",
         "RANGE: ONE",
@@ -68,13 +68,13 @@ def test_a_result_under_several_methods_gives_a_column_per_method() -> None:
 def test_compare_names_amounts_and_shares_apart() -> None:
     amounts = SNAP.spending(providers=5)
 
-    table = cf.compare(amounts, amounts.share_of_total()).table.to_polars()
+    table = cf.compare(amounts, amounts.share_of_total()).table
 
     assert table.columns[len(KEYS) :] == ["amounts", "share of total"]
 
 
 def test_results_nothing_sets_apart_are_numbered() -> None:
-    table = cf.compare(SNAP.spending(), SNAP.spending()).table.to_polars()
+    table = cf.compare(SNAP.spending(), SNAP.spending()).table
 
     assert table.columns[len(KEYS) :] == ["result 1: ONE", "result 2: ONE"]
 

@@ -59,7 +59,7 @@ Raises `UnknownProviderError` or `UnknownRecipientError` for a name, code, or ag
 ```python
 for flow in ("commitments", "disbursements", "grant_equivalent"):
     result = release.spending(providers="Japan", years=[2021, 2022], flow=flow)
-    print(flow, round(result.table.to_polars()["value"].sum() / 1e6, 1))
+    print(flow, round(result.table["value"].sum() / 1e6, 1))
 ```
 
 ```output
@@ -72,7 +72,7 @@ grant_equivalent 8.0
 
 ```python
 result = release.spending(providers="France", years=[2022], view="provider")
-for row in result.table.to_polars().sort("bi_multi").iter_rows(named=True):
+for row in result.table.sort("bi_multi").iter_rows(named=True):
     print(row["bi_multi"], round(row["value"] / 1e6, 2))
 ```
 
@@ -87,7 +87,7 @@ Bi_Multi 1 is France's bilateral spending, and 2 is the climate share of its con
 
 ```python
 result = release.spending(providers="Japan", years=[2021, 2022], oda_only=True)
-print(round(result.table.to_polars()["value"].sum() / 1e6, 1))
+print(round(result.table["value"].sum() / 1e6, 1))
 ```
 
 ```output
@@ -191,8 +191,8 @@ print(cf.methods.ONE.replace(significant=0.5).significant)
 
 The answer to one `Spec`:
 
-- `table` is a `Table` with one row per year, provider, recipient, Bi_Multi code, and method. Its columns are: `year`, `provider_code`, `recipient_code`, `bi_multi`, `method`, `amount`, `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced`. `amount` is the unweighted face value. `value` is the weighted climate value, equal to adaptation + mitigation + `cross_cutting` + `unsplit` under the highest-marker rule (where objectives are disjoint), and to adaptation + mitigation − `cross_cutting` + `unsplit` otherwise. `unsplit` holds attributed value whose agency share lacks a split by objective. `untraced` is the part of `value` from untraced rows, so `value` − `untraced` is the traced value, and it is 0 for commitments. `Table` converts with `to_polars()`, `to_pandas()`, and `to_arrow()`.
-- `modelled` is a `Table` of the "modelled, not reported" range with the columns: `year`, `provider_code`, `recipient_code`, `basis`, `low`, and `high`. It is populated only when the query asks for recipient-view disbursements with `oda_only=False`.
+- `table` is a polars DataFrame with one row per year, provider, recipient, Bi_Multi code, and method. Its columns are: `year`, `provider_code`, `recipient_code`, `bi_multi`, `method`, `amount`, `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced`. `amount` is the unweighted face value. `value` is the weighted climate value, equal to adaptation + mitigation + `cross_cutting` + `unsplit` under the highest-marker rule (where objectives are disjoint), and to adaptation + mitigation − `cross_cutting` + `unsplit` otherwise. `unsplit` holds attributed value whose agency share lacks a split by objective. `untraced` is the part of `value` from untraced rows, so `value` − `untraced` is the traced value, and it is 0 for commitments. It is computed on first access and kept, so reading it twice runs the query once. `pl.DataFrame(result.table)`, `pa.table(result.table)` and DuckDB read it directly, and `result.table.to_pandas()` returns a pandas frame when pandas is installed.
+- `modelled` is a polars DataFrame of the "modelled, not reported" range with the columns: `year`, `provider_code`, `recipient_code`, `basis`, `low`, and `high`. It is populated only when the query asks for recipient-view disbursements with `oda_only=False`.
 - `spec` is the `Spec`. `release.run(result.spec)` reruns the query to an identical table.
 - `meta` holds `release`, `package_version`, `source_versions`, `model_versions`, `years`, and `conversion`. `years` copies the release's `years`. `conversion` holds the pydeflate version and a SHA-256 of the factors behind a converted result, because pydeflate refreshes its DAC data every 30 days, and is None for USD at current prices.
 - `rows(*, provider=None, **filters)` returns the project rows behind the table as a polars DataFrame, filtered by column equality. A list, tuple, set, or range matches any item. `provider` takes names, DAC codes, or agencies, as `spending()` does. Raises `KeyError` for an unknown column. `origin` is `commitment`, `disbursement`, `untraced`, or `attribution`. A row has the columns `origin`, `row_id`, `record_id`, `year`, `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_category`, `flow_code`, `project_number`, `title`, `status`, `rio_adaptation`, `rio_mitigation`, `record_rio_adaptation`, `record_rio_mitigation`, `marker_source`, `reason`, `climate_share`, `share_source`, `link_method`, `link_probability`, `allocation_weight`, `objective_label`, `label_source`, `jev_level`, `amount`, `coefficient_basis`, `coefficient_source`, and `method`, followed by the weighted amounts `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced`. An untraced row has no `row_id`, carries the record's own markers with `marker_source` `record`, and has `reason` `excess` for a linked record's disbursement beyond what its commitments take or `unlinked` for a record linked to no commitment. `coefficient_basis` is `provider`, `default`, or `case_by_case`, and null where the release has no coefficient row for the provider.

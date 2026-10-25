@@ -196,9 +196,7 @@ class ClimateData:
                         currency=self.currency,
                         prices=self.prices,
                         oda_only=self._oda_only,
-                    )
-                    .table.to_polars()
-                    .with_columns(flow=pl.lit(flow))
+                    ).table.with_columns(flow=pl.lit(flow))
                     for flow, spending_flow in chosen
                 )
             self._tables[name] = by_view[view]

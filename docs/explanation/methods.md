@@ -69,7 +69,7 @@ for name, method in methods.items():
     result = release.spending(
         providers=["Germany", "Japan"], years=range(2021, 2024), method=method
     )
-    print(name, round(result.table.to_polars()["value"].sum() / 1e6, 1))
+    print(name, round(result.table["value"].sum() / 1e6, 1))
 ```
 
 ```output
@@ -83,7 +83,7 @@ PROVIDER 145.8
 ```python
 one = release.spending(providers="Japan", years=[2023], method=cf.methods.ONE)
 oecd = release.spending(providers="Japan", years=[2023], method=cf.methods.OECD)
-print(cf.compare(one, oecd).table.to_polars().columns)
+print(cf.compare(one, oecd).table.columns)
 ```
 
 ```output
@@ -94,7 +94,7 @@ print(cf.compare(one, oecd).table.to_polars().columns)
 
 ```python
 result = release.spending(providers="Japan", years=[2023], method=cf.methods.RANGE)
-print(sorted(result.table.to_polars()["method"].unique()))
+print(sorted(result.table["method"].unique()))
 ```
 
 ```output

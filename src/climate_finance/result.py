@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass
+from functools import cached_property
 from html import escape
-from typing import TYPE_CHECKING
 
 import polars as pl
 from pydantic import BaseModel, ConfigDict
@@ -35,41 +34,12 @@ from climate_finance.spec import (
 )
 from climate_finance.sums import ordered_sum
 
-if TYPE_CHECKING:
-    import pandas as pd
-    import pyarrow as pa
-
 AMOUNTS = (
     "amount", "adaptation", "mitigation", "cross_cutting", "unsplit", "value", "low",
     "high", "untraced",
 )  # fmt: skip
 # The keys of a result table's rows, before the method.
 ROW_KEYS = ("year", "provider_code", "recipient_code", "bi_multi")
-
-
-class Table:
-    """A result table that converts to polars, pandas or arrow."""
-
-    def __init__(self, frame: pl.LazyFrame) -> None:
-        self._frame = frame
-
-    def to_polars(self) -> pl.DataFrame:
-        """The table as a polars DataFrame."""
-        return self._frame.collect()
-
-    def to_pandas(self) -> pd.DataFrame:
-        """The table as a pandas DataFrame."""
-        return self.to_polars().to_pandas()
-
-    def to_arrow(self) -> pa.Table:
-        """The table as a pyarrow Table."""
-        return self.to_polars().to_arrow()
-
-    def __repr__(self) -> str:
-        return repr(self.to_polars())
-
-    def _repr_html_(self) -> str:
-        return self.to_polars()._repr_html_()
 
 
 class Meta(BaseModel):
@@ -103,21 +73,31 @@ class Result:
     def __init__(
         self,
         *,
-        table: Table,
-        modelled: Table,
+        table: pl.LazyFrame,
+        modelled: pl.LazyFrame,
         rows: pl.LazyFrame,
         totals: pl.LazyFrame,
         spec: Spec,
         meta: Meta,
     ) -> None:
         measured = _shares(table, totals) if spec.measure == "share_of_total" else table
-        self.table = Table(_bounds(measured._frame))
+        self._measured = measured
         self._sums = table
-        self.modelled = modelled
+        self._modelled = modelled
         self.spec = spec
         self.meta = meta
         self._rows = rows
         self._totals = totals
+
+    @cached_property
+    def table(self) -> pl.DataFrame:
+        """The answer, one row per key and method, computed on first access."""
+        return _bounds(self._measured).collect()
+
+    @cached_property
+    def modelled(self) -> pl.DataFrame:
+        """The modelled disbursement line, computed on first access."""
+        return self._modelled.collect()
 
     def __repr__(self) -> str:
         return f"{_title(self.spec, release=self.meta.release)}\n{self.table!r}"
@@ -220,7 +200,7 @@ class Result:
             return self
         return Result(
             table=self._sums,
-            modelled=self.modelled,
+            modelled=self._modelled,
             rows=self._rows,
             totals=self._totals,
             spec=self.spec.replace(measure="share_of_total"),
@@ -236,11 +216,11 @@ def _bounds(frame: pl.LazyFrame) -> pl.LazyFrame:
     )
 
 
-def _shares(table: Table, totals: pl.LazyFrame) -> Table:
+def _shares(table: pl.LazyFrame, totals: pl.LazyFrame) -> pl.LazyFrame:
     """`table` with every amount divided by the total of its key and method in
     `totals`."""
-    return Table(
-        table._frame.join(
+    return (
+        table.join(
             totals,
             on=[*ROW_KEYS, "method"],
             how="left",
@@ -253,7 +233,6 @@ def _shares(table: Table, totals: pl.LazyFrame) -> Table:
     )
 
 
-@dataclass(frozen=True, kw_only=True)
 class Quality:
     """Link, coverage and status statistics for part of a release.
 
@@ -278,12 +257,52 @@ class Quality:
     (`fund_unlinked_usd`).
     """
 
-    table: Table
-    status: Table
-    eu_left_out: Table
-    attribution: Table
-    precision: Table
-    untraced: Table
+    def __init__(
+        self,
+        *,
+        table: pl.LazyFrame,
+        status: pl.LazyFrame,
+        eu_left_out: pl.LazyFrame,
+        attribution: pl.LazyFrame,
+        precision: pl.LazyFrame,
+        untraced: pl.LazyFrame,
+    ) -> None:
+        self._table = table
+        self._status = status
+        self._eu_left_out = eu_left_out
+        self._attribution = attribution
+        self._precision = precision
+        self._untraced = untraced
+
+    @cached_property
+    def table(self) -> pl.DataFrame:
+        """The release's `quality` rows, computed on first access."""
+        return self._table.collect()
+
+    @cached_property
+    def status(self) -> pl.DataFrame:
+        """Climate value by provider and commitment status."""
+        return self._status.collect()
+
+    @cached_property
+    def eu_left_out(self) -> pl.DataFrame:
+        """The EU Institutions rows a provider view of every provider leaves out."""
+        return self._eu_left_out.collect()
+
+    @cached_property
+    def attribution(self) -> pl.DataFrame:
+        """The value attributed through core contributions."""
+        return self._attribution.collect()
+
+    @cached_property
+    def precision(self) -> pl.DataFrame:
+        """The blind-sample precision of the links, by provider."""
+        return self._precision.collect()
+
+    @cached_property
+    def untraced(self) -> pl.DataFrame:
+        """The Rio-marked CRS disbursement outside `disbursements`."""
+        return self._untraced.collect()
 
     def summary(self) -> pl.DataFrame:
         """Per provider: link rate, certain-route share, label sources, status split.
@@ -302,7 +321,7 @@ class Quality:
         linked = ordered_sum(pl.col("linked_usd"))
         coverage = pl.col("grant_equiv_coverage")
         known = coverage.is_not_null()
-        rates = self.table._frame.group_by("provider_code").agg(
+        rates = self._table.group_by("provider_code").agg(
             # A count, and an integer sum is exact in any order.
             pl.col("commitments").sum(),
             climate_usd=climate,
@@ -316,7 +335,7 @@ class Quality:
                 / ordered_sum(pl.col("linked_usd").filter(known))
             ),
         )
-        split = self.status._frame.group_by("provider_code").agg(
+        split = self._status.group_by("provider_code").agg(
             (
                 ordered_sum(pl.col("climate_usd").filter(pl.col("status") == status))
                 / climate
@@ -635,9 +654,16 @@ class Reconciliation:
     `query.reconcile`).
     """
 
-    def __init__(self, *, table: Table, rows: Callable[[], pl.LazyFrame]) -> None:
-        self.table = table
+    def __init__(
+        self, *, table: pl.LazyFrame, rows: Callable[[], pl.LazyFrame]
+    ) -> None:
+        self._table = table
         self._rows = rows
+
+    @cached_property
+    def table(self) -> pl.DataFrame:
+        """The comparison, computed on first access."""
+        return self._table.collect()
 
     def rows(self, *, provider: str | int, year: int) -> pl.DataFrame:
         """The project-level link behind one party and year: each BTR row of every
@@ -671,12 +697,17 @@ class Reconciliation:
         )
 
 
-@dataclass(frozen=True, kw_only=True)
 class Comparison:
     """Several results side by side, as a long table with one column per result."""
 
-    table: Table
-    results: tuple[Result, ...]
+    def __init__(self, *, table: pl.LazyFrame, results: tuple[Result, ...]) -> None:
+        self._table = table
+        self.results = results
+
+    @cached_property
+    def table(self) -> pl.DataFrame:
+        """The comparison, computed on first access."""
+        return self._table.collect()
 
     def __repr__(self) -> str:
         return f"{self._title()}\n{self.table!r}"
@@ -685,7 +716,7 @@ class Comparison:
         return f"<p>{escape(self._title())}</p>{self.table._repr_html_()}"
 
     def _title(self) -> str:
-        columns = self.table._frame.collect_schema().names()[len(ROW_KEYS) :]
+        columns = self._table.collect_schema().names()[len(ROW_KEYS) :]
         count = len(self.results)
         results = "result" if count == 1 else "results"
         return f"Comparison of {count} {results}: {'; '.join(columns)}"
@@ -711,18 +742,16 @@ def compare(*results: Result) -> Comparison:
         for method in methods:
             column = name if len(methods) == 1 else f"{name}: {method}"
             frames.append(
-                result.table._frame.filter(pl.col("method") == method).select(
-                    *ROW_KEYS, pl.col("value").alias(column)
-                )
+                result.table.lazy()
+                .filter(pl.col("method") == method)
+                .select(*ROW_KEYS, pl.col("value").alias(column))
             )
     table = frames[0]
     for frame in frames[1:]:
         table = table.join(
             frame, on=ROW_KEYS, how="full", nulls_equal=True, coalesce=True
         )
-    return Comparison(
-        table=Table(table.sort(ROW_KEYS, nulls_last=True)), results=results
-    )
+    return Comparison(table=table.sort(ROW_KEYS, nulls_last=True), results=results)
 
 
 def _result_names(specs: Sequence[Spec]) -> list[str]:

@@ -476,7 +476,7 @@ def test_load_downloads_verifies_and_then_runs_offline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cache = tmp_path / "cache"
-    expected = cf.load(path=FIXTURE_DIR).spending().table.to_polars()
+    expected = cf.load(path=FIXTURE_DIR).spending().table
 
     loaded = cf.load(cache_dir=cache)
 
@@ -487,9 +487,9 @@ def test_load_downloads_verifies_and_then_runs_offline(
         raise AssertionError("network after download")
 
     monkeypatch.setattr(release_module.urllib.request, "urlopen", offline)
-    assert loaded.spending().table.to_polars().equals(expected)
+    assert loaded.spending().table.equals(expected)
     again = cf.load("fixture", cache_dir=cache)
-    assert again.spending().table.to_polars().equals(expected)
+    assert again.spending().table.equals(expected)
 
 
 def test_refresh_reads_the_index_online(

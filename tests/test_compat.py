@@ -26,7 +26,7 @@ def _climate_data(**kwargs: object) -> ClimateData:
 def _expected(*parts: tuple[str, str, cf.Result]) -> pd.DataFrame:
     """`spending()` tables with the `flow` and `source` columns `get_data` adds."""
     frame = pl.concat(
-        result.table.to_polars().with_columns(flow=pl.lit(flow), source=pl.lit(source))
+        result.table.with_columns(flow=pl.lit(flow), source=pl.lit(source))
         for source, flow, result in parts
     )
     return frame.to_pandas()

@@ -51,7 +51,7 @@ quality = release.quality(providers=["Germany", "Japan"])
 3. Find the certain share. `quality.table` carries, by provider and year, the climate value of disbursements in the high bound (`disbursed_climate_usd`) and in the low bound (`certain_disbursed_climate_usd`). Their ratio is the share of the provider's disbursements that rests on certain links, reached by certain routes.
 
     ```python
-    table = quality.table.to_polars()
+    table = quality.table
     certain = table.group_by("provider_code").agg(
         (
             pl.col("certain_disbursed_climate_usd").sum()
@@ -70,7 +70,7 @@ quality = release.quality(providers=["Germany", "Japan"])
 4. Read the measured precision. `quality.precision` holds one row per provider that went through the release's blind sample. `estimate` is the share of allocated value whose link a sample found right, `lower` and `upper` give its interval, and `passed` shows whether the lower bound reached the release's threshold. `waived` is true where the release shipped despite a failure.
 
     ```python
-    print(quality.precision.to_polars().columns)
+    print(quality.precision.columns)
     ```
 
     ```output
@@ -84,7 +84,7 @@ quality = release.quality(providers=["Germany", "Japan"])
 5. Check what a provider view omits. For provider-view totals, `quality.eu_left_out` holds the value of EU Institutions agencies' own rows omitted from the total because members' contributions stand in for them. `quality.attribution` holds the value attributed through core contributions by share source.
 
     ```python
-    print(quality.eu_left_out.to_polars().columns)
+    print(quality.eu_left_out.columns)
     ```
 
     ```output

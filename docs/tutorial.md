@@ -31,7 +31,7 @@ result = release.spending(
     recipients="Bangladesh",
     years=range(2021, 2024),
 )
-for row in result.table.to_polars().iter_rows(named=True):
+for row in result.table.iter_rows(named=True):
     print(row["year"], round(row["value"] / 1e6, 1), round(row["low"] / 1e6, 1))
 ```
 
@@ -87,7 +87,7 @@ Print the full string to see how `value` is calculated. Significant Rio markers 
 ```python
 for flow in ("commitments", "disbursements"):
     flows = release.spending(providers="Japan", years=[2021, 2022], flow=flow)
-    print(flow, round(flows.table.to_polars()["value"].sum() / 1e6, 1))
+    print(flow, round(flows.table["value"].sum() / 1e6, 1))
 ```
 
 ```output

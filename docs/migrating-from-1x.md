@@ -5,7 +5,7 @@ In climate-finance 1.2.3, `ClimateData` downloaded OECD files, matched them, and
 ## Before you start
 
 - Python 3.12 or later.
-- `pip install climate-finance`. `Result.table.to_pandas()` needs pandas, which `pip install "climate-finance[compat]"` adds.
+- `pip install climate-finance`. `result.table` is a polars DataFrame, and its `to_pandas()` needs pandas, which `pip install "climate-finance[compat]"` adds.
 - Remove `set_climate_finance_data_path()` from your scripts. A release downloads to `~/.cache/climate-finance`. Set `CLIMATE_FINANCE_CACHE` or pass `cache_dir=` to `load()` to move it. Open a release folder on disk with `load(path=...)`.
 
 ## Keep 1.x code running
@@ -49,6 +49,8 @@ print(len(data), "rows")
 10 rows
 ```
 
+`result.table` is a polars DataFrame, and polars' own `to_pandas()` needs pandas installed (the `compat` extra). Any Arrow-aware library reads the frame directly, such as `pa.table(result.table)`.
+
 | 1.x | 2.0 |
 |---|---|
 | `set_climate_finance_data_path(path)` | `CLIMATE_FINANCE_CACHE`, `load(cache_dir=...)`, or `load(path=...)` |
@@ -62,7 +64,7 @@ print(len(data), "rows")
 | `flows="gross_disbursements"`, `"commitments"`, `"grant_equivalent"` | `flow="disbursements"`, `"commitments"`, `"grant_equivalent"` |
 | `source="OECD_CRS"`, `"OECD_CRS_ALLOCABLE"`, `"OECD_CRDF"`, `"OECD_CRDF_CRS"`, `"OECD_CRDF_CRS_ALLOCABLE"` | `view="recipient"`, the default. A release holds one traced source, which includes disbursements from development banks' own ledgers, so `"OECD_CRS"` can return more than the CRS alone. The `_ALLOCABLE` names return the same rows as their plain names, without their former filter. |
 | `source="OECD_CRDF_DONOR"` | `view="provider"` |
-| `get_data()` | `result.table.to_pandas()`, `to_polars()`, or `to_arrow()` |
+| `get_data()` | `result.table.to_pandas()`; any Arrow-aware library, such as `pa.table(result.table)`, reads `result.table` directly |
 | `as_share_of_total()`, `convert_to_shares()` | `result.share_of_total()` |
 | `available_providers()` and the `get_*_providers()` helpers | `cf.providers.list()`, which has a `type` column |
 | `available_flows()`, `available_methodologies()` | `cf.flows.list()`, `cf.methods.list()` |

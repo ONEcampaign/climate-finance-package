@@ -138,7 +138,7 @@ def test_a_relative_path_reads_the_release_it_verified(
 
     monkeypatch.chdir(tmp_path / "b")
     other = cf.load(path="release").spending(flow="commitments")
-    assert not other.table.to_polars().equals(expected.table.to_polars())
+    assert not other.table.equals(expected.table)
 
     table = result.table if lazy else release.spending(flow="commitments").table
-    assert_frame_equal(table.to_polars(), expected.table.to_polars())
+    assert_frame_equal(table, expected.table)

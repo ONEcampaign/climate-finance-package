@@ -29,8 +29,8 @@ def test_names_select_the_same_rows_as_their_codes(
     by_name = SNAP.spending(providers=providers, recipients=recipients)
     by_code = SNAP.spending(providers=codes[0], recipients=codes[1])
 
-    assert by_name.table.to_polars().height
-    assert_frame_equal(by_name.table.to_polars(), by_code.table.to_polars())
+    assert by_name.table.height
+    assert_frame_equal(by_name.table, by_code.table)
 
 
 def test_names_match_without_accents_or_typographic_apostrophes() -> None:

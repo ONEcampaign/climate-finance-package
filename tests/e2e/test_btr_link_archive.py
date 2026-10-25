@@ -250,7 +250,7 @@ def test_party_totals_agree_at_the_prototype_weights(
     comparator: str,
     ratio: float,
 ) -> None:
-    rows = reconciliation.table.to_polars().filter(
+    rows = reconciliation.table.filter(
         party=party, year=year, method="ONE", comparator=comparator
     )
 
@@ -264,7 +264,7 @@ def test_germany_counts_both_significant_disbursements_in_full(
     # Germany's coefficients count a record significant on both objectives at 1.0
     # and one significant on one at 0.5. Its 1,341 both-significant records of 2021
     # disburse USD 1.82bn, which at 0.5 would give USD 4.54bn.
-    rows = reconciliation_at_own_coefficients.table.to_polars().filter(
+    rows = reconciliation_at_own_coefficients.table.filter(
         party="DEU", year=2021, method="ONE"
     )
 
@@ -283,7 +283,7 @@ METHOD_SHARES = (
 
 def _method_shares(reconciliation: Reconciliation, party: str) -> pl.Series:
     """`party`'s method shares of 2021 and 2022, every comparator's alike."""
-    rows = reconciliation.table.to_polars().filter(party=party, method="ONE")
+    rows = reconciliation.table.filter(party=party, method="ONE")
     shares = rows.select(pl.concat_list(METHOD_SHARES).explode()).to_series()
     assert shares.null_count() == 0
     return shares

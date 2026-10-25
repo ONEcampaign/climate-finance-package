@@ -85,7 +85,6 @@ from climate_finance.result import (
     Quality,
     Reconciliation,
     Result,
-    Table,
 )
 from climate_finance.schema import (
     ADAPTATION_FIRST_YEAR,
@@ -260,8 +259,8 @@ def spending(release: Release, *, spec: Spec) -> Result:
         "channel_code", nulls_last=True,
     )  # fmt: skip
     return Result(
-        table=Table(_aggregate(rows, methods=[label(method) for method in methods])),
-        modelled=Table(_modelled(release, spec=spec, conditions=modelled)),
+        table=_aggregate(rows, methods=[label(method) for method in methods]),
+        modelled=_modelled(release, spec=spec, conditions=modelled),
         rows=rows,
         totals=_totals(release, spec=spec, conditions=filters, eu_kept=eu_kept),
         spec=spec,
@@ -301,17 +300,15 @@ def quality(
     if providers is not None and EU_INSTITUTIONS not in providers:
         eu_left_out = eu_left_out.clear()
     return Quality(
-        table=Table(table.filter(*conditions)),
-        status=Table(status),
-        eu_left_out=Table(eu_left_out),
-        attribution=Table(
-            _attribution(release, providers=providers, years=years, method=method)
+        table=table.filter(*conditions),
+        status=status,
+        eu_left_out=eu_left_out,
+        attribution=_attribution(
+            release, providers=providers, years=years, method=method
         ),
-        precision=Table(_precision(release, providers=providers)),
-        untraced=Table(
-            _untraced(release, conditions=conditions, method=method).sort(
-                "provider_code", "year"
-            )
+        precision=_precision(release, providers=providers),
+        untraced=_untraced(release, conditions=conditions, method=method).sort(
+            "provider_code", "year"
         ),
     )
 
@@ -693,7 +690,7 @@ def reconcile(
         .sort("party", "year", "status", "method", nulls_last=True)
     )
     return Reconciliation(
-        table=Table(table),
+        table=table,
         rows=lambda: _reconciliation_rows(release, conditions=conditions),
     )
 
