@@ -110,15 +110,15 @@ Runs a saved `Spec`, such as `result.spec` or one read back with `cf.Spec.model_
 
 ### `Release.quality(*, providers, years, method)`
 
-Returns a `Quality` object. Its amounts are the CRDF's published climate value of the commitments. `method` acts on the provider-view columns, `eu_left_out` and `attribution`, and on the climate value of untraced disbursement in `untraced`. `providers` takes provider names and DAC codes; a name of an agency raises `UnknownProviderError`, since its tables count providers.
+Returns a `Quality` object. Its amounts are the CRDF's published climate value of the commitments. `method` acts on the provider-view columns, `eu_left_out` and `attribution`, and on the climate value of untraced disbursement in `untraced`. `providers` and `years` take the forms `spending()` takes, and `method` one method or its name; a range raises `TypeError`. An agency raises `ValueError` naming its provider, since the tables count providers.
 
-### `Release.reconcile(*, parties, years, method)`
+### `Release.reconcile(*, providers, years, method)`
 
 Compares each party's BTR Table III.1 total with OECD figures for its bilateral finance. Returns a `Reconciliation`:
 
-- `parties` (`str | Sequence[str] | None`). ISO 3 codes as the `btr` table holds them, such as `"NOR"` and `"EUU"`. `None` compares every party.
-- `years` (`Iterable[int]`, default `range(2015, 2023)`).
-- `method` (`Method | MethodRange`, default `cf.methods.ONE`).
+- `providers` (`str | int | Iterable[str | int] | None`). The parties, named as `spending()` names providers, so `"Germany"`, `"DEU"`, and `5` name one party. `None` compares every party. An agency raises `ValueError` naming its provider, since the BTR reports providers.
+- `years` (`int | Iterable[int] | None`). `None` takes every year the BTR tables hold.
+- `method` (`Method | MethodRange | str`, default `cf.methods.ONE`), in the forms `spending()` takes.
 
 ### `Release.disbursement_profile()`
 
@@ -237,6 +237,8 @@ Returned by `Release.reconcile()`. `table` has one row per party, year, status, 
 - The comparators `crdf_at_party_weight`, `crdf_at_100`, `traced_climate_value`, `crs_disbursed_at_party_weight`, and `crs_grant_equivalent_at_party_weight`. The three weighted ones weigh each commitment or CRS record as `PROVIDER` does: by its agency's coefficients, else its provider's, at the both-significant coefficient for one significant on both objectives where the provider states one, and at `PROVIDER`'s 0.4 and 1.0 where those coefficients are case by case with no default, at the agency level as for France's AFD or the provider level as for the UK. A provider with no `provider_coefficients` row weighs every activity at `PROVIDER`'s coefficients, as `spending()` does, and reads 1.0 in all three shares. `reconcile` raises `ReleaseIntegrityError` when two `provider_coefficients` rows of one provider and agency cover the same year.
 - `comparator`: the comparator of the row's flow, `crdf_at_party_weight` for committed rows and `crs_disbursed_at_party_weight` for disbursed rows, null on a row with no status. `btr_over_comparator` is the BTR total over it, and `thin_comparator` is true where the comparator is below USD 10m (`query.THIN_COMPARATOR_USD`).
 - `btr_over_<comparator>` for each of the four face comparators, null for the other flow's comparators, and `btr_grant_equivalent_over_crs_grant_equivalent`. Every ratio is null where its comparator is zero or null.
+
+`rows(provider=..., year=...)` returns the BTR rows of one party and year with each CRS record linked to them, on a local build that holds `btr` and `btr_links`. `provider` takes a party as `providers` does.
 
 `rows(party, year)` returns the BTR rows of that party and year alongside each linked CRS record, with the record's facts prefixed `crs_`, and `unfccc_only` set to true for unlinked rows. On a published release, which leaves out `btr` and `btr_links`, it raises `WithheldTableError`.
 

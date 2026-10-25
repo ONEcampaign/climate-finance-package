@@ -2,11 +2,11 @@
 
 Reconcile a party's Biennial Transparency Report (BTR) total against the OECD figures for the same party and year to find where the two disagree, or to check whether a figure from `spending()` is close to what the donor told the UNFCCC. The comparison covers the bilateral total of Table III.1. The workbooks' Tables III.2 and III.3 are unread.
 
-A published release holds the reconciliation aggregates, so `release.reconcile()` compares totals there. The BTR rows behind them, and `rows(party, year)`, need a local build from the workbooks, which [How to reproduce the BTR tables](reproduce-btr-tables.md) sets up.
+A published release holds the reconciliation aggregates, so `release.reconcile()` compares totals there. The BTR rows behind them, and `rows(provider=..., year=...)`, need a local build from the workbooks, which [How to reproduce the BTR tables](reproduce-btr-tables.md) sets up.
 
 ## Before you start
 
-Load a release. Parties are ISO 3 codes, such as `"DEU"`, `"NOR"`, and `"EUU"`. The examples run on the synthetic test release, so their numbers are invented.
+Load a release. `providers=` names parties as `spending()` names providers, so `"Germany"`, `"DEU"`, and `5` name one party, and `"EU Institutions"` and `"EUU"` the EU. The examples run on the synthetic test release, so their numbers are invented.
 
 ```python
 import climate_finance as cf
@@ -16,10 +16,10 @@ release = cf.load()
 
 ## Steps
 
-1. Reconcile the parties and years you need. `parties=None` compares every party in the release, and `years` defaults to 2015 to 2022.
+1. Reconcile the parties and years you need. `providers=None` compares every party in the release, and `years=None` every year the BTR tables hold.
 
    ```python
-   reconciliation = release.reconcile(parties=["DEU", "NOR"], years=[2021, 2022])
+   reconciliation = release.reconcile(providers=["Germany", "Norway"], years=[2021, 2022])
    table = reconciliation.table.to_polars()
    for row in table.iter_rows(named=True):
        ratio = row["btr_over_comparator"]
@@ -51,10 +51,10 @@ release = cf.load()
 
 3. Find where a gap comes from. `unfccc_only_usd` sums the BTR rows that no CRS record links to at a probability of 0.5 or more, split by the BTR funding source into ODA, other official flows, and the rest. `oecd_only_usd` sums the party-year's climate-marked CRS records of the row's flow that no BTR row links to, and is null for a year past the release's last complete CRS year. Read the two together: a large amount on both sides of one year usually means links the build missed, so an unlinked BTR row is not evidence that the OECD lacks the activity.
 
-4. On a local build, list the rows behind a gap. `rows(party, year)` returns every BTR row of that party and year with each CRS record linked to it, and prefixes the CRS facts with `crs_`. `unfccc_only` is true for a BTR row that no CRS record links to.
+4. On a local build, list the rows behind a gap. `rows(provider=..., year=...)` returns every BTR row of that party and year with each CRS record linked to it, and prefixes the CRS facts with `crs_`. `unfccc_only` is true for a BTR row that no CRS record links to.
 
    ```python
-   linked = reconciliation.rows("DEU", 2021)
+   linked = reconciliation.rows(provider="Germany", year=2021)
    print(linked.select("row_id", "record_id", "unfccc_only").rows())
    ```
 

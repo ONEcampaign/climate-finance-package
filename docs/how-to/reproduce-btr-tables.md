@@ -58,8 +58,8 @@ A published release ships the BTR reconciliation totals (`btr_totals` and `btr_c
    import climate_finance as cf
 
    release = cf.load(path="releases/2026a-btr/assemble")
-   reconciliation = release.reconcile(parties=["DEU"], years=[2021, 2022])
-   rows = reconciliation.rows("DEU", 2021)
+   reconciliation = release.reconcile(providers="Germany", years=[2021, 2022])
+   rows = reconciliation.rows(provider="Germany", year=2021)
    ```
 
 ## Verify it worked

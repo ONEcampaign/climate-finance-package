@@ -62,13 +62,11 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from climate_finance import catalogue
 from climate_finance.convert import convert, provenance
 from climate_finance.errors import (
     MissingLabelsError,
     ReleaseIntegrityError,
     SchemaError,
-    UnknownProviderError,
 )
 from climate_finance.methods import (
     ONE,
@@ -281,8 +279,8 @@ def spending(release: Release, *, spec: Spec) -> Result:
 def quality(
     release: Release,
     *,
-    providers: Sequence[str | int] | None = None,
-    years: Iterable[int] | None = None,
+    providers: tuple[int, ...] | None = None,
+    years: tuple[int, ...] | None = None,
     method: Method = ONE,
 ) -> Quality:
     """Coverage, status and precision statistics.
@@ -292,9 +290,7 @@ def quality(
     Institutions rows an all-provider provider view leaves out under `method`, and
     `untraced` the Rio-marked CRS disbursement that reaches no commitment.
     """
-    years = None if years is None else tuple(years)
-    codes = _provider_codes(providers)
-    conditions = _conditions(providers=codes, recipients=None, years=years)
+    conditions = _conditions(providers=providers, recipients=None, years=years)
     table = release.table("quality")
     status = (
         _counted_commitments(release)
@@ -302,16 +298,16 @@ def quality(
         .select("provider_code", "year", "status", "climate_usd")
     )
     eu_left_out = _eu_left_out(release, years=years, method=method)
-    if codes is not None and EU_INSTITUTIONS not in codes:
+    if providers is not None and EU_INSTITUTIONS not in providers:
         eu_left_out = eu_left_out.clear()
     return Quality(
         table=Table(table.filter(*conditions)),
         status=Table(status),
         eu_left_out=Table(eu_left_out),
         attribution=Table(
-            _attribution(release, providers=codes, years=years, method=method)
+            _attribution(release, providers=providers, years=years, method=method)
         ),
-        precision=Table(_precision(release, providers=codes)),
+        precision=Table(_precision(release, providers=providers)),
         untraced=Table(
             _untraced(release, conditions=conditions, method=method).sort(
                 "provider_code", "year"
@@ -436,12 +432,15 @@ def _party_coefficients(release: Release) -> pl.LazyFrame:
 def reconcile(
     release: Release,
     *,
-    parties: Sequence[str] | None,
-    years: Iterable[int],
+    providers: tuple[int, ...] | None,
+    years: tuple[int, ...] | None,
     method: Method | MethodRange,
 ) -> Reconciliation:
     """Each party's BTR Table III.1 total against OECD figures for its bilateral
     finance, one row per party, year, status and method.
+
+    `providers` filters the parties by their DAC provider codes, and `years` the
+    report years; None takes every one the BTR tables hold.
 
     The BTR side comes from `btr_totals`, so a release without the row-level `btr`
     and `btr_links` reconciles alike. Each status has its own row, and rows without a
@@ -500,10 +499,8 @@ def reconcile(
     `THIN_COMPARATOR_USD`. `btr_grant_equivalent_over_crs_grant_equivalent` divides
     `btr_grant_equivalent` by its comparator on every row, null where that is zero.
     """
-    years = tuple(years)
-    totals = release.table("btr_totals").filter(pl.col("year").is_in(years))
-    if parties is not None:
-        totals = totals.filter(pl.col("party").is_in(list(parties)))
+    conditions = _conditions(providers=providers, recipients=None, years=years)
+    totals = release.table("btr_totals").filter(*conditions)
     face = pl.col("face_usd_at_dac")
     unlinked = ~pl.col("linked")
 
@@ -553,10 +550,10 @@ def reconcile(
         )
     )
     party_years = reported.select("provider_code", "year").unique()
-    bilateral = (pl.col("bi_multi").is_in(BILATERAL), pl.col("year").is_in(years))
+    bilateral = pl.col("bi_multi").is_in(BILATERAL)
     commitments = (
         _counted_commitments(release)
-        .filter(*bilateral, pl.col("climate_share").is_null())
+        .filter(bilateral, pl.col("climate_share").is_null())
         # Jev labels CRS records only, so a Jev method reads markers here.
         .with_columns(**face_shares(), jev_level=pl.lit(None, pl.Int8))
         .join(party_years, on=["provider_code", "year"], how="semi")
@@ -587,7 +584,7 @@ def reconcile(
         of each record's agency, weighted as the CRDF comparators weight."""
         flows = (
             release.table("total_flows")
-            .filter(pl.col("flow") == flow, *bilateral)
+            .filter(pl.col("flow") == flow, bilateral)
             .join(party_years, on=["provider_code", "year"], how="semi")
         )
         # Every `total_flows` row weighs by its markers, so it has no shares.
@@ -697,25 +694,25 @@ def reconcile(
     )
     return Reconciliation(
         table=Table(table),
-        rows=lambda: _reconciliation_rows(release, parties=parties, years=years),
+        rows=lambda: _reconciliation_rows(release, conditions=conditions),
     )
 
 
 def _reconciliation_rows(
-    release: Release, *, parties: Sequence[str] | None, years: tuple[int, ...]
+    release: Release, *, conditions: Sequence[pl.Expr]
 ) -> pl.LazyFrame:
-    """Each BTR row of `parties` and `years` with each CRS record linked to it.
+    """Each BTR row that meets `conditions` with each CRS record linked to it.
 
     Raises:
         WithheldTableError: when the release leaves out `btr` or `btr_links`.
     """
-    btr = release.table("btr").filter(pl.col("year").is_in(years))
-    if parties is not None:
-        btr = btr.filter(pl.col("party").is_in(list(parties)))
     return (
-        btr.join(release.table("btr_links"), on="row_id", how="left", suffix="_crs")
+        release.table("btr")
+        .filter(*conditions)
+        .join(release.table("btr_links"), on="row_id", how="left", suffix="_crs")
         .select(
             "party",
+            "provider_code",
             "year",
             "row_id",
             "status",
@@ -813,25 +810,6 @@ def _eu_left_out(
 def _per_flow(build: Callable[[Flow], pl.LazyFrame]) -> pl.LazyFrame:
     """`build`'s frame for each of `FLOWS`, with its `flow`, stacked."""
     return pl.concat(build(flow).with_columns(flow=pl.lit(flow)) for flow in FLOWS)
-
-
-def _provider_codes(values: Sequence[str | int] | None) -> tuple[int, ...] | None:
-    """The DAC codes `values` name, for `quality`, whose tables count providers.
-
-    Raises:
-        UnknownProviderError: for a name or code `resolve` refuses, or a name of an
-            agency.
-    """
-    targets = catalogue.resolve(values, kind="providers")
-    if targets is None:
-        return None
-    for target in targets:
-        if isinstance(target, catalogue.Agency):
-            name = catalogue.name_of(target, kind="providers")
-            raise UnknownProviderError(
-                name, note=f"{name} is an agency; quality() counts providers only."
-            )
-    return tuple(target for target in targets if isinstance(target, int))
 
 
 def _conditions(

@@ -46,8 +46,48 @@ def _btr_release(target: Path, edit: Callable[[pl.DataFrame], pl.DataFrame]) -> 
     )
 
 
+@pytest.mark.parametrize("germany", ["Germany", " germany ", "DEU", 5])
+def test_providers_name_a_party_in_any_form(germany: str | int) -> None:
+    reconciliation = SNAP.reconcile(providers=germany)
+    rows = reconciliation.rows(provider=germany, year=2021)
+
+    assert set(reconciliation.table.to_polars()["party"]) == {"DEU"}
+    assert set(rows["party"]) == {"DEU"}
+
+
+def test_years_take_one_year_and_none_takes_every_year() -> None:
+    assert set(SNAP.reconcile(years=2022).table.to_polars()["year"]) == {2022}
+    assert set(SNAP.reconcile().table.to_polars()["year"]) == {2021, 2022}
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: SNAP.reconcile(providers="EIB"),
+        lambda: SNAP.reconcile().rows(provider="EIB", year=2021),
+        lambda: SNAP.quality(providers=["Germany", "EIB"]),
+    ],
+    ids=["reconcile", "rows", "quality"],
+)
+def test_an_agency_is_refused_naming_its_provider(call: Callable[[], object]) -> None:
+    with pytest.raises(
+        ValueError,
+        match="'EIB' is the European Investment Bank, an agency of EU Institutions",
+    ) as raised:
+        call()
+
+    assert "='EU Institutions'" in str(raised.value)
+
+
+def test_an_unknown_provider_is_refused_with_suggestions() -> None:
+    with pytest.raises(cf.UnknownProviderError) as raised:
+        SNAP.reconcile(providers="Germny")
+
+    assert "Germany" in raised.value.suggestions
+
+
 def test_germany_reads_against_its_own_weight() -> None:
-    row = _row(SNAP.reconcile(parties="DEU"), "DEU", 2022)
+    row = _row(SNAP.reconcile(providers="DEU"), "DEU", 2022)
 
     assert row["party_weight"] == 0.5
     assert row["party_principal"] == 1.0
@@ -76,7 +116,7 @@ def test_germany_reads_against_its_own_weight() -> None:
 
 
 def test_a_disbursed_row_reads_against_disbursements_only() -> None:
-    row = _row(SNAP.reconcile(parties="NOR"), "NOR", 2021)
+    row = _row(SNAP.reconcile(providers="NOR"), "NOR", 2021)
 
     assert row["status"] == "disbursed"
     assert row["comparator"] == "crs_disbursed_at_party_weight"
@@ -90,7 +130,7 @@ def test_a_disbursed_row_reads_against_disbursements_only() -> None:
 
 
 def test_grant_equivalent_reads_against_the_crs_grant_equivalent() -> None:
-    row = _row(SNAP.reconcile(parties="DEU"), "DEU", 2022)
+    row = _row(SNAP.reconcile(providers="DEU"), "DEU", 2022)
 
     # The fixture's grant equivalent is 0.9 of each disbursement.
     assert row["crs_grant_equivalent_at_party_weight"] == pytest.approx(
@@ -103,7 +143,7 @@ def test_grant_equivalent_reads_against_the_crs_grant_equivalent() -> None:
 
 def test_core_contributions_stay_out_of_the_comparators() -> None:
     # DEU-3 (60m) and the Bi_Multi 2 disbursements are core contributions.
-    row = _row(SNAP.reconcile(parties="DEU"), "DEU", 2021)
+    row = _row(SNAP.reconcile(providers="DEU"), "DEU", 2021)
 
     assert row["crdf_at_100"] == pytest.approx(40e6)
     assert row["crs_disbursed_at_party_weight"] == pytest.approx(50.666667e6, rel=1e-6)
@@ -113,7 +153,7 @@ def test_a_case_by_case_party_reads_against_its_default() -> None:
     # Norway assesses each activity, with 0.3 for a Significant one whose share is
     # unknown and no default for a Principal one, which counts in full at PROVIDER's
     # 1.0. NOR-1 (18m, 2021) is Principal and NOR-2 (9m, 2022) Significant.
-    reconciliation = SNAP.reconcile(parties="NOR")
+    reconciliation = SNAP.reconcile(providers="NOR")
     row = _row(reconciliation, "NOR", 2021)
 
     assert (row["party_weight"], row["party_principal"]) == (0.3, None)
@@ -137,7 +177,7 @@ def test_an_agency_reads_against_its_own_coefficients(tmp_path: Path) -> None:
     # activity case by case, so its Significant commitment FRA-2 (12m) and its
     # Significant 2021 disbursement (12m) count at PROVIDER's 0.4.
     release = copy_release(tmp_path / "r", edits={"btr_totals": _france_reports})
-    reconciliation = cf.load(path=release).reconcile(parties="FRA")
+    reconciliation = cf.load(path=release).reconcile(providers="FRA")
     row = _row(reconciliation, "FRA", 2022)
 
     assert row["party_weight"] == 0.3
@@ -188,7 +228,7 @@ def test_a_mixed_basis_party_shows_its_method_shares(tmp_path: Path) -> None:
             "total_flows": lambda frame: _a_loan_at_agency_1(_french_agency_2(frame)),
         },
     )
-    row = _row(cf.load(path=release).reconcile(parties="FRA"), "FRA", 2022)
+    row = _row(cf.load(path=release).reconcile(providers="FRA"), "FRA", 2022)
 
     assert row["coefficient_basis"] == "provider"
     assert row["crdf_at_party_weight"] == pytest.approx(0.7 * 12e6)
@@ -217,7 +257,7 @@ def test_overlapping_coefficient_rows_refuse_to_reconcile(tmp_path: Path) -> Non
         ReleaseIntegrityError,
         match="5 None 2020: covers 2020 to every later year",
     ):
-        cf.load(path=release).reconcile(parties="DEU").table.to_polars()
+        cf.load(path=release).reconcile(providers="DEU").table.to_polars()
 
 
 def _without_a_default(frame: pl.DataFrame) -> pl.DataFrame:
@@ -234,7 +274,7 @@ def test_a_case_by_case_party_without_a_default_reads_at_provider_coefficients(
     release = copy_release(
         tmp_path / "release", edits={"provider_coefficients": _without_a_default}
     )
-    row = _row(cf.load(path=release).reconcile(parties="NOR"), "NOR", 2022)
+    row = _row(cf.load(path=release).reconcile(providers="NOR"), "NOR", 2022)
 
     assert row["party_weight"] is None
     assert row["coefficient_basis"] == "case_by_case"
@@ -258,7 +298,7 @@ def test_a_party_without_a_coefficient_row_reads_at_provider_coefficients(
             )
         },
     )
-    row = _row(cf.load(path=release).reconcile(parties="DEU"), "DEU", 2022)
+    row = _row(cf.load(path=release).reconcile(providers="DEU"), "DEU", 2022)
 
     assert (row["party_weight"], row["coefficient_basis"]) == (None, None)
     assert row["crdf_at_party_weight"] == pytest.approx(0.4 * 25e6)
@@ -271,7 +311,7 @@ def test_a_party_without_a_coefficient_row_reads_at_provider_coefficients(
 
 def test_each_method_gives_its_traced_value() -> None:
     table = SNAP.reconcile(
-        parties=["DEU"], years=[2022], method=MethodRange(methods=(ONE, OECD))
+        providers=["DEU"], years=[2022], method=MethodRange(methods=(ONE, OECD))
     ).table.to_polars()
 
     assert dict(table.select("method", "traced_climate_value").iter_rows()) == {
@@ -295,7 +335,7 @@ def test_climate_component_rows_stay_out_of_the_crdf_comparators(
         tmp_path / "r", edits={"commitments": _commitments_climate_share}
     )
 
-    row = _row(cf.load(path=release).reconcile(parties="DEU"), "DEU", 2022)
+    row = _row(cf.load(path=release).reconcile(providers="DEU"), "DEU", 2022)
 
     assert row["crdf_at_100"] is None
     assert row["traced_climate_value"] is None
@@ -319,7 +359,7 @@ def _norway_reports_commitments(frame: pl.DataFrame) -> pl.DataFrame:
 def test_each_status_reads_on_its_own_row(tmp_path: Path) -> None:
     release = _btr_release(tmp_path / "r", _norway_reports_commitments)
 
-    reconciliation = cf.load(path=release).reconcile(parties="NOR")
+    reconciliation = cf.load(path=release).reconcile(providers="NOR")
 
     committed = _row(reconciliation, "NOR", 2021, "committed")
     assert committed["btr_face"] == pytest.approx(20e6)
@@ -355,7 +395,7 @@ def test_a_missing_btr_amount_stays_null_and_a_reported_zero_stays_zero(
 ) -> None:
     release = _btr_release(tmp_path / "r", _norway_misses_amounts)
 
-    reconciliation = cf.load(path=release).reconcile(parties="NOR")
+    reconciliation = cf.load(path=release).reconcile(providers="NOR")
 
     no_face = _row(reconciliation, "NOR", 2021)
     assert no_face["btr_face"] is None
@@ -385,15 +425,15 @@ def test_a_release_with_no_btr_rows_reconciles_to_an_empty_table(
 
 
 def test_unlinked_rows_are_unfccc_only() -> None:
-    reconciliation = SNAP.reconcile(parties=["DEU"])
+    reconciliation = SNAP.reconcile(providers=["DEU"])
 
     assert _row(reconciliation, "DEU", 2021)["unfccc_only_usd"] == 0
     assert _row(reconciliation, "DEU", 2022)["unfccc_only_usd"] == pytest.approx(22e6)
-    linked = reconciliation.rows("DEU", 2021)
+    linked = reconciliation.rows(provider="DEU", year=2021)
     assert linked["record_id"].to_list() == ["DEU-B-R1", "DEU-B-R2"]
     assert linked["crs_project_number"].to_list() == ["300123-101", "300123-105"]
     assert not linked["unfccc_only"].any()
-    unlinked = reconciliation.rows("DEU", 2022)
+    unlinked = reconciliation.rows(provider="DEU", year=2022)
     assert unlinked.select("row_id", "record_id", "unfccc_only").rows() == [
         ("BTR-DEU-2022", None, True)
     ]
@@ -409,7 +449,7 @@ def test_unlinked_btr_money_splits_by_funding_source(tmp_path: Path) -> None:
         return pl.concat([frame, loan])
 
     row = _row(
-        cf.load(path=_btr_release(tmp_path / "r", oof_loan)).reconcile(parties="DEU"),
+        cf.load(path=_btr_release(tmp_path / "r", oof_loan)).reconcile(providers="DEU"),
         "DEU",
         2022,
     )
@@ -447,7 +487,7 @@ def test_a_comparator_under_10m_is_thin(
         )
 
     release = copy_release(tmp_path / "r", edits={"commitments": small})
-    row = _row(cf.load(path=release).reconcile(parties="DEU"), "DEU", 2022)
+    row = _row(cf.load(path=release).reconcile(providers="DEU"), "DEU", 2022)
 
     # DEU-2 is Significant on both objectives, which Germany counts in full. A
     # zero comparator gives no ratio.
@@ -470,7 +510,7 @@ def test_btr_amounts_read_at_the_dac_rate(tmp_path: Path) -> None:
         )
 
     release = _btr_release(tmp_path / "r", at_dac)
-    row = _row(cf.load(path=release).reconcile(parties="DEU"), "DEU", 2022)
+    row = _row(cf.load(path=release).reconcile(providers="DEU"), "DEU", 2022)
 
     assert row["btr_face"] == pytest.approx(20e6)
     assert row["btr_face_reported"] == pytest.approx(22e6)
@@ -500,7 +540,7 @@ def test_grant_equivalent_counts_rows_without_a_status_or_a_face_value(
         return pl.concat([frame, *extra])
 
     release = _btr_release(tmp_path / "r", germany)
-    reconciliation = cf.load(path=release).reconcile(parties="DEU", years=[2022])
+    reconciliation = cf.load(path=release).reconcile(providers="DEU", years=[2022])
 
     table = reconciliation.table.to_polars()
     assert table["btr_grant_equivalent"].sum() == pytest.approx(22e6 + 3e6 + 5e6)
@@ -533,4 +573,4 @@ def test_a_release_without_btr_rows_reconciles_from_its_totals(
 
     assert reconciliation.table.to_polars().equals(SNAP.reconcile().table.to_polars())
     with pytest.raises(WithheldTableError, match="btr"):
-        reconciliation.rows("DEU", 2021)
+        reconciliation.rows(provider="DEU", year=2021)

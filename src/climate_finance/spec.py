@@ -13,7 +13,7 @@ from pydantic import (
     model_serializer,
 )
 
-from climate_finance.catalogue import Agency, Coded, Target, resolve
+from climate_finance.catalogue import Agency, Coded, Target, name_of, resolve
 from climate_finance.errors import UnknownNameError
 from climate_finance.methods import (
     OECD,
@@ -58,6 +58,68 @@ def _resolver(kind: Coded) -> BeforeValidator:
         return resolve(values, kind=kind)
 
     return BeforeValidator(read)
+
+
+def read_provider_codes(
+    providers: str | int | Agency | Iterable[str | int | Agency] | None,
+    *,
+    reader: str,
+    keyword: str = "providers",
+) -> tuple[int, ...] | None:
+    """The DAC provider codes `providers` names, sorted and without duplicates, or
+    None for None, for `reader`, whose tables count providers and no agencies.
+
+    Raises:
+        UnknownProviderError: for a name, code or agency `resolve` refuses.
+        ValueError: for a name or value of an agency, naming its provider, which
+            `keyword` takes instead.
+        TypeError: for a value of another type.
+    """
+    if providers is None:
+        return None
+    values = (
+        providers
+        if isinstance(providers, Iterable) and not isinstance(providers, str | Agency)
+        else (providers,)
+    )
+    codes: set[int] = set()
+    for value in values:
+        targets = resolve(value, kind="providers") or ()
+        if agencies := [target for target in targets if isinstance(target, Agency)]:
+            raise _agency_error(value, agencies[0], reader=reader, keyword=keyword)
+        codes.update(target for target in targets if isinstance(target, int))
+    return tuple(sorted(codes))
+
+
+def _agency_error(
+    value: object, agency: Agency, *, reader: str, keyword: str
+) -> ValueError:
+    provider = name_of(agency.provider, kind="providers")
+    # `name_of` names an agency as "<agency> (<provider>)".
+    name = name_of(agency, kind="providers").removesuffix(f" ({provider})")
+    return ValueError(
+        f"{reader} reads providers; {value!r} is the {name}, an agency of "
+        f"{provider}. Pass {keyword}={provider!r}."
+    )
+
+
+def read_one_method(
+    method: Method | MethodRange | str | Iterable[Method | str], *, reader: str
+) -> Method:
+    """`read_method` for `reader`, which reads one method and no range.
+
+    Raises:
+        UnknownNameError: for a name outside `cf.methods.list()`.
+        TypeError: for a range, naming its methods, or any other value.
+    """
+    read = read_method(method)
+    if isinstance(read, Method):
+        return read
+    *first, last = (label(member) for member in read.methods)
+    members = f"{', '.join(first)} and {last}" if first else last
+    raise TypeError(
+        f"{reader} reads one method; {label(read)} holds {members}. Pass one of them."
+    )
 
 
 # The methods `method` takes by name, keyed by the names `cf.methods.list()` prints.

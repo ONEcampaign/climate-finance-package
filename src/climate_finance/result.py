@@ -30,6 +30,8 @@ from climate_finance.spec import (
     ODA_FLOW_CODES,
     Spec,
     provider_rows,
+    read_provider_codes,
+    read_years,
 )
 from climate_finance.sums import ordered_sum
 
@@ -637,18 +639,34 @@ class Reconciliation:
         self.table = table
         self._rows = rows
 
-    def rows(self, party: str, year: int) -> pl.DataFrame:
+    def rows(self, *, provider: str | int, year: int) -> pl.DataFrame:
         """The project-level link behind one party and year: each BTR row of every
         status with each CRS record linked to it, the record's facts prefixed
         `crs_`, and `unfccc_only` true for a row no record links to.
 
+        `provider` names the party as `reconcile`'s `providers` does, such as
+        "Germany", "DEU" or 5.
+
         Raises:
+            UnknownProviderError: for a provider name or code outside the listings.
+            ValueError: for an agency, naming its provider.
+            TypeError: for a year that is not an integer.
             WithheldTableError: when the release leaves out the row-level BTR
                 tables, as the published release does.
         """
+        keys = {
+            "provider_code": read_provider_codes(
+                provider, reader="Reconciliation.rows()", keyword="provider"
+            ),
+            "year": read_years(year),
+        }
         return (
             self._rows()
-            .filter(pl.col("party") == party, pl.col("year") == year)
+            .filter(
+                pl.col(name).is_in(values)
+                for name, values in keys.items()
+                if values is not None
+            )
             .collect()
         )
 

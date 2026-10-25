@@ -9,7 +9,7 @@ import shutil
 import tarfile
 import tempfile
 import urllib.request
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from importlib.resources import files
 from pathlib import Path
 from typing import Unpack
@@ -33,7 +33,14 @@ from climate_finance.schema import (
     scan_table,
     sha256_file,
 )
-from climate_finance.spec import Spec, SpecInputs, read_years
+from climate_finance.spec import (
+    Spec,
+    SpecInputs,
+    read_method,
+    read_one_method,
+    read_provider_codes,
+    read_years,
+)
 
 # The release index shipped in the wheel.
 RELEASE_INDEX = files("climate_finance") / "data" / "releases.json"
@@ -115,33 +122,56 @@ class Release:
     def quality(
         self,
         *,
-        providers: str | int | Sequence[str | int] | None = None,
+        providers: str | int | Iterable[str | int] | None = None,
         years: int | Iterable[int] | None = None,
-        method: Method = ONE,
+        method: Method | str = ONE,
     ) -> Quality:
         """Link, coverage and status statistics, and the EU Institutions rows that
-        `method`'s provider view leaves out."""
+        `method`'s provider view leaves out.
+
+        `providers` and `years` take the forms `spending` takes, and `method` one
+        method or its name. None takes every provider or year.
+
+        Raises:
+            UnknownProviderError: for a provider name or code outside the listings.
+            ValueError: for an agency, since the tables count providers; the error
+                names its provider.
+            UnknownNameError: for a method name outside `cf.methods.list()`.
+            TypeError: for a range of methods, or years or a method in a form
+                `Spec` does not take.
+        """
         return query.quality(
-            self, providers=_as_tuple(providers), years=read_years(years), method=method
+            self,
+            providers=read_provider_codes(providers, reader="quality()"),
+            years=read_years(years),
+            method=read_one_method(method, reader="quality()"),
         )
 
     def reconcile(
         self,
         *,
-        parties: str | Sequence[str] | None = None,
-        years: Iterable[int] = range(2015, 2023),
-        method: Method | MethodRange = ONE,
+        providers: str | int | Iterable[str | int] | None = None,
+        years: int | Iterable[int] | None = None,
+        method: Method | MethodRange | str | Iterable[Method | str] = ONE,
     ) -> Reconciliation:
-        """Compare each party's BTR figures with OECD data (`query.reconcile`).
+        """Compare each BTR party's figures with OECD data (`query.reconcile`).
 
-        `parties` are ISO 3 codes as the `btr` table holds them, such as "NOR" and
-        "EUU". None compares every party.
+        `providers`, `years` and `method` take the forms `spending` takes, so
+        `providers="Germany"`, `"DEU"` and `5` name one party. None compares every
+        party, or every year the BTR tables hold.
+
+        Raises:
+            UnknownProviderError: for a provider name or code outside the listings.
+            ValueError: for an agency, since the BTR reports providers; the error
+                names its provider.
+            UnknownNameError: for a method name outside `cf.methods.list()`.
+            TypeError: for years or a method in a form `Spec` does not take.
         """
         return query.reconcile(
             self,
-            parties=(parties,) if isinstance(parties, str) else parties,
-            years=years,
-            method=method,
+            providers=read_provider_codes(providers, reader="reconcile()"),
+            years=read_years(years),
+            method=read_method(method),
         )
 
     def disbursement_profile(self) -> pl.DataFrame:
@@ -309,14 +339,3 @@ def _fetch(url: str, *, out_path: Path) -> str:
     except OSError as error:
         raise SourceUnavailableError(f"Could not download {url}: {error}") from error
     return digest.hexdigest()
-
-
-def _as_tuple(
-    values: str | int | Iterable[str | int] | None,
-) -> tuple[str | int, ...] | None:
-    """One name or code, or many, as a tuple; a string counts as one value."""
-    if values is None:
-        return None
-    if isinstance(values, str | int):
-        return (values,)
-    return tuple(values)

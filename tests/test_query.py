@@ -1552,11 +1552,17 @@ def test_a_year_without_a_budget_share_keeps_the_budgets_own_rows(
     assert set(rows["year"]) == {2022, 2023}
 
 
-def test_quality_refuses_an_agency() -> None:
-    with pytest.raises(cf.UnknownProviderError) as raised:
-        SNAP.quality(providers="EIB")
+@pytest.mark.parametrize("method", ["RANGE", RANGE, ["ONE", "OECD"]])
+def test_quality_refuses_a_range_of_methods(method: object) -> None:
+    with pytest.raises(TypeError, match=r"quality\(\) reads one method; .* holds ONE"):
+        # A range is outside the type quality() takes; the test checks the run time.
+        SNAP.quality(method=method)  # ty: ignore[invalid-argument-type]
 
-    assert raised.value.note is not None
+
+def test_quality_reads_a_method_by_name() -> None:
+    by_name = SNAP.quality(method="oecd").untraced.to_polars()
+
+    assert by_name.equals(SNAP.quality(method=OECD).untraced.to_polars())
 
 
 @pytest.mark.parametrize("flow", FLOWS)
