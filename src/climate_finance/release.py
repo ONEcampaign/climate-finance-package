@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import difflib
 import hashlib
 import os
 import shutil
 import tarfile
 import tempfile
 import urllib.request
+import warnings
 from collections.abc import Iterable
 from importlib.resources import files
 from pathlib import Path
@@ -19,14 +19,15 @@ import pyarrow as pa
 from pydantic import BaseModel, ConfigDict
 
 from climate_finance import query
+from climate_finance.catalogue import unknown_name
 from climate_finance.errors import (
+    CoverageWarning,
     ReleaseIntegrityError,
     SourceUnavailableError,
-    UnknownNameError,
     WithheldTableError,
 )
 from climate_finance.methods import ONE, Method, MethodRange
-from climate_finance.result import Quality, Reconciliation, Result
+from climate_finance.result import Quality, Reconciliation, Result, year_runs
 from climate_finance.schema import (
     RELEASE_TABLES,
     ReleaseManifest,
@@ -52,6 +53,16 @@ INDEX_URL = (
 # Seconds a download may wait on the server before it fails.
 _TIMEOUT = 60
 _CHUNK = 1 << 20
+# Where releases are published, for the error `load` gives before the first one.
+RELEASES_PAGE = "https://github.com/ONEcampaign/climate-finance-package/releases"
+# A warning names the first caller outside the package.
+_PACKAGE_DIR = str(Path(__file__).parent)
+# What each flow reads, as a coverage warning names it.
+_FLOW_TEXT = {
+    "commitments": "commitments",
+    "disbursements": "disbursements",
+    "grant_equivalent": "grant equivalents",
+}
 
 
 class IndexEntry(BaseModel):
@@ -83,16 +94,20 @@ class Release:
     def __init__(self, *, path: Path, manifest: ReleaseManifest) -> None:
         self.path = path
         self.manifest = manifest
+        self._years: dict[str, tuple[int, ...]] = {}
 
     def table(self, name: str) -> pl.LazyFrame:
         """Scan one release table.
 
         Raises:
-            KeyError: when `name` is not a release table.
+            UnknownNameError: when `name` is not a release table, with close names
+                as suggestions.
             WithheldTableError: when the release leaves `name` out.
         """
         if name not in RELEASE_TABLES:
-            raise KeyError(f"{name!r} is not a release table: {sorted(RELEASE_TABLES)}")
+            raise unknown_name(
+                name, kind="release table", choices=sorted(RELEASE_TABLES)
+            )
         if note := self.manifest.withheld_tables.get(name):
             raise WithheldTableError(name, note=note)
         return scan_table(self.path / f"{name}.parquet")
@@ -108,15 +123,30 @@ class Release:
                 listings.
             UnknownRecipientError: for a recipient name or code outside them.
             UnknownNameError: for a method name outside `cf.methods.list()`.
-            TypeError: for years, a method or prices in a form `Spec` does not take.
-            pydantic.ValidationError: for an unknown keyword or a value outside a
-                field's choices, such as `flow="commitment"`.
+            InvalidInputError: for an unknown keyword, such as `spec=`, which
+                `run` takes, years, a method or prices in a form `Spec` does not
+                take, or a value outside a field's choices, such as
+                `flow="commitment"`.
+
+        Warns:
+            CoverageWarning: for years the flow's tables hold no rows for.
         """
         return self.run(Spec(**inputs))
 
     def run(self, spec: Spec) -> Result:
         """Rerun a saved `Spec`, such as `result.spec` or one read back with
-        `Spec.model_validate_json`."""
+        `Spec.model_validate_json`.
+
+        Warns:
+            CoverageWarning: for years the flow's tables hold no rows for.
+        """
+        # The flow's rows come from these tables only, so a year none holds has none.
+        tables = ["commitments" if spec.flow == "commitments" else "disbursements"]
+        if spec.flow != "commitments" and spec.untraced:
+            tables.append("untraced")
+        if spec.view == "provider":
+            tables.append("core_contributions")
+        self._warn_uncovered(spec.years, tables=tables, holds=_FLOW_TEXT[spec.flow])
         return query.spending(self, spec=spec)
 
     def quality(
@@ -134,16 +164,20 @@ class Release:
 
         Raises:
             UnknownProviderError: for a provider name or code outside the listings.
-            ValueError: for an agency, since the tables count providers; the error
-                names its provider.
             UnknownNameError: for a method name outside `cf.methods.list()`.
-            TypeError: for a range of methods, or years or a method in a form
-                `Spec` does not take.
+            InvalidInputError: for an agency, since the tables count providers,
+                naming its provider; for a range of methods; or for years or a
+                method in a form `Spec` does not take.
+
+        Warns:
+            CoverageWarning: for years the `quality` table holds no rows for.
         """
+        read = read_years(years)
+        self._warn_uncovered(read, tables=["quality"], holds="quality statistics")
         return query.quality(
             self,
             providers=read_provider_codes(providers, reader="quality()"),
-            years=read_years(years),
+            years=read,
             method=read_one_method(method, reader="quality()"),
         )
 
@@ -162,15 +196,20 @@ class Release:
 
         Raises:
             UnknownProviderError: for a provider name or code outside the listings.
-            ValueError: for an agency, since the BTR reports providers; the error
-                names its provider.
             UnknownNameError: for a method name outside `cf.methods.list()`.
-            TypeError: for years or a method in a form `Spec` does not take.
+            InvalidInputError: for an agency, since the BTR reports providers,
+                naming its provider, or for years or a method in a form `Spec` does
+                not take.
+
+        Warns:
+            CoverageWarning: for years the `btr_totals` table holds no rows for.
         """
+        read = read_years(years)
+        self._warn_uncovered(read, tables=["btr_totals"], holds="BTR totals")
         return query.reconcile(
             self,
             providers=read_provider_codes(providers, reader="reconcile()"),
-            years=read_years(years),
+            years=read,
             method=read_method(method),
         )
 
@@ -183,6 +222,35 @@ class Release:
         long.
         """
         return self.table("disbursement_profile").sort("group", "years_since").collect()
+
+    def _years_of(self, table: str) -> tuple[int, ...]:
+        """The years `table` holds rows for, sorted, read once per release."""
+        if table not in self._years:
+            held = self.table(table).select(pl.col("year").unique().sort()).collect()
+            self._years[table] = tuple(held["year"].to_list())
+        return self._years[table]
+
+    def _warn_uncovered(
+        self, years: Iterable[int] | None, *, tables: Iterable[str], holds: str
+    ) -> None:
+        """Warn once when `years` asks for years none of `tables` holds rows for;
+        `holds` names what the tables hold."""
+        if years is None:
+            return
+        held = sorted({year for table in tables for year in self._years_of(table)})
+        if not (missing := sorted(set(years) - set(held))):
+            return
+        span = f"{holds} for {year_runs(held)}" if held else f"no {holds}"
+        asked = (
+            f"year {missing[0]} returns"
+            if len(missing) == 1
+            else f"years {year_runs(missing)} return"
+        )
+        warnings.warn(
+            f"the release holds {span}; {asked} no rows",
+            CoverageWarning,
+            skip_file_prefixes=(_PACKAGE_DIR,),
+        )
 
 
 def load(
@@ -208,7 +276,8 @@ def load(
             release table it does not withhold is missing, a table's sha256
             differs from `release.json`, or a pack's sha256 differs from the
             index.
-        UnknownNameError: when the index lists no release named `release`.
+        UnknownNameError: when the index lists no release named `release`, or no
+            release at all, which names `path=` and where releases come from.
         SourceUnavailableError: when the index or a pack cannot be downloaded.
     """
     if path is not None:
@@ -278,13 +347,19 @@ def _resolve(index: ReleaseIndex, release: str) -> str:
         UnknownNameError: when `index` lists no such release.
     """
     name = index.latest if release == "latest" else release
-    if name is None or name not in index.releases:
-        listed = sorted(index.releases)
-        raise UnknownNameError(
+    if not index.releases:
+        raise unknown_name(
             release,
             kind="release",
-            suggestions=difflib.get_close_matches(release, listed) if listed else (),
+            choices=(),
+            note=(
+                "No release is published yet. Open a release directory with "
+                "cf.load(path=...). Releases are built with `cf-build release` and "
+                f"published at {RELEASES_PAGE}."
+            ),
         )
+    if name is None or name not in index.releases:
+        raise unknown_name(release, kind="release", choices=sorted(index.releases))
     return name
 
 

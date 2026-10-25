@@ -10,7 +10,11 @@ from releases import copy_release
 
 import climate_finance as cf
 from climate_finance.build.release import btr_totals
-from climate_finance.errors import ReleaseIntegrityError, WithheldTableError
+from climate_finance.errors import (
+    InvalidInputError,
+    ReleaseIntegrityError,
+    WithheldTableError,
+)
 from climate_finance.methods import OECD, ONE, MethodRange
 from climate_finance.result import Reconciliation
 from climate_finance.schema import ReleaseManifest
@@ -82,7 +86,7 @@ def test_years_take_one_year_and_none_takes_every_year() -> None:
 )
 def test_an_agency_is_refused_naming_its_provider(call: Callable[[], object]) -> None:
     with pytest.raises(
-        ValueError,
+        InvalidInputError,
         match="'EIB' is the European Investment Bank, an agency of EU Institutions",
     ) as raised:
         call()

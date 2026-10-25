@@ -5,12 +5,20 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Mapping, Sequence
 from functools import cached_property
 from html import escape
+from numbers import Integral, Real
 
 import polars as pl
 from pydantic import BaseModel, ConfigDict
 
-from climate_finance.catalogue import Agency, name_of, resolve, with_names
+from climate_finance.catalogue import (
+    Agency,
+    name_of,
+    resolve,
+    unknown_name,
+    with_names,
+)
 from climate_finance.convert import Conversion
+from climate_finance.errors import InvalidInputError
 from climate_finance.methods import (
     Method,
     MethodRange,
@@ -65,11 +73,12 @@ class Meta(BaseModel):
 class Result:
     """The answer to one `Spec`: a table, the rows behind it, and its provenance.
 
-    `table` takes each method's amounts by key, with that method's own `low` and
-    `high`. Under `spec.measure="share_of_total"` the result divides each method's
-    amounts by its `totals`, so a result always holds the measure its spec names.
-    `low` and `high` then span every method of the key, the lowest `low` and the
-    highest `high`, in amounts or in shares.
+    `table` takes each method's amounts by key. Its `low` and `high` span every
+    method of the key, the lowest `low` and the highest `high` of any method, so
+    every method's row of a key carries the same bounds. Under
+    `spec.measure="share_of_total"` the result divides each method's amounts by its
+    `totals` before the bounds are taken, so a result always holds the measure its
+    spec names, and the bounds span the methods' shares.
 
     `table` starts `year`, `provider`, `recipient`, `method` and ends `value`, `low`,
     `high`, `untraced`, so polars' truncated print shows them; `provider` and
@@ -125,22 +134,23 @@ class Result:
         `provider` and `recipient`: names, DAC codes or, for providers, agencies,
         read as `spending` reads them.
 
-        A filter value that is a list, tuple, set or range matches any of its items.
+        A filter value that is a list, tuple, set or range matches any of its items,
+        and each item must be of its column's type. Agencies filter through
+        `provider`, as `provider="EIB"`.
 
         Raises:
-            KeyError: when a filter names a column the rows do not have.
+            UnknownNameError: when a filter names a column the rows do not have,
+                with close names as suggestions.
+            InvalidInputError: for a filter value of another type than its column,
+                such as a name for `provider_code`, or an `agency` filter.
             UnknownProviderError: for a `provider` name, code or agency the
                 listings lack, or a name of several entries.
             UnknownRecipientError: for a `recipient` name or code the listings
                 lack, or a name of several entries.
         """
-        columns = self._rows.collect_schema().names()
-        if unknown := sorted(set(filters) - set(columns)):
-            raise KeyError(f"rows have no column {unknown}; columns are {columns}")
+        schema = self._rows.collect_schema()
         conditions = [
-            pl.col(name).is_in(list(value))
-            if isinstance(value, Collection) and not isinstance(value, str)
-            else pl.col(name) == value
+            _column_filter(name, value, schema=schema)
             for name, value in filters.items()
         ]
         if (providers := resolve(provider, kind="providers")) is not None:
@@ -220,6 +230,69 @@ class Result:
             spec=self.spec.replace(measure="share_of_total"),
             meta=self.meta,
         )
+
+
+# The keyword that filters each code column by name, for the error a name gives.
+_NAMED_BY = {
+    "provider_code": "provider",
+    "agency_code": "provider",
+    "recipient_code": "recipient",
+}
+
+
+def _column_filter(name: str, value: object, *, schema: pl.Schema) -> pl.Expr:
+    """The condition `rows(name=value)` adds, once each item fits its column.
+
+    Raises:
+        UnknownNameError: for a column outside `schema`.
+        InvalidInputError: for `agency`, which `provider` filters, or an item of
+            another type than the column.
+    """
+    if name == "agency":
+        raise InvalidInputError(
+            f"rows() filters agencies through provider, as provider={value!r}"
+        )
+    if name not in schema:
+        raise unknown_name(name, kind="column", choices=schema.names())
+    items = (
+        list(value)
+        if isinstance(value, Collection) and not isinstance(value, str)
+        else [value]
+    )
+    for item in items:
+        if not _fits(item, dtype=schema[name]):
+            raise _filter_error(name, item, dtype=schema[name])
+    return pl.col(name).is_in(items)
+
+
+def _fits(item: object, *, dtype: pl.DataType) -> bool:
+    """Whether a filter item is of the type of a column of `dtype`."""
+    if dtype.is_integer():
+        return isinstance(item, Integral) and not isinstance(item, bool)
+    if dtype.is_float():
+        return isinstance(item, Real) and not isinstance(item, bool)
+    if dtype == pl.Boolean:
+        return isinstance(item, bool)
+    if dtype == pl.String:
+        return isinstance(item, str)
+    return True
+
+
+def _filter_error(name: str, item: object, *, dtype: pl.DataType) -> InvalidInputError:
+    if name in _NAMED_BY:
+        holds = "agency codes" if name == "agency_code" else "DAC codes"
+    elif dtype.is_integer():
+        holds = "integers"
+    elif dtype.is_float():
+        holds = "numbers"
+    elif dtype == pl.Boolean:
+        holds = "True or False"
+    else:
+        holds = "text"
+    message = f"{name} holds {holds}, not {item!r}"
+    if name in _NAMED_BY and isinstance(item, str):
+        message += f"; filter names with {_NAMED_BY[name]}={item!r}"
+    return InvalidInputError(message)
 
 
 def _bounds(frame: pl.LazyFrame) -> pl.LazyFrame:
@@ -407,7 +480,7 @@ def explain(
         lines.append("low and high are the lowest and highest bound across methods.")
     if unmeasured:
         lines.append(
-            f"Adaptation is not measured for rows in {_runs(unmeasured)}, as the "
+            f"Adaptation is not measured for rows in {year_runs(unmeasured)}, as the "
             "CRDF has no adaptation marker or climate components before 2010 and an "
             "agency share of 2010 spans 2009. Their adaptation and cross_cutting are "
             "null, and their climate value is mitigation only."
@@ -502,7 +575,7 @@ def _coverage(
                 f"Under {_listing(labels)}, attributed finance covers core "
                 f"contributions in {_span(years, 'core_contributions')} and {text} "
                 f"in {_span(years, table)}; the provider view attributes none in "
-                f"{_runs(outside)}."
+                f"{year_runs(outside)}."
             )
     return lines
 
@@ -539,7 +612,7 @@ def _span(years: Mapping[str, tuple[int, int]] | None, name: str) -> str:
     return f"{first} to {last}"
 
 
-def _runs(years: Sequence[int]) -> str:
+def year_runs(years: Sequence[int]) -> str:
     """Sorted `years` as running text, consecutive years as a span, such as
     "2000 to 2014 and 2025"."""
     runs: list[list[int]] = []
@@ -690,8 +763,8 @@ class Reconciliation:
 
         Raises:
             UnknownProviderError: for a provider name or code outside the listings.
-            ValueError: for an agency, naming its provider.
-            TypeError: for a year that is not an integer.
+            InvalidInputError: for an agency, naming its provider, or a year that
+                is not an integer.
             WithheldTableError: when the release leaves out the row-level BTR
                 tables, as the published release does.
         """
@@ -746,10 +819,17 @@ def compare(*results: Result) -> Comparison:
     gives one column per method. A key a result has no row for is null in its column.
 
     Raises:
-        ValueError: when no result is given.
+        InvalidInputError: when no result is given, or any argument is not a
+            `Result`, such as a list of them.
     """
     if not results:
-        raise ValueError("compare() needs at least one result")
+        raise InvalidInputError("compare() takes at least one result")
+    for given in results:
+        if not isinstance(given, Result):
+            raise InvalidInputError(
+                "compare() takes results as arguments, as cf.compare(a, b), or "
+                f"cf.compare(*results) for a list; got a {type(given).__name__}"
+            )
     names = _result_names([result.spec for result in results])
     frames = []
     for name, result in zip(names, results, strict=True):

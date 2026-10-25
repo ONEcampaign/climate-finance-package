@@ -7,6 +7,7 @@ import pytest
 from make_fixture import FIXTURE_DIR
 
 import climate_finance as cf
+from climate_finance.errors import InvalidInputError
 from climate_finance.methods import ONE, RANGE
 
 SNAP = cf.load(path=FIXTURE_DIR)
@@ -89,8 +90,16 @@ def test_results_nothing_sets_apart_are_numbered() -> None:
 
 
 def test_compare_needs_a_result() -> None:
-    with pytest.raises(ValueError, match="at least one result"):
+    with pytest.raises(InvalidInputError, match="at least one result"):
         cf.compare()
+
+
+def test_compare_refuses_a_list_naming_the_call_it_takes() -> None:
+    result = SNAP.spending()
+
+    with pytest.raises(InvalidInputError, match=r"as cf\.compare\(a, b\)"):
+        # A list is outside the type compare() takes; the test checks the run time.
+        cf.compare([result, result])  # ty: ignore[invalid-argument-type]
 
 
 RESULT_REPR = """\

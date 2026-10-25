@@ -8,7 +8,7 @@ Opens a release and returns a `Release`.
 
 Parameters:
 
-- `release` (`str`, default `"latest"`). A release name from the release index, or `"latest"`. The index shipped in the wheel is empty until the first 2.0 release is published, so until then a call without `path` raises `UnknownNameError`.
+- `release` (`str`, default `"latest"`). A release name from the release index, or `"latest"`. The index shipped in the wheel is empty until the first 2.0 release is published, so until then a call without `path` raises `UnknownNameError`, whose message names `cf.load(path=...)` and the package's GitHub releases page, where releases built with `cf-build release` are published.
 - `path` (`str | Path | None`). A release directory on disk. When given, the function ignores the other arguments and downloads nothing.
 - `cache_dir` (`str | Path | None`). Where releases unpack. Defaults to `CLIMATE_FINANCE_CACHE`, then `~/.cache/climate-finance`.
 - `refresh` (`bool`, default `False`). When `True`, reads the newest release index online. When `False`, reads the index shipped in the wheel.
@@ -52,7 +52,7 @@ Returns a `Result`. Every argument is optional and keyword-only, and each is a `
 - `measure` (`"amount" | "share_of_total"`, default `"amount"`). `"share_of_total"` divides every amount by all CRS flows of its key, as `Result.share_of_total()` does.
 - `untraced` (`bool`, default `True`). `False` leaves out the untraced rows of disbursements and grant equivalents. Commitments have none.
 
-Raises `UnknownProviderError` or `UnknownRecipientError` for a name, code, or agency outside the listings, `UnknownNameError` for a method name outside `cf.methods.list()`, `TypeError` for years, a method, or prices in another form, such as `years="2022"`, pydantic's `ValidationError` for an unknown keyword or a value outside a field's choices, and `MissingLabelsError` for a method with `relevance="jev"` on a release that holds no Jev labels.
+Raises `UnknownProviderError` or `UnknownRecipientError` for a name, code, or agency outside the listings, `UnknownNameError` for a method name outside `cf.methods.list()`, `InvalidInputError` for years, a method, or prices in another form, such as `years="2022"`, for an unknown keyword, such as `spec=`, which `release.run(spec)` takes, or for a value outside a field's choices, such as `flow="commitment"`, and `MissingLabelsError` for a method with `relevance="jev"` on a release that holds no Jev labels.
 
 **Flow.** `flow="disbursements"` counts what the trace allocated to the release's climate commitments, by the year of the disbursement record. A disbursement counts against a commitment the release holds, and the commitments start at the first CRDF year, so the earliest years count less of what was paid. Rio-marked CRS disbursement that reaches no commitment, the excess beyond a full commitment and the records linked to none, counts as untraced, weighted by the record's own markers, in `value` and `high` and not in `low`. Disbursements end at the build's `crs_last_complete`. `flow="commitments"` counts CRDF commitments at face value in the commitment year, with `low`, `value`, and `high` equal. `flow="grant_equivalent"` counts the grant equivalent of the disbursements. A record with no grant equivalent, or a negative one on a positive disbursement, counts nothing, and `release.quality().summary()` reports the valued share of allocated value as `grant_equiv_coverage`.
 
@@ -110,13 +110,13 @@ Runs a saved `Spec`, such as `result.spec` or one read back with `cf.Spec.model_
 
 ### `Release.quality(*, providers, years, method)`
 
-Returns a `Quality` object. Its amounts are the CRDF's published climate value of the commitments. `method` acts on the provider-view columns, `eu_left_out` and `attribution`, and on the climate value of untraced disbursement in `untraced`. `providers` and `years` take the forms `spending()` takes, and `method` one method or its name; a range raises `TypeError`. An agency raises `ValueError` naming its provider, since the tables count providers.
+Returns a `Quality` object. Its amounts are the CRDF's published climate value of the commitments. `method` acts on the provider-view columns, `eu_left_out` and `attribution`, and on the climate value of untraced disbursement in `untraced`. `providers` and `years` take the forms `spending()` takes, and `method` one method or its name; a range raises `InvalidInputError`. An agency raises `InvalidInputError` naming its provider, since the tables count providers. Years the `quality` table lacks give a `CoverageWarning`.
 
 ### `Release.reconcile(*, providers, years, method)`
 
 Compares each party's BTR Table III.1 total with OECD figures for its bilateral finance. Returns a `Reconciliation`:
 
-- `providers` (`str | int | Iterable[str | int] | None`). The parties, named as `spending()` names providers, so `"Germany"`, `"DEU"`, and `5` name one party. `None` compares every party. An agency raises `ValueError` naming its provider, since the BTR reports providers.
+- `providers` (`str | int | Iterable[str | int] | None`). The parties, named as `spending()` names providers, so `"Germany"`, `"DEU"`, and `5` name one party. `None` compares every party. An agency raises `InvalidInputError` naming its provider, since the BTR reports providers.
 - `years` (`int | Iterable[int] | None`). `None` takes every year the BTR tables hold.
 - `method` (`Method | MethodRange | str`, default `cf.methods.ONE`), in the forms `spending()` takes.
 
@@ -126,7 +126,7 @@ Returns a polars DataFrame of the cumulative disbursed share of traceable climat
 
 ### `Release.table(name)`
 
-Returns one release table as a polars LazyFrame. Raises `KeyError` for a name outside the release tables.
+Returns one release table as a polars LazyFrame. Raises `UnknownNameError`, with close names as suggestions, for a name outside the release tables.
 
 ## `Spec`
 
@@ -195,7 +195,7 @@ The answer to one `Spec`:
 - `modelled` is a polars DataFrame of the "modelled, not reported" range with the columns: `year`, `provider`, `provider_code`, `recipient`, `recipient_code`, `basis`, `low`, and `high`. It is populated only when the query asks for recipient-view disbursements with `oda_only=False`.
 - `spec` is the `Spec`. `release.run(result.spec)` reruns the query to an identical table.
 - `meta` holds `release`, `package_version`, `source_versions`, `model_versions`, `years`, and `conversion`. `years` copies the release's `years`. `conversion` holds the pydeflate version and a SHA-256 of the factors behind a converted result, because pydeflate refreshes its DAC data every 30 days, and is None for USD at current prices.
-- `rows(*, provider=None, recipient=None, **filters)` returns the project rows behind the table as a polars DataFrame, filtered by column equality. A list, tuple, set, or range matches any item. `provider` and `recipient` take names or DAC codes, and `provider` agencies too, as `spending()` does, so `rows(recipient="kenya")` and `rows(recipient="KEN")` return Kenya's rows. Raises `KeyError` for an unknown column, and `UnknownProviderError` or `UnknownRecipientError`, with close names as suggestions, for a name the listings lack. `origin` is `commitment`, `disbursement`, `untraced`, or `attribution`. A row has the columns `origin`, `year`, `record_id`, `link_method`, `provider`, `agency`, `recipient`, `method`, `row_id`, `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_category`, `flow_code`, `project_number`, `title`, `status`, `rio_adaptation`, `rio_mitigation`, `record_rio_adaptation`, `record_rio_mitigation`, `marker_source`, `reason`, `climate_share`, `share_source`, `link_probability`, `allocation_weight`, `objective_label`, `label_source`, `jev_level`, `coefficient_basis`, `coefficient_source`, and `amount`, followed by the weighted amounts `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced`. `agency` is the agency's name in the listings, null where they lack it. An untraced row has no `row_id`, carries the record's own markers with `marker_source` `record`, and has `reason` `excess` for a linked record's disbursement beyond what its commitments take or `unlinked` for a record linked to no commitment. `coefficient_basis` is `provider`, `default`, or `case_by_case`, and null where the release has no coefficient row for the provider.
+- `rows(*, provider=None, recipient=None, **filters)` returns the project rows behind the table as a polars DataFrame, filtered by column equality. A list, tuple, set, or range matches any item. `provider` and `recipient` take names or DAC codes, and `provider` agencies too, as `spending()` does, so `rows(recipient="kenya")` and `rows(recipient="KEN")` return Kenya's rows. Each filter item must be of its column's type, and agencies filter through `provider`, as `rows(provider="EIB")`. Raises `UnknownNameError`, with close names as suggestions, for an unknown column, `InvalidInputError` for an item of another type or an `agency` filter, so `rows(provider_code="Japan")` names `provider="Japan"`, and `UnknownProviderError` or `UnknownRecipientError`, with close names as suggestions, for a name the listings lack. `origin` is `commitment`, `disbursement`, `untraced`, or `attribution`. A row has the columns `origin`, `year`, `record_id`, `link_method`, `provider`, `agency`, `recipient`, `method`, `row_id`, `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_category`, `flow_code`, `project_number`, `title`, `status`, `rio_adaptation`, `rio_mitigation`, `record_rio_adaptation`, `record_rio_mitigation`, `marker_source`, `reason`, `climate_share`, `share_source`, `link_probability`, `allocation_weight`, `objective_label`, `label_source`, `jev_level`, `coefficient_basis`, `coefficient_source`, and `amount`, followed by the weighted amounts `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced`. `agency` is the agency's name in the listings, null where they lack it. An untraced row has no `row_id`, carries the record's own markers with `marker_source` `record`, and has `reason` `excess` for a linked record's disbursement beyond what its commitments take or `unlinked` for a record linked to no commitment. `coefficient_basis` is `provider`, `default`, or `case_by_case`, and null where the release has no coefficient row for the provider.
 - `explain()` returns the method, view, flow, filters, and units in plain language, as a string.
 - `share_of_total()` returns the same result under `measure="share_of_total"`, with every amount divided by all CRS flows for the same flow, year, provider, recipient, and Bi_Multi code, so its spec reruns to the same shares. A key missing from `total_flows` gives null. In the provider view, EU Institutions' total holds the same rows as their amounts under each method, at the same scaling.
 
@@ -244,7 +244,7 @@ Returned by `Release.reconcile()`. `table` has one row per party, year, status, 
 
 ## `compare(*results)` and `Comparison`
 
-`cf.compare(a, b, ...)` places results side by side. It returns a `Comparison` whose `table` has one row per year, provider, recipient, and Bi_Multi code, with the key columns `year`, `provider`, `recipient`, `provider_code`, `recipient_code`, and `bi_multi`, and one `value` column per result and method, named by the `Spec` fields that distinguish the results. A key absent from a result is null in its column. Calling `compare()` with no arguments raises `ValueError`.
+`cf.compare(a, b, ...)` places results side by side. It returns a `Comparison` whose `table` has one row per year, provider, recipient, and Bi_Multi code, with the key columns `year`, `provider`, `recipient`, `provider_code`, `recipient_code`, and `bi_multi`, and one `value` column per result and method, named by the `Spec` fields that distinguish the results. A key absent from a result is null in its column. Calling `compare()` with no arguments, or with a list such as `cf.compare([a, b])`, raises `InvalidInputError`; `cf.compare(*results)` compares a list.
 
 ## Listings
 
@@ -289,13 +289,24 @@ All errors inherit from `ClimateFinanceError`. The three name errors import from
 
 | Error | Raised when |
 |---|---|
-| `UnknownNameError` | a name is absent from its listing, or names several entries. `.suggestions` holds close names, or every entry the name names. |
+| `InvalidInputError` | an argument has a form or value the call does not take: an unknown keyword, a value outside a field's choices, years, a method, or prices in another form, an agency where a call reads providers, or a `rows()` filter of another type than its column. The message names the form the call takes. It is also a `TypeError`. |
+| `UnknownNameError` | a name is absent from its listing, or names several entries: a provider, recipient, method, release, release table, or `rows()` column. `.suggestions` holds close names, or every entry the name names. |
 | `UnknownProviderError`, `UnknownRecipientError` | a provider, agency, or recipient name or code is absent from its listing. |
 | `ReleaseIntegrityError` | a release fails its check. |
 | `SourceUnavailableError` | a download fails. |
 | `MissingLabelsError` | a method with `relevance="jev"` queries a release with no Jev labels. The message names the `jev_labels` setting. |
 | `WithheldTableError` | `Release.table()` asks for a table the published release leaves out, `btr` or `btr_links`. `release.json` names each under `withheld_tables` with a note on how to build it. |
 | `SchemaError` | a table fails to match its schema. |
+
+`spending()`, `run()`, `quality()`, and `reconcile()` give one `CoverageWarning` when `years` asks for years the release holds no rows for, naming the years it holds and the years that return no rows. `spending()` reads the years of the flow's tables: `commitments` for commitments, `disbursements` and, with `untraced`, `untraced` for the other flows, and in the provider view `core_contributions` too. `quality()` reads the `quality` table and `reconcile()` the `btr_totals` table. Silence it by class:
+
+```python
+import warnings
+
+import climate_finance as cf
+
+warnings.filterwarnings("ignore", category=cf.errors.CoverageWarning)
+```
 
 ## Next
 

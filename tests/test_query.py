@@ -9,6 +9,8 @@ import json
 import math
 import os
 import tomllib
+import warnings
+from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
 
@@ -18,13 +20,17 @@ import pyarrow as pa
 import pytest
 from make_fixture import DEU, FIXTURE_DIR, FRA, GEF, JPN, LEDGER_RECORD
 from polars.testing import assert_frame_equal
-from pydantic import ValidationError
 from releases import copy_release
 
 import climate_finance as cf
 from climate_finance import convert as convert_module
 from climate_finance.catalogue import Agency
-from climate_finance.errors import MissingLabelsError, UnknownRecipientError
+from climate_finance.errors import (
+    CoverageWarning,
+    InvalidInputError,
+    MissingLabelsError,
+    UnknownRecipientError,
+)
 from climate_finance.methods import OECD, ONE, RANGE, Method, MethodRange, label
 from climate_finance.query import (
     BILATERAL,
@@ -317,7 +323,7 @@ def test_a_method_or_prices_of_another_form_raises_one_type_error(
 def test_spending_takes_keywords_only_and_run_reruns_a_spec() -> None:
     spec = Spec(providers="Japan")
 
-    with pytest.raises(ValidationError, match="spec"):
+    with pytest.raises(InvalidInputError, match=r"release\.run\(spec\)"):
         SNAP.spending(spec=spec, providers="France")
     with pytest.raises(TypeError):
         SNAP.spending(spec)  # ty: ignore[too-many-positional-arguments]
@@ -325,6 +331,76 @@ def test_spending_takes_keywords_only_and_run_reruns_a_spec() -> None:
         SNAP.run(spec).table,
         SNAP.spending(providers="Japan").table,
     )
+
+
+@pytest.mark.parametrize(
+    ("inputs", "message"),
+    [
+        ({"provider": "Japan"}, "no keyword 'provider'; did you mean 'providers'?"),
+        ({"flow": "commitment"}, "flow takes 'commitments', 'disbursements' or"),
+        ({"years": []}, "years takes at least one year"),
+        ({"oda_only": "maybe"}, "oda_only: input should be a valid boolean"),
+    ],
+)
+def test_spec_restates_every_refusal_as_one_package_error(
+    inputs: dict, message: str
+) -> None:
+    with pytest.raises(InvalidInputError, match=message):
+        Spec.model_validate(inputs)
+    with pytest.raises(InvalidInputError, match=message):
+        SNAP.spending(**inputs)
+
+
+COVERED = {
+    "spending": lambda: SNAP.spending(years=range(2015, 2023)),
+    "commitments": lambda: SNAP.spending(flow="commitments", years=[2022, 2023]),
+    "quality": lambda: SNAP.quality(years=[2019, 2022, 2023]),
+    "reconcile": lambda: SNAP.reconcile(years=2030),
+}
+
+
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (
+            COVERED["spending"],
+            "holds disbursements for 2021 to 2024; years 2015 to 2020 return no rows",
+        ),
+        (
+            COVERED["commitments"],
+            "holds commitments for 2021 to 2022; year 2023 returns no rows",
+        ),
+        (
+            COVERED["quality"],
+            "quality statistics for 2021 to 2022; years 2019 and 2023 return",
+        ),
+        (COVERED["reconcile"], "BTR totals for 2021 to 2022; year 2030 returns"),
+    ],
+    ids=list(COVERED),
+)
+def test_years_a_table_lacks_warn_once_at_the_caller(
+    call: Callable[[], object], message: str
+) -> None:
+    with pytest.warns(CoverageWarning, match=message) as record:
+        call()
+
+    assert [warning.filename for warning in record] == [__file__]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: SNAP.spending(years=range(2021, 2025)),
+        lambda: SNAP.spending(view="provider", years=[2021, 2024]),
+        lambda: SNAP.spending(),
+        lambda: SNAP.quality(years=2022),
+        lambda: SNAP.reconcile(years=[2021, 2022]),
+    ],
+)
+def test_covered_years_warn_nothing(call: Callable[[], object]) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", CoverageWarning)
+        call()
 
 
 @pytest.mark.parametrize("flow", FLOWS)
@@ -843,8 +919,27 @@ def test_rows_filter_by_equality_and_membership() -> None:
     assert set(result.rows(year=2022)["year"]) == {2022}
     assert set(result.rows(provider_code=[5, 8])["provider_code"]) == {5, 8}
     assert set(result.rows(provider=["Germany", 8])["provider_code"]) == {5, 8}
-    with pytest.raises(KeyError, match="no column"):
-        result.rows(donor="Germany")
+    with pytest.raises(cf.UnknownNameError) as raised:
+        result.rows(yeer=2022)
+    assert raised.value.suggestions[0] == "year"
+
+
+@pytest.mark.parametrize(
+    ("filters", "message"),
+    [
+        ({"provider_code": "Japan"}, "DAC codes, not 'Japan'; .* provider='Japan'"),
+        ({"recipient_code": ["Kenya"]}, "filter names with recipient='Kenya'"),
+        ({"agency_code": "KfW"}, "agency codes, not 'KfW'; .* provider='KfW'"),
+        ({"agency": "EIB"}, "through provider, as provider='EIB'"),
+        ({"year": [2022, "2023"]}, "year holds integers, not '2023'"),
+        ({"origin": 1}, "origin holds text, not 1"),
+    ],
+)
+def test_rows_refuse_a_filter_its_column_cannot_hold(
+    filters: dict, message: str
+) -> None:
+    with pytest.raises(InvalidInputError, match=message):
+        SNAP.spending().rows(**filters)
 
 
 def test_a_record_shows_its_jev_label_before_its_markers() -> None:

@@ -106,9 +106,24 @@ def test_a_cached_release_with_a_malformed_manifest_downloads_again(
 def test_table_refuses_names_outside_the_release_contract() -> None:
     release = cf.load(path=FIXTURE_DIR)
 
-    with pytest.raises(KeyError, match="links"):
-        release.table("links")
+    with pytest.raises(cf.UnknownNameError) as raised:
+        release.table("btr_total")
+    assert raised.value.suggestions[0] == "btr_totals"
     assert set(RELEASE_TABLES) <= set(release.manifest.tables)
+
+
+@pytest.mark.parametrize("refresh", [False, True])
+def test_an_empty_index_names_path_and_where_releases_come_from(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, refresh: bool
+) -> None:
+    monkeypatch.setattr(release_module, "_shipped_index", ReleaseIndex)
+    monkeypatch.setattr(release_module, "_fetch_index", ReleaseIndex)
+
+    with pytest.raises(cf.UnknownNameError) as raised:
+        cf.load(cache_dir=tmp_path, refresh=refresh)
+
+    assert "cf.load(path=...)" in str(raised.value)
+    assert release_module.RELEASES_PAGE in str(raised.value)
 
 
 def test_disbursement_profile_reads_the_release_table_by_group_and_year() -> None:

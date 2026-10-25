@@ -28,6 +28,7 @@ import polars as pl
 from pydantic import BaseModel, ConfigDict
 
 from climate_finance.errors import (
+    InvalidInputError,
     UnknownNameError,
     UnknownProviderError,
     UnknownRecipientError,
@@ -83,8 +84,8 @@ def resolve(
             code or agency the listings lack, with the closest codes as suggestions.
         UnknownRecipientError: for a recipient name of no entry, or of several, or
             a code the listings lack.
-        TypeError: for a value of another type, a bool included, or for an
-            `Agency` among recipients.
+        InvalidInputError: for a value of another type, a bool included, or for
+            an `Agency` among recipients.
     """
     if values is None:
         return None
@@ -168,10 +169,10 @@ class Catalogue:
                 a code or agency the listings lack.
             UnknownRecipientError: for a recipient name of no entry, or of several,
                 or a code the listings lack.
-            TypeError: on `cf.flows` and `cf.methods`, which have no codes.
+            InvalidInputError: on `cf.flows` and `cf.methods`, which have no codes.
         """
         if self.kind not in ("providers", "recipients"):
-            raise TypeError(f"cf.{self.kind} has names, not codes")
+            raise InvalidInputError(f"cf.{self.kind} has names, not codes")
         return _target(name, kind=self.kind)
 
     def _row(self, code: int) -> dict[str, object]:
@@ -202,6 +203,18 @@ class Catalogue:
         return _unknown(name, kind=self.kind, suggestions=suggestions)
 
 
+def unknown_name(
+    name: str, *, kind: str, choices: Iterable[str], note: str | None = None
+) -> UnknownNameError:
+    """The error for `name`, a `kind` outside `choices`, suggesting the closest."""
+    return UnknownNameError(
+        name,
+        kind=kind,
+        suggestions=get_close_matches(name, list(choices), n=_SUGGESTIONS),
+        note=note,
+    )
+
+
 def _unknown(
     name: str, *, kind: Kind, suggestions: Sequence[str], note: str | None = None
 ) -> UnknownNameError:
@@ -215,9 +228,9 @@ def _unknown(
 def _target(value: object, *, kind: Coded) -> Target:
     """The code or agency one value names."""
     if kind == "recipients" and isinstance(value, Agency):
-        raise TypeError(f"recipients takes names or DAC codes, not {value!r}")
+        raise InvalidInputError(f"recipients takes names or DAC codes, not {value!r}")
     if isinstance(value, bool) or not isinstance(value, str | Integral | Agency):
-        raise TypeError(
+        raise InvalidInputError(
             f"{kind} takes names, DAC codes or cf.Agency values, not "
             f"{value!r} ({type(value).__name__})"
         )

@@ -14,6 +14,13 @@ class SourceUnavailableError(ClimateFinanceError):
     """A source file or service could not be read."""
 
 
+class InvalidInputError(ClimateFinanceError, TypeError):
+    """An argument in a form or of a value the call does not take, such as
+    `years="2022"`, an unknown keyword, or an agency where a call reads providers.
+    The message names the form the call takes. It is a `TypeError`, as Python's
+    refusal of an unexpected keyword is, so pydantic validators pass it through."""
+
+
 class UnknownNameError(ClimateFinanceError, LookupError):
     """A name is not in its listing, or names several entries. `suggestions` holds
     close names or, for a name of several entries, every entry it names. `note`,
@@ -84,3 +91,8 @@ class SchemaError(ClimateFinanceError):
         self.problems = dict(problems)
         detail = "; ".join(f"{column}: {why}" for column, why in self.problems.items())
         super().__init__(f"Table {table!r} fails its schema: {detail}")
+
+
+class CoverageWarning(UserWarning):
+    """A query asks for years its release tables hold no rows for. Silence it with
+    `warnings.filterwarnings("ignore", category=cf.errors.CoverageWarning)`."""

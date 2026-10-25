@@ -3,14 +3,17 @@
 from collections.abc import Iterable, Mapping
 from difflib import get_close_matches
 from numbers import Integral
-from typing import Annotated, Any, Literal, TypedDict, Unpack
+from typing import Annotated, Any, Literal, Self, TypedDict, Unpack
 
 import polars as pl
 from pydantic import (
     BaseModel,
     BeforeValidator,
+    ModelWrapValidatorHandler,
     SerializerFunctionWrapHandler,
+    ValidationError,
     model_serializer,
+    model_validator,
 )
 
 from climate_finance.catalogue import (
@@ -21,7 +24,7 @@ from climate_finance.catalogue import (
     name_of,
     resolve,
 )
-from climate_finance.errors import UnknownNameError
+from climate_finance.errors import InvalidInputError, UnknownNameError
 from climate_finance.methods import (
     OECD,
     ONE,
@@ -78,9 +81,8 @@ def read_provider_codes(
 
     Raises:
         UnknownProviderError: for a name, code or agency `resolve` refuses.
-        ValueError: for a name or value of an agency, naming its provider, which
-            `keyword` takes instead.
-        TypeError: for a value of another type.
+        InvalidInputError: for a name or value of an agency, naming its provider,
+            which `keyword` takes instead, or for a value of another type.
     """
     if providers is None:
         return None
@@ -100,10 +102,10 @@ def read_provider_codes(
 
 def _agency_error(
     value: object, agency: Agency, *, reader: str, keyword: str
-) -> ValueError:
+) -> InvalidInputError:
     provider = name_of(agency.provider, kind="providers")
     name = agency_name(agency)
-    return ValueError(
+    return InvalidInputError(
         f"{reader} reads providers; {value!r} is the {name}, an agency of "
         f"{provider}. Pass {keyword}={provider!r}."
     )
@@ -116,14 +118,14 @@ def read_one_method(
 
     Raises:
         UnknownNameError: for a name outside `cf.methods.list()`.
-        TypeError: for a range, naming its methods, or any other value.
+        InvalidInputError: for a range, naming its methods, or any other value.
     """
     read = read_method(method)
     if isinstance(read, Method):
         return read
     *first, last = (label(member) for member in read.methods)
     members = f"{', '.join(first)} and {last}" if first else last
-    raise TypeError(
+    raise InvalidInputError(
         f"{reader} reads one method; {label(read)} holds {members}. Pass one of them."
     )
 
@@ -136,9 +138,9 @@ def read_years(years: int | Iterable[int] | None) -> tuple[int, ...] | None:
     """The years `years` names, sorted and without duplicates, or None for None.
 
     Raises:
-        TypeError: for a string, a bool or any other value that is not an integer or
-            an iterable of integers. numpy integers count as integers.
-        ValueError: for an empty iterable, which would select no rows.
+        InvalidInputError: for a string, a bool or any other value that is not an
+            integer or an iterable of integers, numpy integers counting as integers,
+            and for an empty iterable, which would select no rows.
     """
     if years is None:
         return None
@@ -149,12 +151,12 @@ def read_years(years: int | Iterable[int] | None) -> tuple[int, ...] | None:
         if isinstance(year, bool) or not isinstance(year, Integral):
             raise _years_error(year)
     if not values:
-        raise ValueError("years takes at least one year; None takes every year")
+        raise InvalidInputError("years takes at least one year; None takes every year")
     return tuple(sorted({int(year) for year in values}))
 
 
-def _years_error(value: object) -> TypeError:
-    return TypeError(
+def _years_error(value: object) -> InvalidInputError:
+    return InvalidInputError(
         f"years takes an int or ints, such as 2022 or range(2015, 2023); got {value!r}"
     )
 
@@ -168,7 +170,7 @@ def read_method(
     Raises:
         UnknownNameError: for a name outside `cf.methods.list()`, with close names
             as suggestions.
-        TypeError: for any other value, or a range inside a list.
+        InvalidInputError: for any other value, or a range inside a list.
     """
     if isinstance(method, Method | MethodRange):
         return method
@@ -194,8 +196,8 @@ def _named_method(name: str) -> Method | MethodRange:
     )
 
 
-def _method_error(value: object) -> TypeError:
-    return TypeError(
+def _method_error(value: object) -> InvalidInputError:
+    return InvalidInputError(
         "method takes a Method, a MethodRange, a name from cf.methods.list() or a "
         f"list of methods and names; got {value!r}"
     )
@@ -210,13 +212,13 @@ def read_prices(prices: int | Literal["current"]) -> int | Literal["current"]:
     """`"current"`, or the base year `prices` names as an int.
 
     Raises:
-        TypeError: for any other value.
+        InvalidInputError: for any other value.
     """
     if prices == "current":
         return "current"
     if isinstance(prices, Integral) and not isinstance(prices, bool):
         return int(prices)
-    raise TypeError(
+    raise InvalidInputError(
         f"prices takes 'current' or a base year, such as 2022; got {prices!r}"
     )
 
@@ -277,8 +279,10 @@ class Spec(Frozen):
     them sorted and without duplicates. `method` takes a `Method`, a `MethodRange`, a
     name from `cf.methods.list()` ignoring case, or a list of methods and names,
     which becomes a range; it holds the `Method` or `MethodRange`, so JSON keeps the
-    coefficients. `prices` takes `"current"` or a base year. Other values raise
-    `TypeError`, and an unknown method name `UnknownNameError`.
+    coefficients. `prices` takes `"current"` or a base year. An unknown method name
+    raises `UnknownNameError`. Any other refusal, an unknown keyword or a value
+    outside a field's choices included, raises one `InvalidInputError` naming each
+    field and the form it takes.
 
     A spec at the default `measure` and `untraced` leaves them out of its serialised
     form, so it serialises as a spec written before either field.
@@ -302,6 +306,16 @@ class Spec(Frozen):
         # is named because they read `super()` as `Frozen`'s fieldless constructor.
         BaseModel.__init__(self, **inputs)
 
+    @model_validator(mode="wrap")
+    @classmethod
+    def _restate_errors(
+        cls, data: Any, handler: ModelWrapValidatorHandler[Self]
+    ) -> Self:
+        try:
+            return handler(data)
+        except ValidationError as error:
+            raise _restated(error) from None
+
     @model_serializer(mode="wrap")
     def _drop_later_defaults(
         self, handler: SerializerFunctionWrapHandler
@@ -317,6 +331,40 @@ class Spec(Frozen):
     def methods(self) -> tuple[Method, ...]:
         """The methods `method` names: itself, or each method of a range."""
         return self.method.methods
+
+
+def _restated(error: ValidationError) -> InvalidInputError:
+    """One error naming each field `error` refuses and the form it takes."""
+    problems = []
+    for detail in error.errors(include_url=False):
+        field = ".".join(str(part) for part in detail["loc"]) or "Spec"
+        context = detail.get("ctx", {})
+        if detail["type"] == "extra_forbidden" and len(detail["loc"]) == 1:
+            problems.append(_unknown_keyword(field))
+        elif detail["type"] == "literal_error":
+            problems.append(
+                f"{field} takes {context['expected']}; got {detail['input']!r}"
+            )
+        elif "error" in context:  # a validator's own ValueError, already worded
+            problems.append(str(context["error"]))
+        else:
+            message = detail["msg"]
+            problems.append(
+                f"{field}: {message[0].lower()}{message[1:]}; got {detail['input']!r}"
+            )
+    return InvalidInputError("; ".join(problems))
+
+
+def _unknown_keyword(name: str) -> str:
+    if name == "spec":
+        return "Spec takes no keyword 'spec'; rerun a saved Spec with release.run(spec)"
+    close = get_close_matches(name, Spec.model_fields, n=1)
+    hint = (
+        f"did you mean {close[0]!r}?"
+        if close
+        else f"it takes {', '.join(Spec.model_fields)}"
+    )
+    return f"Spec takes no keyword {name!r}; {hint}"
 
 
 def provider_rows(providers: tuple[Target, ...]) -> pl.Expr:
