@@ -68,6 +68,7 @@ from climate_finance.errors import (
     MissingLabelsError,
     ReleaseIntegrityError,
     SchemaError,
+    UnknownProviderError,
 )
 from climate_finance.methods import (
     ONE,
@@ -812,9 +813,14 @@ def _per_flow(build: Callable[[Flow], pl.LazyFrame]) -> pl.LazyFrame:
 
 def _codes(values: Sequence[str | int], *, listing: catalogue.Catalogue) -> list[int]:
     """DAC codes for `values`, with names resolved through `listing`."""
-    return [
-        listing.code(value) if isinstance(value, str) else value for value in values
-    ]
+    codes = []
+    for value in values:
+        code = listing.code(value) if isinstance(value, str) else value
+        # Queries do not filter by agency yet, so an agency name stays unknown.
+        if isinstance(code, catalogue.Agency):
+            raise UnknownProviderError(str(value))
+        codes.append(code)
+    return codes
 
 
 def _conditions(

@@ -36,7 +36,7 @@ def _run(code: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_usd_queries_by_name_and_compare_load_no_build_compat_or_conversion() -> None:
+def test_queries_names_and_compare_load_no_build_compat_or_conversion() -> None:
     result = _run(
         "import sys\n"
         "from pathlib import Path\n"
@@ -48,6 +48,10 @@ def test_usd_queries_by_name_and_compare_load_no_build_compat_or_conversion() ->
         "named = release.spending(providers='Germany', recipients='Kenya')\n"
         "assert named.table.to_polars().height\n"
         "assert cf.compare(result, named).table.to_polars().height\n"
+        "from climate_finance.catalogue import resolve\n"
+        "assert resolve(['DEU', 'EIB'], kind='providers')\n"
+        "assert release.spending(providers='DEU', recipients='KEN').rows().height\n"
+        "assert cf.providers.info('EIB')\n"
         "assert cf.providers.list().height and cf.methods.list().height\n"
         f"loaded = {BUILD_ONLY + COMPAT_ONLY + CONVERSION_ONLY!r}\n"
         "print(sorted(m for m in loaded if m in sys.modules))"

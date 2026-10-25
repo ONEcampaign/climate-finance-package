@@ -228,7 +228,7 @@ Returned by `Release.reconcile()`. `table` has one row per party, year, status, 
 
 ## Listings
 
-`cf.providers`, `cf.recipients`, `cf.flows`, and `cf.methods` each provide three methods: `.list()`, which returns a polars DataFrame; `.info(name)`, which returns a description by name or, for providers and recipients, by DAC code; and `.search(text)`, which returns the rows whose names contain `text`.
+`cf.providers`, `cf.recipients`, `cf.flows`, and `cf.methods` each provide three methods: `.list()`, which returns a polars DataFrame; `.info(name)`, which returns a description by name or, for providers and recipients, by DAC code; and `.search(text)`, which returns the listing rows whose names contain `text`.
 
 ```python
 print(cf.providers.info("Japan"))
@@ -238,13 +238,38 @@ print(cf.providers.info("Japan"))
 Japan (DAC code 701): DAC member.
 ```
 
+A provider or recipient name can take any common form: the listing name, the French provider name, an ISO 3 or ISO 2 code, or another spelling resolvekit knows, matched ignoring case, accents, and surrounding spaces. `"DEU"`, `"Allemagne"`, and `" germany "` all name Germany. A provider name can also name one agency, such as `"EIB"` for the European Investment Bank, agency 3 of the EU Institutions. `cf.providers.code(name)` and `cf.recipients.code(name)` return the DAC code, or for an agency an `Agency(provider=918, agency=3)`, which serialises as `{"provider": 918, "agency": 3}`. A DAC code, or a string of digits, passes through.
+
+```python
+print(cf.providers.code("Allemagne"))
+print(cf.providers.info("EIB"))
+```
+
+```output
+5
+European Investment Bank (agency 3 of EU Institutions, DAC code 918).
+```
+
+A name of several entries raises `UnknownProviderError` or `UnknownRecipientError` with every entry it names in `.suggestions`, and an unknown name raises one with close names. Neither is ever applied.
+
+```python
+try:
+    cf.providers.code("Japn")
+except cf.UnknownProviderError as error:
+    print(error)
+```
+
+```output
+Unknown provider 'Japn'. Did you mean: Japan?
+```
+
 ## Errors
 
 All errors inherit from `ClimateFinanceError`. The three name errors import from `climate_finance`, and every error imports from `climate_finance.errors`.
 
 | Error | Raised when |
 |---|---|
-| `UnknownNameError` | a name is absent from its listing. `.suggestions` holds close names. |
+| `UnknownNameError` | a name is absent from its listing, or names several entries. `.suggestions` holds close names, or every entry the name names. |
 | `UnknownProviderError`, `UnknownRecipientError` | a provider or recipient is absent from its listing. |
 | `ReleaseIntegrityError` | a release fails its check. |
 | `SourceUnavailableError` | a download fails. |
