@@ -566,28 +566,29 @@ def reconcile(
             crdf_at_100=crdf_at(significant=pl.lit(1.0)),
         )
     )
-    marker = pl.col("rio_marker")
+    crs_fractions = weights(_PARTY_RULE, **_COEFFICIENT_INPUTS)
 
     def crs_at_party_weight(flow: str) -> pl.LazyFrame:
         """The year's CRS `flow` on Rio-marked records at `PROVIDER`'s coefficients
-        of each record's agency, by its higher marker."""
+        of each record's agency, weighted as the CRDF comparators weight."""
         flows = (
             snapshot.table("total_flows")
             .filter(pl.col("flow") == flow, *bilateral)
             .join(party_years, on=["provider_code", "year"], how="semi")
         )
+        # Every `total_flows` row weighs by its markers, so it has no shares.
+        shares = (
+            "climate_share",
+            "share_adaptation",
+            "share_mitigation",
+            "share_overlap",
+        )
         return (
             _coefficients(snapshot, flows, method=PROVIDER)
+            .with_columns(pl.lit(None, pl.Float64).alias(name) for name in shares)
             .group_by("provider_code", "year")
             .agg(
-                ordered_sum(
-                    pl.col("amount_usd")
-                    * pl.when(marker == 2)
-                    .then(pl.col("principal"))
-                    .when(marker == 1)
-                    .then(pl.col("significant"))
-                    .otherwise(0.0)
-                ).alias("amount_usd")
+                amount_usd=ordered_sum(pl.col("amount_usd") * crs_fractions["climate"])
             )
         )
 

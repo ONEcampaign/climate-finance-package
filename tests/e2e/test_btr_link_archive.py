@@ -146,6 +146,35 @@ def reconciliation(
 ) -> Reconciliation:
     """The archive release with the BTR tables and the prototype's weights."""
     out = tmp_path_factory.mktemp("reconcile")
+    _with_btr_tables(release, out, btr=btr, crs=crs, links=links)
+    _prototype_coefficients().write_parquet(out / "provider_coefficients.parquet")
+    return _reconcile(out)
+
+
+@pytest.fixture(scope="module")
+def reconciliation_at_own_coefficients(
+    release: Path,
+    btr: pl.LazyFrame,
+    crs: pl.LazyFrame,
+    links: pl.DataFrame,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Reconciliation:
+    """The archive release with the BTR tables and its own `provider_coefficients`."""
+    out = tmp_path_factory.mktemp("reconcile_own")
+    _with_btr_tables(release, out, btr=btr, crs=crs, links=links)
+    return _reconcile(out)
+
+
+def _with_btr_tables(
+    release: Path,
+    out: Path,
+    *,
+    btr: pl.LazyFrame,
+    crs: pl.LazyFrame,
+    links: pl.DataFrame,
+) -> None:
+    """Copy `release` to `out` with its BTR tables and `total_flows` built from
+    `btr`, `crs` and `links`."""
     for name in (*schema.RELEASE_TABLES, "release"):
         suffix = ".json" if name == "release" else ".parquet"
         if (release / f"{name}{suffix}").exists():
@@ -165,7 +194,12 @@ def reconciliation(
     ).collect().write_parquet(out / "btr_crs_unlinked.parquet")
     # The CRS of 2021 and 2022, so the years compared.
     assemble.total_flows(crs).collect().write_parquet(out / "total_flows.parquet")
-    pl.DataFrame(
+
+
+def _prototype_coefficients() -> pl.DataFrame:
+    """`provider_coefficients` at `PROTOTYPE_WEIGHTS`, with no both-significant
+    coefficient."""
+    return pl.DataFrame(
         {
             "provider_code": list(PROTOTYPE_WEIGHTS),
             "agency_code": None,
@@ -182,7 +216,11 @@ def reconciliation(
             name: column.dtype
             for name, column in schema.PROVIDER_COEFFICIENTS.columns.items()
         },
-    ).write_parquet(out / "provider_coefficients.parquet")
+    )
+
+
+def _reconcile(out: Path) -> Reconciliation:
+    """`reconcile` over 2021 and 2022 on the release in `out`."""
     manifest = schema.ReleaseManifest.model_validate_json(
         (out / "release.json").read_text()
     )
@@ -218,3 +256,19 @@ def test_party_totals_agree_at_the_prototype_weights(
 
     assert rows.height == 1
     assert rows["btr_over_comparator"].item() == pytest.approx(ratio, abs=0.0005)
+
+
+def test_germany_counts_both_significant_disbursements_in_full(
+    reconciliation_at_own_coefficients: Reconciliation,
+) -> None:
+    # Germany's coefficients count a record significant on both objectives at 1.0
+    # and one significant on one at 0.5. Its 1,341 both-significant records of 2021
+    # disburse USD 1.82bn, which at 0.5 would give USD 4.54bn.
+    rows = reconciliation_at_own_coefficients.table.to_polars().filter(
+        party="DEU", year=2021, method="ONE"
+    )
+
+    assert rows.height == 1
+    assert rows["crs_disbursed_at_party_weight"].item() == pytest.approx(
+        5.45e9, rel=0.005
+    )

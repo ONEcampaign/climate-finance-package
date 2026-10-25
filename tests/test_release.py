@@ -811,13 +811,11 @@ def test_core_contributions_read_an_empty_stage_table(
     assert release.core_contributions(stage).collect().is_empty()
 
 
-def test_total_flows_sum_every_crs_record_by_its_higher_marker(
-    release_dir: Path,
-) -> None:
+def test_total_flows_sum_every_crs_record_by_its_markers(release_dir: Path) -> None:
     totals = _read(release_dir, "total_flows")
 
-    columns = ("provider_code", "year", "bi_multi", "flow", "rio_marker", "amount_usd")
-    assert sorted(totals.select(columns).rows()) == [
+    columns = ("provider_code", "year", "bi_multi", "flow", "rio_mitigation")
+    assert sorted(totals.select(*columns, "amount_usd").rows()) == [
         (NOR, 2019, 1, "commitments", 2, 150.0),
         (NOR, 2020, 1, "disbursements", 0, 5.0),
         (NOR, 2020, 1, "disbursements", 2, 95.0),
@@ -826,6 +824,7 @@ def test_total_flows_sum_every_crs_record_by_its_higher_marker(
         (NOR, 2021, 2, "disbursements", 0, 9.0),
         (GEF, 2020, 1, "disbursements", 2, 7.0),
     ]
+    assert totals["rio_adaptation"].unique().to_list() == [0]
 
 
 def test_btr_links_carry_their_crs_records_facts() -> None:

@@ -181,11 +181,11 @@ Key `provider_code`, `year`. Rio-marked CRS disbursements that reach no commitme
 
 ## `total_flows`
 
-Key `provider_code`, `agency_code`, `recipient_code`, `year`, `bi_multi`, `flow`, `rio_marker`. Every CRS flow, across climate and non-climate records, up to `crs_last_complete`. It is the denominator of `Result.share_of_total()`, and the BTR reconciliation weights its climate disbursements by `rio_marker`:
+Key `provider_code`, `agency_code`, `recipient_code`, `year`, `bi_multi`, `flow`, `rio_adaptation`, `rio_mitigation`. Every CRS flow, across climate and non-climate records, up to `crs_last_complete`. It is the denominator of `Result.share_of_total()`, and the BTR reconciliation weights its climate disbursements by the two markers:
 
 - `provider_code`, `recipient_code`, `year`, `bi_multi`, `flow`.
 - `agency_code`: the CRS agency, so a query can take out the EIB's flows where the EIB counts as a channel. Null on core contributions.
-- `rio_marker`: the higher of the record's two Rio markers, 0 for none.
+- `rio_adaptation`, `rio_mitigation`: the record's Rio markers, 0 for none.
 - `amount_usd`.
 
 ## `provider_coefficients`
