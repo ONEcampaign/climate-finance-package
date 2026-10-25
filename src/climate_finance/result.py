@@ -29,14 +29,19 @@ from climate_finance.methods import (
 from climate_finance.schema import (
     BILATERAL,
     CORE_CONTRIBUTION,
+    LABEL_SOURCES,
+    LINK_METHODS,
     MULTILATERAL_OUTFLOW,
+    SHARE_ORIGINS,
     STATUSES,
+    UNTRACED_REASONS,
 )
 from climate_finance.spec import (
     ODA_FLOW_CATEGORY,
     ODA_FLOW_CODES,
     Spec,
     provider_rows,
+    read_one_method,
     read_provider_codes,
     read_years,
 )
@@ -46,10 +51,30 @@ AMOUNTS = (
     "amount", "adaptation", "mitigation", "cross_cutting", "unsplit", "value", "low",
     "high", "untraced",
 )  # fmt: skip
+# Where each of `Result.rows()` comes from, as `query` describes.
+ORIGINS = ("commitment", "disbursement", "untraced", "attribution")
 # The keys of a result table's rows, before the method.
 ROW_KEYS = ("year", "provider_code", "recipient_code", "bi_multi")
-# A comparison's key columns, names beside codes, before one column per result.
-_COMPARISON_KEYS = ("year", "provider", "recipient", *ROW_KEYS[1:])
+# The keys of a result whose spec names an agency. `agency_code` holds the agency of
+# a provider the spec names through its agencies, and is null for other providers.
+AGENCY_ROW_KEYS = ("year", "provider_code", "agency_code", "recipient_code", "bi_multi")
+_NAMES = {
+    "provider_code": "provider",
+    "agency_code": "agency",
+    "recipient_code": "recipient",
+}
+
+
+def row_keys(columns: Collection[str]) -> tuple[str, ...]:
+    """The row keys of a table of `columns`: `AGENCY_ROW_KEYS` where it holds
+    `agency_code`, else `ROW_KEYS`."""
+    return AGENCY_ROW_KEYS if "agency_code" in columns else ROW_KEYS
+
+
+def named_keys(keys: Sequence[str]) -> tuple[str, ...]:
+    """The name columns of `keys` after the year, as "provider" for
+    "provider_code"; a table shows them before the codes."""
+    return (keys[0], *(_NAMES[key] for key in keys if key in _NAMES))
 
 
 class Meta(BaseModel):
@@ -84,7 +109,8 @@ class Result:
     `high`, `untraced`, so polars' truncated print shows them; `provider` and
     `recipient` name the codes beside them, as do `provider`, `agency` and
     `recipient` in `rows()`, which start `origin`, `year`, `record_id`,
-    `link_method`.
+    `link_method`. A spec that names an agency keys `table` by `AGENCY_ROW_KEYS`,
+    with `agency` after `provider`.
     """
 
     def __init__(
@@ -136,11 +162,15 @@ class Result:
 
         A filter value that is a list, tuple, set or range matches any of its items,
         and each item must be of its column's type. Agencies filter through
-        `provider`, as `provider="EIB"`.
+        `provider`, as `provider="EIB"`. A column of a fixed vocabulary, such as
+        `origin` or `link_method` (`ROW_VALUES`), takes its values only, and
+        `method` takes the forms `spending` takes, such as `method="one"`, for a
+        method of the result.
 
         Raises:
-            UnknownNameError: when a filter names a column the rows do not have,
-                with close names as suggestions.
+            UnknownNameError: when a filter names a column the rows do not have, a
+                value outside its column's vocabulary, or a method outside the
+                result's, with close names as suggestions.
             InvalidInputError: for a filter value of another type than its column,
                 such as a name for `provider_code`, or an `agency` filter.
             UnknownProviderError: for a `provider` name, code or agency the
@@ -149,8 +179,9 @@ class Result:
                 lack, or a name of several entries.
         """
         schema = self._rows.collect_schema()
+        methods = [label(method) for method in self.spec.methods]
         conditions = [
-            _column_filter(name, value, schema=schema)
+            _column_filter(name, value, schema=schema, methods=methods)
             for name, value in filters.items()
         ]
         if (providers := resolve(provider, kind="providers")) is not None:
@@ -240,11 +271,27 @@ _NAMED_BY = {
 }
 
 
-def _column_filter(name: str, value: object, *, schema: pl.Schema) -> pl.Expr:
+# The values each fixed-vocabulary column of `Result.rows()` holds, so a filter
+# value outside them raises where it would match no row.
+ROW_VALUES: dict[str, tuple[str, ...]] = {
+    "origin": ORIGINS,
+    "link_method": LINK_METHODS,
+    "share_source": SHARE_ORIGINS,
+    "status": STATUSES,
+    "label_source": LABEL_SOURCES,
+    "reason": UNTRACED_REASONS,
+}
+
+
+def _column_filter(
+    name: str, value: object, *, schema: pl.Schema, methods: Sequence[str]
+) -> pl.Expr:
     """The condition `rows(name=value)` adds, once each item fits its column.
+    `methods` are the labels of the result's methods.
 
     Raises:
-        UnknownNameError: for a column outside `schema`.
+        UnknownNameError: for a column outside `schema`, a value outside the
+            column's `ROW_VALUES`, or a method outside `methods`.
         InvalidInputError: for `agency`, which `provider` filters, or an item of
             another type than the column.
     """
@@ -259,10 +306,32 @@ def _column_filter(name: str, value: object, *, schema: pl.Schema) -> pl.Expr:
         if isinstance(value, Collection) and not isinstance(value, str)
         else [value]
     )
+    if name == "method":
+        return pl.col(name).is_in([_method_label(item, held=methods) for item in items])
     for item in items:
         if not _fits(item, dtype=schema[name]):
             raise _filter_error(name, item, dtype=schema[name])
+        if name in ROW_VALUES and item not in ROW_VALUES[name]:
+            raise unknown_name(item, kind=name, choices=ROW_VALUES[name])
     return pl.col(name).is_in(items)
+
+
+def _method_label(item: object, *, held: Sequence[str]) -> str:
+    """The label in `held` that a `method` filter item names: the label itself, or
+    a `Method` or name `read_one_method` reads."""
+    if isinstance(item, str) and item in held:
+        return item
+    if not isinstance(item, str | Method):
+        raise _filter_error("method", item, dtype=pl.String())
+    named = label(read_one_method(item, reader="rows()"))
+    if named not in held:
+        raise unknown_name(
+            named,
+            kind="method",
+            choices=held,
+            note=f"The rows hold methods {', '.join(held)}, not {named}.",
+        )
+    return named
 
 
 def _fits(item: object, *, dtype: pl.DataType) -> bool:
@@ -297,9 +366,9 @@ def _filter_error(name: str, item: object, *, dtype: pl.DataType) -> InvalidInpu
 
 def _bounds(frame: pl.LazyFrame) -> pl.LazyFrame:
     """`frame` with `low` and `high` spanning every method of the same key."""
+    keys = row_keys(frame.collect_schema().names())
     return frame.with_columns(
-        low=pl.col("low").min().over(ROW_KEYS),
-        high=pl.col("high").max().over(ROW_KEYS),
+        low=pl.col("low").min().over(keys), high=pl.col("high").max().over(keys)
     )
 
 
@@ -309,7 +378,7 @@ def _shares(table: pl.LazyFrame, totals: pl.LazyFrame) -> pl.LazyFrame:
     return (
         table.join(
             totals,
-            on=[*ROW_KEYS, "method"],
+            on=[*row_keys(table.collect_schema().names()), "method"],
             how="left",
             nulls_equal=True,
             validate="m:1",
@@ -844,7 +913,9 @@ class Comparison:
         return f"<p>{escape(self._title())}</p>{self.table._repr_html_()}"
 
     def _title(self) -> str:
-        columns = self._table.collect_schema().names()[len(_COMPARISON_KEYS) :]
+        names = self._table.collect_schema().names()
+        keys = row_keys(names)
+        columns = [name for name in names if name not in {*named_keys(keys), *keys}]
         count = len(self.results)
         results = "result" if count == 1 else "results"
         return f"Comparison of {count} {results}: {'; '.join(columns)}"
@@ -873,26 +944,27 @@ def compare(*results: Result) -> Comparison:
                 f"cf.compare(*results) for a list; got a {type(given).__name__}"
             )
     names = _result_names(results)
+    # A result without agencies keys its rows by provider alone: a null agency.
+    keys = row_keys({column for result in results for column in result.table.columns})
     frames = []
     for name, result in zip(names, results, strict=True):
         methods = [label(method) for method in result.spec.methods]
+        table = result.table.lazy()
+        if "agency_code" not in result.table.columns:
+            table = table.with_columns(agency_code=pl.lit(None, pl.Int32))
         for method in methods:
             column = name if len(methods) == 1 else f"{name}: {method}"
             frames.append(
-                result.table.lazy()
-                .filter(pl.col("method") == method)
-                .select(*ROW_KEYS, pl.col("value").alias(column))
+                table.filter(pl.col("method") == method).select(
+                    *keys, pl.col("value").alias(column)
+                )
             )
     table = frames[0]
     for frame in frames[1:]:
-        table = table.join(
-            frame, on=ROW_KEYS, how="full", nulls_equal=True, coalesce=True
-        )
-    table = with_names(table.sort(ROW_KEYS, nulls_last=True))
-    return Comparison(
-        table=table.select(*_COMPARISON_KEYS, pl.exclude(_COMPARISON_KEYS)),
-        results=results,
-    )
+        table = table.join(frame, on=keys, how="full", nulls_equal=True, coalesce=True)
+    table = with_names(table.sort(keys, nulls_last=True))
+    first = (*named_keys(keys), *keys[1:])
+    return Comparison(table=table.select(*first, pl.exclude(first)), results=results)
 
 
 def _result_names(results: Sequence[Result]) -> list[str]:

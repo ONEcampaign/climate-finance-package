@@ -25,7 +25,6 @@ from numbers import Integral
 from typing import Literal
 
 import polars as pl
-from pydantic import BaseModel, ConfigDict
 
 from climate_finance.errors import (
     InvalidInputError,
@@ -33,6 +32,7 @@ from climate_finance.errors import (
     UnknownProviderError,
     UnknownRecipientError,
 )
+from climate_finance.frozen import Frozen
 
 type Kind = Literal["providers", "recipients", "flows", "methods"]
 type Coded = Literal["providers", "recipients"]
@@ -52,22 +52,21 @@ _FLOWS = {
 }
 
 
-class Agency(BaseModel):
+class Agency(Frozen):
     """One agency of a provider, by DAC provider and agency code, such as the European
     Investment Bank, agency 3 of the EU Institutions (918)."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     provider: int
     agency: int
 
 
 type Target = int | Agency
+type Value = str | int | Agency
 type Entry = tuple[int, int | None, str]
 
 
 def resolve(
-    values: str | int | Agency | Iterable[str | int | Agency] | None, *, kind: Coded
+    values: Value | Iterable[Value] | None, *, kind: Coded
 ) -> tuple[Target, ...] | None:
     """The DAC codes and agencies `values` name, sorted by provider and agency and
     without duplicates, or None for None.
@@ -84,15 +83,13 @@ def resolve(
             code or agency the listings lack, with the closest codes as suggestions.
         UnknownRecipientError: for a recipient name of no entry, or of several, or
             a code the listings lack.
-        InvalidInputError: for a value of another type, a bool included, or for
-            an `Agency` among recipients.
+        InvalidInputError: for a value of another type, a bool included, for an
+            `Agency` among recipients, or for an empty iterable, which would select
+            no rows.
     """
     if values is None:
         return None
-    if isinstance(values, str | Integral | Agency) or not isinstance(values, Iterable):
-        targets = {_target(values, kind=kind)}
-    else:
-        targets = {_target(value, kind=kind) for value in values}
+    targets = {target_of(value, kind=kind) for value in each_value(values, kind=kind)}
     covered = {target for target in targets if isinstance(target, int)}
     return tuple(
         sorted(
@@ -104,6 +101,22 @@ def resolve(
             key=_order,
         )
     )
+
+
+def each_value(values: object, *, kind: Coded) -> tuple[object, ...]:
+    """The values of `values`: its items, or itself for one string, integer, `Agency`
+    or other non-iterable. `target_of` checks each value's type.
+
+    Raises:
+        InvalidInputError: for an iterable that yields no value.
+    """
+    if isinstance(values, str | Integral | Agency) or not isinstance(values, Iterable):
+        return (values,)
+    if not (items := tuple(values)):
+        raise InvalidInputError(
+            f"{kind} takes at least one name or code; None takes every one"
+        )
+    return items
 
 
 class Catalogue:
@@ -155,9 +168,45 @@ class Catalogue:
         return f"{row['name']} (DAC code {row['code']})."
 
     def search(self, text: str) -> pl.DataFrame:
-        """Entries whose names contain `text`, ignoring case."""
-        return self.list().filter(
-            pl.col("name").str.to_lowercase().str.contains(text.lower(), literal=True)
+        """Entries whose names contain `text`, ignoring case.
+
+        Providers and recipients match any name `resolve` reads, as "kfw" or "DEU",
+        ignoring case, accents and surrounding spaces. Listing rows come first, in
+        listing order, then the agencies matched, by provider and agency code, with
+        `type` saying whose agency each is, as "Agency 2 of Germany".
+        """
+        if self.kind not in ("providers", "recipients"):
+            return self.list().filter(
+                pl.col("name")
+                .str.to_lowercase()
+                .str.contains(text.lower(), literal=True)
+            )
+        hits = (
+            _names()
+            .filter(
+                pl.col("kind") == self.kind[:-1],
+                pl.col("key").str.contains(_fold(text).strip(), literal=True),
+            )
+            .unique(["code", "agency"])
+        )
+        listed = self.list().filter(
+            pl.col("code").is_in(
+                hits.filter(pl.col("agency").is_null())["code"].to_list()
+            )
+        )
+        agencies = [
+            {
+                "code": code,
+                "name": name,
+                "type": f"Agency {agency} of {_code_names('providers')[code]}",
+            }
+            for code, agency, name in hits.filter(pl.col("agency").is_not_null())
+            .select("code", "agency", "name")
+            .sort("code", "agency")
+            .iter_rows()
+        ]
+        return pl.concat(
+            [listed, pl.DataFrame(agencies, schema=listed.schema)], how="vertical"
         )
 
     def code(self, name: str | int | Agency) -> Target:
@@ -173,7 +222,7 @@ class Catalogue:
         """
         if self.kind not in ("providers", "recipients"):
             raise InvalidInputError(f"cf.{self.kind} has names, not codes")
-        return _target(name, kind=self.kind)
+        return target_of(name, kind=self.kind)
 
     def _row(self, code: int) -> dict[str, object]:
         rows = self.list().filter(pl.col("code") == code)
@@ -225,7 +274,7 @@ def _unknown(
     return UnknownNameError(name, kind=kind[:-1], suggestions=suggestions, note=note)
 
 
-def _target(value: object, *, kind: Coded) -> Target:
+def target_of(value: object, *, kind: Coded) -> Target:
     """The code or agency one value names."""
     if kind == "recipients" and isinstance(value, Agency):
         raise InvalidInputError(f"recipients takes names or DAC codes, not {value!r}")

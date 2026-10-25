@@ -24,7 +24,7 @@ from releases import copy_release
 
 import climate_finance as cf
 from climate_finance import convert as convert_module
-from climate_finance.catalogue import Agency
+from climate_finance.catalogue import Agency, agency_name
 from climate_finance.errors import (
     CoverageWarning,
     InvalidInputError,
@@ -42,7 +42,7 @@ from climate_finance.query import (
     _aggregate,
 )
 from climate_finance.release import Release
-from climate_finance.result import AMOUNTS, ROW_KEYS
+from climate_finance.result import AMOUNTS, ROW_KEYS, ROW_VALUES
 from climate_finance.schema import ReleaseManifest
 from climate_finance.spec import Spec, SpecInputs
 from climate_finance.sums import ordered_sum
@@ -364,7 +364,12 @@ def test_spending_takes_keywords_only_and_run_reruns_a_spec() -> None:
         ({"provider": "Japan"}, "no keyword 'provider'; did you mean 'providers'?"),
         ({"flow": "commitment"}, "flow takes 'commitments', 'disbursements' or"),
         ({"years": []}, "years takes at least one year"),
+        ({"providers": []}, "providers takes at least one name or code"),
+        ({"recipients": ()}, "recipients takes at least one name or code"),
         ({"oda_only": "maybe"}, "oda_only: input should be a valid boolean"),
+        ({"oda_only": "yes"}, "oda_only: input should be a valid boolean"),
+        ({"untraced": 1}, "untraced: input should be a valid boolean"),
+        ({"method": {"significant": 2}}, "method.significant: input should be"),
     ],
 )
 def test_spec_restates_every_refusal_as_one_package_error(
@@ -374,6 +379,68 @@ def test_spec_restates_every_refusal_as_one_package_error(
         Spec.model_validate(inputs)
     with pytest.raises(InvalidInputError, match=message):
         SNAP.spending(**inputs)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: SNAP.quality(providers=[]),
+        lambda: SNAP.reconcile(providers=[]),
+        lambda: SNAP.spending().rows(provider=[]),
+        lambda: SNAP.spending().rows(recipient=[]),
+        lambda: SNAP.reconcile().rows(provider=[], year=2021),
+    ],
+    ids=["quality", "reconcile", "rows provider", "rows recipient", "btr rows"],
+)
+def test_an_empty_list_of_providers_or_recipients_raises(
+    call: Callable[[], object],
+) -> None:
+    with pytest.raises(InvalidInputError, match="takes at least one name or code"):
+        call()
+
+
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (
+            lambda: SNAP.reconcile(parties="DEU"),
+            r"reconcile\(\) takes no keyword 'parties'; did you mean 'providers'\?",
+        ),
+        (
+            lambda: SNAP.quality(yeras=2022),
+            r"quality\(\) takes no keyword 'yeras'; did you mean 'years'\?",
+        ),
+        (
+            lambda: SNAP.quality(flow="commitments"),
+            "quality\\(\\) takes no keyword 'flow'; it takes providers, years, method",
+        ),
+    ],
+)
+def test_quality_and_reconcile_restate_an_unknown_keyword(
+    call: Callable[[], object], message: str
+) -> None:
+    with pytest.raises(InvalidInputError, match=message):
+        call()
+
+
+def test_run_reads_a_saved_spec_from_a_mapping_and_refuses_anything_else() -> None:
+    spec = Spec(providers=["Japan", Agency(provider=5, agency=1)], method=RANGE)
+
+    rerun = SNAP.run(json.loads(spec.model_dump_json()))
+
+    assert rerun.spec == spec
+    assert_frame_equal(rerun.table, SNAP.run(spec).table)
+    for value in (None, spec.model_dump_json(), [spec]):
+        with pytest.raises(InvalidInputError, match="run\\(\\) takes a Spec"):
+            SNAP.run(value)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(InvalidInputError, match="flow takes"):
+        SNAP.run({"flow": "commitment"})
+
+
+@pytest.mark.parametrize("text", ['{"years": ', "not json", b"\xff"])
+def test_malformed_spec_json_raises_the_package_error(text: str | bytes) -> None:
+    with pytest.raises(InvalidInputError, match=r"^Spec reads JSON; "):
+        Spec.model_validate_json(text)
 
 
 COVERED = {
@@ -965,6 +1032,82 @@ def test_rows_refuse_a_filter_its_column_cannot_hold(
 ) -> None:
     with pytest.raises(InvalidInputError, match=message):
         SNAP.spending().rows(**filters)
+
+
+def test_rows_read_a_method_filter_as_spending_reads_a_method() -> None:
+    result = SNAP.spending(method=RANGE)
+
+    for name in ("one", " One ", ONE, ["ONE"]):
+        assert_frame_equal(
+            result.rows(method=name), result.rows().filter(pl.col("method") == "ONE")
+        )
+    assert result.rows(method="OECD").height > 0
+
+
+@pytest.mark.parametrize(
+    ("filters", "suggestion"),
+    [
+        ({"origin": "disbursment"}, "disbursement"),
+        ({"origin": ["commitment", "atribution"]}, "attribution"),
+        ({"link_method": "crs_ids"}, "crs_id"),
+        ({"share_source": "computd"}, "computed"),
+        ({"method": "OECD"}, None),
+        ({"method": "ONEE"}, "ONE"),
+    ],
+)
+def test_rows_refuse_a_value_outside_a_fixed_vocabulary(
+    filters: dict, suggestion: str | None
+) -> None:
+    with pytest.raises(cf.UnknownNameError) as raised:
+        SNAP.spending().rows(**filters)
+
+    if suggestion is None:
+        assert raised.value.note == "The rows hold methods ONE, not OECD."
+    else:
+        assert suggestion in raised.value.suggestions
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        Spec(method=RANGE),
+        Spec(method=RANGE, view="provider"),
+        Spec(flow="commitments", view="provider"),
+        Spec(flow="grant_equivalent"),
+    ],
+)
+def test_rows_hold_only_the_values_their_vocabularies_list(spec: Spec) -> None:
+    rows = SNAP.run(spec).rows()
+
+    for column, values in ROW_VALUES.items():
+        assert set(rows[column].drop_nulls()) <= set(values), column
+
+
+def test_a_spec_that_names_an_agency_keys_its_table_by_agency() -> None:
+    giz = cf.providers.code("GIZ")
+    assert isinstance(giz, Agency)
+    result = SNAP.spending(providers=[giz, "Japan"])
+    table = result.table
+
+    assert table.columns[:5] == ["year", "provider", "agency", "recipient", "method"]
+    assert table.columns[5:9] == [
+        "provider_code",
+        "agency_code",
+        "recipient_code",
+        "bi_multi",
+    ]
+    by_agency = dict(
+        table.group_by("provider_code", "agency_code")
+        .agg(pl.len())
+        .select("provider_code", "agency_code")
+        .iter_rows()
+    )
+    assert by_agency == {DEU: giz.agency, JPN: None}
+    assert set(table.filter(provider_code=DEU)["agency"]) == {agency_name(giz)}
+    assert table["value"].sum() == pytest.approx(result.rows()["value"].sum())
+    shares = result.share_of_total().table
+    assert shares["value"].is_not_null().all()
+    assert "agency" not in SNAP.spending(providers="Germany").table.columns
 
 
 def test_a_record_shows_its_jev_label_before_its_markers() -> None:

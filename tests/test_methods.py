@@ -1,8 +1,12 @@
 """Marker rules, ported from 1.2.3's `transform_markers_into_indicators` tests."""
 
+from collections.abc import Callable
+
 import polars as pl
 import pytest
 
+import climate_finance as cf
+from climate_finance.errors import InvalidInputError
 from climate_finance.methods import (
     OECD,
     ONE,
@@ -126,14 +130,29 @@ def test_methods_with_close_coefficients_keep_distinct_labels() -> None:
     assert label(close[0]) != label(close[1])
 
 
-def test_a_range_refuses_repeated_members() -> None:
-    with pytest.raises(ValueError, match="more than once"):
-        MethodRange(methods=(ONE, OECD, ONE))
-
-
-def test_coefficients_outside_zero_to_one_are_refused() -> None:
-    with pytest.raises(ValueError, match="principal"):
-        ONE.replace(principal=1.5)
+@pytest.mark.parametrize(
+    ("build", "match"),
+    [
+        (lambda: MethodRange(methods=(ONE, OECD, ONE)), "more than once"),
+        (lambda: ONE.replace(principal=1.5), "principal"),
+        (lambda: Method(significant=0.4, principal=1.0), "highest_marker"),
+        (
+            lambda: Method(significant=0.4, principal=1.0, highest_marker="yes"),
+            "highest_marker",
+        ),
+        (
+            lambda: Method(signficant=0.4, principal=1.0, highest_marker=True),
+            "did you mean 'significant'",
+        ),
+        (lambda: cf.Agency(provider=918), "agency"),
+        (lambda: cf.Agency(provider=918, agncy=3), "did you mean 'agency'"),
+    ],
+)
+def test_a_method_or_agency_refuses_with_the_package_error(
+    build: Callable[[], object], match: str
+) -> None:
+    with pytest.raises(InvalidInputError, match=match):
+        build()
 
 
 def _marker_row(

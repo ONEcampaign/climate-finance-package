@@ -80,12 +80,14 @@ from climate_finance.methods import (
     weights,
 )
 from climate_finance.result import (
+    AGENCY_ROW_KEYS,
     AMOUNTS,
     ROW_KEYS,
     Meta,
     Quality,
     Reconciliation,
     Result,
+    named_keys,
 )
 from climate_finance.schema import (
     ADAPTATION_FIRST_YEAR,
@@ -135,10 +137,6 @@ EU_BUDGET_AND_EDF = tuple(code for code in EU_CHANNELS if code != EIB_CHANNEL)
 # climate components first, then Jev, then the donor's markers.
 LABEL_PRECEDENCE = {"crdf": 0, "jev": 1, "marker": 2}
 
-KEYS = (*ROW_KEYS, "method")
-# A result table's columns in order: polars' truncated print shows the first four,
-# year, names and method, and the last four, `value`, `low`, `high` and `untraced`.
-TABLE_COLUMNS = ("year", "provider", "recipient", "method", *ROW_KEYS[1:], *AMOUNTS)
 # The first columns of `Result.rows()`, which show the record and its link; the
 # amounts come last.
 ROW_FIRST = (
@@ -271,11 +269,16 @@ def spending(release: Release, *, spec: Spec) -> Result:
     rows = with_names(rows).select(
         *ROW_FIRST, pl.exclude(*ROW_FIRST, *AMOUNTS), *AMOUNTS
     )
+    agency = _agency_key(spec.providers)
     return Result(
-        table=_aggregate(rows, methods=[label(method) for method in methods]),
+        table=_aggregate(
+            rows, methods=[label(method) for method in methods], agency=agency
+        ),
         modelled=_modelled(release, spec=spec, conditions=modelled),
         rows=rows,
-        totals=_totals(release, spec=spec, conditions=filters, eu_kept=eu_kept),
+        totals=_totals(
+            release, spec=spec, conditions=filters, eu_kept=eu_kept, agency=agency
+        ),
         spec=spec,
         meta=Meta(
             release=release.manifest.release,
@@ -1407,40 +1410,72 @@ def _measured_sum(name: str) -> pl.Expr:
     return pl.when(~unmeasured.any()).then(_sum(name))
 
 
-def _aggregate(rows: pl.LazyFrame, *, methods: Sequence[str]) -> pl.LazyFrame:
-    """Sum rows by `KEYS`, each method's `low` and `high` its own. Adaptation and
-    cross_cutting are null where a row leaves them unmeasured.
+def _agency_key(providers: tuple[Target, ...] | None) -> pl.Expr | None:
+    """The `agency_code` key of a result whose spec names agencies: a row's agency
+    where the spec names its provider through agencies, else null. None for a spec
+    that names no agency, whose result has no agency key."""
+    owners = {
+        target.provider for target in providers or () if isinstance(target, Agency)
+    }
+    if not owners:
+        return None
+    return pl.when(pl.col("provider_code").is_in(sorted(owners))).then(
+        pl.col("agency_code")
+    )
+
+
+def _keyed(frame: pl.LazyFrame, *, agency: pl.Expr | None) -> pl.LazyFrame:
+    """`frame` with `agency_code` as the key `_agency_key` gives, when it gives one."""
+    return frame if agency is None else frame.with_columns(agency_code=agency)
+
+
+def _aggregate(
+    rows: pl.LazyFrame, *, methods: Sequence[str], agency: pl.Expr | None = None
+) -> pl.LazyFrame:
+    """Sum rows by their row keys and method, each method's `low` and `high` its
+    own. Adaptation and cross_cutting are null where a row leaves them unmeasured.
+    With an `agency` key (`_agency_key`) the keys hold `agency_code`, and the table
+    names the agency in `agency` beside its provider.
 
     Every method in `methods` holds a row for every key any method holds, with zero
     amounts where it counts nothing, so a method that has no row for a key still
     bounds it when `Result` spans the bounds across methods.
+
+    The columns start with the year, the names and the method and end with `value`,
+    `low`, `high` and `untraced`, so polars' truncated print shows them.
     """
-    summed = rows.group_by(KEYS).agg(
-        *(
-            (
-                _measured_sum(name)
-                if name in ("adaptation", "cross_cutting")
-                else _sum(name)
-            ).alias(name)
-            for name in AMOUNTS
-        ),
-        _held=pl.len(),
+    row_keys = ROW_KEYS if agency is None else AGENCY_ROW_KEYS
+    keys = (*row_keys, "method")
+    summed = (
+        _keyed(rows, agency=agency)
+        .group_by(keys)
+        .agg(
+            *(
+                (
+                    _measured_sum(name)
+                    if name in ("adaptation", "cross_cutting")
+                    else _sum(name)
+                ).alias(name)
+                for name in AMOUNTS
+            ),
+            _held=pl.len(),
+        )
     )
     grid = (
-        summed.select(ROW_KEYS)
+        summed.select(row_keys)
         .unique()
         .join(pl.LazyFrame({"method": methods}), how="cross")
     )
     held = pl.col("_held").is_not_null()
     return with_names(
-        grid.join(summed, on=KEYS, how="left", nulls_equal=True)
+        grid.join(summed, on=keys, how="left", nulls_equal=True)
         .with_columns(
             pl.when(held).then(pl.col(name)).otherwise(0.0).alias(name)
             for name in AMOUNTS
         )
         .drop("_held")
-        .sort(KEYS, nulls_last=True)
-    ).select(TABLE_COLUMNS)
+        .sort(keys, nulls_last=True)
+    ).select(*named_keys(row_keys), "method", *row_keys[1:], *AMOUNTS)
 
 
 def _totals(
@@ -1449,10 +1484,12 @@ def _totals(
     spec: Spec,
     conditions: Sequence[pl.Expr],
     eu_kept: Mapping[str, pl.LazyFrame],
+    agency: pl.Expr | None,
 ) -> pl.LazyFrame:
-    """All CRS flows of `spec.flow` by `ROW_KEYS` and method, plus a row per
-    provider, year, Bi_Multi code and method with a null recipient that sums every
-    recipient, for rows such as attribution that have none.
+    """All CRS flows of `spec.flow` by the result's row keys and method, plus a row
+    per provider, year, Bi_Multi code and method with a null recipient that sums
+    every recipient, for rows such as attribution that have none. With an `agency`
+    key (`_agency_key`) the keys hold `agency_code`, as the result table's do.
 
     CRDF commitments carry their provider's class, Bi_Multi 1 for a bilateral
     provider, where the CRS splits bilateral flows over codes 1, 3, 7 and 8, so
@@ -1483,13 +1520,15 @@ def _totals(
         ).with_columns(method=pl.lit(label(method)))
         for method in spec.methods
     )
+    keys = (*(ROW_KEYS if agency is None else AGENCY_ROW_KEYS), "method")
+    by_method = _keyed(by_method, agency=agency)
     total = ordered_sum(pl.col("amount_usd")).alias("total")
-    by_recipient = by_method.group_by(KEYS).agg(total)
+    by_recipient = by_method.group_by(keys).agg(total)
     all_recipients = (
-        by_method.group_by("year", "provider_code", "bi_multi", "method")
+        by_method.group_by(*(key for key in keys if key != "recipient_code"))
         .agg(total)
         .with_columns(recipient_code=pl.lit(None, pl.Int32))
-        .select(*KEYS, "total")
+        .select(*keys, "total")
     )
     return convert(
         pl.concat([by_recipient, all_recipients]),

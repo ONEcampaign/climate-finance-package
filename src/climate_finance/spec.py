@@ -3,17 +3,17 @@
 from collections.abc import Iterable, Iterator, Mapping
 from difflib import get_close_matches
 from numbers import Integral
-from typing import Annotated, Any, Literal, Self, TypedDict, Unpack
+from typing import Annotated, Any, ClassVar, Literal, TypedDict, Unpack
 
 import polars as pl
 from pydantic import (
     BaseModel,
     BeforeValidator,
-    ModelWrapValidatorHandler,
+    Discriminator,
     SerializerFunctionWrapHandler,
-    ValidationError,
+    StrictBool,
+    Tag,
     model_serializer,
-    model_validator,
 )
 
 from climate_finance.catalogue import (
@@ -21,16 +21,18 @@ from climate_finance.catalogue import (
     Coded,
     Target,
     agency_name,
+    each_value,
     name_of,
     resolve,
+    target_of,
 )
 from climate_finance.errors import InvalidInputError, UnknownNameError
+from climate_finance.frozen import Frozen
 from climate_finance.methods import (
     OECD,
     ONE,
     PROVIDER,
     RANGE,
-    Frozen,
     Method,
     MethodRange,
     label,
@@ -82,21 +84,17 @@ def read_provider_codes(
     Raises:
         UnknownProviderError: for a name, code or agency `resolve` refuses.
         InvalidInputError: for a name or value of an agency, naming its provider,
-            which `keyword` takes instead, or for a value of another type.
+            which `keyword` takes instead, for a value of another type, or for an
+            empty iterable.
     """
     if providers is None:
         return None
-    values = (
-        providers
-        if isinstance(providers, Iterable) and not isinstance(providers, str | Agency)
-        else (providers,)
-    )
     codes: set[int] = set()
-    for value in values:
-        targets = resolve(value, kind="providers") or ()
-        if agencies := [target for target in targets if isinstance(target, Agency)]:
-            raise _agency_error(value, agencies[0], reader=reader, keyword=keyword)
-        codes.update(target for target in targets if isinstance(target, int))
+    for value in each_value(providers, kind="providers"):
+        target = target_of(value, kind="providers")
+        if isinstance(target, Agency):
+            raise _agency_error(value, target, reader=reader, keyword=keyword)
+        codes.add(target)
     return tuple(sorted(codes))
 
 
@@ -226,7 +224,21 @@ def read_prices(prices: int | Literal["current"]) -> int | Literal["current"]:
 type Providers = Annotated[tuple[Target, ...] | None, _resolver("providers")]
 type Recipients = Annotated[tuple[int, ...] | None, _resolver("recipients")]
 type Years = Annotated[tuple[int, ...] | None, BeforeValidator(read_years)]
-type MethodField = Annotated[Method | MethodRange, BeforeValidator(_method_or_dump)]
+
+
+def _method_kind(value: Any) -> str:
+    """Which model a method reads as: a range for a serialised range, which holds
+    `methods`, else a method, so a refusal names one model's fields."""
+    if isinstance(value, Mapping):
+        return "MethodRange" if "methods" in value else "Method"
+    return type(value).__name__
+
+
+type MethodField = Annotated[
+    Annotated[Method, Tag("Method")] | Annotated[MethodRange, Tag("MethodRange")],
+    Discriminator(_method_kind),
+    BeforeValidator(_method_or_dump),
+]
 type Prices = Annotated[int | Literal["current"], BeforeValidator(read_prices)]
 
 
@@ -279,7 +291,8 @@ class Spec(Frozen):
     them sorted and without duplicates. `method` takes a `Method`, a `MethodRange`, a
     name from `cf.methods.list()` ignoring case, or a list of methods and names,
     which becomes a range; it holds the `Method` or `MethodRange`, so JSON keeps the
-    coefficients. `prices` takes `"current"` or a base year. An unknown method name
+    coefficients. `prices` takes `"current"` or a base year, and `oda_only` and
+    `untraced` take True or False only. An unknown method name
     raises `UnknownNameError`. Any other refusal, an unknown keyword or a value
     outside a field's choices included, raises one `InvalidInputError` naming each
     field and the form it takes.
@@ -296,25 +309,19 @@ class Spec(Frozen):
     view: View = "recipient"
     currency: Currency = "USD"
     prices: Prices = "current"
-    oda_only: bool = False
+    oda_only: StrictBool = False
     measure: Measure = "amount"
-    untraced: bool = True
+    untraced: StrictBool = True
+
+    _keyword_notes: ClassVar[Mapping[str, str]] = {
+        "spec": "rerun a saved Spec with release.run(spec)"
+    }
 
     def __init__(self, **inputs: Unpack[SpecInputs]) -> None:
         # Typed by `SpecInputs`: type checkers type a pydantic model's own constructor
         # from the stored field types, which refuse `providers="Japan"`. `BaseModel`
         # is named because they read `super()` as `Frozen`'s fieldless constructor.
         BaseModel.__init__(self, **inputs)
-
-    @model_validator(mode="wrap")
-    @classmethod
-    def _restate_errors(
-        cls, data: Any, handler: ModelWrapValidatorHandler[Self]
-    ) -> Self:
-        try:
-            return handler(data)
-        except ValidationError as error:
-            raise _restated(error) from None
 
     @model_serializer(mode="wrap")
     def _drop_later_defaults(
@@ -350,40 +357,6 @@ class _Expression(str):
 
     def __repr__(self) -> str:
         return str.__str__(self)
-
-
-def _restated(error: ValidationError) -> InvalidInputError:
-    """One error naming each field `error` refuses and the form it takes."""
-    problems = []
-    for detail in error.errors(include_url=False):
-        field = ".".join(str(part) for part in detail["loc"]) or "Spec"
-        context = detail.get("ctx", {})
-        if detail["type"] == "extra_forbidden" and len(detail["loc"]) == 1:
-            problems.append(_unknown_keyword(field))
-        elif detail["type"] == "literal_error":
-            problems.append(
-                f"{field} takes {context['expected']}; got {detail['input']!r}"
-            )
-        elif "error" in context:  # a validator's own ValueError, already worded
-            problems.append(str(context["error"]))
-        else:
-            message = detail["msg"]
-            problems.append(
-                f"{field}: {message[0].lower()}{message[1:]}; got {detail['input']!r}"
-            )
-    return InvalidInputError("; ".join(problems))
-
-
-def _unknown_keyword(name: str) -> str:
-    if name == "spec":
-        return "Spec takes no keyword 'spec'; rerun a saved Spec with release.run(spec)"
-    close = get_close_matches(name, Spec.model_fields, n=1)
-    hint = (
-        f"did you mean {close[0]!r}?"
-        if close
-        else f"it takes {', '.join(Spec.model_fields)}"
-    )
-    return f"Spec takes no keyword {name!r}; {hint}"
 
 
 def provider_rows(providers: tuple[Target, ...]) -> pl.Expr:

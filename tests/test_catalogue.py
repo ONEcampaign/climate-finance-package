@@ -194,6 +194,25 @@ def test_search_matches_part_of_a_name_ignoring_case() -> None:
 
 
 @pytest.mark.parametrize(
+    ("text", "found"),
+    [
+        ("kfw", ("KfW Bankengruppe (KfW banking group)", "Agency 2 of Germany")),
+        ("EIB", ("European Investment Bank", "Agency 3 of EU Institutions")),
+        ("deu", ("Germany", "DAC member")),
+        ("Allemagne", ("Germany", "DAC member")),
+    ],
+)
+def test_search_finds_every_name_the_resolver_reads(
+    text: str, found: tuple[str, str]
+) -> None:
+    rows = cf.providers.search(text).select("name", "type").rows()
+
+    assert found in rows
+    for name, _ in rows:
+        cf.providers.code(name)
+
+
+@pytest.mark.parametrize(
     ("listing", "name", "expected"),
     [
         (cf.providers, "Germany", "Germany (DAC code 5): DAC member."),

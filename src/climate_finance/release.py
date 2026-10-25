@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import inspect
 import os
 import shutil
 import tarfile
 import tempfile
 import urllib.request
 import warnings
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Mapping
 from importlib.resources import files
 from pathlib import Path
 from typing import Unpack
@@ -22,10 +24,12 @@ from climate_finance import query
 from climate_finance.catalogue import unknown_name
 from climate_finance.errors import (
     CoverageWarning,
+    InvalidInputError,
     ReleaseIntegrityError,
     SourceUnavailableError,
     WithheldTableError,
 )
+from climate_finance.frozen import unknown_keyword
 from climate_finance.methods import ONE, Method, MethodRange
 from climate_finance.result import Quality, Reconciliation, Result, year_runs
 from climate_finance.schema import (
@@ -91,6 +95,25 @@ def release_dirname(release: str) -> str:
     return f"climate-finance-{release}"
 
 
+def _keywords[**P, R](method: Callable[P, R]) -> Callable[P, R]:
+    """`method`, refusing an unknown keyword as `Spec` does, with a close name."""
+    parameters = [
+        name for name in inspect.signature(method).parameters if name != "self"
+    ]
+    owner = f"{getattr(method, '__name__', 'Release')}()"
+
+    @functools.wraps(method)
+    def checked(*args: P.args, **kwargs: P.kwargs) -> R:
+        for name in kwargs:
+            if name not in parameters:
+                raise InvalidInputError(
+                    unknown_keyword(name, owner=owner, choices=parameters)
+                )
+        return method(*args, **kwargs)
+
+    return checked
+
+
 class Release:
     """One release on disk, read through its release tables only."""
 
@@ -151,13 +174,28 @@ class Release:
         """
         return self.run(Spec(**inputs))
 
-    def run(self, spec: Spec) -> Result:
+    def run(self, spec: Spec | Mapping[str, object]) -> Result:
         """Rerun a saved `Spec`, such as `result.spec` or one read back with
-        `Spec.model_validate_json`.
+        `Spec.model_validate_json`. A mapping, such as a saved spec read back with
+        `json.load`, reads as `Spec.model_validate` reads it.
+
+        Raises:
+            InvalidInputError: for a value that is neither a `Spec` nor a mapping,
+                or a mapping `Spec` refuses.
+            UnknownNameError: for a name in the mapping outside its listing, as
+                `spending` raises.
 
         Warns:
             CoverageWarning: for years the flow's tables hold no rows for.
         """
+        if isinstance(spec, Mapping):
+            spec = Spec.model_validate(spec)
+        elif not isinstance(spec, Spec):
+            raise InvalidInputError(
+                "run() takes a Spec, such as result.spec or "
+                "cf.Spec.model_validate_json(text), or a mapping of its fields; "
+                f"got {type(spec).__name__}"
+            )
         # The flow's rows come from these tables only, so a year none holds has none.
         tables = ["commitments" if spec.flow == "commitments" else "disbursements"]
         if spec.flow != "commitments" and spec.untraced:
@@ -167,6 +205,7 @@ class Release:
         self._warn_uncovered(spec.years, tables=tables, holds=_FLOW_TEXT[spec.flow])
         return query.spending(self, spec=spec)
 
+    @_keywords
     def quality(
         self,
         *,
@@ -184,8 +223,9 @@ class Release:
             UnknownProviderError: for a provider name or code outside the listings.
             UnknownNameError: for a method name outside `cf.methods.list()`.
             InvalidInputError: for an agency, since the tables count providers,
-                naming its provider; for a range of methods; or for years or a
-                method in a form `Spec` does not take.
+                naming its provider; for a range of methods; for years or a
+                method in a form `Spec` does not take; for an empty list of
+                providers; or for an unknown keyword, naming a close one.
 
         Warns:
             CoverageWarning: for years the `quality` table holds no rows for.
@@ -199,6 +239,7 @@ class Release:
             method=read_one_method(method, reader="quality()"),
         )
 
+    @_keywords
     def reconcile(
         self,
         *,
@@ -216,8 +257,9 @@ class Release:
             UnknownProviderError: for a provider name or code outside the listings.
             UnknownNameError: for a method name outside `cf.methods.list()`.
             InvalidInputError: for an agency, since the BTR reports providers,
-                naming its provider, or for years or a method in a form `Spec` does
-                not take.
+                naming its provider; for years or a method in a form `Spec` does
+                not take; for an empty list of providers; or for an unknown
+                keyword, such as `parties=`, naming a close one.
 
         Warns:
             CoverageWarning: for years the `btr_totals` table holds no rows for.
