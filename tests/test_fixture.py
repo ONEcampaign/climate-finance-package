@@ -492,16 +492,20 @@ def test_release_invariants_allow_rounding_in_a_marked_total() -> None:
 
 
 @pytest.mark.parametrize(
-    "column", ["record_grant_equiv_usd", "record_disbursement_usd"]
+    "column", ["record_grant_equiv_usd", "record_disbursement_usd", "allocated_usd"]
+)
+# JPN-SPLIT has a row under JPN-1 and one under JPN-3, so a non-finite amount on
+# the JPN-1 row leaves the record's rows unequal and the commitment's sum short.
+@pytest.mark.parametrize(
+    ("row_id", "record_id"), [("AFDB-1", "AFDB-1-R1"), ("JPN-1", "JPN-SPLIT")]
 )
 @pytest.mark.parametrize("value", [float("nan"), float("inf")])
 def test_release_invariants_report_a_non_finite_amount_once(
-    column: str, value: float
+    column: str, row_id: str, record_id: str, value: float
 ) -> None:
-    # AFDB-1-R1 is a one-row record, so no row of it can differ from another.
     tables = {name: _read(name) for name in INVARIANT_TABLES}
     tables["disbursements"] = tables["disbursements"].with_columns(
-        pl.when(pl.col("record_id") == "AFDB-1-R1")
+        pl.when(pl.col("row_id") == row_id, pl.col("record_id") == record_id)
         .then(value)
         .otherwise(pl.col(column))
         .alias(column)
@@ -510,7 +514,7 @@ def test_release_invariants_report_a_non_finite_amount_once(
     problems = release_invariants(tables)
 
     assert len(problems) == 1
-    assert "AFDB-1-R1" in problems[0]
+    assert record_id in problems[0]
     assert problems[0].endswith(f"{column} is not finite")
 
 
