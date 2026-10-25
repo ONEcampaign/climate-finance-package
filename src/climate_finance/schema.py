@@ -560,7 +560,7 @@ ID_PRACTICE = _table(
     ("donor_code", "agency_code", "period"),
     donor_code=_code(),
     agency_code=_code(),
-    period=_str(values=("2010-2014", "2015-2018", "2019-2022")),
+    period=_str(values=("2000-2009", "2010-2014", "2015-2018", "2019-2022")),
     id_class=_str(values=ID_PRACTICE_CLASSES),
     open_commitments=_count(),
     id_share=_f64(nullable=True),

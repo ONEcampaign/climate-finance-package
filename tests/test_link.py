@@ -27,6 +27,7 @@ from climate_finance.build.link.id_practice import (
     classify_id_practice,
     parent_id,
     period_of,
+    untraceable,
 )
 from climate_finance.build.link.jev import JevFitError
 from climate_finance.build.link.keys import as_exact_links, build_units, link_by_keys
@@ -747,6 +748,8 @@ def test_a_certain_link_whose_records_disagree_is_certain_only_once_accepted(
 @pytest.mark.parametrize(
     ("year", "period"),
     [
+        (1995, "2000-2009"),
+        (2009, "2000-2009"),
         (2010, "2010-2014"),
         (2014, "2010-2014"),
         (2015, "2015-2018"),
@@ -863,9 +866,85 @@ def test_id_practice_is_per_period() -> None:
     }
     classes = classify_id_practice(_units(records))
     assert dict(classes.select("period", "id_class").iter_rows()) == {
+        "2000-2009": "id_persistent",
         "2010-2014": "id_persistent",
         "2015-2018": "pn_persistent",
     }
+
+
+def test_2000_2009_keys_on_its_own() -> None:
+    # Ten keyed 2010-2014 commitments disbursing 60, and 900 unkeyed in 2005.
+    records = _agency(7, n=10, follow=("id",), commit_year=2012) | {
+        "d": _disbursement(
+            donor_code=918,
+            agency_code=7,
+            year=2005,
+            disbursement_usd=900.0,
+            crs_id="Z",
+            project_number=None,
+        )
+    }
+    classes = classify_id_practice(_units(records))
+    assert dict(classes.select("period", untraceable=untraceable()).iter_rows()) == {
+        "2000-2009": True,
+        "2010-2014": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("id_class", "share", "expected"),
+    [
+        ("neither", None, True),
+        ("neither", 0.9, True),
+        # A period with no disbursement to key leaves the class to decide.
+        ("mixed", None, False),
+        ("mixed", 0.44, True),
+        ("mixed", 0.45, False),
+    ],
+)
+def test_untraceable(id_class: str, share: float | None, expected: bool) -> None:
+    row = pl.DataFrame(
+        {"id_class": [id_class], "keyed_disbursement_share": [share]},
+        schema={"id_class": pl.String, "keyed_disbursement_share": pl.Float64},
+    )
+    assert row.select(untraceable()).item() is expected
+
+
+def test_2000_2009_takes_the_2010_2014_share_when_it_disburses_nothing() -> None:
+    # Ten keyed 2010-2014 commitments disbursing 60, and 140 unkeyed in 2013.
+    records = _agency(7, n=10, follow=("id",), commit_year=2012) | {
+        "d": _disbursement(
+            donor_code=918,
+            agency_code=7,
+            year=2013,
+            disbursement_usd=140.0,
+            crs_id="Z",
+            project_number=None,
+        )
+    }
+    classes = classify_id_practice(_units(records))
+    [row] = (
+        classes.filter(pl.col("period") == period_of(pl.lit(2005)))
+        .select("keyed_disbursement_share", untraceable=untraceable())
+        .rows()
+    )
+    assert row == (pytest.approx(0.3), True)
+
+
+def test_2000_2009_takes_the_2010_2014_class() -> None:
+    # 2005 commitments that never continue would class the agency `neither`.
+    unpersisted = _agency(8, n=10, follow=(), commit_year=2005)
+    for fields in unpersisted.values():
+        fields["agency_code"] = 7
+    records = _agency(7, n=10, follow=("id",), commit_year=2012) | unpersisted
+    classes = classify_id_practice(_units(records))
+    schema.validate(schema.ID_PRACTICE, classes)
+    inherited = ["id_class", "open_commitments", "id_share", "parent_share"]
+    early, measured = (
+        classes.filter(period=period).select(inherited).row(0)
+        for period in ("2000-2009", "2010-2014")
+    )
+    assert early == measured == ("id_persistent", 10, 1.0, 0.0)
 
 
 def _crdf_rows(**rows: dict[str, object]) -> pl.LazyFrame:
