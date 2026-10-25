@@ -658,7 +658,8 @@ def build_tables() -> dict[str, pl.DataFrame]:
             | {
                 "recipient_code": KEN,
                 "title": f"Adaptation programme {link[1]}",
-                "rio_marker": 2,
+                "rio_adaptation": 2,
+                "rio_mitigation": 0,
             }
             for link in BTR_LINKS
         ],

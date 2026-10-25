@@ -461,6 +461,7 @@ def test_linked_pairs_sum_a_programme_and_follow_the_row_status() -> None:
             "year": 2021,
             "commitment_usd": 99.0,
             "disbursement_usd": 25.0,
+            "rio_adaptation": 1,
             "rio_mitigation": 1,
         },
     )
@@ -475,6 +476,6 @@ def test_linked_pairs_sum_a_programme_and_follow_the_row_status() -> None:
     pairs = linked_pairs(links, btr=btr.lazy(), crs=crs.lazy())
 
     assert pairs.rows() == [
-        ("GBR", 2021, 40.0, 100.0, 2),
-        ("NOR", 2021, 10.0, 25.0, 1),
+        ("GBR", 2021, 40.0, 100.0, 2, False),
+        ("NOR", 2021, 10.0, 25.0, 1, True),
     ]

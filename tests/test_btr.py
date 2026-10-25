@@ -406,7 +406,11 @@ def test_the_archive_counts_each_workbooks_rows_kept_and_dropped(
     ]
 
 
-def _pairs(party: str, rows: list[tuple[float, float, int]]) -> pl.DataFrame:
+def _pairs(
+    party: str, rows: list[tuple[float, float, int]], *, on_both: bool = False
+) -> pl.DataFrame:
+    """Linked pairs of (btr_usd, crs_usd, rio_marker), all Significant for both
+    objectives with `on_both`."""
     return pl.DataFrame(
         [(party, *row) for row in rows],
         schema={
@@ -416,7 +420,7 @@ def _pairs(party: str, rows: list[tuple[float, float, int]]) -> pl.DataFrame:
             "rio_marker": pl.Int8,
         },
         orient="row",
-    )
+    ).with_columns(significant_on_both=pl.lit(on_both))
 
 
 def test_party_weight_is_the_level_of_most_significant_pairs() -> None:
@@ -446,21 +450,28 @@ def test_party_weight_is_the_level_of_most_significant_pairs() -> None:
     assert weights["EST"]["significant_share_at"]["1.0"] is None
 
 
-def _stated(*rows: tuple[int, int | None, float | None]) -> pl.DataFrame:
+def _stated(
+    *rows: tuple[int, int | None, float | None], both: float | None = None
+) -> pl.DataFrame:
     """A `provider_coefficients` table of (provider, first_year, significant) rows
-    covering every agency."""
+    covering every agency, each with `both` as its `both_significant`."""
     return pl.DataFrame(
         [
             {
                 "provider_code": provider,
                 "first_year": first_year,
                 "significant": significant,
+                "both_significant": both,
                 "source": "Fixture survey",
                 "locator": "p. 8",
             }
             for provider, first_year, significant in rows
         ],
-        schema_overrides={"provider_code": pl.Int32, "first_year": pl.Int16},
+        schema_overrides={
+            "provider_code": pl.Int32,
+            "first_year": pl.Int16,
+            "both_significant": pl.Float64,
+        },
     ).with_columns(agency_code=pl.lit(None, pl.Int32), last_year=pl.lit(None, pl.Int16))
 
 
@@ -487,6 +498,25 @@ def test_the_weight_check_reports_parties_whose_fit_differs() -> None:
         ("CAN", 0.3, 1.0, "Fixture survey, p. 8")
     ]
     assert check["share_at_stated"].item() == pytest.approx(2 / 3)
+
+
+@pytest.mark.parametrize(("both", "reported"), [(1.0, []), (None, [(1.0, 1 / 3)])])
+def test_the_weight_check_reads_a_pair_on_both_objectives_at_its_coefficient(
+    both: float | None, reported: list[tuple[float, float]]
+) -> None:
+    # Germany counts an activity Significant for both objectives in full. Two of its
+    # three Significant pairs are on both, so read at 0.5 they would fit 1.0.
+    pairs = pl.concat(
+        [
+            _pairs("DEU", [(50, 100, 1)]),
+            _pairs("DEU", [(100, 100, 1), (200, 200, 1)], on_both=True),
+        ]
+    )
+    stated = _stated((5, None, 0.5), both=both)
+
+    check = check_party_weights(_dated(pairs), coefficients=stated)
+
+    assert check.select("fitted", "share_at_stated").rows() == reported
 
 
 def test_the_weight_check_compares_each_span_with_its_own_years() -> None:

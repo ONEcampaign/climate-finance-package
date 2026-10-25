@@ -112,7 +112,7 @@ Key `row_id`, `record_id`. Links from BTR rows to same-year CRS records of the p
 - `row_id`, `record_id`, `link_method` (`btr_id` or `btr_splink`), `probability`. A `btr_splink` probability comes from the party's own calibration map when its id-linked rows give at least 30 right and 30 wrong labels, and from a map pooled over every party otherwise, which needs as many. A row links at a probability of 0.5 or more, and a party with neither map links by ids alone.
 - `provider_code`, `year`, `recipient_code`, `project_number`, `title`: the record's fields.
 - `commitment_usd`, `disbursement_usd`: the record's amounts.
-- `rio_marker`: the higher of the record's two Rio markers.
+- `rio_adaptation`, `rio_mitigation`: the record's Rio markers, 0 for none.
 
 ## `btr_totals`
 

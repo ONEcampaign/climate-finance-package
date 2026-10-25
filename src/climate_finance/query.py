@@ -724,7 +724,8 @@ def _reconciliation_rows(
             crs_title="title_crs",
             crs_commitment_usd="commitment_usd",
             crs_disbursement_usd="disbursement_usd",
-            crs_rio_marker="rio_marker",
+            crs_rio_adaptation="rio_adaptation",
+            crs_rio_mitigation="rio_mitigation",
             unfccc_only=pl.col("record_id").is_null(),
         )
         .sort("party", "year", "row_id", "record_id", nulls_last=True)

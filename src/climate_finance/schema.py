@@ -1068,7 +1068,7 @@ TOTAL_FLOWS = _table(
 
 # Each BTR row's links to same-year CRS records of its party (`links` task
 # `btr_crs`), with the CRS record's facts, since the release holds no CRS records.
-# `rio_marker` is the higher of the record's two Rio markers.
+# `rio_adaptation` and `rio_mitigation` are the record's Rio markers, 0 for none.
 BTR_LINKS = _table(
     "btr_links",
     ("row_id", "record_id"),
@@ -1083,7 +1083,8 @@ BTR_LINKS = _table(
     title=_str(nullable=True),
     commitment_usd=_usd(nullable=True),
     disbursement_usd=_usd(nullable=True),
-    rio_marker=Column(pl.Int8(), values=RIO_MARKERS),
+    rio_adaptation=Column(pl.Int8(), values=RIO_MARKERS),
+    rio_mitigation=Column(pl.Int8(), values=RIO_MARKERS),
 )
 
 # Each party's BTR rows summed by year, status, funding class, currency and whether a

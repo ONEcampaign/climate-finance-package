@@ -842,9 +842,8 @@ def test_btr_links_carry_their_crs_records_facts() -> None:
 
     schema.validate(schema.BTR_LINKS, built)
     # Only BTR links, and only to records the build holds.
-    assert built.select("row_id", "record_id", "year", "rio_marker").rows() == [
-        ("BTR-NOR-2021-00001", "d21", 2021, 2)
-    ]
+    columns = ("row_id", "record_id", "year", "rio_adaptation", "rio_mitigation")
+    assert built.select(columns).rows() == [("BTR-NOR-2021-00001", "d21", 2021, 0, 2)]
     assert built["disbursement_usd"].to_list() == [70.0]
 
 
