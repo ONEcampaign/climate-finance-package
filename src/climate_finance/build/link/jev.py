@@ -276,7 +276,7 @@ def best_link_threshold(pairs: pl.DataFrame, *, threshold: float) -> float:
             its best on the grid.
     """
     # Jev's labelled pairs are the single-id donors' alone, so recall counts their
-    # true pairs rather than id truth's.
+    # true pairs.
     n_true = pairs.filter("true_pair")["left_id"].n_unique()
     best = best_commitments(pairs, probability="probability")
     return checked_best_threshold(

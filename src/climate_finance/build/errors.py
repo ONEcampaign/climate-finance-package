@@ -60,9 +60,9 @@ class LinkInputError(BuildError):
 
 class LinkThresholdError(BuildError):
     """F1 of the links at the fixed link threshold falls more than
-    `link.score.F1_TOLERANCE` below its best on the threshold grid: the classifier's
-    on its training pairs (`link.score`), or the Jev band's on the labelled pairs of
-    single-id donors (`link.jev.best_link_threshold`)."""
+    `link.score.F1_TOLERANCE` below its best on the threshold grid. The links are the
+    classifier's on its training pairs (`link.score`) or the Jev band's on the
+    labelled pairs of single-id donors (`link.jev.best_link_threshold`)."""
 
     def __init__(
         self, *, threshold: float, f1: float, best_threshold: float, best_f1: float

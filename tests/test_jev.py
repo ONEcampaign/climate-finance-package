@@ -315,7 +315,7 @@ def test_the_band_refuses_a_cut_far_below_its_best_f1(
     strong: int, *, refuses: bool
 ) -> None:
     # Every grid threshold to 0.30 links the weak unit's true pair, so the best is
-    # the lowest; at 0.5 it does not link.
+    # the lowest. At 0.5 it does not link.
     pairs = _labelled(strong)
     if not refuses:
         assert best_link_threshold(pairs, threshold=0.5) == 0.01
