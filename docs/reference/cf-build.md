@@ -91,6 +91,18 @@ Builds, gates, and packs a release. It writes `<out-dir>/climate-finance-<RELEAS
 
 The command raises `GateFailedError` when a gate fails, and `BuildError` when a source lacks a licence entry.
 
+## `cf-build names`
+
+```bash
+cf-build names [--check]
+```
+
+Bakes the alias table behind `providers=` and `recipients=` into `src/climate_finance/data/names.csv`, which ships in the wheel, so the analyst package resolves names without resolvekit. Each row maps one folded name (case, accents and surrounding spaces dropped) to a DAC provider or recipient code, and to an agency code when the name is an agency's. The names come from the listings' English and French names, `build/aliases.toml`, the ISO codes and aliases of the resolvekit places and organisations that carry a listing code, and the names of the providers' agencies in resolvekit's `org.governments` pack, best first. Each name keeps its rows from its best source only, so a name with several rows there is ambiguous.
+
+The bake fails when a listing name does not resolve to its own code, when `aliases.toml` names a code or agency that the listing or resolvekit lacks or a listing name hides, and when an ISO code or resolvekit alias of a provider is also the name of one of its agencies, which would widen the agency to the whole provider. Such a name is settled by a line in `aliases.toml`.
+
+- `--check` rebakes without writing and exits with status 1 when `names.csv` differs. CI runs it in the locked lint job, so a resolvekit bump or an `aliases.toml` edit without a rebake fails there.
+
 ## Next
 
 - [How to cut a release](../how-to/cut-a-release.md) runs these commands in order.

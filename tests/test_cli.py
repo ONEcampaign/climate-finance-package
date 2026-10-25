@@ -18,4 +18,5 @@ def test_cf_build_declares_every_command() -> None:
         "import-labels",
         "ingest-unfccc",
         "release",
+        "names",
     }
