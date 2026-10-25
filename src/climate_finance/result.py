@@ -292,8 +292,8 @@ def _column_filter(
     Raises:
         UnknownNameError: for a column outside `schema`, a value outside the
             column's `ROW_VALUES`, or a method outside `methods`.
-        InvalidInputError: for `agency`, which `provider` filters, or an item of
-            another type than the column.
+        InvalidInputError: for `agency`, which `provider` filters, a collection
+            with no item, or an item of another type than the column.
     """
     if name == "agency":
         raise InvalidInputError(
@@ -306,6 +306,10 @@ def _column_filter(
         if isinstance(value, Collection) and not isinstance(value, str)
         else [value]
     )
+    if not items:
+        raise InvalidInputError(
+            f"{name} takes at least one value; leave it out to take every one"
+        )
     if name == "method":
         return pl.col(name).is_in([_method_label(item, held=methods) for item in items])
     for item in items:
@@ -931,6 +935,10 @@ def compare(*results: Result) -> Comparison:
     name. A result under several methods gives one column per method. A key a result
     has no row for is null in its column.
 
+    When every result names an agency, the rows are keyed by agency as well. When
+    only some do, `_provider_values` sums their agencies' rows to each provider's
+    key, so an agency's column sits beside its provider's on one row.
+
     Raises:
         InvalidInputError: when no result is given, or any argument is not a
             `Result`, such as a list of them.
@@ -944,14 +952,16 @@ def compare(*results: Result) -> Comparison:
                 f"cf.compare(*results) for a list; got a {type(given).__name__}"
             )
     names = _result_names(results)
-    # A result without agencies keys its rows by provider alone: a null agency.
-    keys = row_keys({column for result in results for column in result.table.columns})
+    keyed = ["agency_code" in result.table.columns for result in results]
+    keys = AGENCY_ROW_KEYS if all(keyed) else ROW_KEYS
     frames = []
-    for name, result in zip(names, results, strict=True):
+    for name, result, agency in zip(names, results, keyed, strict=True):
         methods = [label(method) for method in result.spec.methods]
-        table = result.table.lazy()
-        if "agency_code" not in result.table.columns:
-            table = table.with_columns(agency_code=pl.lit(None, pl.Int32))
+        table = (
+            _provider_values(result)
+            if agency and keys == ROW_KEYS
+            else result.table.lazy()
+        )
         for method in methods:
             column = name if len(methods) == 1 else f"{name}: {method}"
             frames.append(
@@ -965,6 +975,20 @@ def compare(*results: Result) -> Comparison:
     table = with_names(table.sort(keys, nulls_last=True))
     first = (*named_keys(keys), *keys[1:])
     return Comparison(table=table.select(*first, pl.exclude(first)), results=results)
+
+
+def _provider_values(result: Result) -> pl.LazyFrame:
+    """The `value` of an agency-keyed `result` by `ROW_KEYS` and method: its amounts
+    summed over each provider's agencies, and under `measure="share_of_total"`
+    divided by its totals summed the same way."""
+    keys = [*ROW_KEYS, "method"]
+    values = result._sums.group_by(keys).agg(ordered_sum(pl.col("value")))
+    if result.spec.measure != "share_of_total":
+        return values
+    totals = result._totals.group_by(keys).agg(ordered_sum(pl.col("total")))
+    return values.join(
+        totals, on=keys, how="left", nulls_equal=True, validate="1:1"
+    ).select(*keys, value=pl.col("value") / pl.col("total"))
 
 
 def _result_names(results: Sequence[Result]) -> list[str]:

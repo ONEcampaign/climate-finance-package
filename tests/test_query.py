@@ -1026,6 +1026,9 @@ def test_rows_filter_by_equality_and_membership() -> None:
         ({"agency": "EIB"}, "through provider, as provider='EIB'"),
         ({"year": [2022, "2023"]}, "year holds integers, not '2023'"),
         ({"origin": 1}, "origin holds text, not 1"),
+        ({"origin": []}, "origin takes at least one value"),
+        ({"method": []}, "method takes at least one value"),
+        ({"provider_code": []}, "provider_code takes at least one value"),
     ],
 )
 def test_rows_refuse_a_filter_its_column_cannot_hold(

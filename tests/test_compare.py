@@ -12,6 +12,7 @@ import climate_finance as cf
 from climate_finance.errors import InvalidInputError
 from climate_finance.methods import ONE, RANGE
 from climate_finance.schema import ReleaseManifest
+from climate_finance.spec import Measure
 
 SNAP = cf.load(path=FIXTURE_DIR)
 KEYS = ["year", "provider_code", "recipient_code", "bi_multi"]
@@ -75,6 +76,23 @@ def test_a_key_one_result_lacks_is_null_in_its_column() -> None:
     assert table.columns == [*COLUMNS, "providers Germany", "providers France"]
     assert table.height == _values(germany).height + _values(france).height
     assert table.filter(provider_code=5)["providers France"].is_null().all()
+
+
+@pytest.mark.parametrize("measure", ["amount", "share_of_total"])
+def test_an_agency_sits_beside_its_provider_on_one_row(measure: Measure) -> None:
+    giz = SNAP.spending(providers=[cf.Agency(provider=5, agency=52)], measure=measure)
+    germany = SNAP.spending(providers="Germany", measure=measure)
+
+    table = cf.compare(giz, germany).table
+    giz_column, germany_column = table.columns[len(COLUMNS) :]
+
+    # Every Germany row in the fixture is GIZ's, so the two columns match.
+    assert table.columns[: len(COLUMNS)] == COLUMNS
+    assert (
+        table.select(*KEYS).sort(KEYS).equals(_values(germany).select(KEYS).sort(KEYS))
+    )
+    assert table[giz_column].equals(table[germany_column], check_names=False)
+    assert table[giz_column].is_not_null().all()
 
 
 def test_a_result_under_several_methods_gives_a_column_per_method() -> None:
