@@ -97,7 +97,32 @@ disbursements 38.0
 
 Japan's climate commitments for 2021 and 2022 total 130.0. The 38.0 is what Japan disbursed in those two years against climate commitments of any year the release holds, so the two figures measure different money. `oda_only=True`, `currency=`, and `prices=` filter or convert a query the same way. [Python API](reference/python-api.md) lists the parameters.
 
-## Step 6. Check how much traces
+## Step 6. Ask for one objective
+
+The table splits `value` into `adaptation`, `mitigation`, `cross_cutting`, and `unsplit` columns, so an adaptation question needs no filter. Under ONE's method each activity counts once, under its higher marker, so `adaptation` holds the activities marked for adaptation alone and `cross_cutting` holds those marked for both objectives. Everything marked for adaptation is the sum of the two.
+
+```python
+import polars as pl
+
+germany = release.spending(providers="Germany", years=range(2021, 2024))
+adaptation = (
+    germany.table.group_by("year")
+    .agg(pl.sum("adaptation", "cross_cutting"))
+    .sort("year")
+)
+for row in adaptation.iter_rows(named=True):
+    print(row["year"], round(row["adaptation"] / 1e6, 1), round(row["cross_cutting"] / 1e6, 1))
+```
+
+```output
+2021 12.7 0.0
+2022 15.2 1.7
+2023 12.7 1.7
+```
+
+Germany's adaptation finance for 2022 is 15.2 million USD, or 16.8 with the cross-cutting activities. `low` and `high` bound `value`, the total over all objectives, and no column bounds an objective alone. Under OECD's method (`method=cf.methods.OECD`) `adaptation` already counts every activity marked for adaptation, cross-cutting ones included, so `cross_cutting` is not added.
+
+## Step 7. Check how much traces
 
 `quality()` reports how much of a provider's climate value matches a CRS commitment, and how its commitments split by status.
 

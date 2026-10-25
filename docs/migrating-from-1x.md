@@ -5,12 +5,12 @@ In climate-finance 1.2.3, `ClimateData` downloaded OECD files, matched them, and
 ## Before you start
 
 - Python 3.12 or later.
-- `pip install climate-finance`. `result.table` is a polars DataFrame, and its `to_pandas()` needs pandas, which `pip install "climate-finance[compat]"` adds.
+- `pip install climate-finance`. `result.table` is a polars DataFrame, and its `to_pandas()` needs pandas, which `pip install "climate-finance[compat]"` adds. `ClimateData.get_data()` needs it too.
 - Remove `set_climate_finance_data_path()` from your scripts. A release downloads to `~/.cache/climate-finance`. Set `CLIMATE_FINANCE_CACHE` or pass `cache_dir=` to `load()` to move it. Open a release folder on disk with `load(path=...)`.
 
-## Keep 1.x code running
+## What still runs
 
-`ClimateData` imports from `climate_finance` and runs, with a `DeprecationWarning`, until 3.0. It wraps 2.0 by calling `spending()` once per source and flow and returning pandas. The examples on this page run on the synthetic test release, so their amounts are invented. `set_climate_finance_data_path` and `get_unfccc_data` import with the same warning. Calling them raises `NotImplementedError` and names their replacement. Calls with no 2.0 equivalent also raise `NotImplementedError` and state that none exists.
+`ClimateData` imports from `climate_finance` and runs, with a `DeprecationWarning`, until 3.0. It wraps 2.0 by calling `spending()` once per source and flow and returning pandas. The constructor, the `set_*` methods, `load_spending_data()`, and `get_data()` run. `get_data()` returns the 2.0 columns and not the 1.x ones, so a script that reads `indicator` or `oecd_provider_code` raises `KeyError`. The examples on this page run on the synthetic test release, so their amounts are invented. `set_climate_finance_data_path` and `get_unfccc_data` import with the same warning. Calling them raises `NotImplementedError` and names their replacement. Calls with no 2.0 equivalent also raise `NotImplementedError` and state that none exists.
 
 ```python
 from climate_finance import ClimateData
@@ -20,12 +20,27 @@ climate_data.load_spending_data(
     methodology="ONE", source="OECD_CRDF_CRS_ALLOCABLE", flows="gross_disbursements"
 )
 data = climate_data.get_data()
-print(data.columns.tolist()[-6:])
+print(data.columns.tolist())
 ```
 
 ```output
-['value', 'low', 'high', 'untraced', 'flow', 'source']
+['year', 'provider', 'recipient', 'method', 'provider_code', 'recipient_code', 'bi_multi', 'amount', 'adaptation', 'mitigation', 'cross_cutting', 'unsplit', 'value', 'low', 'high', 'untraced', 'flow', 'source']
 ```
+
+The 1.x frame was long, with one row per `indicator`. The 2.0 frame is wide, with one column per objective. A script that reads these columns changes as follows:
+
+| 1.x | 2.0 |
+|---|---|
+| `oecd_provider_code` | `provider_code` |
+| `oecd_recipient_code` | `recipient_code` |
+| `provider`, `recipient` | `provider`, `recipient`, the listing names of the codes |
+| `year` | `year` |
+| `indicator` of `climate_adaptation`, `climate_mitigation`, or `climate_cross_cutting`, with `value` | the `adaptation`, `mitigation`, and `cross_cutting` columns |
+| `indicator` of `not_climate_relevant` | none; 2.0 returns climate value only |
+| `value` summed over the indicators | `value`, the climate total, with `low`, `high`, and `untraced` beside it |
+| project columns, such as `crs_id`, `project_title`, and the sector columns | `result.rows()`, which returns the project rows behind a table |
+
+Three columns have no 1.x counterpart: `bi_multi`, `method`, and `amount`, the unweighted face value. `get_data()` adds `flow` and `source`.
 
 ## Rewrite to the 2.0 API
 
@@ -49,7 +64,7 @@ print(len(data), "rows")
 10 rows
 ```
 
-`result.table` is a polars DataFrame, and polars' own `to_pandas()` needs pandas installed (the `compat` extra). Any Arrow-aware library reads the frame directly, such as `pa.table(result.table)`.
+Any Arrow-aware library reads the frame without pandas, such as `pa.table(result.table)`.
 
 | 1.x | 2.0 |
 |---|---|
@@ -75,8 +90,8 @@ Releases hold gross disbursements only, so `net_disbursements` has no 2.0 equiva
 
 ## What else is different
 
-- The result is a polars table by default, with `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced` columns. `result.rows()` returns the projects behind it.
-- `value` is climate value only, in `ClimateData` too, and no row carries the 1.x indicator `not_climate_relevant`. A 1.x script that sums `value` over every indicator gets a different number and no error.
+- The result is a polars table, with `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced` columns. `result.rows()` returns the projects behind it.
+- `value` is climate value only, in `ClimateData` too, and no row carries the 1.x indicator `not_climate_relevant`. A 1.x script that sums `value` over every indicator, that one included, summed all development finance; the 2.0 sum is climate value.
 - A result carries its `Spec`. `release.run(result.spec)` reruns it.
 - Names and codes resolve through `cf.providers` and `cf.recipients`. A misspelt name, or a code the listings lack, raises an error that suggests close matches.
 - Building a release fetches OECD data, using `cf-build` and the `build` extra. 2.0 reads the built release. [cf-build](reference/cf-build.md) lists the commands.

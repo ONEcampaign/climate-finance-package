@@ -1,6 +1,6 @@
 # Python API
 
-Everything in version 2.0 imports from `climate_finance`, usually as `cf`. The examples run on the synthetic test release, so their amounts are invented. The names in `cf.__all__` form the public API. `Quality` and `Reconciliation`, the return types of `quality()` and `reconcile()`, live in `climate_finance.result`, and the errors live in `climate_finance.errors`. [Migrating from 1.x](../migrating-from-1x.md) covers the deprecated 1.x names.
+Everything in version 2.0 imports from `climate_finance`, usually as `cf`. The examples run on the synthetic test release, so their amounts are invented. The names in `cf.__all__` form the public API, including `Quality` and `Reconciliation`, the return types of `quality()` and `reconcile()`, and `errors`, the module of the package's [error classes](#errors). [Migrating from 1.x](../migrating-from-1x.md) covers the deprecated 1.x names.
 
 ## `cf.load(release="latest", *, path=None, cache_dir=None, refresh=False)`
 
@@ -211,7 +211,7 @@ print(cf.methods.ONE.replace(significant=0.5).significant)
 
 The answer to one `Spec`:
 
-- `table` is a polars DataFrame with one row per year, provider, recipient, Bi_Multi code, and method. Its columns, in order, are: `year`, `provider`, `recipient`, `method`, `provider_code`, `recipient_code`, `bi_multi`, `amount`, `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced`, so polars' truncated print shows the year, the names, the method and the last four. `provider` and `recipient` are the listing names of the codes beside them, null for a code the listings lack, as for the attributed rows' missing recipient. `amount` is the unweighted face value. `value` is the weighted climate value, equal to adaptation + mitigation + `cross_cutting` + `unsplit` under the highest-marker rule (where objectives are disjoint), and to adaptation + mitigation − `cross_cutting` + `unsplit` otherwise. `unsplit` holds attributed value whose agency share lacks a split by objective. `untraced` is the part of `value` from untraced rows, so `value` − `untraced` is the traced value, and it is 0 for commitments. It is computed on first access and kept, so reading it twice runs the query once. `pl.DataFrame(result.table)`, `pa.table(result.table)` and DuckDB read it directly, and `result.table.to_pandas()` returns a pandas frame when pandas is installed.
+- `table` is a polars DataFrame with one row per year, provider, recipient, Bi_Multi code, and method. Its columns, in order, are: `year`, `provider`, `recipient`, `method`, `provider_code`, `recipient_code`, `bi_multi`, `amount`, `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced`, so polars' truncated print shows the year, the names, the method and the last four. `provider` and `recipient` are the listing names of the codes beside them, null for a code the listings lack, as for the attributed rows' missing recipient. `amount` is the unweighted face value. `value` is the weighted climate value, equal to adaptation + mitigation + `cross_cutting` + `unsplit` under the highest-marker rule (where objectives are disjoint), and to adaptation + mitigation − `cross_cutting` + `unsplit` otherwise. `unsplit` holds attributed value whose agency share lacks a split by objective. `untraced` is the part of `value` from untraced rows, so `value` − `untraced` is the traced value, and it is 0 for commitments. It is computed on first access and kept, so reading it twice runs the query once. `pa.table(result.table)` reads it as an Arrow table, and `result.table.to_pandas()` returns a pandas frame when pandas is installed. `low` and `high` bound `value`, the total over all objectives, and no column bounds `adaptation`, `mitigation`, or `cross_cutting` alone. [Step 6 of the tutorial](../tutorial.md#step-6-ask-for-one-objective) sums one objective.
 - `modelled` is a polars DataFrame of the "modelled, not reported" range with the columns: `year`, `provider`, `provider_code`, `recipient`, `recipient_code`, `basis`, `low`, and `high`. It is populated only when the query asks for recipient-view disbursements with `oda_only=False`.
 - `spec` is the `Spec`. `release.run(result.spec)` reruns the query to an identical table.
 - `meta` holds `release`, `package_version`, `source_versions`, `model_versions`, `years`, and `conversion`. `years` copies the release's `years`. `conversion` holds the pydeflate version and a SHA-256 of the factors behind a converted result, because pydeflate refreshes its DAC data every 30 days, and is None for USD at current prices.
@@ -229,6 +229,24 @@ print(sorted(result.rows(origin="disbursement")["link_method"].unique()))
 ```
 
 The synthetic release behind these examples carries `crosswalk_amount` and `title_recipient` as disbursement links. A build writes both only as routes from a CRDF row to its CRS commitment. [How linking works](../explanation/how-linking-works.md) lists the methods it writes.
+
+DuckDB queries the table by the name of the variable that holds it, here `frame`:
+
+```python
+import duckdb
+
+frame = result.table
+print(duckdb.sql("select year, round(sum(value) / 1e6, 1) as value_musd from frame group by year order by year"))
+```
+
+```output
+┌───────┬────────────┐
+│ year  │ value_musd │
+│ int16 │   double   │
+├───────┼────────────┤
+│  2023 │       48.3 │
+└───────┴────────────┘
+```
 
 ## `Quality`
 
@@ -307,7 +325,7 @@ Unknown provider 'Japn'. Did you mean: Japan?
 
 ## Errors
 
-All errors inherit from `ClimateFinanceError`. The three name errors import from `climate_finance`, and every error imports from `climate_finance.errors`.
+All errors inherit from `ClimateFinanceError`, and `climate_finance.errors` holds every class. `UnknownNameError`, `UnknownProviderError`, and `UnknownRecipientError` also import from `climate_finance`.
 
 | Error | Raised when |
 |---|---|
@@ -320,7 +338,25 @@ All errors inherit from `ClimateFinanceError`. The three name errors import from
 | `WithheldTableError` | `Release.table()` asks for a table the published release leaves out, `btr` or `btr_links`. `release.json` names each under `withheld_tables` with a note on how to build it. |
 | `SchemaError` | a table fails to match its schema. |
 
-`spending()`, `run()`, `quality()`, and `reconcile()` give one `CoverageWarning` when `years` asks for years the release holds no rows for, naming the years it holds and the years that return no rows. `spending()` reads the years of the flow's tables: `commitments` for commitments, `disbursements` and, with `untraced`, `untraced` for the other flows, and in the provider view `core_contributions` too. `quality()` reads the `quality` table and `reconcile()` the `btr_totals` table. Silence it by class:
+Catch the base class for any package error. `InvalidInputError` is also a `TypeError`, and `UnknownNameError` and `WithheldTableError` are also `LookupError`s, so the built-in classes catch them as well.
+
+```python
+for call in (
+    lambda: release.spending(years="2022"),
+    lambda: release.spending(providers="Japn"),
+):
+    try:
+        call()
+    except cf.errors.ClimateFinanceError as error:
+        print(type(error).__name__, "-", error)
+```
+
+```output
+InvalidInputError - years takes an int or ints, such as 2022 or range(2015, 2023); got '2022'
+UnknownProviderError - Unknown provider 'Japn'. Did you mean: Japan?
+```
+
+`spending()`, `run()`, `quality()`, and `reconcile()` give one `CoverageWarning`, a `UserWarning` in `climate_finance.errors`, when `years` asks for years the release holds no rows for, naming the years it holds and the years that return no rows. `spending()` reads the years of the flow's tables: `commitments` for commitments, `disbursements` and, with `untraced`, `untraced` for the other flows, and in the provider view `core_contributions` too. `quality()` reads the `quality` table and `reconcile()` the `btr_totals` table. Silence it by class:
 
 ```python
 import warnings
