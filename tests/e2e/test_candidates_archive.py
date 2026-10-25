@@ -34,6 +34,33 @@ FIRST_YEAR = CRS_YEARS[0]
 PROTOTYPE_YEARS = (2021, 2022)
 CRDF_YEARS = (2015, 2024)
 RECALL_TARGET = 0.985
+# Eligible and training pairs under the key tiers and repair rules before the rules
+# in `KEY_RULES_ELIGIBLE`.
+ELIGIBLE_PAIRS = 1_348_593
+TRAINING_PAIRS = 1_371_429
+# Eligible pairs each key rule adds by leaving disbursements unlinked, or takes by
+# linking them, each measured with the rules above it in place. No rule moves a
+# training pair.
+KEY_RULES_ELIGIBLE = {
+    # A lettered record reaches its parent only in its recipient under its project
+    # number (`_parent_key`).
+    "lettered parent": 2_995,
+    # Only an EU contract passes its floor in the parent tier (`parent_floor_year`).
+    "EU parent floor": 0,
+    # A missing project number counts as one more project in `crs_key`.
+    "crs_key on a missing project number": 2,
+    # A floor naming no commitment under the disbursement's own crs id passes
+    # (`same_crs_id`).
+    "floor unseen": -19,
+    # A component award keys each component by purpose (`split_components`), so
+    # the project-number tiers link within one component, and the disbursements
+    # they linked across components, mostly US, go to scoring.
+    "component awards": 23_821,
+    # Key repair compares awards too: it links 2,831 disbursements within one
+    # component, 1,480 of them US and 900 Canadian, and no longer links 2,310 across
+    # components. The units it now links held more pairs than those it frees.
+    "component awards in key repair": -21_094,
+}
 _CATEGORY = {
     "DAC member": "bilateral",
     "Non-DAC member": "bilateral",
@@ -210,7 +237,10 @@ def test_candidates_hold_eligible_and_training_pairs(
     # `short_description` fallback titles untitled units, which raises training pairs
     # to 7,198,372; `template_lines` then takes 5,826,943 of them, almost all Japan's
     # "TC aggregated activities", and the two leave 4,774 fewer eligible pairs.
-    assert counts == {True: 1_348_593, False: 1_371_429}
+    assert counts == {
+        True: ELIGIBLE_PAIRS + sum(KEY_RULES_ELIGIBLE.values()),
+        False: TRAINING_PAIRS,
+    }
     assert (candidates["eligible"] != candidates["id_persistent"]).all()
 
 

@@ -1293,12 +1293,8 @@ def _coefficient_basis() -> pl.Expr:
 
 def _coefficients_by_year(snapshot: Snapshot, *, years: pl.LazyFrame) -> pl.LazyFrame:
     """Each `provider_coefficients` row once for every year of `years` its span
-    covers, with `citation` its source and locator.
-
-    The span is expanded into its years and matched on `year`, an equi-join. A
-    cross join filtered on the span would be rewritten by polars into an
-    inequality join, which polars 1.33 to 1.35 collect wrongly where the plan is
-    reused.
+    covers, with `citation` its source and locator, matched on `year` after the
+    span is expanded into its years.
 
     Raises:
         ReleaseIntegrityError: when two rows of one provider and agency cover a

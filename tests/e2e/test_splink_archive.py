@@ -37,6 +37,24 @@ SIMULATION_CACHE = Path("jev-cache/splink-simulation")
 # Truth-group providers of several sizes: four with their own model (New Zealand,
 # Austria, France, Denmark) and three small enough to share the pooled model.
 SIMULATED = (820, 1, 4, 3, 68, 1624, 76)
+# Splink pairs on the archive build with commitments from 2015 and the key tiers
+# before the rules in `PAIRS_MOVED`.
+SPLINK_PAIRS = 1_640_847
+# Pairs each change adds, each measured with the changes above it in place. The
+# lettered-parent rule, the EU parent floor and the floor naming no commitment move
+# none.
+PAIRS_MOVED = {
+    # A missing project number counts as one more project in `crs_key`.
+    "crs_key on a missing project number": 2,
+    # A component award keys each component by purpose (`split_components`), so the
+    # disbursements the project-number tiers linked across components, US awards
+    # among them, go to scoring.
+    "component awards": 27_826,
+    # The build takes every commitment year the CRS holds, from 2000, so the
+    # providers' disbursements also pair with earlier commitments: 804,454 pairs
+    # have a commitment from before 2015, 795,740 of them the US's.
+    "commitments from 2000": 804_639,
+}
 _LABELS = {
     name: column.dtype for name, column in schema.PAIR_LABELS.columns.items()
 } | {"stratified": pl.Boolean()}
@@ -87,20 +105,20 @@ def test_without_decisions_splink_only_asks_for_calibration_labels(
     queued = scores.filter(review_reason=CALIBRATION_REASON).group_by("model").len()
     assert set(queued["len"]) == {CALIBRATION_LABELS}
     assert set(scores["review_reason"].drop_nulls()) == {CALIBRATION_REASON}
-    # The archive build: 39 providers outside the truth group and five usable models
-    # (USA, three more providers of their own and the pooled model). The pairs are
+    # The archive build: 39 providers outside the truth group and six usable models
+    # (USA, four more providers of their own and the pooled model). The pairs are
     # those providers' eligible candidates, blocked on trimmed ids and on project
     # numbers with rounded ones null, less the disbursements the key tiers link. The
     # GEF reuses a crs id across projects, so `crs_key` leaves most of its
     # disbursements to scoring. Its own model then completes one EM session, its
     # project numbers block one pair and EM drives a recipient-and-purpose m to zero,
     # so it joins the pooled model. `template_lines` takes every pair of the
-    # Development Bank of Latin America and the New Development Bank, and the EBRD's
-    # "aggregated disbursements" lines leave it 292 open commitments, under the
-    # `SPLINK_MIN_COMMITMENTS` of its own model.
+    # Development Bank of Latin America and the New Development Bank. Commitments
+    # from 2000 give the EBRD (990) 527 commitments, over `SPLINK_MIN_COMMITMENTS`,
+    # and a model of its own.
     assert len(providers) == 39
-    assert scores.height == 1_640_847
-    assert queued.height == 5
+    assert scores.height == SPLINK_PAIRS + sum(PAIRS_MOVED.values())
+    assert queued.height == 6
 
 
 def test_two_runs_give_the_same_scores(tables: LinkTables, tmp_path: Path) -> None:
@@ -226,11 +244,13 @@ def test_calibrated_splink_against_id_truth(tables: LinkTables) -> None:
     # The pooled model's providers (68, 1624, 76) link nothing at 0.5. The
     # `short_description` fallback adds 172 New Zealand pairs (21 true) and 15
     # Danish ones to the pool, and `template_lines` takes 2,908 French and 548
-    # Danish ones out. `SIMULATION_CACHE` holds Jev's answers for every pair the
-    # calibration samples of New Zealand, Denmark and France draw.
+    # Danish ones out. Commitments from 2000 give the pool 132,177 more pairs, all
+    # Austrian, Danish, French and pooled; New Zealand has none before 2015.
+    # `SIMULATION_CACHE` holds Jev's answers for every pair the calibration samples
+    # draw.
     assert at_half == {
-        1: (1633, 0.662, 0.791),
-        3: (886, 0.613, 0.457),
-        4: (1971, 0.953, 0.856),
+        1: (2251, 0.681, 0.833),
+        3: (1736, 0.641, 0.472),
+        4: (2655, 0.901, 0.758),
         820: (1641, 0.645, 0.801),
     }

@@ -77,6 +77,7 @@ def record(
     disburse: float | None = None,
     donor: int = 1,
     crs_id: str = "2019000001",
+    project_number: str | None = None,
     purpose: int = 230,
     dated: int | None = None,
     start: int | None = None,
@@ -90,7 +91,7 @@ def record(
         "donor_code": donor,
         "agency_code": 10,
         "crs_id": crs_id,
-        "project_number": None,
+        "project_number": project_number,
         "title": title,
         "short_description": None,
         "recipient_code": 289,
@@ -329,6 +330,44 @@ def test_a_disbursement_fills_the_commitment_whose_date_and_title_it_repeats(
 ) -> None:
     # d22 carries m2's date; it is m2's own when the titles share half their words.
     pairs = run([*MODULES, record("d22", 2022, disburse=60.0, dated=2022, title=title)])
+    assert by_commitment(pairs) == pytest.approx(filled)
+
+
+@pytest.mark.parametrize(
+    ("line", "filled"),
+    [
+        # CRS3 commits, so its disbursement fills CRS3 first and pools only the
+        # remainder over the loan's other line.
+        ("CRS3", {"CRS1": 50.0, "CRS3": 100.0}),
+        # CRS5 never commits, so its disbursement pools over the loan's lines.
+        ("CRS5", {"CRS1": 75.0, "CRS3": 75.0}),
+    ],
+)
+def test_a_world_bank_disbursement_fills_its_own_line_first(
+    line: str, filled: dict[str, float]
+) -> None:
+    def line_record(
+        name: str, year: int, purpose: int, **amount: float
+    ) -> dict[str, object]:
+        return record(
+            name,
+            year,
+            donor=905,
+            crs_id="P1",
+            project_number=f"P1.IDA2.{name}",
+            purpose=purpose,
+            **amount,
+        )
+
+    crs, crdf, units, links = link(
+        [
+            line_record("CRS1", 2019, 140, commit=100.0),
+            line_record("CRS3", 2019, 230, commit=100.0),
+            {**line_record(line, 2020, 230, disburse=150.0), "record_id": "d"},
+        ]
+    )
+    assert set(links.collect()["link_method"]) == {"wb_loan"}
+    pairs = allocate(units, crs=crs, links=links, crdf=crdf)
     assert by_commitment(pairs) == pytest.approx(filled)
 
 

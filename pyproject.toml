@@ -19,7 +19,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "polars>=1.33.0",
+    "polars>=2.0.0",
     "pyarrow>=16.1.0",
     "pydantic>=2.10.0",
     "pydeflate>=2.6.2",

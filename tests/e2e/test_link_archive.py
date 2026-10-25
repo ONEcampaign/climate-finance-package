@@ -25,14 +25,15 @@ _SHARES = ("id_share", "parent_share", "pn_share")
 # The references take every crs id longer than ten characters as a contract under
 # its first ten. Under the build's own rule, `parent_id` takes only EU decision ids
 # and `LETTER_SUFFIX_DONORS` letters, so these agencies continue less by parent id in
-# 2019-2022, and those in `_NOW_BY_PN` continue by project number instead.
+# 2019-2022, and those in `_NOW_BY_PN` continue by project number instead. Germany's
+# agency 2 writes 189 of its 2019-2022 lettered ids with a trailing space, as
+# `2018128770a `; normalise trims it, so `parent_id` reads them as the references do.
 _FEWER_BY_PARENT = {
     (1, 8),
     (1, 9),
     (1, 13),
     (4, 2),
     (4, 44),
-    (5, 2),
     (6, 4),
     (10, 6),
     (68, 1),
@@ -92,19 +93,21 @@ KEY_RULES_LINKED_USD = {
     # reaches a commitment placed no later than the floor (`floor_seen`).
     "floor_seen": 5.042315754e9,
     # A lettered record reaches its parent only in its recipient under its project
-    # number (`_parent_key`), and only an EU contract passes its floor in the parent
-    # tier (`parent_floor_year`).
-    "lettered parent": -0.922428401e9,
-    "EU parent floor": -0.010459718e9,
+    # number (`_parent_key`): Germany's 1.06bn and the US's 0.24bn no longer reach
+    # a parent elsewhere. Only an EU contract passes its floor in the parent tier
+    # (`parent_floor_year`).
+    "lettered parent": -1.336838177e9,
+    "EU parent floor": -0.002612380e9,
     # A missing project number counts as one more project in `crs_key`.
-    "crs_key on a missing project number": -0.030889500e9,
+    "crs_key on a missing project number": -0.029908498e9,
     # A floor naming no commitment under the disbursement's own crs id passes
-    # (`same_crs_id`); 1.60bn of this is EU Institutions' disbursement under its
+    # (`same_crs_id`); 1.64bn of this is EU Institutions' disbursement under its
     # decision ids.
-    "floor unseen": 1.819184508e9,
-    # A component award keys each component by purpose (`split_components`), so its
-    # key is unique and the project-number tiers reach it.
-    "component awards": 20.978664440e9,
+    "floor unseen": 1.862874714e9,
+    # A component award keys each component by purpose (`split_components`).
+    # `unique_by` already reaches each component in the purpose tier, so the split
+    # only stops links across components, 0.86bn of them US awards.
+    "component awards": -0.887649091e9,
 }
 _PERIOD_KEY = ["donor_code", "agency_code", "period"]
 # The CRS years the tests normalise; the first is the first year they load.
@@ -275,8 +278,9 @@ def test_id_practice_reproduces_the_three_period_reference(
     moves = _compare(built, id_practice, _PERIOD_KEY)
     for column in ("open_commitments", "id_share"):
         assert (moves[column] == moves[f"{column}_built"]).all(), column
+    # The 2019-2022 rows of `_FEWER_BY_PARENT` and 30 of earlier periods.
     fewer = _moved(moves, "parent_share", _PERIOD_KEY)
-    assert fewer.height == 45
+    assert fewer.height == 44
     assert (fewer["parent_share_built"] < fewer["parent_share"]).all()
     assert (moves["pn_share_built"] >= moves["pn_share"]).all()
     reclassed = moves.filter(pl.col("id_class") != pl.col("id_class_built"))
