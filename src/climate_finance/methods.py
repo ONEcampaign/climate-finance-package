@@ -9,6 +9,20 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from climate_finance.catalogue import Catalogue
 from climate_finance.schema import OBJECTIVES
 
+__all__ = [
+    "OECD",
+    "ONE",
+    "PROVIDER",
+    "RANGE",
+    "Method",
+    "MethodRange",
+    "describe",
+    "info",
+    "label",
+    "list",
+    "search",
+]
+
 NOT_CLIMATE = "not_climate_relevant"
 
 
