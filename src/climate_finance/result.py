@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 from pydantic import BaseModel, ConfigDict
 
+from climate_finance.catalogue import Agency, name_of, resolve
 from climate_finance.convert import Conversion
 from climate_finance.methods import (
     Method,
@@ -28,6 +29,7 @@ from climate_finance.spec import (
     ODA_FLOW_CATEGORY,
     ODA_FLOW_CODES,
     Spec,
+    provider_rows,
 )
 from climate_finance.sums import ordered_sum
 
@@ -122,13 +124,21 @@ class Result:
         title = escape(_title(self.spec, release=self.meta.release))
         return f"<p>{title}</p>{self.table._repr_html_()}"
 
-    def rows(self, **filters: object) -> pl.DataFrame:
-        """The project rows behind the table, filtered by column equality.
+    def rows(
+        self,
+        *,
+        provider: str | int | Agency | Collection[str | int | Agency] | None = None,
+        **filters: object,
+    ) -> pl.DataFrame:
+        """The project rows behind the table, filtered by column equality, and by
+        `provider`: names, DAC codes or agencies, read as `spending` reads them.
 
         A filter value that is a list, tuple, set or range matches any of its items.
 
         Raises:
             KeyError: when a filter names a column the rows do not have.
+            UnknownProviderError: for a `provider` name, code or agency the
+                listings lack, or a name of several entries.
         """
         columns = self._rows.collect_schema().names()
         if unknown := sorted(set(filters) - set(columns)):
@@ -139,6 +149,8 @@ class Result:
             else pl.col(name) == value
             for name, value in filters.items()
         ]
+        if (providers := resolve(provider, kind="providers")) is not None:
+            conditions.append(provider_rows(providers))
         return self._rows.filter(*conditions).collect()
 
     def explain(self) -> str:
@@ -730,7 +742,11 @@ def _field_text(field: str, value: object) -> str:
             return f"{value} view"
         case (("providers" | "recipients" | "years"), None):
             return f"all {field}"
-        case (("providers" | "recipients" | "years"), tuple()):
+        case "providers", tuple():
+            return f"{field} {', '.join(name_of(code, kind=field) for code in value)}"
+        case "recipients", tuple():
+            return f"{field} {', '.join(name_of(code, kind=field) for code in value)}"
+        case "years", tuple():
             return f"{field} {', '.join(map(str, value))}"
     return str(value)
 

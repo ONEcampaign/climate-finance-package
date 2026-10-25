@@ -107,10 +107,12 @@ from climate_finance.spec import (
     Flow,
     Spec,
     View,
+    provider_rows,
 )
 from climate_finance.sums import ordered_sum
 
 if TYPE_CHECKING:
+    from climate_finance.catalogue import Target
     from climate_finance.release import Release
 
 
@@ -203,6 +205,11 @@ def spending(release: Release, *, spec: Spec) -> Result:
     named = _conditions(providers=spec.providers, recipients=None, years=None)
     others = _conditions(providers=None, recipients=spec.recipients, years=spec.years)
     filters = [*named, *others]
+    # `modelled` holds no agency, so an agency carries no modelled line.
+    codes = None
+    if spec.providers is not None:
+        codes = tuple(code for code in spec.providers if isinstance(code, int))
+    modelled = [*_conditions(providers=codes, recipients=None, years=None), *others]
     if spec.oda_only:
         others = [
             *others,
@@ -256,7 +263,7 @@ def spending(release: Release, *, spec: Spec) -> Result:
     )  # fmt: skip
     return Result(
         table=Table(_aggregate(rows, methods=[label(method) for method in methods])),
-        modelled=Table(_modelled(release, spec=spec, conditions=filters)),
+        modelled=Table(_modelled(release, spec=spec, conditions=modelled)),
         rows=rows,
         totals=_totals(release, spec=spec, conditions=filters, eu_kept=eu_kept),
         spec=spec,
@@ -286,7 +293,8 @@ def quality(
     `untraced` the Rio-marked CRS disbursement that reaches no commitment.
     """
     years = None if years is None else tuple(years)
-    conditions = _conditions(providers=providers, recipients=None, years=years)
+    codes = _provider_codes(providers)
+    conditions = _conditions(providers=codes, recipients=None, years=years)
     table = release.table("quality")
     status = (
         _counted_commitments(release)
@@ -294,18 +302,16 @@ def quality(
         .select("provider_code", "year", "status", "climate_usd")
     )
     eu_left_out = _eu_left_out(release, years=years, method=method)
-    if providers is not None and EU_INSTITUTIONS not in _codes(
-        providers, listing=catalogue.providers
-    ):
+    if codes is not None and EU_INSTITUTIONS not in codes:
         eu_left_out = eu_left_out.clear()
     return Quality(
         table=Table(table.filter(*conditions)),
         status=Table(status),
         eu_left_out=Table(eu_left_out),
         attribution=Table(
-            _attribution(release, providers=providers, years=years, method=method)
+            _attribution(release, providers=codes, years=years, method=method)
         ),
-        precision=Table(_precision(release, providers=providers)),
+        precision=Table(_precision(release, providers=codes)),
         untraced=Table(
             _untraced(release, conditions=conditions, method=method).sort(
                 "provider_code", "year"
@@ -364,9 +370,7 @@ _GATE_ROW = pl.Schema(
 )
 
 
-def _precision(
-    release: Release, *, providers: Sequence[str | int] | None
-) -> pl.LazyFrame:
+def _precision(release: Release, *, providers: tuple[int, ...] | None) -> pl.LazyFrame:
     """The precision gate's rows in `release.json`, one per provider; none when the
     release was not gated.
 
@@ -739,7 +743,7 @@ def _reconciliation_rows(
 def _attribution(
     release: Release,
     *,
-    providers: Sequence[str | int] | None,
+    providers: tuple[int, ...] | None,
     years: tuple[int, ...] | None,
     method: Method,
 ) -> pl.LazyFrame:
@@ -811,31 +815,36 @@ def _per_flow(build: Callable[[Flow], pl.LazyFrame]) -> pl.LazyFrame:
     return pl.concat(build(flow).with_columns(flow=pl.lit(flow)) for flow in FLOWS)
 
 
-def _codes(values: Sequence[str | int], *, listing: catalogue.Catalogue) -> list[int]:
-    """DAC codes for `values`, with names resolved through `listing`."""
-    codes = []
-    for value in values:
-        code = listing.code(value) if isinstance(value, str) else value
-        # Queries do not filter by agency yet, so an agency name stays unknown.
-        if isinstance(code, catalogue.Agency):
-            raise UnknownProviderError(str(value))
-        codes.append(code)
-    return codes
+def _provider_codes(values: Sequence[str | int] | None) -> tuple[int, ...] | None:
+    """The DAC codes `values` name, for `quality`, whose tables count providers.
+
+    Raises:
+        UnknownProviderError: for a name or code `resolve` refuses, or a name of an
+            agency.
+    """
+    targets = catalogue.resolve(values, kind="providers")
+    if targets is None:
+        return None
+    for target in targets:
+        if isinstance(target, catalogue.Agency):
+            name = catalogue.name_of(target, kind="providers")
+            raise UnknownProviderError(
+                name, note=f"{name} is an agency; quality() counts providers only."
+            )
+    return tuple(target for target in targets if isinstance(target, int))
 
 
 def _conditions(
     *,
-    providers: Sequence[str | int] | None,
-    recipients: Sequence[str | int] | None,
+    providers: tuple[Target, ...] | None,
+    recipients: tuple[int, ...] | None,
     years: Iterable[int] | None,
 ) -> list[pl.Expr]:
     conditions = []
     if providers is not None:
-        codes = _codes(providers, listing=catalogue.providers)
-        conditions.append(pl.col("provider_code").is_in(codes))
+        conditions.append(provider_rows(providers))
     if recipients is not None:
-        codes = _codes(recipients, listing=catalogue.recipients)
-        conditions.append(pl.col("recipient_code").is_in(codes))
+        conditions.append(pl.col("recipient_code").is_in(recipients))
     if years is not None:
         conditions.append(pl.col("year").is_in(list(years)))
     return conditions

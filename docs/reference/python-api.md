@@ -40,7 +40,8 @@ Represents one release on disk. `release.path` is its directory and `release.man
 
 Returns a `Result`. Every argument is optional and keyword-only:
 
-- `providers`, `recipients` (`str | int | Sequence[str | int] | None`). Names or DAC codes. `None` takes all. A name resolves by exact match, ignoring case and accents.
+- `providers` (`str | int | Agency | Iterable[str | int | Agency] | None`). Provider names, DAC codes, or agencies, one or many. `None` takes all. A name can name one agency, such as `"EIB"`, and the query then counts that agency's rows only.
+- `recipients` (`str | int | Iterable[str | int] | None`). Recipient names or DAC codes. `None` takes all.
 - `years` (`int | Iterable[int] | None`). `None` takes all years.
 - `method` (`Method | MethodRange`, default `cf.methods.ONE`).
 - `flow` (`"commitments" | "disbursements" | "grant_equivalent"`, default `"disbursements"`).
@@ -52,7 +53,7 @@ Returns a `Result`. Every argument is optional and keyword-only:
 - `untraced` (`bool`, default `True`). `False` leaves out the untraced rows of disbursements and grant equivalents. Commitments have none.
 - `spec` (`Spec | None`). Replaces every other argument.
 
-Raises `UnknownProviderError` or `UnknownRecipientError` for a name outside the listings, and `MissingLabelsError` for a method with `relevance="jev"` on a release that holds no Jev labels.
+Raises `UnknownProviderError` or `UnknownRecipientError` for a name, code, or agency outside the listings, and `MissingLabelsError` for a method with `relevance="jev"` on a release that holds no Jev labels.
 
 **Flow.** `flow="disbursements"` counts what the trace allocated to the release's climate commitments, by the year of the disbursement record. A disbursement counts against a commitment the release holds, and the commitments start at the first CRDF year, so the earliest years count less of what was paid. Rio-marked CRS disbursement that reaches no commitment, the excess beyond a full commitment and the records linked to none, counts as untraced, weighted by the record's own markers, in `value` and `high` and not in `low`. Disbursements end at the build's `crs_last_complete`. `flow="commitments"` counts CRDF commitments at face value in the commitment year, with `low`, `value`, and `high` equal. `flow="grant_equivalent"` counts the grant equivalent of the disbursements. A record with no grant equivalent, or a negative one on a positive disbursement, counts nothing, and `release.quality().summary()` reports the valued share of allocated value as `grant_equiv_coverage`.
 
@@ -106,7 +107,7 @@ result = release.spending(
 
 ### `Release.quality(*, providers, years, method)`
 
-Returns a `Quality` object. Its amounts are the CRDF's published climate value of the commitments. `method` acts on the provider-view columns, `eu_left_out` and `attribution`, and on the climate value of untraced disbursement in `untraced`.
+Returns a `Quality` object. Its amounts are the CRDF's published climate value of the commitments. `method` acts on the provider-view columns, `eu_left_out` and `attribution`, and on the climate value of untraced disbursement in `untraced`. `providers` takes provider names and DAC codes; a name of an agency raises `UnknownProviderError`, since its tables count providers.
 
 ### `Release.reconcile(*, parties, years, method)`
 
@@ -130,8 +131,8 @@ A frozen pydantic model of every `spending()` argument. `Spec.methods` returns t
 
 | Field | Type | Default |
 |---|---|---|
-| `providers` | `tuple[str \| int, ...] \| None` | `None` |
-| `recipients` | `tuple[str \| int, ...] \| None` | `None` |
+| `providers` | `tuple[int \| Agency, ...] \| None` | `None` |
+| `recipients` | `tuple[int, ...] \| None` | `None` |
 | `years` | `tuple[int, ...] \| None` | `None` |
 | `method` | `Method \| MethodRange` | `cf.methods.ONE` |
 | `flow` | `Flow` | `"disbursements"` |
@@ -141,6 +142,18 @@ A frozen pydantic model of every `spending()` argument. `Spec.methods` returns t
 | `oda_only` | `bool` | `False` |
 | `measure` | `Measure` | `"amount"` |
 | `untraced` | `bool` | `True` |
+
+`providers` and `recipients` read names, codes, and agencies through the listings and hold the DAC codes and `Agency` values they name, sorted and without duplicates. So `providers="Japan"` and `providers=701` give equal specs, and a provider named beside one of its agencies covers it. In JSON an agency is `{"provider": 918, "agency": 3}`.
+
+```python
+print(release.spending(providers=["EIB", "Japan", 701]).spec.providers)
+```
+
+```output
+(701, Agency(provider=918, agency=3))
+```
+
+An agency selects the rows whose `provider_code` and `agency_code` match it. Attributed core contributions carry no agency, so an agency has none, and it has no modelled line. Under a method with `eu="provider"`, such as `cf.methods.OECD`, the provider view leaves out the EIB's own rows, so `providers="EIB"` returns no rows there.
 
 With `view="recipient"`, the query counts bilateral flows (Bi_Multi 1, 3, 7, and 8) and multilateral outflows (code 4). With `view="provider"`, it counts the bilateral flows plus each provider's core contributions multiplied by the receiving agency's climate share. Both views exclude code 2 rows from the release tables. The provider view adds attributed core contributions, which carry Bi_Multi 2, so each dollar counts once.
 
@@ -177,7 +190,7 @@ The answer to one `Spec`:
 - `modelled` is a `Table` of the "modelled, not reported" range with the columns: `year`, `provider_code`, `recipient_code`, `basis`, `low`, and `high`. It is populated only when the query asks for recipient-view disbursements with `oda_only=False`.
 - `spec` is the `Spec`. `release.spending(spec=result.spec)` reruns the query to an identical table.
 - `meta` holds `release`, `package_version`, `source_versions`, `model_versions`, `years`, and `conversion`. `years` copies the release's `years`. `conversion` holds the pydeflate version and a SHA-256 of the factors behind a converted result, because pydeflate refreshes its DAC data every 30 days, and is None for USD at current prices.
-- `rows(**filters)` returns the project rows behind the table as a polars DataFrame, filtered by column equality. A list, tuple, set, or range matches any item. Raises `KeyError` for an unknown column. `origin` is `commitment`, `disbursement`, `untraced`, or `attribution`. A row has the columns `origin`, `row_id`, `record_id`, `year`, `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_category`, `flow_code`, `project_number`, `title`, `status`, `rio_adaptation`, `rio_mitigation`, `record_rio_adaptation`, `record_rio_mitigation`, `marker_source`, `reason`, `climate_share`, `share_source`, `link_method`, `link_probability`, `allocation_weight`, `objective_label`, `label_source`, `jev_level`, `amount`, `coefficient_basis`, `coefficient_source`, and `method`, followed by the weighted amounts `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced`. An untraced row has no `row_id`, carries the record's own markers with `marker_source` `record`, and has `reason` `excess` for a linked record's disbursement beyond what its commitments take or `unlinked` for a record linked to no commitment. `coefficient_basis` is `provider`, `default`, or `case_by_case`, and null where the release has no coefficient row for the provider.
+- `rows(*, provider=None, **filters)` returns the project rows behind the table as a polars DataFrame, filtered by column equality. A list, tuple, set, or range matches any item. `provider` takes names, DAC codes, or agencies, as `spending()` does. Raises `KeyError` for an unknown column. `origin` is `commitment`, `disbursement`, `untraced`, or `attribution`. A row has the columns `origin`, `row_id`, `record_id`, `year`, `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_category`, `flow_code`, `project_number`, `title`, `status`, `rio_adaptation`, `rio_mitigation`, `record_rio_adaptation`, `record_rio_mitigation`, `marker_source`, `reason`, `climate_share`, `share_source`, `link_method`, `link_probability`, `allocation_weight`, `objective_label`, `label_source`, `jev_level`, `amount`, `coefficient_basis`, `coefficient_source`, and `method`, followed by the weighted amounts `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced`. An untraced row has no `row_id`, carries the record's own markers with `marker_source` `record`, and has `reason` `excess` for a linked record's disbursement beyond what its commitments take or `unlinked` for a record linked to no commitment. `coefficient_basis` is `provider`, `default`, or `case_by_case`, and null where the release has no coefficient row for the provider.
 - `explain()` returns the method, view, flow, filters, and units in plain language, as a string.
 - `share_of_total()` returns the same result under `measure="share_of_total"`, with every amount divided by all CRS flows for the same flow, year, provider, recipient, and Bi_Multi code, so its spec reruns to the same shares. A key missing from `total_flows` gives null. In the provider view, EU Institutions' total holds the same rows as their amounts under each method, at the same scaling.
 
@@ -238,7 +251,7 @@ print(cf.providers.info("Japan"))
 Japan (DAC code 701): DAC member.
 ```
 
-A provider or recipient name can take any common form: the listing name, the French provider name, an ISO 3 or ISO 2 code, or another spelling resolvekit knows, matched ignoring case, accents, and surrounding spaces. `"DEU"`, `"Allemagne"`, and `" germany "` all name Germany. A provider name can also name one agency, such as `"EIB"` for the European Investment Bank, agency 3 of the EU Institutions. `cf.providers.code(name)` and `cf.recipients.code(name)` return the DAC code, or for an agency an `Agency(provider=918, agency=3)`, which serialises as `{"provider": 918, "agency": 3}`. A DAC code, or a string of digits, passes through.
+A provider or recipient name can take any common form: the listing name, the French provider name, an ISO 3 or ISO 2 code, or another spelling resolvekit knows, matched ignoring case, accents, and surrounding spaces. `"DEU"`, `"Allemagne"`, and `" germany "` all name Germany. A provider name can also name one agency, such as `"EIB"` for the European Investment Bank, agency 3 of the EU Institutions. `cf.providers.code(name)` and `cf.recipients.code(name)` return the DAC code, or for an agency a `cf.Agency(provider=918, agency=3)`, which serialises as `{"provider": 918, "agency": 3}`. A DAC code, or a string of digits, passes through when its listing holds it. An `Agency` passes through when `data/agencies.csv` lists it, or when it is agency 0 or 1 of a listed provider, which the OECD files use for the provider itself.
 
 ```python
 print(cf.providers.code("Allemagne"))
@@ -250,7 +263,7 @@ print(cf.providers.info("EIB"))
 European Investment Bank (agency 3 of EU Institutions, DAC code 918).
 ```
 
-A name of several entries raises `UnknownProviderError` or `UnknownRecipientError` with every entry it names in `.suggestions`, and an unknown name raises one with close names. Neither is ever applied.
+A name of several entries raises `UnknownProviderError` or `UnknownRecipientError` with every entry it names in `.suggestions`, an unknown name raises one with close names, and an unknown code one with the closest listed codes. Neither is ever applied.
 
 ```python
 try:
@@ -270,7 +283,7 @@ All errors inherit from `ClimateFinanceError`. The three name errors import from
 | Error | Raised when |
 |---|---|
 | `UnknownNameError` | a name is absent from its listing, or names several entries. `.suggestions` holds close names, or every entry the name names. |
-| `UnknownProviderError`, `UnknownRecipientError` | a provider or recipient is absent from its listing. |
+| `UnknownProviderError`, `UnknownRecipientError` | a provider, agency, or recipient name or code is absent from its listing. |
 | `ReleaseIntegrityError` | a release fails its check. |
 | `SourceUnavailableError` | a download fails. |
 | `MissingLabelsError` | a method with `relevance="jev"` queries a release with no Jev labels. The message names the `jev_labels` setting. |

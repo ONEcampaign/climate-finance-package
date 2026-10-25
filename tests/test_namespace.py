@@ -7,7 +7,9 @@ from climate_finance import methods
 
 
 def test_all_lists_the_vocabulary_and_every_name_resolves() -> None:
-    assert {"Release", "Quality", "Reconciliation", "errors"} <= set(cf.__all__)
+    assert {"Agency", "Release", "Quality", "Reconciliation", "errors"} <= set(
+        cf.__all__
+    )
     assert all(hasattr(cf, name) for name in cf.__all__)
     assert cf.errors.ClimateFinanceError.__name__ == "ClimateFinanceError"
 

@@ -5,7 +5,7 @@ from importlib import import_module as _import_module
 from importlib.metadata import version as _version
 
 from climate_finance import errors, methods
-from climate_finance.catalogue import flows, providers, recipients
+from climate_finance.catalogue import Agency, flows, providers, recipients
 from climate_finance.errors import (
     UnknownNameError,
     UnknownProviderError,
@@ -19,6 +19,7 @@ from climate_finance.spec import Spec
 __version__ = _version("climate-finance")
 
 __all__ = [
+    "Agency",
     "Comparison",
     "Method",
     "Quality",

@@ -19,6 +19,7 @@ import pyarrow as pa
 from pydantic import BaseModel, ConfigDict
 
 from climate_finance import query
+from climate_finance.catalogue import Agency
 from climate_finance.errors import (
     ReleaseIntegrityError,
     SourceUnavailableError,
@@ -93,8 +94,8 @@ class Release:
     def spending(
         self,
         *,
-        providers: str | int | Sequence[str | int] | None = None,
-        recipients: str | int | Sequence[str | int] | None = None,
+        providers: str | int | Agency | Iterable[str | int | Agency] | None = None,
+        recipients: str | int | Iterable[str | int] | None = None,
         years: int | Iterable[int] | None = None,
         method: Method | MethodRange = ONE,
         flow: Flow = "disbursements",
@@ -111,18 +112,22 @@ class Release:
         `spec` replaces every other argument, so a saved `Spec` reruns exactly.
         """
         if spec is None:
-            spec = Spec(
-                providers=_as_tuple(providers),
-                recipients=_as_tuple(recipients),
-                years=_years(years),
-                method=method,
-                flow=flow,
-                view=view,
-                currency=currency,
-                prices=prices,
-                oda_only=oda_only,
-                measure=measure,
-                untraced=untraced,
+            # Validated from a dict: the fields' validators read names and single
+            # values that the stored types, which type checkers see, do not admit.
+            spec = Spec.model_validate(
+                {
+                    "providers": providers,
+                    "recipients": recipients,
+                    "years": _years(years),
+                    "method": method,
+                    "flow": flow,
+                    "view": view,
+                    "currency": currency,
+                    "prices": prices,
+                    "oda_only": oda_only,
+                    "measure": measure,
+                    "untraced": untraced,
+                }
             )
         return query.spending(self, spec=spec)
 

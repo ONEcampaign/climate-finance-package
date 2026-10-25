@@ -71,6 +71,8 @@ EIB = Agency(provider=918, agency=3)
         ("EC", "providers", (Agency(provider=918, agency=1),)),
         (["EIB", 918], "providers", (918,)),
         ([EIB, "KfW", 4, "4"], "providers", (4, Agency(provider=5, agency=2), EIB)),
+        # Agency 0 and 1 stand for the provider itself, listed or not.
+        (Agency(provider=4, agency=0), "providers", (Agency(provider=4, agency=0),)),
         ("KEN", "recipients", (248,)),
         ("Kenia", "recipients", (248,)),
         (None, "providers", None),
@@ -148,9 +150,26 @@ def test_a_name_with_nothing_close_raises_without_suggestions() -> None:
     assert raised.value.suggestions == ()
 
 
-def test_codes_pass_through_without_a_lookup() -> None:
-    # 1635 is a CRS provider code missing from the provider listing.
-    assert SNAP.spending(providers=1635).table.to_polars().is_empty()
+@pytest.mark.parametrize(
+    ("keywords", "error", "suggestion"),
+    [
+        ({"providers": 7010}, cf.UnknownProviderError, "701 (Japan)"),
+        ({"providers": ["Japan", "7010"]}, cf.UnknownProviderError, "701 (Japan)"),
+        (
+            {"providers": Agency(provider=918, agency=77)},
+            cf.UnknownProviderError,
+            "European Investment Bank (agency 3)",
+        ),
+        ({"recipients": 2480}, cf.UnknownRecipientError, "248 (Kenya)"),
+    ],
+)
+def test_a_code_the_listings_lack_raises_with_close_codes(
+    keywords: dict[str, object], error: type[cf.UnknownNameError], suggestion: str
+) -> None:
+    with pytest.raises(error) as raised:
+        SNAP.spending(**keywords)
+
+    assert suggestion in raised.value.suggestions
 
 
 def test_listings_hold_the_entries_the_api_accepts() -> None:

@@ -6,6 +6,7 @@ deliberate change, then review the diff.
 
 import inspect
 import itertools
+import json
 import math
 import os
 import tomllib
@@ -19,6 +20,7 @@ from releases import copy_release
 
 import climate_finance as cf
 from climate_finance import convert as convert_module
+from climate_finance.catalogue import Agency
 from climate_finance.errors import MissingLabelsError
 from climate_finance.methods import OECD, ONE, RANGE, Method, MethodRange, label
 from climate_finance.query import (
@@ -173,6 +175,7 @@ def test_code_2_rows_leave_every_total_unchanged(
         Spec(method=cf.methods.ONE.replace(significant=0.25), flow="grant_equivalent"),
         Spec(method=cf.methods.ONE.replace(eu="provider"), view="provider"),
         Spec(view="provider", providers=(5,), measure="share_of_total"),
+        Spec(providers=(5, Agency(provider=918, agency=3)), recipients=(248,)),
     ],
 )
 def test_a_spec_round_trips_through_json_and_reruns_identically(spec: Spec) -> None:
@@ -184,6 +187,21 @@ def test_a_spec_round_trips_through_json_and_reruns_identically(spec: Spec) -> N
     assert restored == spec
     assert_frame_equal(first.table.to_polars(), rerun.table.to_polars())
     assert_frame_equal(first.rows(), rerun.rows())
+
+
+def test_a_spec_holds_sorted_codes_and_agencies_whatever_names_them() -> None:
+    eib = Agency(provider=918, agency=3)
+    spec = Spec(providers=["EIB", "Japan", eib, 701], recipients=["KEN", 248])
+
+    assert Spec(providers=["DEU", 5]) == Spec(providers=[5])
+    assert SNAP.spending(providers="Japan").spec == SNAP.spending(providers=701).spec
+    assert (spec.providers, spec.recipients) == ((701, eib), (248,))
+    assert json.loads(spec.model_dump_json())["providers"] == [
+        701,
+        {"provider": 918, "agency": 3},
+    ]
+    # A provider covers its agencies.
+    assert Spec(providers=["EU Institutions", "EIB"]).providers == (EU_INSTITUTIONS,)
 
 
 def test_keyword_arguments_build_the_same_spec() -> None:
@@ -635,6 +653,7 @@ def test_rows_filter_by_equality_and_membership() -> None:
 
     assert set(result.rows(year=2022)["year"]) == {2022}
     assert set(result.rows(provider_code=[5, 8])["provider_code"]) == {5, 8}
+    assert set(result.rows(provider=["Germany", 8])["provider_code"]) == {5, 8}
     with pytest.raises(KeyError, match="no column"):
         result.rows(donor="Germany")
 
@@ -802,6 +821,14 @@ def test_explain_and_title_name_the_measure(
     assert absent not in result.explain()
     title = repr(result).splitlines()[0]
     assert ("share of total" in title) == (measure == "share_of_total")
+
+
+def test_the_title_names_providers_agencies_and_recipients() -> None:
+    result = SNAP.spending(providers=["EIB", 701], recipients="KEN")
+
+    assert (
+        "providers Japan, European Investment Bank (EU Institutions); recipients Kenya;"
+    ) in repr(result).splitlines()[0]
 
 
 @pytest.mark.parametrize(
@@ -1168,6 +1195,33 @@ def test_eu_institutions_alone_return_their_own_spending(
     assert_frame_equal(as_channel, eu_alone(ONE_EU_AS_PROVIDER))
 
 
+@pytest.mark.parametrize("view", VIEWS)
+@pytest.mark.parametrize("flow", FLOWS)
+def test_an_agency_returns_its_own_rows_and_no_modelled_line(
+    eu_release: Release, flow: str, view: str
+) -> None:
+    eib = eu_release.spending(view=view, flow=flow, providers="EIB")
+    eu = eu_release.spending(view=view, flow=flow, providers=EU_INSTITUTIONS)
+
+    rows = eib.rows()
+    assert rows.height
+    assert set(rows.select("provider_code", "agency_code").rows()) == {
+        (EU_INSTITUTIONS, EIB_AGENCY)
+    }
+    assert_frame_equal(rows, eu.rows(provider="EIB"))
+    assert_frame_equal(rows, eu.rows(provider=Agency(provider=918, agency=3)))
+    assert eib.modelled.to_polars().is_empty()
+
+
+def test_under_oecd_the_provider_view_holds_no_eib_rows(eu_release: Release) -> None:
+    """OECD counts EU Institutions as a provider, whose provider view leaves the
+    EIB's own rows out and attributes members' contributions to it."""
+    result = eu_release.spending(view="provider", method=OECD, providers="EIB")
+
+    assert result.rows().is_empty()
+    assert result.table.to_polars().is_empty()
+
+
 @pytest.mark.parametrize(
     ("providers", "eu_own_rows"),
     [
@@ -1437,6 +1491,13 @@ def test_a_year_without_a_budget_share_keeps_the_budgets_own_rows(
     rows = cf.load(path=release).spending(view="provider").rows(row_id="EU-1")
 
     assert set(rows["year"]) == {2022, 2023}
+
+
+def test_quality_refuses_an_agency() -> None:
+    with pytest.raises(cf.UnknownProviderError) as raised:
+        SNAP.quality(providers="EIB")
+
+    assert raised.value.note is not None
 
 
 @pytest.mark.parametrize("flow", FLOWS)

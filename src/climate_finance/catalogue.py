@@ -13,7 +13,7 @@ provider names, ISO codes, resolvekit aliases and agency names), baked by
 `cf-build names`. A name matches ignoring case, accents and surrounding spaces. A name
 of several entries, or of none, raises with candidates or close names as suggestions,
 which are never applied. Flow and method names match their listing exactly, ignoring
-case and accents.
+case and accents. A DAC code or agency the listings lack raises as an unknown name.
 """
 
 import unicodedata
@@ -73,12 +73,16 @@ def resolve(
 
     A string is a name from `data/names.csv`, matched ignoring case, accents and
     surrounding spaces, or a string of digits, read as a DAC code. An integer is a DAC
-    code and an `Agency` an agency, both passed through. An agency whose provider is
-    also named is dropped, since the provider covers it. Recipients have no agencies.
+    code and an `Agency` an agency, both kept when the listings hold them. An agency
+    is listed in `data/agencies.csv`, or is agency 0 or 1 of a listed provider, which
+    the OECD files use for the provider itself. An agency whose provider is also
+    named is dropped, since the provider covers it. Recipients have no agencies.
 
     Raises:
-        UnknownProviderError: for a provider name of no entry, or of several.
-        UnknownRecipientError: for a recipient name of no entry, or of several.
+        UnknownProviderError: for a provider name of no entry, or of several, or a
+            code or agency the listings lack, with the closest codes as suggestions.
+        UnknownRecipientError: for a recipient name of no entry, or of several, or
+            a code the listings lack.
         TypeError: for a value of another type, a bool included, or for an
             `Agency` among recipients.
     """
@@ -133,12 +137,15 @@ class Catalogue:
             return self.list()["description"][self._index(name)]
         target = self.code(name)
         if isinstance(target, Agency):
+            provider = _code_names("providers")[target.provider]
             agency = _agency_names().get((target.provider, target.agency))
             if agency is None:
-                raise self._unknown(repr(target), suggestions=())
-            provider = self._row(target.provider)
+                return (
+                    f"Agency {target.agency} of {provider} "
+                    f"(DAC code {target.provider})."
+                )
             return (
-                f"{agency} (agency {target.agency} of {provider['name']}, "
+                f"{agency} (agency {target.agency} of {provider}, "
                 f"DAC code {target.provider})."
             )
         row = self._row(target)
@@ -157,8 +164,10 @@ class Catalogue:
         name names, as `resolve` reads it.
 
         Raises:
-            UnknownProviderError: for a provider name of no entry, or of several.
-            UnknownRecipientError: for a recipient name of no entry, or of several.
+            UnknownProviderError: for a provider name of no entry, or of several, or
+                a code or agency the listings lack.
+            UnknownRecipientError: for a recipient name of no entry, or of several,
+                or a code the listings lack.
             TypeError: on `cf.flows` and `cf.methods`, which have no codes.
         """
         if self.kind not in ("providers", "recipients"):
@@ -213,12 +222,12 @@ def _target(value: object, *, kind: Coded) -> Target:
             f"{value!r} ({type(value).__name__})"
         )
     if isinstance(value, Agency):
-        return value
+        return _listed_agency(value)
     if isinstance(value, Integral):
-        return int(value)
+        return _listed(int(value), kind=kind)
     key = _fold(value).strip()
     if key.isdigit():
-        return int(key)
+        return _listed(int(key), kind=kind)
     entries = _aliases(kind).get(key)
     if entries is None:
         raise _unknown(value, kind=kind, suggestions=_close_names(key, kind=kind))
@@ -231,6 +240,48 @@ def _target(value: object, *, kind: Coded) -> Target:
         )
     [(code, agency, _)] = entries
     return code if agency is None else Agency(provider=code, agency=agency)
+
+
+def _listed(code: int, *, kind: Coded) -> int:
+    """`code` when its listing holds it; else an error with the closest listed codes
+    as suggestions."""
+    names = _code_names(kind)
+    if code in names:
+        return code
+    close = get_close_matches(str(code), [str(listed) for listed in names])
+    raise _unknown(
+        str(code),
+        kind=kind,
+        suggestions=[f"{listed} ({names[int(listed)]})" for listed in close],
+    )
+
+
+def _listed_agency(agency: Agency) -> Agency:
+    """`agency` when the listings hold it; else an error with its provider's agencies
+    as suggestions."""
+    _listed(agency.provider, kind="providers")
+    names = _agency_names()
+    if (agency.provider, agency.agency) in names or agency.agency in (0, 1):
+        return agency
+    raise _unknown(
+        repr(agency),
+        kind="providers",
+        suggestions=[
+            f"{name} (agency {code})"
+            for (provider, code), name in names.items()
+            if provider == agency.provider
+        ],
+    )
+
+
+def name_of(target: Target, *, kind: Coded) -> str:
+    """The listing name of a code or agency, an agency's followed by its provider's,
+    as in "European Investment Bank (EU Institutions)"."""
+    if isinstance(target, Agency):
+        provider = _code_names("providers")[target.provider]
+        agency = _agency_names().get((target.provider, target.agency))
+        return f"{agency or f'Agency {target.agency}'} ({provider})"
+    return _code_names(kind)[target]
 
 
 def _order(target: Target) -> tuple[int, int]:
@@ -289,8 +340,17 @@ def _aliases(kind: Coded) -> dict[str, tuple[Entry, ...]]:
 
 
 @cache
+def _code_names(kind: Coded) -> dict[int, str]:
+    """The listing of `kind`: each DAC code and its name."""
+    return dict(_table(kind).select("code", "name").iter_rows())
+
+
+@cache
 def _agency_names() -> dict[tuple[int, int], str]:
-    agencies = _names().filter(pl.col("agency").is_not_null())
+    """`data/agencies.csv`: each provider and agency code and the agency's name."""
+    agencies = pl.read_csv(
+        (files("climate_finance") / "data" / "agencies.csv").read_bytes()
+    )
     return {
         (code, agency): name
         for code, agency, name in agencies.select("code", "agency", "name").iter_rows()

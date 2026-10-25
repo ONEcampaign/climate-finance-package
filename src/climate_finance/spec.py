@@ -1,9 +1,12 @@
 """`Spec`: the frozen description of one query, which reruns to an identical frame."""
 
-from typing import Any, Literal
+from collections.abc import Iterable, Mapping
+from typing import Annotated, Any, Literal
 
-from pydantic import SerializerFunctionWrapHandler, model_serializer
+import polars as pl
+from pydantic import BeforeValidator, SerializerFunctionWrapHandler, model_serializer
 
+from climate_finance.catalogue import Agency, Coded, Target, resolve
 from climate_finance.methods import ONE, Frozen, Method, MethodRange
 
 # Re-exported: the Bi_Multi codes the views count, which `schema` defines.
@@ -21,6 +24,27 @@ type Measure = Literal["amount", "share_of_total"]
 # loans (13) and equity (19) form category 10.
 ODA_FLOW_CATEGORY = 10
 ODA_FLOW_CODES = (11, 13, 19)
+
+
+def _resolver(kind: Coded) -> BeforeValidator:
+    """Read a field's names, codes and agencies through `resolve`. An agency in its
+    serialised form, `{"provider": 918, "agency": 3}`, reads as an `Agency`."""
+
+    def read(values: Any) -> tuple[Target, ...] | None:
+        if isinstance(values, Mapping):
+            return resolve(Agency.model_validate(values), kind=kind)
+        if isinstance(values, Iterable) and not isinstance(values, str | Agency):
+            values = [
+                Agency.model_validate(value) if isinstance(value, Mapping) else value
+                for value in values
+            ]
+        return resolve(values, kind=kind)
+
+    return BeforeValidator(read)
+
+
+type Providers = Annotated[tuple[Target, ...] | None, _resolver("providers")]
+type Recipients = Annotated[tuple[int, ...] | None, _resolver("recipients")]
 
 
 class Spec(Frozen):
@@ -44,12 +68,18 @@ class Spec(Frozen):
     equivalents: Rio-marked CRS disbursement that reaches no commitment. Commitments
     have none, so it changes nothing there.
 
+    `providers` and `recipients` take names, DAC codes or, for providers,
+    `Agency` values, one or many, and hold the codes and agencies they name, sorted
+    and without duplicates (`catalogue.resolve`). So `providers=["Japan", 701]` and
+    `providers=701` give equal specs, and a provider beside one of its agencies
+    covers it. An agency serialises as `{"provider": 918, "agency": 3}`.
+
     A spec at the default `measure` and `untraced` leaves them out of its serialised
     form, so it serialises as a spec written before either field.
     """
 
-    providers: tuple[str | int, ...] | None = None
-    recipients: tuple[str | int, ...] | None = None
+    providers: Providers = None
+    recipients: Recipients = None
     years: tuple[int, ...] | None = None
     method: Method | MethodRange = ONE
     flow: Flow = "disbursements"
@@ -75,3 +105,21 @@ class Spec(Frozen):
     def methods(self) -> tuple[Method, ...]:
         """The methods `method` names: itself, or each method of a range."""
         return self.method.methods
+
+
+def provider_rows(providers: tuple[Target, ...]) -> pl.Expr:
+    """Rows of the providers in `providers`, and of the (provider, agency) pairs.
+
+    A row with a null `agency_code`, such as an attributed core contribution, matches
+    a provider and no agency of it.
+    """
+    codes = [target for target in providers if isinstance(target, int)]
+    agencies = [target for target in providers if isinstance(target, Agency)]
+    return pl.any_horizontal(
+        pl.col("provider_code").is_in(codes),
+        *(
+            (pl.col("provider_code") == agency.provider)
+            & (pl.col("agency_code") == agency.agency)
+            for agency in agencies
+        ),
+    )
