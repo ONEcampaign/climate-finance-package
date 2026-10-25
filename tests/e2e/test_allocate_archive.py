@@ -107,44 +107,117 @@ OWN_FIRST_RELEASE_MOVED_BN = {
     "no_disbursement_record": -0.14,
     "not_traceable": 0.0,
 }
+# The figures above read CRDF 2015 to 2024 and CRS 2010 to 2025; each change below
+# is measured with the changes above it in place, in USD bn to four places. The
+# truth-group classifier labels pairs from `FIRST_MEASURED_YEAR` and reads each
+# commitment's sibling lines (`sibling_lines`), so it links less disbursement into
+# 2021 to 2022 rows.
+CLASSIFIER_SIBLINGS_MOVED_BN = {
+    "disbursed": -0.0217,
+    "partly_disbursed": -0.0586,
+    "no_disbursement_record": 0.0802,
+    "not_traceable": 0.0,
+}
+CLASSIFIER_SIBLINGS_RELEASE_MOVED_BN = {
+    "disbursed": -0.0216,
+    "partly_disbursed": -0.0669,
+    "no_disbursement_record": 0.0885,
+    "not_traceable": 0.0,
+}
+# The build reads every year the sources hold: CRDF and CRS from 2000.
+EVERY_YEAR_MOVED_BN = {
+    "disbursed": 0.0001,
+    "partly_disbursed": -0.0081,
+    "no_disbursement_record": 0.0080,
+    "not_traceable": 0.0,
+}
 # Allocation reads CRS records up to `crs_last_complete`, so the early 2025 reports
 # no longer complete some 2021 to 2022 commitments.
 LAST_COMPLETE_YEAR_MOVED_BN = {
-    "disbursed": -0.12,
-    "partly_disbursed": 0.11,
-    "no_disbursement_record": 0.01,
+    "disbursed": -0.1516,
+    "partly_disbursed": 0.1433,
+    "no_disbursement_record": 0.0084,
     "not_traceable": 0.0,
 }
-# An agency keying under `MIN_KEYED_DISBURSED` of its disbursement is not traceable:
-# the EBRD's 2019 to 2022 rows (5.17 bn) and IFAD's (0.51 bn).
+# An agency keying under `MIN_KEYED_DISBURSED` of its disbursement is not traceable,
+# mostly the EBRD's and IFAD's rows.
 DISBURSEMENT_SIDE_MOVED_BN = {
     "disbursed": 0.0,
     "partly_disbursed": 0.0,
-    "no_disbursement_record": -5.68,
-    "not_traceable": 5.68,
+    "no_disbursement_record": -5.6023,
+    "not_traceable": 5.6023,
 }
-# Under the release rule the disbursement-side test moves USD 5.62 bn: the 2021 to
-# 2022 not-traceable pins measured with it and without it are 40.74 and 35.12 bn.
-RELEASE_DISBURSEMENT_SIDE_MOVED_BN = {
-    "disbursed": 0.0,
-    "partly_disbursed": 0.0,
-    "no_disbursement_record": -5.62,
-    "not_traceable": 5.62,
-}
-# A component award's disbursement reaches its own component (`split_components`),
-# mostly US awards.
-COMPONENT_AWARDS_MOVED_BN = {
-    "disbursed": 0.14,
-    "partly_disbursed": 0.14,
-    "no_disbursement_record": -0.28,
+# No row receives a record from before its CRDF year, which moves only the release
+# rule.
+TIME_ORDER_MOVED_BN = {
+    "disbursed": -0.0011,
+    "partly_disbursed": 0.0011,
+    "no_disbursement_record": 0.0,
     "not_traceable": 0.0,
 }
-# No row receives a record from before its CRDF year, which takes the earlier
-# records of Italian aggregate children, so it moves only the release rule.
-TIME_ORDER_MOVED_BN = {
+# Only an EU contract passes its floor in the parent tier, in allocation and in the
+# keys (`parent_floor_year`), and `crs_key` counts a missing project number as one
+# more project. Together they move only the release rule.
+PARENT_FLOOR_RELEASE_MOVED_BN = {
     "disbursed": 0.0,
-    "partly_disbursed": -0.08,
-    "no_disbursement_record": 0.08,
+    "partly_disbursed": -0.0024,
+    "no_disbursement_record": 0.0024,
+    "not_traceable": 0.0,
+}
+# A lettered record reaches its parent only in its recipient under its project
+# number (`_parent_key`).
+LETTERED_PARENT_MOVED_BN = {
+    "disbursed": 0.0015,
+    "partly_disbursed": -0.0068,
+    "no_disbursement_record": 0.0053,
+    "not_traceable": 0.0,
+}
+# A component award keys each component by purpose (`split_components`). The
+# purpose tier's `unique_by` already reaches each component, so the split only stops
+# links across components. The floor exemption under a disbursement's own crs id
+# (`same_crs_id`) moves no status.
+COMPONENT_AWARDS_MOVED_BN = {
+    "disbursed": -0.0011,
+    "partly_disbursed": -0.0020,
+    "no_disbursement_record": 0.0031,
+    "not_traceable": 0.0,
+}
+# The classifier links at the fixed cut of 0.40, below the best threshold of its
+# training F1 in this build (0.43), which moves a little value from partly disbursed
+# to disbursed.
+FIXED_CUT_MOVED_BN = {
+    "disbursed": 0.0003,
+    "partly_disbursed": -0.0003,
+    "no_disbursement_record": 0.0,
+    "not_traceable": 0.0,
+}
+FIXED_CUT_RELEASE_MOVED_BN = {
+    "disbursed": 0.0004,
+    "partly_disbursed": -0.0004,
+    "no_disbursement_record": 0.0,
+    "not_traceable": 0.0,
+}
+# `sibling_lines` counts a commitment's sibling lines over every link-stage unit,
+# which changes the classifier's links.
+SIBLING_LINES_MOVED_BN = {
+    "disbursed": -0.0081,
+    "partly_disbursed": 0.0166,
+    "no_disbursement_record": -0.0086,
+    "not_traceable": 0.0,
+}
+SIBLING_LINES_RELEASE_MOVED_BN = {
+    "disbursed": -0.0081,
+    "partly_disbursed": 0.0166,
+    "no_disbursement_record": -0.0085,
+    "not_traceable": 0.0,
+}
+# An IBRD or IDA record fills the commitment on its own sector line before the
+# loan's other lines (`_own_commitments`). The rows it moves count the same under
+# both rules.
+WORLD_BANK_OWN_LINE_MOVED_BN = {
+    "disbursed": 0.1526,
+    "partly_disbursed": -0.1803,
+    "no_disbursement_record": 0.0277,
     "not_traceable": 0.0,
 }
 # With aggregate children counted and their parents left out (the release rule).
@@ -175,10 +248,18 @@ RELEASE_RULE_BN = {
 # full numbers, so `repair_afdb_scientific` links it to none (USD 0.05 bn).
 # `repair_stray_country` moves USD 0.01 bn of Canadian and Danish rows.
 REPAIR_MOVED_BN = {"bilateral": 0.85, "banks": 2.12}
+# The classifier links less into 2021 to 2022 rows, so the rules lift more bilateral
+# value out of no record, and so do the CRDF and CRS years from 2000.
+REPAIR_CLASSIFIER_SIBLINGS_BN = {"bilateral": 0.0324, "banks": 0.0}
+REPAIR_EVERY_YEAR_BN = {"bilateral": 0.0091, "banks": 0.0}
 # The EBRD's no-record rows become not traceable, leaving the rules less to move.
-REPAIR_DISBURSEMENT_SIDE_BN = {"bilateral": 0.0, "banks": -0.33}
-# The exact tiers reach US component value before the rules do.
-REPAIR_COMPONENT_AWARDS_BN = {"bilateral": -0.07, "banks": 0.03}
+REPAIR_DISBURSEMENT_SIDE_BN = {"bilateral": 0.0, "banks": -0.3130}
+# Key repair compares awards too (`split_components`), so its rules link within one
+# component where the award was ambiguous across them.
+REPAIR_COMPONENT_AWARDS_BN = {"bilateral": 0.1491, "banks": 0.0}
+# With `sibling_lines` counted over every link-stage unit, the build without the
+# rules holds less in no record, and the rules lift less bilateral value out of it.
+REPAIR_SIBLING_LINES_BN = {"bilateral": -0.0085, "banks": 0.0}
 REPAIR_TOLERANCE_BN = 0.05
 _CATEGORY = {
     "DAC member": "bilateral",
@@ -272,9 +353,15 @@ def test_statuses_reproduce_the_reference_without_recoveries(
         + DATE_TIER_MOVED_BN[status]
         + CLASSIFIER_MOVED_BN[status]
         + OWN_FIRST_MOVED_BN[status]
+        + CLASSIFIER_SIBLINGS_MOVED_BN[status]
+        + EVERY_YEAR_MOVED_BN[status]
         + LAST_COMPLETE_YEAR_MOVED_BN[status]
         + DISBURSEMENT_SIDE_MOVED_BN[status]
+        + LETTERED_PARENT_MOVED_BN[status]
         + COMPONENT_AWARDS_MOVED_BN[status]
+        + FIXED_CUT_MOVED_BN[status]
+        + SIBLING_LINES_MOVED_BN[status]
+        + WORLD_BANK_OWN_LINE_MOVED_BN[status]
         for status, usd_bn in reference.select("status", "usd_bn").iter_rows()
     }
     assert built == pytest.approx(expected, abs=TOLERANCE_BN)
@@ -296,10 +383,17 @@ def test_statuses_under_the_release_rule(base: Path) -> None:
         + DATE_TIER_MOVED_BN[status]
         + CLASSIFIER_RELEASE_MOVED_BN[status]
         + OWN_FIRST_RELEASE_MOVED_BN[status]
+        + CLASSIFIER_SIBLINGS_RELEASE_MOVED_BN[status]
+        + EVERY_YEAR_MOVED_BN[status]
         + LAST_COMPLETE_YEAR_MOVED_BN[status]
-        + RELEASE_DISBURSEMENT_SIDE_MOVED_BN[status]
-        + COMPONENT_AWARDS_MOVED_BN[status]
+        + DISBURSEMENT_SIDE_MOVED_BN[status]
         + TIME_ORDER_MOVED_BN[status]
+        + PARENT_FLOOR_RELEASE_MOVED_BN[status]
+        + LETTERED_PARENT_MOVED_BN[status]
+        + COMPONENT_AWARDS_MOVED_BN[status]
+        + FIXED_CUT_RELEASE_MOVED_BN[status]
+        + SIBLING_LINES_RELEASE_MOVED_BN[status]
+        + WORLD_BANK_OWN_LINE_MOVED_BN[status]
         for status, usd_bn in RELEASE_RULE_BN.items()
     }
     assert built == pytest.approx(expected, abs=TOLERANCE_BN)
@@ -377,8 +471,11 @@ def test_key_repair_moves_no_record_value(
     for category, usd_bn in REPAIR_MOVED_BN.items():
         moved_bn = (
             usd_bn
+            + REPAIR_CLASSIFIER_SIBLINGS_BN[category]
+            + REPAIR_EVERY_YEAR_BN[category]
             + REPAIR_DISBURSEMENT_SIDE_BN[category]
             + REPAIR_COMPONENT_AWARDS_BN[category]
+            + REPAIR_SIBLING_LINES_BN[category]
         )
         assert by_category[category] == pytest.approx(
             moved_bn, abs=REPAIR_TOLERANCE_BN

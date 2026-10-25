@@ -103,6 +103,73 @@ OWN_FIRST_MOVED_BN = {
     "no_disbursement_record": -0.1351,
     "not_traceable": 0.0,
 }
+# The figures above read CRDF 2015 to 2024 and CRS 2010 to 2025. The truth-group
+# classifier labels pairs from `FIRST_MEASURED_YEAR` and reads each commitment's
+# sibling lines (`sibling_lines`), so it links less disbursement into 2021 to 2022
+# rows.
+CLASSIFIER_SIBLINGS_MOVED_BN = {
+    "disbursed": -0.0101,
+    "partly_disbursed": -0.0568,
+    "no_disbursement_record": 0.0670,
+    "not_traceable": 0.0,
+}
+# The build reads every year the sources hold: CRDF and CRS from 2000.
+EVERY_YEAR_MOVED_BN = {
+    "disbursed": -0.0107,
+    "partly_disbursed": 0.0,
+    "no_disbursement_record": 0.0106,
+    "not_traceable": 0.0,
+}
+# Allocation reads CRS records up to `crs_last_complete`, so the early 2025 reports
+# no longer complete some 2021 to 2022 commitments.
+LAST_COMPLETE_YEAR_MOVED_BN = {
+    "disbursed": -0.1516,
+    "partly_disbursed": 0.1432,
+    "no_disbursement_record": 0.0084,
+    "not_traceable": 0.0,
+}
+# An agency keying under `MIN_KEYED_DISBURSED` of its disbursement is not traceable,
+# mostly the EBRD's and IFAD's rows.
+DISBURSEMENT_SIDE_MOVED_BN = {
+    "disbursed": 0.0,
+    "partly_disbursed": 0.0,
+    "no_disbursement_record": -5.6023,
+    "not_traceable": 5.6023,
+}
+# A lettered record reaches its parent only in its recipient under its project
+# number (`_parent_key`).
+LETTERED_PARENT_MOVED_BN = {
+    "disbursed": 0.0015,
+    "partly_disbursed": -0.0068,
+    "no_disbursement_record": 0.0053,
+    "not_traceable": 0.0,
+}
+# A component award keys each component by purpose (`split_components`), so links
+# across components stop. The time order of allocation, the EU-only parent floor,
+# `crs_key` on a missing project number and the floor exemption under a
+# disbursement's own crs id move no status here.
+COMPONENT_AWARDS_MOVED_BN = {
+    "disbursed": -0.0011,
+    "partly_disbursed": -0.0019,
+    "no_disbursement_record": 0.0031,
+    "not_traceable": 0.0,
+}
+# `sibling_lines` counts a commitment's sibling lines over every link-stage unit,
+# which changes the classifier's links and moves value out of partly disbursed.
+SIBLING_LINES_MOVED_BN = {
+    "disbursed": 0.0013,
+    "partly_disbursed": -0.0097,
+    "no_disbursement_record": 0.0083,
+    "not_traceable": 0.0,
+}
+# An IBRD or IDA record fills the commitment on its own sector line before the
+# loan's other lines (`_own_commitments`).
+WORLD_BANK_OWN_LINE_MOVED_BN = {
+    "disbursed": 0.1526,
+    "partly_disbursed": -0.1803,
+    "no_disbursement_record": 0.0277,
+    "not_traceable": 0.0,
+}
 TOLERANCE_BN = 0.001
 
 
@@ -192,6 +259,14 @@ def test_step_one_matches_the_target_plus_the_gef_crosswalk(
         + CERTAIN_FIRST_MOVED_BN[status]
         + FLOOR_SEEN_MOVED_BN[status]
         + OWN_FIRST_MOVED_BN[status]
+        + CLASSIFIER_SIBLINGS_MOVED_BN[status]
+        + EVERY_YEAR_MOVED_BN[status]
+        + LAST_COMPLETE_YEAR_MOVED_BN[status]
+        + DISBURSEMENT_SIDE_MOVED_BN[status]
+        + LETTERED_PARENT_MOVED_BN[status]
+        + COMPONENT_AWARDS_MOVED_BN[status]
+        + SIBLING_LINES_MOVED_BN[status]
+        + WORLD_BANK_OWN_LINE_MOVED_BN[status]
         for status, usd_bn in STEP_ONE_BN.items()
     }
     assert _step_one(without_crosswalk) == pytest.approx(expected, abs=TOLERANCE_BN)
