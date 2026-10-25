@@ -482,12 +482,7 @@ def _coefficients(
 
 def _coefficients_by_year(snapshot: Snapshot, *, years: pl.LazyFrame) -> pl.LazyFrame:
     """Each `provider_coefficients` row once for every year of `years` its span
-    covers.
-
-    The span is expanded into its years and matched on `year`, an equi-join. A
-    cross join filtered on the span would be rewritten by polars into an
-    inequality join, which polars 1.33 to 1.35 collect wrongly where the plan is
-    reused.
+    covers, matched on `year` after the span is expanded into its years.
     """
     first, last = pl.col("first_year"), pl.col("last_year")
     held = years.select("year").unique()

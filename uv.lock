@@ -136,7 +136,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "pandas", marker = "extra == 'compat'", specifier = ">=2.2.2" },
-    { name = "polars", specifier = ">=1.33.0" },
+    { name = "polars", specifier = ">=2.0.0" },
     { name = "pyarrow", specifier = ">=16.1.0" },
     { name = "pydantic", specifier = ">=2.10.0" },
     { name = "pydeflate", specifier = ">=2.6.2" },
