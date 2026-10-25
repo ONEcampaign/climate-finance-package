@@ -25,6 +25,7 @@ from climate_finance.build.link.btr import (
 from climate_finance.build.normalise import btr_at_dac_rates
 from climate_finance.build.normalise.crs import normalise_crs
 from climate_finance.build.readers.btr import estimate_party_weights, ingest_unfccc
+from climate_finance.build.stages import raw_dir
 from climate_finance.result import Reconciliation
 from climate_finance.snapshot import Snapshot
 
@@ -151,7 +152,7 @@ def reconciliation(
             shutil.copyfile(release / f"{name}{suffix}", out / f"{name}{suffix}")
     rows = btr_at_dac_rates(
         btr.collect(),
-        exchange=pl.read_parquet(release.parent / "raw" / DAC_EXCHANGE_FILE),
+        exchange=pl.read_parquet(raw_dir(release.parent) / DAC_EXCHANGE_FILE),
     )
     rows.write_parquet(out / "btr.parquet")
     btr_links = assemble.btr_links(links.lazy(), crs=crs).collect()
