@@ -252,9 +252,12 @@ def score_candidates(
         on="unit_id",
         how="semi",
     )
-    features = comparison_levels(
-        pairs, attributes=unit_attributes(compared, crs=crs, stems=stems)
-    ).join(sibling_lines(compared), on="right_id", how="left", maintain_order="left")
+    features = sibling_lines(
+        comparison_levels(
+            pairs, attributes=unit_attributes(compared, crs=crs, stems=stems)
+        ),
+        units=units,
+    )
     scores = score_truth_group(features, groups=groups, truth=truth)
     return Scored(
         links=classifier_links(scores, rejected=rejected),
@@ -263,16 +266,22 @@ def score_candidates(
     )
 
 
-def sibling_lines(units: pl.DataFrame) -> pl.DataFrame:
-    """Each commitment unit of `units` with a crs id and project number, as
-    `right_id`, and `sibling_lines`: how many other line ids (`line_id`) its
-    `SIBLING_KEY` commits.
+def sibling_lines(pairs: pl.DataFrame, *, units: pl.DataFrame) -> pl.DataFrame:
+    """`pairs` with `sibling_lines`: how many other line ids (`line_id`) the
+    `SIBLING_KEY` of the pair's commitment (`right_id`) commits, null where the
+    commitment has no crs id or project number.
 
-    A project that commits several lines in a year can give them one title,
-    recipient and purpose, so a later disbursement compares alike with each of
-    them and continues one.
+    The count runs over every commitment unit of `units`, so a sibling line that
+    is in no candidate pair still counts, and a commitment's count does not depend
+    on which pairs blocking found. A project that commits several lines in a year
+    can give them one title, recipient and purpose, so a later disbursement
+    compares alike with each of them and continues one.
+
+    Args:
+        pairs: rows with `right_id`, in any order, and the output keeps it.
+        units: the link stage's units.
     """
-    return (
+    counts = (
         _with_lines(units)
         .filter(pl.col("commitment_usd") > 0)
         .drop_nulls(["crs_id", "project_number"])
@@ -283,6 +292,7 @@ def sibling_lines(units: pl.DataFrame) -> pl.DataFrame:
             ),
         )
     )
+    return pairs.join(counts, on="right_id", how="left", maintain_order="left")
 
 
 def confirmable_pairs(pairs: pl.DataFrame, *, units: pl.DataFrame) -> pl.DataFrame:

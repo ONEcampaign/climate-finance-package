@@ -123,8 +123,16 @@ DISBURSEMENT_SIDE_MOVED_BN = {
     "no_disbursement_record": -5.68,
     "not_traceable": 5.68,
 }
+# Under the release rule the disbursement-side test moves USD 5.62 bn: the 2021 to
+# 2022 not-traceable pins measured with it and without it are 40.74 and 35.12 bn.
+RELEASE_DISBURSEMENT_SIDE_MOVED_BN = {
+    "disbursed": 0.0,
+    "partly_disbursed": 0.0,
+    "no_disbursement_record": -5.62,
+    "not_traceable": 5.62,
+}
 # A component award's disbursement reaches its own component (`split_components`),
-# mostly US awards (0.28 bn) and IFAD's (0.06 bn).
+# mostly US awards.
 COMPONENT_AWARDS_MOVED_BN = {
     "disbursed": 0.14,
     "partly_disbursed": 0.14,
@@ -289,7 +297,7 @@ def test_statuses_under_the_release_rule(base: Path) -> None:
         + CLASSIFIER_RELEASE_MOVED_BN[status]
         + OWN_FIRST_RELEASE_MOVED_BN[status]
         + LAST_COMPLETE_YEAR_MOVED_BN[status]
-        + DISBURSEMENT_SIDE_MOVED_BN[status]
+        + RELEASE_DISBURSEMENT_SIDE_MOVED_BN[status]
         + COMPONENT_AWARDS_MOVED_BN[status]
         + TIME_ORDER_MOVED_BN[status]
         for status, usd_bn in RELEASE_RULE_BN.items()

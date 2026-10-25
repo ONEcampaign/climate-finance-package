@@ -64,8 +64,8 @@
       "rows": 4
     },
     "unallocated": {
-      "sha256": "a4d38a4d43352238f3317e104e8132e04086e0e66b39c623183f0dbd2237f62e",
-      "rows": 4
+      "sha256": "a477c4925b20d979206b1bd661330a1bea6dc708fd2aa578af2cbb168e55fc6e",
+      "rows": 14
     },
     "total_flows": {
       "sha256": "2d58a5dac34f5fe7fb8a11e7f1a37ad2925f20e2c8bb14eca14c2f0db6fb1d7b",
@@ -103,6 +103,7 @@
     "years.crs_last_complete": 2023
   },
   "precision_gate_waived": false,
+  "precision_waiver": null,
   "previous_release": null,
   "withheld_tables": {}
 }

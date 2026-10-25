@@ -877,9 +877,7 @@ def _base_rows(
         "overlap_usd",
     )
     allocated = pl.col("allocated_usd")
-    # No amount or total reads `allocation_weight`, a column `rows()` shows, so this
-    # window sum needs no fixed order.
-    record_allocated = allocated.sum().over("record_id")
+    record_allocated = ordered_sum(allocated).over("record_id")
     disbursements = (
         snapshot.table("disbursements")
         .with_columns(
@@ -1221,6 +1219,8 @@ def _coefficients(
     `coefficient_basis` is `provider` for the provider's flat coefficients, `default`
     for the default share of a provider that assesses case by case, `case_by_case`
     where such a provider gives no default, and null where the release holds no row.
+    A row with a `climate_share` weighs by its shares, which take no provider
+    coefficient, so its `coefficient_basis` and `coefficient_source` are null.
     """
     if method.coefficients == "fixed":
         return frame.with_columns(
@@ -1246,6 +1246,12 @@ def _coefficients(
     def pick(name: str) -> pl.Expr:
         return pl.when(own_agency).then(pl.col(name)).otherwise(pl.col(f"{name}_all"))
 
+    # A frame without shares, such as `total_flows`, weighs every row by its markers.
+    marker = (
+        pl.col("climate_share").is_null()
+        if "climate_share" in frame.collect_schema().names()
+        else pl.lit(value=True)
+    )
     return (
         frame.join(
             by_agency,
@@ -1265,8 +1271,8 @@ def _coefficients(
             significant=pl.col("_significant").fill_null(method.significant),
             principal=pl.col("_principal").fill_null(method.principal),
             both_significant=pl.col("_both"),
-            coefficient_basis=pl.col("_basis"),
-            coefficient_source=pl.col("_source"),
+            coefficient_basis=pl.when(marker).then(pl.col("_basis")),
+            coefficient_source=pl.when(marker).then(pl.col("_source")),
         )
         .drop(*columns, *(f"{name}_all" for name in columns))
     )

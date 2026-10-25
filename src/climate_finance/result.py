@@ -289,6 +289,7 @@ class Quality:
         coverage = pl.col("grant_equiv_coverage")
         known = coverage.is_not_null()
         rates = self.table._frame.group_by("provider_code").agg(
+            # A count, and an integer sum is exact in any order.
             pl.col("commitments").sum(),
             climate_usd=climate,
             repeat_climate_usd=ordered_sum(pl.col("repeat_climate_usd")),

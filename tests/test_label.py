@@ -44,6 +44,8 @@ def _commitments() -> pl.DataFrame:
          "face_usd": 10.0, "climate_usd": 6.0, "adaptation_usd": 6.0,
          "mitigation_usd": 0.0, "climate_share": 0.6},
         {"row_id": "marked", "year": 2021, "rio_adaptation": 1, "rio_mitigation": 2},
+        # A GEF project the fund's IATI route fills when the build runs gap fill.
+        {"row_id": "gef", "year": 2021, "provider_code": 811, "project_number": "9001"},
     )  # fmt: skip
 
 
@@ -61,24 +63,26 @@ def _records() -> pl.DataFrame:
         {"record_id": "r_excess", "year": 2022, "rio_adaptation": 2,
          "rio_mitigation": 2, "disbursement_usd": 1.0,
          "title": "Drought-tolerant seed"},
-        # Linked to nothing, so untraced. The GEF's is untraced too unless the build
-        # routes the GEF through its IATI files, which then count it.
+        # Linked to nothing, so untraced. The GEF's is untraced too unless the GEF's
+        # IATI route fills its project, 9001, and so counts it.
         {"record_id": "r_unlinked", "year": 2022, "rio_adaptation": 1,
          "disbursement_usd": 1.0, "title": "Seawalls against sea level rise"},
         {"record_id": "r_fund", "year": 2022, "donor_code": 811, "rio_adaptation": 1,
-         "disbursement_usd": 1.0, "title": "School meals"},
+         "project_number": "9001", "disbursement_usd": 1.0, "title": "School meals"},
     )  # fmt: skip
 
 
-def _allocations() -> pl.DataFrame:
+def _allocations(*, routed: bool = False) -> pl.DataFrame:
     rows = [
-        ("bank", "r_bank"),
-        ("bank2", "r_bank"),
-        ("marked", "r_same"),
-        ("marked", "r_other"),
-        ("marked", "r_blank"),
-        (None, "r_excess"),
+        ("bank", "r_bank", "fifo"),
+        ("bank2", "r_bank", "fifo"),
+        ("marked", "r_same", "fifo"),
+        ("marked", "r_other", "fifo"),
+        ("marked", "r_blank", "fifo"),
+        (None, "r_excess", "excess"),
     ]
+    if routed:
+        rows.append(("gef", "iati:gef:9001:2022", "iati"))
     return pl.DataFrame(
         [
             {
@@ -88,10 +92,10 @@ def _allocations() -> pl.DataFrame:
                 "allocated_usd": 1.0,
                 "allocated_low_usd": 1.0,
                 "allocated_high_usd": 1.0,
-                "rule": "fifo" if row_id else "excess",
-                "disbursement_source": "crs",
+                "rule": rule,
+                "disbursement_source": "iati" if rule == "iati" else "crs",
             }
-            for row_id, record_id in rows
+            for row_id, record_id, rule in rows
         ],
         schema=schema.ALLOCATIONS.dtypes,
     )
@@ -175,7 +179,9 @@ def test_reported_objectives_leave_out_adaptation_before_the_crs_measures_it() -
 
 def _context(tmp_path: Path, config: BuildConfig) -> StageContext:
     release_dir = tmp_path / "r"
-    write_inputs(release_dir, "fill", {"allocations": _allocations()})
+    write_inputs(
+        release_dir, "fill", {"allocations": _allocations(routed=config.gap_fill)}
+    )
     write_inputs(release_dir, "normalise", {"crdf": _commitments(), "crs": _records()})
     return stage_context(release_dir, config=config)
 

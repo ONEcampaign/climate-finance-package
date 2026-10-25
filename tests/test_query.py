@@ -289,12 +289,17 @@ def test_attribution_reads_agency_shares_as_inclusive_of_cross_cutting(
     method: Method, expected: tuple[float, float, float, float]
 ) -> None:
     result = SNAP.spending(view="provider", method=method, providers=5, years=2021)
-    rows = result.rows(origin="attribution").select(
-        "adaptation", "mitigation", "cross_cutting", "value"
-    )
+    rows = result.rows(origin="attribution")
 
     assert rows.height == 1
-    assert rows.row(0) == pytest.approx(expected)
+    assert rows.select("adaptation", "mitigation", "cross_cutting", "value").row(
+        0
+    ) == pytest.approx(expected)
+    # The shares take no coefficient of Germany's, so the row names none.
+    assert rows.select("coefficient_basis", "coefficient_source").row(0) == (
+        None,
+        None,
+    )
 
 
 def test_a_climate_only_share_attributes_value_as_unsplit() -> None:
@@ -1753,13 +1758,13 @@ def test_a_jev_label_reaches_only_the_rows_a_record_weighs_as_adaptation(
 
 def test_quality_reports_the_untraced_and_left_out_marked_disbursement() -> None:
     untraced = SNAP.quality(method=OECD).untraced.to_polars()
+    parts = ("excess_usd", "unlinked_marked_usd", "outside_release_usd")
 
-    assert untraced.select(
+    # The provider-years with Rio-marked disbursement outside `disbursements`.
+    assert untraced.filter(pl.sum_horizontal(*parts, "fund_unlinked_usd") > 0).select(
         "provider_code",
         "year",
-        "excess_usd",
-        "unlinked_marked_usd",
-        "outside_release_usd",
+        *parts,
         "fund_unlinked_usd",
         "excess_climate_usd",
         "unlinked_climate_usd",
@@ -1770,6 +1775,8 @@ def test_quality_reports_the_untraced_and_left_out_marked_disbursement() -> None
         (GEF, 2021, 0.0, 0.0, 0.0, 1.5e6, 0.0, 0.0),
     ]
     one = SNAP.quality(providers=["France"]).untraced.to_polars()
-    assert one.select("provider_code", "unlinked_climate_usd").rows() == [
-        (FRA, pytest.approx(1.2e6))
+    assert one.select("provider_code", "year", "unlinked_climate_usd").rows() == [
+        (FRA, 2021, pytest.approx(1.2e6)),
+        (FRA, 2023, 0.0),
+        (FRA, 2024, 0.0),
     ]

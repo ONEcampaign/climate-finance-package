@@ -164,7 +164,7 @@ Key `record_id`. Rio-marked CRS disbursement that reaches no commitment in the r
 - `reason`: `excess` for a linked record's disbursement beyond what its commitments take, and `unlinked` for the whole disbursement of a record linked to no commitment.
 - `record_disbursement_usd`, `record_grant_equiv_usd`: as on `disbursements`. A query takes an untraced row's grant equivalent as `record_grant_equiv_usd` × `untraced_usd` ÷ `record_disbursement_usd`.
 
-A record's `disbursements` rows and its `untraced` row never share money: its allocations plus its `untraced_usd` are at most its disbursement. With `gap_fill` on, the funds whose commitments the build routes through their IATI files, the GEF and the GCF, keep their unlinked records out of `untraced`, since a fill may count the same money, and `unallocated.fund_unlinked_usd` holds them. Their excess stays in.
+A record's `disbursements` rows and its `untraced` row never share money: its allocations plus its `untraced_usd` are at most its disbursement. With `gap_fill` on, the build routes the GEF's and the GCF's commitments through their IATI files. An unlinked record of either fund whose fund key matches a commitment the route filled stays out of `untraced`, since the fill counts the same money, and `unallocated.fund_unlinked_usd` holds it. The fund's other unlinked records, and its excess, stay in.
 
 ## `unallocated`
 
@@ -174,9 +174,10 @@ Key `provider_code`, `year`. Rio-marked CRS disbursements that reach no commitme
 - `excess_usd`: a linked record's disbursement beyond what its commitments take.
 - `outside_release_usd`: disbursements linked to CRS commitments with no CRDF row in the release.
 - `unlinked_marked_usd`: records linked to no commitment.
-- `fund_unlinked_usd`: the unlinked records of the funds the build routes through their IATI files, 0 with `gap_fill` off.
+- `fund_unlinked_usd`: the unlinked GEF and GCF records whose commitment the IATI route filled, 0 with `gap_fill` off.
+- `marked_usd`: every Rio-marked CRS disbursement of the provider and year.
 
-`excess_usd` and `unlinked_marked_usd` equal the `untraced` sums by provider, year, and reason, and count in totals through it. No total counts `outside_release_usd` or `fund_unlinked_usd`.
+`marked_usd` equals the allocated `disbursements` of Rio-marked CRS records plus the other four amounts. `excess_usd` and `unlinked_marked_usd` equal the `untraced` sums by provider, year, and reason, and count in totals through it. No total counts `outside_release_usd` or `fund_unlinked_usd`.
 
 ## `total_flows`
 

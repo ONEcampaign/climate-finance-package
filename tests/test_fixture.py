@@ -469,33 +469,90 @@ def test_release_invariants_name_the_row_that_breaks_one(
 
 def test_release_invariants_refuse_an_untraced_adaptation_marker_before_2010() -> None:
     # DEU-UNLINKED, Germany's only untraced record of 2022, moves to 2009 in both
-    # tables and keeps its adaptation marker.
-    def to_2009(frame: pl.DataFrame) -> pl.DataFrame:
-        is_row = (pl.col("provider_code") == 5) & (pl.col("year") == 2022)
-        return frame.with_columns(
-            year=pl.when(is_row).then(pl.lit(2009, pl.Int16)).otherwise(pl.col("year"))
-        )
-
+    # tables and keeps its adaptation marker. Its 2.5m leaves Germany's 2022
+    # `unallocated` row for a 2009 row of its own.
     tables = {name: _read(name) for name in INVARIANT_TABLES}
-    tables["untraced"] = to_2009(tables["untraced"])
-    tables["unallocated"] = to_2009(tables["unallocated"])
+    untraced, unallocated = tables["untraced"], tables["unallocated"]
+    tables["untraced"] = untraced.with_columns(
+        year=pl.when(pl.col("record_id") == "DEU-UNLINKED")
+        .then(pl.lit(2009, pl.Int16))
+        .otherwise(pl.col("year"))
+    )
+    is_row = (pl.col("provider_code") == 5) & (pl.col("year") == 2022)
+    moved = unallocated.filter(is_row).with_columns(
+        year=pl.lit(2009, pl.Int16),
+        marked_usd=pl.col("unlinked_marked_usd"),
+        outside_release_usd=pl.lit(0.0),
+    )
+    kept = unallocated.with_columns(
+        pl.when(is_row)
+        .then(pl.col(name) - pl.col("unlinked_marked_usd"))
+        .otherwise(pl.col(name))
+        .alias(name)
+        for name in ("marked_usd", "unlinked_marked_usd")
+    )
+    tables["unallocated"] = pl.concat([kept, moved])
 
     assert release_invariants(tables) == [
         "untraced DEU-UNLINKED: an adaptation marker before ADAPTATION_FIRST_YEAR"
     ]
 
 
+def test_release_invariants_refuse_a_dropped_allocation_row() -> None:
+    # NOR-1-R1, Norway's only Rio-marked record of 2022, loses its allocation row,
+    # and NOR-1's disbursed amounts drop with it, so every per-row and per-record
+    # bound still holds. Norway's 2022 Rio-marked disbursement then reaches no table.
+    tables = {name: _read(name) for name in INVARIANT_TABLES}
+    dropped = tables["disbursements"].filter(pl.col("record_id") == "NOR-1-R1")
+    tables["disbursements"] = tables["disbursements"].filter(
+        pl.col("record_id") != "NOR-1-R1"
+    )
+    tables["commitments"] = tables["commitments"].with_columns(
+        pl.when(pl.col("row_id") == "NOR-1")
+        .then(pl.col(total) - dropped[part].sum())
+        .otherwise(pl.col(total))
+        .alias(total)
+        for total, part in (
+            ("disbursed_usd", "allocated_usd"),
+            ("disbursed_low_usd", "allocated_low_usd"),
+            ("disbursed_high_usd", "allocated_high_usd"),
+        )
+    )
+
+    assert release_invariants(tables) == [
+        "unallocated 8 2022: marked_usd 5700000.0 differs from its parts' sum 0.0"
+    ]
+
+
+def test_release_invariants_allow_rounding_in_a_marked_total() -> None:
+    # Japan's 64m of 2023 off by 1e-5 USD, above INVARIANT_TOLERANCE_USD and within
+    # INVARIANT_RELATIVE_TOLERANCE of it, as rounding parts large totals.
+    tables = {name: _read(name) for name in INVARIANT_TABLES}
+    is_row = (pl.col("provider_code") == 701) & (pl.col("year") == 2023)
+    tables["unallocated"] = tables["unallocated"].with_columns(
+        marked_usd=pl.when(is_row)
+        .then(pl.col("marked_usd") + 1e-5)
+        .otherwise(pl.col("marked_usd"))
+    )
+
+    assert release_invariants(tables) == []
+
+
 @pytest.mark.parametrize(
-    "column", ["record_grant_equiv_usd", "record_disbursement_usd"]
+    "column", ["record_grant_equiv_usd", "record_disbursement_usd", "allocated_usd"]
+)
+# JPN-SPLIT has a row under JPN-1 and one under JPN-3, so a non-finite amount on
+# the JPN-1 row leaves the record's rows unequal and the commitment's sum short.
+@pytest.mark.parametrize(
+    ("row_id", "record_id"), [("AFDB-1", "AFDB-1-R1"), ("JPN-1", "JPN-SPLIT")]
 )
 @pytest.mark.parametrize("value", [float("nan"), float("inf")])
 def test_release_invariants_report_a_non_finite_amount_once(
-    column: str, value: float
+    column: str, row_id: str, record_id: str, value: float
 ) -> None:
-    # AFDB-1-R1 is a one-row record, so no row of it can differ from another.
     tables = {name: _read(name) for name in INVARIANT_TABLES}
     tables["disbursements"] = tables["disbursements"].with_columns(
-        pl.when(pl.col("record_id") == "AFDB-1-R1")
+        pl.when(pl.col("row_id") == row_id, pl.col("record_id") == record_id)
         .then(value)
         .otherwise(pl.col(column))
         .alias(column)
@@ -504,7 +561,7 @@ def test_release_invariants_report_a_non_finite_amount_once(
     problems = release_invariants(tables)
 
     assert len(problems) == 1
-    assert "AFDB-1-R1" in problems[0]
+    assert record_id in problems[0]
     assert problems[0].endswith(f"{column} is not finite")
 
 

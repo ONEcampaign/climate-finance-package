@@ -222,10 +222,12 @@ def test_crdf_amounts_face_values_and_climate_shares(crs: pl.DataFrame) -> None:
 def test_crdf_adaptation_is_null_before_the_crdf_measures_it(
     crs: pl.DataFrame, year: int, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # The water row, adaptation and mitigation both marked, and the adaptation-only
-    # row moved to `year`.
+    # The water row, adaptation and mitigation both marked, the adaptation-only row
+    # and IDA's components, USD 37.5m of them adaptation alone, moved to `year`.
     raw = pl.read_parquet(OECD / "crdf_recipient.parquet").with_columns(
-        year=pl.when(pl.col("crs_id").is_in(["2022000101", "2022000102"]))
+        year=pl.when(
+            pl.col("crs_id").is_in(["2022000101", "2022000102", "2022P170001"])
+        )
         .then(year)
         .otherwise(pl.col("year"))
     )
@@ -241,8 +243,15 @@ def test_crdf_adaptation_is_null_before_the_crdf_measures_it(
     assert solar["face_usd"] == pytest.approx(4e6)
     assert solar["climate_usd"] == pytest.approx(4e6 if measured else 0.0)
     assert solar["objective"] == "adaptation"
+    # A component row keeps its face value, and its climate share follows its
+    # climate value.
+    ida = _row(crdf, crs_id="2022P170001")
+    assert ida["face_usd"] == pytest.approx(150e6)
+    assert ida["climate_usd"] == pytest.approx(67.5e6 if measured else 30e6)
+    assert ida["climate_share"] == pytest.approx(0.45 if measured else 0.2)
+    assert (ida["adaptation_usd"] is not None) == measured
     warned = [r.args for r in caplog.records if r.funcName == "_mitigation_only"]
-    assert warned == ([] if measured else [(1, ADAPTATION_FIRST_YEAR, 4.0)])
+    assert warned == ([] if measured else [(2, ADAPTATION_FIRST_YEAR, 41.5)])
     assert water["climate_usd"] == water["mitigation_usd"] == pytest.approx(2.5e6)
     assert (water["adaptation_usd"] is not None) == measured
     assert (water["overlap_usd"] is not None) == measured

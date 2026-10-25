@@ -1017,20 +1017,21 @@ UNTRACED = _table(
     record_grant_equiv_usd=_usd(nullable=True, minimum=0.0),
 )
 
-# Rio-marked CRS disbursement outside `disbursements`, by provider and disbursement
-# year, at face value: a linked record's disbursement beyond what its commitments
-# take (`excess_usd`), disbursements to commitments with no CRDF row in the release
-# (`outside_release_usd`), records linked to no commitment (`unlinked_marked_usd`),
-# and the unlinked records of the funds whose commitments the build routes through
-# their IATI files (`fund_unlinked_usd`, 0 with `gap_fill` off). Excess and unlinked
-# count in the totals through `untraced`, and the release leaves the other two out.
-# With the `disbursements` rows of Rio-marked CRS records they sum to every
-# Rio-marked CRS disbursement.
+# Rio-marked CRS disbursement by provider and disbursement year, at face value: all
+# of it (`marked_usd`), and its parts outside `disbursements`: a linked record's
+# disbursement beyond what its commitments take (`excess_usd`), disbursements to
+# commitments with no CRDF row in the release (`outside_release_usd`), records
+# linked to no commitment (`unlinked_marked_usd`), and the unlinked records of the
+# GCF and the GEF whose money the funds' IATI route counts (`fund_unlinked_usd`, 0
+# with `gap_fill` off). Excess and unlinked count in the totals through `untraced`,
+# and the release leaves the other two out. The four parts and the `disbursements`
+# rows of Rio-marked CRS records sum to `marked_usd` (`release_invariants`).
 UNALLOCATED = _table(
     "unallocated",
     ("provider_code", "year"),
     provider_code=_code(),
     year=_year(),
+    marked_usd=_usd(),
     excess_usd=_usd(),
     outside_release_usd=_usd(),
     unlinked_marked_usd=_usd(),
@@ -1269,6 +1270,11 @@ INVARIANT_TOLERANCE_USD = 1e-6
 # The relative difference `btr_totals` may show from the `btr` rows it sums, as the
 # two add the same amounts in different orders.
 BTR_TOTALS_TOLERANCE = 1e-9
+# Relative tolerance for a provider-year total of `unallocated.marked_usd`, where
+# INVARIANT_TOLERANCE_USD is smaller. Its parts are sums of the allocations a
+# record's disbursement splits into, so rounding parts them from the total by up to
+# 1.1e-15 of it, 5e-6 USD on EU Institutions' 4.8bn of 2024 in an archive build.
+INVARIANT_RELATIVE_TOLERANCE = 1e-12
 # "Developing countries, unspecified": 998 in the CRDF and the DAC recipient list,
 # 9998 in the bulk CRS. Release tables carry 998 only.
 UNSPECIFIED_RECIPIENT = 998
@@ -1353,8 +1359,10 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     `unallocated`, `agency_shares`, `agency_spending`, `core_contributions`,
     `provider_coefficients` and BTR tables.
 
-    Every amount is finite or null; the other checks skip a non-finite amount, so it
-    is reported once, as non-finite. Every disbursements row holds
+    Every amount is finite or null; the other checks skip a non-finite amount, and
+    the sum, record and untraced checks skip the commitment and the record whose
+    row holds one, and the `unallocated` total its provider and year, so it is
+    reported once, as non-finite. Every disbursements row holds
     0 <= allocated_low <= allocated <= allocated_high and 0 <= record_grant_equiv,
     and names a commitment. Per commitment, its rows' allocated, allocated_low and
     allocated_high, each plus `withheld_usd`, sum to disbursed, disbursed_low and
@@ -1381,14 +1389,16 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     aggregates another of its channels. Per party, year and status, `btr_totals`
     holds as many rows and linked rows as `btr` and `btr_links` do, and the same
     face and grant-equivalent sums within `BTR_TOTALS_TOLERANCE` of their size. The
-    `untraced` checks are those of `_untraced_problems`, and the
-    `provider_coefficients` checks those of `_coefficient_problems`. An empty list
-    means every check passed.
+    `untraced` checks are those of `_untraced_problems`, the `unallocated` total
+    that of `_marked_problems`, and the `provider_coefficients` checks those of
+    `_coefficient_problems`. An empty list means every check passed.
     """
-    commitments, problems = _finite(tables["commitments"], name="commitments")
-    disbursements, non_finite = _finite(tables["disbursements"], name="disbursements")
+    commitments, problems, _ = _finite(tables["commitments"], name="commitments")
+    disbursements, non_finite, flagged = _finite(
+        tables["disbursements"], name="disbursements"
+    )
     problems.extend(non_finite)
-    untraced, non_finite = _finite(tables["untraced"], name="untraced")
+    untraced, non_finite, _ = _finite(tables["untraced"], name="untraced")
     problems.extend(non_finite)
     # A non-finite amount is not null in `tables`, so it is reported once, above.
     problems.extend(
@@ -1444,11 +1454,15 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
         for row_id in orphans["row_id"].unique().sort()
     )
 
-    sums = disbursements.group_by("row_id").agg(
-        pl.col(part).sum().alias(f"_{part}") for part in _DISBURSED_SUMS.values()
+    summed = ~pl.col("row_id").is_in(flagged["row_id"].implode())
+    sums = (
+        disbursements.filter(summed)
+        .group_by("row_id")
+        .agg(pl.col(part).sum().alias(f"_{part}") for part in _DISBURSED_SUMS.values())
     )
     totals = (
-        commitments.select("row_id", "withheld_usd", *_DISBURSED_SUMS)
+        commitments.filter(summed)
+        .select("row_id", "withheld_usd", *_DISBURSED_SUMS)
         .join(sums, on="row_id", how="left")
         .with_columns(
             (pl.col(f"_{part}").fill_null(0.0) + pl.col("withheld_usd")).alias(
@@ -1480,7 +1494,10 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
         f"commitments {row_id}: disbursed_high_usd > max(face_usd, 0)"
         for row_id in failing["row_id"]
     )
-    problems.extend(_record_problems(disbursements))
+    finite = disbursements.filter(
+        ~pl.col("record_id").is_in(flagged["record_id"].implode())
+    )
+    problems.extend(_record_problems(finite))
     problems.extend(
         _btr_problems(
             tables["btr"], links=tables["btr_links"], totals=tables["btr_totals"]
@@ -1488,7 +1505,16 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     )
     problems.extend(
         _untraced_problems(
-            untraced, disbursements=disbursements, unallocated=tables["unallocated"]
+            untraced, disbursements=finite, unallocated=tables["unallocated"]
+        )
+    )
+    held = flagged.select("provider_code", "year").unique()
+    problems.extend(
+        _marked_problems(
+            disbursements.join(held, on=["provider_code", "year"], how="anti"),
+            unallocated=tables["unallocated"].join(
+                held, on=["provider_code", "year"], how="anti"
+            ),
         )
     )
     problems.extend(_share_problems(tables["agency_shares"]))
@@ -1756,9 +1782,11 @@ def _spending_problems(
     ]
 
 
-def _finite(frame: pl.DataFrame, *, name: str) -> tuple[pl.DataFrame, list[str]]:
-    """`frame` with NaN and infinite amounts set to null, and a problem per such
-    amount, naming its row by the table's sort key."""
+def _finite(
+    frame: pl.DataFrame, *, name: str
+) -> tuple[pl.DataFrame, list[str], pl.DataFrame]:
+    """`frame` with NaN and infinite amounts set to null, a problem per such amount,
+    naming its row by the table's sort key, and the rows that held one."""
     columns = [column for column, dtype in frame.schema.items() if dtype.is_float()]
     key = RELEASE_TABLES[name].sort_key
     problems = [
@@ -1766,11 +1794,14 @@ def _finite(frame: pl.DataFrame, *, name: str) -> tuple[pl.DataFrame, list[str]]
         for column in columns
         for row in frame.filter(~pl.col(column).is_finite()).iter_rows(named=True)
     ]
+    flagged = frame.filter(
+        pl.any_horizontal(~pl.col(column).is_finite() for column in columns)
+    )
     finite = frame.with_columns(
         pl.when(pl.col(column).is_finite()).then(pl.col(column)).alias(column)
         for column in columns
     )
-    return finite, problems
+    return finite, problems, flagged
 
 
 def _record_problems(disbursements: pl.DataFrame) -> list[str]:
@@ -1907,6 +1938,63 @@ def _untraced_problems(
             ).iter_rows()
         )
     return problems
+
+
+def _marked_problems(
+    disbursements: pl.DataFrame, *, unallocated: pl.DataFrame
+) -> list[str]:
+    """Providers and years whose `unallocated.marked_usd` differs from the sum of
+    its parts: the allocated amounts of the `disbursements` rows of Rio-marked CRS
+    records, and `unallocated`'s excess, outside-release, unlinked and fund-unlinked
+    amounts. A Rio-marked record is in the recipient view's Bi_Multi codes and
+    carries a measured adaptation marker (`measured_adaptation`) or a mitigation
+    marker above 0, as `allocate.marked_records` selects them; a record that
+    disburses nothing has no allocation to sum. A provider and year missing from
+    one side counts 0 there. The two sides compare within `INVARIANT_TOLERANCE_USD`
+    or `INVARIANT_RELATIVE_TOLERANCE` of `marked_usd`, whichever is larger."""
+    key = ["provider_code", "year"]
+    marked = (measured_adaptation(pl.col("record_rio_adaptation")) > 0) | (
+        pl.col("record_rio_mitigation") > 0
+    )
+    released = (
+        disbursements.filter(
+            pl.col("disbursement_source") == "crs",
+            pl.col("bi_multi").is_in(RECIPIENT_VIEW),
+            marked.fill_null(value=False),
+        )
+        .group_by(key)
+        .agg(_released=pl.col("allocated_usd").sum())
+    )
+    ledger = (
+        unallocated.select(
+            *key,
+            "marked_usd",
+            _parts=pl.sum_horizontal(
+                "excess_usd",
+                "outside_release_usd",
+                "unlinked_marked_usd",
+                "fund_unlinked_usd",
+            ),
+        )
+        .join(released, on=key, how="full", coalesce=True)
+        .with_columns(pl.exclude(key).fill_null(0.0))
+        .with_columns(_summed=pl.col("_released") + pl.col("_parts"))
+        .filter(
+            (pl.col("marked_usd") - pl.col("_summed")).abs()
+            > pl.max_horizontal(
+                pl.lit(INVARIANT_TOLERANCE_USD),
+                INVARIANT_RELATIVE_TOLERANCE * pl.col("marked_usd").abs(),
+            )
+        )
+        .sort(key)
+    )
+    return [
+        f"unallocated {provider} {year}: marked_usd {marked_usd!r} differs from "
+        f"its parts' sum {summed!r}"
+        for provider, year, marked_usd, summed in ledger.select(
+            *key, "marked_usd", "_summed"
+        ).iter_rows()
+    ]
 
 
 # release.json --------------------------------------------------------------------

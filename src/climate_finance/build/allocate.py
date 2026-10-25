@@ -75,7 +75,6 @@ from climate_finance.build.errors import AllocationInputError
 from climate_finance.build.fetch import last_complete_year
 from climate_finance.build.link.id_practice import period_of, untraceable
 from climate_finance.build.link.keys import line_date
-from climate_finance.build.link.ledger import FUND_PUBLISHERS
 from climate_finance.build.link.text import title_words, word_share
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
@@ -89,7 +88,6 @@ from climate_finance.schema import (
 )
 
 if TYPE_CHECKING:
-    from climate_finance.build.config import BuildConfig
     from climate_finance.build.stages import StageContext, StageOutput
 
 # A donor is dated when this share of its disbursement-only dollars in these record
@@ -1265,19 +1263,12 @@ def years_since_commitment(
     )
 
 
-def routed_funds(config: BuildConfig) -> tuple[int, ...]:
-    """The funds of `FUND_PUBLISHERS` whose CRDF rows the fill stage routes through
-    their IATI files: every one when `gap_fill` is on, as `gap_fill.run_fill`
-    refuses a config that leaves a fund's publisher out, and none when it is off."""
-    return tuple(FUND_PUBLISHERS) if config.gap_fill else ()
-
-
 def marked_records(
     allocations: pl.LazyFrame,
     *,
     crs: pl.LazyFrame,
     last_year: int,
-    routed: Collection[int],
+    routed: pl.LazyFrame,
 ) -> pl.LazyFrame:
     """Each Rio-marked CRS record's disbursement and where allocation put it.
 
@@ -1287,8 +1278,9 @@ def marked_records(
     from `ADAPTATION_FIRST_YEAR` (`schema.measured_adaptation`), as the CRDF's
     does. `excess_usd` sums its `excess` allocations, and `outside_release_usd` its
     other allocations to commitments with no CRDF row (a null `row_id`). `linked`
-    is whether allocation holds a row of it, and `route_fund` whether its provider
-    is one of `routed` (`routed_funds`).
+    is whether allocation holds a row of it, and `route_fund` whether its record id
+    is in `routed`, the records whose money a fund's IATI route counts
+    (`gap_fill.routed_records`).
     """
     excess = pl.col("rule") == "excess"
     amount = pl.col("allocated_usd")
@@ -1316,12 +1308,17 @@ def marked_records(
             "year",
             "disbursement_usd",
             provider_code="donor_code",
-            route_fund=pl.col("donor_code").is_in(list(routed)),
         )
         .join(by_record, on="record_id", how="left", validate="1:1")
+        .join(
+            routed.select("record_id", route_fund=pl.lit(value=True)),
+            on="record_id",
+            how="left",
+            validate="1:1",
+        )
         .with_columns(
             pl.col("excess_usd", "outside_release_usd").fill_null(0.0),
-            pl.col("linked").fill_null(value=False),
+            pl.col("linked", "route_fund").fill_null(value=False),
         )
     )
 
@@ -1331,13 +1328,16 @@ def untraced_records(marked: pl.LazyFrame) -> pl.LazyFrame:
     commitment: a linked record's excess, as reason `excess`, and an unlinked
     record's whole disbursement, as `unlinked`.
 
-    A routed fund's unlinked record stays out. The CRS does not carry the GCF's and
-    the GEF's own ids, so their records link to few commitments, and where the build
-    routes the funds (`routed_funds`) `gap_fill.route_funds` gives those commitments
-    the disbursements of the funds' IATI files. A routed fund's unlinked records are
-    the money that route already counts. Its excess still counts, since a link
-    reached a commitment that was already full. Without the route, nothing else
-    counts a fund's unlinked records, so they are untraced like any other.
+    An unlinked record whose money a fund's IATI route counts (`route_fund`) stays
+    out. The CRS does not carry the GCF's and the GEF's own ids, so their records
+    link to few commitments, and with `gap_fill` on `gap_fill.route_funds` gives
+    those commitments the disbursements of the funds' IATI files. A fund record
+    whose fund key is that of a commitment the route filled is money the route
+    already counts (`gap_fill.routed_records`). The fund's other unlinked records,
+    whose commitment has no fund key or matches no IATI activity with
+    disbursements, are untraced like any other, as are every fund's unlinked
+    records with `gap_fill` off. A linked record's excess counts whatever its
+    provider, since a link reached a commitment that was already full.
     """
     unlinked = ~pl.col("linked")
     return marked.filter(
