@@ -20,10 +20,10 @@ from typing import NamedTuple
 import pytest
 from make_fixture import FIXTURE_DIR
 
-from climate_finance import snapshot
+from climate_finance import release as release_module
 from climate_finance.methods import Method
+from climate_finance.release import IndexEntry, ReleaseIndex, release_dirname
 from climate_finance.schema import RELEASE_TABLES
-from climate_finance.snapshot import IndexEntry, ReleaseIndex, release_dirname
 from climate_finance.spec import Spec
 
 ROOT = Path(__file__).parent.parent
@@ -62,7 +62,7 @@ def fixture_as_latest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         latest="fixture",
         releases={"fixture": IndexEntry(url="https://example.org/pack", sha256="0")},
     )
-    monkeypatch.setattr(snapshot, "_shipped_index", lambda: index)
+    monkeypatch.setattr(release_module, "_shipped_index", lambda: index)
     monkeypatch.setenv("CLIMATE_FINANCE_CACHE", str(cache))
     work = tmp_path / "work"
     work.mkdir()

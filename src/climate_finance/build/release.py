@@ -76,6 +76,7 @@ from climate_finance.build.measure import load_provider_facts
 from climate_finance.build.provenance import setting_value
 from climate_finance.build.readers.btr import party_provider
 from climate_finance.build.sums import ordered_sum
+from climate_finance.release import IndexEntry, ReleaseIndex, load, release_dirname
 from climate_finance.schema import (
     BILATERAL,
     BTR,
@@ -109,7 +110,6 @@ from climate_finance.schema import (
     sha256_file,
     withheld_record,
 )
-from climate_finance.snapshot import IndexEntry, ReleaseIndex, load, release_dirname
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence

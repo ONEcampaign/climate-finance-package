@@ -24,8 +24,8 @@ Requires Python 3.12 or later. To build a release, install the `build` extra wit
 ```python
 import climate_finance as cf
 
-snap = cf.load()
-result = snap.spending(
+release = cf.load()
+result = release.spending(
     providers="Japan",
     recipients="Bangladesh",
     years=range(2021, 2024),
@@ -48,7 +48,7 @@ for row in result.table.to_polars().iter_rows(named=True):
 - Commitments, disbursements, and grant equivalents of climate finance by provider, recipient, and year, in USD, EUR, GBP, or CAD, at current or constant prices.
 - Climate value under `ONE` or `OECD` marker weights, under `PROVIDER`, which takes the coefficients each provider applies when it reports to the UNFCCC, or under all three at once with `RANGE`. A release built with Jev's labels also answers `relevance="jev"` queries.
 - Core contributions to multilateral agencies attributed to the providers that pay them, so each dollar counts once.
-- Link rates, commitment status, and the measured precision of the links with `snap.quality()`, and a party's BTR report against the OECD data with `snap.reconcile()`.
+- Link rates, commitment status, and the measured precision of the links with `release.quality()`, and a party's BTR report against the OECD data with `release.reconcile()`.
 
 ## When to use something else
 

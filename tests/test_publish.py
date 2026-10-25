@@ -21,7 +21,7 @@ import pytest
 from make_fixture import FIXTURE_DIR
 
 import climate_finance as cf
-from climate_finance import snapshot
+from climate_finance import release as release_module
 from climate_finance.build import gate, release
 from climate_finance.build.errors import BuildError, GateFailedError
 from climate_finance.build.fetch import BTR_SOURCE
@@ -32,8 +32,8 @@ from climate_finance.errors import (
     UnknownNameError,
     WithheldTableError,
 )
+from climate_finance.release import IndexEntry, ReleaseIndex
 from climate_finance.schema import BTR_WORKBOOKS, ReleaseManifest, sha256_file
-from climate_finance.snapshot import IndexEntry, ReleaseIndex
 
 PACK = "climate-finance-fixture.tar.zst"
 BUILD_TOML = Path(__file__).parents[1] / "build.toml"
@@ -465,8 +465,8 @@ def published(
     shipped = tmp_path / "releases.json"
     shipped.write_text(index.model_dump_json())
     (served / "releases.json").write_text(index.model_dump_json())
-    monkeypatch.setattr(snapshot, "RELEASE_INDEX", shipped)
-    monkeypatch.setattr(snapshot, "INDEX_URL", f"{url}/releases.json")
+    monkeypatch.setattr(release_module, "RELEASE_INDEX", shipped)
+    monkeypatch.setattr(release_module, "INDEX_URL", f"{url}/releases.json")
     return index, served
 
 
@@ -478,16 +478,16 @@ def test_load_downloads_verifies_and_then_runs_offline(
     cache = tmp_path / "cache"
     expected = cf.load(path=FIXTURE_DIR).spending().table.to_polars()
 
-    snap = cf.load(cache_dir=cache)
+    loaded = cf.load(cache_dir=cache)
 
-    assert snap.path == cache / "climate-finance-fixture"
+    assert loaded.path == cache / "climate-finance-fixture"
     assert sorted(path.name for path in cache.iterdir()) == ["climate-finance-fixture"]
 
     def offline(*args: object, **kwargs: object) -> None:
         raise AssertionError("network after download")
 
-    monkeypatch.setattr(snapshot.urllib.request, "urlopen", offline)
-    assert snap.spending().table.to_polars().equals(expected)
+    monkeypatch.setattr(release_module.urllib.request, "urlopen", offline)
+    assert loaded.spending().table.to_polars().equals(expected)
     again = cf.load("fixture", cache_dir=cache)
     assert again.spending().table.to_polars().equals(expected)
 
@@ -497,11 +497,11 @@ def test_refresh_reads_the_index_online(
     published: tuple[ReleaseIndex, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(snapshot, "RELEASE_INDEX", tmp_path / "missing.json")
+    monkeypatch.setattr(release_module, "RELEASE_INDEX", tmp_path / "missing.json")
 
-    snap = cf.load(cache_dir=tmp_path / "cache", refresh=True)
+    loaded = cf.load(cache_dir=tmp_path / "cache", refresh=True)
 
-    assert snap.manifest.release == "fixture"
+    assert loaded.manifest.release == "fixture"
 
 
 def test_a_pack_whose_sha256_differs_from_the_index_is_refused(
@@ -524,9 +524,9 @@ def test_a_cached_release_that_fails_its_check_downloads_again(
     table = cache / "climate-finance-fixture" / "provider_coefficients.parquet"
     table.write_bytes(b"corrupt")
 
-    snap = cf.load(cache_dir=cache)
+    loaded = cf.load(cache_dir=cache)
 
-    assert sha256_file(table) == snap.manifest.tables["provider_coefficients"].sha256
+    assert sha256_file(table) == loaded.manifest.tables["provider_coefficients"].sha256
 
 
 def test_load_names_an_unlisted_release_and_an_unreachable_pack(
@@ -551,4 +551,4 @@ def test_load_names_an_unlisted_release_and_an_unreachable_pack(
 
 
 def test_the_shipped_index_parses() -> None:
-    assert isinstance(snapshot._shipped_index(), ReleaseIndex)
+    assert isinstance(release_module._shipped_index(), ReleaseIndex)

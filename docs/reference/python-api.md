@@ -4,7 +4,7 @@ Everything in version 2.0 imports from `climate_finance`, usually as `cf`. The e
 
 ## `cf.load(release="latest", *, path=None, cache_dir=None, refresh=False)`
 
-Opens a release and returns a `Snapshot`.
+Opens a release and returns a `Release`.
 
 Parameters:
 
@@ -24,19 +24,19 @@ Raises:
 ```python
 import climate_finance as cf
 
-snap = cf.load()
-print(snap.manifest.release, snap.manifest.package_version)
+release = cf.load()
+print(release.manifest.release, release.manifest.package_version)
 ```
 
 ```output
 fixture 2.0.0.dev0
 ```
 
-## `Snapshot`
+## `Release`
 
-Represents one release on disk. `snap.path` is its directory and `snap.manifest` is the parsed `release.json`.
+Represents one release on disk. `release.path` is its directory and `release.manifest` is the parsed `release.json`.
 
-### `Snapshot.spending(*, providers, recipients, years, method, flow, view, currency, prices, oda_only, measure, untraced, spec)`
+### `Release.spending(*, providers, recipients, years, method, flow, view, currency, prices, oda_only, measure, untraced, spec)`
 
 Returns a `Result`. Every argument is optional and keyword-only:
 
@@ -54,11 +54,11 @@ Returns a `Result`. Every argument is optional and keyword-only:
 
 Raises `UnknownProviderError` or `UnknownRecipientError` for a name outside the listings, and `MissingLabelsError` for a method with `relevance="jev"` on a release that holds no Jev labels.
 
-**Flow.** `flow="disbursements"` counts what the trace allocated to the release's climate commitments, by the year of the disbursement record. A disbursement counts against a commitment the release holds, and the commitments start at the first CRDF year, so the earliest years count less of what was paid. Rio-marked CRS disbursement that reaches no commitment, the excess beyond a full commitment and the records linked to none, counts as untraced, weighted by the record's own markers, in `value` and `high` and not in `low`. Disbursements end at the build's `crs_last_complete`. `flow="commitments"` counts CRDF commitments at face value in the commitment year, with `low`, `value`, and `high` equal. `flow="grant_equivalent"` counts the grant equivalent of the disbursements. A record with no grant equivalent, or a negative one on a positive disbursement, counts nothing, and `snap.quality().summary()` reports the valued share of allocated value as `grant_equiv_coverage`.
+**Flow.** `flow="disbursements"` counts what the trace allocated to the release's climate commitments, by the year of the disbursement record. A disbursement counts against a commitment the release holds, and the commitments start at the first CRDF year, so the earliest years count less of what was paid. Rio-marked CRS disbursement that reaches no commitment, the excess beyond a full commitment and the records linked to none, counts as untraced, weighted by the record's own markers, in `value` and `high` and not in `low`. Disbursements end at the build's `crs_last_complete`. `flow="commitments"` counts CRDF commitments at face value in the commitment year, with `low`, `value`, and `high` equal. `flow="grant_equivalent"` counts the grant equivalent of the disbursements. A record with no grant equivalent, or a negative one on a positive disbursement, counts nothing, and `release.quality().summary()` reports the valued share of allocated value as `grant_equiv_coverage`.
 
 ```python
 for flow in ("commitments", "disbursements", "grant_equivalent"):
-    result = snap.spending(providers="Japan", years=[2021, 2022], flow=flow)
+    result = release.spending(providers="Japan", years=[2021, 2022], flow=flow)
     print(flow, round(result.table.to_polars()["value"].sum() / 1e6, 1))
 ```
 
@@ -71,7 +71,7 @@ grant_equivalent 8.0
 **View.** `view="recipient"` counts what reaches recipients, including the outflows of multilateral agencies. `view="provider"` adds each provider's core contributions to multilateral agencies multiplied by the agency's climate share, and excludes the agencies' own outflows. Attributed rows have no recipient. The `share_source` column of `result.rows(origin="attribution")` shows whether each share is `computed`, `held`, or `oecd`.
 
 ```python
-result = snap.spending(providers="France", years=[2022], view="provider")
+result = release.spending(providers="France", years=[2022], view="provider")
 for row in result.table.to_polars().sort("bi_multi").iter_rows(named=True):
     print(row["bi_multi"], round(row["value"] / 1e6, 2))
 ```
@@ -86,7 +86,7 @@ Bi_Multi 1 is France's bilateral spending, and 2 is the climate share of its con
 **Scope.** `oda_only=True` keeps commitments of the CRDF's ODA category and disbursements of the CRS's ODA flow codes 11, 13, and 19.
 
 ```python
-result = snap.spending(providers="Japan", years=[2021, 2022], oda_only=True)
+result = release.spending(providers="Japan", years=[2021, 2022], oda_only=True)
 print(round(result.table.to_polars()["value"].sum() / 1e6, 1))
 ```
 
@@ -97,18 +97,18 @@ print(round(result.table.to_polars()["value"].sum() / 1e6, 1))
 **Currency and prices.** `currency` takes `"USD"`, `"EUR"`, `"GBP"`, or `"CAD"`. `prices` takes `"current"` or a base year. Conversion uses the OECD DAC exchange rates and deflators through pydeflate by provider, falling back to the DAC total for providers without their own series. It downloads those series on the first run, so the test suite skips this example.
 
 ```python skip
-result = snap.spending(
+result = release.spending(
     providers="France", years=range(2018, 2023), currency="EUR", prices=2022
 )
 ```
 
 `result.explain()` states the currency, the price basis, and the conversion source.
 
-### `Snapshot.quality(*, providers, years, method)`
+### `Release.quality(*, providers, years, method)`
 
 Returns a `Quality` object. Its amounts are the CRDF's published climate value of the commitments. `method` acts on the provider-view columns, `eu_left_out` and `attribution`, and on the climate value of untraced disbursement in `untraced`.
 
-### `Snapshot.reconcile(*, parties, years, method)`
+### `Release.reconcile(*, parties, years, method)`
 
 Compares each party's BTR Table III.1 total with OECD figures for its bilateral finance. Returns a `Reconciliation`:
 
@@ -116,11 +116,11 @@ Compares each party's BTR Table III.1 total with OECD figures for its bilateral 
 - `years` (`Iterable[int]`, default `range(2015, 2023)`).
 - `method` (`Method | MethodRange`, default `cf.methods.ONE`).
 
-### `Snapshot.disbursement_profile()`
+### `Release.disbursement_profile()`
 
 Returns a polars DataFrame of the cumulative disbursed share of traceable climate value by years since commitment, for the groups `all`, `bilateral`, and `multilateral`. `vintages` counts the commitment years observed for that duration.
 
-### `Snapshot.table(name)`
+### `Release.table(name)`
 
 Returns one release table as a polars LazyFrame. Raises `KeyError` for a name outside the release tables.
 
@@ -175,14 +175,14 @@ The answer to one `Spec`:
 
 - `table` is a `Table` with one row per year, provider, recipient, Bi_Multi code, and method. Its columns are: `year`, `provider_code`, `recipient_code`, `bi_multi`, `method`, `amount`, `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced`. `amount` is the unweighted face value. `value` is the weighted climate value, equal to adaptation + mitigation + `cross_cutting` + `unsplit` under the highest-marker rule (where objectives are disjoint), and to adaptation + mitigation − `cross_cutting` + `unsplit` otherwise. `unsplit` holds attributed value whose agency share lacks a split by objective. `untraced` is the part of `value` from untraced rows, so `value` − `untraced` is the traced value, and it is 0 for commitments. `Table` converts with `to_polars()`, `to_pandas()`, and `to_arrow()`.
 - `modelled` is a `Table` of the "modelled, not reported" range with the columns: `year`, `provider_code`, `recipient_code`, `basis`, `low`, and `high`. It is populated only when the query asks for recipient-view disbursements with `oda_only=False`.
-- `spec` is the `Spec`. `snap.spending(spec=result.spec)` reruns the query to an identical table.
+- `spec` is the `Spec`. `release.spending(spec=result.spec)` reruns the query to an identical table.
 - `meta` holds `release`, `package_version`, `source_versions`, `model_versions`, `years`, and `conversion`. `years` copies the release's `years`. `conversion` holds the pydeflate version and a SHA-256 of the factors behind a converted result, because pydeflate refreshes its DAC data every 30 days, and is None for USD at current prices.
 - `rows(**filters)` returns the project rows behind the table as a polars DataFrame, filtered by column equality. A list, tuple, set, or range matches any item. Raises `KeyError` for an unknown column. `origin` is `commitment`, `disbursement`, `untraced`, or `attribution`. A row has the columns `origin`, `row_id`, `record_id`, `year`, `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_category`, `flow_code`, `project_number`, `title`, `status`, `rio_adaptation`, `rio_mitigation`, `record_rio_adaptation`, `record_rio_mitigation`, `marker_source`, `reason`, `climate_share`, `share_source`, `link_method`, `link_probability`, `allocation_weight`, `objective_label`, `label_source`, `jev_level`, `amount`, `coefficient_basis`, `coefficient_source`, and `method`, followed by the weighted amounts `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced`. An untraced row has no `row_id`, carries the record's own markers with `marker_source` `record`, and has `reason` `excess` for a linked record's disbursement beyond what its commitments take or `unlinked` for a record linked to no commitment. `coefficient_basis` is `provider`, `default`, or `case_by_case`, and null where the release has no coefficient row for the provider.
 - `explain()` returns the method, view, flow, filters, and units in plain language, as a string.
 - `share_of_total()` returns the same result under `measure="share_of_total"`, with every amount divided by all CRS flows for the same flow, year, provider, recipient, and Bi_Multi code, so its spec reruns to the same shares. A key missing from `total_flows` gives null. In the provider view, EU Institutions' total holds the same rows as their amounts under each method, at the same scaling.
 
 ```python
-result = snap.spending(providers="Japan", recipients="Bangladesh", years=[2023])
+result = release.spending(providers="Japan", recipients="Bangladesh", years=[2023])
 print(sorted(result.rows(origin="disbursement")["link_method"].unique()))
 ```
 
@@ -194,7 +194,7 @@ The synthetic release behind these examples carries `crosswalk_amount` and `titl
 
 ## `Quality`
 
-Returned by `Snapshot.quality()`. Each attribute is a `Table`:
+Returned by `Release.quality()`. Each attribute is a `Table`:
 
 - `table` holds the release's `quality` rows by provider and year.
 - `status` holds climate value by provider and commitment status.
@@ -208,7 +208,7 @@ Returned by `Snapshot.quality()`. Each attribute is a `Table`:
 
 ## `Reconciliation`
 
-Returned by `Snapshot.reconcile()`. `table` has one row per party, year, status, and method, and rows with no status sit on their own row. The columns, in order:
+Returned by `Release.reconcile()`. `table` has one row per party, year, status, and method, and rows with no status sit on their own row. The columns, in order:
 
 - `party`, `provider_code`, `year`, `status`, `method`, `party_weight`, `party_principal`, `weight_source`, `coefficient_basis`. The last four come from the provider's `provider_coefficients` row for every agency without a row of its own. `coefficient_basis` is `provider`, `default`, or `case_by_case`, as in `Result.rows()`, and null where the release holds no such row.
 - `crdf_method_share`, `crs_method_share`, and `crs_grant_equivalent_method_share`: the share of `crdf_at_party_weight`, of `crs_disbursed_at_party_weight`, and of `crs_grant_equivalent_at_party_weight` that rests on `PROVIDER`'s coefficients in place of the party's own, because the row's coefficients are case by case with no value for its marker or the provider has none in the release. The grant-equivalent comparator weighs the same records as the disbursed one, but a loan's grant equivalent is a fraction of its disbursement, so its share differs where loans concentrate in agencies that assess case by case, as at France's AFD. Each is null where its comparator is zero or null.
@@ -249,7 +249,7 @@ All errors inherit from `ClimateFinanceError`. The three name errors import from
 | `ReleaseIntegrityError` | a release fails its check. |
 | `SourceUnavailableError` | a download fails. |
 | `MissingLabelsError` | a method with `relevance="jev"` queries a release with no Jev labels. The message names the `jev_labels` setting. |
-| `WithheldTableError` | `Snapshot.table()` asks for a table the published release leaves out, `btr` or `btr_links`. `release.json` names each under `withheld_tables` with a note on how to build it. |
+| `WithheldTableError` | `Release.table()` asks for a table the published release leaves out, `btr` or `btr_links`. `release.json` names each under `withheld_tables` with a note on how to build it. |
 | `SchemaError` | a table fails to match its schema. |
 
 ## Next

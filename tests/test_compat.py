@@ -14,13 +14,13 @@ import climate_finance as cf
 from climate_finance.compat import ClimateData, set_climate_finance_data_path
 from climate_finance.methods import Method
 
-SNAP = cf.load(path=FIXTURE_DIR)
+RELEASE = cf.load(path=FIXTURE_DIR)
 YEARS = range(2021, 2025)
 
 
 def _climate_data(**kwargs: object) -> ClimateData:
     with pytest.warns(DeprecationWarning, match=r"spending\(\.\.\.\)"):
-        return ClimateData(years=YEARS, snapshot=SNAP, **kwargs)
+        return ClimateData(years=YEARS, release=RELEASE, **kwargs)
 
 
 def _expected(*parts: tuple[str, str, cf.Result]) -> pd.DataFrame:
@@ -40,7 +40,7 @@ def test_get_data_equals_spending_for_each_flow() -> None:
     )
 
     def spending(flow: str) -> cf.Result:
-        return SNAP.spending(
+        return RELEASE.spending(
             providers=[5, "France"], recipients="Kenya", years=YEARS, flow=flow
         )
 
@@ -78,7 +78,7 @@ def test_1x_settings_map_onto_spending_arguments(
 
     source = load.get("source", "OECD_CRS")
     expected = _expected(
-        (source, "gross_disbursements", SNAP.spending(years=YEARS, **spending))
+        (source, "gross_disbursements", RELEASE.spending(years=YEARS, **spending))
     )
     pd.testing.assert_frame_equal(data, expected)
 
@@ -87,7 +87,7 @@ def test_the_methodology_argument_overrides_the_set_methods_as_in_1x() -> None:
     data = _climate_data().set_oecd_spending_methodology().load_spending_data()
 
     expected = _expected(
-        ("OECD_CRS", "gross_disbursements", SNAP.spending(years=YEARS))
+        ("OECD_CRS", "gross_disbursements", RELEASE.spending(years=YEARS))
     )
     pd.testing.assert_frame_equal(data.get_data(), expected)
 
@@ -115,7 +115,7 @@ def test_importing_the_package_warns_only_when_a_1x_name_is_used() -> None:
 
 def test_constructing_climate_data_warns_with_the_replacement() -> None:
     with pytest.warns(DeprecationWarning, match="goes in climate-finance 3.0"):
-        ClimateData(years=YEARS, snapshot=SNAP)
+        ClimateData(years=YEARS, release=RELEASE)
 
 
 @pytest.mark.parametrize(
@@ -154,7 +154,7 @@ def test_choices_1x_refused_are_still_refused(
 ) -> None:
     with pytest.raises(ValueError, match=message), warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        ClimateData(years=YEARS, snapshot=SNAP, **kwargs)
+        ClimateData(years=YEARS, release=RELEASE, **kwargs)
 
 
 def test_custom_methodology_needs_its_coefficients_first() -> None:

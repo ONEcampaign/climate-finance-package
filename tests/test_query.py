@@ -30,9 +30,9 @@ from climate_finance.query import (
     EU_INSTITUTIONS,
     _aggregate,
 )
+from climate_finance.release import Release
 from climate_finance.result import AMOUNTS, ROW_KEYS
 from climate_finance.schema import ReleaseManifest
-from climate_finance.snapshot import Snapshot
 from climate_finance.spec import Spec
 from climate_finance.sums import ordered_sum
 
@@ -128,7 +128,7 @@ def test_value_stays_within_face_and_between_its_bounds(flow: str, view: str) ->
 
 
 @pytest.fixture(scope="module")
-def without_code_2(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
+def without_code_2(tmp_path_factory: pytest.TempPathFactory) -> Release:
     """The fixture release without its Bi_Multi 2 commitments and their rows."""
     code_2 = SNAP.table("commitments").filter(pl.col("bi_multi") == 2).collect()
     assert code_2.height, "the fixture needs a Bi_Multi 2 commitment"
@@ -146,7 +146,7 @@ def without_code_2(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
 @pytest.mark.parametrize("flow", FLOWS)
 @pytest.mark.parametrize("view", VIEWS)
 def test_code_2_rows_leave_every_total_unchanged(
-    without_code_2: Snapshot, flow: str, view: str
+    without_code_2: Release, flow: str, view: str
 ) -> None:
     spec = Spec(method=cf.methods.RANGE, flow=flow, view=view)
     with_code_2 = SNAP.spending(spec=spec).table.to_polars()
@@ -193,7 +193,7 @@ def test_keyword_arguments_build_the_same_spec() -> None:
 
 
 def test_spending_defaults_match_the_spec_defaults() -> None:
-    parameters = inspect.signature(Snapshot.spending).parameters
+    parameters = inspect.signature(Release.spending).parameters
     fields = Spec.model_fields
 
     assert set(fields) <= set(parameters)
@@ -511,17 +511,17 @@ def _hold_afdb_2022(frame: pl.DataFrame) -> pl.DataFrame:
 
 
 def test_attributed_value_shows_and_sums_by_share_source(tmp_path: Path) -> None:
-    snap = cf.load(
+    release = cf.load(
         path=copy_release(
             tmp_path / "release", edits={"agency_spending": _hold_afdb_2022}
         )
     )
-    rows = snap.spending(view="provider").rows(origin="attribution")
+    rows = release.spending(view="provider").rows(origin="attribution")
     by_source = rows.group_by("provider_code", "year", "share_source").agg(
         pl.col("value").sum()
     )
 
-    attribution = snap.quality().attribution.to_polars().filter(flow="disbursements")
+    attribution = release.quality().attribution.to_polars().filter(flow="disbursements")
     columns = attribution.unpivot(
         index=["provider_code", "year"],
         on=["computed_usd", "held_usd", "oecd_usd"],
@@ -532,7 +532,9 @@ def test_attributed_value_shows_and_sums_by_share_source(tmp_path: Path) -> None
     assert sorted(
         columns.with_columns(pl.col("share_source").str.strip_suffix("_usd")).rows()
     ) == pytest.approx(sorted(by_source.select(columns.columns).rows()))
-    oecd_rows = snap.spending(view="provider", method=OECD).rows(origin="attribution")
+    oecd_rows = release.spending(view="provider", method=OECD).rows(
+        origin="attribution"
+    )
     assert set(oecd_rows["share_source"]) == {"oecd"}
 
 
@@ -815,9 +817,9 @@ def test_a_spec_serialises_only_the_later_fields_it_changes(
 SURVEY = "Fixture survey, p. 8"
 
 
-def _ratio(snapshot: Snapshot, method: Method, row_id: str) -> tuple[float, str]:
+def _ratio(release: Release, method: Method, row_id: str) -> tuple[float, str]:
     """The share of `row_id`'s commitment that counts, and its coefficient basis."""
-    rows = snapshot.spending(method=method, flow="commitments").rows(row_id=row_id)
+    rows = release.spending(method=method, flow="commitments").rows(row_id=row_id)
     return rows["value"].sum() / rows["amount"].sum(), rows["coefficient_basis"][0]
 
 
@@ -864,13 +866,13 @@ def test_both_significant_reads_the_jev_level(tmp_path: Path) -> None:
     # DEU-2 marks both objectives significant, which Germany counts at 1.0. Jev
     # finds DEU-2-R0 not adaptation, so under Jev relevance it is significant for
     # mitigation alone and counts at Germany's 0.5.
-    release = copy_release(
+    path = copy_release(
         tmp_path / "release", edits={"objectives": _jev_rules_out_adaptation}
     )
-    snapshot = cf.load(path=release)
+    release = cf.load(path=path)
 
     def ratio(method: Method) -> float:
-        row = snapshot.spending(method=method).rows(record_id="DEU-2-R0")
+        row = release.spending(method=method).rows(record_id="DEU-2-R0")
         return row["value"].item() / row["amount"].item()
 
     assert ratio(cf.methods.PROVIDER) == pytest.approx(1.0)
@@ -1081,7 +1083,7 @@ def _with_eu_total_flows(frame: pl.DataFrame) -> pl.DataFrame:
 
 
 @pytest.fixture(scope="module")
-def eu_snap(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
+def eu_release(tmp_path_factory: pytest.TempPathFactory) -> Release:
     release = copy_release(
         tmp_path_factory.mktemp("eu") / "release",
         edits={
@@ -1128,13 +1130,13 @@ def test_the_eu_constants_match_the_channels_the_build_maps_to_eu_institutions()
     ],
 )
 def test_an_all_provider_total_counts_eu_money_once(
-    eu_snap: Snapshot,
+    eu_release: Release,
     method: Method,
     flow: str,
     eu_own_agencies: set[int],
     eu_attributed: float,
 ) -> None:
-    rows = eu_snap.spending(view="provider", method=method, flow=flow).rows()
+    rows = eu_release.spending(view="provider", method=method, flow=flow).rows()
 
     own = rows.filter(
         pl.col("provider_code") == EU_INSTITUTIONS,
@@ -1149,10 +1151,10 @@ def test_an_all_provider_total_counts_eu_money_once(
 @pytest.mark.parametrize("view", VIEWS)
 @pytest.mark.parametrize("flow", FLOWS)
 def test_eu_institutions_alone_return_their_own_spending(
-    eu_snap: Snapshot, flow: str, view: str
+    eu_release: Release, flow: str, view: str
 ) -> None:
     def eu_alone(method: Method) -> pl.DataFrame:
-        result = eu_snap.spending(
+        result = eu_release.spending(
             view=view, method=method, flow=flow, providers=EU_INSTITUTIONS
         )
         return result.rows().drop("method")
@@ -1177,9 +1179,9 @@ def test_eu_institutions_alone_return_their_own_spending(
     ],
 )
 def test_eu_own_rows_leave_a_result_only_beside_eu_attribution(
-    eu_snap: Snapshot, providers: tuple[int, ...] | None, eu_own_rows: bool
+    eu_release: Release, providers: tuple[int, ...] | None, eu_own_rows: bool
 ) -> None:
-    rows = eu_snap.spending(
+    rows = eu_release.spending(
         view="provider", providers=providers, years=EU_ATTRIBUTION_YEARS
     ).rows(provider_code=EU_INSTITUTIONS)
 
@@ -1201,7 +1203,7 @@ def _with_two_eu_members(frame: pl.DataFrame) -> pl.DataFrame:
 
 
 @pytest.fixture(scope="module")
-def two_member_snap(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
+def two_member_release(tmp_path_factory: pytest.TempPathFactory) -> Release:
     release = copy_release(
         tmp_path_factory.mktemp("eu-members") / "release",
         edits={
@@ -1217,10 +1219,10 @@ def two_member_snap(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
 
 @pytest.mark.parametrize("flow", FLOWS)
 def test_eu_own_rows_count_less_the_contributions_of_queried_members(
-    two_member_snap: Snapshot, flow: str
+    two_member_release: Release, flow: str
 ) -> None:
     def value(providers: int | tuple[int, ...] | None, provider: int) -> float:
-        result = two_member_snap.spending(
+        result = two_member_release.spending(
             view="provider", flow=flow, providers=providers, years=EU_ATTRIBUTION_YEARS
         )
         return result.rows(provider_code=provider)["value"].sum()
@@ -1264,7 +1266,7 @@ def _with_eu_untraced(frame: pl.DataFrame) -> pl.DataFrame:
 
 
 @pytest.fixture(scope="module")
-def eu_untraced_snap(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
+def eu_untraced_release(tmp_path_factory: pytest.TempPathFactory) -> Release:
     release = copy_release(
         tmp_path_factory.mktemp("eu-untraced") / "release",
         edits={
@@ -1289,12 +1291,12 @@ def eu_untraced_snap(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
     ],
 )
 def test_eu_untraced_rows_count_once_as_the_eus_own_rows_do(
-    eu_untraced_snap: Snapshot,
+    eu_untraced_release: Release,
     method: Method,
     providers: tuple[int, ...] | None,
     kept: dict[int, float],
 ) -> None:
-    rows = eu_untraced_snap.spending(
+    rows = eu_untraced_release.spending(
         view="provider", method=method, providers=providers, years=(2022,)
     ).rows(origin="untraced", provider_code=EU_INSTITUTIONS)
 
@@ -1309,9 +1311,9 @@ def test_eu_untraced_rows_count_once_as_the_eus_own_rows_do(
 @pytest.mark.parametrize("flow", ["commitments", "disbursements"])
 @pytest.mark.parametrize("providers", [(EU_INSTITUTIONS,), (EU_INSTITUTIONS, 4)])
 def test_eu_shares_of_total_divide_by_the_rows_each_method_counts(
-    two_member_snap: Snapshot, flow: str, providers: tuple[int, ...]
+    two_member_release: Release, flow: str, providers: tuple[int, ...]
 ) -> None:
-    result = two_member_snap.spending(
+    result = two_member_release.spending(
         view="provider", method=RANGE, flow=flow, providers=providers
     )
     eu = pl.col("provider_code") == EU_INSTITUTIONS
@@ -1340,7 +1342,7 @@ def test_eu_shares_of_total_divide_by_the_rows_each_method_counts(
 
 
 def test_range_share_bounds_span_each_methods_own_share(
-    two_member_snap: Snapshot,
+    two_member_release: Release,
 ) -> None:
     spec = Spec(
         view="provider",
@@ -1350,12 +1352,12 @@ def test_range_share_bounds_span_each_methods_own_share(
     )
     eu = pl.col("provider_code") == EU_INSTITUTIONS
     shares = (
-        two_member_snap.spending(spec=spec.replace(method=RANGE))
+        two_member_release.spending(spec=spec.replace(method=RANGE))
         .table.to_polars()
         .filter(eu)
     )
     alone = pl.concat(
-        two_member_snap.spending(spec=spec.replace(method=method))
+        two_member_release.spending(spec=spec.replace(method=method))
         .table.to_polars()
         .filter(eu)
         for method in RANGE.methods
@@ -1369,10 +1371,10 @@ def test_range_share_bounds_span_each_methods_own_share(
 
 
 def test_a_member_counts_its_eu_share_only_with_the_eu_as_a_channel(
-    eu_snap: Snapshot,
+    eu_release: Release,
 ) -> None:
     def france(method: Method) -> float:
-        result = eu_snap.spending(
+        result = eu_release.spending(
             view="provider", method=method, providers=4, years=2021
         )
         return result.rows(origin="attribution")["value"].sum()
@@ -1382,11 +1384,11 @@ def test_a_member_counts_its_eu_share_only_with_the_eu_as_a_channel(
     )
 
 
-def test_eu_own_rows_stay_in_a_year_without_eu_attribution(eu_snap: Snapshot) -> None:
+def test_eu_own_rows_stay_in_a_year_without_eu_attribution(eu_release: Release) -> None:
     # The EU's commitments disburse in 2023, a year in which France attributes
     # nothing to the EU.
     def eu_rows(method: Method) -> pl.DataFrame:
-        rows = eu_snap.spending(view="provider", method=method).rows(
+        rows = eu_release.spending(view="provider", method=method).rows(
             provider_code=EU_INSTITUTIONS
         )
         return rows.drop("method")
@@ -1439,12 +1441,12 @@ def test_a_year_without_a_budget_share_keeps_the_budgets_own_rows(
 
 @pytest.mark.parametrize("flow", FLOWS)
 def test_quality_reports_the_eu_rows_a_provider_total_leaves_out(
-    eu_snap: Snapshot, flow: str
+    eu_release: Release, flow: str
 ) -> None:
     # As a provider, the EU keeps its budget and EDF rows; the EIB's leave as a
     # channel's own rows under either method.
     own = (
-        eu_snap.spending(
+        eu_release.spending(
             view="provider",
             method=ONE_EU_AS_PROVIDER,
             flow=flow,
@@ -1456,7 +1458,7 @@ def test_quality_reports_the_eu_rows_a_provider_total_leaves_out(
         .agg(pl.col("value").sum())
     )
 
-    left_out = eu_snap.quality().eu_left_out.to_polars().filter(flow=flow)
+    left_out = eu_release.quality().eu_left_out.to_polars().filter(flow=flow)
 
     assert own.height
     assert set(left_out.select("agency_code", "channel_code").rows()) == {
@@ -1470,8 +1472,10 @@ def test_quality_reports_the_eu_rows_a_provider_total_leaves_out(
         .agg(pl.col("value").sum())
     )
     assert dict(budget_and_edf.rows()) == pytest.approx(dict(own.rows()))
-    assert eu_snap.quality(method=ONE_EU_AS_PROVIDER).eu_left_out.to_polars().is_empty()
-    assert eu_snap.quality(providers=4).eu_left_out.to_polars().is_empty()
+    assert (
+        eu_release.quality(method=ONE_EU_AS_PROVIDER).eu_left_out.to_polars().is_empty()
+    )
+    assert eu_release.quality(providers=4).eu_left_out.to_polars().is_empty()
 
 
 def _unmeasured_deu_2_markers(frame: pl.DataFrame) -> pl.DataFrame:
@@ -1735,7 +1739,7 @@ def _label_split_record(frame: pl.DataFrame) -> pl.DataFrame:
 def test_a_jev_label_reaches_only_the_rows_a_record_weighs_as_adaptation(
     tmp_path: Path,
 ) -> None:
-    release = copy_release(
+    path = copy_release(
         tmp_path / "release",
         edits={
             "disbursements": _unmark_split_commitments,
@@ -1743,10 +1747,10 @@ def test_a_jev_label_reaches_only_the_rows_a_record_weighs_as_adaptation(
             "objectives": _label_split_record,
         },
     )
-    snapshot = cf.load(path=release)
+    release = cf.load(path=path)
 
     def values(method: Method) -> dict[str | None, float]:
-        rows = snapshot.spending(method=method).rows(record_id="JPN-SPLIT")
+        rows = release.spending(method=method).rows(record_id="JPN-SPLIT")
         return dict(rows.select("row_id", "value").rows())
 
     # The traced rows weigh by their commitments' 0 and count nothing, label or not.

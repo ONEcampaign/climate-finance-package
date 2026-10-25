@@ -44,7 +44,7 @@ A share with no split by objective, as the OECD gives before 2021, sits in the `
 
 ## EU Institutions
 
-EU Institutions is a provider and also a channel for its members' money. `Method(eu="channel")`, the default for ONE and PROVIDER, attributes members' contributions to the EU budget, the European Development Fund, and the EIB to the members. In each year where an EU agency's channel attributes a member's contribution, the provider view scales that agency's own rows by the share of the channel's contributions from providers outside the query, so the money counts once. A query for EU Institutions alone keeps its own rows whole, a query that also names some of its members keeps the part those members do not fund, and an all-provider query keeps none. `snap.quality().eu_left_out` reports the rows an all-provider total leaves out.
+EU Institutions is a provider and also a channel for its members' money. `Method(eu="channel")`, the default for ONE and PROVIDER, attributes members' contributions to the EU budget, the European Development Fund, and the EIB to the members. In each year where an EU agency's channel attributes a member's contribution, the provider view scales that agency's own rows by the share of the channel's contributions from providers outside the query, so the money counts once. A query for EU Institutions alone keeps its own rows whole, a query that also names some of its members keeps the part those members do not fund, and an all-provider query keeps none. `release.quality().eu_left_out` reports the rows an all-provider total leaves out.
 
 `eu="provider"`, the setting of OECD, counts the EU budget and the European Development Fund as a provider in its own right and the EIB as a channel. The EIB's own rows leave the provider view, and members' contributions to the EIB attribute at the method's share. Under either setting an all-provider total leaves the EIB's own lending out of the provider view, USD 8.0bn of disbursements and USD 27.4bn of commitments in 2015 to 2024.
 
@@ -59,14 +59,14 @@ The same query under each named method shows what the weights change. OECD count
 ```python
 import climate_finance as cf
 
-snap = cf.load()
+release = cf.load()
 methods = {
     "ONE": cf.methods.ONE,
     "OECD": cf.methods.OECD,
     "PROVIDER": cf.methods.PROVIDER,
 }
 for name, method in methods.items():
-    result = snap.spending(
+    result = release.spending(
         providers=["Germany", "Japan"], years=range(2021, 2024), method=method
     )
     print(name, round(result.table.to_polars()["value"].sum() / 1e6, 1))
@@ -81,8 +81,8 @@ PROVIDER 145.8
 `cf.compare()` joins results on year, provider, recipient, and Bi_Multi code, and names each column after what sets the results apart.
 
 ```python
-one = snap.spending(providers="Japan", years=[2023], method=cf.methods.ONE)
-oecd = snap.spending(providers="Japan", years=[2023], method=cf.methods.OECD)
+one = release.spending(providers="Japan", years=[2023], method=cf.methods.ONE)
+oecd = release.spending(providers="Japan", years=[2023], method=cf.methods.OECD)
 print(cf.compare(one, oecd).table.to_polars().columns)
 ```
 
@@ -93,7 +93,7 @@ print(cf.compare(one, oecd).table.to_polars().columns)
 `cf.methods.RANGE` returns the three methods in one table, one row per method. Use it for a figure that has to hold under any of the three readings.
 
 ```python
-result = snap.spending(providers="Japan", years=[2023], method=cf.methods.RANGE)
+result = release.spending(providers="Japan", years=[2023], method=cf.methods.RANGE)
 print(sorted(result.table.to_polars()["method"].unique()))
 ```
 
@@ -105,7 +105,7 @@ print(sorted(result.table.to_polars()["method"].unique()))
 
 ```python
 half = cf.methods.ONE.replace(significant=0.5)
-result = snap.spending(providers="Japan", years=[2023], method=half)
+result = release.spending(providers="Japan", years=[2023], method=half)
 print(result.explain().splitlines()[1][:46])
 ```
 
@@ -116,7 +116,7 @@ Method significant 0.5, principal 1, highest m
 Under PROVIDER, `explain()` names the source of each provider's coefficients.
 
 ```python
-result = snap.spending(
+result = release.spending(
     providers=["Germany", "Japan"], years=[2021], method=cf.methods.PROVIDER
 )
 for line in result.explain().splitlines():

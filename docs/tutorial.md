@@ -11,22 +11,22 @@ A release is a folder of parquet tables. `load()` opens the latest release in th
 ```python
 import climate_finance as cf
 
-snap = cf.load()
-print(snap.manifest.release)
+release = cf.load()
+print(release.manifest.release)
 ```
 
 ```output
 fixture
 ```
 
-Every result from `snap` records this release name, so a figure always identifies its source data.
+Every result from `release` records this release name, so a figure always identifies its source data.
 
 ## Step 2. Ask for a figure
 
 `spending()` takes providers and recipients by name or DAC code. It returns disbursements under ONE's method by default.
 
 ```python
-result = snap.spending(
+result = release.spending(
     providers="Japan",
     recipients="Bangladesh",
     years=range(2021, 2024),
@@ -86,7 +86,7 @@ Print the full string to see how `value` is calculated. Significant Rio markers 
 
 ```python
 for flow in ("commitments", "disbursements"):
-    flows = snap.spending(providers="Japan", years=[2021, 2022], flow=flow)
+    flows = release.spending(providers="Japan", years=[2021, 2022], flow=flow)
     print(flow, round(flows.table.to_polars()["value"].sum() / 1e6, 1))
 ```
 
@@ -102,7 +102,7 @@ Japan's climate commitments for 2021 and 2022 total 130.0. The 38.0 is what Japa
 `quality()` reports how much of a provider's climate value matches a CRS commitment, and how its commitments split by status.
 
 ```python
-summary = snap.quality(providers="Japan").summary().row(0, named=True)
+summary = release.quality(providers="Japan").summary().row(0, named=True)
 print(
     round(summary["link_rate"], 2),
     round(summary["disbursed_share"], 2),
@@ -116,7 +116,7 @@ print(
 
 Every Japanese commitment in this release matches a CRS commitment (`link_rate` 1.0), which says nothing yet about what disbursed. Commitments disbursed to 90% or more hold 31% of the climate value, and partly disbursed commitments hold 69%.
 
-This synthetic release skips the blind-sample gate, so `snap.quality().precision` is empty. In a published release, that table holds each provider's measured link precision and interval.
+This synthetic release skips the blind-sample gate, so `release.quality().precision` is empty. In a published release, that table holds each provider's measured link precision and interval.
 
 ## Next
 

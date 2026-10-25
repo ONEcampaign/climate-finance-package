@@ -373,7 +373,7 @@ def explain(
         lines.append(_UNTRACED[spec.untraced])
     lines.append(
         "Commitments that repeat an earlier vintage are left out, and their "
-        "disbursements count on the row they repeat; snap.quality() reports their "
+        "disbursements count on the row they repeat; release.quality() reports their "
         "value."
     )
     filters = [
@@ -599,7 +599,7 @@ _FLOWS = {
     "reports.",
     "grant_equivalent": "Flow: grant equivalent of disbursements, shared across the "
     "commitments a record funds in proportion to the amount each receives; records "
-    "without one stay missing, and snap.quality() reports coverage.",
+    "without one stay missing, and release.quality() reports coverage.",
 }
 
 
@@ -607,7 +607,7 @@ _UNTRACED = {
     True: "Untraced: CRS disbursement with a Rio marker that reaches no commitment, "
     "the excess beyond a full commitment and records linked to none, weighted by "
     "the record's own markers. It counts in value and high, not in low, and the "
-    "untraced column holds it; snap.quality() reports it with the marked "
+    "untraced column holds it; release.quality() reports it with the marked "
     "disbursement no total counts.",
     False: "Untraced disbursement, Rio-marked CRS disbursement that reaches no "
     "commitment, is left out.",

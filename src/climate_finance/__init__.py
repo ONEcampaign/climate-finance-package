@@ -12,8 +12,8 @@ from climate_finance.errors import (
     UnknownRecipientError,
 )
 from climate_finance.methods import Method
+from climate_finance.release import Release, load
 from climate_finance.result import Comparison, Result, compare
-from climate_finance.snapshot import Snapshot, load
 from climate_finance.spec import Spec
 
 __version__ = version("climate-finance")
@@ -21,8 +21,8 @@ __version__ = version("climate-finance")
 __all__ = [
     "Comparison",
     "Method",
+    "Release",
     "Result",
-    "Snapshot",
     "Spec",
     "UnknownNameError",
     "UnknownProviderError",

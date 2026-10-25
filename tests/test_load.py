@@ -12,18 +12,19 @@ from polars.testing import assert_frame_equal
 from releases import copy_release
 
 import climate_finance as cf
-from climate_finance import snapshot
+from climate_finance import release as release_module
 from climate_finance.errors import ReleaseIntegrityError
+from climate_finance.release import IndexEntry, ReleaseIndex, release_dirname
 from climate_finance.schema import RELEASE_TABLES
-from climate_finance.snapshot import IndexEntry, ReleaseIndex, release_dirname
 
 
 @pytest.mark.parametrize("as_path", [Path, str])
 def test_load_opens_the_fixture_with_its_manifest(as_path) -> None:
-    snap = cf.load(path=as_path(FIXTURE_DIR))
+    release = cf.load(path=as_path(FIXTURE_DIR))
 
-    assert snap.manifest.release == "fixture"
-    assert snap.table("commitments").collect().height == 14
+    assert isinstance(release, cf.Release)
+    assert release.manifest.release == "fixture"
+    assert release.table("commitments").collect().height == 14
 
 
 def _change_bytes(release: Path) -> None:
@@ -93,21 +94,21 @@ def test_a_cached_release_with_a_malformed_manifest_downloads_again(
         downloads.append(entry.url)
         shutil.copytree(FIXTURE_DIR, target)
 
-    monkeypatch.setattr(snapshot, "_shipped_index", lambda: index)
-    monkeypatch.setattr(snapshot, "_download", download)
+    monkeypatch.setattr(release_module, "_shipped_index", lambda: index)
+    monkeypatch.setattr(release_module, "_download", download)
 
-    snap = cf.load(cache_dir=cache)
+    release = cf.load(cache_dir=cache)
 
     assert downloads == ["https://example.org/pack"]
-    assert snap.manifest.release == "fixture"
+    assert release.manifest.release == "fixture"
 
 
 def test_table_refuses_names_outside_the_release_contract() -> None:
-    snap = cf.load(path=FIXTURE_DIR)
+    release = cf.load(path=FIXTURE_DIR)
 
     with pytest.raises(KeyError, match="links"):
-        snap.table("links")
-    assert set(RELEASE_TABLES) <= set(snap.manifest.tables)
+        release.table("links")
+    assert set(RELEASE_TABLES) <= set(release.manifest.tables)
 
 
 def test_disbursement_profile_reads_the_release_table_by_group_and_year() -> None:
@@ -132,12 +133,12 @@ def test_a_relative_path_reads_the_release_it_verified(
     )
     expected = cf.load(path=FIXTURE_DIR).spending(flow="commitments")
     monkeypatch.chdir(tmp_path / "a")
-    snap = cf.load(path="release")
-    result = snap.spending(flow="commitments")
+    release = cf.load(path="release")
+    result = release.spending(flow="commitments")
 
     monkeypatch.chdir(tmp_path / "b")
     other = cf.load(path="release").spending(flow="commitments")
     assert not other.table.to_polars().equals(expected.table.to_polars())
 
-    table = result.table if lazy else snap.spending(flow="commitments").table
+    table = result.table if lazy else release.spending(flow="commitments").table
     assert_frame_equal(table.to_polars(), expected.table.to_polars())

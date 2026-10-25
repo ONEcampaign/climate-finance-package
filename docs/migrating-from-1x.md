@@ -1,6 +1,6 @@
 # Migrating from 1.x
 
-In climate-finance 1.2.3, `ClimateData` downloaded OECD files, matched them, and computed figures on your machine. In 2.0, a release holds the matched data, and one call to `Snapshot.spending()` answers a question. [The 2.0.0 release notes](release-notes/2.0.0.md) explain why the numbers differ.
+In climate-finance 1.2.3, `ClimateData` downloaded OECD files, matched them, and computed figures on your machine. In 2.0, a release holds the matched data, and one call to `Release.spending()` answers a question. [The 2.0.0 release notes](release-notes/2.0.0.md) explain why the numbers differ.
 
 ## Before you start
 
@@ -29,13 +29,13 @@ print(data.columns.tolist()[-6:])
 
 ## Rewrite to the 2.0 API
 
-The same query in 2.0 runs through `Snapshot.spending()`.
+The same query in 2.0 runs through `Release.spending()`.
 
 ```python
 import climate_finance as cf
 
-snap = cf.load()
-result = snap.spending(
+release = cf.load()
+result = release.spending(
     providers=[701, 5],
     years=range(2021, 2024),
     method=cf.methods.ONE,
@@ -52,7 +52,7 @@ print(len(data), "rows")
 | 1.x | 2.0 |
 |---|---|
 | `set_climate_finance_data_path(path)` | `CLIMATE_FINANCE_CACHE`, `load(cache_dir=...)`, or `load(path=...)` |
-| `ClimateData(years, providers, recipients)` | `snap.spending(years=..., providers=..., recipients=...)` |
+| `ClimateData(years, providers, recipients)` | `release.spending(years=..., providers=..., recipients=...)` |
 | `currency="CAN"` | `currency="CAD"` |
 | `prices="constant", base_year=2022` | `prices=2022` |
 | `set_only_oda()` | `oda_only=True` |
@@ -66,16 +66,16 @@ print(len(data), "rows")
 | `as_share_of_total()`, `convert_to_shares()` | `result.share_of_total()` |
 | `available_providers()` and the `get_*_providers()` helpers | `cf.providers.list()`, which has a `type` column |
 | `available_flows()`, `available_methodologies()` | `cf.flows.list()`, `cf.methods.list()` |
-| `get_unfccc_data()` | `snap.reconcile()` |
+| `get_unfccc_data()` | `release.reconcile()` |
 | `get_multilateral_spending_shares()`, `load_multilateral_imputations_data()` | `spending(view="provider")`, with `method=cf.methods.OECD` for the OECD's imputed shares |
 
-Releases hold gross disbursements only, so `net_disbursements` has no 2.0 equivalent. The UNFCCC source of `ClimateData` has no equivalent either. `snap.reconcile()` compares BTR reports with OECD data.
+Releases hold gross disbursements only, so `net_disbursements` has no 2.0 equivalent. The UNFCCC source of `ClimateData` has no equivalent either. `release.reconcile()` compares BTR reports with OECD data.
 
 ## What else is different
 
 - The result is a polars table by default, with `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced` columns. `result.rows()` returns the projects behind it.
 - `value` is climate value only, in `ClimateData` too, and no row carries the 1.x indicator `not_climate_relevant`. A 1.x script that sums `value` over every indicator gets a different number and no error.
-- A result carries its `Spec`. `snap.spending(spec=result.spec)` reruns it.
+- A result carries its `Spec`. `release.spending(spec=result.spec)` reruns it.
 - Names and codes resolve through `cf.providers` and `cf.recipients`. A misspelt name raises an error that suggests close matches.
 - Building a release fetches OECD data, using `cf-build` and the `build` extra. 2.0 reads the built release. [cf-build](reference/cf-build.md) lists the commands.
 

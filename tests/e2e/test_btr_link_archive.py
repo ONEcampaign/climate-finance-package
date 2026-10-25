@@ -26,8 +26,8 @@ from climate_finance.build.normalise import btr_at_dac_rates
 from climate_finance.build.normalise.crs import normalise_crs
 from climate_finance.build.readers.btr import estimate_party_weights, ingest_unfccc
 from climate_finance.build.stages import raw_dir
+from climate_finance.release import Release
 from climate_finance.result import Reconciliation
-from climate_finance.snapshot import Snapshot
 
 pytestmark = pytest.mark.slow
 
@@ -224,7 +224,7 @@ def _reconcile(out: Path) -> Reconciliation:
     manifest = schema.ReleaseManifest.model_validate_json(
         (out / "release.json").read_text()
     )
-    return Snapshot(path=out, manifest=manifest).reconcile(years=(2021, 2022))
+    return Release(path=out, manifest=manifest).reconcile(years=(2021, 2022))
 
 
 @pytest.mark.parametrize(

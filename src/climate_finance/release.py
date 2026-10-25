@@ -1,4 +1,4 @@
-"""`Snapshot` and `load`: open a release and answer queries against it."""
+"""`Release` and `load`: open a release and answer queries against it."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ def release_dirname(release: str) -> str:
     return f"climate-finance-{release}"
 
 
-class Snapshot:
+class Release:
     """One release on disk, read through its release tables only."""
 
     def __init__(self, *, path: Path, manifest: ReleaseManifest) -> None:
@@ -175,7 +175,7 @@ def load(
     path: str | Path | None = None,
     cache_dir: str | Path | None = None,
     refresh: bool = False,
-) -> Snapshot:
+) -> Release:
     """Open a release from `path`, or download `release` into `cache_dir` once.
 
     Without `path`, `release` is looked up in the release index shipped in the wheel,
@@ -185,7 +185,7 @@ def load(
     index, and it unpacks into `cache_dir`. A cached copy that fails its check
     downloads again.
     A relative `path` resolves against the working directory at load, so the
-    snapshot reads the files it verified after a later change of directory.
+    release reads the files it verified after a later change of directory.
 
     Raises:
         ReleaseIntegrityError: when `release.json` is missing or malformed, a
@@ -210,7 +210,7 @@ def load(
     return _open(target, release=name)
 
 
-def _open(path: Path, *, release: str | None = None) -> Snapshot:
+def _open(path: Path, *, release: str | None = None) -> Release:
     """Open the release in `path` once every table matches `release.json`."""
     manifest_path = path / "release.json"
     if not manifest_path.is_file():
@@ -237,7 +237,7 @@ def _open(path: Path, *, release: str | None = None) -> Snapshot:
             f"release {release or manifest.release!r} at {path} fails its check: "
             + "; ".join(problems)
         )
-    return Snapshot(path=path, manifest=manifest)
+    return Release(path=path, manifest=manifest)
 
 
 def _shipped_index() -> ReleaseIndex:

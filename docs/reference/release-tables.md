@@ -1,6 +1,6 @@
 # Release tables
 
-As of 2.0. A build writes the parquet tables below, each sorted by its key so that two builds from the same inputs hash the same. Amounts are float64 USD at current prices and face value, DAC codes int32, years int16, and `bi_multi` and Rio markers int8. `snap.table(name)` scans one table. [Python API](python-api.md) describes how queries read them.
+As of 2.0. A build writes the parquet tables below, each sorted by its key so that two builds from the same inputs hash the same. Amounts are float64 USD at current prices and face value, DAC codes int32, years int16, and `bi_multi` and Rio markers int8. `release.table(name)` scans one table. [Python API](python-api.md) describes how queries read them.
 
 ## Files in a release
 
@@ -11,7 +11,7 @@ A release is a folder, `climate-finance-<name>/`, packed as one `.tar.zst`. It h
 
 The release holds only processed tables and metadata. The Green Climate Fund's ledger rows are withheld. [How linking works](../explanation/how-linking-works.md) explains why, and `commitments.withheld_usd` states their amount.
 
-The published release also leaves out the row-level BTR tables `btr` and `btr_links` until the UNFCCC confirms its terms cover them, and `snap.table("btr")` on it raises `WithheldTableError`. A build from BTR workbooks downloaded from the UNFCCC writes both. `btr_totals` and `btr_crs_unlinked` hold the reconciliation totals in either.
+The published release also leaves out the row-level BTR tables `btr` and `btr_links` until the UNFCCC confirms its terms cover them, and `release.table("btr")` on it raises `WithheldTableError`. A build from BTR workbooks downloaded from the UNFCCC writes both. `btr_totals` and `btr_crs_unlinked` hold the reconciliation totals in either.
 
 ## `commitments`
 

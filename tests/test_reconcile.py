@@ -1,4 +1,4 @@
-"""`Snapshot.reconcile()` on the fixture release: BTR totals against OECD figures."""
+"""`Release.reconcile()` on the fixture release: BTR totals against OECD figures."""
 
 from collections.abc import Callable
 from pathlib import Path

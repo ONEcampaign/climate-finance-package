@@ -241,12 +241,12 @@ def _read(release_dir: Path, table: str) -> pl.DataFrame:
 
 
 def test_the_release_opens_and_matches_release_json(release_dir: Path) -> None:
-    snapshot = cf.load(path=release_dir / "assemble")
+    loaded = cf.load(path=release_dir / "assemble")
 
-    assert snapshot.manifest.source_versions == {
+    assert loaded.manifest.source_versions == {
         source: "v20261006" if source == "crs" else "0" * 64 for source in YEAR_SOURCES
     }
-    assert snapshot.manifest.years == {
+    assert loaded.manifest.years == {
         "crs": (2010, 2025),
         "crdf_recipient": (2015, 2024),
         "crdf_provider": (2015, 2024),
@@ -256,9 +256,9 @@ def test_the_release_opens_and_matches_release_json(release_dir: Path) -> None:
         "core_contributions": (2021, 2021),
         "agency_spending": (2022, 2022),
     }
-    assert set(snapshot.manifest.tables) == set(schema.RELEASE_TABLES)
+    assert set(loaded.manifest.tables) == set(schema.RELEASE_TABLES)
     # The config fixture turns key repair and recoveries off.
-    assert snapshot.manifest.settings == {
+    assert loaded.manifest.settings == {
         "offline": False,
         "key_repair": False,
         "recoveries": False,

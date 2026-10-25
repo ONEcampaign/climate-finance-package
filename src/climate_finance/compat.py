@@ -1,7 +1,7 @@
 """`ClimateData`: the 1.x interface as a thin, deprecated wrapper over `spending()`.
 
 The 1.2.3 constructor, its `set_*` methods, `load_spending_data` and `get_data` map
-onto one `Snapshot.spending` call per source and flow:
+onto one `Release.spending` call per source and flow:
 
 - `methodology` "ONE" and "OECD" map to `methods.ONE` and `methods.OECD`; "custom"
   takes the coefficients of `set_custom_spending_methodology`.
@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Literal, NoReturn, Self
 import polars as pl
 
 from climate_finance.methods import OECD, ONE, Method
-from climate_finance.snapshot import Snapshot, load
+from climate_finance.release import Release, load
 from climate_finance.spec import Currency, Flow, View
 
 if TYPE_CHECKING:
@@ -70,7 +70,7 @@ _NO_EQUIVALENT = {
     "net_disbursements": "net disbursements have no 2.0 equivalent; releases hold "
     "gross disbursements only",
     "UNFCCC": "UNFCCC data has no ClimateData equivalent; use "
-    "Snapshot.reconcile(), which compares BTR reports with OECD data",
+    "Release.reconcile(), which compares BTR reports with OECD data",
 }
 
 
@@ -89,7 +89,7 @@ def _removed(call: str, replacement: str) -> Callable[..., NoReturn]:
 class ClimateData:
     """The 1.2.3 constructor and methods, returning pandas.
 
-    `snapshot` is the release to query. Without it, `load_spending_data` opens the
+    `release` is the release to query. Without it, `load_spending_data` opens the
     latest release with `climate_finance.load()`.
 
     Raises:
@@ -105,7 +105,7 @@ class ClimateData:
         prices: str = "current",
         base_year: int | None = None,
         *,
-        snapshot: Snapshot | None = None,
+        release: Release | None = None,
     ) -> None:
         warnings.warn(DEPRECATION, DeprecationWarning, stacklevel=2)
         self.years = list(years)
@@ -113,7 +113,7 @@ class ClimateData:
         self.recipients = _listed(recipients)
         self.currency = _choice(currency, _CURRENCIES, what="currency")
         self.prices = _prices(prices, base_year=base_year)
-        self._snapshot = snapshot
+        self._release = release
         self._custom: Method | None = None
         self._oda_only = False
         self._refresh = False
@@ -180,13 +180,13 @@ class ClimateData:
         views = {
             name: _choice(name, _VIEWS, what="source") for name in _as_list(source)
         }
-        snapshot = self._snapshot or load(refresh=self._refresh)
+        release = self._release or load(refresh=self._refresh)
         # Sources that share a view share one query per flow.
         by_view: dict[View, pl.DataFrame] = {}
         for name, view in views.items():
             if view not in by_view:
                 by_view[view] = pl.concat(
-                    snapshot.spending(
+                    release.spending(
                         providers=self.providers,
                         recipients=self.recipients,
                         years=self.years,
@@ -289,7 +289,7 @@ set_climate_finance_data_path = _removed(
     "set_climate_finance_data_path",
     "the CLIMATE_FINANCE_CACHE environment variable or load(cache_dir=...)",
 )
-get_unfccc_data = _removed("get_unfccc_data", "Snapshot.reconcile()")
+get_unfccc_data = _removed("get_unfccc_data", "Release.reconcile()")
 
 
 def _listed(values: list[int | str] | int | str | None) -> list[int | str] | None:

@@ -11,8 +11,8 @@ import polars as pl
 
 import climate_finance as cf
 
-snap = cf.load()
-quality = snap.quality(providers=["Germany", "Japan"])
+release = cf.load()
+quality = release.quality(providers=["Germany", "Japan"])
 ```
 
 ## Steps
@@ -79,7 +79,7 @@ quality = snap.quality(providers=["Germany", "Japan"])
 
     Ungated releases, including the synthetic release, leave this table empty. For a published release, check that every provider you report has a row, that `passed` is true, and that `waived` is false. A wide interval means the provider has few labelled links, so its estimate is rough.
 
-    A provider's estimate covers all its allocated value, certain and estimated links together. Each stratum's estimate and interval sit beside it in `snap.manifest.gates["precision"]`, under `strata`. Where a provider's figure rests on estimated links, read the `model` stratum as well as the provider's row.
+    A provider's estimate covers all its allocated value, certain and estimated links together. Each stratum's estimate and interval sit beside it in `release.manifest.gates["precision"]`, under `strata`. Where a provider's figure rests on estimated links, read the `model` stratum as well as the provider's row.
 
 5. Check what a provider view omits. For provider-view totals, `quality.eu_left_out` holds the value of EU Institutions agencies' own rows omitted from the total because members' contributions stand in for them. `quality.attribution` holds the value attributed through core contributions by share source.
 
@@ -93,7 +93,7 @@ quality = snap.quality(providers=["Germany", "Japan"])
 
 ## Verify it worked
 
-Every provider you report appears in `summary()` and, for a gated release, in `quality.precision`. `snap.manifest.gates` holds the gate rows that `cf-build release` recorded, and `snap.manifest.precision_gate_waived` is true when the release was packed with `--waive-precision`.
+Every provider you report appears in `summary()` and, for a gated release, in `quality.precision`. `release.manifest.gates` holds the gate rows that `cf-build release` recorded, and `release.manifest.precision_gate_waived` is true when the release was packed with `--waive-precision`.
 
 ## Troubleshooting
 

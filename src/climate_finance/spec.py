@@ -24,7 +24,7 @@ ODA_FLOW_CODES = (11, 13, 19)
 
 
 class Spec(Frozen):
-    """Every argument of `Snapshot.spending`, as a frozen pydantic model.
+    """Every argument of `Release.spending`, as a frozen pydantic model.
 
     `view="recipient"` counts bilateral flows (Bi_Multi 1, 3, 7 and 8) and
     multilateral outflows (code 4). `view="provider"` counts the same bilateral flows

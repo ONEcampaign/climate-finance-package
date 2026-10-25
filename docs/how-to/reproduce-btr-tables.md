@@ -1,6 +1,6 @@
 # How to reproduce the BTR tables
 
-A published release ships the BTR reconciliation totals (`btr_totals` and `btr_crs_unlinked`) and leaves out the parsed rows of each party's Biennial Transparency Report (`btr`) and their links to CRS records (`btr_links`). The UNFCCC's terms make its documents public domain only where no change to the content is introduced, and parsed rows change it. Build the two tables locally from workbooks you download yourself, and `snap.reconcile()` then works row by row on that build.
+A published release ships the BTR reconciliation totals (`btr_totals` and `btr_crs_unlinked`) and leaves out the parsed rows of each party's Biennial Transparency Report (`btr`) and their links to CRS records (`btr_links`). The UNFCCC's terms make its documents public domain only where no change to the content is introduced, and parsed rows change it. Build the two tables locally from workbooks you download yourself, and `release.reconcile()` then works row by row on that build.
 
 ## Before you start
 
@@ -57,14 +57,14 @@ A published release ships the BTR reconciliation totals (`btr_totals` and `btr_c
    ```python skip
    import climate_finance as cf
 
-   snap = cf.load(path="releases/2026a-btr/assemble")
-   reconciliation = snap.reconcile(parties=["DEU"], years=[2021, 2022])
+   release = cf.load(path="releases/2026a-btr/assemble")
+   reconciliation = release.reconcile(parties=["DEU"], years=[2021, 2022])
    rows = reconciliation.rows("DEU", 2021)
    ```
 
 ## Verify it worked
 
-`snap.table("btr")` holds rows for each party you downloaded. The build's `normalise/btr_workbooks.parquet` lists each workbook with the rows kept and dropped by reason, and the `sources.json` of a pack that `cf-build release` writes carries the same list. A party whose workbook gives no rows has every row dropped there, most often because its amounts are blank or a notation key such as "NR".
+`release.table("btr")` holds rows for each party you downloaded. The build's `normalise/btr_workbooks.parquet` lists each workbook with the rows kept and dropped by reason, and the `sources.json` of a pack that `cf-build release` writes carries the same list. A party whose workbook gives no rows has every row dropped there, most often because its amounts are blank or a notation key such as "NR".
 
 ## Next
 

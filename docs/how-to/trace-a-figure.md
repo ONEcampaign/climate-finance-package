@@ -11,8 +11,8 @@ import polars as pl
 
 import climate_finance as cf
 
-snap = cf.load()
-result = snap.spending(providers="Japan", years=[2023])
+release = cf.load()
+result = release.spending(providers="Japan", years=[2023])
 ```
 
 ## Steps
@@ -66,7 +66,7 @@ result = snap.spending(providers="Japan", years=[2023])
 
     ```python
     saved = result.spec.model_dump_json()
-    rerun = snap.spending(spec=cf.Spec.model_validate_json(saved))
+    rerun = release.spending(spec=cf.Spec.model_validate_json(saved))
     print(rerun.table.to_polars().equals(result.table.to_polars()))
     ```
 
