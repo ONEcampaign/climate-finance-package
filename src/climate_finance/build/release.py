@@ -14,10 +14,12 @@ amounts. `quality` and `disbursement_profile` leave them out of their totals, an
 `untraced` holds, per CRS record, the Rio-marked disbursement that reaches no
 commitment: excess beyond a full commitment, and records linked to nothing
 (`allocate.untraced_records`). The query counts it at the record's own markers.
-`unallocated` reports, by provider and year, the Rio-marked CRS disbursement outside
-`disbursements`: the two parts `untraced` holds, allocations to commitments with no
-CRDF row, and the unlinked records of the funds the build routes through their
-IATI files.
+`unallocated` reports, by provider and year, every Rio-marked CRS disbursement
+(`marked_usd`) and the parts of it outside `disbursements`: the two parts
+`untraced` holds, allocations to commitments with no CRDF row, and the unlinked
+fund records whose money the funds' IATI route counts. `schema.release_invariants`
+checks that these parts and the Rio-marked records' `disbursements` rows sum to
+`marked_usd`.
 """
 
 from __future__ import annotations
@@ -33,7 +35,6 @@ from climate_finance import __version__
 from climate_finance.build.allocate import (
     counted_rows,
     marked_records,
-    routed_funds,
     untraced_records,
     years_since_commitment,
 )
@@ -41,6 +42,7 @@ from climate_finance.build.config import RELEASE_SETTINGS
 from climate_finance.build.errors import ReleaseInvariantError, StageInputMissingError
 from climate_finance.build.fetch import fetched_years, last_complete_year
 from climate_finance.build.label import inherit_markers
+from climate_finance.build.link.gap_fill import routed_records
 from climate_finance.build.provenance import setting_value
 from climate_finance.build.sums import ordered_sum
 from climate_finance.schema import (
@@ -165,7 +167,7 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         allocations,
         crs=crs,
         last_year=last_year,
-        routed=routed_funds(context.config),
+        routed=routed_records(crs, allocations=allocations, crdf=crdf),
     )
 
     commitments = release_commitments(crdf, status=status, links=links).collect()
@@ -569,14 +571,14 @@ def release_untraced(untraced: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFra
 
 
 def unallocated(marked: pl.LazyFrame) -> pl.LazyFrame:
-    """Rio-marked CRS disbursement outside `disbursements`, by provider and year,
-    from `marked_records`.
+    """Rio-marked CRS disbursement (`marked_usd`) and its parts outside
+    `disbursements`, by provider and year, from `marked_records`.
 
     A linked record's allocations split its disbursement into the `disbursements`
     rows, `excess_usd`, and `outside_release_usd` for commitments with no CRDF row.
     An unlinked record counts its whole disbursement in `unlinked_marked_usd`, or in
-    `fund_unlinked_usd` for a routed fund, whose unlinked records `untraced_records`
-    leaves out. Years are disbursement years.
+    `fund_unlinked_usd` where a fund's IATI route counts its money (`route_fund`),
+    as `untraced_records` leaves it out. Years are disbursement years.
     """
     unlinked = ~pl.col("linked")
     disbursement = pl.col("disbursement_usd")
@@ -584,6 +586,7 @@ def unallocated(marked: pl.LazyFrame) -> pl.LazyFrame:
         marked.group_by("provider_code", "year")
         .agg(
             ordered_sum(pl.col("excess_usd", "outside_release_usd")),
+            marked_usd=ordered_sum(disbursement),
             unlinked_marked_usd=ordered_sum(
                 disbursement.filter(unlinked, ~pl.col("route_fund"))
             ),

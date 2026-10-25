@@ -975,20 +975,21 @@ UNTRACED = _table(
     record_grant_equiv_usd=_usd(nullable=True, minimum=0.0),
 )
 
-# Rio-marked CRS disbursement outside `disbursements`, by provider and disbursement
-# year, at face value: a linked record's disbursement beyond what its commitments
-# take (`excess_usd`), disbursements to commitments with no CRDF row in the release
-# (`outside_release_usd`), records linked to no commitment (`unlinked_marked_usd`),
-# and the unlinked records of the funds whose commitments the build routes through
-# their IATI files (`fund_unlinked_usd`, 0 with `gap_fill` off). Excess and unlinked
-# count in the totals through `untraced`, and the release leaves the other two out.
-# With the `disbursements` rows of Rio-marked CRS records they sum to every
-# Rio-marked CRS disbursement.
+# Rio-marked CRS disbursement by provider and disbursement year, at face value: all
+# of it (`marked_usd`), and its parts outside `disbursements`: a linked record's
+# disbursement beyond what its commitments take (`excess_usd`), disbursements to
+# commitments with no CRDF row in the release (`outside_release_usd`), records
+# linked to no commitment (`unlinked_marked_usd`), and the unlinked records of the
+# GCF and the GEF whose money the funds' IATI route counts (`fund_unlinked_usd`, 0
+# with `gap_fill` off). Excess and unlinked count in the totals through `untraced`,
+# and the release leaves the other two out. The four parts and the `disbursements`
+# rows of Rio-marked CRS records sum to `marked_usd` (`release_invariants`).
 UNALLOCATED = _table(
     "unallocated",
     ("provider_code", "year"),
     provider_code=_code(),
     year=_year(),
+    marked_usd=_usd(),
     excess_usd=_usd(),
     outside_release_usd=_usd(),
     unlinked_marked_usd=_usd(),
@@ -1150,6 +1151,11 @@ def validate(table: TableSchema, frame: pl.DataFrame) -> None:
 
 # Absolute tolerance, in USD, for the amount checks in `release_invariants`.
 INVARIANT_TOLERANCE_USD = 1e-6
+# Relative tolerance for a provider-year total of `unallocated.marked_usd`, where
+# INVARIANT_TOLERANCE_USD is smaller. Its parts are sums of the allocations a
+# record's disbursement splits into, so rounding parts them from the total by up to
+# 1.1e-15 of it, 5e-6 USD on EU Institutions' 4.8bn of 2024 in an archive build.
+INVARIANT_RELATIVE_TOLERANCE = 1e-12
 # "Developing countries, unspecified": 998 in the CRDF and the DAC recipient list,
 # 9998 in the bulk CRS. Release tables carry 998 only.
 UNSPECIFIED_RECIPIENT = 998
@@ -1250,9 +1256,9 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     A channel and year of `agency_spending` holds no `one` row of `agency_shares`.
     Each commitment's value under the OECD method equals its published
     `climate_usd`, and no channel of `core_contributions` aggregates another of its
-    channels. The `untraced` checks are those of `_untraced_problems`, and the
-    `provider_coefficients` checks those of `_coefficient_problems`. An empty list
-    means every check passed.
+    channels. The `untraced` checks are those of `_untraced_problems`, the
+    `unallocated` total that of `_marked_problems`, and the `provider_coefficients`
+    checks those of `_coefficient_problems`. An empty list means every check passed.
     """
     commitments, problems = _finite(tables["commitments"], name="commitments")
     disbursements, non_finite = _finite(tables["disbursements"], name="disbursements")
@@ -1352,6 +1358,7 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
             untraced, disbursements=disbursements, unallocated=tables["unallocated"]
         )
     )
+    problems.extend(_marked_problems(disbursements, unallocated=tables["unallocated"]))
     problems.extend(_share_problems(tables["agency_shares"]))
     problems.extend(_oecd_problems(commitments))
     core = tables["core_contributions"]
@@ -1692,6 +1699,63 @@ def _untraced_problems(
             ).iter_rows()
         )
     return problems
+
+
+def _marked_problems(
+    disbursements: pl.DataFrame, *, unallocated: pl.DataFrame
+) -> list[str]:
+    """Providers and years whose `unallocated.marked_usd` differs from the sum of
+    its parts: the allocated amounts of the `disbursements` rows of Rio-marked CRS
+    records, and `unallocated`'s excess, outside-release, unlinked and fund-unlinked
+    amounts. A Rio-marked record is in the recipient view's Bi_Multi codes and
+    carries a measured adaptation marker (`measured_adaptation`) or a mitigation
+    marker above 0, as `allocate.marked_records` selects them; a record that
+    disburses nothing has no allocation to sum. A provider and year missing from
+    one side counts 0 there. The two sides compare within `INVARIANT_TOLERANCE_USD`
+    or `INVARIANT_RELATIVE_TOLERANCE` of `marked_usd`, whichever is larger."""
+    key = ["provider_code", "year"]
+    marked = (measured_adaptation(pl.col("record_rio_adaptation")) > 0) | (
+        pl.col("record_rio_mitigation") > 0
+    )
+    released = (
+        disbursements.filter(
+            pl.col("disbursement_source") == "crs",
+            pl.col("bi_multi").is_in(RECIPIENT_VIEW),
+            marked.fill_null(value=False),
+        )
+        .group_by(key)
+        .agg(_released=pl.col("allocated_usd").sum())
+    )
+    ledger = (
+        unallocated.select(
+            *key,
+            "marked_usd",
+            _parts=pl.sum_horizontal(
+                "excess_usd",
+                "outside_release_usd",
+                "unlinked_marked_usd",
+                "fund_unlinked_usd",
+            ),
+        )
+        .join(released, on=key, how="full", coalesce=True)
+        .with_columns(pl.exclude(key).fill_null(0.0))
+        .with_columns(_summed=pl.col("_released") + pl.col("_parts"))
+        .filter(
+            (pl.col("marked_usd") - pl.col("_summed")).abs()
+            > pl.max_horizontal(
+                pl.lit(INVARIANT_TOLERANCE_USD),
+                INVARIANT_RELATIVE_TOLERANCE * pl.col("marked_usd").abs(),
+            )
+        )
+        .sort(key)
+    )
+    return [
+        f"unallocated {provider} {year}: marked_usd {marked_usd!r} differs from "
+        f"its parts' sum {summed!r}"
+        for provider, year, marked_usd, summed in ledger.select(
+            *key, "marked_usd", "_summed"
+        ).iter_rows()
+    ]
 
 
 # release.json --------------------------------------------------------------------

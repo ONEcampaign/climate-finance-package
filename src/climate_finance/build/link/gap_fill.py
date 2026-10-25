@@ -4,7 +4,9 @@ The GCF and GEF report their disbursements under ids the CRS does not carry, so
 their CRDF rows that allocation leaves not traceable take their status from the
 funds' own IATI files: the activity's disbursements (type 3) over its own commitment
 (type 2), by year (`route_funds`). Allocation rows from this route carry rule and
-`disbursement_source` `iati`.
+`disbursement_source` `iati`. A fund's unlinked CRS record whose fund key is that of
+a row the route filled holds money the route counts (`routed_records`), so the
+release leaves it out of `untraced`.
 
 The bank-ledger fill gives a commitment with no CRS disbursement on its ledger key
 the ledger's disbursement on that key, in bank-years whose ledger agrees with the
@@ -260,6 +262,35 @@ def fund_key(publisher: pl.Expr, project_number: pl.Expr, title: pl.Expr) -> pl.
             )
         )
         .otherwise(normalise_pn(project_number))
+    )
+
+
+def routed_records(
+    crs: pl.LazyFrame, *, allocations: pl.LazyFrame, crdf: pl.LazyFrame
+) -> pl.LazyFrame:
+    """The `record_id` of each GCF and GEF CRS record whose money `route_funds`
+    counts: a record whose fund key (`fund_key` over its own project number and
+    title) is the key of a CRDF row the route filled, a row with an `iati`
+    allocation in `allocations`. Without the route there are none."""
+    publisher = pl.col("publisher")
+    key = fund_key(publisher, pl.col("project_number"), pl.col("title"))
+    filled = (
+        crdf.join(
+            allocations.filter(pl.col("disbursement_source") == "iati"),
+            on="row_id",
+            how="semi",
+        )
+        .with_columns(publisher=publisher_of(pl.col("provider_code"), FUND_PUBLISHERS))
+        .select("publisher", key=key)
+        .drop_nulls()
+        .unique()
+    )
+    return (
+        crs.with_columns(publisher=publisher_of(pl.col("donor_code"), FUND_PUBLISHERS))
+        .filter(publisher.is_not_null())
+        .with_columns(key=key)
+        .join(filled, on=["publisher", "key"], how="semi")
+        .select("record_id")
     )
 
 

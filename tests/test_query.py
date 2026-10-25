@@ -1747,13 +1747,13 @@ def test_a_jev_label_reaches_only_the_rows_a_record_weighs_as_adaptation(
 
 def test_quality_reports_the_untraced_and_left_out_marked_disbursement() -> None:
     untraced = SNAP.quality(method=OECD).untraced.to_polars()
+    parts = ("excess_usd", "unlinked_marked_usd", "outside_release_usd")
 
-    assert untraced.select(
+    # The provider-years with Rio-marked disbursement outside `disbursements`.
+    assert untraced.filter(pl.sum_horizontal(*parts, "fund_unlinked_usd") > 0).select(
         "provider_code",
         "year",
-        "excess_usd",
-        "unlinked_marked_usd",
-        "outside_release_usd",
+        *parts,
         "fund_unlinked_usd",
         "excess_climate_usd",
         "unlinked_climate_usd",
@@ -1764,6 +1764,8 @@ def test_quality_reports_the_untraced_and_left_out_marked_disbursement() -> None
         (GEF, 2021, 0.0, 0.0, 0.0, 1.5e6, 0.0, 0.0),
     ]
     one = SNAP.quality(providers=["France"]).untraced.to_polars()
-    assert one.select("provider_code", "unlinked_climate_usd").rows() == [
-        (FRA, pytest.approx(1.2e6))
+    assert one.select("provider_code", "year", "unlinked_climate_usd").rows() == [
+        (FRA, 2021, pytest.approx(1.2e6)),
+        (FRA, 2023, 0.0),
+        (FRA, 2024, 0.0),
     ]

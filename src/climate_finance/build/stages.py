@@ -200,7 +200,7 @@ REGISTRY: tuple[StageDef, ...] = (
     _entry(
         Stage.LABEL,
         label.run_label,
-        settings=("gap_fill", "jev.model", "jev_labels", "years.crs_last_complete"),
+        settings=("jev.model", "jev_labels", "years.crs_last_complete"),
     ),
     _entry(
         Stage.MEASURE,

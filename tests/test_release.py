@@ -29,7 +29,6 @@ from climate_finance.build.allocate import (
     allocate_to_rows,
     counted_rows,
     marked_records,
-    routed_funds,
     untraced_records,
 )
 from climate_finance.build.errors import (
@@ -38,6 +37,7 @@ from climate_finance.build.errors import (
     StaleStageError,
 )
 from climate_finance.build.fetch import YEAR_SOURCES
+from climate_finance.build.link.gap_fill import fill_allocations, routed_records
 from climate_finance.build.link.keys import build_units, link_by_keys
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.provenance import Provenance, StageRecord, record_path
@@ -513,9 +513,9 @@ def test_untraced_unallocated_and_release_rows_sum_to_the_marked_disbursement(
     marked = {2020: 60.0 + 20.0 + 15.0 + 7.0, 2021: 70.0}
 
     assert unallocated.rows() == [
-        (NOR, 2020, 0.0, 20.0, 15.0, 0.0),
-        (NOR, 2021, 30.0, 0.0, 0.0, 0.0),
-        (GEF, 2020, 0.0, 0.0, 7.0, 0.0),
+        (NOR, 2020, 95.0, 0.0, 20.0, 15.0, 0.0),
+        (NOR, 2021, 70.0, 30.0, 0.0, 0.0, 0.0),
+        (GEF, 2020, 7.0, 0.0, 0.0, 7.0, 0.0),
     ]
     # The excess and the unlinked records count as untraced, with the record's own
     # disbursement and grant equivalent. The build runs no gap fill, so no IATI
@@ -533,41 +533,57 @@ def test_untraced_unallocated_and_release_rows_sum_to_the_marked_disbursement(
     ]
     totals = (
         unallocated.group_by("year")
-        .agg(pl.sum_horizontal(pl.exclude("provider_code", "year")).sum())
+        .agg(pl.sum_horizontal(pl.exclude("provider_code", "year", "marked_usd")).sum())
         .join(released, on="year")
         .select("year", pl.sum_horizontal(pl.exclude("year")))
     )
     assert dict(totals.rows()) == marked
+    assert (
+        dict(unallocated.group_by("year").agg(pl.col("marked_usd").sum()).rows())
+        == marked
+    )
 
 
 @pytest.mark.parametrize(
-    ("gap_fill", "untraced", "fund_unlinked"),
-    [(False, ["d21", "g20", "z20"], 0.0), (True, ["d21", "z20"], 7.0)],
+    ("filled", "untraced", "fund_unlinked"),
+    [(False, ["e20", "f20"], 0.0), (True, ["f20"], 7.0)],
 )
-def test_a_routed_funds_unlinked_records_stay_out_of_untraced(
-    release_dir: Path,
-    config: BuildConfig,
-    gap_fill: bool,
-    untraced: list[str],
-    fund_unlinked: float,
+def test_a_fund_record_stays_out_of_untraced_only_where_the_route_filled_its_key(
+    filled: bool, untraced: list[str], fund_unlinked: float
 ) -> None:
-    # With gap fill on, the fill stage gives the GEF's commitments the disbursements
-    # of its IATI files, which hold the money of its unlinked CRS records.
-    allocations = pl.scan_parquet(table_path(release_dir, "fill", "allocations"))
+    # Two unlinked GEF records: e20 under GEF id 9001, the key of commitment E1,
+    # and f20 under 9002, which no commitment carries. With gap fill on, the IATI
+    # route fills E1, so it counts e20's money; with it off, nothing fills E1.
+    crs = crs_records(
+        {"record_id": "e20", "year": 2020, "donor_code": GEF, "project_number": "9001",
+         "disbursement_usd": 7.0},
+        {"record_id": "f20", "year": 2020, "donor_code": GEF, "project_number": "9002",
+         "disbursement_usd": 3.0},
+    ).lazy()  # fmt: skip
+    crdf = crdf_rows(
+        {"row_id": "E1", "year": 2018, "provider_code": GEF, "project_number": "9001"}
+    ).lazy()
+    route = pl.DataFrame(
+        {"row_id": ["E1"], "publisher": ["gef"], "key": ["9001"], "year": [2020]},
+        schema_overrides={"year": pl.Int16},
+    )
+    allocations = fill_allocations(
+        route.head(1 if filled else 0), source="iati", prefix="iati", amount=pl.lit(5.0)
+    ).lazy()
+
     marked = marked_records(
         allocations,
-        crs=CRS.lazy(),
+        crs=crs,
         last_year=2024,
-        routed=routed_funds(config.model_copy(update={"gap_fill": gap_fill})),
+        routed=routed_records(crs, allocations=allocations, crdf=crdf),
     )
-
     records = untraced_records(marked).collect()
-    ledger = release.unallocated(marked).filter(pl.col("provider_code") == GEF)
+    ledger = release.unallocated(marked).collect()
 
     assert sorted(records["record_id"]) == untraced
-    assert ledger.select("unlinked_marked_usd", "fund_unlinked_usd").collect().row(
+    assert ledger.select("marked_usd", "unlinked_marked_usd", "fund_unlinked_usd").row(
         0
-    ) == (7.0 - fund_unlinked, fund_unlinked)
+    ) == (10.0, 10.0 - fund_unlinked, fund_unlinked)
 
 
 def test_untraced_records_before_the_adaptation_marker_count_mitigation_alone() -> None:
@@ -581,7 +597,12 @@ def test_untraced_records_before_the_adaptation_marker_count_mitigation_alone() 
     ).lazy()  # fmt: skip
     allocations = _empty(schema.ALLOCATIONS).lazy()
 
-    marked = marked_records(allocations, crs=crs, last_year=2024, routed=())
+    marked = marked_records(
+        allocations,
+        crs=crs,
+        last_year=2024,
+        routed=pl.LazyFrame(schema={"record_id": pl.String}),
+    )
     untraced = release.release_untraced(untraced_records(marked), crs=crs).collect()
 
     assert untraced.select("record_id", "rio_adaptation", "rio_mitigation").rows() == [

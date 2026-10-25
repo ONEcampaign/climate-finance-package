@@ -32,9 +32,11 @@ from climate_finance.schema import (
     CERTAIN_ROUTES,
     FLOWS,
     LINK_METHODS,
+    RECIPIENT_VIEW,
     RELEASE_TABLES,
     ReleaseManifest,
     TableEntry,
+    measured_adaptation,
     release_invariants,
     validate,
 )
@@ -648,7 +650,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
         list(commitments.values()), frames["disbursements"]
     )
     frames["quality"] = _quality(frames["commitments"], frames["disbursements"])
-    frames["unallocated"] = _unallocated(frames["untraced"])
+    frames["unallocated"] = _unallocated(frames["untraced"], frames["disbursements"])
     frames["total_flows"] = _total_flows(
         frames["commitments"],
         pl.concat(
@@ -775,31 +777,55 @@ def _quality(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataF
     )
 
 
-def _unallocated(untraced: pl.DataFrame) -> pl.DataFrame:
+def _unallocated(untraced: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataFrame:
     """Per provider and disbursement year, the untraced excess and unlinked
-    amounts, with `UNALLOCATED`'s amounts outside the release and of route funds."""
+    amounts, with `UNALLOCATED`'s amounts outside the release and of route funds,
+    and `marked_usd`, their sum with the allocations of the Rio-marked CRS records
+    of `disbursements`."""
+    key = ["provider_code", "year"]
     amount = pl.col("untraced_usd")
-    excess = untraced.group_by("provider_code", "year").agg(
+    excess = untraced.group_by(key).agg(
         excess_usd=amount.filter(pl.col("reason") == "excess").sum(),
         unlinked_marked_usd=amount.filter(pl.col("reason") == "unlinked").sum(),
     )
     other = pl.DataFrame(
         UNALLOCATED,
-        schema=["provider_code", "year", "outside_release_usd", "fund_unlinked_usd"],
+        schema=[*key, "outside_release_usd", "fund_unlinked_usd"],
         orient="row",
     )
+    released = _marked_allocations(disbursements)
     columns = _polars_schema("unallocated")
     return (
         excess.join(
             other.cast({name: columns[name] for name in other.columns}),
-            on=["provider_code", "year"],
+            on=key,
             how="full",
             coalesce=True,
         )
+        .join(released, on=key, how="full", coalesce=True)
         .with_columns(pl.col("^.*_usd$").fill_null(0.0))
-        .filter(pl.sum_horizontal("^.*_usd$") > 0)
+        .with_columns(marked_usd=pl.sum_horizontal("^.*_usd$"))
+        .filter(pl.col("marked_usd") > 0)
         .select(pl.col(name).cast(dtype) for name, dtype in columns.items())
-        .sort("provider_code", "year")
+        .sort(key)
+    )
+
+
+def _marked_allocations(disbursements: pl.DataFrame) -> pl.DataFrame:
+    """Per provider and year, `released_usd`: the allocated amounts of the
+    `disbursements` rows of Rio-marked CRS records, as `release_invariants` sums
+    them."""
+    marked = (measured_adaptation(pl.col("record_rio_adaptation")) > 0) | (
+        pl.col("record_rio_mitigation") > 0
+    )
+    return (
+        disbursements.filter(
+            pl.col("disbursement_source") == "crs",
+            pl.col("bi_multi").is_in(RECIPIENT_VIEW),
+            marked.fill_null(value=False),
+        )
+        .group_by("provider_code", "year")
+        .agg(released_usd=pl.col("allocated_usd").sum())
     )
 
 
@@ -852,7 +878,8 @@ def sample_release(release: Path) -> dict[str, pl.DataFrame]:
     the commitments' disbursed amounts still sum from their allocations. Each repeat
     keeps the first row it repeats, which holds its allocations. `quality`,
     `modelled`, `core_contributions`, `total_flows`, `untraced` and `unallocated`
-    keep the six providers' rows for the whole release.
+    keep the six providers' rows for the whole release, with `unallocated.marked_usd`
+    less the Rio-marked allocations the sample leaves out.
     """
     tables = {
         name: pl.read_parquet(release / f"{name}.parquet") for name in RELEASE_TABLES
@@ -909,6 +936,20 @@ def sample_release(release: Path) -> dict[str, pl.DataFrame]:
         sample[name] = tables[name].filter(
             pl.col("provider_code").is_in(SAMPLE_PROVIDERS)
         )
+    # `marked_usd` leaves out the Rio-marked allocations the sample drops, so the
+    # sample's parts still sum to it.
+    key = ["provider_code", "year"]
+    dropped = _marked_allocations(
+        disbursements.filter(~pl.col("row_id").is_in(row_ids))
+    )
+    sample["unallocated"] = (
+        sample["unallocated"]
+        .join(dropped, on=key, how="left")
+        .with_columns(
+            marked_usd=pl.col("marked_usd") - pl.col("released_usd").fill_null(0.0)
+        )
+        .drop("released_usd")
+    )
     return sample
 
 

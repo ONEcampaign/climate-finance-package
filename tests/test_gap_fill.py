@@ -18,6 +18,7 @@ from climate_finance.build.link.gap_fill import (
     keyed_units,
     ledger_flows,
     route_funds,
+    routed_records,
     run_fill,
 )
 from climate_finance.build.stages import raw_dir, table_path
@@ -159,6 +160,40 @@ def test_fund_rows_take_the_rise_in_their_disbursed_share_each_year() -> None:
         "iati:gcf:FP001:2021",
         "iati:gcf:FP001:2022",
     ]
+
+
+def test_routed_records_are_the_fund_records_on_a_key_the_route_filled() -> None:
+    allocations, _ = _route()
+    crs = pl.LazyFrame(
+        [
+            # FP001 and FP002 (by title) are GCF keys the route filled, and 9001 the
+            # GEF's, written without the CRDF's float artefact.
+            ("gcf_number", GCF, "FP001", "A project"),
+            ("gcf_title", GCF, None, "Phase 2 of FP002"),
+            ("gef_number", GEF, "9001", "A project"),
+            # FP004 matches an activity with no disbursement, FP999 none, and the
+            # readiness grant carries no funded activity number.
+            ("gcf_undisbursed", GCF, "FP004", "A project"),
+            ("gcf_unmatched", GCF, "FP999", "A project"),
+            ("gcf_unkeyed", GCF, "MLI-RS-001", "Readiness"),
+            ("gef_undisbursed", GEF, "9002", "A project"),
+            # FP001 is a GCF key, and Germany is no fund.
+            ("germany", GERMANY, "FP001", "A project"),
+        ],
+        schema={
+            "record_id": pl.String,
+            "donor_code": pl.Int32,
+            "project_number": pl.String,
+            "title": pl.String,
+        },
+        orient="row",
+    )
+
+    routed = routed_records(
+        crs, allocations=allocations.lazy(), crdf=_crdf(FUND_ROWS).lazy()
+    ).collect()
+
+    assert sorted(routed["record_id"]) == ["gcf_number", "gcf_title", "gef_number"]
 
 
 def test_fund_rows_take_their_status_from_the_iati_share() -> None:

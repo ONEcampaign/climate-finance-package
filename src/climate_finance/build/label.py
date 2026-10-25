@@ -33,10 +33,10 @@ import polars as pl
 
 from climate_finance.build.allocate import (
     marked_records,
-    routed_funds,
     untraced_records,
 )
 from climate_finance.build.fetch import ADAPTATION_LABELS_FILE
+from climate_finance.build.link.gap_fill import routed_records
 from climate_finance.schema import OBJECTIVE_LABELS, OBJECTIVES, measured_adaptation
 
 if TYPE_CHECKING:
@@ -110,7 +110,7 @@ def run_label(context: StageContext) -> StageOutput:
             allocations,
             crs=crs,
             last_year=context.config.years.crs_last_complete,
-            routed=routed_funds(context.config),
+            routed=routed_records(crs, allocations=allocations, crdf=commitments),
         )
     )
     objectives = reported_objectives(
