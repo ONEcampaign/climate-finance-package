@@ -91,8 +91,8 @@ def _restated(error: ValidationError, *, model: type[Frozen]) -> InvalidInputErr
     """One error naming each field `error` refuses and the form it takes."""
     problems = []
     for detail in error.errors(include_url=False):
-        # A capitalised part tags a union member, as `Method` in `method.Method.eu`;
-        # field names are lower case.
+        # A capitalised part tags a union member, as `Method` in `method.Method.eu`.
+        # Field names are lower case.
         field = ".".join(
             str(part) for part in detail["loc"] if not str(part)[:1].isupper()
         )

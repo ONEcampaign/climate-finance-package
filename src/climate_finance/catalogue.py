@@ -11,9 +11,10 @@ Provider and recipient names resolve through `resolve`, which reads `data/names.
 every common form of a provider, agency or recipient name (listing names, French
 provider names, ISO codes, resolvekit aliases and agency names), baked by
 `cf-build names`. A name matches ignoring case, accents and surrounding spaces. A name
-of several entries, or of none, raises with candidates or close names as suggestions,
-which are never applied. Flow and method names match their listing exactly, ignoring
-case and accents. A DAC code or agency the listings lack raises as an unknown name.
+of several entries, or of none, raises with candidates or close names as suggestions
+that the call does not apply. Flow and method names match their listing exactly,
+ignoring case and accents. A DAC code or agency the listings lack raises as an unknown
+name.
 """
 
 import unicodedata

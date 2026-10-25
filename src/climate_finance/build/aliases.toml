@@ -22,7 +22,7 @@ EUU = 918  # the BTR's party code for the EU
 # Agency names, each to a DAC provider code and that provider's agency code.
 [agencies]
 EIB = [918, 3]  # European Investment Bank
-USAID = [302, 1]  # resolvekit has the name, not the acronym
+USAID = [302, 1]  # resolvekit holds the full name only
 # "EC" is also Ecuador's ISO 2 code, which would outrank the agency. As a provider
 # an analyst means the European Commission; Ecuador is a recipient almost everywhere
 # in this data, and `recipients="EC"` still gives Ecuador.

@@ -243,9 +243,9 @@ type Prices = Annotated[int | Literal["current"], BeforeValidator(read_prices)]
 
 
 class SpecInputs(TypedDict, total=False):
-    """The forms each `Spec` field takes as input, which `Spec(...)`,
-    `Release.spending(...)` and their type checkers read. `Spec` holds the defaults
-    and the stored types."""
+    """The forms each `Spec` field takes as input. `Spec(...)` and
+    `Release.spending(...)` accept them, and type checkers read them from here. `Spec`
+    holds the defaults and the stored types."""
 
     providers: str | int | Agency | Iterable[str | int | Agency] | None
     recipients: str | int | Iterable[str | int] | None
@@ -292,10 +292,10 @@ class Spec(Frozen):
     name from `cf.methods.list()` ignoring case, or a list of methods and names,
     which becomes a range; it holds the `Method` or `MethodRange`, so JSON keeps the
     coefficients. `prices` takes `"current"` or a base year, and `oda_only` and
-    `untraced` take True or False only. An unknown method name
-    raises `UnknownNameError`. Any other refusal, an unknown keyword or a value
-    outside a field's choices included, raises one `InvalidInputError` naming each
-    field and the form it takes.
+    `untraced` take True or False only. An unknown method name raises
+    `UnknownNameError`. Any other refusal, an unknown keyword or a value outside a
+    field's choices included, raises one `InvalidInputError` naming each field and
+    the form it takes.
 
     A spec at the default `measure` and `untraced` leaves them out of its serialised
     form, so it serialises as a spec written before either field.
@@ -318,9 +318,10 @@ class Spec(Frozen):
     }
 
     def __init__(self, **inputs: Unpack[SpecInputs]) -> None:
-        # Typed by `SpecInputs`: type checkers type a pydantic model's own constructor
-        # from the stored field types, which refuse `providers="Japan"`. `BaseModel`
-        # is named because they read `super()` as `Frozen`'s fieldless constructor.
+        # `SpecInputs` types the keywords. Type checkers derive a pydantic model's
+        # constructor from the stored field types, which refuse `providers="Japan"`.
+        # `BaseModel` is named because they read `super()` as `Frozen`'s fieldless
+        # constructor.
         BaseModel.__init__(self, **inputs)
 
     @model_serializer(mode="wrap")

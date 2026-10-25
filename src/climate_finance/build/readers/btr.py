@@ -898,7 +898,7 @@ def _recipient_code(name: str) -> int | None:
         code = recipients.code(name)
     except UnknownRecipientError:
         return None
-    # Recipient names never name an agency.
+    # A recipient name resolves to a recipient code, an int.
     assert isinstance(code, int)
     return code
 

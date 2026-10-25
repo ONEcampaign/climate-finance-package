@@ -78,7 +78,7 @@ OECD 160.5
 PROVIDER 145.8
 ```
 
-`cf.compare()` joins results on year, provider, recipient, and Bi_Multi code, and names each column after what sets the results apart: the release where the releases differ, and each spec field that differs, such as the method.
+`cf.compare()` joins results on year, provider, recipient, and Bi_Multi code, and names each column after what sets the results apart, which is the release where the releases differ, and each spec field that differs, such as the method.
 
 ```python
 one = release.spending(providers="Japan", years=[2023], method=cf.methods.ONE)

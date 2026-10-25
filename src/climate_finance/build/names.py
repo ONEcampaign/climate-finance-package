@@ -24,7 +24,7 @@ The sources, best first:
    agencies whose `oecd:agency` code is the provider (a DAC code, or an ISO 3 code
    mapped through `geo.provider_code`) and the agency. Only agencies the agency
    listing holds, of providers the provider listing holds, have rows, so a name
-   never resolves to an agency no release table carries.
+   resolves only to an agency a release table can carry.
 
 Keys of digits alone are left out, since those read as DAC codes. Each key keeps its
 rows at its best source only. A key with one row resolves; a key with several rows at

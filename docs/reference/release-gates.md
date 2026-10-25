@@ -42,7 +42,7 @@ Returns the number of rows, in every release table that carries a `record_id`, `
 
 ## `listed_codes`
 
-Returns the number of provider, agency, and recipient codes in the release tables that the package's listings lack, and its detail names each one, as `provider 1058`, `agency 3/5`, or `recipient 434`. The listings are `oecd_classification.csv`, `agencies.csv`, and `recipients.csv` in `src/climate_finance/data`. Agency codes 0 and 1 and a null agency stand for the provider itself, so only other agency codes need a row in `agencies.csv`. The threshold is 0. A failure means the OECD files carry a code the listings lack: run `cf-build listings` on the build's raw directory, then `cf-build names`, and commit both.
+Returns the number of provider, agency, and recipient codes in the release tables that the package's listings lack, and its detail names each one, as `provider 1058`, `agency 3/5`, or `recipient 434`. The listings are `oecd_classification.csv`, `agencies.csv`, and `recipients.csv` in `src/climate_finance/data`. Agency codes 0 and 1 and a null agency stand for the provider itself, so only other agency codes need a row in `agencies.csv`. The threshold is 0. A failure means the OECD files carry a code the listings lack. Run `cf-build listings` on the build's raw directory, then `cf-build names`, and commit both.
 
 ## Next
 

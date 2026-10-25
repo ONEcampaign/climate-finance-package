@@ -36,7 +36,7 @@ fixture 2.0.0.dev0
 
 Represents one release on disk. `release.path` is its directory and `release.manifest` is the parsed `release.json`.
 
-A release prints its name, the years its commitments and disbursements cover, and its table count, naming any table it withholds. The synthetic test release carries the reserved name `fixture` and prints `synthetic figures` beside it; `cf-build release` refuses to cut or publish a release of that name.
+A release prints its name, the years its commitments and disbursements cover, and its table count, naming any table it withholds. The synthetic test release carries the reserved name `fixture` and prints `synthetic figures` beside it. `cf-build release` refuses to cut or publish a release of that name.
 
 ```python
 print(release)
@@ -62,7 +62,7 @@ Returns a `Result`. Every argument is optional and keyword-only, and each is a `
 - `measure` (`"amount" | "share_of_total"`, default `"amount"`). `"share_of_total"` divides every amount by all CRS flows of its key, as `Result.share_of_total()` does.
 - `untraced` (`bool`, default `True`). `False` leaves out the untraced rows of disbursements and grant equivalents. Commitments have none.
 
-Raises `UnknownProviderError` or `UnknownRecipientError` for a name, code, or agency outside the listings, `UnknownNameError` for a method name outside `cf.methods.list()`, `InvalidInputError` for years, a method, or prices in another form, such as `years="2022"`, for an empty list of providers, recipients, or years, which would select no rows, for `oda_only` or `untraced` other than `True` or `False`, for an unknown keyword, such as `spec=`, which `release.run(spec)` takes, or for a value outside a field's choices, such as `flow="commitment"`, and `MissingLabelsError` for a method with `relevance="jev"` on a release that holds no Jev labels.
+Raises `UnknownProviderError` or `UnknownRecipientError` for a name, code, or agency outside the listings, `UnknownNameError` for a method name outside `cf.methods.list()`, `InvalidInputError` for an argument in another form (see [Errors](#errors)), such as `years="2022"`, `flow="commitment"`, or `spec=`, which `release.run(spec)` takes, and `MissingLabelsError` for a method with `relevance="jev"` on a release that holds no Jev labels.
 
 **Flow.** `flow="disbursements"` counts what the trace allocated to the release's climate commitments, by the year of the disbursement record. A disbursement counts against a commitment the release holds, and the commitments start at the first CRDF year, so the earliest years count less of what was paid. Rio-marked CRS disbursement that reaches no commitment, the excess beyond a full commitment and the records linked to none, counts as untraced, weighted by the record's own markers, in `value` and `high` and not in `low`. Disbursements end at the build's `crs_last_complete`. `flow="commitments"` counts CRDF commitments at face value in the commitment year, with `low`, `value`, and `high` equal. `flow="grant_equivalent"` counts the grant equivalent of the disbursements. A record with no grant equivalent, or a negative one on a positive disbursement, counts nothing, and `release.quality().summary()` reports the valued share of allocated value as `grant_equiv_coverage`.
 
@@ -120,7 +120,7 @@ Runs a saved `Spec`, such as `result.spec` or one read back with `cf.Spec.model_
 
 ### `Release.quality(*, providers, years, method)`
 
-Returns a `Quality` object. Its amounts are the CRDF's published climate value of the commitments. `method` acts on the provider-view columns, `eu_left_out` and `attribution`, and on the climate value of untraced disbursement in `untraced`. `providers` and `years` take the forms `spending()` takes, and `method` one method or its name; a range raises `InvalidInputError`. An agency raises `InvalidInputError` naming its provider, since the tables count providers, and so does an unknown keyword, naming a close one. Years the `quality` table lacks give a `CoverageWarning`.
+Returns a `Quality` object. Its amounts are the CRDF's published climate value of the commitments. `method` acts on the provider-view columns, `eu_left_out` and `attribution`, and on the climate value of untraced disbursement in `untraced`. `providers` and `years` take the forms `spending()` takes, and `method` one method or its name. A range raises `InvalidInputError`. An agency raises `InvalidInputError` naming its provider, since the tables count providers, and so does an unknown keyword, naming a close one. Years the `quality` table lacks give a `CoverageWarning`.
 
 ### `Release.reconcile(*, providers, years, method)`
 
@@ -142,19 +142,19 @@ Returns one release table as a polars LazyFrame. Raises `UnknownNameError`, with
 
 A frozen pydantic model of every `spending()` argument. `Spec.methods` returns the tuple of `Method` objects that the `method` field names.
 
-| Field | Type | Default |
-|---|---|---|
-| `providers` | `tuple[int \| Agency, ...] \| None` | `None` |
-| `recipients` | `tuple[int, ...] \| None` | `None` |
-| `years` | `tuple[int, ...] \| None` | `None` |
-| `method` | `Method \| MethodRange` | `cf.methods.ONE` |
-| `flow` | `Flow` | `"disbursements"` |
-| `view` | `View` | `"recipient"` |
-| `currency` | `Currency` | `"USD"` |
-| `prices` | `int \| "current"` | `"current"` |
-| `oda_only` | `bool` | `False` |
-| `measure` | `Measure` | `"amount"` |
-| `untraced` | `bool` | `True` |
+| Field        | Type                                | Default           |
+| ------------ | ----------------------------------- | ----------------- |
+| `providers`  | `tuple[int \| Agency, ...] \| None` | `None`            |
+| `recipients` | `tuple[int, ...] \| None`           | `None`            |
+| `years`      | `tuple[int, ...] \| None`           | `None`            |
+| `method`     | `Method \| MethodRange`             | `cf.methods.ONE`  |
+| `flow`       | `Flow`                              | `"disbursements"` |
+| `view`       | `View`                              | `"recipient"`     |
+| `currency`   | `Currency`                          | `"USD"`           |
+| `prices`     | `int \| "current"`                  | `"current"`       |
+| `oda_only`   | `bool`                              | `False`           |
+| `measure`    | `Measure`                           | `"amount"`        |
+| `untraced`   | `bool`                              | `True`            |
 
 The table gives the types a spec holds. `Spec(...)` takes each field in the forms `spending()` lists, and `cf.SpecInputs` types them for a type checker. `years` holds the years sorted and without duplicates, and `method` holds the `Method` or `MethodRange` a name names, so JSON keeps its coefficients.
 
@@ -178,7 +178,7 @@ print(repr(cf.Spec(providers="Japan", method="OECD")))
 Spec(providers=(701,), method=cf.methods.OECD)
 ```
 
-An agency selects the rows whose `provider_code` and `agency_code` match it, and the result table of a spec that names one gains `agency` and `agency_code`, as `Result` describes. Attributed core contributions carry no agency, so an agency has none, and it has no modelled line. Under a method with `eu="provider"`, such as `cf.methods.OECD`, the provider view leaves out the EIB's own rows, so `providers="EIB"` returns no rows there.
+An agency selects the rows whose `provider_code` and `agency_code` match it, and the result table of a spec that names one gains `agency` and `agency_code`, as `Result` describes. Attributed core contributions carry no agency, so a query for an agency returns none of them and no modelled line. Under a method with `eu="provider"`, such as `cf.methods.OECD`, the provider view leaves out the EIB's own rows, so `providers="EIB"` returns no rows there.
 
 With `view="recipient"`, the query counts bilateral flows (Bi_Multi 1, 3, 7, and 8) and multilateral outflows (code 4). With `view="provider"`, it counts the bilateral flows plus each provider's core contributions multiplied by the receiving agency's climate share. Both views exclude code 2 rows from the release tables. The provider view adds attributed core contributions, which carry Bi_Multi 2, so each dollar counts once.
 
@@ -188,14 +188,14 @@ With `view="recipient"`, the query counts bilateral flows (Bi_Multi 1, 3, 7, and
 
 A frozen pydantic model with six fields.
 
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| `significant` | `float` | required | Share of face value counted for a significant marker, 0 to 1. |
-| `principal` | `float` | required | Share counted for a principal marker, 0 to 1. |
-| `highest_marker` | `bool` | required | Count each activity once under its higher marker. |
-| `coefficients` | `"fixed" \| "provider"` | `"fixed"` | `"provider"` takes each provider's coefficients for the row's year and agency from `provider_coefficients`. |
-| `relevance` | `"markers" \| "jev"` | `"markers"` | `"jev"` reads Jev's adaptation level where Jev labelled a record, and needs a release built with `jev_labels` on. |
-| `eu` | `"channel" \| "provider"` | `"channel"` | How EU Institutions count in the provider view. |
+| Field            | Type                      | Default     | Meaning                                                                                                           |
+| ---------------- | ------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------- |
+| `significant`    | `float`                   | required    | Share of face value counted for a significant marker, 0 to 1.                                                     |
+| `principal`      | `float`                   | required    | Share counted for a principal marker, 0 to 1.                                                                     |
+| `highest_marker` | `bool`                    | required    | Count each activity once under its higher marker.                                                                 |
+| `coefficients`   | `"fixed" \| "provider"`   | `"fixed"`   | `"provider"` takes each provider's coefficients for the row's year and agency from `provider_coefficients`.       |
+| `relevance`      | `"markers" \| "jev"`      | `"markers"` | `"jev"` reads Jev's adaptation level where Jev labelled a record, and needs a release built with `jev_labels` on. |
+| `eu`             | `"channel" \| "provider"` | `"channel"` | How EU Institutions count in the provider view.                                                                   |
 
 `Method.replace(**changes)` returns a validated copy. `cf.methods.ONE`, `OECD`, and `PROVIDER` are `Method` values, and `cf.methods.RANGE` is a `MethodRange` of the three. `cf.methods.describe(method)` returns the plain-language text that `Result.explain()` uses for the method. [About the methods](../explanation/methods.md) explains the choices.
 
@@ -211,7 +211,7 @@ print(cf.methods.ONE.replace(significant=0.5).significant)
 
 The answer to one `Spec`:
 
-- `table` is a polars DataFrame with one row per year, provider, recipient, Bi_Multi code, and method. Its columns, in order, are: `year`, `provider`, `recipient`, `method`, `provider_code`, `recipient_code`, `bi_multi`, `amount`, `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced`, so polars' truncated print shows the year, the names, the method and the last four. When the spec names an agency, the table also has `agency` after `provider` and `agency_code` after `provider_code`, and its rows are keyed by agency too: `agency_code` holds the agency of a provider the spec names through its agencies, and is null for the other providers. `provider` and `recipient` are the listing names of the codes beside them, null for a code the listings lack, as for the attributed rows' missing recipient. `amount` is the unweighted face value. `value` is the weighted climate value, equal to adaptation + mitigation + `cross_cutting` + `unsplit` under the highest-marker rule (where objectives are disjoint), and to adaptation + mitigation − `cross_cutting` + `unsplit` otherwise. `unsplit` holds attributed value whose agency share lacks a split by objective. `untraced` is the part of `value` from untraced rows, so `value` − `untraced` is the traced value, and it is 0 for commitments. It is computed on first access and kept, so reading it twice runs the query once. `pa.table(result.table)` reads it as an Arrow table, and `result.table.to_pandas()` returns a pandas frame when pandas is installed. `low` and `high` bound `value`, the total over all objectives, and no column bounds `adaptation`, `mitigation`, or `cross_cutting` alone. [Step 6 of the tutorial](../tutorial.md#step-6-ask-for-one-objective) sums one objective.
+- `table` is a polars DataFrame with one row per year, provider, recipient, Bi_Multi code, and method. Its columns, in order, are: `year`, `provider`, `recipient`, `method`, `provider_code`, `recipient_code`, `bi_multi`, `amount`, `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced`, so polars' truncated print shows the year, the names, the method and the last four. When the spec names an agency, the table also has `agency` after `provider` and `agency_code` after `provider_code`, and its rows are keyed by agency too: `agency_code` holds the agency of a provider the spec names through its agencies, and is null for the other providers. `provider` and `recipient` are the listing names of the codes beside them, null for a code the listings lack, as for the attributed rows' missing recipient. `amount` is the unweighted face value. `value` is the weighted climate value, equal to adaptation + mitigation + `cross_cutting` + `unsplit` under the highest-marker rule (where objectives are disjoint), and to adaptation + mitigation − `cross_cutting` + `unsplit` otherwise. `unsplit` holds attributed value whose agency share lacks a split by objective. `untraced` is the part of `value` from untraced rows, so `value` − `untraced` is the traced value, and it is 0 for commitments. It is computed on first access and kept, so reading it twice runs the query once. `pa.table(result.table)` reads it as an Arrow table, and `result.table.to_pandas()` returns a pandas frame when pandas is installed. `low` and `high` bound only `value`, the total over all objectives. [Step 6 of the tutorial](../tutorial.md#step-6-ask-for-one-objective) sums one objective.
 - `modelled` is a polars DataFrame of the "modelled, not reported" range with the columns: `year`, `provider`, `provider_code`, `recipient`, `recipient_code`, `basis`, `low`, and `high`. It is populated only when the query asks for recipient-view disbursements with `oda_only=False`.
 - `spec` is the `Spec`. `release.run(result.spec)` reruns the query to an identical table.
 - `meta` holds `release`, `package_version`, `source_versions`, `model_versions`, `years`, and `conversion`. `years` copies the release's `years`. `conversion` holds the pydeflate version and a SHA-256 of the factors behind a converted result, because pydeflate refreshes its DAC data every 30 days, and is None for USD at current prices.
@@ -282,11 +282,11 @@ Returned by `Release.reconcile()`. It prints a title line, naming the providers,
 - `comparator`: the comparator of the row's flow, `crdf_at_party_weight` for committed rows and `crs_disbursed_at_party_weight` for disbursed rows, null on a row with no status. `btr_over_comparator` is the BTR total over it, and `thin_comparator` is true where the comparator is below USD 10m (`query.THIN_COMPARATOR_USD`).
 - `btr_over_<comparator>` for each of the four face comparators, null for the other flow's comparators, and `btr_grant_equivalent_over_crs_grant_equivalent`. Every ratio is null where its comparator is zero or null.
 
-`rows(provider=..., year=...)` returns the BTR rows of one party and year with each CRS record linked to them, with the record's facts prefixed `crs_`, and `unfccc_only` set to true for a BTR row that no CRS record links to. `provider` takes a party as `providers` does. The rows hold the provider's name, `provider`, before `provider_code`; `recipient` is the BTR's own recipient text. It needs a local build that holds `btr` and `btr_links`; on a published release, which leaves them out, it raises `WithheldTableError`.
+`rows(provider=..., year=...)` returns the BTR rows of one party and year with each CRS record linked to them, with the record's facts prefixed `crs_`, and `unfccc_only` set to true for a BTR row that no CRS record links to. `provider` takes a party as `providers` does. The rows hold the provider's name, `provider`, before `provider_code`; `recipient` is the BTR's own recipient text. It needs a local build that holds `btr` and `btr_links`. On a published release, which leaves them out, it raises `WithheldTableError`.
 
 ## `compare(*results)` and `Comparison`
 
-`cf.compare(a, b, ...)` places results side by side. It returns a `Comparison` whose `table` has one row per year, provider, recipient, and Bi_Multi code, with the key columns `year`, `provider`, `recipient`, `provider_code`, `recipient_code`, and `bi_multi`, and one `value` column per result and method. When every result names an agency, the keys also hold `agency` and `agency_code`. When only some do, their agencies' amounts, and under `measure="share_of_total"` the totals that divide them, are summed to each provider's key, so `cf.compare(giz, germany)` puts GIZ's value and Germany's on one row per year and recipient, and a column's name says which agencies its spec named. A column is named by what distinguishes its result: the release (`2025a`), then each `Spec` field that differs across the results (`ONE`, `years 2021`), so `cf.compare(r2025, r2026)` gives columns `2025a` and `2026a`, and results that differ in both give `2025a, years 2021`. Fields all the results share stay out of the name. Results that nothing sets apart are numbered, as `result 1: ONE`. The bounds `low` and `high` stay on each `Result`. A key absent from a result is null in its column. Calling `compare()` with no arguments, or with a list such as `cf.compare([a, b])`, raises `InvalidInputError`; `cf.compare(*results)` compares a list.
+`cf.compare(a, b, ...)` places results side by side. It returns a `Comparison` whose `table` has one row per year, provider, recipient, and Bi_Multi code, with the key columns `year`, `provider`, `recipient`, `provider_code`, `recipient_code`, and `bi_multi`, and one `value` column per result and method. When every result names an agency, the keys also hold `agency` and `agency_code`. When only some do, their agencies' amounts, and under `measure="share_of_total"` the totals that divide them, are summed to each provider's key, so `cf.compare(giz, germany)` puts GIZ's value and Germany's on one row per year and recipient, and a column's name says which agencies its spec named. A column is named by what distinguishes its result: the release (`2025a`), then each `Spec` field that differs across the results (`ONE`, `years 2021`), so `cf.compare(r2025, r2026)` gives columns `2025a` and `2026a`, and results that differ in both give `2025a, years 2021`. Fields all the results share stay out of the name. Results that nothing sets apart are numbered, as `result 1: ONE`. The bounds `low` and `high` stay on each `Result`. A key absent from a result is null in its column. Calling `compare()` with no arguments, or with a list such as `cf.compare([a, b])`, raises `InvalidInputError`. `cf.compare(*results)` compares a list.
 
 ## Listings
 
@@ -312,7 +312,7 @@ print(cf.providers.info("EIB"))
 European Investment Bank (agency 3 of EU Institutions, DAC code 918).
 ```
 
-A name of several entries raises `UnknownProviderError` or `UnknownRecipientError` with every entry it names in `.suggestions`, an unknown name raises one with close names, and an unknown code one with the closest listed codes. Neither is ever applied.
+A name of several entries raises `UnknownProviderError` or `UnknownRecipientError` with every entry it names in `.suggestions`, an unknown name raises one with close names, and an unknown code one with the closest listed codes. The resolver applies none of the suggestions.
 
 ```python
 try:
@@ -329,16 +329,16 @@ Unknown provider 'Japn'. Did you mean: Japan?
 
 All errors inherit from `ClimateFinanceError`, and `climate_finance.errors` holds every class. `UnknownNameError`, `UnknownProviderError`, and `UnknownRecipientError` also import from `climate_finance`.
 
-| Error | Raised when |
-|---|---|
-| `InvalidInputError` | an argument has a form or value the call does not take: an unknown keyword, a value outside a field's choices, years, a method, or prices in another form, an empty list of providers, recipients, or years, an agency where a call reads providers, a `rows()` filter of another type than its column, or a `Spec`, `Method`, or `Agency` that pydantic refuses, malformed JSON included. The message names the form the call takes. It is also a `TypeError`. |
-| `UnknownNameError` | a name is absent from its listing, or names several entries: a provider, recipient, method, release, release table, `rows()` column, or `rows()` filter value outside its column's values. `.suggestions` holds close names, or every entry the name names. |
-| `UnknownProviderError`, `UnknownRecipientError` | a provider, agency, or recipient name or code is absent from its listing. |
-| `ReleaseIntegrityError` | a release fails its check. |
-| `SourceUnavailableError` | a download fails. |
-| `MissingLabelsError` | a method with `relevance="jev"` queries a release with no Jev labels. The message names the `jev_labels` setting. |
-| `WithheldTableError` | `Release.table()` asks for a table the published release leaves out, `btr` or `btr_links`. `release.json` names each under `withheld_tables` with a note on how to build it. |
-| `SchemaError` | a table fails to match its schema. |
+| Error                                           | Raised when                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `InvalidInputError`                             | an argument has a form or value the call does not take: an unknown keyword, a value outside a field's choices, years, a method, or prices in another form, an empty list of providers, recipients, or years, an agency where a call reads providers, a `rows()` filter of another type than its column, or a `Spec`, `Method`, or `Agency` that pydantic refuses, malformed JSON included. The message names the form the call takes. It is also a `TypeError`. |
+| `UnknownNameError`                              | a name is absent from its listing, or names several entries: a provider, recipient, method, release, release table, `rows()` column, or `rows()` filter value outside its column's values. `.suggestions` holds close names, or every entry the name names.                                                                                                                                                                                                     |
+| `UnknownProviderError`, `UnknownRecipientError` | a provider, agency, or recipient name or code is absent from its listing.                                                                                                                                                                                                                                                                                                                                                                                       |
+| `ReleaseIntegrityError`                         | a release fails its check.                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `SourceUnavailableError`                        | a download fails.                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `MissingLabelsError`                            | a method with `relevance="jev"` queries a release with no Jev labels. The message names the `jev_labels` setting.                                                                                                                                                                                                                                                                                                                                               |
+| `WithheldTableError`                            | `Release.table()` asks for a table the published release leaves out, `btr` or `btr_links`. `release.json` names each under `withheld_tables` with a note on how to build it.                                                                                                                                                                                                                                                                                    |
+| `SchemaError`                                   | a table fails to match its schema.                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 Catch the base class for any package error. `InvalidInputError` is also a `TypeError`, and `UnknownNameError` and `WithheldTableError` are also `LookupError`s, so the built-in classes catch them as well.
 

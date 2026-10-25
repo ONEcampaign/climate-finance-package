@@ -936,8 +936,8 @@ def compare(*results: Result) -> Comparison:
     has no row for is null in its column.
 
     When every result names an agency, the rows are keyed by agency as well. When
-    only some do, `_provider_values` sums their agencies' rows to each provider's
-    key, so an agency's column sits beside its provider's on one row.
+    only some do, the rows of their agencies are summed to each provider's key, so
+    an agency's column sits beside its provider's on one row.
 
     Raises:
         InvalidInputError: when no result is given, or any argument is not a
