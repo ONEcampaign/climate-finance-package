@@ -466,19 +466,21 @@ def reconcile(
     `weight_source` their source, and `coefficient_basis` the row's basis as
     `spending` gives it. The weighted comparators weigh each activity or record as
     `PROVIDER` does, by its agency's row, else its provider's. Where that row
-    assesses each activity case by case and gives no coefficient, at the agency
-    level as for France's AFD or the provider level as for the UK, the activity
-    takes `PROVIDER`'s coefficients, so a `coefficient_basis` of `case_by_case`
-    marks a party whose comparators rest on `PROVIDER`'s coefficients in place of
-    its own. `crdf_at_party_weight` is its CRDF commitments so weighted;
-    `crdf_at_100` the same commitments with Significant at 100%;
-    `traced_climate_value` the climate value `method` gives what those commitments
-    disbursed; `crs_disbursed_at_party_weight` the year's CRS disbursements on
-    Rio-marked records so weighted, by each record's higher marker; and
-    `crs_grant_equivalent_at_party_weight` their grant equivalent, weighted alike.
-    A party whose provider has no `provider_coefficients` row for every agency has
-    null weighted comparators and a null `coefficient_basis`, and one without a DAC
-    provider code null comparators.
+    gives no coefficient for the activity's marker, because it assesses each
+    activity case by case at the agency level as for France's AFD or the provider
+    level as for the UK, or because the provider has no row, the activity takes
+    `PROVIDER`'s coefficients, as `spending` gives it. `crdf_at_party_weight` is its
+    CRDF commitments so weighted; `crdf_at_100` the same commitments with
+    Significant at 100%; `traced_climate_value` the climate value `method` gives
+    what those commitments disbursed; `crs_disbursed_at_party_weight` the year's
+    CRS disbursements on Rio-marked records so weighted, by each record's higher
+    marker; and `crs_grant_equivalent_at_party_weight` their grant equivalent,
+    weighted alike. `crdf_method_share` is the share of `crdf_at_party_weight` that
+    rests on `PROVIDER`'s coefficients in place of the party's own, and
+    `crs_method_share` the same share of `crs_disbursed_at_party_weight`, which the
+    grant equivalent shares; each is null where its comparator is zero or null,
+    and 1.0 for a party whose provider has no row. A party without a DAC provider
+    code has null comparators.
 
     Each `btr_over_<comparator>` divides `btr_face` by it, null where the
     comparator is zero or null, and is null for a
@@ -556,17 +558,21 @@ def reconcile(
         fractions = weights(
             _PARTY_RULE, **coefficients, published=pl.col("share_climate")
         )
-        return ordered_sum(pl.col("face_usd") * fractions["climate"])
+        return pl.col("face_usd") * fractions["climate"]
 
+    at_party_weight = crdf_at(**_COEFFICIENT_INPUTS)
     crdf = (
         _coefficients(snapshot, commitments, method=PROVIDER)
         .group_by("provider_code", "year")
         .agg(
-            crdf_at_party_weight=crdf_at(**_COEFFICIENT_INPUTS),
-            crdf_at_100=crdf_at(significant=pl.lit(1.0)),
+            crdf_at_party_weight=ordered_sum(at_party_weight),
+            crdf_method_share=_method_share(at_party_weight),
+            crdf_at_100=ordered_sum(crdf_at(significant=pl.lit(1.0))),
         )
     )
-    crs_fractions = weights(_PARTY_RULE, **_COEFFICIENT_INPUTS)
+    crs_value = (
+        pl.col("amount_usd") * weights(_PARTY_RULE, **_COEFFICIENT_INPUTS)["climate"]
+    )
 
     def crs_at_party_weight(flow: str) -> pl.LazyFrame:
         """The year's CRS `flow` on Rio-marked records at `PROVIDER`'s coefficients
@@ -588,15 +594,20 @@ def reconcile(
             .with_columns(pl.lit(None, pl.Float64).alias(name) for name in shares)
             .group_by("provider_code", "year")
             .agg(
-                amount_usd=ordered_sum(pl.col("amount_usd") * crs_fractions["climate"])
+                amount_usd=ordered_sum(crs_value),
+                crs_method_share=_method_share(crs_value),
             )
         )
 
     crs = crs_at_party_weight("disbursements").rename(
         {"amount_usd": "crs_disbursed_at_party_weight"}
     )
-    grant_equivalent = crs_at_party_weight("grant_equivalent").rename(
-        {"amount_usd": GRANT_EQUIVALENT_COMPARATOR}
+    # The grant equivalent weighs the disbursed records alike, so it shares their
+    # `crs_method_share`.
+    grant_equivalent = (
+        crs_at_party_weight("grant_equivalent")
+        .drop("crs_method_share")
+        .rename({"amount_usd": GRANT_EQUIVALENT_COMPARATOR})
     )
     frames = []
     for each in method.methods if isinstance(method, MethodRange) else (method,):
@@ -616,11 +627,6 @@ def reconcile(
             .join(grant_equivalent, on=["provider_code", "year"], how="left")
             .with_columns(method=pl.lit(label(each)))
         )
-    weighted_comparators = (
-        "crdf_at_party_weight",
-        "crs_disbursed_at_party_weight",
-        GRANT_EQUIVALENT_COMPARATOR,
-    )
     status = pl.col("status")
 
     def reads(name: str) -> pl.Expr:
@@ -635,12 +641,6 @@ def reconcile(
     ratios = [f"btr_over_{name}" for name in COMPARATORS]
     table = (
         pl.concat(frames)
-        .with_columns(
-            pl.when(pl.col("coefficient_basis").is_not_null())
-            .then(pl.col(name))
-            .alias(name)
-            for name in weighted_comparators
-        )
         .with_columns(
             *(
                 pl.when(reads(name))
@@ -667,6 +667,8 @@ def reconcile(
             "party_principal",
             "weight_source",
             "coefficient_basis",
+            "crdf_method_share",
+            "crs_method_share",
             "btr_face",
             "btr_face_reported",
             "party_rate",
@@ -1208,8 +1210,8 @@ def _conform(frame: pl.LazyFrame) -> pl.LazyFrame:
 def _coefficients(
     snapshot: Snapshot, frame: pl.LazyFrame, *, method: Method
 ) -> pl.LazyFrame:
-    """Set `significant`, `principal`, `both_significant`, `coefficient_basis` and
-    `coefficient_source` for `method`.
+    """Set `significant`, `principal`, `both_significant`, `coefficient_basis`,
+    `coefficient_source` and `method_coefficient` for `method`.
 
     Under provider coefficients each row takes the `provider_coefficients` row of its
     provider, year and agency, or of its provider and year for an agency without a
@@ -1222,12 +1224,22 @@ def _coefficients(
     where such a provider gives no default, and null where the release holds no row.
     A row with a `climate_share` weighs by its shares, which take no provider
     coefficient, so its `coefficient_basis` and `coefficient_source` are null.
+    `method_coefficient` is true for a marker row whose higher Rio marker weighs at
+    the method's coefficient: its principal one for a Principal row, its significant
+    one for a Significant row without a `both_significant` of its own.
     """
+    # A frame without shares, such as `total_flows`, weighs every row by its markers.
+    marker = (
+        pl.col("climate_share").is_null()
+        if "climate_share" in frame.collect_schema().names()
+        else pl.lit(value=True)
+    )
     if method.coefficients == "fixed":
         return frame.with_columns(
             significant=pl.lit(method.significant),
             principal=pl.lit(method.principal),
             both_significant=pl.lit(None, pl.Float64),
+            method_coefficient=marker,
         )
     held = _coefficients_by_year(snapshot, years=frame).select(
         "provider_code",
@@ -1247,11 +1259,13 @@ def _coefficients(
     def pick(name: str) -> pl.Expr:
         return pl.when(own_agency).then(pl.col(name)).otherwise(pl.col(f"{name}_all"))
 
-    # A frame without shares, such as `total_flows`, weighs every row by its markers.
-    marker = (
-        pl.col("climate_share").is_null()
-        if "climate_share" in frame.collect_schema().names()
-        else pl.lit(value=True)
+    rio_a, rio_m = pl.col("rio_adaptation"), pl.col("rio_mitigation")
+    took_method = (
+        pl.when(pl.max_horizontal(rio_a, rio_m) == 2)
+        .then(pl.col("_principal").is_null())
+        .when((rio_a == 1) & (rio_m == 1) & pl.col("_both").is_not_null())
+        .then(pl.lit(value=False))
+        .otherwise(pl.col("_significant").is_null())
     )
     return (
         frame.join(
@@ -1274,6 +1288,7 @@ def _coefficients(
             both_significant=pl.col("_both"),
             coefficient_basis=pl.when(marker).then(pl.col("_basis")),
             coefficient_source=pl.when(marker).then(pl.col("_source")),
+            method_coefficient=marker & took_method,
         )
         .drop(*columns, *(f"{name}_all" for name in columns))
     )
@@ -1350,7 +1365,15 @@ def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
         untraced=pl.when(pl.col("origin") == "untraced")
         .then(amount * climate)
         .otherwise(0.0),
-    ).drop(*_WEIGHT_INPUTS)
+    ).drop(*_WEIGHT_INPUTS, "method_coefficient")
+
+
+def _method_share(value: pl.Expr) -> pl.Expr:
+    """The share of `value`'s sum on rows that weigh at the method's coefficient,
+    null where the sum is zero or null."""
+    return _ratio(
+        ordered_sum(value.filter(pl.col("method_coefficient"))), ordered_sum(value)
+    )
 
 
 def _ratio(numerator: pl.Expr, denominator: pl.Expr) -> pl.Expr:

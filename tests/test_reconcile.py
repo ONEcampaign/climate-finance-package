@@ -53,6 +53,7 @@ def test_germany_reads_against_its_own_weight() -> None:
     assert row["party_principal"] == 1.0
     assert row["weight_source"] == "Fixture survey, p. 8"
     assert row["coefficient_basis"] == "provider"
+    assert (row["crdf_method_share"], row["crs_method_share"]) == (0.0, 0.0)
     assert row["btr_face"] == pytest.approx(22e6)
     # DEU-2, face 25m, is Significant on both objectives, which Germany counts in
     # full.
@@ -110,13 +111,17 @@ def test_core_contributions_stay_out_of_the_comparators() -> None:
 
 def test_a_case_by_case_party_reads_against_its_default() -> None:
     # Norway assesses each activity, with 0.3 for a Significant one whose share is
-    # unknown and no default for a Principal one, which counts in full. NOR-1 (18m)
-    # is Principal.
-    row = _row(SNAP.reconcile(parties="NOR"), "NOR", 2021)
+    # unknown and no default for a Principal one, which counts in full at PROVIDER's
+    # 1.0. NOR-1 (18m, 2021) is Principal and NOR-2 (9m, 2022) Significant.
+    reconciliation = SNAP.reconcile(parties="NOR")
+    row = _row(reconciliation, "NOR", 2021)
 
     assert (row["party_weight"], row["party_principal"]) == (0.3, None)
     assert row["coefficient_basis"] == "default"
     assert row["crdf_at_party_weight"] == pytest.approx(18e6)
+    # A Principal row rests on PROVIDER's 1.0 though the basis is `default`.
+    assert (row["crdf_method_share"], row["crs_method_share"]) == (1.0, 1.0)
+    assert _row(reconciliation, "NOR", 2022)["crdf_method_share"] == 0.0
 
 
 def _france_reports(frame: pl.DataFrame) -> pl.DataFrame:
@@ -144,6 +149,38 @@ def test_an_agency_reads_against_its_own_coefficients(tmp_path: Path) -> None:
     assert disbursed["crs_grant_equivalent_at_party_weight"] == pytest.approx(
         0.9 * 0.4 * 12e6
     )
+
+
+def _french_agency_2(frame: pl.DataFrame) -> pl.DataFrame:
+    """A copy of France's 2022 rows of agency 1 under agency 2, which has no row of
+    its own and takes France's 0.3."""
+    agency_2 = frame.filter(provider_code=4, agency_code=1, year=2022).with_columns(
+        agency_code=pl.lit(2, pl.Int32)
+    )
+    if "row_id" in frame.columns:
+        agency_2 = agency_2.with_columns(pl.col("row_id") + "-AGENCY-2")
+    return pl.concat([frame, agency_2])
+
+
+def test_a_mixed_basis_party_shows_its_method_shares(tmp_path: Path) -> None:
+    # FRA-2 (12m) and France's Significant 2022 disbursement (4.8m) count at
+    # PROVIDER's 0.4 under agency 1 and at France's 0.3 under agency 2, so 0.4 of
+    # every 0.7 rests on PROVIDER's coefficients.
+    release = copy_release(
+        tmp_path / "r",
+        edits={
+            "btr_totals": _france_reports,
+            "commitments": _french_agency_2,
+            "total_flows": _french_agency_2,
+        },
+    )
+    row = _row(cf.load(path=release).reconcile(parties="FRA"), "FRA", 2022)
+
+    assert row["coefficient_basis"] == "provider"
+    assert row["crdf_at_party_weight"] == pytest.approx(0.7 * 12e6)
+    assert row["crdf_method_share"] == pytest.approx(4 / 7)
+    assert row["crs_disbursed_at_party_weight"] == pytest.approx(0.7 * 4.8e6)
+    assert row["crs_method_share"] == pytest.approx(4 / 7)
 
 
 def _overlapping_coefficients(frame: pl.DataFrame) -> pl.DataFrame:
@@ -192,26 +229,29 @@ def test_a_case_by_case_party_without_a_default_reads_at_provider_coefficients(
     )
 
 
-def test_a_party_without_a_coefficient_row_has_no_weighted_comparators(
+def test_a_party_without_a_coefficient_row_reads_at_provider_coefficients(
     tmp_path: Path,
 ) -> None:
+    # Without its row Germany weighs as `spending` weighs it: DEU-2 (25m), Significant
+    # on both objectives, counts at PROVIDER's 0.4, and so does DEU-2's 16.67m
+    # disbursed.
     release = copy_release(
         tmp_path / "release",
         edits={
             "provider_coefficients": lambda frame: frame.filter(
-                pl.col("provider_code") != 8
+                pl.col("provider_code") != 5
             )
         },
     )
-    row = _row(cf.load(path=release).reconcile(parties="NOR"), "NOR", 2021)
+    row = _row(cf.load(path=release).reconcile(parties="DEU"), "DEU", 2022)
 
-    assert row["coefficient_basis"] is None
-    assert row["crdf_at_party_weight"] is None
-    assert row["crs_disbursed_at_party_weight"] is None
-    # Norway's own comparator is null, so its ratio says nothing.
-    assert row["btr_over_comparator"] is None
-    assert row["thin_comparator"] is None
-    assert row["crdf_at_100"] == pytest.approx(18e6)
+    assert (row["party_weight"], row["coefficient_basis"]) == (None, None)
+    assert row["crdf_at_party_weight"] == pytest.approx(0.4 * 25e6)
+    assert row["crs_disbursed_at_party_weight"] == pytest.approx(
+        60.666667e6 + 0.4 * 16.666667e6, rel=1e-6
+    )
+    assert (row["crdf_method_share"], row["crs_method_share"]) == (1.0, 1.0)
+    assert row["btr_over_comparator"] == pytest.approx(22 / 10)
 
 
 def test_each_method_gives_its_traced_value() -> None:
