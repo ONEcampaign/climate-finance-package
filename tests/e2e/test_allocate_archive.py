@@ -3,7 +3,8 @@
 The fetch is offline. The archive files take their places in the raw layout, with a
 `raw_manifest` that records them. One build runs with key repair off and pins the
 2021 to 2022 statuses. A second reuses its fetch and normalise tables, runs link and
-allocate with key repair on, and pins the no-record value the rules move.
+allocate with key repair on, and pins the no-record value the rules move. The base
+build also pins the EIB's keyed share for 2010 to 2014.
 """
 
 import os
@@ -17,7 +18,7 @@ from climate_finance.build import Stage, build
 from climate_finance.build.config import BuildConfig
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.stages import table_path
-from climate_finance.schema import KEY_REPAIR_METHODS, sha256_file
+from climate_finance.schema import EU_INSTITUTIONS, KEY_REPAIR_METHODS, sha256_file
 
 pytestmark = pytest.mark.slow
 
@@ -261,6 +262,12 @@ REPAIR_COMPONENT_AWARDS_BN = {"bilateral": 0.1491, "banks": 0.0}
 # rules holds less in no record, and the rules lift less bilateral value out of it.
 REPAIR_SIBLING_LINES_BN = {"bilateral": -0.0085, "banks": 0.0}
 REPAIR_TOLERANCE_BN = 0.05
+# The EIB reports as agency 3 of EU Institutions. It keys 0.638 of its 2010 to 2014
+# disbursement value, but 0.375 pooled with 2000 to 2009 (0.030 there), under
+# `MIN_KEYED_DISBURSED`. The 2010 to 2014 row is measured on its own.
+EIB_AGENCY = 3
+EIB_KEYED_SHARE = 0.6383
+KEYED_SHARE_TOLERANCE = 0.001
 _CATEGORY = {
     "DAC member": "bilateral",
     "Non-DAC member": "bilateral",
@@ -397,6 +404,15 @@ def test_statuses_under_the_release_rule(base: Path) -> None:
         for status, usd_bn in RELEASE_RULE_BN.items()
     }
     assert built == pytest.approx(expected, abs=TOLERANCE_BN)
+
+
+def test_eib_keyed_share_is_measured_on_2010_to_2014(base: Path) -> None:
+    id_practice = pl.read_parquet(table_path(base, "link", "id_practice")).filter(
+        donor_code=EU_INSTITUTIONS, agency_code=EIB_AGENCY, period="2010-2014"
+    )
+    assert id_practice["keyed_disbursement_share"].to_list() == pytest.approx(
+        [EIB_KEYED_SHARE], abs=KEYED_SHARE_TOLERANCE
+    )
 
 
 @pytest.mark.parametrize("build_name", ["base", "repaired"])
