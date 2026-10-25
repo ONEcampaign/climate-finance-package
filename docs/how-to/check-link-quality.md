@@ -74,7 +74,7 @@ quality = release.quality(providers=["Germany", "Japan"])
     ```
 
     ```output
-    ['provider_code', 'estimate', 'lower', 'upper', 'passed', 'waived', 'detail']
+    ['provider', 'provider_code', 'estimate', 'lower', 'upper', 'passed', 'waived', 'detail']
     ```
 
     Ungated releases, including the synthetic release, leave this table empty. For a published release, check that every provider you report has a row, that `passed` is true, and that `waived` is false. A wide interval means the provider has few labelled links, so its estimate is rough.
@@ -88,7 +88,7 @@ quality = release.quality(providers=["Germany", "Japan"])
     ```
 
     ```output
-    ['agency_code', 'channel_code', 'year', 'flow', 'value']
+    ['agency', 'agency_code', 'channel_code', 'year', 'flow', 'value']
     ```
 
 ## Verify it worked

@@ -55,6 +55,17 @@ def test_providers_name_a_party_in_any_form(germany: str | int) -> None:
     assert set(rows["party"]) == {"DEU"}
 
 
+def test_rows_name_the_provider_and_keep_the_btr_recipient() -> None:
+    rows = SNAP.reconcile().rows(provider="DEU", year=2021)
+    btr = pl.read_parquet(FIXTURE_DIR / "btr.parquet").filter(
+        provider_code=5, year=2021
+    )
+
+    assert rows.columns[:3] == ["party", "provider", "provider_code"]
+    assert set(rows["provider"]) == {"Germany"}
+    assert set(rows["recipient"]) == set(btr["recipient"])
+
+
 def test_years_take_one_year_and_none_takes_every_year() -> None:
     assert set(SNAP.reconcile(years=2022).table["year"]) == {2022}
     assert set(SNAP.reconcile().table["year"]) == {2021, 2022}

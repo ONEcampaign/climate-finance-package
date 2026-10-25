@@ -9,7 +9,7 @@ from html import escape
 import polars as pl
 from pydantic import BaseModel, ConfigDict
 
-from climate_finance.catalogue import Agency, name_of, resolve
+from climate_finance.catalogue import Agency, name_of, resolve, with_names
 from climate_finance.convert import Conversion
 from climate_finance.methods import (
     Method,
@@ -40,6 +40,8 @@ AMOUNTS = (
 )  # fmt: skip
 # The keys of a result table's rows, before the method.
 ROW_KEYS = ("year", "provider_code", "recipient_code", "bi_multi")
+# A comparison's key columns, names beside codes, before one column per result.
+_COMPARISON_KEYS = ("year", "provider", "recipient", *ROW_KEYS[1:])
 
 
 class Meta(BaseModel):
@@ -68,6 +70,12 @@ class Result:
     amounts by its `totals`, so a result always holds the measure its spec names.
     `low` and `high` then span every method of the key, the lowest `low` and the
     highest `high`, in amounts or in shares.
+
+    `table` starts `year`, `provider`, `recipient`, `method` and ends `value`, `low`,
+    `high`, `untraced`, so polars' truncated print shows them; `provider` and
+    `recipient` name the codes beside them, as do `provider`, `agency` and
+    `recipient` in `rows()`, which start `origin`, `year`, `record_id`,
+    `link_method`.
     """
 
     def __init__(
@@ -110,10 +118,12 @@ class Result:
         self,
         *,
         provider: str | int | Agency | Collection[str | int | Agency] | None = None,
+        recipient: str | int | Collection[str | int] | None = None,
         **filters: object,
     ) -> pl.DataFrame:
         """The project rows behind the table, filtered by column equality, and by
-        `provider`: names, DAC codes or agencies, read as `spending` reads them.
+        `provider` and `recipient`: names, DAC codes or, for providers, agencies,
+        read as `spending` reads them.
 
         A filter value that is a list, tuple, set or range matches any of its items.
 
@@ -121,6 +131,8 @@ class Result:
             KeyError: when a filter names a column the rows do not have.
             UnknownProviderError: for a `provider` name, code or agency the
                 listings lack, or a name of several entries.
+            UnknownRecipientError: for a `recipient` name or code the listings
+                lack, or a name of several entries.
         """
         columns = self._rows.collect_schema().names()
         if unknown := sorted(set(filters) - set(columns)):
@@ -133,6 +145,8 @@ class Result:
         ]
         if (providers := resolve(provider, kind="providers")) is not None:
             conditions.append(provider_rows(providers))
+        if (recipients := resolve(recipient, kind="recipients")) is not None:
+            conditions.append(pl.col("recipient_code").is_in(recipients))
         return self._rows.filter(*conditions).collect()
 
     def explain(self) -> str:
@@ -342,11 +356,11 @@ class Quality:
             ).alias(f"{status}_share")
             for status in STATUSES
         )
-        return (
-            rates.join(split, on="provider_code", how="full", coalesce=True)
-            .sort("provider_code")
-            .collect()
-        )
+        return with_names(
+            rates.join(split, on="provider_code", how="full", coalesce=True).sort(
+                "provider_code"
+            )
+        ).collect()
 
 
 def explain(
@@ -671,7 +685,8 @@ class Reconciliation:
         `crs_`, and `unfccc_only` true for a row no record links to.
 
         `provider` names the party as `reconcile`'s `providers` does, such as
-        "Germany", "DEU" or 5.
+        "Germany", "DEU" or 5. The rows name the provider in `provider`;
+        `recipient` is the BTR's own recipient text.
 
         Raises:
             UnknownProviderError: for a provider name or code outside the listings.
@@ -716,7 +731,7 @@ class Comparison:
         return f"<p>{escape(self._title())}</p>{self.table._repr_html_()}"
 
     def _title(self) -> str:
-        columns = self._table.collect_schema().names()[len(ROW_KEYS) :]
+        columns = self._table.collect_schema().names()[len(_COMPARISON_KEYS) :]
         count = len(self.results)
         results = "result" if count == 1 else "results"
         return f"Comparison of {count} {results}: {'; '.join(columns)}"
@@ -751,7 +766,11 @@ def compare(*results: Result) -> Comparison:
         table = table.join(
             frame, on=ROW_KEYS, how="full", nulls_equal=True, coalesce=True
         )
-    return Comparison(table=table.sort(ROW_KEYS, nulls_last=True), results=results)
+    table = with_names(table.sort(ROW_KEYS, nulls_last=True))
+    return Comparison(
+        table=table.select(*_COMPARISON_KEYS, pl.exclude(_COMPARISON_KEYS)),
+        results=results,
+    )
 
 
 def _result_names(specs: Sequence[Spec]) -> list[str]:

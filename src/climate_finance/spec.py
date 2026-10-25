@@ -13,7 +13,14 @@ from pydantic import (
     model_serializer,
 )
 
-from climate_finance.catalogue import Agency, Coded, Target, name_of, resolve
+from climate_finance.catalogue import (
+    Agency,
+    Coded,
+    Target,
+    agency_name,
+    name_of,
+    resolve,
+)
 from climate_finance.errors import UnknownNameError
 from climate_finance.methods import (
     OECD,
@@ -95,8 +102,7 @@ def _agency_error(
     value: object, agency: Agency, *, reader: str, keyword: str
 ) -> ValueError:
     provider = name_of(agency.provider, kind="providers")
-    # `name_of` names an agency as "<agency> (<provider>)".
-    name = name_of(agency, kind="providers").removesuffix(f" ({provider})")
+    name = agency_name(agency)
     return ValueError(
         f"{reader} reads providers; {value!r} is the {name}, an agency of "
         f"{provider}. Pass {keyword}={provider!r}."

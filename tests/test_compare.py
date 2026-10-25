@@ -11,6 +11,15 @@ from climate_finance.methods import ONE, RANGE
 
 SNAP = cf.load(path=FIXTURE_DIR)
 KEYS = ["year", "provider_code", "recipient_code", "bi_multi"]
+# A comparison's key columns: names beside codes.
+COLUMNS = [
+    "year",
+    "provider",
+    "recipient",
+    "provider_code",
+    "recipient_code",
+    "bi_multi",
+]
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +38,7 @@ def test_compare_sets_one_value_column_per_result_on_shared_keys() -> None:
 
     table = cf.compare(one, oecd).table
 
-    assert table.columns == [*KEYS, "ONE", "OECD"]
+    assert table.columns == [*COLUMNS, "ONE", "OECD"]
     # Attribution rows have no recipient. Their null key must match across results.
     # Only OECD has a share for AfDB in 2020, so its attribution keys cover ONE's.
     assert table.filter(bi_multi=2).height == _values(oecd).filter(bi_multi=2).height
@@ -48,7 +57,7 @@ def test_a_key_one_result_lacks_is_null_in_its_column() -> None:
 
     table = cf.compare(germany, france).table
 
-    assert table.columns == [*KEYS, "providers Germany", "providers France"]
+    assert table.columns == [*COLUMNS, "providers Germany", "providers France"]
     assert table.height == _values(germany).height + _values(france).height
     assert table.filter(provider_code=5)["providers France"].is_null().all()
 
@@ -57,7 +66,7 @@ def test_a_result_under_several_methods_gives_a_column_per_method() -> None:
     table = cf.compare(SNAP.spending(), SNAP.spending(method=RANGE)).table
 
     assert table.columns == [
-        *KEYS,
+        *COLUMNS,
         "ONE",
         "RANGE: ONE",
         "RANGE: OECD",
@@ -70,13 +79,13 @@ def test_compare_names_amounts_and_shares_apart() -> None:
 
     table = cf.compare(amounts, amounts.share_of_total()).table
 
-    assert table.columns[len(KEYS) :] == ["amounts", "share of total"]
+    assert table.columns[len(COLUMNS) :] == ["amounts", "share of total"]
 
 
 def test_results_nothing_sets_apart_are_numbered() -> None:
     table = cf.compare(SNAP.spending(), SNAP.spending()).table
 
-    assert table.columns[len(KEYS) :] == ["result 1: ONE", "result 2: ONE"]
+    assert table.columns[len(COLUMNS) :] == ["result 1: ONE", "result 2: ONE"]
 
 
 def test_compare_needs_a_result() -> None:
@@ -86,25 +95,25 @@ def test_compare_needs_a_result() -> None:
 
 RESULT_REPR = """\
 Result: ONE; disbursements; recipient view; providers Germany; years 2021; USD at current prices; release fixture
-shape: (1, 14)
-┌──────┬───────────────┬────────────────┬──────────┬────────┬──────────┬────────────┬────────────┬───────────────┬─────────┬──────────┬──────────┬────────┬──────────┐
-│ year ┆ provider_code ┆ recipient_code ┆ bi_multi ┆ method ┆ amount   ┆ adaptation ┆ mitigation ┆ cross_cutting ┆ unsplit ┆ value    ┆ low      ┆ high   ┆ untraced │
-│ ---  ┆ ---           ┆ ---            ┆ ---      ┆ ---    ┆ ---      ┆ ---        ┆ ---        ┆ ---           ┆ ---     ┆ ---      ┆ ---      ┆ ---    ┆ ---      │
-│ i16  ┆ i32           ┆ i32            ┆ i8       ┆ str    ┆ f64      ┆ f64        ┆ f64        ┆ f64           ┆ f64     ┆ f64      ┆ f64      ┆ f64    ┆ f64      │
-╞══════╪═══════════════╪════════════════╪══════════╪════════╪══════════╪════════════╪════════════╪═══════════════╪═════════╪══════════╪══════════╪════════╪══════════╡
-│ 2021 ┆ 5             ┆ 248            ┆ 1        ┆ ONE    ┆ 1.2667e7 ┆ 1.2667e7   ┆ 0.0        ┆ 0.0           ┆ 0.0     ┆ 1.2667e7 ┆ 1.2667e7 ┆ 1.33e7 ┆ 0.0      │
-└──────┴───────────────┴────────────────┴──────────┴────────┴──────────┴────────────┴────────────┴───────────────┴─────────┴──────────┴──────────┴────────┴──────────┘"""  # noqa: E501 (a table snapshot)
+shape: (1, 16)
+┌──────┬──────────┬───────────┬────────┬───────────────┬────────────────┬──────────┬──────────┬────────────┬────────────┬───────────────┬─────────┬──────────┬──────────┬────────┬──────────┐
+│ year ┆ provider ┆ recipient ┆ method ┆ provider_code ┆ recipient_code ┆ bi_multi ┆ amount   ┆ adaptation ┆ mitigation ┆ cross_cutting ┆ unsplit ┆ value    ┆ low      ┆ high   ┆ untraced │
+│ ---  ┆ ---      ┆ ---       ┆ ---    ┆ ---           ┆ ---            ┆ ---      ┆ ---      ┆ ---        ┆ ---        ┆ ---           ┆ ---     ┆ ---      ┆ ---      ┆ ---    ┆ ---      │
+│ i16  ┆ str      ┆ str       ┆ str    ┆ i32           ┆ i32            ┆ i8       ┆ f64      ┆ f64        ┆ f64        ┆ f64           ┆ f64     ┆ f64      ┆ f64      ┆ f64    ┆ f64      │
+╞══════╪══════════╪═══════════╪════════╪═══════════════╪════════════════╪══════════╪══════════╪════════════╪════════════╪═══════════════╪═════════╪══════════╪══════════╪════════╪══════════╡
+│ 2021 ┆ Germany  ┆ Kenya     ┆ ONE    ┆ 5             ┆ 248            ┆ 1        ┆ 1.2667e7 ┆ 1.2667e7   ┆ 0.0        ┆ 0.0           ┆ 0.0     ┆ 1.2667e7 ┆ 1.2667e7 ┆ 1.33e7 ┆ 0.0      │
+└──────┴──────────┴───────────┴────────┴───────────────┴────────────────┴──────────┴──────────┴────────────┴────────────┴───────────────┴─────────┴──────────┴──────────┴────────┴──────────┘"""  # noqa: E501 (a table snapshot)
 
 COMPARISON_REPR = """\
 Comparison of 2 results: ONE; OECD
-shape: (1, 6)
-┌──────┬───────────────┬────────────────┬──────────┬──────────┬──────────┐
-│ year ┆ provider_code ┆ recipient_code ┆ bi_multi ┆ ONE      ┆ OECD     │
-│ ---  ┆ ---           ┆ ---            ┆ ---      ┆ ---      ┆ ---      │
-│ i16  ┆ i32           ┆ i32            ┆ i8       ┆ f64      ┆ f64      │
-╞══════╪═══════════════╪════════════════╪══════════╪══════════╪══════════╡
-│ 2021 ┆ 5             ┆ 248            ┆ 1        ┆ 1.2667e7 ┆ 1.2667e7 │
-└──────┴───────────────┴────────────────┴──────────┴──────────┴──────────┘"""
+shape: (1, 8)
+┌──────┬──────────┬───────────┬───────────────┬────────────────┬──────────┬──────────┬──────────┐
+│ year ┆ provider ┆ recipient ┆ provider_code ┆ recipient_code ┆ bi_multi ┆ ONE      ┆ OECD     │
+│ ---  ┆ ---      ┆ ---       ┆ ---           ┆ ---            ┆ ---      ┆ ---      ┆ ---      │
+│ i16  ┆ str      ┆ str       ┆ i32           ┆ i32            ┆ i8       ┆ f64      ┆ f64      │
+╞══════╪══════════╪═══════════╪═══════════════╪════════════════╪══════════╪══════════╪══════════╡
+│ 2021 ┆ Germany  ┆ Kenya     ┆ 5             ┆ 248            ┆ 1        ┆ 1.2667e7 ┆ 1.2667e7 │
+└──────┴──────────┴───────────┴───────────────┴────────────────┴──────────┴──────────┴──────────┘"""  # noqa: E501 (a table snapshot)
 
 
 def test_a_result_prints_its_spec_release_and_table() -> None:

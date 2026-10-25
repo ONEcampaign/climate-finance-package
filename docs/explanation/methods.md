@@ -87,7 +87,7 @@ print(cf.compare(one, oecd).table.columns)
 ```
 
 ```output
-['year', 'provider_code', 'recipient_code', 'bi_multi', 'ONE', 'OECD']
+['year', 'provider', 'recipient', 'provider_code', 'recipient_code', 'bi_multi', 'ONE', 'OECD']
 ```
 
 `cf.methods.RANGE` returns the three methods in one table, one row per method. Use it for a figure that has to hold under any of the three readings.

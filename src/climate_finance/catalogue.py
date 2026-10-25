@@ -279,9 +279,54 @@ def name_of(target: Target, *, kind: Coded) -> str:
     as in "European Investment Bank (EU Institutions)"."""
     if isinstance(target, Agency):
         provider = _code_names("providers")[target.provider]
-        agency = _agency_names().get((target.provider, target.agency))
-        return f"{agency or f'Agency {target.agency}'} ({provider})"
+        return f"{agency_name(target)} ({provider})"
     return _code_names(kind)[target]
+
+
+def agency_name(agency: Agency) -> str:
+    """An agency's own name in `data/agencies.csv`, as in "European Investment
+    Bank", or "Agency <code>" for an agency the file lacks."""
+    return _agency_names().get((agency.provider, agency.agency)) or (
+        f"Agency {agency.agency}"
+    )
+
+
+def with_names(frame: pl.LazyFrame) -> pl.LazyFrame:
+    """`frame` with each code column it holds preceded by the listing name: `provider`
+    before `provider_code`, `recipient` before `recipient_code`, and `agency` before
+    `agency_code` where `frame` also holds `provider_code`. A code the listings lack
+    has a null name."""
+    columns = frame.collect_schema().names()
+    names = {
+        "provider_code": "provider",
+        "recipient_code": "recipient",
+        "agency_code": "agency",
+    }
+    if "provider_code" in columns and "agency_code" in columns:
+        frame = frame.join(
+            _agency_table().lazy(),
+            on=["provider_code", "agency_code"],
+            how="left",
+            validate="m:1",
+            maintain_order="left",
+        )
+    else:
+        del names["agency_code"]
+    frame = frame.with_columns(
+        pl.col(code)
+        .replace_strict(_code_names(kind), default=None, return_dtype=pl.String)
+        .alias(names[code])
+        for code, kind in (
+            ("provider_code", "providers"),
+            ("recipient_code", "recipients"),
+        )
+        if code in columns
+    )
+    return frame.select(
+        name
+        for column in columns
+        for name in ((names[column], column) if column in names else (column,))
+    )
 
 
 def _order(target: Target) -> tuple[int, int]:
@@ -355,6 +400,20 @@ def _agency_names() -> dict[tuple[int, int], str]:
         (code, agency): name
         for code, agency, name in agencies.select("code", "agency", "name").iter_rows()
     }
+
+
+@cache
+def _agency_table() -> pl.DataFrame:
+    """`data/agencies.csv` keyed as release tables key agencies."""
+    return pl.DataFrame(
+        [(code, agency, name) for (code, agency), name in _agency_names().items()],
+        schema={
+            "provider_code": pl.Int32,
+            "agency_code": pl.Int32,
+            "agency": pl.String,
+        },
+        orient="row",
+    )
 
 
 @cache

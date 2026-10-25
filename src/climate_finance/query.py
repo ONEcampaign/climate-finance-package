@@ -62,6 +62,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from climate_finance.catalogue import Agency, agency_name, with_names
 from climate_finance.convert import convert, provenance
 from climate_finance.errors import (
     MissingLabelsError,
@@ -135,6 +136,15 @@ EU_BUDGET_AND_EDF = tuple(code for code in EU_CHANNELS if code != EIB_CHANNEL)
 LABEL_PRECEDENCE = {"crdf": 0, "jev": 1, "marker": 2}
 
 KEYS = (*ROW_KEYS, "method")
+# A result table's columns in order: polars' truncated print shows the first four,
+# year, names and method, and the last four, `value`, `low`, `high` and `untraced`.
+TABLE_COLUMNS = ("year", "provider", "recipient", "method", *ROW_KEYS[1:], *AMOUNTS)
+# The first columns of `Result.rows()`, which show the record and its link; the
+# amounts come last.
+ROW_FIRST = (
+    "origin", "year", "record_id", "link_method", "provider", "agency", "recipient",
+    "method",
+)  # fmt: skip
 ROW_COLUMNS: dict[str, pl.DataType] = {
     "origin": pl.String(),
     "row_id": pl.String(),
@@ -258,6 +268,9 @@ def spending(release: Release, *, spec: Spec) -> Result:
         "method", "origin", "provider_code", "year", "row_id", "record_id",
         "channel_code", nulls_last=True,
     )  # fmt: skip
+    rows = with_names(rows).select(
+        *ROW_FIRST, pl.exclude(*ROW_FIRST, *AMOUNTS), *AMOUNTS
+    )
     return Result(
         table=_aggregate(rows, methods=[label(method) for method in methods]),
         modelled=_modelled(release, spec=spec, conditions=modelled),
@@ -300,15 +313,17 @@ def quality(
     if providers is not None and EU_INSTITUTIONS not in providers:
         eu_left_out = eu_left_out.clear()
     return Quality(
-        table=table.filter(*conditions),
-        status=status,
+        table=with_names(table.filter(*conditions)),
+        status=with_names(status),
         eu_left_out=eu_left_out,
-        attribution=_attribution(
-            release, providers=providers, years=years, method=method
+        attribution=with_names(
+            _attribution(release, providers=providers, years=years, method=method)
         ),
-        precision=_precision(release, providers=providers),
-        untraced=_untraced(release, conditions=conditions, method=method).sort(
-            "provider_code", "year"
+        precision=with_names(_precision(release, providers=providers)),
+        untraced=with_names(
+            _untraced(release, conditions=conditions, method=method).sort(
+                "provider_code", "year"
+            )
         ),
     )
 
@@ -690,8 +705,8 @@ def reconcile(
         .sort("party", "year", "status", "method", nulls_last=True)
     )
     return Reconciliation(
-        table=table,
-        rows=lambda: _reconciliation_rows(release, conditions=conditions),
+        table=with_names(table),
+        rows=lambda: with_names(_reconciliation_rows(release, conditions=conditions)),
     )
 
 
@@ -791,14 +806,19 @@ def _eu_left_out(
             .agg(value=ordered_sum(pl.col("value")))
         )
 
+    names = {
+        code: agency_name(Agency(provider=EU_INSTITUTIONS, agency=code))
+        for code in EU_AGENCY_CHANNELS
+    }
     left_out = (
         _per_flow(by_agency)
         .with_columns(
+            agency=pl.col("agency_code").replace_strict(names, return_dtype=pl.String),
             channel_code=pl.col("agency_code").replace_strict(
                 EU_AGENCY_CHANNELS, return_dtype=pl.Int32
-            )
+            ),
         )
-        .select("agency_code", "channel_code", "year", "flow", "value")
+        .select("agency", "agency_code", "channel_code", "year", "flow", "value")
         .sort("agency_code", "year", "flow")
     )
     return left_out if method.eu == "channel" else left_out.clear()
@@ -1412,7 +1432,7 @@ def _aggregate(rows: pl.LazyFrame, *, methods: Sequence[str]) -> pl.LazyFrame:
         .join(pl.LazyFrame({"method": methods}), how="cross")
     )
     held = pl.col("_held").is_not_null()
-    return (
+    return with_names(
         grid.join(summed, on=KEYS, how="left", nulls_equal=True)
         .with_columns(
             pl.when(held).then(pl.col(name)).otherwise(0.0).alias(name)
@@ -1420,7 +1440,7 @@ def _aggregate(rows: pl.LazyFrame, *, methods: Sequence[str]) -> pl.LazyFrame:
         )
         .drop("_held")
         .sort(KEYS, nulls_last=True)
-    )
+    ).select(TABLE_COLUMNS)
 
 
 def _totals(
@@ -1483,13 +1503,15 @@ def _modelled(
     release: Release, *, spec: Spec, conditions: Sequence[pl.Expr]
 ) -> pl.LazyFrame:
     """The "modelled, not reported" line, shown for recipient-view disbursements."""
-    modelled = release.table("modelled").select(
-        "year",
-        "provider_code",
-        "recipient_code",
-        "basis",
-        low=pl.col("low_usd"),
-        high=pl.col("high_usd"),
+    modelled = with_names(
+        release.table("modelled").select(
+            "year",
+            "provider_code",
+            "recipient_code",
+            "basis",
+            low=pl.col("low_usd"),
+            high=pl.col("high_usd"),
+        )
     )
     if spec.flow != "disbursements" or spec.view != "recipient" or spec.oda_only:
         return modelled.clear()

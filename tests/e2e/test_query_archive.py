@@ -85,6 +85,7 @@ def test_quality_reports_germany(answers: dict) -> None:
     (germany,) = answers["quality"]
 
     assert germany["provider_code"] == 5
+    assert germany["provider"] == "Germany"
     assert 0 < germany["link_rate"] <= 1
 
 

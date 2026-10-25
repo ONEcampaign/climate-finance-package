@@ -9,6 +9,7 @@ import json
 import math
 import os
 import tomllib
+from importlib.resources import files
 from pathlib import Path
 
 import numpy as np
@@ -23,7 +24,7 @@ from releases import copy_release
 import climate_finance as cf
 from climate_finance import convert as convert_module
 from climate_finance.catalogue import Agency
-from climate_finance.errors import MissingLabelsError
+from climate_finance.errors import MissingLabelsError, UnknownRecipientError
 from climate_finance.methods import OECD, ONE, RANGE, Method, MethodRange, label
 from climate_finance.query import (
     BILATERAL,
@@ -752,6 +753,88 @@ def test_a_marker_row_counts_at_most_its_published_climate_share(
     row = result.rows(row_id="DEU-2")
 
     assert row["value"].item() == pytest.approx(0.4 * 25e6)
+
+
+# Each name column with the listing that names it, keyed as the tables key it.
+LISTINGS = {
+    "provider": cf.providers.list().select(provider_code="code", provider="name"),
+    "recipient": cf.recipients.list().select(recipient_code="code", recipient="name"),
+    "agency": pl.read_csv(
+        (files("climate_finance") / "data" / "agencies.csv").read_bytes(),
+        schema_overrides={"code": pl.Int32, "agency": pl.Int32},
+    ).select(provider_code="code", agency_code="agency", agency="name"),
+}
+
+
+def _named_tables() -> list[tuple[str, pl.DataFrame, tuple[str, ...]]]:
+    quality = SNAP.quality()
+    provider = SNAP.spending(view="provider")
+    return [
+        ("table", SNAP.spending().table, ("provider", "recipient")),
+        ("rows", provider.rows(), ("provider", "agency", "recipient")),
+        ("modelled", SNAP.spending().modelled, ("provider", "recipient")),
+        ("quality", quality.table, ("provider",)),
+        ("status", quality.status, ("provider",)),
+        ("attribution", quality.attribution, ("provider",)),
+        ("untraced", quality.untraced, ("provider",)),
+        ("summary", quality.summary(), ("provider",)),
+        ("reconcile", SNAP.reconcile().table, ("provider",)),
+        (
+            "compare",
+            cf.compare(provider, SNAP.spending()).table,
+            ("provider", "recipient"),
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("frame", "names"),
+    [(frame, names) for _, frame, names in _named_tables()],
+    ids=[name for name, _, _ in _named_tables()],
+)
+def test_names_sit_before_their_codes_and_match_the_listings(
+    frame: pl.DataFrame, names: tuple[str, ...]
+) -> None:
+    for name in names:
+        listing = LISTINGS[name]
+        keys = [column for column in listing.columns if column != name]
+        expected = frame.select(keys).join(
+            listing, on=keys, how="left", maintain_order="left"
+        )[name]
+
+        assert frame.columns.index(name) < frame.columns.index(keys[-1])
+        assert frame[name].drop_nulls().len() > 0
+        assert frame[name].equals(expected)
+
+
+def test_a_result_table_prints_names_first_and_bounds_last() -> None:
+    result = SNAP.spending()
+    rows = result.rows()
+
+    assert result.table.columns[:4] == ["year", "provider", "recipient", "method"]
+    assert result.table.columns[-4:] == ["value", "low", "high", "untraced"]
+    assert rows.columns[:4] == ["origin", "year", "record_id", "link_method"]
+    assert rows.columns[-4:] == ["value", "low", "high", "untraced"]
+    assert set(rows.columns) == set(result._rows.collect_schema().names())
+
+
+@pytest.mark.parametrize("kenya", ["kenya", "KEN", 248])
+def test_rows_take_a_recipient_in_any_form(kenya: str | int) -> None:
+    result = SNAP.spending()
+
+    assert result.rows(recipient=kenya).equals(result.rows(recipient_code=248))
+    assert result.rows(recipient=kenya).height > 0
+    assert set(result.rows(recipient=["kenya", "Bangladesh"])["recipient"]) == {
+        "Kenya",
+        "Bangladesh",
+    }
+
+
+def test_an_unknown_recipient_in_rows_raises_with_suggestions() -> None:
+    with pytest.raises(UnknownRecipientError) as error:
+        SNAP.spending().rows(recipient="kenyaa")
+
+    assert "Kenya" in error.value.suggestions
 
 
 def test_rows_filter_by_equality_and_membership() -> None:
@@ -1627,6 +1710,11 @@ def test_quality_reports_the_eu_rows_a_provider_total_leaves_out(
     left_out = eu_release.quality().eu_left_out.filter(flow=flow)
 
     assert own.height
+    listed = LISTINGS["agency"].filter(provider_code=EU_INSTITUTIONS)
+    names = dict(listed.select("agency_code", "agency").iter_rows())
+    assert {code: names[code] for code in left_out["agency_code"]} == dict(
+        left_out.select("agency_code", "agency").iter_rows()
+    )
     assert set(left_out.select("agency_code", "channel_code").rows()) == {
         (1, 42001),
         (2, 42003),
