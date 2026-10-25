@@ -36,14 +36,14 @@ fixture 2.0.0.dev0
 
 Represents one release on disk. `release.path` is its directory and `release.manifest` is the parsed `release.json`.
 
-### `Release.spending(*, providers, recipients, years, method, flow, view, currency, prices, oda_only, measure, untraced, spec)`
+### `Release.spending(*, providers, recipients, years, method, flow, view, currency, prices, oda_only, measure, untraced)`
 
-Returns a `Result`. Every argument is optional and keyword-only:
+Returns a `Result`. Every argument is optional and keyword-only, and each is a `Spec` field that `Spec(...)` takes in the same forms:
 
 - `providers` (`str | int | Agency | Iterable[str | int | Agency] | None`). Provider names, DAC codes, or agencies, one or many. `None` takes all. A name can name one agency, such as `"EIB"`, and the query then counts that agency's rows only.
 - `recipients` (`str | int | Iterable[str | int] | None`). Recipient names or DAC codes. `None` takes all.
-- `years` (`int | Iterable[int] | None`). `None` takes all years.
-- `method` (`Method | MethodRange`, default `cf.methods.ONE`).
+- `years` (`int | Iterable[int] | None`). One year or many, such as `2022` or `range(2015, 2023)`. `None` takes all years.
+- `method` (`Method | MethodRange | str | Iterable[Method | str]`, default `cf.methods.ONE`). A method, a range, a name from `cf.methods.list()` ignoring case, such as `"OECD"`, or a list of methods and names, which becomes a range.
 - `flow` (`"commitments" | "disbursements" | "grant_equivalent"`, default `"disbursements"`).
 - `view` (`"recipient" | "provider"`, default `"recipient"`).
 - `currency` (`"USD" | "EUR" | "GBP" | "CAD"`, default `"USD"`).
@@ -51,9 +51,8 @@ Returns a `Result`. Every argument is optional and keyword-only:
 - `oda_only` (`bool`, default `False`).
 - `measure` (`"amount" | "share_of_total"`, default `"amount"`). `"share_of_total"` divides every amount by all CRS flows of its key, as `Result.share_of_total()` does.
 - `untraced` (`bool`, default `True`). `False` leaves out the untraced rows of disbursements and grant equivalents. Commitments have none.
-- `spec` (`Spec | None`). Replaces every other argument.
 
-Raises `UnknownProviderError` or `UnknownRecipientError` for a name, code, or agency outside the listings, and `MissingLabelsError` for a method with `relevance="jev"` on a release that holds no Jev labels.
+Raises `UnknownProviderError` or `UnknownRecipientError` for a name, code, or agency outside the listings, `UnknownNameError` for a method name outside `cf.methods.list()`, `TypeError` for years, a method, or prices in another form, such as `years="2022"`, pydantic's `ValidationError` for an unknown keyword or a value outside a field's choices, and `MissingLabelsError` for a method with `relevance="jev"` on a release that holds no Jev labels.
 
 **Flow.** `flow="disbursements"` counts what the trace allocated to the release's climate commitments, by the year of the disbursement record. A disbursement counts against a commitment the release holds, and the commitments start at the first CRDF year, so the earliest years count less of what was paid. Rio-marked CRS disbursement that reaches no commitment, the excess beyond a full commitment and the records linked to none, counts as untraced, weighted by the record's own markers, in `value` and `high` and not in `low`. Disbursements end at the build's `crs_last_complete`. `flow="commitments"` counts CRDF commitments at face value in the commitment year, with `low`, `value`, and `high` equal. `flow="grant_equivalent"` counts the grant equivalent of the disbursements. A record with no grant equivalent, or a negative one on a positive disbursement, counts nothing, and `release.quality().summary()` reports the valued share of allocated value as `grant_equiv_coverage`.
 
@@ -105,6 +104,10 @@ result = release.spending(
 
 `result.explain()` states the currency, the price basis, and the conversion source.
 
+### `Release.run(spec)`
+
+Runs a saved `Spec`, such as `result.spec` or one read back with `cf.Spec.model_validate_json`, and returns its `Result`. `spec.replace(...)` changes a field and takes the forms `spending()` takes.
+
 ### `Release.quality(*, providers, years, method)`
 
 Returns a `Quality` object. Its amounts are the CRDF's published climate value of the commitments. `method` acts on the provider-view columns, `eu_left_out` and `attribution`, and on the climate value of untraced disbursement in `untraced`. `providers` takes provider names and DAC codes; a name of an agency raises `UnknownProviderError`, since its tables count providers.
@@ -142,6 +145,8 @@ A frozen pydantic model of every `spending()` argument. `Spec.methods` returns t
 | `oda_only` | `bool` | `False` |
 | `measure` | `Measure` | `"amount"` |
 | `untraced` | `bool` | `True` |
+
+The table gives the types a spec holds. `Spec(...)` takes each field in the forms `spending()` lists, and `climate_finance.spec.SpecInputs` types them for a type checker. `years` holds the years sorted and without duplicates, and `method` holds the `Method` or `MethodRange` a name names, so JSON keeps its coefficients.
 
 `providers` and `recipients` read names, codes, and agencies through the listings and hold the DAC codes and `Agency` values they name, sorted and without duplicates. So `providers="Japan"` and `providers=701` give equal specs, and a provider named beside one of its agencies covers it. In JSON an agency is `{"provider": 918, "agency": 3}`.
 
@@ -188,7 +193,7 @@ The answer to one `Spec`:
 
 - `table` is a `Table` with one row per year, provider, recipient, Bi_Multi code, and method. Its columns are: `year`, `provider_code`, `recipient_code`, `bi_multi`, `method`, `amount`, `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced`. `amount` is the unweighted face value. `value` is the weighted climate value, equal to adaptation + mitigation + `cross_cutting` + `unsplit` under the highest-marker rule (where objectives are disjoint), and to adaptation + mitigation − `cross_cutting` + `unsplit` otherwise. `unsplit` holds attributed value whose agency share lacks a split by objective. `untraced` is the part of `value` from untraced rows, so `value` − `untraced` is the traced value, and it is 0 for commitments. `Table` converts with `to_polars()`, `to_pandas()`, and `to_arrow()`.
 - `modelled` is a `Table` of the "modelled, not reported" range with the columns: `year`, `provider_code`, `recipient_code`, `basis`, `low`, and `high`. It is populated only when the query asks for recipient-view disbursements with `oda_only=False`.
-- `spec` is the `Spec`. `release.spending(spec=result.spec)` reruns the query to an identical table.
+- `spec` is the `Spec`. `release.run(result.spec)` reruns the query to an identical table.
 - `meta` holds `release`, `package_version`, `source_versions`, `model_versions`, `years`, and `conversion`. `years` copies the release's `years`. `conversion` holds the pydeflate version and a SHA-256 of the factors behind a converted result, because pydeflate refreshes its DAC data every 30 days, and is None for USD at current prices.
 - `rows(*, provider=None, **filters)` returns the project rows behind the table as a polars DataFrame, filtered by column equality. A list, tuple, set, or range matches any item. `provider` takes names, DAC codes, or agencies, as `spending()` does. Raises `KeyError` for an unknown column. `origin` is `commitment`, `disbursement`, `untraced`, or `attribution`. A row has the columns `origin`, `row_id`, `record_id`, `year`, `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_category`, `flow_code`, `project_number`, `title`, `status`, `rio_adaptation`, `rio_mitigation`, `record_rio_adaptation`, `record_rio_mitigation`, `marker_source`, `reason`, `climate_share`, `share_source`, `link_method`, `link_probability`, `allocation_weight`, `objective_label`, `label_source`, `jev_level`, `amount`, `coefficient_basis`, `coefficient_source`, and `method`, followed by the weighted amounts `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced`. An untraced row has no `row_id`, carries the record's own markers with `marker_source` `record`, and has `reason` `excess` for a linked record's disbursement beyond what its commitments take or `unlinked` for a record linked to no commitment. `coefficient_basis` is `provider`, `default`, or `case_by_case`, and null where the release has no coefficient row for the provider.
 - `explain()` returns the method, view, flow, filters, and units in plain language, as a string.

@@ -1,13 +1,30 @@
 """`Spec`: the frozen description of one query, which reruns to an identical frame."""
 
 from collections.abc import Iterable, Mapping
-from typing import Annotated, Any, Literal
+from difflib import get_close_matches
+from numbers import Integral
+from typing import Annotated, Any, Literal, TypedDict, Unpack
 
 import polars as pl
-from pydantic import BeforeValidator, SerializerFunctionWrapHandler, model_serializer
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+)
 
 from climate_finance.catalogue import Agency, Coded, Target, resolve
-from climate_finance.methods import ONE, Frozen, Method, MethodRange
+from climate_finance.errors import UnknownNameError
+from climate_finance.methods import (
+    OECD,
+    ONE,
+    PROVIDER,
+    RANGE,
+    Frozen,
+    Method,
+    MethodRange,
+    label,
+)
 
 # Re-exported: the Bi_Multi codes the views count, which `schema` defines.
 from climate_finance.schema import BILATERAL as BILATERAL
@@ -43,8 +60,122 @@ def _resolver(kind: Coded) -> BeforeValidator:
     return BeforeValidator(read)
 
 
+# The methods `method` takes by name, keyed by the names `cf.methods.list()` prints.
+_METHODS = {label(method): method for method in (ONE, OECD, PROVIDER, RANGE)}
+
+
+def read_years(years: int | Iterable[int] | None) -> tuple[int, ...] | None:
+    """The years `years` names, sorted and without duplicates, or None for None.
+
+    Raises:
+        TypeError: for a string, a bool or any other value that is not an integer or
+            an iterable of integers. numpy integers count as integers.
+        ValueError: for an empty iterable, which would select no rows.
+    """
+    if years is None:
+        return None
+    if isinstance(years, str) or not isinstance(years, Integral | Iterable):
+        raise _years_error(years)
+    values = (years,) if isinstance(years, Integral) else tuple(years)
+    for year in values:
+        if isinstance(year, bool) or not isinstance(year, Integral):
+            raise _years_error(year)
+    if not values:
+        raise ValueError("years takes at least one year; None takes every year")
+    return tuple(sorted({int(year) for year in values}))
+
+
+def _years_error(value: object) -> TypeError:
+    return TypeError(
+        f"years takes an int or ints, such as 2022 or range(2015, 2023); got {value!r}"
+    )
+
+
+def read_method(
+    method: Method | MethodRange | str | Iterable[Method | str],
+) -> Method | MethodRange:
+    """The method `method` names: a `Method` or `MethodRange` as given, a name from
+    `cf.methods.list()` ignoring case, or a list of methods and names as a range.
+
+    Raises:
+        UnknownNameError: for a name outside `cf.methods.list()`, with close names
+            as suggestions.
+        TypeError: for any other value, or a range inside a list.
+    """
+    if isinstance(method, Method | MethodRange):
+        return method
+    if isinstance(method, str):
+        return _named_method(method)
+    if not isinstance(method, Iterable):
+        raise _method_error(method)
+    members: list[Method] = []
+    for member in method:
+        read = read_method(member)
+        if not isinstance(read, Method):
+            raise _method_error(method)
+        members.append(read)
+    return MethodRange(methods=tuple(members))
+
+
+def _named_method(name: str) -> Method | MethodRange:
+    key = name.strip().upper()
+    if key in _METHODS:
+        return _METHODS[key]
+    raise UnknownNameError(
+        name, kind="method", suggestions=get_close_matches(key, _METHODS)
+    )
+
+
+def _method_error(value: object) -> TypeError:
+    return TypeError(
+        "method takes a Method, a MethodRange, a name from cf.methods.list() or a "
+        f"list of methods and names; got {value!r}"
+    )
+
+
+def _method_or_dump(value: Any) -> Any:
+    """`read_method` for every input but a serialised method, which pydantic reads."""
+    return value if isinstance(value, Mapping) else read_method(value)
+
+
+def read_prices(prices: int | Literal["current"]) -> int | Literal["current"]:
+    """`"current"`, or the base year `prices` names as an int.
+
+    Raises:
+        TypeError: for any other value.
+    """
+    if prices == "current":
+        return "current"
+    if isinstance(prices, Integral) and not isinstance(prices, bool):
+        return int(prices)
+    raise TypeError(
+        f"prices takes 'current' or a base year, such as 2022; got {prices!r}"
+    )
+
+
 type Providers = Annotated[tuple[Target, ...] | None, _resolver("providers")]
 type Recipients = Annotated[tuple[int, ...] | None, _resolver("recipients")]
+type Years = Annotated[tuple[int, ...] | None, BeforeValidator(read_years)]
+type MethodField = Annotated[Method | MethodRange, BeforeValidator(_method_or_dump)]
+type Prices = Annotated[int | Literal["current"], BeforeValidator(read_prices)]
+
+
+class SpecInputs(TypedDict, total=False):
+    """The forms each `Spec` field takes as input, which `Spec(...)`,
+    `Release.spending(...)` and their type checkers read. `Spec` holds the defaults
+    and the stored types."""
+
+    providers: str | int | Agency | Iterable[str | int | Agency] | None
+    recipients: str | int | Iterable[str | int] | None
+    years: int | Iterable[int] | None
+    method: Method | MethodRange | str | Iterable[Method | str]
+    flow: Flow
+    view: View
+    currency: Currency
+    prices: int | Literal["current"]
+    oda_only: bool
+    measure: Measure
+    untraced: bool
 
 
 class Spec(Frozen):
@@ -74,21 +205,34 @@ class Spec(Frozen):
     `providers=701` give equal specs, and a provider beside one of its agencies
     covers it. An agency serialises as `{"provider": 918, "agency": 3}`.
 
+    `years` takes an integer or integers, such as `range(2015, 2023)`, and holds
+    them sorted and without duplicates. `method` takes a `Method`, a `MethodRange`, a
+    name from `cf.methods.list()` ignoring case, or a list of methods and names,
+    which becomes a range; it holds the `Method` or `MethodRange`, so JSON keeps the
+    coefficients. `prices` takes `"current"` or a base year. Other values raise
+    `TypeError`, and an unknown method name `UnknownNameError`.
+
     A spec at the default `measure` and `untraced` leaves them out of its serialised
     form, so it serialises as a spec written before either field.
     """
 
     providers: Providers = None
     recipients: Recipients = None
-    years: tuple[int, ...] | None = None
-    method: Method | MethodRange = ONE
+    years: Years = None
+    method: MethodField = ONE
     flow: Flow = "disbursements"
     view: View = "recipient"
     currency: Currency = "USD"
-    prices: int | Literal["current"] = "current"
+    prices: Prices = "current"
     oda_only: bool = False
     measure: Measure = "amount"
     untraced: bool = True
+
+    def __init__(self, **inputs: Unpack[SpecInputs]) -> None:
+        # Typed by `SpecInputs`: type checkers type a pydantic model's own constructor
+        # from the stored field types, which refuse `providers="Japan"`. `BaseModel`
+        # is named because they read `super()` as `Frozen`'s fieldless constructor.
+        BaseModel.__init__(self, **inputs)
 
     @model_serializer(mode="wrap")
     def _drop_later_defaults(

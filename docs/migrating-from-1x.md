@@ -75,7 +75,7 @@ Releases hold gross disbursements only, so `net_disbursements` has no 2.0 equiva
 
 - The result is a polars table by default, with `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, and `untraced` columns. `result.rows()` returns the projects behind it.
 - `value` is climate value only, in `ClimateData` too, and no row carries the 1.x indicator `not_climate_relevant`. A 1.x script that sums `value` over every indicator gets a different number and no error.
-- A result carries its `Spec`. `release.spending(spec=result.spec)` reruns it.
+- A result carries its `Spec`. `release.run(result.spec)` reruns it.
 - Names and codes resolve through `cf.providers` and `cf.recipients`. A misspelt name, or a code the listings lack, raises an error that suggests close matches.
 - Building a release fetches OECD data, using `cf-build` and the `build` extra. 2.0 reads the built release. [cf-build](reference/cf-build.md) lists the commands.
 

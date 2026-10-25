@@ -75,7 +75,7 @@ print(result.explain().splitlines()[-2:])
 ```
 
 ```output
-['Filtered to providers Japan; recipients Bangladesh; years 2021, 2022, 2023.', 'Amounts in USD at current prices.']
+['Filtered to providers Japan; recipients Bangladesh; years 2021 to 2023.', 'Amounts in USD at current prices.']
 ```
 
 Print the full string to see how `value` is calculated. Significant Rio markers count at 40% of face value, principal markers count at 100%, and each activity counts once under its higher marker.

@@ -12,14 +12,13 @@ import urllib.request
 from collections.abc import Iterable, Sequence
 from importlib.resources import files
 from pathlib import Path
-from typing import Literal
+from typing import Unpack
 
 import polars as pl
 import pyarrow as pa
 from pydantic import BaseModel, ConfigDict
 
 from climate_finance import query
-from climate_finance.catalogue import Agency
 from climate_finance.errors import (
     ReleaseIntegrityError,
     SourceUnavailableError,
@@ -34,7 +33,7 @@ from climate_finance.schema import (
     scan_table,
     sha256_file,
 )
-from climate_finance.spec import Currency, Flow, Measure, Spec, View
+from climate_finance.spec import Spec, SpecInputs, read_years
 
 # The release index shipped in the wheel.
 RELEASE_INDEX = files("climate_finance") / "data" / "releases.json"
@@ -91,44 +90,26 @@ class Release:
             raise WithheldTableError(name, note=note)
         return scan_table(self.path / f"{name}.parquet")
 
-    def spending(
-        self,
-        *,
-        providers: str | int | Agency | Iterable[str | int | Agency] | None = None,
-        recipients: str | int | Iterable[str | int] | None = None,
-        years: int | Iterable[int] | None = None,
-        method: Method | MethodRange = ONE,
-        flow: Flow = "disbursements",
-        view: View = "recipient",
-        currency: Currency = "USD",
-        prices: int | Literal["current"] = "current",
-        oda_only: bool = False,
-        measure: Measure = "amount",
-        untraced: bool = True,
-        spec: Spec | None = None,
-    ) -> Result:
-        """Climate finance under `method`, or under `spec` when given.
+    def spending(self, **inputs: Unpack[SpecInputs]) -> Result:
+        """Climate finance for the query `inputs` describe, as keywords only.
 
-        `spec` replaces every other argument, so a saved `Spec` reruns exactly.
+        Each keyword is a `Spec` field and takes the forms `SpecInputs` lists, such as
+        `providers="Japan"`, `years=range(2015, 2023)` or `method="OECD"`.
+
+        Raises:
+            UnknownProviderError: for a provider name, code or agency outside the
+                listings.
+            UnknownRecipientError: for a recipient name or code outside them.
+            UnknownNameError: for a method name outside `cf.methods.list()`.
+            TypeError: for years, a method or prices in a form `Spec` does not take.
+            pydantic.ValidationError: for an unknown keyword or a value outside a
+                field's choices, such as `flow="commitment"`.
         """
-        if spec is None:
-            # Validated from a dict: the fields' validators read names and single
-            # values that the stored types, which type checkers see, do not admit.
-            spec = Spec.model_validate(
-                {
-                    "providers": providers,
-                    "recipients": recipients,
-                    "years": _years(years),
-                    "method": method,
-                    "flow": flow,
-                    "view": view,
-                    "currency": currency,
-                    "prices": prices,
-                    "oda_only": oda_only,
-                    "measure": measure,
-                    "untraced": untraced,
-                }
-            )
+        return self.run(Spec(**inputs))
+
+    def run(self, spec: Spec) -> Result:
+        """Rerun a saved `Spec`, such as `result.spec` or one read back with
+        `Spec.model_validate_json`."""
         return query.spending(self, spec=spec)
 
     def quality(
@@ -141,7 +122,7 @@ class Release:
         """Link, coverage and status statistics, and the EU Institutions rows that
         `method`'s provider view leaves out."""
         return query.quality(
-            self, providers=_as_tuple(providers), years=_years(years), method=method
+            self, providers=_as_tuple(providers), years=read_years(years), method=method
         )
 
     def reconcile(
@@ -339,9 +320,3 @@ def _as_tuple(
     if isinstance(values, str | int):
         return (values,)
     return tuple(values)
-
-
-def _years(years: int | Iterable[int] | None) -> tuple[int, ...] | None:
-    if years is None:
-        return None
-    return (years,) if isinstance(years, int) else tuple(years)

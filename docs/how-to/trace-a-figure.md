@@ -66,7 +66,7 @@ result = release.spending(providers="Japan", years=[2023])
 
     ```python
     saved = result.spec.model_dump_json()
-    rerun = release.spending(spec=cf.Spec.model_validate_json(saved))
+    rerun = release.run(cf.Spec.model_validate_json(saved))
     print(rerun.table.to_polars().equals(result.table.to_polars()))
     ```
 

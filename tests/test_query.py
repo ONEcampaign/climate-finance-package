@@ -4,7 +4,6 @@ Golden tables live in tests/golden/; set CF_UPDATE_GOLDEN=1 to rewrite them afte
 deliberate change, then review the diff.
 """
 
-import inspect
 import itertools
 import json
 import math
@@ -12,10 +11,12 @@ import os
 import tomllib
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 import pytest
 from make_fixture import DEU, FIXTURE_DIR, FRA, GEF, JPN, LEDGER_RECORD
 from polars.testing import assert_frame_equal
+from pydantic import ValidationError
 from releases import copy_release
 
 import climate_finance as cf
@@ -35,7 +36,7 @@ from climate_finance.query import (
 from climate_finance.release import Release
 from climate_finance.result import AMOUNTS, ROW_KEYS
 from climate_finance.schema import ReleaseManifest
-from climate_finance.spec import Spec
+from climate_finance.spec import Spec, SpecInputs
 from climate_finance.sums import ordered_sum
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
@@ -64,12 +65,12 @@ CLIMATE_ONLY_SPEC = Spec(view="provider", method=RANGE, providers=(4,), years=(2
 
 @pytest.mark.parametrize(("name", "spec"), GOLDEN_SPECS.items())
 def test_method_outputs_match_their_golden_tables(name: str, spec: Spec) -> None:
-    _golden(name, SNAP.spending(spec=spec).table.to_polars())
+    _golden(name, SNAP.run(spec).table.to_polars())
 
 
 @pytest.mark.parametrize("spec", [*GOLDEN_SPECS.values(), CLIMATE_ONLY_SPEC])
 def test_value_is_the_objectives_plus_unsplit(spec: Spec) -> None:
-    result = SNAP.spending(spec=spec)
+    result = SNAP.run(spec)
     # Under the highest-marker rule the objectives are disjoint; otherwise adaptation
     # and mitigation each include cross_cutting.
     sign = pl.col("method").replace_strict(
@@ -151,11 +152,9 @@ def test_code_2_rows_leave_every_total_unchanged(
     without_code_2: Release, flow: str, view: str
 ) -> None:
     spec = Spec(method=cf.methods.RANGE, flow=flow, view=view)
-    with_code_2 = SNAP.spending(spec=spec).table.to_polars()
+    with_code_2 = SNAP.run(spec).table.to_polars()
 
-    assert_frame_equal(
-        with_code_2, without_code_2.spending(spec=spec).table.to_polars()
-    )
+    assert_frame_equal(with_code_2, without_code_2.run(spec).table.to_polars())
     bilateral = with_code_2.filter(pl.col("bi_multi").is_in(BILATERAL))
     assert bilateral.height
 
@@ -179,10 +178,10 @@ def test_code_2_rows_leave_every_total_unchanged(
     ],
 )
 def test_a_spec_round_trips_through_json_and_reruns_identically(spec: Spec) -> None:
-    first = SNAP.spending(spec=spec)
+    first = SNAP.run(spec)
 
     restored = Spec.model_validate_json(first.spec.model_dump_json())
-    rerun = SNAP.spending(spec=restored)
+    rerun = SNAP.run(restored)
 
     assert restored == spec
     assert_frame_equal(first.table.to_polars(), rerun.table.to_polars())
@@ -210,14 +209,75 @@ def test_keyword_arguments_build_the_same_spec() -> None:
     assert result.spec == Spec(providers=(5,), years=(2021, 2022), view="provider")
 
 
-def test_spending_defaults_match_the_spec_defaults() -> None:
-    parameters = inspect.signature(Release.spending).parameters
-    fields = Spec.model_fields
+def test_spec_inputs_name_every_spec_field() -> None:
+    assert set(SpecInputs.__annotations__) == set(Spec.model_fields)
 
-    assert set(fields) <= set(parameters)
-    assert {name: parameters[name].default for name in fields} == {
-        name: field.default for name, field in fields.items()
-    }
+
+@pytest.mark.parametrize(
+    ("years", "expected"),
+    [
+        (2022, (2022,)),
+        (np.int64(2022), (2022,)),
+        (range(2021, 2023), (2021, 2022)),
+        ([2023, np.int32(2021), 2023], (2021, 2023)),
+    ],
+)
+def test_years_hold_sorted_distinct_ints(years: object, expected: tuple) -> None:
+    assert Spec.model_validate({"years": years}).years == expected
+
+
+@pytest.mark.parametrize("years", ["2022", ["2022"], True, 2022.0])
+def test_years_refuse_anything_but_ints(years: object) -> None:
+    with pytest.raises(TypeError, match="years takes an int or ints"):
+        Spec.model_validate({"years": years})
+
+
+@pytest.mark.parametrize(
+    ("method", "expected"),
+    [
+        ("oecd", OECD),
+        (" Range ", RANGE),
+        (["one", OECD], MethodRange(methods=(ONE, OECD))),
+    ],
+)
+def test_a_method_reads_from_its_name_ignoring_case(
+    method: object, expected: Method | MethodRange
+) -> None:
+    spec = Spec.model_validate({"method": method})
+
+    assert spec.method == expected
+    assert Spec.model_validate_json(spec.model_dump_json()) == spec
+
+
+def test_an_unknown_method_name_suggests_close_ones() -> None:
+    with pytest.raises(cf.UnknownNameError) as raised:
+        SNAP.spending(method="OECDD")
+
+    assert raised.value.suggestions == ("OECD",)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("method", 1), ("method", ["RANGE"]), ("prices", "constant"), ("prices", True)],
+)
+def test_a_method_or_prices_of_another_form_raises_one_type_error(
+    field: str, value: object
+) -> None:
+    with pytest.raises(TypeError, match=f"^{field} takes"):
+        Spec.model_validate({field: value})
+
+
+def test_spending_takes_keywords_only_and_run_reruns_a_spec() -> None:
+    spec = Spec(providers="Japan")
+
+    with pytest.raises(ValidationError, match="spec"):
+        SNAP.spending(spec=spec, providers="France")
+    with pytest.raises(TypeError):
+        SNAP.spending(spec)  # ty: ignore[too-many-positional-arguments]
+    assert_frame_equal(
+        SNAP.run(spec).table.to_polars(),
+        SNAP.spending(providers="Japan").table.to_polars(),
+    )
 
 
 @pytest.mark.parametrize("flow", FLOWS)
@@ -259,9 +319,9 @@ def test_a_channel_with_no_agency_share_attributes_nothing(
     )
 
     spec = Spec(view="provider", method=method)
-    result = cf.load(path=release).spending(spec=spec).table.to_polars()
+    result = cf.load(path=release).run(spec).table.to_polars()
 
-    assert_frame_equal(result, SNAP.spending(spec=spec).table.to_polars())
+    assert_frame_equal(result, SNAP.run(spec).table.to_polars())
 
 
 # Fixture inputs: Germany gives IDA (channel 44002) 60m in 2021. IDA's commitments,
@@ -323,7 +383,7 @@ def test_attribution_reads_agency_shares_as_inclusive_of_cross_cutting(
 def test_a_climate_only_share_attributes_value_as_unsplit() -> None:
     # France gives AfDB (channel 46002) 25m in 2020. AfDB's 2020 OECD share is 0.35
     # in total, with no split by objective, and it has no ONE share that year.
-    result = SNAP.spending(spec=CLIMATE_ONLY_SPEC)
+    result = SNAP.run(CLIMATE_ONLY_SPEC)
     columns = (
         "adaptation", "mitigation", "cross_cutting", "unsplit", "value", "low", "high",
     )  # fmt: skip
@@ -492,12 +552,12 @@ def test_a_range_of_close_methods_counts_each_member_once() -> None:
     close = (ONE.replace(significant=0.5000001), ONE.replace(significant=0.5000002))
     spec = Spec(providers=(5,), recipients=(248,), years=(2022,))
 
-    together = SNAP.spending(spec=spec.replace(method=MethodRange(methods=close)))
+    together = SNAP.run(spec.replace(method=MethodRange(methods=close)))
 
     values = together.table.to_polars().group_by("method").agg(pl.col("value").sum())
     assert values.height == 2
     for method in close:
-        alone = SNAP.spending(spec=spec.replace(method=method)).table.to_polars()
+        alone = SNAP.run(spec.replace(method=method)).table.to_polars()
         expected = alone["value"].sum()
         assert values.filter(pl.col("method") == label(method))["value"].item() == (
             pytest.approx(expected)
@@ -798,7 +858,7 @@ def test_a_share_result_reruns_from_its_own_spec() -> None:
 
     assert shares.spec.measure == "share_of_total"
     assert_frame_equal(
-        SNAP.spending(spec=shares.spec).table.to_polars(), shares.table.to_polars()
+        SNAP.run(shares.spec).table.to_polars(), shares.table.to_polars()
     )
     assert_frame_equal(
         shares.share_of_total().table.to_polars(), shares.table.to_polars()
@@ -823,11 +883,14 @@ def test_explain_and_title_name_the_measure(
     assert ("share of total" in title) == (measure == "share_of_total")
 
 
-def test_the_title_names_providers_agencies_and_recipients() -> None:
-    result = SNAP.spending(providers=["EIB", 701], recipients="KEN")
+def test_the_title_names_providers_agencies_recipients_and_year_runs() -> None:
+    result = SNAP.spending(
+        providers=["EIB", 701], recipients="KEN", years=[2015, 2021, 2022, 2023]
+    )
 
     assert (
         "providers Japan, European Investment Bank (EU Institutions); recipients Kenya;"
+        " years 2015, 2021 to 2023"
     ) in repr(result).splitlines()[0]
 
 
@@ -999,9 +1062,9 @@ def test_a_bilateral_commitment_divides_by_every_bilateral_code(
     )
     spec = Spec(flow="commitments", providers=(8,), years=(2021,))
 
-    shares = cf.load(path=release).spending(spec=spec).share_of_total()
+    shares = cf.load(path=release).run(spec).share_of_total()
 
-    expected = SNAP.spending(spec=spec).share_of_total().table.to_polars()
+    expected = SNAP.run(spec).share_of_total().table.to_polars()
     assert expected.height
     assert_frame_equal(shares.table.to_polars(), expected)
 
@@ -1406,14 +1469,10 @@ def test_range_share_bounds_span_each_methods_own_share(
     )
     eu = pl.col("provider_code") == EU_INSTITUTIONS
     shares = (
-        two_member_release.spending(spec=spec.replace(method=RANGE))
-        .table.to_polars()
-        .filter(eu)
+        two_member_release.run(spec.replace(method=RANGE)).table.to_polars().filter(eu)
     )
     alone = pl.concat(
-        two_member_release.spending(spec=spec.replace(method=method))
-        .table.to_polars()
-        .filter(eu)
+        two_member_release.run(spec.replace(method=method)).table.to_polars().filter(eu)
         for method in RANGE.methods
     )
     expected = alone.group_by(ROW_KEYS).agg(pl.col("low").min(), pl.col("high").max())
@@ -1564,8 +1623,8 @@ def test_unmeasured_adaptation_stays_null_and_value_counts_mitigation(
         },
     )
     spec = Spec(providers=(5,), view="provider", flow=flow, method=ONE)
-    result = cf.load(path=release).spending(spec=spec)
-    original = SNAP.spending(spec=spec)
+    result = cf.load(path=release).run(spec)
+    original = SNAP.run(spec)
 
     # DEU-2's own rows and 2022's attribution; disbursements in 2022 of DEU-1, a
     # 2021 commitment, keep their adaptation.
@@ -1703,8 +1762,8 @@ def test_untraced_rows_weigh_by_the_records_own_markers_in_value_and_high(
 
 def test_traced_only_leaves_the_untraced_rows_out() -> None:
     spec = Spec(method=RANGE)
-    full = SNAP.spending(spec=spec)
-    traced = SNAP.spending(spec=spec.replace(untraced=False))
+    full = SNAP.run(spec)
+    traced = SNAP.run(spec.replace(untraced=False))
 
     assert set(traced.rows()["origin"]) == {"disbursement"}
     assert traced.table.to_polars()["untraced"].sum() == 0.0
