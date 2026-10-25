@@ -19,4 +19,5 @@ def test_cf_build_declares_every_command() -> None:
         "ingest-unfccc",
         "release",
         "names",
+        "listings",
     }

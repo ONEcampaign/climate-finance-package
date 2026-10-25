@@ -4,6 +4,8 @@ Provider names come from `data/oecd_classification.csv`, the OECD's donor list.
 Recipient names come from `data/recipients.csv`: DAC recipient codes and their English
 names as the OECD CRS bulk download spells them, carried over from climate-finance
 1.2.3 (`oecd/cleaning_tools/recipient_names.feather`, built from the 2021 CRS).
+`cf-build listings` adds every other code the OECD files carry to both, and fills
+`data/agencies.csv`, with the names those files give them.
 
 Provider and recipient names resolve through `resolve`, which reads `data/names.csv`:
 every common form of a provider, agency or recipient name (listing names, French

@@ -15,6 +15,9 @@ EUU = 918  # the BTR's party code for the EU
 "European Union" = 918
 # Timor-Leste's one agency in resolvekit carries the country's own name.
 "Timor Leste" = 765
+# The IMF Resilience and Sustainability Trust reports as its own agency 1, which
+# carries resolvekit's French name of the provider.
+"Fonds de résilience et de durabilité du FMI" = 1058
 
 # Agency names, each to a DAC provider code and that provider's agency code.
 [agencies]

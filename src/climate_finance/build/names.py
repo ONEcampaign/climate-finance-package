@@ -8,8 +8,8 @@ package resolves names without resolvekit. One row per key and target:
 - `key`: the name, folded as `catalogue._fold` folds it, and stripped.
 - `code`: the DAC provider or recipient code.
 - `agency`: the DAC agency code when the key names an agency, else null.
-- `name`: the listing name of the provider or recipient, or the agency's canonical
-  name in resolvekit.
+- `name`: the listing name of the provider, agency or recipient, or the agency's
+  canonical name in resolvekit where the agency listing lacks it.
 - `source`: where the key came from, one of `SOURCES`.
 
 The sources, best first:
@@ -21,10 +21,10 @@ The sources, best first:
    code as its `oecd:provider` or `oecd:recipient` code.
 5. `resolvekit`: every name of the resolvekit places and organisations carrying the
    listing code.
-6. `agency`: every name of the `org.governments` agencies, whose `oecd:agency` code
-   is the provider (a DAC code, or an ISO 3 code mapped through
-   `geo.provider_code`) and the agency. Agencies of providers outside the listing
-   are left out.
+6. `agency`: the agency listing's names, and every name of the `org.governments`
+   agencies, whose `oecd:agency` code is the provider (a DAC code, or an ISO 3 code
+   mapped through `geo.provider_code`) and the agency. Agencies of providers outside
+   the listing are left out.
 
 Keys of digits alone are left out, since those read as DAC codes. Each key keeps its
 rows at its best source only. A key with one row resolves; a key with several rows at
@@ -46,6 +46,7 @@ from resolvekit.core.model.entity import EntityRecord
 
 from climate_finance.build.errors import BuildError
 from climate_finance.build.geo import provider_code, resolver
+from climate_finance.build.listings import read_listing
 from climate_finance.catalogue import _fold, providers, recipients
 
 SOURCES = (
@@ -71,6 +72,8 @@ _SCHEMA = {
 _SYSTEMS = {"provider": "oecd:provider", "recipient": "oecd:recipient"}
 
 type Row = dict[str, str | int | None]
+# An agency's name and every alias, by provider and agency code.
+type Agencies = dict[tuple[int, int], tuple[str, list[str]]]
 
 
 class NamesError(BuildError):
@@ -142,7 +145,7 @@ def _listing_rows(listings: dict[str, dict[int, str]]) -> Iterator[Row]:
     french = pl.read_csv(
         (files("climate_finance") / "data" / "oecd_classification.csv").read_bytes(),
         columns=["code", "name_fr"],
-    )
+    ).drop_nulls()
     for code, name_fr in french.iter_rows():
         yield _row(
             "provider",
@@ -157,7 +160,7 @@ def _curated_rows(
     aliases: Path,
     *,
     listings: dict[str, dict[int, str]],
-    agencies: dict[tuple[int, int], EntityRecord],
+    agencies: Agencies,
 ) -> Iterator[Row]:
     curated = tomllib.loads(aliases.read_text())
     unknown = []
@@ -181,7 +184,7 @@ def _curated_rows(
             alias,
             code=code,
             agency=agency,
-            name=agencies[code, agency].canonical_name,
+            name=agencies[code, agency][0],
             source="curated",
         )
     if unknown:
@@ -209,10 +212,17 @@ def _entity_rows(listings: dict[str, dict[int, str]]) -> Iterator[Row]:
                     yield _row(kind, alias, code=code, name=name, source="resolvekit")
 
 
-def _agencies(listing: dict[int, str]) -> dict[tuple[int, int], EntityRecord]:
-    """The `org.governments` agencies of listed providers, by provider and agency."""
+def _agencies(listing: dict[int, str]) -> Agencies:
+    """The agencies of listed providers: those of the agency listing, named as it
+    names them, and the `org.governments` agencies, named by their canonical name
+    where the agency listing lacks them. An agency in both takes every name of each.
+    """
+    agencies: Agencies = {
+        (code, agency): (name, [name])
+        for code, agency, name in read_listing("agencies").iter_rows()
+        if code in listing
+    }
     store = resolver().store_for_domain("org")
-    agencies = {}
     for entity in store.bulk_get_entities(sorted(store.all_entity_ids())).values():
         codes = {code.system: code.value for code in entity.codes}
         if "oecd:agency" not in codes:
@@ -220,19 +230,22 @@ def _agencies(listing: dict[int, str]) -> dict[tuple[int, int], EntityRecord]:
         provider, agency = codes["oecd:agency"].split(":")
         code = int(provider) if provider.isdigit() else provider_code(provider)
         if code in listing:
-            agencies[code, int(agency)] = entity
+            name, aliases = agencies.get(
+                (code, int(agency)), (entity.canonical_name, [])
+            )
+            agencies[code, int(agency)] = (name, [*aliases, *_names(entity)])
     return agencies
 
 
-def _agency_rows(agencies: dict[tuple[int, int], EntityRecord]) -> Iterator[Row]:
-    for (code, agency), entity in agencies.items():
-        for alias in _names(entity):
+def _agency_rows(agencies: Agencies) -> Iterator[Row]:
+    for (code, agency), (name, aliases) in agencies.items():
+        for alias in aliases:
             yield _row(
                 "provider",
                 alias,
                 code=code,
                 agency=agency,
-                name=entity.canonical_name,
+                name=name,
                 source="agency",
             )
 

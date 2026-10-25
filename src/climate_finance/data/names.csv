@@ -270,9 +270,9 @@ provider,bloomberg family foundation,1640,,Bloomberg Family Foundation,listing
 provider,blu,909,90,UK Blue Carbon Fund,agency
 provider,bm:ukk,1,14,"Ministry for Education, Arts and Culture",agency
 provider,bmas,5,71,Federal Ministry of Labour and Social Affairs,agency
-provider,bmbf,1,16,Federal Ministry of Education and Women's Affairs,agency
+provider,bmbf,1,16,Federal Ministry of Education,agency
 provider,bmbfsfj,5,65,"Federal Ministry for Education, Family Affairs, Senior Citizens, Women and Youth",agency
-provider,bmbwf,1,9,"FM of Education, Science and Research",agency
+provider,bmbwf,1,9,"Federal Ministry of Women's Affairs, Science and Research",agency
 provider,bmds,5,73,Federal Ministry for Digital Transformation and Government Modernisation,agency
 provider,bmeia,1,5,Federal Ministry for European and International Affairs,agency
 provider,bmf,1,1,Federal Ministry of Finance,agency
@@ -283,9 +283,9 @@ provider,bmgf,1601,1,Bill & Melinda Gates Foundation,agency
 provider,bmi,1,12,Ministry of Interior,agency
 provider,bmi,5,60,Federal Ministry of the Interior,agency
 provider,bmjv,5,61,Federal Ministry of Justice and Consumer Protection,agency
-provider,bmk,1,17,"Federal Ministry of Climate Action, Environment, Energy, Mobility, Innovation and Technology",agency
+provider,bmk,1,17,"Federal Ministry of Innovation, Mobility and Infrastructure",agency
 provider,bmleh,5,63,"Federal Ministry of Agriculture, Food and Regional Identity",agency
-provider,bmlrt,1,10,"Federal Ministry of Agriculture, Regions and Tourism",agency
+provider,bmlrt,1,10,"Federal Ministry of Agriculture, Forestry, Climate and Environmental Protection, Regions and Water Management",agency
 provider,bmlv,1,11,FM of Defense,agency
 provider,bmukn,5,9,"Federal Ministry for the Enviroment, Climate Action, Nature Conservation and Nuclear Safety",agency
 provider,bmv,5,67,Federal Ministry of Transport,agency
@@ -300,6 +300,7 @@ provider,botnar foundation,1644,1,Botnar Foundation,agency
 provider,bp,7,12,Building Prospects,agency
 provider,bp,9,20,Bank of Portugal,agency
 provider,bpi,4,95,BPI France,agency
+provider,bpi france,4,2,BPI France,agency
 provider,bpi france,4,95,BPI France,agency
 provider,br,431,,Brazil,iso2
 provider,bra,431,,Brazil,iso3
@@ -342,7 +343,7 @@ provider,bureau du gouvernement central pour la reconstruction et le logement,62
 provider,bureau du premier ministre,75,10,Prime Minister's Office,agency
 provider,bureau national du commerce,10,39,National Board of Trade,agency
 provider,ca,301,,Canada,iso2
-provider,cabei - non-core funding,910,2,CABEI - non-core funding ,agency
+provider,cabei - non-core funding,910,2,Trust funds,agency
 provider,cabinet du premier ministre,546,9,Prime Minister's Office,agency
 provider,caf,1015,1,Development Bank of Latin America,agency
 provider,caixa geral de depositos - portuguese public bank,9,21,Caixa Geral de Depósitos - Portuguese Public Bank,agency
@@ -537,8 +538,8 @@ provider,convention on international trade in endangered species of wild fauna a
 provider,convention on migratory species (cms) - assessed contributions,807,13,Convention on Migratory Species (CMS) - assessed contributions,agency
 provider,convention on migratory species (cms) - voluntary contributions non-core developmental,807,14,Convention on Migratory Species (CMS) - Voluntary Contributions Non-core developmental,agency
 provider,convention on migratory species (cms) - voluntary contributions non-core tossd only,807,15,Convention on Migratory Species (CMS) - Voluntary Contributions Non-core TOSSD only,agency
-provider,coop decentral,4,8,COOP DECENTRAL/MAE,agency
-provider,coop decentral/mae,4,8,COOP DECENTRAL/MAE,agency
+provider,coop decentral,4,8,Local authorities,agency
+provider,coop decentral/mae,4,8,Local authorities,agency
 provider,cooperation fund for project preparation in the greater mekong subregion and in other specific asian countries,915,39,Cooperation Fund for Project Preparation in the Greater Mekong Subregion and in Other Specific Asian Countries,agency
 provider,cooperation fund in support of managing for development results,915,40,Cooperation Fund in Support of Managing for Development Results,agency
 provider,coordination for the improvement of higher education personnel,431,8,Coordination for the Improvement of Higher Education Personnel,agency
@@ -681,6 +682,7 @@ provider,deu,5,,Germany,iso3
 provider,deutsche gesellschaft fur internationale zusammenarbeit (giz) gmbh,5,52,Deutsche Gesellschaft für Internationale Zusammenarbeit (GIZ) GmbH,agency
 provider,deutsche investitions- und entwicklungsgesellschaft mbh (german investment and development company),5,4,Deutsche Investitions- und Entwicklungsgesellschaft mbH (German Investment and Development Company),agency
 provider,deutsche investitions- und entwicklungsgesellschaft mbh (societe allemande d'investissement et de developpement),5,4,Deutsche Investitions- und Entwicklungsgesellschaft mbH (German Investment and Development Company),agency
+provider,deutscher entwicklungsdienst,5,15,Deutscher Entwicklungsdienst,agency
 provider,deutschland,5,,Germany,resolvekit
 provider,development bank of latin america,1015,,Development Bank of Latin America,listing
 provider,development fund for the colombia-peru border integration zone,909,97,Development Fund for the Colombia-Peru Border Integration Zone,agency
@@ -905,6 +907,7 @@ provider,exim,302,31,Export Import Bank,agency
 provider,exim bank,701,4,EXIM BANK,agency
 provider,eximbank,738,19,Eximbank,agency
 provider,expanded special project for elimination of neglected tropical disease,928,16,Expanded Special Project for Elimination of Neglected Tropical Disease,agency
+provider,expertise france,4,15,Expertise France,agency
 provider,export and investment fund of denmark,3,72,Export and Investment Fund of Denmark,agency
 provider,export credit guarantee department,12,5,Export Credit Guarantee Department,agency
 provider,export development canada,301,31,Export Development Canada,agency
@@ -946,18 +949,22 @@ provider,federal ministry for european and international affairs,1,5,Federal Min
 provider,"federal ministry for housing, urban development and building",5,72,"Federal Ministry for Housing, Urban Development and Building",agency
 provider,"federal ministry for the enviroment, climate action, nature conservation and nuclear safety",5,9,"Federal Ministry for the Enviroment, Climate Action, Nature Conservation and Nuclear Safety",agency
 provider,"federal ministry of agriculture, food and regional identity",5,63,"Federal Ministry of Agriculture, Food and Regional Identity",agency
-provider,"federal ministry of agriculture, regions and tourism",1,10,"Federal Ministry of Agriculture, Regions and Tourism",agency
-provider,"federal ministry of climate action, environment, energy, mobility, innovation and technology",1,17,"Federal Ministry of Climate Action, Environment, Energy, Mobility, Innovation and Technology",agency
+provider,"federal ministry of agriculture, forestry, climate and environmental protection, regions and water management",1,10,"Federal Ministry of Agriculture, Forestry, Climate and Environmental Protection, Regions and Water Management",agency
+provider,"federal ministry of agriculture, regions and tourism",1,10,"Federal Ministry of Agriculture, Forestry, Climate and Environmental Protection, Regions and Water Management",agency
+provider,"federal ministry of climate action, environment, energy, mobility, innovation and technology",1,17,"Federal Ministry of Innovation, Mobility and Infrastructure",agency
 provider,federal ministry of defence,5,64,Federal Ministry of Defence,agency
-provider,federal ministry of education and women's affairs,1,16,Federal Ministry of Education and Women's Affairs,agency
+provider,federal ministry of education,1,16,Federal Ministry of Education,agency
+provider,federal ministry of education and women's affairs,1,16,Federal Ministry of Education,agency
 provider,federal ministry of finance,1,1,Federal Ministry of Finance,agency
 provider,federal ministry of finance,5,5,Federal Ministry of Finance,agency
 provider,federal ministry of health,5,66,Federal Ministry of Health,agency
+provider,"federal ministry of innovation, mobility and infrastructure",1,17,"Federal Ministry of Innovation, Mobility and Infrastructure",agency
 provider,federal ministry of justice and consumer protection,5,61,Federal Ministry of Justice and Consumer Protection,agency
 provider,federal ministry of labour and social affairs,5,71,Federal Ministry of Labour and Social Affairs,agency
 provider,"federal ministry of research, technology and space",5,68,"Federal Ministry of Research, Technology and Space",agency
 provider,federal ministry of the interior,5,60,Federal Ministry of the Interior,agency
 provider,federal ministry of transport,5,67,Federal Ministry of Transport,agency
+provider,"federal ministry of women's affairs, science and research",1,9,"Federal Ministry of Women's Affairs, Science and Research",agency
 provider,federal office for the environment,11,10,Federal Office for the Environment,agency
 provider,federal republic of germany,5,,Germany,resolvekit
 provider,federal republic of nigeria,261,,Nigeria,resolvekit
@@ -995,7 +1002,7 @@ provider,flux fiscaux pre-affectes aux ong,6,101,Earmarked fiscal flows to NGOs,
 provider,flux fiscaux pre-affectes aux ong et organisations religieuses,6,10,Earmarked fiscal flows to NGOs & religious organisations,agency
 provider,flux fiscaux pre-affectes aux organisations religieuses,6,102,Earmarked fiscal flows to religious organisations,agency
 provider,fm of defense,1,11,FM of Defense,agency
-provider,"fm of education, science and research",1,9,"FM of Education, Science and Research",agency
+provider,"fm of education, science and research",1,9,"Federal Ministry of Women's Affairs, Science and Research",agency
 provider,fma,966,1,WFP,agency
 provider,fmi,907,1,IMF,agency
 provider,fmi (fonds fiduciaires concessionnels),958,,IMF (Concessional Trust Funds),listing_fr
@@ -1065,6 +1072,7 @@ provider,fonds de consolidation de la paix-onu,923,,UN Peacebuilding Fund,listin
 provider,fonds de cooperation et de developpement international,732,2,International Cooperation and Development Fund,agency
 provider,fonds de developpement saoudien,566,6,Saudi Development Fund,agency
 provider,fonds de mise en œuvre du protocole de nagoya (npif),811,14,Nagoya Protocol Implementation Fund (NPIF),agency
+provider,fonds de resilience et de durabilite du fmi,1058,,IMF Resilience and Sustainability Trust,curated
 provider,fonds de stabilisation des conflits et pour la securite,12,14,Conflict stability and security fund,agency
 provider,fonds de tiers administres par la cdp,6,17,Third Party funds administered by CDP,agency
 provider,fonds des infrastructures pour l'afrique emergente,1014,2,Emerging Africa Infrastructure Fund,agency
@@ -1191,6 +1199,7 @@ provider,global partnership for education,997,,Global Partnership for Education,
 provider,global partnership for education fund,909,106,Global Partnership for Education Fund,agency
 provider,global partnership for education fund,915,58,Global Partnership for Education Fund,agency
 provider,gode,982,,GODE,listing
+provider,good ventures foundation,1650,,Good Ventures Foundation,listing
 provider,gordon and betty moore foundation,1626,,Gordon and Betty Moore Foundation,listing
 provider,gouv hollandais a travers la banque hollandaise d'inv pour les pays en dvmt,7,4,NLD Gov. through NLD Inv Bank for Developing Countries,agency
 provider,gouvernement,4,1,Government,agency
@@ -1332,6 +1341,7 @@ provider,ilo,1022,6,ILO,agency
 provider,imf,907,1,IMF,agency
 provider,imf (concessional trust funds),958,,IMF (Concessional Trust Funds),listing
 provider,imf concessional,958,1,IMF concessional,agency
+provider,imf resilience and sustainability trust,1058,,IMF Resilience and Sustainability Trust,listing
 provider,imf trust fund,956,,IMF Trust Fund,listing
 provider,"immigration, refugees and citizenship canada",301,10,"Immigration, Refugees and Citizenship Canada",agency
 provider,"immigration, refuges et citoyennete canada",301,10,"Immigration, Refugees and Citizenship Canada",agency
@@ -1387,13 +1397,13 @@ provider,integrated disaster risk management fund,915,44,Integrated Disaster Ris
 provider,inter-american committee on ports,1056,5,Inter-American Committee on Ports,agency
 provider,inter-american development bank,909,,Inter-American Development Bank,listing
 provider,inter-american development bank (iadb),909,,Inter-American Development Bank,resolvekit
-provider,inter-american development bank group,909,1,Inter-American Development Bank Group,agency
+provider,inter-american development bank group,909,1,Ordinary Capital,agency
 provider,inter-american development foundation,302,21,Inter-American Development Foundation,agency
-provider,interdepartmental,4,15,Interdepartmental,agency
+provider,interdepartmental,4,15,Expertise France,agency
 provider,intergovernmental science-policy platform on biodiversity and ecosystem services (ipbes) - voluntary contributions non-core - developmental,807,24,Intergovernmental Science-Policy Platform on Biodiversity and Ecosystem Services (IPBES) - Voluntary Contributions Non-core - developmental,agency
 provider,intergovernmental science-policy platform on biodiversity and ecosystem services - (ipbes) voluntary contributions non-core - tossd only,807,25,Intergovernmental Science-Policy Platform on Biodiversity and Ecosystem Services - (IPBES) Voluntary Contributions Non-core - TOSSD only,agency
-provider,intermin,4,15,Interdepartmental,agency
-provider,interministeriel,4,15,Interdepartmental,agency
+provider,intermin,4,15,Expertise France,agency
+provider,interministeriel,4,15,Expertise France,agency
 provider,internal special funds,1024,2,Internal Special Funds,agency
 provider,international atomic energy agency,944,,International Atomic Energy Agency,listing
 provider,international atomic energy agency (iaea),944,,International Atomic Energy Agency,resolvekit
@@ -1653,6 +1663,7 @@ provider,local administration - unspecified,6,8,Local administration - Unspecifi
 provider,local and regional governments,69,30,Local and Regional governments,agency
 provider,local and regional governments,83,3,Local and regional governments,agency
 provider,local authorites,82,4,Local Authorites,agency
+provider,local authorities,4,8,Local authorities,agency
 provider,local authorities,84,30,Local Authorities,agency
 provider,local government,336,7,Local government ,agency
 provider,local government - municipal authorities,546,5,local government - Municipal authorities,agency
@@ -1803,7 +1814,7 @@ provider,mih,9,11,Ministry of Infrastructure and Housing,agency
 provider,millennium challenge corporation,302,18,Millennium Challenge Corporation,agency
 provider,mimp,454,7,Ministry for Women and Vulnerable Population Groups,agency
 provider,min,1,2,Various ministries,agency
-provider,min/equipement,4,30,MIN/EQUIPEMENT,agency
+provider,min/equipement,4,30,Water agencies,agency
 provider,min/sante,4,36,MIN/SANTE,agency
 provider,min/transports,4,35,MIN/TRANSPORTS,agency
 provider,min/travail,4,37,MIN/TRAVAIL,agency
@@ -1813,7 +1824,7 @@ provider,minamata convention on mercury (mcv) - voluntary contributions non-core
 provider,mincetur,454,4,Ministry of Foreign Trade and Tourism,agency
 provider,minefi,4,10,"Ministry of Economy, Finance and Industry",agency
 provider,minefi/bdf,4,42,MINEFI/BDF,agency
-provider,minefi/natexis,4,2,MINEFI/NATEXIS,agency
+provider,minefi/natexis,4,2,BPI France,agency
 provider,ministere adjoint et de la reforme de l'etat,9,9,Ministry of Deputy and State Reform,agency
 provider,ministere de l'administration interne,9,13,Ministry of Internal Administration,agency
 provider,ministere de l'agriculture,4,13,Ministry of Agriculture,agency
@@ -2029,13 +2040,13 @@ provider,ministere du travail et de l'inclusion sociale,8,17,Ministry of Labour 
 provider,"ministere du travail, de la retraite, la famille et de la politique sociale",62,13,"Ministry of Labour, Pensions, Family and Social Policy",agency
 provider,"ministere du travail, de la solidarite et de la securite sociale",9,16,"Ministry of Labour, Solidarity and Social Security",agency
 provider,"ministere du travail, la famille, la protection sociale et la vieillesse",77,8,"Ministry of Labour, Family, Social Protection and Elderly",agency
-provider,"ministere federal de l'action climatique, de l'environnement, de l'energie, de l'innovation et de la technologie",1,17,"Federal Ministry of Climate Action, Environment, Energy, Mobility, Innovation and Technology",agency
+provider,"ministere federal de l'action climatique, de l'environnement, de l'energie, de l'innovation et de la technologie",1,17,"Federal Ministry of Innovation, Mobility and Infrastructure",agency
 provider,"ministere federal de l'agriculture, de l'alimentation et de l'identite regionale",5,63,"Federal Ministry of Agriculture, Food and Regional Identity",agency
-provider,"ministere federal de l'agriculture, des regions et du tourisme",1,10,"Federal Ministry of Agriculture, Regions and Tourism",agency
+provider,"ministere federal de l'agriculture, des regions et du tourisme",1,10,"Federal Ministry of Agriculture, Forestry, Climate and Environmental Protection, Regions and Water Management",agency
 provider,ministere federal de l'economie et de l'energie,5,62,Federal Ministry for Economic Affairs and Energy,agency
-provider,ministere federal de l'education et des affaires des femmes,1,16,Federal Ministry of Education and Women's Affairs,agency
+provider,ministere federal de l'education et des affaires des femmes,1,16,Federal Ministry of Education,agency
 provider,"ministere federal de l'education, des arts et de la culture",1,14,"Ministry for Education, Arts and Culture",agency
-provider,"ministere federal de l'education, des sciences et de la recherche",1,9,"FM of Education, Science and Research",agency
+provider,"ministere federal de l'education, des sciences et de la recherche",1,9,"Federal Ministry of Women's Affairs, Science and Research",agency
 provider,"ministere federal de l'education, la famille, des personnes agees, de la femme et de la jeunesse",5,65,"Federal Ministry for Education, Family Affairs, Senior Citizens, Women and Youth",agency
 provider,"ministere federal de l'environnement, du climat, de la protection de la nature et de la surete nucleaire",5,9,"Federal Ministry for the Enviroment, Climate Action, Nature Conservation and Nuclear Safety",agency
 provider,ministere federal de l'interieur,5,60,Federal Ministry of the Interior,agency
@@ -2062,6 +2073,7 @@ provider,ministeres regionaux publics de wallonie,2,80,Walloon Official Regional
 provider,ministeres regionaux publics des flandres,2,70,Flanders Official Regional Ministries,agency
 provider,ministry for demography and immigration,62,6,Ministry for Demography and Immigration,agency
 provider,"ministry for education, arts and culture",1,14,"Ministry for Education, Arts and Culture",agency
+provider,"ministry for immigration, integration and housing",3,5,"Ministry for Immigration, Integration and Housing",agency
 provider,ministry for innovation and technology,75,9,Ministry for Innovation and Technology,agency
 provider,ministry for justice and security,7,6,Ministry for Justice and Security,agency
 provider,ministry for national economy,75,13,Ministry for National Economy,agency
@@ -2619,6 +2631,7 @@ provider,non-core (other than covax),1311,4,non-core (other than COVAX),agency
 provider,non-core resources,1039,1,Non-core resources,agency
 provider,non-core resources - developmental,1043,2,Non-core resources - developmental,agency
 provider,non-core resources - other,1043,3,Non-core resources - other,agency
+provider,non-core resources - tossd only,1057,2,Non-core resources - TOSSD only,agency
 provider,nonsovereign revolving trust fund,915,81,Nonsovereign Revolving Trust Fund,agency
 provider,noor dubai,576,23,Noor Dubai,agency
 provider,nor,8,,Norway,iso3
@@ -2695,6 +2708,8 @@ provider,oms-plan strategique de preparation et de reponse,1050,,WHO-Strategic P
 provider,ond,2,31,Ducroire National Office,agency
 provider,onu commission economique et sociale pour l'asie occidentale,1403,,Economic and Social Commission for Western Asia,resolvekit
 provider,onu femmes,1046,,UN Women,listing_fr
+provider,onu-bcad budget regulier,1057,1,UNDCO core resources,agency
+provider,onu-bureau de la coordination des activites de developpement,1057,,UN Development Coordination Office,resolvekit
 provider,onudi,1406,,United Nations Industrial Development Organization,listing_fr
 provider,opb,1,98,Other Public Bodies,agency
 provider,opec fund,951,1,OPEC Fund,agency
@@ -2705,6 +2720,7 @@ provider,opic,302,22,Overseas Private Investment Corporation,agency
 provider,orc,909,4,Ordinary Capital,agency
 provider,orc,910,1,Ordinary capital,agency
 provider,ordinance-designed cities,701,15,Ordinance-designed Cities,agency
+provider,ordinary capital,909,1,Ordinary Capital,agency
 provider,ordinary capital,909,4,Ordinary Capital,agency
 provider,ordinary capital,910,1,Ordinary capital,agency
 provider,ordinary capital resources,976,1,Ordinary Capital Resources,agency
@@ -3358,6 +3374,7 @@ provider,trade and development agency,302,12,Trade and Development Agency,agency
 provider,transparency trust fund,909,21,Transparency Trust Fund,agency
 provider,tresor,4,91,TRESOR,agency
 provider,trust fund,976,8,Trust Fund,agency
+provider,trust funds,910,2,Trust funds,agency
 provider,tschechien,68,,Czechia,resolvekit
 provider,tschechische republik,68,,Czechia,resolvekit
 provider,tur,55,,Türkiye,iso3
@@ -3388,6 +3405,7 @@ provider,ukraine solidarity fund,1013,15,Ukraine Solidarity Fund,agency
 provider,un agencies,992,,UN AGENCIES,listing
 provider,un capital development fund,1039,,UN Capital Development Fund,listing
 provider,un covid-1,1047,1,COVID-19 Response and Recovery Multi-Partner Trust Fund,agency
+provider,un development coordination office,1057,,UN Development Coordination Office,listing
 provider,un economic and social commission for western asia,1403,,Economic and Social Commission for Western Asia,resolvekit
 provider,un economic commission for europe (ece),948,,UNECE,resolvekit
 provider,un institute for disarmament research,1038,,UN Institute for Disarmament Research,listing
@@ -3400,6 +3418,7 @@ provider,un women,1046,,UN Women,listing
 provider,unaids,971,,UNAIDS,listing
 provider,uncdf,1039,2,UNCDF,agency
 provider,unctad,962,2,United Nations Conference on Trade and Development - Regular budget,agency
+provider,undco core resources,1057,1,UNDCO core resources,agency
 provider,under funded,1020,2,Under Funded,agency
 provider,undp,959,,UNDP,listing
 provider,undp- global and regional activities,959,3,UNDP- Global and regional activities,agency
@@ -3521,6 +3540,7 @@ provider,vuc,69,30,Local and Regional governments,agency
 provider,wag,12,22,Welsh Assembly Government,agency
 provider,walloon official regional ministries,2,80,Walloon Official Regional Ministries,agency
 provider,waqf,976,9,WAQF,agency
+provider,water agencies,4,30,Water agencies,agency
 provider,water authority,546,6,Water Authority,agency
 provider,water innovation trust fund under the water financing partnership facility,915,49,Water Innovation Trust Fund under the Water Financing Partnership Facility,agency
 provider,water resilience trust fund,915,85,Water Resilience Trust Fund,agency
@@ -3852,6 +3872,8 @@ recipient,ag,377,,Antigua and Barbuda,iso2
 recipient,agawej,256,,Mauritania,resolvekit
 recipient,ago,225,,Angola,iso3
 recipient,agypten,142,,Egypt,resolvekit
+recipient,ai,376,,Anguilla,iso2
+recipient,aia,376,,Anguilla,iso3
 recipient,al,71,,Albania,iso2
 recipient,al hind,645,,India,resolvekit
 recipient,al-ittihad al-qumuri,233,,Comoros,resolvekit
@@ -3872,6 +3894,8 @@ recipient,"amerique du sud, regional",489,,"South America, regional",resolvekit
 recipient,"amerique, regional",498,,"America, regional",resolvekit
 recipient,ancienne republique yougoslave de macedoine,66,,North Macedonia,resolvekit
 recipient,angola,225,,Angola,listing
+recipient,anguila,376,,Anguilla,resolvekit
+recipient,anguilla,376,,Anguilla,listing
 recipient,ant,377,,Antigua and Barbuda,resolvekit
 recipient,antigua & barbuda,377,,Antigua and Barbuda,resolvekit
 recipient,antigua and barbuda,377,,Antigua and Barbuda,listing
@@ -3887,6 +3911,9 @@ recipient,aquatorialguinea,245,,Equatorial Guinea,resolvekit
 recipient,ar,425,,Argentina,iso2
 recipient,arab republic of egypt,142,,Egypt,resolvekit
 recipient,arabia felix / arabia eudaimon,580,,Yemen,resolvekit
+recipient,arabia saudi,566,,Saudi Arabia,resolvekit
+recipient,arabia saudita,566,,Saudi Arabia,resolvekit
+recipient,arabie saoudite,566,,Saudi Arabia,resolvekit
 recipient,arg,425,,Argentina,iso3
 recipient,argelia,130,,Algeria,resolvekit
 recipient,argentina,425,,Argentina,listing
@@ -3917,6 +3944,9 @@ recipient,azerbaiyan,611,,Azerbaijan,resolvekit
 recipient,azərbaycan,611,,Azerbaijan,resolvekit
 recipient,azərbaycan respublikası,611,,Azerbaijan,resolvekit
 recipient,ba,64,,Bosnia and Herzegovina,iso2
+recipient,bahrain,530,,Bahrain,listing
+recipient,bahrein,530,,Bahrain,resolvekit
+recipient,bahrein islands,530,,Bahrain,resolvekit
 recipient,bal-bo,660,,Nepal,resolvekit
 recipient,bal-po'i yul,660,,Nepal,resolvekit
 recipient,bal-yul,660,,Nepal,resolvekit
@@ -3927,6 +3957,12 @@ recipient,bangla desh,666,,Bangladesh,resolvekit
 recipient,banglades,666,,Bangladesh,resolvekit
 recipient,bangladesch,666,,Bangladesh,resolvekit
 recipient,bangladesh,666,,Bangladesh,listing
+recipient,barbade,329,,Barbados,resolvekit
+recipient,barbades,329,,Barbados,resolvekit
+recipient,barbadoes,329,,Barbados,resolvekit
+recipient,barbados,329,,Barbados,listing
+recipient,barein,530,,Bahrain,resolvekit
+recipient,bb,329,,Barbados,iso2
 recipient,bd,666,,Bangladesh,iso2
 recipient,bdi,228,,Burundi,iso3
 recipient,belarus,86,,Belarus,listing
@@ -3942,11 +3978,13 @@ recipient,benin,236,,Benin,listing
 recipient,bf,287,,Burkina Faso,iso2
 recipient,bfa,287,,Burkina Faso,iso3
 recipient,bgd,666,,Bangladesh,iso3
+recipient,bh,530,,Bahrain,iso2
 recipient,bharat,645,,India,resolvekit
 recipient,bharat ganarajya,645,,India,resolvekit
 recipient,bharata,645,,India,resolvekit
 recipient,bharatvarsh,645,,India,resolvekit
 recipient,bhoutan,630,,Bhutan,resolvekit
+recipient,bhr,530,,Bahrain,iso3
 recipient,bhutan,630,,Bhutan,listing
 recipient,bi,228,,Burundi,iso2
 recipient,bielarus,86,,Belarus,resolvekit
@@ -3992,6 +4030,7 @@ recipient,brasil,431,,Brazil,resolvekit
 recipient,brasile,431,,Brazil,resolvekit
 recipient,brasilien,431,,Brazil,resolvekit
 recipient,brazil,431,,Brazil,listing
+recipient,brb,329,,Barbados,iso3
 recipient,bresil,431,,Brazil,resolvekit
 recipient,bt,630,,Bhutan,iso2
 recipient,btn,630,,Bhutan,iso3
@@ -4046,17 +4085,24 @@ recipient,cg,234,,Congo,iso2
 recipient,cha,232,,Chad,resolvekit
 recipient,chad,232,,Chad,listing
 recipient,chade,232,,Chad,resolvekit
+recipient,chi,434,,Chile,resolvekit
+recipient,chile,434,,Chile,listing
+recipient,chili,434,,Chile,resolvekit
 recipient,china,730,,China (People's Republic of),resolvekit
 recipient,china (people's republic of),730,,China (People's Republic of),listing
 recipient,china pr,730,,China (People's Republic of),resolvekit
 recipient,chine,730,,China (People's Republic of),resolvekit
 recipient,chine (republique populaire de),730,,China (People's Republic of),resolvekit
+recipient,chl,434,,Chile,iso3
 recipient,chn,730,,China (People's Republic of),iso3
 recipient,ci,247,,Côte d'Ivoire,iso2
 recipient,ciad,232,,Chad,resolvekit
+recipient,cile,434,,Chile,resolvekit
 recipient,cina,730,,China (People's Republic of),resolvekit
 recipient,cisjordanie et bande de gaza,550,,West Bank and Gaza Strip,resolvekit
 recipient,civ,247,,Côte d'Ivoire,iso3
+recipient,ck,831,,Cook Islands,iso2
+recipient,cl,434,,Chile,iso2
 recipient,cm,229,,Cameroon,iso2
 recipient,cmr,229,,Cameroon,iso3
 recipient,cn,730,,China (People's Republic of),iso2
@@ -4064,6 +4110,7 @@ recipient,co,437,,Colombia,iso2
 recipient,co-operative republic of guyana,446,,Guyana,resolvekit
 recipient,cod,235,,Democratic Republic of the Congo,iso3
 recipient,cog,234,,Congo,iso3
+recipient,cok,831,,Cook Islands,iso3
 recipient,col,437,,Colombia,iso3
 recipient,colombia,437,,Colombia,listing
 recipient,colombie,437,,Colombia,resolvekit
@@ -4095,6 +4142,10 @@ recipient,"congo, republic of the",234,,Congo,resolvekit
 recipient,"congo, the democratic republic of",235,,Democratic Republic of the Congo,resolvekit
 recipient,congo-brazzaville,234,,Congo,resolvekit
 recipient,congo-kinshasa,235,,Democratic Republic of the Congo,resolvekit
+recipient,cook group,831,,Cook Islands,resolvekit
+recipient,cook islands,831,,Cook Islands,listing
+recipient,cook-inseln,831,,Cook Islands,resolvekit
+recipient,cookinseln,831,,Cook Islands,resolvekit
 recipient,corea del nord,740,,Democratic People's Republic of Korea,resolvekit
 recipient,corea del norte,740,,Democratic People's Republic of Korea,resolvekit
 recipient,coree du nord,740,,Democratic People's Republic of Korea,resolvekit
@@ -4110,11 +4161,13 @@ recipient,country of bengal,666,,Bangladesh,resolvekit
 recipient,cpv,230,,Cabo Verde,iso3
 recipient,cr,336,,Costa Rica,iso2
 recipient,cri,336,,Costa Rica,iso3
+recipient,croatia,62,,Croatia,listing
 recipient,cu,338,,Cuba,iso2
 recipient,cub,338,,Cuba,iso3
 recipient,cuba,338,,Cuba,listing
 recipient,cv,230,,Cabo Verde,iso2
 recipient,dahomey,236,,Benin,resolvekit
+recipient,dawlat al-bahrain,530,,Bahrain,resolvekit
 recipient,democratic cambodia,728,,Cambodia,resolvekit
 recipient,democratic federal macedonia,66,,North Macedonia,resolvekit
 recipient,democratic kampuchea,728,,Cambodia,resolvekit
@@ -4127,6 +4180,7 @@ recipient,democratic socialist republic of sri lanka,640,,Sri Lanka,resolvekit
 recipient,demokratische republik kongo,235,,Democratic Republic of the Congo,resolvekit
 recipient,demokratische republik sao tome und principe,268,,Sao Tome and Principe,resolvekit
 recipient,demokratische volksrepublik korea,740,,Democratic People's Republic of Korea,resolvekit
+recipient,department of mayotte,258,,Mayotte,resolvekit
 recipient,"developing countries, unspecified",998,,"Developing countries, unspecified",listing
 recipient,dj,274,,Djibouti,iso2
 recipient,djazair,130,,Algeria,resolvekit
@@ -4156,6 +4210,7 @@ recipient,dza,130,,Algeria,iso3
 recipient,dzayer,130,,Algeria,resolvekit
 recipient,east timor,765,,Timor-Leste,resolvekit
 recipient,"eastern africa, regional",1027,,"Eastern Africa, regional",listing
+recipient,eastern republic of uruguay,460,,Uruguay,resolvekit
 recipient,ec,440,,Ecuador,iso2
 recipient,ecu,440,,Ecuador,iso3
 recipient,ecuador,440,,Ecuador,listing
@@ -4212,6 +4267,8 @@ recipient,federal republic of somalia,273,,Somalia,resolvekit
 recipient,federated states of micronesia,860,,Micronesia,resolvekit
 recipient,"federated states of micronesia, fsm",860,,Micronesia,resolvekit
 recipient,federation of malaysia,751,,Malaysia,resolvekit
+recipient,federation of saint christopher and nevis,382,,Saint Kitts and Nevis,resolvekit
+recipient,federation of saint kitts and nevis,382,,Saint Kitts and Nevis,resolvekit
 recipient,federative republic of brazil,431,,Brazil,resolvekit
 recipient,fidji,832,,Fiji,resolvekit
 recipient,fidschi,832,,Fiji,resolvekit
@@ -4224,8 +4281,10 @@ recipient,fiyi,832,,Fiji,resolvekit
 recipient,fj,832,,Fiji,iso2
 recipient,fji,832,,Fiji,iso3
 recipient,fm,860,,Micronesia,iso2
+recipient,foderation st. kitts und nevis,382,,Saint Kitts and Nevis,resolvekit
 recipient,foderierte staaten von mikronesien,860,,Micronesia,resolvekit
 recipient,former yugoslav republic of macedonia,66,,North Macedonia,resolvekit
+recipient,fr-yt,258,,Mayotte,iso2
 recipient,friendly islands,870,,Tonga,resolvekit
 recipient,fsm,860,,Micronesia,iso3
 recipient,fyr macedonia,66,,North Macedonia,resolvekit
@@ -4303,6 +4362,7 @@ recipient,hayastan,610,,Armenia,resolvekit
 recipient,hayastani hanrapetut'yun,610,,Armenia,resolvekit
 recipient,hayti,349,,Haiti,resolvekit
 recipient,heart of south america,451,,Paraguay,resolvekit
+recipient,hervey islands,831,,Cook Islands,resolvekit
 recipient,hewanorra,383,,Saint Lucia,resolvekit
 recipient,hindoostan,645,,India,resolvekit
 recipient,hindustan,645,,India,resolvekit
@@ -4319,11 +4379,18 @@ recipient,iemen,580,,Yemen,resolvekit
 recipient,ile de france,257,,Mauritius,resolvekit
 recipient,ile maurice,257,,Mauritius,resolvekit
 recipient,ile sainte-helene,276,,Saint Helena,resolvekit
+recipient,iles cook,831,,Cook Islands,resolvekit
 recipient,iles fidji,832,,Fiji,resolvekit
 recipient,iles marshall,859,,Marshall Islands,resolvekit
 recipient,iles salomon,866,,Solomon Islands,resolvekit
+recipient,iles turks et caiques,387,,Turks and Caicos Islands,resolvekit
+recipient,iles turks-et-caicos,387,,Turks and Caicos Islands,resolvekit
+recipient,iles turques et caiques,387,,Turks and Caicos Islands,resolvekit
+recipient,iles turques-et-caiques,387,,Turks and Caicos Islands,resolvekit
+recipient,ilhas cook,831,,Cook Islands,resolvekit
 recipient,ilhas marshall,859,,Marshall Islands,resolvekit
 recipient,ilhas salomao,866,,Solomon Islands,resolvekit
+recipient,ilhas turcas e caicos,387,,Turks and Caicos Islands,resolvekit
 recipient,in,645,,India,iso2
 recipient,ind,645,,India,iso3
 recipient,inde,645,,India,resolvekit
@@ -4356,6 +4423,7 @@ recipient,iri,271,,Eritrea,resolvekit
 recipient,iritriya,271,,Eritrea,resolvekit
 recipient,irn,540,,Iran,iso3
 recipient,irq,543,,Iraq,iso3
+recipient,isla de malta,45,,Malta,resolvekit
 recipient,isla juana,338,,Cuba,resolvekit
 recipient,isla niue,856,,Niue,resolvekit
 recipient,isla trapobana,640,,Sri Lanka,resolvekit
@@ -4366,11 +4434,16 @@ recipient,islamic republic of pakistan,665,,Pakistan,resolvekit
 recipient,islamic republic of the gambia,240,,Gambia,resolvekit
 recipient,island of dominica,378,,Dominica,resolvekit
 recipient,island of montserrat,385,,Montserrat,resolvekit
+recipient,islas cook,831,,Cook Islands,resolvekit
 recipient,islas marshall,859,,Marshall Islands,resolvekit
 recipient,islas salomon,866,,Solomon Islands,resolvekit
+recipient,islas turcas y caicos,387,,Turks and Caicos Islands,resolvekit
+recipient,iso 3166-1:bh,530,,Bahrain,resolvekit
 recipient,iso 3166-1:jo,549,,Jordan,resolvekit
+recipient,isole cook,831,,Cook Islands,resolvekit
 recipient,isole marshall,859,,Marshall Islands,resolvekit
 recipient,isole salomone,866,,Solomon Islands,resolvekit
+recipient,isole turks e caicos,387,,Turks and Caicos Islands,resolvekit
 recipient,ivory coast,247,,Côte d'Ivoire,resolvekit
 recipient,iyonola,383,,Saint Lucia,resolvekit
 recipient,jabuuti,274,,Djibouti,resolvekit
@@ -4415,6 +4488,7 @@ recipient,kh,728,,Cambodia,iso2
 recipient,khm,728,,Cambodia,iso3
 recipient,khmer republic,728,,Cambodia,resolvekit
 recipient,ki,836,,Kiribati,iso2
+recipient,kingdom of bahrain,530,,Bahrain,resolvekit
 recipient,kingdom of bhutan,630,,Bhutan,resolvekit
 recipient,kingdom of cambodia,728,,Cambodia,resolvekit
 recipient,kingdom of eswatini,280,,Eswatini,resolvekit
@@ -4422,6 +4496,7 @@ recipient,kingdom of jordan,549,,Jordan,resolvekit
 recipient,kingdom of lesotho,249,,Lesotho,resolvekit
 recipient,kingdom of libya,133,,Libya,resolvekit
 recipient,kingdom of morocco,136,,Morocco,resolvekit
+recipient,kingdom of saudi arabia,566,,Saudi Arabia,resolvekit
 recipient,kingdom of siam,764,,Thailand,resolvekit
 recipient,kingdom of swaziland,280,,Eswatini,resolvekit
 recipient,kingdom of thailand,764,,Thailand,resolvekit
@@ -4435,7 +4510,11 @@ recipient,kirgizistan,614,,Kyrgyzstan,resolvekit
 recipient,kirguistan,614,,Kyrgyzstan,resolvekit
 recipient,kirguizistan,614,,Kyrgyzstan,resolvekit
 recipient,kiribati,836,,Kiribati,listing
+recipient,kitts & nevis,382,,Saint Kitts and Nevis,resolvekit
+recipient,kitts and nevis,382,,Saint Kitts and Nevis,resolvekit
 recipient,km,233,,Comoros,iso2
+recipient,kn,382,,Saint Kitts and Nevis,iso2
+recipient,kna,382,,Saint Kitts and Nevis,iso3
 recipient,kolumbien,437,,Colombia,resolvekit
 recipient,komoren,233,,Comoros,resolvekit
 recipient,kongo,234,,Congo,resolvekit
@@ -4450,6 +4529,7 @@ recipient,"korea, north",740,,Democratic People's Republic of Korea,resolvekit
 recipient,kosova,57,,Kosovo,resolvekit
 recipient,kosovo,57,,Kosovo,listing
 recipient,kp,740,,Democratic People's Republic of Korea,iso2
+recipient,ksa,566,,Saudi Arabia,resolvekit
 recipient,kuba,338,,Cuba,resolvekit
 recipient,kyrgyz republic,614,,Kyrgyzstan,resolvekit
 recipient,kyrgyzstan,614,,Kyrgyzstan,listing
@@ -4522,6 +4602,11 @@ recipient,maldive,655,,Maldives,resolvekit
 recipient,maldives,655,,Maldives,listing
 recipient,malediven,655,,Maldives,resolvekit
 recipient,mali,255,,Mali,listing
+recipient,malliouhana,376,,Anguilla,resolvekit
+recipient,malta,45,,Malta,listing
+recipient,malta island,45,,Malta,resolvekit
+recipient,malte,45,,Malta,resolvekit
+recipient,mamlakat al-bahrayn,530,,Bahrain,resolvekit
 recipient,mar,136,,Morocco,iso3
 recipient,maroc,136,,Morocco,resolvekit
 recipient,marocco,136,,Morocco,resolvekit
@@ -4543,6 +4628,7 @@ recipient,mauritania,256,,Mauritania,listing
 recipient,mauritanie,256,,Mauritania,resolvekit
 recipient,mauritius,257,,Mauritius,listing
 recipient,maw,253,,Malawi,resolvekit
+recipient,mayotte,258,,Mayotte,listing
 recipient,mazedonien,66,,North Macedonia,resolvekit
 recipient,md,93,,Moldova,iso2
 recipient,mda,93,,Moldova,iso3
@@ -4580,6 +4666,7 @@ recipient,mk,66,,North Macedonia,iso2
 recipient,mkd,66,,North Macedonia,iso3
 recipient,ml,255,,Mali,iso2
 recipient,mli,255,,Mali,iso3
+recipient,mlt,45,,Malta,iso3
 recipient,mm,635,,Myanmar,iso2
 recipient,mmr,635,,Myanmar,iso3
 recipient,mn,753,,Mongolia,iso2
@@ -4613,6 +4700,7 @@ recipient,mr,256,,Mauritania,iso2
 recipient,mrt,256,,Mauritania,iso3
 recipient,ms,385,,Montserrat,iso2
 recipient,msr,385,,Montserrat,iso3
+recipient,mt,45,,Malta,iso2
 recipient,mu,257,,Mauritius,iso2
 recipient,muritanya,256,,Mauritania,resolvekit
 recipient,murutaane,256,,Mauritania,resolvekit
@@ -4629,6 +4717,7 @@ recipient,myanmar (burma),635,,Myanmar,resolvekit
 recipient,myanmar (union de),635,,Myanmar,resolvekit
 recipient,"myanmar, republic of the union of",635,,Myanmar,resolvekit
 recipient,mys,751,,Malaysia,iso3
+recipient,myt,258,,Mayotte,iso3
 recipient,mz,259,,Mozambique,iso2
 recipient,mzanzi,218,,South Africa,resolvekit
 recipient,na,275,,Namibia,iso2
@@ -4688,7 +4777,12 @@ recipient,nueva espana,358,,Mexico,resolvekit
 recipient,occupied palestinian territory,550,,West Bank and Gaza Strip,resolvekit
 recipient,"oceania, regional",889,,"Oceania, regional",listing
 recipient,"oceanie, regional",889,,"Oceania, regional",resolvekit
+recipient,om,558,,Oman,iso2
+recipient,oma,558,,Oman,resolvekit
+recipient,oman,558,,Oman,listing
+recipient,omn,558,,Oman,iso3
 recipient,opt,550,,West Bank and Gaza Strip,resolvekit
+recipient,oriental republic of uruguay,460,,Uruguay,resolvekit
 recipient,osttimor,765,,Timor-Leste,resolvekit
 recipient,ouganda,285,,Uganda,resolvekit
 recipient,ouvoimoja wakomori,233,,Comoros,resolvekit
@@ -4798,6 +4892,7 @@ recipient,republic of cabo verde,230,,Cabo Verde,resolvekit
 recipient,republic of cameroon,229,,Cameroon,resolvekit
 recipient,republic of cape verde,230,,Cabo Verde,resolvekit
 recipient,republic of chad,232,,Chad,resolvekit
+recipient,republic of chile,434,,Chile,resolvekit
 recipient,republic of colombia,437,,Colombia,resolvekit
 recipient,republic of congo,234,,Congo,resolvekit
 recipient,republic of costa rica,336,,Costa Rica,resolvekit
@@ -4834,6 +4929,7 @@ recipient,republic of madagascar,252,,Madagascar,resolvekit
 recipient,republic of malawi,253,,Malawi,resolvekit
 recipient,republic of maldives,655,,Maldives,resolvekit
 recipient,republic of mali,255,,Mali,resolvekit
+recipient,republic of malta,45,,Malta,resolvekit
 recipient,republic of mauritius,257,,Mauritius,resolvekit
 recipient,republic of moldova,93,,Moldova,resolvekit
 recipient,republic of montenegro,65,,Montenegro,resolvekit
@@ -4853,6 +4949,7 @@ recipient,republic of qazaqstan,613,,Kazakhstan,resolvekit
 recipient,republic of rwanda,266,,Rwanda,resolvekit
 recipient,republic of senegal,269,,Senegal,resolvekit
 recipient,republic of serbia,63,,Serbia,resolvekit
+recipient,republic of seychelles,270,,Seychelles,resolvekit
 recipient,republic of sierra leone,272,,Sierra Leone,resolvekit
 recipient,republic of south africa,218,,South Africa,resolvekit
 recipient,republic of south sudan,279,,South Sudan,resolvekit
@@ -4871,6 +4968,7 @@ recipient,republic of the niger,260,,Niger,resolvekit
 recipient,republic of the philippines,755,,Philippines,resolvekit
 recipient,republic of the sudan,278,,Sudan,resolvekit
 recipient,republic of the union of myanmar,635,,Myanmar,resolvekit
+recipient,republic of trinidad and tobago,375,,Trinidad and Tobago,resolvekit
 recipient,republic of tunisia,139,,Tunisia,resolvekit
 recipient,republic of turkey,55,,Türkiye,resolvekit
 recipient,republic of turkiye,55,,Türkiye,resolvekit
@@ -4888,6 +4986,7 @@ recipient,republica bolivariana de venezuela,463,,Venezuela,resolvekit
 recipient,republica centro-africana,231,,Central African Republic,resolvekit
 recipient,republica centroafricana,231,,Central African Republic,resolvekit
 recipient,republica de bolivia,428,,Bolivia,resolvekit
+recipient,republica de chile,434,,Chile,resolvekit
 recipient,republica de colombia,437,,Colombia,resolvekit
 recipient,republica de costa rica,336,,Costa Rica,resolvekit
 recipient,republica de cuba,338,,Cuba,resolvekit
@@ -4914,6 +5013,7 @@ recipient,republica do congo,234,,Congo,resolvekit
 recipient,republica dominicana,340,,Dominican Republic,resolvekit
 recipient,republica mejicana,358,,Mexico,resolvekit
 recipient,republica moldova,93,,Moldova,resolvekit
+recipient,republica oriental del uruguay,460,,Uruguay,resolvekit
 recipient,republica popular china,730,,China (People's Republic of),resolvekit
 recipient,republica popular democratica de corea,740,,Democratic People's Republic of Korea,resolvekit
 recipient,republica unida de tanzania,282,,Tanzania,resolvekit
@@ -4974,14 +5074,21 @@ recipient,rw,266,,Rwanda,iso2
 recipient,rwa,266,,Rwanda,iso3
 recipient,rwanda,266,,Rwanda,listing
 recipient,rwandese republic,266,,Rwanda,resolvekit
+recipient,sa,566,,Saudi Arabia,iso2
+recipient,saint christopher and nevis,382,,Saint Kitts and Nevis,resolvekit
 recipient,saint helena,276,,Saint Helena,listing
 recipient,saint helena and dependencies,276,,Saint Helena,resolvekit
 recipient,"saint helena, ascension and tristan da cunha",276,,Saint Helena,resolvekit
 recipient,"saint helena, ascension, and tristan da cunha",276,,Saint Helena,resolvekit
+recipient,saint kitts and nevis,382,,Saint Kitts and Nevis,listing
+recipient,saint kitts e nevis,382,,Saint Kitts and Nevis,resolvekit
+recipient,saint kitts y nevis,382,,Saint Kitts and Nevis,resolvekit
 recipient,saint lucia,383,,Saint Lucia,listing
 recipient,saint vincent,384,,Saint Vincent and the Grenadines,resolvekit
 recipient,saint vincent and the grenadines,384,,Saint Vincent and the Grenadines,listing
 recipient,saint vincent e grenadine,384,,Saint Vincent and the Grenadines,resolvekit
+recipient,saint-christophe-et-nieves,382,,Saint Kitts and Nevis,resolvekit
+recipient,saint-kitts-et-nevis,382,,Saint Kitts and Nevis,resolvekit
 recipient,saint-vincent-et-les grenadines,384,,Saint Vincent and the Grenadines,resolvekit
 recipient,saint-vincent-et-les-grenadines,384,,Saint Vincent and the Grenadines,resolvekit
 recipient,sainte-helene,276,,Saint Helena,resolvekit
@@ -4994,6 +5101,8 @@ recipient,salomoninseln,866,,Solomon Islands,resolvekit
 recipient,salvador,342,,El Salvador,resolvekit
 recipient,sambia,288,,Zambia,resolvekit
 recipient,samoa,880,,Samoa,listing
+recipient,san cristobal y nevis,382,,Saint Kitts and Nevis,resolvekit
+recipient,san cristobal y nieves,382,,Saint Kitts and Nevis,resolvekit
 recipient,san vicente y las granadinas,384,,Saint Vincent and the Grenadines,resolvekit
 recipient,sant'elena,276,,Saint Helena,resolvekit
 recipient,santa elena,276,,Saint Helena,resolvekit
@@ -5002,6 +5111,7 @@ recipient,santa helena,276,,Saint Helena,resolvekit
 recipient,santa lucia,383,,Saint Lucia,resolvekit
 recipient,santo domingo,340,,Dominican Republic,resolvekit
 recipient,santo tome y principe,268,,Sao Tome and Principe,resolvekit
+recipient,sao cristovao e nevis,382,,Saint Kitts and Nevis,resolvekit
 recipient,sao tome & principe,268,,Sao Tome and Principe,resolvekit
 recipient,sao tome and principe,268,,Sao Tome and Principe,listing
 recipient,sao tome e principe,268,,Sao Tome and Principe,resolvekit
@@ -5009,9 +5119,15 @@ recipient,sao tome og principe,268,,Sao Tome and Principe,resolvekit
 recipient,sao tome und principe,268,,Sao Tome and Principe,resolvekit
 recipient,sao tome-et-principe,268,,Sao Tome and Principe,resolvekit
 recipient,sao vicente e granadinas,384,,Saint Vincent and the Grenadines,resolvekit
+recipient,sau,566,,Saudi Arabia,iso3
+recipient,saudi,566,,Saudi Arabia,resolvekit
+recipient,saudi arabia,566,,Saudi Arabia,listing
+recipient,saudi-arabien,566,,Saudi Arabia,resolvekit
 recipient,sb,866,,Solomon Islands,iso2
+recipient,sc,270,,Seychelles,iso2
 recipient,sd,278,,Sudan,iso2
 recipient,sdn,278,,Sudan,iso3
+recipient,seicheles,270,,Seychelles,resolvekit
 recipient,sen,269,,Senegal,iso3
 recipient,senegal,269,,Senegal,listing
 recipient,serbia,63,,Serbia,listing
@@ -5020,6 +5136,8 @@ recipient,serbien,63,,Serbia,resolvekit
 recipient,serendib,640,,Sri Lanka,resolvekit
 recipient,serra leoa,272,,Sierra Leone,resolvekit
 recipient,servia,63,,Serbia,resolvekit
+recipient,seychellen,270,,Seychelles,resolvekit
+recipient,seychelles,270,,Seychelles,listing
 recipient,sh,276,,Saint Helena,iso2
 recipient,shn,276,,Saint Helena,iso3
 recipient,shqiperise,71,,Albania,resolvekit
@@ -5031,6 +5149,7 @@ recipient,siria,573,,Syrian Arab Republic,resolvekit
 recipient,sl,272,,Sierra Leone,iso2
 recipient,slb,866,,Solomon Islands,iso3
 recipient,sle,272,,Sierra Leone,iso3
+recipient,slovenia,61,,Slovenia,listing
 recipient,slv,342,,El Salvador,iso3
 recipient,sn,269,,Senegal,iso2
 recipient,so,273,,Somalia,iso2
@@ -5066,19 +5185,26 @@ recipient,srilanka,640,,Sri Lanka,resolvekit
 recipient,ss,279,,South Sudan,resolvekit
 recipient,ssd,279,,South Sudan,iso3
 recipient,st,268,,Sao Tome and Principe,iso2
+recipient,st christopher and nevis,382,,Saint Kitts and Nevis,resolvekit
 recipient,st helena,276,,Saint Helena,resolvekit
 recipient,st helena and dependencies,276,,Saint Helena,resolvekit
 recipient,"st helena, ascension and tristan da cunha",276,,Saint Helena,resolvekit
 recipient,"st helena, ascension, and tristan da cunha",276,,Saint Helena,resolvekit
+recipient,st kitts & nevis,382,,Saint Kitts and Nevis,resolvekit
+recipient,st kitts and nevis,382,,Saint Kitts and Nevis,resolvekit
 recipient,st lucia,383,,Saint Lucia,resolvekit
 recipient,st vincent,384,,Saint Vincent and the Grenadines,resolvekit
 recipient,st vincent and grenadines,384,,Saint Vincent and the Grenadines,resolvekit
 recipient,st vincent and the grenadines,384,,Saint Vincent and the Grenadines,resolvekit
+recipient,st. christopher and nevis,382,,Saint Kitts and Nevis,resolvekit
 recipient,st. helena,276,,Saint Helena,resolvekit
 recipient,st. helena and dependencies,276,,Saint Helena,resolvekit
 recipient,"st. helena, ascension and tristan da cunha",276,,Saint Helena,resolvekit
 recipient,"st. helena, ascension und tristan da cunha",276,,Saint Helena,resolvekit
 recipient,"st. helena, ascension, and tristan da cunha",276,,Saint Helena,resolvekit
+recipient,st. kitts & nevis,382,,Saint Kitts and Nevis,resolvekit
+recipient,st. kitts and nevis,382,,Saint Kitts and Nevis,resolvekit
+recipient,st. kitts und nevis,382,,Saint Kitts and Nevis,resolvekit
 recipient,st. lucia,383,,Saint Lucia,resolvekit
 recipient,st. vincent,384,,Saint Vincent and the Grenadines,resolvekit
 recipient,st. vincent & grenadines,384,,Saint Vincent and the Grenadines,resolvekit
@@ -5104,6 +5230,7 @@ recipient,sudao,278,,Sudan,resolvekit
 recipient,sudao do sul,279,,South Sudan,resolvekit
 recipient,sudrhodesien,265,,Zimbabwe,resolvekit
 recipient,sudsudan,279,,South Sudan,resolvekit
+recipient,sultanate of oman,558,,Oman,resolvekit
 recipient,sur,457,,Suriname,iso3
 recipient,surie,573,,Syrian Arab Republic,resolvekit
 recipient,surinam,457,,Suriname,resolvekit
@@ -5117,6 +5244,7 @@ recipient,swaziland (eswatini),280,,Eswatini,resolvekit
 recipient,swazilandia,280,,Eswatini,resolvekit
 recipient,swz,280,,Eswatini,iso3
 recipient,sy,573,,Syrian Arab Republic,iso2
+recipient,syc,270,,Seychelles,iso3
 recipient,syr,573,,Syrian Arab Republic,iso3
 recipient,syria,573,,Syrian Arab Republic,resolvekit
 recipient,syrian arab republic,573,,Syrian Arab Republic,listing
@@ -5136,8 +5264,11 @@ recipient,tanzanie,282,,Tanzania,resolvekit
 recipient,taprobane,640,,Sri Lanka,resolvekit
 recipient,tay hoi,665,,Pakistan,resolvekit
 recipient,tayikistan,615,,Tajikistan,resolvekit
+recipient,tc,387,,Turks and Caicos Islands,iso2
+recipient,tca,387,,Turks and Caicos Islands,iso3
 recipient,tcd,232,,Chad,iso3
 recipient,tchad,232,,Chad,resolvekit
+recipient,tci,387,,Turks and Caicos Islands,resolvekit
 recipient,td,232,,Chad,iso2
 recipient,tenjiku,645,,India,resolvekit
 recipient,territoire des comores,233,,Comoros,resolvekit
@@ -5188,6 +5319,7 @@ recipient,the dominican republic,340,,Dominican Republic,resolvekit
 recipient,the dprk,740,,Democratic People's Republic of Korea,resolvekit
 recipient,the dr congo,235,,Democratic Republic of the Congo,resolvekit
 recipient,the drc,235,,Democratic Republic of the Congo,resolvekit
+recipient,the eastern republic of uruguay,460,,Uruguay,resolvekit
 recipient,the ecuadorian state,440,,Ecuador,resolvekit
 recipient,"the egypt, arab rep.",142,,Egypt,resolvekit
 recipient,the federal democratic republic of ethiopia,238,,Ethiopia,resolvekit
@@ -5196,6 +5328,8 @@ recipient,the federal republic of nigeria,261,,Nigeria,resolvekit
 recipient,the federal republic of somalia,273,,Somalia,resolvekit
 recipient,the federated states of micronesia,860,,Micronesia,resolvekit
 recipient,the federation of malaysia,751,,Malaysia,resolvekit
+recipient,the federation of saint christopher and nevis,382,,Saint Kitts and Nevis,resolvekit
+recipient,the federation of saint kitts and nevis,382,,Saint Kitts and Nevis,resolvekit
 recipient,the federative republic of brazil,431,,Brazil,resolvekit
 recipient,the former yugoslav republic of macedonia,66,,North Macedonia,resolvekit
 recipient,the fyrom,66,,North Macedonia,resolvekit
@@ -5212,11 +5346,13 @@ recipient,the islamic republic of mauritania,256,,Mauritania,resolvekit
 recipient,the islamic republic of pakistan,665,,Pakistan,resolvekit
 recipient,the islamic republic of the gambia,240,,Gambia,resolvekit
 recipient,the ivory coast,247,,Côte d'Ivoire,resolvekit
+recipient,the kingdom of bahrain,530,,Bahrain,resolvekit
 recipient,the kingdom of bhutan,630,,Bhutan,resolvekit
 recipient,the kingdom of cambodia,728,,Cambodia,resolvekit
 recipient,the kingdom of eswatini,280,,Eswatini,resolvekit
 recipient,the kingdom of lesotho,249,,Lesotho,resolvekit
 recipient,the kingdom of morocco,136,,Morocco,resolvekit
+recipient,the kingdom of saudi arabia,566,,Saudi Arabia,resolvekit
 recipient,the kingdom of siam,764,,Thailand,resolvekit
 recipient,the kingdom of swaziland,280,,Eswatini,resolvekit
 recipient,the kingdom of thailand,764,,Thailand,resolvekit
@@ -5238,6 +5374,7 @@ recipient,the mountain kingdom,249,,Lesotho,resolvekit
 recipient,"the myanmar, republic of the union of",635,,Myanmar,resolvekit
 recipient,the niger,260,,Niger,resolvekit
 recipient,the niue,856,,Niue,resolvekit
+recipient,the oriental republic of uruguay,460,,Uruguay,resolvekit
 recipient,the people's democratic republic of algeria,130,,Algeria,resolvekit
 recipient,the people's republic of albania,71,,Albania,resolvekit
 recipient,the people's republic of bangladesh,666,,Bangladesh,resolvekit
@@ -5263,6 +5400,7 @@ recipient,the republic of cabo verde,230,,Cabo Verde,resolvekit
 recipient,the republic of cameroon,229,,Cameroon,resolvekit
 recipient,the republic of cape verde,230,,Cabo Verde,resolvekit
 recipient,the republic of chad,232,,Chad,resolvekit
+recipient,the republic of chile,434,,Chile,resolvekit
 recipient,the republic of colombia,437,,Colombia,resolvekit
 recipient,the republic of congo,234,,Congo,resolvekit
 recipient,the republic of costa rica,336,,Costa Rica,resolvekit
@@ -5297,6 +5435,7 @@ recipient,the republic of madagascar,252,,Madagascar,resolvekit
 recipient,the republic of malawi,253,,Malawi,resolvekit
 recipient,the republic of maldives,655,,Maldives,resolvekit
 recipient,the republic of mali,255,,Mali,resolvekit
+recipient,the republic of malta,45,,Malta,resolvekit
 recipient,the republic of mauritius,257,,Mauritius,resolvekit
 recipient,the republic of moldova,93,,Moldova,resolvekit
 recipient,the republic of montenegro,65,,Montenegro,resolvekit
@@ -5315,6 +5454,7 @@ recipient,the republic of qazaqstan,613,,Kazakhstan,resolvekit
 recipient,the republic of rwanda,266,,Rwanda,resolvekit
 recipient,the republic of senegal,269,,Senegal,resolvekit
 recipient,the republic of serbia,63,,Serbia,resolvekit
+recipient,the republic of seychelles,270,,Seychelles,resolvekit
 recipient,the republic of sierra leone,272,,Sierra Leone,resolvekit
 recipient,the republic of south africa,218,,South Africa,resolvekit
 recipient,the republic of south sudan,279,,South Sudan,resolvekit
@@ -5332,6 +5472,7 @@ recipient,the republic of the niger,260,,Niger,resolvekit
 recipient,the republic of the philippines,755,,Philippines,resolvekit
 recipient,the republic of the sudan,278,,Sudan,resolvekit
 recipient,the republic of the union of myanmar,635,,Myanmar,resolvekit
+recipient,the republic of trinidad and tobago,375,,Trinidad and Tobago,resolvekit
 recipient,the republic of tunisia,139,,Tunisia,resolvekit
 recipient,the republic of turkey,55,,Türkiye,resolvekit
 recipient,the republic of turkiye,55,,Türkiye,resolvekit
@@ -5343,8 +5484,11 @@ recipient,the republic of zambia,288,,Zambia,resolvekit
 recipient,the republic of zimbabwe,265,,Zimbabwe,resolvekit
 recipient,the rhodesia,265,,Zimbabwe,resolvekit
 recipient,the rwandese republic,266,,Rwanda,resolvekit
+recipient,the saint christopher and nevis,382,,Saint Kitts and Nevis,resolvekit
 recipient,the socialist republic of viet nam,769,,Viet Nam,resolvekit
 recipient,the somali republic,273,,Somalia,resolvekit
+recipient,the st kitts and nevis,382,,Saint Kitts and Nevis,resolvekit
+recipient,the st. kitts and nevis,382,,Saint Kitts and Nevis,resolvekit
 recipient,the state of eritrea,271,,Eritrea,resolvekit
 recipient,the state of jordan,549,,Jordan,resolvekit
 recipient,the state of lebanon,555,,Lebanon,resolvekit
@@ -5352,6 +5496,7 @@ recipient,the state of libya,133,,Libya,resolvekit
 recipient,the state of mongolia,753,,Mongolia,resolvekit
 recipient,the state of palestine,550,,West Bank and Gaza Strip,resolvekit
 recipient,the sudan,278,,Sudan,resolvekit
+recipient,the sultanate of oman,558,,Oman,resolvekit
 recipient,the togolese republic,283,,Togo,resolvekit
 recipient,the union of the comoros,233,,Comoros,resolvekit
 recipient,the united mexican states,358,,Mexico,resolvekit
@@ -5388,7 +5533,17 @@ recipient,tonga,870,,Tonga,listing
 recipient,tonga islands,870,,Tonga,resolvekit
 recipient,tr,55,,Türkiye,iso2
 recipient,trapobana,640,,Sri Lanka,resolvekit
+recipient,trinidad & tobago,375,,Trinidad and Tobago,resolvekit
+recipient,trinidad and tobago,375,,Trinidad and Tobago,listing
+recipient,trinidad e tobago,375,,Trinidad and Tobago,resolvekit
+recipient,trinidad et tobago,375,,Trinidad and Tobago,resolvekit
+recipient,trinidad und tobago,375,,Trinidad and Tobago,resolvekit
+recipient,trinidad y tabago,375,,Trinidad and Tobago,resolvekit
+recipient,trinidad y tobago,375,,Trinidad and Tobago,resolvekit
+recipient,trinite-et-tobago,375,,Trinidad and Tobago,resolvekit
 recipient,tschad,232,,Chad,resolvekit
+recipient,tt,375,,Trinidad and Tobago,iso2
+recipient,tto,375,,Trinidad and Tobago,iso3
 recipient,tun,139,,Tunisia,iso3
 recipient,tunesien,139,,Tunisia,resolvekit
 recipient,tunez,139,,Tunisia,resolvekit
@@ -5403,6 +5558,11 @@ recipient,turkey,55,,Türkiye,resolvekit
 recipient,turkiye,55,,Türkiye,listing
 recipient,turkmenia,616,,Turkmenistan,resolvekit
 recipient,turkmenistan,616,,Turkmenistan,listing
+recipient,turks & caicos,387,,Turks and Caicos Islands,resolvekit
+recipient,turks & caicos islands,387,,Turks and Caicos Islands,resolvekit
+recipient,turks and caicos,387,,Turks and Caicos Islands,resolvekit
+recipient,turks and caicos islands,387,,Turks and Caicos Islands,listing
+recipient,turks- und caicosinseln,387,,Turks and Caicos Islands,resolvekit
 recipient,turquia,55,,Türkiye,resolvekit
 recipient,turquie,55,,Türkiye,resolvekit
 recipient,tuv,872,,Tuvalu,iso3
@@ -5422,6 +5582,7 @@ recipient,ukr,85,,Ukraine,iso3
 recipient,ukraina,85,,Ukraine,resolvekit
 recipient,ukraine,85,,Ukraine,listing
 recipient,ukrainia,85,,Ukraine,resolvekit
+recipient,uman,558,,Oman,resolvekit
 recipient,umbuso weswatini,280,,Eswatini,resolvekit
 recipient,union des comores,233,,Comoros,resolvekit
 recipient,union india,645,,India,resolvekit
@@ -5435,8 +5596,12 @@ recipient,united republic of tanzania,282,,Tanzania,resolvekit
 recipient,united states of mexico,358,,Mexico,resolvekit
 recipient,united states of venezuela,463,,Venezuela,resolvekit
 recipient,upper volta,287,,Burkina Faso,resolvekit
+recipient,uruguai,460,,Uruguay,resolvekit
+recipient,uruguay,460,,Uruguay,listing
+recipient,ury,460,,Uruguay,iso3
 recipient,us of m,358,,Mexico,resolvekit
 recipient,usbekistan,617,,Uzbekistan,resolvekit
+recipient,uy,460,,Uruguay,iso2
 recipient,uz,617,,Uzbekistan,iso2
 recipient,uzb,617,,Uzbekistan,iso3
 recipient,uzbekistan,617,,Uzbekistan,listing
@@ -5510,12 +5675,15 @@ recipient,zwe,265,,Zimbabwe,iso3
 recipient,азербаиджан,611,,Azerbaijan,resolvekit
 recipient,албания,71,,Albania,resolvekit
 recipient,алжир,130,,Algeria,resolvekit
+recipient,ангилья,376,,Anguilla,resolvekit
 recipient,ангола,225,,Angola,resolvekit
 recipient,антигуа и барбуда,377,,Antigua and Barbuda,resolvekit
 recipient,аргентина,425,,Argentina,resolvekit
 recipient,армения,610,,Armenia,resolvekit
 recipient,афганистан,625,,Afghanistan,resolvekit
 recipient,бангладеш,666,,Bangladesh,resolvekit
+recipient,барбадос,329,,Barbados,resolvekit
+recipient,бахреин,530,,Bahrain,resolvekit
 recipient,беларусь,86,,Belarus,resolvekit
 recipient,белиз,352,,Belize,resolvekit
 recipient,бенин,236,,Benin,resolvekit
@@ -5582,6 +5750,7 @@ recipient,малави,253,,Malawi,resolvekit
 recipient,малаизия,751,,Malaysia,resolvekit
 recipient,мали,255,,Mali,resolvekit
 recipient,мальдивы,655,,Maldives,resolvekit
+recipient,мальта,45,,Malta,resolvekit
 recipient,марокко,136,,Morocco,resolvekit
 recipient,маршалловы о-ва,859,,Marshall Islands,resolvekit
 recipient,мексика,358,,Mexico,resolvekit
@@ -5598,6 +5767,8 @@ recipient,нигерия,261,,Nigeria,resolvekit
 recipient,никарагуа,364,,Nicaragua,resolvekit
 recipient,ниуэ,856,,Niue,resolvekit
 recipient,о-в св. елены,276,,Saint Helena,resolvekit
+recipient,о-ва кука,831,,Cook Islands,resolvekit
+recipient,оман,558,,Oman,resolvekit
 recipient,пакистан,665,,Pakistan,resolvekit
 recipient,палау,861,,Palau,resolvekit
 recipient,палестина,550,,West Bank and Gaza Strip,resolvekit
@@ -5610,9 +5781,12 @@ recipient,руанда,266,,Rwanda,resolvekit
 recipient,сальвадор,342,,El Salvador,resolvekit
 recipient,самоа,880,,Samoa,resolvekit
 recipient,сан-томе и принсипи,268,,Sao Tome and Principe,resolvekit
+recipient,саудовская аравия,566,,Saudi Arabia,resolvekit
 recipient,северная македония,66,,North Macedonia,resolvekit
+recipient,сеишельские о-ва,270,,Seychelles,resolvekit
 recipient,сенегал,269,,Senegal,resolvekit
 recipient,сент-винсент и гренадины,384,,Saint Vincent and the Grenadines,resolvekit
+recipient,сент-китс и невис,382,,Saint Kitts and Nevis,resolvekit
 recipient,сент-люсия,383,,Saint Lucia,resolvekit
 recipient,сербия,63,,Serbia,resolvekit
 recipient,сирия,573,,Syrian Arab Republic,resolvekit
@@ -5624,9 +5798,11 @@ recipient,сьерра-леоне,272,,Sierra Leone,resolvekit
 recipient,таджикистан,615,,Tajikistan,resolvekit
 recipient,таиланд,764,,Thailand,resolvekit
 recipient,танзания,282,,Tanzania,resolvekit
+recipient,теркс и каикос,387,,Turks and Caicos Islands,resolvekit
 recipient,того,283,,Togo,resolvekit
 recipient,токелау,868,,Tokelau,resolvekit
 recipient,тонга,870,,Tonga,resolvekit
+recipient,тринидад и тобаго,375,,Trinidad and Tobago,resolvekit
 recipient,тувалу,872,,Tuvalu,resolvekit
 recipient,тунис,139,,Tunisia,resolvekit
 recipient,туркменистан,616,,Turkmenistan,resolvekit
@@ -5635,12 +5811,14 @@ recipient,уганда,285,,Uganda,resolvekit
 recipient,узбекистан,617,,Uzbekistan,resolvekit
 recipient,украина,85,,Ukraine,resolvekit
 recipient,уоллис и футуна,876,,Wallis and Futuna,resolvekit
+recipient,уругваи,460,,Uruguay,resolvekit
 recipient,федеративные штаты микронезии,860,,Micronesia,resolvekit
 recipient,фиджи,832,,Fiji,resolvekit
 recipient,филиппины,755,,Philippines,resolvekit
 recipient,центрально-африканская республика,231,,Central African Republic,resolvekit
 recipient,чад,232,,Chad,resolvekit
 recipient,черногория,65,,Montenegro,resolvekit
+recipient,чили,434,,Chile,resolvekit
 recipient,шри-ланка,640,,Sri Lanka,resolvekit
 recipient,эквадор,440,,Ecuador,resolvekit
 recipient,экваториальная гвинея,245,,Equatorial Guinea,resolvekit
@@ -5662,6 +5840,7 @@ recipient,الارجنتين,425,,Argentina,resolvekit
 recipient,الاردن,549,,Jordan,resolvekit
 recipient,الاكوادور,440,,Ecuador,resolvekit
 recipient,البانيا,71,,Albania,resolvekit
+recipient,البحرين,530,,Bahrain,resolvekit
 recipient,البرازيل,431,,Brazil,resolvekit
 recipient,البوسنة والهرسك,64,,Bosnia and Herzegovina,resolvekit
 recipient,الجبل الاسود,65,,Montenegro,resolvekit
@@ -5680,12 +5859,15 @@ recipient,الكونغو - برازافيل,234,,Congo,resolvekit
 recipient,الكونغو - كينشاسا,235,,Democratic Republic of the Congo,resolvekit
 recipient,المغرب,136,,Morocco,resolvekit
 recipient,المكسيك,358,,Mexico,resolvekit
+recipient,المملكة العربية السعودية,566,,Saudi Arabia,resolvekit
 recipient,النيجر,260,,Niger,resolvekit
 recipient,الهند,645,,India,resolvekit
 recipient,اليمن,580,,Yemen,resolvekit
 recipient,انتيغوا وبربودا,377,,Antigua and Barbuda,resolvekit
 recipient,اندونيسيا,738,,Indonesia,resolvekit
 recipient,انغولا,225,,Angola,resolvekit
+recipient,انغويلا,376,,Anguilla,resolvekit
+recipient,اورغواي,460,,Uruguay,resolvekit
 recipient,اوزبكستان,617,,Uzbekistan,resolvekit
 recipient,اوغندا,285,,Uganda,resolvekit
 recipient,اوكرانيا,85,,Ukraine,resolvekit
@@ -5694,6 +5876,7 @@ recipient,بابوا غينيا الجديدة,862,,Papua New Guinea,resolvekit
 recipient,باراغواي,451,,Paraguay,resolvekit
 recipient,باكستان,665,,Pakistan,resolvekit
 recipient,بالاو,861,,Palau,resolvekit
+recipient,بربادوس,329,,Barbados,resolvekit
 recipient,بليز,352,,Belize,resolvekit
 recipient,بنغلاديش,666,,Bangladesh,resolvekit
 recipient,بنما,366,,Panama,resolvekit
@@ -5708,7 +5891,9 @@ recipient,بيلاروس,86,,Belarus,resolvekit
 recipient,تايلاند,764,,Thailand,resolvekit
 recipient,تركمانستان,616,,Turkmenistan,resolvekit
 recipient,تركيا,55,,Türkiye,resolvekit
+recipient,ترينيداد وتوباغو,375,,Trinidad and Tobago,resolvekit
 recipient,تشاد,232,,Chad,resolvekit
+recipient,تشيلي,434,,Chile,resolvekit
 recipient,تنزانيا,282,,Tanzania,resolvekit
 recipient,توغو,283,,Togo,resolvekit
 recipient,توفالو,872,,Tuvalu,resolvekit
@@ -5719,7 +5904,9 @@ recipient,تيمور - ليشتي,765,,Timor-Leste,resolvekit
 recipient,جامايكا,354,,Jamaica,resolvekit
 recipient,جزر القمر,233,,Comoros,resolvekit
 recipient,جزر المالديف,655,,Maldives,resolvekit
+recipient,جزر توركس وكايكوس,387,,Turks and Caicos Islands,resolvekit
 recipient,جزر سليمان,866,,Solomon Islands,resolvekit
+recipient,جزر كوك,831,,Cook Islands,resolvekit
 recipient,جزر مارشال,859,,Marshall Islands,resolvekit
 recipient,جزر والس وفوتونا,876,,Wallis and Futuna,resolvekit
 recipient,جمهورية افريقيا الوسطى,231,,Central African Republic,resolvekit
@@ -5735,6 +5922,7 @@ recipient,زيمبابوي,265,,Zimbabwe,resolvekit
 recipient,ساحل العاج,247,,Côte d'Ivoire,resolvekit
 recipient,ساموا,880,,Samoa,resolvekit
 recipient,سانت فنسنت وجزر غرينادين,384,,Saint Vincent and the Grenadines,resolvekit
+recipient,سانت كيتس ونيفيس,382,,Saint Kitts and Nevis,resolvekit
 recipient,سانت لوسيا,383,,Saint Lucia,resolvekit
 recipient,سانت هيلينا,276,,Saint Helena,resolvekit
 recipient,ساو تومي وبرينسيبي,268,,Sao Tome and Principe,resolvekit
@@ -5742,8 +5930,10 @@ recipient,سريلانكا,640,,Sri Lanka,resolvekit
 recipient,سوريا,573,,Syrian Arab Republic,resolvekit
 recipient,سورينام,457,,Suriname,resolvekit
 recipient,سيراليون,272,,Sierra Leone,resolvekit
+recipient,سيشل,270,,Seychelles,resolvekit
 recipient,صربيا,63,,Serbia,resolvekit
 recipient,طاجيكستان,615,,Tajikistan,resolvekit
+recipient,عمان,558,,Oman,resolvekit
 recipient,غامبيا,240,,Gambia,resolvekit
 recipient,غانا,241,,Ghana,resolvekit
 recipient,غرينادا,381,,Grenada,resolvekit
@@ -5772,6 +5962,7 @@ recipient,لبنان,555,,Lebanon,resolvekit
 recipient,ليبيا,133,,Libya,resolvekit
 recipient,ليبيريا,251,,Liberia,resolvekit
 recipient,ليسوتو,249,,Lesotho,resolvekit
+recipient,مالطا,45,,Malta,resolvekit
 recipient,مالي,255,,Mali,resolvekit
 recipient,ماليزيا,751,,Malaysia,resolvekit
 recipient,مدغشقر,252,,Madagascar,resolvekit
@@ -5800,6 +5991,7 @@ recipient,アルシェリア,130,,Algeria,resolvekit
 recipient,アルセンチン,425,,Argentina,resolvekit
 recipient,アルハニア,71,,Albania,resolvekit
 recipient,アルメニア,610,,Armenia,resolvekit
+recipient,アンキラ,376,,Anguilla,resolvekit
 recipient,アンコラ,225,,Angola,resolvekit
 recipient,アンティクア・ハーフータ,377,,Antigua and Barbuda,resolvekit
 recipient,イエメン,580,,Yemen,resolvekit
@@ -5811,12 +6003,14 @@ recipient,ウォリス・フツナ,876,,Wallis and Futuna,resolvekit
 recipient,ウカンタ,285,,Uganda,resolvekit
 recipient,ウクライナ,85,,Ukraine,resolvekit
 recipient,ウスヘキスタン,617,,Uzbekistan,resolvekit
+recipient,ウルクアイ,460,,Uruguay,resolvekit
 recipient,エクアトル,440,,Ecuador,resolvekit
 recipient,エシフト,142,,Egypt,resolvekit
 recipient,エスワティニ,280,,Eswatini,resolvekit
 recipient,エチオヒア,238,,Ethiopia,resolvekit
 recipient,エリトリア,271,,Eritrea,resolvekit
 recipient,エルサルハトル,342,,El Salvador,resolvekit
+recipient,オマーン,558,,Oman,resolvekit
 recipient,カイアナ,446,,Guyana,resolvekit
 recipient,カサフスタン,613,,Kazakhstan,resolvekit
 recipient,カホン,239,,Gabon,resolvekit
@@ -5831,6 +6025,7 @@ recipient,キューハ,338,,Cuba,resolvekit
 recipient,キリハス,836,,Kiribati,resolvekit
 recipient,キルキス,614,,Kyrgyzstan,resolvekit
 recipient,クアテマラ,347,,Guatemala,resolvekit
+recipient,クック諸島,831,,Cook Islands,resolvekit
 recipient,クレナタ,381,,Grenada,resolvekit
 recipient,ケニア,248,,Kenya,resolvekit
 recipient,コスタリカ,336,,Costa Rica,resolvekit
@@ -5840,6 +6035,7 @@ recipient,コロンヒア,437,,Colombia,resolvekit
 recipient,コンコ共和国(フラサヒル),234,,Congo,resolvekit
 recipient,コンコ民主共和国(キンシャサ),235,,Democratic Republic of the Congo,resolvekit
 recipient,コートシホワール,247,,Côte d'Ivoire,resolvekit
+recipient,サウシアラヒア,566,,Saudi Arabia,resolvekit
 recipient,サモア,880,,Samoa,resolvekit
 recipient,サントメ・フリンシヘ,268,,Sao Tome and Principe,resolvekit
 recipient,サンヒア,288,,Zambia,resolvekit
@@ -5854,20 +6050,25 @@ recipient,スリランカ,640,,Sri Lanka,resolvekit
 recipient,スータン,278,,Sudan,resolvekit
 recipient,セネカル,269,,Senegal,resolvekit
 recipient,セルヒア,63,,Serbia,resolvekit
+recipient,セントクリストファー・ネーウィス,382,,Saint Kitts and Nevis,resolvekit
 recipient,セントヒンセント及ひクレナティーン諸島,384,,Saint Vincent and the Grenadines,resolvekit
 recipient,セントヘレナ,276,,Saint Helena,resolvekit
 recipient,セントルシア,383,,Saint Lucia,resolvekit
+recipient,セーシェル,270,,Seychelles,resolvekit
 recipient,ソマリア,273,,Somalia,resolvekit
 recipient,ソロモン諸島,866,,Solomon Islands,resolvekit
 recipient,タイ,764,,Thailand,resolvekit
 recipient,タシキスタン,615,,Tajikistan,resolvekit
 recipient,タンサニア,282,,Tanzania,resolvekit
+recipient,タークス・カイコス諸島,387,,Turks and Caicos Islands,resolvekit
 recipient,チャト,232,,Chad,resolvekit
 recipient,チュニシア,139,,Tunisia,resolvekit
+recipient,チリ,434,,Chile,resolvekit
 recipient,ツハル,872,,Tuvalu,resolvekit
 recipient,トケラウ,868,,Tokelau,resolvekit
 recipient,トミニカ共和国,340,,Dominican Republic,resolvekit
 recipient,トミニカ国,378,,Dominica,resolvekit
+recipient,トリニタート・トハコ,375,,Trinidad and Tobago,resolvekit
 recipient,トルクメニスタン,616,,Turkmenistan,resolvekit
 recipient,トルコ,55,,Türkiye,resolvekit
 recipient,トンカ,870,,Tonga,resolvekit
@@ -5886,9 +6087,11 @@ recipient,ハヌアツ,854,,Vanuatu,resolvekit
 recipient,ハフアニューキニア,862,,Papua New Guinea,resolvekit
 recipient,ハラオ,861,,Palau,resolvekit
 recipient,ハラクアイ,451,,Paraguay,resolvekit
+recipient,ハルハトス,329,,Barbados,resolvekit
 recipient,ハレスチナ,550,,West Bank and Gaza Strip,resolvekit
 recipient,ハレスチナ自治区,550,,West Bank and Gaza Strip,resolvekit
 recipient,ハンクラテシュ,666,,Bangladesh,resolvekit
+recipient,ハーレーン,530,,Bahrain,resolvekit
 recipient,フィシー,832,,Fiji,resolvekit
 recipient,フィリヒン,755,,Philippines,resolvekit
 recipient,フラシル,431,,Brazil,resolvekit
@@ -5908,6 +6111,7 @@ recipient,ホンシュラス,351,,Honduras,resolvekit
 recipient,マタカスカル,252,,Madagascar,resolvekit
 recipient,マラウイ,253,,Malawi,resolvekit
 recipient,マリ,255,,Mali,resolvekit
+recipient,マルタ,45,,Malta,resolvekit
 recipient,マレーシア,751,,Malaysia,resolvekit
 recipient,マーシャル諸島,859,,Marshall Islands,resolvekit
 recipient,ミクロネシア連邦,860,,Micronesia,resolvekit
@@ -5937,6 +6141,7 @@ recipient,中非共和国,231,,Central African Republic,resolvekit
 recipient,乌克兰,85,,Ukraine,resolvekit
 recipient,乌兹别克斯坦,617,,Uzbekistan,resolvekit
 recipient,乌干达,285,,Uganda,resolvekit
+recipient,乌拉圭,460,,Uruguay,resolvekit
 recipient,乍得,232,,Chad,resolvekit
 recipient,也门,580,,Yemen,resolvekit
 recipient,亚美尼亚,610,,Armenia,resolvekit
@@ -5979,6 +6184,7 @@ recipient,图瓦卢,872,,Tuvalu,resolvekit
 recipient,土库曼斯坦,616,,Turkmenistan,resolvekit
 recipient,土耳其,55,,Türkiye,resolvekit
 recipient,圣卢西亚,383,,Saint Lucia,resolvekit
+recipient,圣基茨和尼维斯,382,,Saint Kitts and Nevis,resolvekit
 recipient,圣多美和普林西比,268,,Sao Tome and Principe,resolvekit
 recipient,圣文森特和格林纳丁斯,384,,Saint Vincent and the Grenadines,resolvekit
 recipient,圣赫勒拿,276,,Saint Helena,resolvekit
@@ -5991,6 +6197,7 @@ recipient,塔吉克斯坦,615,,Tajikistan,resolvekit
 recipient,塞内加尔,269,,Senegal,resolvekit
 recipient,塞尔维亚,63,,Serbia,resolvekit
 recipient,塞拉利昂,272,,Sierra Leone,resolvekit
+recipient,塞舌尔,270,,Seychelles,resolvekit
 recipient,墨西哥,358,,Mexico,resolvekit
 recipient,多哥,283,,Togo,resolvekit
 recipient,多米尼克,378,,Dominica,resolvekit
@@ -5998,6 +6205,7 @@ recipient,多米尼加共和国,340,,Dominican Republic,resolvekit
 recipient,委内瑞拉,463,,Venezuela,resolvekit
 recipient,孟加拉国,666,,Bangladesh,resolvekit
 recipient,安哥拉,225,,Angola,resolvekit
+recipient,安圭拉,376,,Anguilla,resolvekit
 recipient,安提瓜和巴布达,377,,Antigua and Barbuda,resolvekit
 recipient,密克罗尼西亚,860,,Micronesia,resolvekit
 recipient,尼加拉瓜,364,,Nicaragua,resolvekit
@@ -6007,13 +6215,16 @@ recipient,尼泊尔,660,,Nepal,resolvekit
 recipient,巴勒斯坦,550,,West Bank and Gaza Strip,resolvekit
 recipient,巴勒斯坦领土,550,,West Bank and Gaza Strip,resolvekit
 recipient,巴基斯坦,665,,Pakistan,resolvekit
+recipient,巴巴多斯,329,,Barbados,resolvekit
 recipient,巴布亚新几内亚,862,,Papua New Guinea,resolvekit
 recipient,巴拉圭,451,,Paraguay,resolvekit
 recipient,巴拿马,366,,Panama,resolvekit
+recipient,巴林,530,,Bahrain,resolvekit
 recipient,巴西,431,,Brazil,resolvekit
 recipient,布基纳法索,287,,Burkina Faso,resolvekit
 recipient,布隆迪,228,,Burundi,resolvekit
 recipient,帕劳,861,,Palau,resolvekit
+recipient,库克群岛,831,,Cook Islands,resolvekit
 recipient,所罗门群岛,866,,Solomon Islands,resolvekit
 recipient,托克劳,868,,Tokelau,resolvekit
 recipient,摩尔多瓦,93,,Moldova,resolvekit
@@ -6021,6 +6232,7 @@ recipient,摩洛哥,136,,Morocco,resolvekit
 recipient,斐济,832,,Fiji,resolvekit
 recipient,斯威士兰,280,,Eswatini,resolvekit
 recipient,斯里兰卡,640,,Sri Lanka,resolvekit
+recipient,智利,434,,Chile,resolvekit
 recipient,朝鲜,740,,Democratic People's Republic of Korea,resolvekit
 recipient,東ティモール,765,,Timor-Leste,resolvekit
 recipient,柬埔寨,728,,Cambodia,resolvekit
@@ -6029,12 +6241,15 @@ recipient,格鲁吉亚,612,,Georgia,resolvekit
 recipient,毛里塔尼亚,256,,Mauritania,resolvekit
 recipient,毛里求斯,257,,Mauritius,resolvekit
 recipient,汤加,870,,Tonga,resolvekit
+recipient,沙特阿拉伯,566,,Saudi Arabia,resolvekit
 recipient,波斯尼亚和黑塞哥维那,64,,Bosnia and Herzegovina,resolvekit
 recipient,泰国,764,,Thailand,resolvekit
 recipient,津巴布韦,265,,Zimbabwe,resolvekit
 recipient,洪都拉斯,351,,Honduras,resolvekit
 recipient,海地,349,,Haiti,resolvekit
 recipient,牙买加,354,,Jamaica,resolvekit
+recipient,特克斯和凯科斯群岛,387,,Turks and Caicos Islands,resolvekit
+recipient,特立尼达和多巴哥,375,,Trinidad and Tobago,resolvekit
 recipient,玻利维亚,428,,Bolivia,resolvekit
 recipient,瑙鲁,845,,Nauru,resolvekit
 recipient,瓦利斯和富图纳,876,,Wallis and Futuna,resolvekit
@@ -6070,11 +6285,13 @@ recipient,阿塞拜疆,611,,Azerbaijan,resolvekit
 recipient,阿富汗,625,,Afghanistan,resolvekit
 recipient,阿尔及利亚,130,,Algeria,resolvekit
 recipient,阿尔巴尼亚,71,,Albania,resolvekit
+recipient,阿曼,558,,Oman,resolvekit
 recipient,阿根廷,425,,Argentina,resolvekit
 recipient,马尔代夫,655,,Maldives,resolvekit
 recipient,马拉维,253,,Malawi,resolvekit
 recipient,马来西亚,751,,Malaysia,resolvekit
 recipient,马绍尔群岛,859,,Marshall Islands,resolvekit
+recipient,马耳他,45,,Malta,resolvekit
 recipient,马达加斯加,252,,Madagascar,resolvekit
 recipient,马里,255,,Mali,resolvekit
 recipient,黎巴嫩,555,,Lebanon,resolvekit

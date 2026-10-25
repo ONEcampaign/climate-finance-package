@@ -1,10 +1,10 @@
 # Release gates
 
-`cf-build release` (from 2.0) runs seven gates on a build before packing the release, and `cf-build gate` runs them on their own. A failed gate stops the release with `GateFailedError`. The results go into `release.json` under `gates`, and `release.quality().precision` reads the precision rows back.
+`cf-build release` (from 2.0) runs eight gates on a build before packing the release, and `cf-build gate` runs them on their own. A failed gate stops the release with `GateFailedError`. The results go into `release.json` under `gates`, and `release.quality().precision` reads the precision rows back.
 
 Each gate returns one or more rows with `gate`, `subject`, `value`, `lower`, `upper`, `threshold`, `passed`, `waived`, `detail`, `code`, and `strata`. On precision and human-audit rows, `code` names why a row could not estimate or why its estimate cannot be read, and is null on a row that estimated. Rows of the other gates carry no `code`. `strata` is null on every gate but precision. A row passes when its value is at or below its threshold, with three exceptions. The `raw_links` share must stay under its threshold. Precision's lower bound must reach its threshold, and so must the human-audit share. The thresholds live in `src/climate_finance/build/gates.yaml`.
 
-A gate with nothing to measure fails. Precision fails with no allocated links, the human audit with no blind sample or an empty one, conservation with no linked record that disbursed, the `raw_links` row with no linked commitment unit, `oecd_reconciliation` when neither the release nor the published CRDF holds a climate commitment, and `withheld_rows` with an empty `disbursements` table. Drift fails without a previous release to compare.
+A gate with nothing to measure fails. Precision fails with no allocated links, the human audit with no blind sample or an empty one, conservation with no linked record that disbursed, the `raw_links` row with no linked commitment unit, `oecd_reconciliation` when neither the release nor the published CRDF holds a climate commitment, `withheld_rows` with an empty `disbursements` table, and `listed_codes` when no release table holds a provider code. Drift fails without a previous release to compare.
 
 ## `precision`
 
@@ -39,6 +39,10 @@ Returns the largest relative move of a provider-year's climate commitments or di
 ## `withheld_rows`
 
 Returns the number of rows, in every release table that carries a `record_id`, `disbursements` and `untraced` among them, whose record comes from a withheld source, and its detail names each table and record. The threshold is 0. [How linking works](../explanation/how-linking-works.md) lists the withheld sources.
+
+## `listed_codes`
+
+Returns the number of provider, agency, and recipient codes in the release tables that the package's listings lack, and its detail names each one, as `provider 1058`, `agency 3/5`, or `recipient 434`. The listings are `oecd_classification.csv`, `agencies.csv`, and `recipients.csv` in `src/climate_finance/data`. Agency codes 0 and 1 and a null agency stand for the provider itself, so only other agency codes need a row in `agencies.csv`. The threshold is 0. A failure means the OECD files carry a code the listings lack: run `cf-build listings` on the build's raw directory, then `cf-build names`, and commit both.
 
 ## Next
 

@@ -24,16 +24,19 @@ over-allocation:
 - `withheld_rows`: no release row comes from a source the release withholds, such
   as the Green Climate Fund's ledger, whose terms allow only private study, research
   and teaching (`schema.withheld_record`).
+- `listed_codes`: every provider, agency and recipient code in the release tables has
+  a row in the package's listings (`listings.unlisted_codes`), so a query can refuse
+  a code the listings lack.
 
 Every value is a largest gap, a count or a share. A row passes at or below its
 threshold, except that the raw-links share passes below it, and precision's lower
 bound and the human-audit share pass at or above it. A gate with nothing to
 measure fails: no allocated pairs, no linked record with a disbursement, no linked
 commitment unit, no provider-year in the release or the published CRDF, no
-disbursement row, or an empty sample. A precision or human_audit row that could
-not estimate says why in `code`: `no_allocated_pairs`, `no_sample`, `empty_sample`
-or `stale_sample`, and a precision row whose estimate or bound is NaN or infinite
-fails as `non_finite_estimate`. The other gates' rows carry no `code`.
+disbursement row, no provider code, or an empty sample. A precision or human_audit
+row that could not estimate says why in `code`: `no_allocated_pairs`, `no_sample`,
+`empty_sample` or `stale_sample`, and a precision row whose estimate or bound is NaN
+or infinite fails as `non_finite_estimate`. The other gates' rows carry no `code`.
 `waive_precision` lets precision and human_audit rows fail.
 """
 
@@ -47,7 +50,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict
 
 import climate_finance as cf
-from climate_finance.build import evaluate
+from climate_finance.build import evaluate, listings
 from climate_finance.build.errors import GateFailedError
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
@@ -67,6 +70,7 @@ GATES = (
     "oecd_reconciliation",
     "drift",
     "withheld_rows",
+    "listed_codes",
 )
 RESULT_SCHEMA = pl.Schema(
     {
@@ -238,6 +242,7 @@ def run_gates(
                 config=gates.drift,
             ),
             withheld_gate({name: released(name) for name in RELEASE_TABLES}),
+            listing_gate({name: released(name) for name in RELEASE_TABLES}),
         ]
     ).with_columns(
         waived=pl.col("gate").is_in(WAIVABLE) & ~pl.col("passed") & waive_precision
@@ -784,5 +789,31 @@ def withheld_gate(tables: Mapping[str, pl.LazyFrame]) -> pl.DataFrame:
             f"rows from withheld records: {_named(records)}"
             if rows.height
             else "no release row comes from a withheld source"
+        ),
+    )
+
+
+def listing_gate(tables: Mapping[str, pl.LazyFrame]) -> pl.DataFrame:
+    """The number of provider, agency and recipient codes in the release tables in
+    `tables` that the listings lack (`listings.unlisted_codes`). It fails when the
+    tables hold no provider code."""
+    if not listings.held_providers(tables):
+        return _row(
+            "listed_codes",
+            value=None,
+            threshold=0.0,
+            passed=False,
+            detail="the release holds no provider code: nothing to check",
+        )
+    unlisted = listings.unlisted_codes(tables)
+    return _row(
+        "listed_codes",
+        value=float(len(unlisted)),
+        threshold=0.0,
+        passed=not unlisted,
+        detail=(
+            f"codes the listings lack: {_named(unlisted)}; run `cf-build listings`"
+            if unlisted
+            else "every provider, agency and recipient code is listed"
         ),
     )

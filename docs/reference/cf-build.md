@@ -91,13 +91,23 @@ Builds, gates, and packs a release. It writes `<out-dir>/climate-finance-<RELEAS
 
 The command raises `GateFailedError` when a gate fails, and `BuildError` when a source lacks a licence entry.
 
+## `cf-build listings`
+
+```bash
+cf-build listings RAW
+```
+
+Adds every provider, agency, and recipient code the OECD files in `RAW/oecd/` carry to the listing in `src/climate_finance/data` that lacks it: `oecd_classification.csv` for providers, `agencies.csv` for agencies, and `recipients.csv` for recipients. `RAW` is a build's raw directory, `releases/<RELEASE>/fetch/raw`, or an archive laid out the same way. The command reads the CRS (`CRS*.parquet`) for donors, agencies, and recipients, the recipient-perspective CRDF (`crdf_recipient*.parquet`) for all three, the provider-perspective CRDF (`crdf_provider*.parquet`) for providers and agencies, and MULTI (`multisystem*.parquet`) for donors below the donor groups from 20000. CRS and MULTI rows count from the first year the recipient-perspective CRDF holds. Agency 0 and a null agency stand for the provider and are left out.
+
+Listed rows stay as they are. Each added code takes the name the files give it in the latest year they carry it, and an added provider has no French name or type. The command prints the rows it added and fails with `ListingsError` when a file kind is missing or no file names a code. The listings are committed and ship in the wheel, so the release gate `listed_codes` and the package read them without raw data. Run `cf-build names` after a refresh.
+
 ## `cf-build names`
 
 ```bash
 cf-build names [--check]
 ```
 
-Bakes the alias table behind `providers=` and `recipients=` into `src/climate_finance/data/names.csv`, which ships in the wheel, so the analyst package resolves names without resolvekit. Each row maps one folded name (case, accents and surrounding spaces dropped) to a DAC provider or recipient code, and to an agency code when the name is an agency's. The names come from the listings' English and French names, `build/aliases.toml`, the ISO codes and aliases of the resolvekit places and organisations that carry a listing code, and the names of the providers' agencies in resolvekit's `org.governments` pack, best first. Each name keeps its rows from its best source only, so a name with several rows there is ambiguous.
+Bakes the alias table behind `providers=` and `recipients=` into `src/climate_finance/data/names.csv`, which ships in the wheel, so the analyst package resolves names without resolvekit. Each row maps one folded name (case, accents and surrounding spaces dropped) to a DAC provider or recipient code, and to an agency code when the name is an agency's. The names come from the listings' English and French names, `build/aliases.toml`, the ISO codes and aliases of the resolvekit places and organisations that carry a listing code, and the names of the providers' agencies in `agencies.csv` and resolvekit's `org.governments` pack, best first. Each name keeps its rows from its best source only, so a name with several rows there is ambiguous.
 
 The bake fails when a listing name does not resolve to its own code, when `aliases.toml` names a code or agency that the listing or resolvekit lacks or a listing name hides, and when an ISO code or resolvekit alias of a provider is also the name of one of its agencies, which would widen the agency to the whole provider. Such a name is settled by a line in `aliases.toml`.
 

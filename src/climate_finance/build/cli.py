@@ -7,7 +7,14 @@ import typer
 from rich.console import Console
 
 from climate_finance.build import build as run_build
-from climate_finance.build import evaluate, gate, load_config, names, release
+from climate_finance.build import (
+    evaluate,
+    gate,
+    listings,
+    load_config,
+    names,
+    release,
+)
 from climate_finance.build.link import decisions as decisions_module
 from climate_finance.build.link import review
 from climate_finance.build.readers import btr
@@ -147,6 +154,20 @@ def ingest_unfccc(
 ) -> None:
     """Parse an archive of BTR workbooks listed in its manifest."""
     console.print(btr.ingest_unfccc(archive_dir, out_path=out))
+
+
+@app.command("listings")
+def listings_command(
+    raw: Annotated[
+        Path, typer.Argument(help="A raw directory holding the OECD files in oecd/.")
+    ],
+) -> None:
+    """Add every provider, agency and recipient code the OECD files carry to the
+    listing that lacks it. Run `cf-build names` after."""
+    for listing, added in listings.refresh_listings(raw).items():
+        console.print(f"{listings.LISTING_FILES[listing]}: {added.height} added")
+        for row in added.select(*listings.LISTING_KEYS[listing], "name").iter_rows():
+            console.print("  " + ", ".join(map(str, row)), markup=False)
 
 
 @app.command("names")

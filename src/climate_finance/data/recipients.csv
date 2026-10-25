@@ -1,6 +1,9 @@
 code,name
+45,Malta
 55,Türkiye
 57,Kosovo
+61,Slovenia
+62,Croatia
 63,Serbia
 64,Bosnia and Herzegovina
 65,Montenegro
@@ -45,6 +48,7 @@ code,name
 255,Mali
 256,Mauritania
 257,Mauritius
+258,Mayotte
 259,Mozambique
 260,Niger
 261,Nigeria
@@ -52,6 +56,7 @@ code,name
 266,Rwanda
 268,Sao Tome and Principe
 269,Senegal
+270,Seychelles
 271,Eritrea
 272,Sierra Leone
 273,Somalia
@@ -68,6 +73,7 @@ code,name
 288,Zambia
 289,"South of Sahara, regional"
 298,"Africa, regional"
+329,Barbados
 336,Costa Rica
 338,Cuba
 340,Dominican Republic
@@ -80,30 +86,39 @@ code,name
 358,Mexico
 364,Nicaragua
 366,Panama
+375,Trinidad and Tobago
+376,Anguilla
 377,Antigua and Barbuda
 378,Dominica
 381,Grenada
+382,Saint Kitts and Nevis
 383,Saint Lucia
 384,Saint Vincent and the Grenadines
 385,Montserrat
+387,Turks and Caicos Islands
 389,"Caribbean & Central America, regional"
 425,Argentina
 428,Bolivia
 431,Brazil
+434,Chile
 437,Colombia
 440,Ecuador
 446,Guyana
 451,Paraguay
 454,Peru
 457,Suriname
+460,Uruguay
 463,Venezuela
 489,"South America, regional"
 498,"America, regional"
+530,Bahrain
 540,Iran
 543,Iraq
 549,Jordan
 550,West Bank and Gaza Strip
 555,Lebanon
+558,Oman
+566,Saudi Arabia
 573,Syrian Arab Republic
 580,Yemen
 589,"Middle East, regional"
@@ -140,6 +155,7 @@ code,name
 769,Viet Nam
 789,"Far East Asia, regional"
 798,"Asia, regional"
+831,Cook Islands
 832,Fiji
 836,Kiribati
 845,Nauru
