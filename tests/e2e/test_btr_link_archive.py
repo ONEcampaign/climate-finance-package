@@ -305,4 +305,4 @@ def test_canada_rests_on_its_own_coefficients(
 ) -> None:
     shares = _method_shares(reconciliation_at_own_coefficients, "CAN")
 
-    assert shares.max() < 0.01
+    assert len(shares) and shares.lt(0.01).all()

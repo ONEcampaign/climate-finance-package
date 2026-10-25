@@ -99,7 +99,7 @@ Japan's climate commitments for 2021 and 2022 total 130.0. The 38.0 is what Japa
 
 ## Step 6. Ask for one objective
 
-The table splits `value` into `adaptation`, `mitigation`, `cross_cutting`, and `unsplit` columns, so an adaptation question needs no filter. Under ONE's method each activity counts once, under its higher marker, so `adaptation` holds the activities marked for adaptation alone and `cross_cutting` holds those marked for both objectives. Everything marked for adaptation is the sum of the two.
+The table splits `value` into `adaptation`, `mitigation`, `cross_cutting`, and `unsplit` columns, so an adaptation question needs no filter. What the columns hold depends on the method's `highest_marker` rule. ONE and PROVIDER set it: each activity counts once, under its higher Rio marker, so `adaptation` holds the activities whose adaptation marker is the higher, `cross_cutting` holds those with equal markers, and adaptation finance is the sum of the two. The recipe below applies to these two methods.
 
 ```python
 import polars as pl
@@ -111,7 +111,11 @@ adaptation = (
     .sort("year")
 )
 for row in adaptation.iter_rows(named=True):
-    print(row["year"], round(row["adaptation"] / 1e6, 1), round(row["cross_cutting"] / 1e6, 1))
+    print(
+        row["year"],
+        round(row["adaptation"] / 1e6, 1),
+        round(row["cross_cutting"] / 1e6, 1),
+    )
 ```
 
 ```output
@@ -120,7 +124,7 @@ for row in adaptation.iter_rows(named=True):
 2023 12.7 1.7
 ```
 
-Germany's adaptation finance for 2022 is 15.2 million USD, or 16.8 with the cross-cutting activities. `low` and `high` bound `value`, the total over all objectives, and no column bounds an objective alone. Under OECD's method (`method=cf.methods.OECD`) `adaptation` already counts every activity marked for adaptation, cross-cutting ones included, so `cross_cutting` is not added.
+Under ONE, Germany's adaptation finance for 2022 is 15.2 million USD, or 16.8 with the cross-cutting activities. OECD (`method=cf.methods.OECD`) counts each marker on its own, so its `adaptation` holds every activity marked for adaptation and its `cross_cutting` is the overlap with mitigation. Under OECD, adaptation finance is the `adaptation` column alone, and adding `cross_cutting` counts the overlap twice. `method.highest_marker` says which rule a method follows. `low` and `high` bound `value`, the total over all objectives, and no column bounds an objective alone.
 
 ## Step 7. Check how much traces
 

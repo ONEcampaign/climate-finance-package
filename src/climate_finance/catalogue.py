@@ -171,9 +171,11 @@ class Catalogue:
         """Entries whose names contain `text`, ignoring case.
 
         Providers and recipients match any name `resolve` reads, as "kfw" or "DEU",
-        ignoring case, accents and surrounding spaces. Listing rows come first, in
-        listing order, then the agencies matched, by provider and agency code, with
-        `type` saying whose agency each is, as "Agency 2 of Germany".
+        ignoring case, accents and surrounding spaces, one row per entry. Listing
+        rows come first, in listing order, then the agencies matched, by provider and
+        agency code, with `type` saying whose agency each is, as "Agency 2 of
+        Germany". `alias` is the shortest name that matched, folded as `resolve`
+        folds it, and null where the entry's own name contains `text`.
         """
         if self.kind not in ("providers", "recipients"):
             return self.list().filter(
@@ -181,27 +183,40 @@ class Catalogue:
                 .str.to_lowercase()
                 .str.contains(text.lower(), literal=True)
             )
-        hits = (
+        key = _fold(text).strip()
+        matched = (
             _names()
             .filter(
                 pl.col("kind") == self.kind[:-1],
-                pl.col("key").str.contains(_fold(text).strip(), literal=True),
+                pl.col("key").str.contains(key, literal=True),
             )
-            .unique(["code", "agency"])
+            .sort(pl.col("key").str.len_chars(), "key")
+            .group_by("code", "agency", maintain_order=True)
+            .agg(pl.col("name", "key").first())
         )
-        listed = self.list().filter(
-            pl.col("code").is_in(
-                hits.filter(pl.col("agency").is_null())["code"].to_list()
+        hits = matched.with_columns(
+            alias=pl.Series(
+                [
+                    None if key in _fold(name) else alias
+                    for name, alias in matched.select("name", "key").iter_rows()
+                ],
+                dtype=pl.String,
             )
+        )
+        listed = self.list().join(
+            hits.filter(pl.col("agency").is_null()).select("code", "alias"),
+            on="code",
+            maintain_order="left",
         )
         agencies = [
             {
                 "code": code,
                 "name": name,
                 "type": f"Agency {agency} of {_code_names('providers')[code]}",
+                "alias": alias,
             }
-            for code, agency, name in hits.filter(pl.col("agency").is_not_null())
-            .select("code", "agency", "name")
+            for code, agency, name, alias in hits.filter(pl.col("agency").is_not_null())
+            .select("code", "agency", "name", "alias")
             .sort("code", "agency")
             .iter_rows()
         ]

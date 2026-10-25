@@ -4,6 +4,7 @@ import subprocess
 import sys
 import warnings
 from collections.abc import Callable
+from typing import Any
 
 import pandas as pd
 import polars as pl
@@ -12,13 +13,17 @@ from make_fixture import FIXTURE_DIR
 
 import climate_finance as cf
 from climate_finance.compat import ClimateData, set_climate_finance_data_path
+from climate_finance.errors import CoverageWarning
 from climate_finance.methods import Method
+from climate_finance.spec import Flow, SpecInputs
 
 RELEASE = cf.load(path=FIXTURE_DIR)
 YEARS = range(2021, 2025)
+# The fixture's commitments end in 2022, two years before its disbursements.
+UNCOVERED_COMMITMENTS = "years 2023 to 2024 return no rows"
 
 
-def _climate_data(**kwargs: object) -> ClimateData:
+def _climate_data(**kwargs: Any) -> ClimateData:
     with pytest.warns(DeprecationWarning, match=r"spending\(\.\.\.\)"):
         return ClimateData(years=YEARS, release=RELEASE, **kwargs)
 
@@ -33,20 +38,22 @@ def _expected(*parts: tuple[str, str, cf.Result]) -> pd.DataFrame:
 
 
 def test_get_data_equals_spending_for_each_flow() -> None:
-    data = (
-        _climate_data(providers=[5, "France"], recipients="Kenya")
-        .load_spending_data(flows=["gross_disbursements", "commitments"])
-        .get_data()
-    )
+    climate_data = _climate_data(providers=[5, "France"], recipients="Kenya")
+    with pytest.warns(CoverageWarning, match=UNCOVERED_COMMITMENTS):
+        data = climate_data.load_spending_data(
+            flows=["gross_disbursements", "commitments"]
+        ).get_data()
 
-    def spending(flow: str) -> cf.Result:
+    def spending(flow: Flow) -> cf.Result:
         return RELEASE.spending(
             providers=[5, "France"], recipients="Kenya", years=YEARS, flow=flow
         )
 
+    with pytest.warns(CoverageWarning, match=UNCOVERED_COMMITMENTS):
+        commitments = spending("commitments")
     expected = _expected(
         ("OECD_CRS", "gross_disbursements", spending("disbursements")),
-        ("OECD_CRS", "commitments", spending("commitments")),
+        ("OECD_CRS", "commitments", commitments),
     )
     assert len(data)
     pd.testing.assert_frame_equal(data, expected)
@@ -71,15 +78,14 @@ def test_get_data_equals_spending_for_each_flow() -> None:
 def test_1x_settings_map_onto_spending_arguments(
     configure: Callable[[ClimateData], ClimateData],
     load: dict[str, str],
-    spending: dict[str, object],
+    spending: SpecInputs,
 ) -> None:
     climate_data = configure(_climate_data())
     data = climate_data.load_spending_data(**load).get_data()
 
     source = load.get("source", "OECD_CRS")
-    expected = _expected(
-        (source, "gross_disbursements", RELEASE.spending(years=YEARS, **spending))
-    )
+    inputs: SpecInputs = {**spending, "years": YEARS}
+    expected = _expected((source, "gross_disbursements", RELEASE.spending(**inputs)))
     pd.testing.assert_frame_equal(data, expected)
 
 
@@ -150,7 +156,7 @@ def test_1x_calls_without_an_equivalent_name_the_replacement(
     ],
 )
 def test_choices_1x_refused_are_still_refused(
-    kwargs: dict[str, object], message: str
+    kwargs: dict[str, Any], message: str
 ) -> None:
     with pytest.raises(ValueError, match=message), warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)

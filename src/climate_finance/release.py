@@ -156,8 +156,27 @@ class Release:
     def spending(self, **inputs: Unpack[SpecInputs]) -> Result:
         """Climate finance for the query `inputs` describe, as keywords only.
 
-        Each keyword is a `Spec` field and takes the forms `SpecInputs` lists, such as
-        `providers="Japan"`, `years=range(2015, 2023)` or `method="OECD"`.
+        Each keyword is a `Spec` field, and `cf.SpecInputs` types the forms it takes.
+
+        Args:
+            providers: names, DAC codes or `Agency` values, one or many, such as
+                `"Japan"`, `701`, `"EIB"` or `["Germany", 701]`. None, the default,
+                takes every provider. A name of one agency counts its rows only.
+            recipients: names or DAC codes, one or many, such as `"Kenya"`,
+                `"KEN"` or `248`. None, the default, takes every recipient.
+            years: an int or ints, such as `2022` or `range(2015, 2023)`. None,
+                the default, takes every year.
+            method: a `Method`, a `MethodRange`, a name from `cf.methods.list()`
+                ignoring case, such as `"OECD"`, or a list of methods and names,
+                which becomes a range. Default `cf.methods.ONE`.
+            flow: `"disbursements"` (default), `"commitments"` or
+                `"grant_equivalent"`.
+            view: `"recipient"` (default) or `"provider"`.
+            currency: `"USD"` (default), `"EUR"`, `"GBP"` or `"CAD"`.
+            prices: `"current"` (default) or a base year, such as `2022`.
+            oda_only: True or False (default).
+            measure: `"amount"` (default) or `"share_of_total"`.
+            untraced: True (default) or False.
 
         Raises:
             UnknownProviderError: for a provider name, code or agency outside the

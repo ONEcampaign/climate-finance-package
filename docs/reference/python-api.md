@@ -156,7 +156,7 @@ A frozen pydantic model of every `spending()` argument. `Spec.methods` returns t
 | `measure` | `Measure` | `"amount"` |
 | `untraced` | `bool` | `True` |
 
-The table gives the types a spec holds. `Spec(...)` takes each field in the forms `spending()` lists, and `climate_finance.spec.SpecInputs` types them for a type checker. `years` holds the years sorted and without duplicates, and `method` holds the `Method` or `MethodRange` a name names, so JSON keeps its coefficients.
+The table gives the types a spec holds. `Spec(...)` takes each field in the forms `spending()` lists, and `cf.SpecInputs` types them for a type checker. `years` holds the years sorted and without duplicates, and `method` holds the `Method` or `MethodRange` a name names, so JSON keeps its coefficients.
 
 `providers` and `recipients` read names, codes, and agencies through the listings and hold the DAC codes and `Agency` values they name, sorted and without duplicates. So `providers="Japan"` and `providers=701` give equal specs, and a provider named beside one of its agencies covers it. In JSON an agency is `{"provider": 918, "agency": 3}`.
 
@@ -236,7 +236,11 @@ DuckDB queries the table by the name of the variable that holds it, here `frame`
 import duckdb
 
 frame = result.table
-print(duckdb.sql("select year, round(sum(value) / 1e6, 1) as value_musd from frame group by year order by year"))
+print(
+    duckdb.sql(
+        "select year, round(sum(value) / 1e6, 1) as value_musd from frame group by year order by year"
+    )
+)
 ```
 
 ```output
@@ -278,9 +282,7 @@ Returned by `Release.reconcile()`. It prints a title line, naming the providers,
 - `comparator`: the comparator of the row's flow, `crdf_at_party_weight` for committed rows and `crs_disbursed_at_party_weight` for disbursed rows, null on a row with no status. `btr_over_comparator` is the BTR total over it, and `thin_comparator` is true where the comparator is below USD 10m (`query.THIN_COMPARATOR_USD`).
 - `btr_over_<comparator>` for each of the four face comparators, null for the other flow's comparators, and `btr_grant_equivalent_over_crs_grant_equivalent`. Every ratio is null where its comparator is zero or null.
 
-`rows(provider=..., year=...)` returns the BTR rows of one party and year with each CRS record linked to them, on a local build that holds `btr` and `btr_links`. `provider` takes a party as `providers` does. The rows hold the provider's name, `provider`, before `provider_code`; `recipient` is the BTR's own recipient text.
-
-`rows(party, year)` returns the BTR rows of that party and year alongside each linked CRS record, with the record's facts prefixed `crs_`, and `unfccc_only` set to true for unlinked rows. On a published release, which leaves out `btr` and `btr_links`, it raises `WithheldTableError`.
+`rows(provider=..., year=...)` returns the BTR rows of one party and year with each CRS record linked to them, with the record's facts prefixed `crs_`, and `unfccc_only` set to true for a BTR row that no CRS record links to. `provider` takes a party as `providers` does. The rows hold the provider's name, `provider`, before `provider_code`; `recipient` is the BTR's own recipient text. It needs a local build that holds `btr` and `btr_links`; on a published release, which leaves them out, it raises `WithheldTableError`.
 
 ## `compare(*results)` and `Comparison`
 
@@ -288,7 +290,7 @@ Returned by `Release.reconcile()`. It prints a title line, naming the providers,
 
 ## Listings
 
-`cf.providers`, `cf.recipients`, `cf.flows`, and `cf.methods` each provide three methods: `.list()`, which returns a polars DataFrame; `.info(name)`, which returns a description by name or, for providers and recipients, by DAC code; and `.search(text)`, which returns the entries whose names contain `text`. For providers and recipients, `search` reads every name the resolver reads, ignoring case and accents, so `cf.providers.search("kfw")` finds KfW, and lists the listing rows first, then each agency it matches, with `type` naming its provider, as `Agency 2 of Germany`.
+`cf.providers`, `cf.recipients`, `cf.flows`, and `cf.methods` each provide three methods: `.list()`, which returns a polars DataFrame; `.info(name)`, which returns a description by name or, for providers and recipients, by DAC code; and `.search(text)`, which returns the entries whose names contain `text`. For providers and recipients, `search` reads every name the resolver reads, ignoring case and accents, so `cf.providers.search("kfw")` finds KfW, and returns one row per entry: the listing rows first, then each agency it matches, with `type` naming its provider, as `Agency 2 of Germany`. `alias` holds the shortest name that matched, folded to lower case without accents, where the entry's own name does not contain `text`, so `cf.providers.search("Allemagne")` returns Germany with `alias` `allemagne`.
 
 ```python
 print(cf.providers.info("Japan"))

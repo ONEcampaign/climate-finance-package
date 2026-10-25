@@ -7,6 +7,7 @@ import pytest
 
 from climate_finance.build.listings import (
     LISTING_FILES,
+    Listing,
     ListingsError,
     refresh_listings,
 )
@@ -37,7 +38,7 @@ MULTI = {
     "donor_code": [8, 20001],
     "donor_name": ["Norway", "DAC countries"],
 }
-LISTED = {
+LISTED: dict[Listing, str] = {
     "providers": "code,name,name_fr,type\n8,Norway,Norvège,DAC member\n",
     "agencies": "code,agency,name\n8,1,Norad\n",
     "recipients": "code,name\n248,Kenya\n",

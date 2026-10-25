@@ -1,6 +1,6 @@
 """Listings, and provider and recipient names resolved to DAC codes."""
 
-from typing import Literal, get_args
+from typing import Any, Literal, get_args
 
 import numpy as np
 import pytest
@@ -9,7 +9,7 @@ from polars.testing import assert_frame_equal
 
 import climate_finance as cf
 from climate_finance.catalogue import Agency, Catalogue, resolve
-from climate_finance.spec import Flow
+from climate_finance.spec import Flow, SpecInputs
 
 SNAP = cf.load(path=FIXTURE_DIR)
 
@@ -51,8 +51,9 @@ def test_names_match_without_accents_or_typographic_apostrophes() -> None:
 def test_an_unknown_name_raises_with_suggestions_and_never_substitutes(
     argument: str, name: str, error: type[cf.UnknownNameError], suggestion: str | None
 ) -> None:
+    keywords: dict[str, Any] = {argument: name}
     with pytest.raises(error) as raised:
-        SNAP.spending(**{argument: name})
+        SNAP.spending(**keywords)
 
     assert raised.value.name == name
     assert raised.value.suggestions
@@ -93,7 +94,7 @@ def test_resolve_reads_any_common_form_as_codes_and_agencies(
             "Miscellaneous",
             "providers",
             cf.UnknownProviderError,
-            40,
+            36,
             "Miscellaneous (Germany)",
         ),
         ("Kongo", "recipients", cf.UnknownRecipientError, 2, "Congo"),
@@ -164,7 +165,7 @@ def test_a_name_with_nothing_close_raises_without_suggestions() -> None:
     ],
 )
 def test_a_code_the_listings_lack_raises_with_close_codes(
-    keywords: dict[str, object], error: type[cf.UnknownNameError], suggestion: str
+    keywords: SpecInputs, error: type[cf.UnknownNameError], suggestion: str
 ) -> None:
     with pytest.raises(error) as raised:
         SNAP.spending(**keywords)
@@ -196,20 +197,29 @@ def test_search_matches_part_of_a_name_ignoring_case() -> None:
 @pytest.mark.parametrize(
     ("text", "found"),
     [
-        ("kfw", ("KfW Bankengruppe (KfW banking group)", "Agency 2 of Germany")),
-        ("EIB", ("European Investment Bank", "Agency 3 of EU Institutions")),
-        ("deu", ("Germany", "DAC member")),
-        ("Allemagne", ("Germany", "DAC member")),
+        ("kfw", ("KfW Bankengruppe (KfW banking group)", "Agency 2 of Germany", None)),
+        ("EIB", ("European Investment Bank", "Agency 3 of EU Institutions", "eib")),
+        ("deu", ("Germany", "DAC member", "deu")),
+        ("Allemagne", ("Germany", "DAC member", "allemagne")),
+        (
+            "ger",
+            (
+                "Ministry of Foreign Affairs",
+                "Agency 2 of Japan",
+                "ministere des affaires etrangeres",
+            ),
+        ),
     ],
 )
 def test_search_finds_every_name_the_resolver_reads(
-    text: str, found: tuple[str, str]
+    text: str, found: tuple[str, str, str | None]
 ) -> None:
-    rows = cf.providers.search(text).select("name", "type").rows()
+    found_rows = cf.providers.search(text)
+    rows = found_rows.select("name", "type", "alias").rows()
 
     assert found in rows
-    for name, _ in rows:
-        cf.providers.code(name)
+    assert found_rows.select("code", "type").is_unique().all()
+    assert found_rows["alias"].drop_nulls().str.contains(text.casefold()).all()
 
 
 @pytest.mark.parametrize(

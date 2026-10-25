@@ -8,8 +8,7 @@ package resolves names without resolvekit. One row per key and target:
 - `key`: the name, folded as `catalogue._fold` folds it, and stripped.
 - `code`: the DAC provider or recipient code.
 - `agency`: the DAC agency code when the key names an agency, else null.
-- `name`: the listing name of the provider, agency or recipient, or the agency's
-  canonical name in resolvekit where the agency listing lacks it.
+- `name`: the listing name of the provider, agency or recipient.
 - `source`: where the key came from, one of `SOURCES`.
 
 The sources, best first:
@@ -22,9 +21,10 @@ The sources, best first:
 5. `resolvekit`: every name of the resolvekit places and organisations carrying the
    listing code.
 6. `agency`: the agency listing's names, and every name of the `org.governments`
-   agencies, whose `oecd:agency` code is the provider (a DAC code, or an ISO 3 code
-   mapped through `geo.provider_code`) and the agency. Agencies of providers outside
-   the listing are left out.
+   agencies whose `oecd:agency` code is the provider (a DAC code, or an ISO 3 code
+   mapped through `geo.provider_code`) and the agency. Only agencies the agency
+   listing holds, of providers the provider listing holds, have rows, so a name
+   never resolves to an agency no release table carries.
 
 Keys of digits alone are left out, since those read as DAC codes. Each key keeps its
 rows at its best source only. A key with one row resolves; a key with several rows at
@@ -177,7 +177,7 @@ def _curated_rows(
         )
     for alias, (code, agency) in curated.get("agencies", {}).items():
         if (code, agency) not in agencies:
-            unknown.append(f"{alias!r}: resolvekit has no agency {agency} of {code}")
+            unknown.append(f"{alias!r}: the listing has no agency {agency} of {code}")
             continue
         yield _row(
             "provider",
@@ -213,10 +213,9 @@ def _entity_rows(listings: dict[str, dict[int, str]]) -> Iterator[Row]:
 
 
 def _agencies(listing: dict[int, str]) -> Agencies:
-    """The agencies of listed providers: those of the agency listing, named as it
-    names them, and the `org.governments` agencies, named by their canonical name
-    where the agency listing lacks them. An agency in both takes every name of each.
-    """
+    """The agency listing's agencies of listed providers, named as it names them,
+    each with every name of the `org.governments` agency carrying its code. An agency
+    the listing lacks is left out, since no release table holds it."""
     agencies: Agencies = {
         (code, agency): (name, [name])
         for code, agency, name in read_listing("agencies").iter_rows()
@@ -229,11 +228,8 @@ def _agencies(listing: dict[int, str]) -> Agencies:
             continue
         provider, agency = codes["oecd:agency"].split(":")
         code = int(provider) if provider.isdigit() else provider_code(provider)
-        if code in listing:
-            name, aliases = agencies.get(
-                (code, int(agency)), (entity.canonical_name, [])
-            )
-            agencies[code, int(agency)] = (name, [*aliases, *_names(entity)])
+        if code is not None and (key := (code, int(agency))) in agencies:
+            agencies[key][1].extend(_names(entity))
     return agencies
 
 

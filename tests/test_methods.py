@@ -135,17 +135,18 @@ def test_methods_with_close_coefficients_keep_distinct_labels() -> None:
     [
         (lambda: MethodRange(methods=(ONE, OECD, ONE)), "more than once"),
         (lambda: ONE.replace(principal=1.5), "principal"),
-        (lambda: Method(significant=0.4, principal=1.0), "highest_marker"),
+        # Each call below is the wrong input under test, so a type checker flags it.
+        (lambda: Method(significant=0.4, principal=1.0), "highest_marker"),  # ty: ignore[missing-argument]
         (
-            lambda: Method(significant=0.4, principal=1.0, highest_marker="yes"),
+            lambda: Method(significant=0.4, principal=1.0, highest_marker="yes"),  # ty: ignore[invalid-argument-type]
             "highest_marker",
         ),
         (
-            lambda: Method(signficant=0.4, principal=1.0, highest_marker=True),
+            lambda: Method(signficant=0.4, principal=1.0, highest_marker=True),  # ty: ignore[missing-argument, unknown-argument]
             "did you mean 'significant'",
         ),
-        (lambda: cf.Agency(provider=918), "agency"),
-        (lambda: cf.Agency(provider=918, agncy=3), "did you mean 'agency'"),
+        (lambda: cf.Agency(provider=918), "agency"),  # ty: ignore[missing-argument]
+        (lambda: cf.Agency(provider=918, agncy=3), "did you mean 'agency'"),  # ty: ignore[missing-argument, unknown-argument]
     ],
 )
 def test_a_method_or_agency_refuses_with_the_package_error(

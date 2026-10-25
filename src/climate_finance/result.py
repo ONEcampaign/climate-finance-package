@@ -1009,21 +1009,8 @@ def _field_text(field: str, value: object) -> str:
         case "recipients", tuple():
             return f"{field} {', '.join(name_of(code, kind=field) for code in value)}"
         case "years", tuple():
-            return f"{field} {_year_runs(value)}"
+            return f"{field} {year_runs(value)}"
     return str(value)
-
-
-def _year_runs(years: tuple[int, ...]) -> str:
-    """Sorted years with each run of consecutive years as its ends: "2015 to 2022"."""
-    runs: list[list[int]] = []
-    for year in years:
-        if runs and year == runs[-1][-1] + 1:
-            runs[-1].append(year)
-        else:
-            runs.append([year])
-    return ", ".join(
-        str(run[0]) if len(run) == 1 else f"{run[0]} to {run[-1]}" for run in runs
-    )
 
 
 def _title(spec: Spec, *, release: str) -> str:

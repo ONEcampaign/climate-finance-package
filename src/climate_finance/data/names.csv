@@ -1,31 +1,19 @@
 kind,key,code,agency,name,source
 provider,'straya,801,,Australia,resolvekit
-provider,11th european development fund economic partnership agreement and caricom single market and economy,906,11,11th European Development Fund Economic Partnership Agreement and CARICOM Single Market and Economy,agency
 provider,abu dhabi department of finance,576,2,Abu Dhabi Department of Finance,agency
 provider,abu dhabi fund for development,576,3,Abu Dhabi Fund for Development,agency
-provider,abu dhabi future energy co.,576,5,Abu Dhabi Future Energy Co.,agency
 provider,ac,928,2,WHO Assessed contributions,agency
-provider,academia,336,8,Academia,agency
 provider,access to energy fund,7,11,Access to Energy Fund,agency
-provider,action plan for the caribbean environment programme - assessed,807,21,Action Plan for the Caribbean Environment Programme - assessed,agency
-provider,action plan for the caribbean environment programme - voluntary contributions non-core - developmental,807,22,Action Plan for the Caribbean Environment Programme - Voluntary Contributions Non-core - developmental,agency
-provider,action plan for the caribbean environment programme - voluntary contributions non-core - tossd only,807,23,Action Plan for the Caribbean Environment Programme - Voluntary Contributions Non-Core - TOSSD only,agency
-provider,ad hoc contributions,909,23,Ad Hoc Contributions,agency
 provider,ada,1,8,Austrian Development Agency,agency
 provider,adaptation fund,1012,,Adaptation Fund,listing
-provider,adb co-financed assistance fund,915,61,ADB Co-financed Assistance Fund,agency
-provider,adb ventures investment fund 1,915,60,ADB Ventures Investment Fund 1,agency
 provider,adf,302,13,African Development Foundation,agency
 provider,adfd,576,3,Abu Dhabi Fund for Development,agency
-provider,adfi,913,22,Africa Digital Financial Inclusion Facility,agency
-provider,adh,909,23,Ad Hoc Contributions,agency
 provider,administration centrale,6,7,Central administration,agency
 provider,administration federale (divers departements),11,1,Federal Administration (various departments),agency
 provider,administration fiscale et douaniere,12,15,HM Revenue and Customs,agency
 provider,administration locale - municipalites et cites metropolitaine,6,82,Local administration - Municipalities and metropolitan cities,agency
 provider,administration locale - non specifie,6,8,Local administration - Unspecified,agency
 provider,administration locale - regions et provinces autonomes,6,81,Local administration - Regions and autonomous provinces,agency
-provider,administration nationale de l'aeronautique et de l'espace,302,35,National Aeronautics and Space Administration,agency
 provider,administration nationale des reserves de l'etat et des questions speciales,77,38,National Agency for State Reserves and Special Problems,agency
 provider,administration suedoise de developpement international,10,6,Swedish International Development Authority,agency
 provider,"administrations provinciales, communautes locales",1,6,"Provincial governments, local communities",agency
@@ -44,23 +32,15 @@ provider,afdf,914,1,AfDF,agency
 provider,afesd,921,1,Arab Fund ,agency
 provider,affaires etrangeres et du commerce international canada,301,6,Foreign Affairs and International Trade Canada,agency
 provider,affaires mondiales canada,301,3,Global Affairs Canada,agency
-provider,afghanistan infrastructure trust fund,915,30,Afghanistan Infrastructure Trust Fund,agency
-provider,afoco,1053,1,AFoCO core resources,agency
-provider,afoco (financement au budget regulier),1053,1,AFoCO core resources,agency
-provider,afoco core resources,1053,1,AFoCO core resources,agency
-provider,afoco non-core resources,1053,2,AFoCO non-core resources,agency
-provider,africa digital financial inclusion facility,913,22,Africa Digital Financial Inclusion Facility,agency
 provider,african development bank,913,,African Development Bank,listing
 provider,african development bank (afdb),913,,African Development Bank,resolvekit
 provider,african development foundation,302,13,African Development Foundation,agency
 provider,african development fund,914,,African Development Fund,listing
-provider,aft,909,24,Aid for Trade Strategic Thematic Fund,agency
 provider,ag,50,15,Autonomous Governments,agency
 provider,ag,801,2,Attorney-General,agency
 provider,agea,6,2,Agenzia Erogazioni Per l'Agricoltura,agency
 provider,agence autrichienne de developpement,1,8,Austrian Development Agency,agency
 provider,agence canadienne de developpement international,301,1,Canadian International Development Agency,agency
-provider,agence croate de l'aviation civile,62,29,Croatian Civil Aviation Agency,agency
 provider,agence de defense psychologique,10,40,Psychological Defence Agency,agency
 provider,agence de developpement international,302,1,Agency for International Development,agency
 provider,agence de l'integrite nationale,77,6,National Integrity Agency,agency
@@ -69,7 +49,6 @@ provider,agence francaise de developpement,4,3,French Development Agency,agency
 provider,agence internationale de l'energie atomique,944,,International Atomic Energy Agency,listing_fr
 provider,agence japonaise de cooperation internationale,701,8,Japanese International Co-operation Agency,agency
 provider,agence japonaise de cooperation outre-mer,701,10,Japan Overseas Development Co-operation,agency
-provider,agence mexicaine de cooperation internationale pour le developpement,358,1,Mexican Agency for International Development Cooperation,agency
 provider,agence multilaterale de garantie des investissements,902,,Multilateral Investment Guarantee Agency,listing_fr
 provider,agence nationale des fonctionnaires,77,12,National Agency of Civil Servants,agency
 provider,agence nationales pour les affaires fiscales,77,18,National Agency for Fiscal Administration,agency
@@ -78,7 +57,6 @@ provider,agence norvegienne de cooperation pour le developpement,8,1,Norwegian A
 provider,agence norvegienne de cooperation pour les echanges,8,9,Norwegian Agency for Exchange Cooperation,agency
 provider,agence nucleaire pour les dechets radioactifs,77,37,Nuclear Agency for Radioactive Waste,agency
 provider,agences de l'onu,992,,UN AGENCIES,listing_fr
-provider,agencia chilena para la cooperacion internacional al desarrollo,434,1,Agencia Chilena para la cooperación internacional al desarrollo,agency
 provider,agency for international development,302,1,Agency for International Development,agency
 provider,agenzia erogazioni per l'agricoltura,6,2,Agenzia Erogazioni Per l'Agricoltura,agency
 provider,agenzia italiana per la cooperazione allo sviluppo,6,4,Agenzia italiana per la cooperazione allo sviluppo,agency
@@ -90,13 +68,9 @@ provider,agri,68,19,Ministry of Agriculture,agency
 provider,agri,75,7,Ministry of Agriculture,agency
 provider,agri,77,30,Ministry of Agriculture and Regional Development,agency
 provider,agri,84,11,Ministry of Agriculture,agency
-provider,agrolac 2025 multidonor trust fund,909,66,AgroLAC 2025 Multidonor Trust Fund,agency
-provider,ahpsr,928,15,Alliance for Health Policy and Systems Research,agency
 provider,aics,6,4,Agenzia italiana per la cooperazione allo sviluppo,agency
 provider,aid,8,17,Ministry of Labour and Social Inclusion,agency
 provider,aid,302,1,Agency for International Development,agency
-provider,aid for trade strategic thematic fund,909,24,Aid for Trade Strategic Thematic Fund,agency
-provider,aif,915,19,ASEAN Infrastructure Fund,agency
 provider,aiib,1024,1,Asian Infrastructure Investment Bank,agency
 provider,al maktoum foundation,576,20,Al Maktoum Foundation,agency
 provider,alemanha,5,,Germany,resolvekit
@@ -106,13 +80,8 @@ provider,algeria,130,,Algeria,listing
 provider,algerie,130,,Algeria,listing_fr
 provider,algerien,130,,Algeria,resolvekit
 provider,allemagne,5,,Germany,listing_fr
-provider,alliance for health policy and systems research,928,15,Alliance for Health Policy and Systems Research,agency
 provider,alliance mondiale pour les vaccins et la vaccination,1311,,Global Alliance for Vaccines and Immunization,listing_fr
-provider,amazon bioeconomy and forest management fund,909,89,Amazon Bioeconomy and Forest Management Fund,agency
-provider,amed,701,16,Japan Agency for Medical Research and Development,agency
 provider,america,302,,United States,resolvekit
-provider,amexcid,358,1,Mexican Agency for International Development Cooperation,agency
-provider,amz,909,89,Amazon Bioeconomy and Forest Management Fund,agency
 provider,aotearoa new zealand,820,,New Zealand,resolvekit
 provider,apdrf,915,2,Asia Pacific Disaster Response Fund,agency
 provider,apif,976,2,Awqaf Properties Investment Fund,agency
@@ -130,16 +99,9 @@ provider,are,576,,United Arab Emirates,iso3
 provider,argelia,130,,Algeria,resolvekit
 provider,art.,6,9,Artigiancassa,agency
 provider,artigiancassa,6,9,Artigiancassa,agency
-provider,asap+,988,3,Enhanced Adaptation for Smallholder Agriculture Programme (ASAP+),agency
 provider,asdb,915,,Asian Development Bank,curated
-provider,asean australia smart cities trust fund,915,31,ASEAN Australia Smart Cities Trust Fund,agency
-provider,asean infrastructure fund,915,19,ASEAN Infrastructure Fund,agency
-provider,asean infrastructure fund - asean catalytic green finance facility,915,68,ASEAN Infrastructure Fund - ASEAN Catalytic Green Finance Facility,agency
 provider,aserbaidschan,611,,Azerbaijan,resolvekit
 provider,asia pacific disaster response fund,915,2,Asia Pacific Disaster Response Fund,agency
-provider,asia pacific project preparation facility,915,32,Asia Pacific Project Preparation Facility,agency
-provider,asia-pacific climate finance fund,915,33,Asia-Pacific Climate Finance Fund,agency
-provider,asian clean energy fund,915,34,Asian Clean Energy Fund,agency
 provider,asian development bank,915,,Asian Development Bank,listing
 provider,asian development bank (adb),915,,Asian Development Bank,resolvekit
 provider,asian forest cooperation organisation,1053,,Asian Forest Cooperation Organisation,listing
@@ -152,16 +114,12 @@ provider,association internationale de developpement,905,,International Developm
 provider,assurance nippone exports et investissements,701,71,Nippon Export and Investment Insurance,agency
 provider,at,1,,Austria,iso2
 provider,atnu,960,,UNTA,listing_fr
-provider,attorney general's office,340,8,Attorney General's Office,agency
 provider,attorney-general,801,2,Attorney-General,agency
 provider,au,801,,Australia,iso2
-provider,auci,460,1,Uruguayan Agency of International Co-operation,agency
 provider,aus,801,,Australia,iso3
 provider,aussieland,801,,Australia,resolvekit
 provider,australia,801,,Australia,listing
-provider,australian climate finance partnership,915,69,Australian Climate Finance Partnership,agency
 provider,australian government,801,5,Australian Government,agency
-provider,australian technical assistance grant,915,35,Australian Technical Assistance Grant,agency
 provider,australie,801,,Australia,listing_fr
 provider,australien,801,,Australia,resolvekit
 provider,austria,1,,Austria,listing
@@ -202,12 +160,6 @@ provider,azərbaycan respublikası,611,,Azerbaijan,resolvekit
 provider,badea,953,1,Arab Bank for Economic Development in Africa,agency
 provider,baden-wurttemberg,5,87,Land Baden-Württemberg,agency
 provider,bafd,913,1,AfDB Ordinary Capital,agency
-provider,bamako convention - assessed contribution,807,16,Bamako Convention - Assessed Contribution,agency
-provider,bamako convention - voluntary non-core contributions,807,17,Bamako Convention - Voluntary Non-Core Contributions,agency
-provider,bamako pow assessed contributions,807,16,Bamako Convention - Assessed Contribution,agency
-provider,bamako pow non-core,807,17,Bamako Convention - Voluntary Non-Core Contributions,agency
-provider,banco portugues de fomento - development bank,9,22,Banco Português de Fomento - Development Bank,agency
-provider,banco portugues de fomento - development bankbf,9,22,Banco Português de Fomento - Development Bank,agency
 provider,bank of portugal,9,20,Bank of Portugal,agency
 provider,bank of thailand,764,22,Bank of Thailand,agency
 provider,banque africaine de developpement,913,,African Development Bank,listing_fr
@@ -234,12 +186,8 @@ provider,banque internationale d'investissement,1037,,International Investment B
 provider,banque internationale pour la reconstruction et le developpement,901,,International Bank for Reconstruction and Development,listing_fr
 provider,banque japonaise pour la cooperation internationale,701,11,Japan Bank for International Co-operation,agency
 provider,banque nationale de croatie,62,11,Croatian National Bank,agency
-provider,"basel, rotterdam and stockholm conventions (brs) - voluntary contributions non-core - developmental",807,11,"Basel, Rotterdam and Stockholm conventions (BRS) - Voluntary Contributions Non-core - developmental",agency
-provider,"basel, rotterdam and stockholm conventions (brs) - voluntary contributions non-core tossd only",807,12,"Basel, Rotterdam and Stockholm conventions (BRS) - Voluntary Contributions Non-core TOSSD only",agency
-provider,"basel, rotterdam and stockholm conventions (brs)- assessed contributions",807,10,"Basel, Rotterdam and Stockholm conventions (BRS)- assessed contributions",agency
 provider,bayern,5,88,Free State of Bavaria,agency
 provider,be,2,,Belgium,iso2
-provider,beif,1045,3,Border Environment Infrastructure Fund,agency
 provider,beis,12,16,"Department for Business, Energy and Industrial Strategy",agency
 provider,bel,2,,Belgium,iso3
 provider,belgian investment company for developing countries,2,22,Belgian Investment Company for Developing Countries,agency
@@ -252,7 +200,6 @@ provider,berd,990,1,EBRD,agency
 provider,berlin,5,90,Land Berlin,agency
 provider,bernard van leer foundation,1609,,Bernard van Leer Foundation,listing
 provider,bezos earth fund,1646,,Bezos Earth Fund,listing
-provider,bf,9,22,Banco Português de Fomento - Development Bank,agency
 provider,bfd,8,15,Ministry of Children and Families,agency
 provider,bg,72,,Bulgaria,iso2
 provider,bgr,72,,Bulgaria,iso3
@@ -262,18 +209,15 @@ provider,bill & melinda gates foundation,1601,,Bill & Melinda Gates Foundation,l
 provider,bin,75,3,Office of Immigration and Nationality,agency
 provider,bio,2,22,Belgian Investment Company for Developing Countries,agency
 provider,bis,12,11,"Department for Business, Innovation and Skills",agency
-provider,bits,10,5,BITS,agency
 provider,bka,1,7,Federal Chancellery,agency
 provider,bkm,5,69,Federal Government Commissioner for Culture and the Media,agency
 provider,black sea trade & development bank,981,,Black Sea Trade & Development Bank,listing
 provider,bloomberg family foundation,1640,,Bloomberg Family Foundation,listing
-provider,blu,909,90,UK Blue Carbon Fund,agency
 provider,bm:ukk,1,14,"Ministry for Education, Arts and Culture",agency
 provider,bmas,5,71,Federal Ministry of Labour and Social Affairs,agency
 provider,bmbf,1,16,Federal Ministry of Education,agency
 provider,bmbfsfj,5,65,"Federal Ministry for Education, Family Affairs, Senior Citizens, Women and Youth",agency
 provider,bmbwf,1,9,"Federal Ministry of Women's Affairs, Science and Research",agency
-provider,bmds,5,73,Federal Ministry for Digital Transformation and Government Modernisation,agency
 provider,bmeia,1,5,Federal Ministry for European and International Affairs,agency
 provider,bmf,1,1,Federal Ministry of Finance,agency
 provider,bmf,5,5,Federal Ministry of Finance,agency
@@ -292,16 +236,12 @@ provider,bmv,5,67,Federal Ministry of Transport,agency
 provider,bmvg,5,64,Federal Ministry of Defence,agency
 provider,bmwe,5,62,Federal Ministry for Economic Affairs and Energy,agency
 provider,bmwfw,1,15,"Ministry for Science, Research and Economy",agency
-provider,bmwsb,5,72,"Federal Ministry for Housing, Urban Development and Building",agency
 provider,bmz,5,1,Federal Ministry for Economic Cooperation and Development,agency
 provider,bohemia,68,,Czechia,resolvekit
-provider,border environment infrastructure fund,1045,3,Border Environment Infrastructure Fund,agency
 provider,botnar foundation,1644,1,Botnar Foundation,agency
 provider,bp,7,12,Building Prospects,agency
 provider,bp,9,20,Bank of Portugal,agency
-provider,bpi,4,95,BPI France,agency
 provider,bpi france,4,2,BPI France,agency
-provider,bpi france,4,95,BPI France,agency
 provider,br,431,,Brazil,iso2
 provider,bra,431,,Brazil,iso3
 provider,brandenburg,5,91,Land Brandenburg,agency
@@ -309,17 +249,11 @@ provider,brasil,431,,Brazil,resolvekit
 provider,brasile,431,,Brazil,resolvekit
 provider,brasilien,431,,Brazil,resolvekit
 provider,brazil,431,,Brazil,listing
-provider,brazilian agricultural research corporation,431,11,Brazilian Agricultural Research Corporation,agency
-provider,brazilian cofinancing account,909,26,Brazilian Cofinancing Account,agency
-provider,brazilian cooperation agency,431,1,Brazilian Cooperation Agency,agency
 provider,breg,1,3,Federal Government of Austria,agency
 provider,bremen,5,83,Free Hanseatic City of Bremen,agency
 provider,bresil,431,,Brazil,listing_fr
 provider,britain,12,,United Kingdom,resolvekit
 provider,british international investment,12,2,British International Investment,agency
-provider,brs pow assessed contributions,807,10,"Basel, Rotterdam and Stockholm conventions (BRS)- assessed contributions",agency
-provider,brs pow non-core - developmental,807,11,"Basel, Rotterdam and Stockholm conventions (BRS) - Voluntary Contributions Non-core - developmental",agency
-provider,brs pow non-core - tossd only,807,12,"Basel, Rotterdam and Stockholm conventions (BRS) - Voluntary Contributions Non-core TOSSD only",agency
 provider,brussels official regional ministries,2,91,Brussels Official Regional Ministries,agency
 provider,bstdb,981,1,BSTDB Ordinary capital,agency
 provider,bstdb ordinary capital,981,1,BSTDB Ordinary capital,agency
@@ -335,7 +269,6 @@ provider,bundestag allemand,5,70,German Bundestag,agency
 provider,bureau d'aide humanitaire de la commission europeenne,918,4,Humanitarian Aid Office of the European Commission,agency
 provider,bureau de cooperation avec les ong,62,16,Office for Cooperation with NGOs,agency
 provider,bureau de cooperation d'outre-mer pour la peche,701,7,Overseas Fishery Co-operation Foundation,agency
-provider,bureau de ducroire,22,22,Ducroire Office,agency
 provider,bureau de l'immigration et de la nationalite,75,3,Office of Immigration and Nationality,agency
 provider,bureau de l'onu de lutte contre le terrorisme,1042,,UN Office of Counter-Terrorism,listing_fr
 provider,bureau des affaires de desarmement des nations unies,1051,,United Nations Office for Disarmament Affairs,listing_fr
@@ -353,56 +286,26 @@ provider,camoes-institute for cooperation and language,9,2,Camões-Institute for
 provider,campagnes saoudiennes,566,5,Saudi Campaigns,agency
 provider,can,301,,Canada,iso3
 provider,canada,301,,Canada,listing
-provider,canada - caricom climate adaptation fund,906,8,Canada - CARICOM Climate Adaptation Fund,agency
-provider,canada afdb climate fund,913,24,Canada AfDB Climate Fund,agency
-provider,canada cooperation framework,909,27,Canada Cooperation Framework,agency
-provider,canadian climate and nature fund for the private sector in asia,915,70,Canadian Climate and Nature Fund for the Private Sector in Asia,agency
-provider,canadian climate fund for the private sector in asia,915,20,Canadian Climate Fund For The Private Sector In Asia,agency
-provider,canadian climate fund for the private sector in asia ii,915,21,Canadian Climate Fund For The Private Sector In Asia II,agency
-provider,canadian climate fund for the private sector in the americas,909,35,Canadian Climate Fund for the Private Sector in the Americas,agency
-provider,canadian fund,909,30,Canadian Fund,agency
-provider,canadian fund for universal legal identity in latin america and the caribbean,909,29,Canadian Fund for Universal Legal Identity in Latin America and the Caribbean,agency
 provider,canadian international development agency,301,1,Canadian International Development Agency,agency
-provider,canadian joint financing programs,909,32,Canadian Joint Financing Programs,agency
-provider,canadian support to the energy sector in the caribbean fund,906,5,Canadian Support to the Energy Sector in the Caribbean Fund,agency
 provider,cantons and municipalities,11,11,Cantons and municipalities,agency
 provider,cantons et communes,11,11,Cantons and municipalities,agency
 provider,cap,1045,2,Community Assistance Program,agency
-provider,cap pow assessed contributions,807,18,Carpathian Convention - assessed,agency
-provider,cap pow non-core - developmental,807,19,Carpathian Convention - Voluntary Contributions Non-core developmental,agency
-provider,cap pownon-core - tossd oonly,807,20,Carpathian Convention - Voluntary Contributions Non-Core - TOSSD only,agency
-provider,capacity building initiative for transparency trust fund,909,91,Capacity Building Initiative for Transparency Trust Fund,agency
-provider,car rcu pow assessed contributions,807,21,Action Plan for the Caribbean Environment Programme - assessed,agency
-provider,car rcu pow non-core - developmental,807,22,Action Plan for the Caribbean Environment Programme - Voluntary Contributions Non-core - developmental,agency
-provider,car rcu pownon-core - tossd only,807,23,Action Plan for the Caribbean Environment Programme - Voluntary Contributions Non-Core - TOSSD only,agency
-provider,carbon capture and storage fund,915,36,Carbon Capture and Storage Fund,agency
 provider,cardb,906,1,Caribbean Development Bank,agency
 provider,caribbean development bank,906,,Caribbean Development Bank,listing
 provider,caribbean development bank (cdb),906,,Caribbean Development Bank,resolvekit
 provider,carnegie corporation of new york,1620,,Carnegie Corporation of New York,listing
-provider,carpathian convention - assessed,807,18,Carpathian Convention - assessed,agency
-provider,carpathian convention - voluntary contributions non-core - tossd only,807,20,Carpathian Convention - Voluntary Contributions Non-Core - TOSSD only,agency
-provider,carpathian convention - voluntary contributions non-core developmental,807,19,Carpathian Convention - Voluntary Contributions Non-core developmental,agency
 provider,cassa depositi e prestiti,6,16,Cassa Depositi e Prestiti,agency
 provider,catar,561,,Qatar,resolvekit
 provider,cazaquistao,613,,Kazakhstan,resolvekit
 provider,cbit,811,15,GEF Capacity Building Initiative for Transparency,agency
-provider,cbt,909,91,Capacity Building Initiative for Transparency Trust Fund,agency
 provider,ccf,915,3,Climate Change Fund,agency
-provider,ccf-psa,915,20,Canadian Climate Fund For The Private Sector In Asia,agency
-provider,ccf-psaii,915,21,Canadian Climate Fund For The Private Sector In Asia II,agency
-provider,ccr,909,29,Canadian Fund for Universal Legal Identity in Latin America and the Caribbean,agency
-provider,cdb-administered deutsche gesellschaft fuer internationale zusammenarbeit,906,7,CDB-administered Deutsche Gesellschaft fuer Internationale Zusammenarbeit,agency
 provider,cdp,6,16,Cassa Depositi e Prestiti,agency
-provider,ceb,68,17,Czech Export Bank,agency
 provider,cechia,68,,Czechia,resolvekit
 provider,cee-onu,948,,UNECE,listing_fr
 provider,cef,1025,1,Center of Excellence in Finance,agency
 provider,center of excellence in finance,1025,,Center of Excellence in Finance,listing
 provider,central administration,6,7,Central administration,agency
 provider,central american bank for economic integration,910,,Central American Bank for Economic Integration,listing
-provider,central american bank for economickorea-cabei partnership single donor trust fund,910,3,Central American Bank for EconomicKorea-CABEI Partnership Single Donor Trust Fund,agency
-provider,central bank,431,3,Central Bank,agency
 provider,central emergency response fund,1020,,Central Emergency Response Fund,listing
 provider,central government office for reconstruction and housing,62,17,Central Government Office for Reconstruction and Housing,agency
 provider,central state office for croats abroad,62,10,Central State Office for Croats Abroad,agency
@@ -413,10 +316,8 @@ provider,centre de recherche pour le developpement international,301,2,Internati
 provider,centre du commerce international de l'omc,1401,,WTO - International Trade Centre,listing_fr
 provider,centre international de genie genetique et de biotechnologie,1052,,International Centre for Genetic Engineering and Biotechnology,listing_fr
 provider,cesce,50,2,Compania Espanola de Seguros de Credito a la Exportacion,agency
-provider,cff,909,92,Global Concessional Financing Facility Trust Fund,agency
 provider,cgd,9,21,Caixa Geral de Depósitos - Portuguese Public Bank,agency
 provider,cgiar,1055,,CGIAR,listing
-provider,cgif,1017,1,Credit Guarantee and Investment Facility,agency
 provider,ch,11,,Switzerland,iso2
 provider,chamber of deputies,77,29,Chamber of Deputies,agency
 provider,chambre des deputes,77,29,Chamber of Deputies,agency
@@ -426,14 +327,11 @@ provider,charity projects ltd (comic relief),1614,,Charity Projects Ltd (Comic R
 provider,che,11,,Switzerland,iso3
 provider,chequia,68,,Czechia,resolvekit
 provider,chi,434,,Chile,resolvekit
-provider,children's board of costa rica (pani),336,4,Children’s Board of Costa Rica (PANI),agency
 provider,children's investment fund foundation,1615,,Children's Investment Fund Foundation,listing
 provider,chile,434,,Chile,listing
 provider,chili,434,,Chile,listing_fr
-provider,china co-financing fund for latin america and the caribbean,909,31,China Co-Financing Fund for Latin America and the Caribbean,agency
 provider,"china, republic of",732,,Chinese Taipei,resolvekit
 provider,"china, taiwan province of",732,,Chinese Taipei,resolvekit
-provider,china-ifad south-south and triangular cooperation facility,988,2,China-IFAD South-South and Triangular Cooperation Facility,agency
 provider,chinese republic,732,,Chinese Taipei,resolvekit
 provider,chinese taipei,732,,Chinese Taipei,listing
 provider,chipre,30,,Cyprus,resolvekit
@@ -446,40 +344,21 @@ provider,cicl,9,2,Camões-Institute for Cooperation and Language,agency
 provider,cida,301,1,Canadian International Development Agency,agency
 provider,ciff,1615,1,Children's Investment Fund Foundation,agency
 provider,cile,434,,Chile,resolvekit
-provider,cip,1056,5,Inter-American Committee on Ports,agency
 provider,cipd (financement au budget regulier),1049,1,ICMP core resources,agency
 provider,cipro,30,,Cyprus,resolvekit
 provider,cirad,4,46,CIRAD,agency
 provider,cirad,4,47,IRD,agency
-provider,cit,909,93,Multidonor Trust Fund for the Development of Sustainable Cities in Latin America and the Caribbean,agency
 provider,cites pow assessed contributions,807,4,Convention on International Trade in Endangered Species of Wild Fauna and Flora (CITES) - Assessed contributions,agency
-provider,cites pow non-core - developmental,807,5,Convention on International Trade in Endangered Species of Wild Fauna and Flora (CITES) - Voluntary Contributions Non-core - developmental,agency
-provider,cites pow non-core - tossd only,807,6,Convention on International Trade in Endangered Species of Wild Fauna and Flora (CITES) - Voluntary Contributions Non-Core - TOSSD only,agency
 provider,citi foundation,1632,,Citi Foundation,listing
-provider,cities development initiative for asia,915,37,Cities Development Initiative for Asia,agency
-provider,ciudad de ceuta,50,47,Ciudad de Ceuta,agency
-provider,ciudad de melilla,50,48,Ciudad de Melilla,agency
-provider,cjf,909,32,Canadian Joint Financing Programs,agency
 provider,cl,434,,Chile,iso2
-provider,clean energy fund,915,38,Clean Energy Fund,agency
 provider,clean technology fund,909,11,Clean Technology Fund,agency
-provider,clean technology fund,913,25,Clean Technology Fund,agency
-provider,clean technology fund,915,14,Clean Technology Fund,agency
 provider,clean technology fund,1011,10,Clean Technology Fund,agency
 provider,climate change fund,915,3,Climate Change Fund,agency
-provider,climate innovation and development fund,915,62,Climate Innovation and Development Fund,agency
 provider,climate investment funds,1011,,Climate Investment Funds,listing
-provider,cms pow assessed contributions,807,13,Convention on Migratory Species (CMS) - assessed contributions,agency
-provider,cms pow no-core - tossd only,807,15,Convention on Migratory Species (CMS) - Voluntary Contributions Non-core TOSSD only,agency
-provider,cms pow non-core - developmental,807,14,Convention on Migratory Species (CMS) - Voluntary Contributions Non-core developmental,agency
 provider,cnb,68,10,Czech National Bank,agency
 provider,co,437,,Colombia,iso2
-provider,coe,926,1,Council of Europe (CoE),agency
-provider,coface,4,43,Coface,agency
 provider,cofides,50,59,Compañía Española de Financiación del Desarrollo,agency
-provider,cofinancing special grants,909,33,Cofinancing Special Grants,agency
 provider,col,437,,Colombia,iso3
-provider,col:1,437,1,COL:1,agency
 provider,colombia,437,,Colombia,listing
 provider,colombie,437,,Colombia,listing_fr
 provider,comite d'etat de la douane,611,5,State Customs Committee,agency
@@ -490,12 +369,9 @@ provider,commission europeenne,918,1,European Commission,agency
 provider,commission internationale pour les personnes disparues,1049,,International Commission on Missing Persons,listing_fr
 provider,commonwealth of australia,801,,Australia,resolvekit
 provider,community assistance program,1045,2,Community Assistance Program,agency
-provider,community resilience partnership program trust fund,915,71,Community Resilience Partnership Program Trust Fund,agency
 provider,compania espanola de financiacion del desarrollo,50,59,Compañía Española de Financiación del Desarrollo,agency
 provider,compania espanola de seguros de credito a la exportacion,50,2,Compania Espanola de Seguros de Credito a la Exportacion,agency
-provider,compete caribbean partnership facility,909,28,Compete Caribbean Partnership Facility ,agency
 provider,compte d'impact social,1013,3,Social Impact Account,agency
-provider,comptroller general of the union,431,42,Comptroller General of the Union,agency
 provider,comunidad autonoma de andalucia,50,30,Comunidad Autónoma de Andalucía,agency
 provider,comunidad autonoma de aragon,50,31,Comunidad Autónoma de Aragón,agency
 provider,comunidad autonoma de canarias,50,34,Comunidad Autónoma de Canarias,agency
@@ -513,65 +389,38 @@ provider,comunidad de castilla y leon,50,36,Comunidad de Castilla y León,agency
 provider,comunidad de madrid,50,42,Comunidad de Madrid,agency
 provider,comunidad foral de navarra,50,44,Comunidad Foral de Navarra,agency
 provider,comunidad valenciana,50,39,Comunidad Valenciana,agency
-provider,conacyt,358,16,National Council for Science and Technology,agency
-provider,conadis,440,7,National Council for Disabilities' Equality,agency
 provider,confederation suisse,11,,Switzerland,resolvekit
 provider,conference des nations unies sur le commerce et le developpement,962,,United Nations Conference on Trade and Development,listing_fr
 provider,conference des nations unies sur le commerce et le developpement - budget regulier,962,2,United Nations Conference on Trade and Development - Regular budget,agency
 provider,conflict stability and security fund,12,14,Conflict stability and security fund,agency
 provider,confoederatio helvetica,11,,Switzerland,resolvekit
 provider,conrad n. hilton foundation,1617,,Conrad N. Hilton Foundation,listing
-provider,consar,358,21,National Commission of the Retirement Savings System,agency
 provider,conseil de l'europe,926,,Council of Europe,listing_fr
-provider,conseil de l'europe (coe),926,1,Council of Europe (CoE),agency
 provider,construire des perspectives,7,12,Building Prospects,agency
 provider,contribution statutaire (budget general) - developemental,1054,1,Statutory contribution (General budget) - Developmental,agency
 provider,contribution statutaire et contributions volontaires du pays hote (representations regionales de woah) - developemental,1054,2,Statutory contribution and voluntary contributions from host country (WOAH Regional Representations) - Developmental,agency
-provider,"convention for the marine and coastal environment of the atlantic coast of the west, central and southern africa region - assessed contributions",807,41,"Convention for the Marine and Coastal Environment of the Atlantic Coast of the West, Central and Southern Africa Region - Assessed Contributions",agency
-provider,"convention for the marine and coastal environment of the atlantic coast of the west, central and southern africa region - non-core",807,42,"Convention for the Marine and Coastal Environment of the Atlantic Coast of the West, Central and Southern Africa Region - Non-core",agency
-provider,convention on biological diversity (cbd) - assessed contributions,807,43,Convention on Biological Diversity (CBD) - Assessed Contributions,agency
-provider,convention on biological diversity (cbd) - voluntary contributions non-core - developmental,807,44,Convention on Biological Diversity (CBD) - Voluntary Contributions Non-core - developmental,agency
-provider,convention on biological diversity (cbd) - voluntary contributions non-core - tossd only,807,45,Convention on Biological Diversity (CBD) - Voluntary Contributions Non-core - TOSSD only,agency
 provider,convention on international trade in endangered species of wild fauna and flora (cites) - assessed contributions,807,4,Convention on International Trade in Endangered Species of Wild Fauna and Flora (CITES) - Assessed contributions,agency
-provider,convention on international trade in endangered species of wild fauna and flora (cites) - voluntary contributions non-core - developmental,807,5,Convention on International Trade in Endangered Species of Wild Fauna and Flora (CITES) - Voluntary Contributions Non-core - developmental,agency
-provider,convention on international trade in endangered species of wild fauna and flora (cites) - voluntary contributions non-core - tossd only,807,6,Convention on International Trade in Endangered Species of Wild Fauna and Flora (CITES) - Voluntary Contributions Non-Core - TOSSD only,agency
-provider,convention on migratory species (cms) - assessed contributions,807,13,Convention on Migratory Species (CMS) - assessed contributions,agency
-provider,convention on migratory species (cms) - voluntary contributions non-core developmental,807,14,Convention on Migratory Species (CMS) - Voluntary Contributions Non-core developmental,agency
-provider,convention on migratory species (cms) - voluntary contributions non-core tossd only,807,15,Convention on Migratory Species (CMS) - Voluntary Contributions Non-core TOSSD only,agency
 provider,coop decentral,4,8,Local authorities,agency
 provider,coop decentral/mae,4,8,Local authorities,agency
-provider,cooperation fund for project preparation in the greater mekong subregion and in other specific asian countries,915,39,Cooperation Fund for Project Preparation in the Greater Mekong Subregion and in Other Specific Asian Countries,agency
-provider,cooperation fund in support of managing for development results,915,40,Cooperation Fund in Support of Managing for Development Results,agency
-provider,coordination for the improvement of higher education personnel,431,8,Coordination for the Improvement of Higher Education Personnel,agency
-provider,core resources,1043,1,Core resources,agency
-provider,core resources  - global and tossd only,971,3,Core resources  - global and TOSSD only,agency
-provider,core resources  - global and tossd only recipients,974,3,Core resources  - global and TOSSD only recipients,agency
 provider,core resources - developmental,932,1,Core resources - developmental,agency
-provider,core resources - global and tossd-only activities,932,3,Core resources - global and TOSSD-only activities,agency
 provider,corea del sud,742,,Korea,resolvekit
 provider,corea del sur,742,,Korea,resolvekit
 provider,coree,742,,Korea,listing_fr
 provider,coree (republique de),742,,Korea,resolvekit
 provider,coree du sud,742,,Korea,resolvekit
 provider,coreia do sul,742,,Korea,resolvekit
-provider,corporation de financement et d'assurance des exportations,801,72,Export Finance and Insurance Corporation,agency
 provider,corporations publiques,701,13,Public Corporations,agency
 provider,costa rica,336,,Costa Rica,listing
-provider,costa rican institute of electricity (ice),336,3,Costa Rican Institute of Electricity (ICE),agency
 provider,council of europe,926,,Council of Europe,listing
-provider,council of europe (coe),926,1,Council of Europe (CoE),agency
 provider,council of europe development bank,1013,,Council of Europe Development Bank,listing
 provider,council of europe development bank (ceb),1013,1,Council of Europe Development Bank (CEB),agency
-provider,"covax, non-core",1311,3,"COVAX, non-core",agency
 provider,covid-19 response and recovery multi-partner trust fund,1047,,COVID-19 Response and Recovery Multi-Partner Trust Fund,listing
-provider,cps,909,35,Canadian Climate Fund for the Private Sector in the Americas,agency
 provider,cr,336,,Costa Rica,iso2
 provider,credit guarantee and investment facility,1017,,Credit Guarantee and Investment Facility,listing
 provider,cri,336,,Costa Rica,iso3
 provider,croacia,62,,Croatia,resolvekit
 provider,croatia,62,,Croatia,listing
 provider,croatian bank for reconstruction and development,62,20,Croatian Bank for Reconstruction and Development,agency
-provider,croatian civil aviation agency,62,29,Croatian Civil Aviation Agency,agency
 provider,croatian employment service,62,30,Croatian Employment Service,agency
 provider,croatian meteorological and hydrological service,62,15,Croatian Meteorological and Hydrological Service,agency
 provider,croatian national bank,62,11,Croatian National Bank,agency
@@ -579,11 +428,7 @@ provider,croatie,62,,Croatia,listing_fr
 provider,croazia,62,,Croatia,resolvekit
 provider,cssf,12,14,Conflict stability and security fund,agency
 provider,ctf,909,11,Clean Technology Fund,agency
-provider,ctf,913,25,Clean Technology Fund,agency
-provider,ctf,915,14,Clean Technology Fund,agency
 provider,ctf,1011,10,Clean Technology Fund,agency
-provider,cultura,340,3,Ministry of Culture,agency
-provider,cultura,358,17,Ministry of Culture,agency
 provider,cvca,928,3,WHO Core Voluntary contributions,agency
 provider,cy,30,,Cyprus,iso2
 provider,cyp,30,,Cyprus,iso3
@@ -592,7 +437,6 @@ provider,cz,68,,Czechia,iso2
 provider,czda,68,1,Czech Development Agency,agency
 provider,cze,68,,Czechia,iso3
 provider,czech development agency,68,1,Czech Development Agency,agency
-provider,czech export bank,68,17,Czech Export Bank,agency
 provider,czech national bank,68,10,Czech National Bank,agency
 provider,czech national development bank,68,21,Czech National Development Bank,agency
 provider,czech republic,68,,Czechia,resolvekit
@@ -608,7 +452,6 @@ provider,danish international development agency,3,2,Danish International Develo
 provider,danmark,3,,Denmark,resolvekit
 provider,david & lucile packard foundation,1618,1,David & Lucile Packard Foundation,agency
 provider,david and lucile packard foundation,1618,,David and Lucile Packard Foundation,listing
-provider,dc,576,21,Dubai Cares,agency
 provider,dcms,12,12,"Department for Culture, Media and Sports",agency
 provider,ddps,11,9,"Federal Department for Defence, Civil Protection and Sports",agency
 provider,de,5,,Germany,iso2
@@ -621,10 +464,7 @@ provider,def,68,7,Ministry of Defence,agency
 provider,def,75,6,Ministry of Defence,agency
 provider,def,77,4,Ministry of National Defence,agency
 provider,def,84,3,Ministry of National Defense,agency
-provider,def,909,36,DEFRA Cofinancing Account,agency
-provider,defesa,431,16,Ministry of Defence,agency
 provider,defra,12,7,Department for Environment Food and Rural Affairs,agency
-provider,defra cofinancing account,909,36,DEFRA Cofinancing Account,agency
 provider,deg,5,4,Deutsche Investitions- und Entwicklungsgesellschaft mbH (German Investment and Development Company),agency
 provider,delegue du gouvernement federal a la culture et aux medias,5,69,Federal Government Commissioner for Culture and the Media,agency
 provider,democratic republic of timor-leste,765,,Timor-Leste,resolvekit
@@ -669,7 +509,6 @@ provider,department of finance canada,301,4,Department of Finance Canada,agency
 provider,department of foreign affairs,21,1,Department of Foreign Affairs,agency
 provider,department of health  and social care,12,10,Department of Health  and Social Care,agency
 provider,department of health and human services,302,14,Department of Health and Human Services,agency
-provider,"department of higher education, science, technology and innovation",440,9,"Department of Higher Education, Science, Technology and Innovation",agency
 provider,department of homeland security,302,19,Department of Homeland Security,agency
 provider,department of justice,302,15,Department of Justice,agency
 provider,department of labor,302,17,Department of Labor,agency
@@ -677,7 +516,6 @@ provider,department of national defence,301,7,Department of National Defence,age
 provider,department of the interior,302,9,Department of the Interior,agency
 provider,department of the treasury,302,6,Department of the Treasury,agency
 provider,department of transportation,302,26,Department of Transportation,agency
-provider,"deputy ministry of environment, national system of conservation areas (sinac)",336,6,"Deputy Ministry of Environment, National System of Conservation Areas (SINAC)",agency
 provider,deu,5,,Germany,iso3
 provider,deutsche gesellschaft fur internationale zusammenarbeit (giz) gmbh,5,52,Deutsche Gesellschaft für Internationale Zusammenarbeit (GIZ) GmbH,agency
 provider,deutsche investitions- und entwicklungsgesellschaft mbh (german investment and development company),5,4,Deutsche Investitions- und Entwicklungsgesellschaft mbH (German Investment and Development Company),agency
@@ -685,8 +523,6 @@ provider,deutsche investitions- und entwicklungsgesellschaft mbh (societe allema
 provider,deutscher entwicklungsdienst,5,15,Deutscher Entwicklungsdienst,agency
 provider,deutschland,5,,Germany,resolvekit
 provider,development bank of latin america,1015,,Development Bank of Latin America,listing
-provider,development fund for the colombia-peru border integration zone,909,97,Development Fund for the Colombia-Peru Border Integration Zone,agency
-provider,development fund for the ecuador-colombia border integration zone,909,96,Development Fund for the Ecuador-Colombia Border Integration Zone,agency
 provider,development promotion fund,50,60,Development Promotion Fund,agency
 provider,dfa,21,1,Department of Foreign Affairs,agency
 provider,dfait,301,6,Foreign Affairs and International Trade Canada,agency
@@ -705,10 +541,6 @@ provider,direction du developpement et de la cooperation,11,4,Swiss Agency for D
 provider,direction generale pour la cooperation et le developpement,2,10,Directorate General for Co-operation and Development,agency
 provider,direction nationale de la protection et du sauvetage,62,3,National Protection and Rescue Directorate,agency
 provider,directorate general for co-operation and development,2,10,Directorate General for Co-operation and Development,agency
-provider,directorate of economic development,1056,3,Directorate of Economic Development,agency
-provider,directorate of human development education and employment,1056,2,Directorate of Human Development Education and Employment,agency
-provider,directorate of sustainable development,1056,4,Directorate of Sustainable Development,agency
-provider,directorate of technical aid corps,261,1,Directorate of Technical Aid Corps,agency
 provider,divers,1,99,Miscellaneous,agency
 provider,divers,2,99,Miscellaneous,agency
 provider,divers,3,99,Miscellaneous,agency
@@ -721,7 +553,6 @@ provider,divers,9,99,Miscellaneous,agency
 provider,divers,10,99,Miscellaneous,agency
 provider,divers,11,99,Miscellaneous,agency
 provider,divers,12,99,Miscellaneous,agency
-provider,divers,18,99,Miscellaneous,agency
 provider,divers,20,99,Miscellaneous,agency
 provider,divers,21,99,Miscellaneous,agency
 provider,divers,22,99,Miscellaneous,agency
@@ -737,12 +568,10 @@ provider,divers,76,99,Miscellaneous,agency
 provider,divers,77,99,Miscellaneous,agency
 provider,divers,301,99,Miscellaneous,agency
 provider,divers,302,99,Miscellaneous,agency
-provider,divers,358,99,Miscellaneous,agency
 provider,divers,552,99,Miscellaneous,agency
 provider,divers,561,99,Miscellaneous,agency
 provider,divers,566,99,Miscellaneous,agency
 provider,divers,576,99,Miscellaneous,agency
-provider,divers,613,99,Miscellaneous,agency
 provider,divers,701,99,Miscellaneous,agency
 provider,divers,742,99,Miscellaneous,agency
 provider,divers,801,99,Miscellaneous,agency
@@ -760,7 +589,6 @@ provider,doe,302,20,Department of Energy,agency
 provider,doha institute,561,2,Doha Institute,agency
 provider,dom,340,,Dominican Republic,iso3
 provider,dom. republik,340,,Dominican Republic,resolvekit
-provider,domestic resource mobilization trust fund,915,72,Domestic Resource Mobilization Trust Fund,agency
 provider,"dominicaine, republique",340,,Dominican Republic,resolvekit
 provider,dominican republic,340,,Dominican Republic,listing
 provider,dominicana,340,,Dominican Republic,resolvekit
@@ -770,9 +598,7 @@ provider,domrep,340,,Dominican Republic,resolvekit
 provider,dot,302,26,Department of Transportation,agency
 provider,down under,801,,Australia,resolvekit
 provider,dtre,302,6,Department of the Treasury,agency
-provider,dubai cares,576,21,Dubai Cares,agency
 provider,ducroire national office,2,31,Ducroire National Office,agency
-provider,ducroire office,22,22,Ducroire Office,agency
 provider,dutch fund for climate and development,7,13,Dutch Fund for Climate and Development,agency
 provider,dutch good growth fund – financing local smes,7,16,Dutch Good Growth Fund – Financing Local SMEs,agency
 provider,dutch good growth fund – investing dutch entrepreneurs,7,15,Dutch Good Growth Fund – Investing Dutch entrepreneurs,agency
@@ -784,12 +610,10 @@ provider,dzayer,130,,Algeria,resolvekit
 provider,e.-u.,302,,United States,resolvekit
 provider,e.u.,918,,EU Institutions,resolvekit
 provider,eaif,1014,2,Emerging Africa Infrastructure Fund,agency
-provider,early childhood development innovation multidonor fund,909,37,Early Childhood Development Innovation Multidonor Fund,agency
 provider,earmarked fiscal flows to ngos,6,101,Earmarked fiscal flows to NGOs,agency
 provider,earmarked fiscal flows to ngos & religious organisations,6,10,Earmarked fiscal flows to NGOs & religious organisations,agency
 provider,earmarked fiscal flows to religious organisations,6,102,Earmarked fiscal flows to religious organisations,agency
 provider,east timor,765,,Timor-Leste,resolvekit
-provider,eastern europe energy efficiency and environmental partnership,1013,13,Eastern Europe Energy Efficiency and Environmental Partnership,agency
 provider,eastern republic of uruguay,460,,Uruguay,resolvekit
 provider,ebrd,990,1,EBRD,agency
 provider,ec,918,1,European Commission,curated
@@ -799,7 +623,6 @@ provider,echo,918,4,Humanitarian Aid Office of the European Commission,agency
 provider,eco,61,7,"Ministry of the Economy, Tourism and Sport",agency
 provider,econ,50,6,Ministry of Economy and Business,agency
 provider,econ,84,6,Ministry of Economy,agency
-provider,economia,431,15,Ministry of Finance,agency
 provider,economic and social commission for western asia,1403,,Economic and Social Commission for Western Asia,listing
 provider,ecu,440,,Ecuador,iso3
 provider,ecuador,440,,Ecuador,listing
@@ -815,12 +638,8 @@ provider,ee,82,,Estonia,iso2
 provider,ee. uu.,302,,United States,resolvekit
 provider,eesti,82,,Estonia,resolvekit
 provider,eesti vabariik,82,,Estonia,resolvekit
-provider,efic,801,72,Export Finance and Insurance Corporation,agency
 provider,efsd,1041,1,Eurasian Fund for Stabilization and Development,agency
-provider,egap,68,18,EGAP,agency
 provider,eib,918,3,European Investment Bank,curated
-provider,eib climate action line of credit,906,6,EIB Climate Action Line of Credit,agency
-provider,eifo,3,72,Export and Investment Fund of Denmark,agency
 provider,ekn,10,71,Swedish Export Credits Guarantee Board,agency
 provider,el pais azteca,358,,Mexico,resolvekit
 provider,ellada,40,,Greece,resolvekit
@@ -832,8 +651,6 @@ provider,emiratos arabes unidos,576,,United Arab Emirates,resolvekit
 provider,emirats arabes unis,576,,United Arab Emirates,listing_fr
 provider,emp,50,12,"Ministry of Labour, Migration and Social Security",agency
 provider,energy and environment partnership trust fund,104,2,Energy and Environment Partnership Trust Fund,agency
-provider,energy transition mechanism partnership trust fund,915,73,Energy Transition Mechanism Partnership Trust Fund,agency
-provider,enhanced adaptation for smallholder agriculture programme (asap+),988,3,Enhanced Adaptation for Smallholder Agriculture Programme (ASAP+),agency
 provider,entreprises et technologies innovantes pour developpement,12,28,Innovative Ventures and Technologies for Development,agency
 provider,env,8,12,Ministry of Climate and Environment,agency
 provider,env,10,11,Ministry of the Environment,agency
@@ -847,13 +664,11 @@ provider,environment and climate change canada,301,11,Environment and Climate Ch
 provider,environment et changement climatique canada,301,11,Environment and Climate Change Canada,agency
 provider,environment fund,807,2,Environment Fund,agency
 provider,environmental protection agency,302,32,Environmental Protection Agency,agency
-provider,eohs,928,13,European Observatory of Health Systems,agency
 provider,epa,302,32,Environmental Protection Agency,agency
 provider,epp,104,2,Energy and Environment Partnership Trust Fund,agency
 provider,equador,440,,Ecuador,resolvekit
 provider,equateur,440,,Ecuador,listing_fr
 provider,es,50,,Spain,iso2
-provider,esc,909,40,Sustainable Emerging Cities Multidonor Trust Fund,agency
 provider,escwa,1403,1,ESCWA - United Nations Economic and Social Commission for Western Asia,agency
 provider,escwa - united nations economic and social commission for western asia,1403,1,ESCWA - United Nations Economic and Social Commission for Western Asia,agency
 provider,eslovaquia,69,,Slovak Republic,resolvekit
@@ -862,7 +677,6 @@ provider,esp,50,,Spain,iso3
 provider,espagne,50,,Spain,listing_fr
 provider,espana,50,,Spain,resolvekit
 provider,espanha,50,,Spain,resolvekit
-provider,espen,928,16,Expanded Special Project for Elimination of Neglected Tropical Disease,agency
 provider,est,82,,Estonia,iso3
 provider,estado espanol,50,,Spain,resolvekit
 provider,estados unidos,302,,United States,resolvekit
@@ -881,52 +695,32 @@ provider,etats federaux et collectivites territoriales,5,12,Federal States and L
 provider,etats-unis,302,,United States,listing_fr
 provider,etats-unis d'amerique,302,,United States,resolvekit
 provider,eu,918,,EU Institutions,curated
-provider,eu caribbean infrastructure fund,906,9,EU Caribbean Infrastructure Fund,agency
-provider,eu facility for refugees in turkey,1013,10,EU Facility for Refugees in Turkey,agency
 provider,eu institutions,918,,EU Institutions,listing
-provider,eu sustainable energy for the eastern caribbean fund,906,2,EU Sustainable Energy for the Eastern Caribbean Fund,agency
 provider,eua,302,,United States,resolvekit
 provider,euler hermes,5,34,Euler Hermes Aktiengesellschaft,agency
 provider,euler hermes aktiengesellschaft,5,34,Euler Hermes Aktiengesellschaft,agency
 provider,eurasian fund for stabilization and development,1041,,Eurasian Fund for Stabilization and Development,listing
 provider,european bank for reconstruction and development,990,,European Bank for Reconstruction and Development,listing
 provider,european commission,918,1,European Commission,agency
-provider,european commission amended and restated framework agreement,909,38,European Commission Amended and Restated Framework Agreement,agency
-provider,european commission framework account,909,39,European Commission Framework Account,agency
 provider,european development fund,918,2,European Development Fund,agency
 provider,european investment bank,918,3,European Investment Bank,agency
-provider,european observatory of health systems,928,13,European Observatory of Health Systems,agency
 provider,european union,918,,EU Institutions,curated
 provider,european union (eu),918,,EU Institutions,resolvekit
-provider,european union-asean catalytic green finance facility trust fund,915,74,European Union-ASEAN Catalytic Green Finance Facility Trust Fund,agency
 provider,euu,918,,EU Institutions,curated
-provider,executive secretariat for integral development,1056,1,Executive Secretariat for Integral Development,agency
-provider,exim,69,50,Export-Import bank,agency
 provider,exim,75,21,Hungarian Export Import Bank PLC,agency
 provider,exim,302,31,Export Import Bank,agency
 provider,exim bank,701,4,EXIM BANK,agency
-provider,eximbank,738,19,Eximbank,agency
-provider,expanded special project for elimination of neglected tropical disease,928,16,Expanded Special Project for Elimination of Neglected Tropical Disease,agency
 provider,expertise france,4,15,Expertise France,agency
-provider,export and investment fund of denmark,3,72,Export and Investment Fund of Denmark,agency
 provider,export credit guarantee department,12,5,Export Credit Guarantee Department,agency
 provider,export development canada,301,31,Export Development Canada,agency
-provider,export finance and insurance corporation,801,72,Export Finance and Insurance Corporation,agency
 provider,export import bank,302,31,Export Import Bank,agency
-provider,export-import bank,69,50,Export-Import bank,agency
 provider,export-import bank of korea,742,2,Export-Import Bank of Korea,agency
 provider,exportation et developpement canada,301,31,Export Development Canada,agency
-provider,external special funds,1024,3,External Special Funds,agency
-provider,extrabudgetary non-core resources,1406,2,Extrabudgetary non-core resources,agency
-provider,extrabudgetary non-core resources – global and tossd only,1406,3,Extrabudgetary non-core resources – global and TOSSD only,agency
 provider,fa,11,1,Federal Administration (various departments),agency
 provider,fafd,914,1,AfDF,agency
-provider,fao,1022,9,FAO,agency
 provider,fcdo,12,17,"Foreign, Commonwealth and Development Office",agency
 provider,fco,12,3,Foreign & Commonwealth Office,agency
 provider,fcp-onu,923,1,UNPBF,agency
-provider,fctc,928,11,WHO Framework Convention on Tobacco Control,agency
-provider,fctc – nd,928,12,WHO Framework Convention on Tobacco Control – non-developmental,agency
 provider,fdfa,11,6,Federal Department of Foreign Affairs,agency
 provider,fed.inst.,5,14,Federal Institutions,agency
 provider,fed.min.,5,16,Federal Ministries,agency
@@ -938,15 +732,12 @@ provider,federal department of foreign affairs,11,6,Federal Department of Foreig
 provider,federal foreign office,5,7,Federal Foreign Office,agency
 provider,federal government commissioner for culture and the media,5,69,Federal Government Commissioner for Culture and the Media,agency
 provider,federal government of austria,1,3,Federal Government of Austria,agency
-provider,federal institute for access to public information and data protection,358,24,Federal Institute for Access to Public Information and Data Protection,agency
 provider,federal institutions,5,14,Federal Institutions,agency
 provider,federal ministries,5,16,Federal Ministries,agency
-provider,federal ministry for digital transformation and government modernisation,5,73,Federal Ministry for Digital Transformation and Government Modernisation,agency
 provider,federal ministry for economic affairs and energy,5,62,Federal Ministry for Economic Affairs and Energy,agency
 provider,federal ministry for economic cooperation and development,5,1,Federal Ministry for Economic Cooperation and Development,agency
 provider,"federal ministry for education, family affairs, senior citizens, women and youth",5,65,"Federal Ministry for Education, Family Affairs, Senior Citizens, Women and Youth",agency
 provider,federal ministry for european and international affairs,1,5,Federal Ministry for European and International Affairs,agency
-provider,"federal ministry for housing, urban development and building",5,72,"Federal Ministry for Housing, Urban Development and Building",agency
 provider,"federal ministry for the enviroment, climate action, nature conservation and nuclear safety",5,9,"Federal Ministry for the Enviroment, Climate Action, Nature Conservation and Nuclear Safety",agency
 provider,"federal ministry of agriculture, food and regional identity",5,63,"Federal Ministry of Agriculture, Food and Regional Identity",agency
 provider,"federal ministry of agriculture, forestry, climate and environmental protection, regions and water management",1,10,"Federal Ministry of Agriculture, Forestry, Climate and Environmental Protection, Regions and Water Management",agency
@@ -973,13 +764,10 @@ provider,federal trade commission,302,23,Federal Trade Commission,agency
 provider,federation de russie,87,,Russia,resolvekit
 provider,federation of russia,87,,Russia,resolvekit
 provider,federative republic of brazil,431,,Brazil,resolvekit
-provider,fef,22,23,Female Entrepreneurship Fund,agency
 provider,fem (general),811,1,GEF (general),agency
 provider,fem initiative de renforcement des capacites pour la transparence,811,15,GEF Capacity Building Initiative for Transparency,agency
-provider,female entrepreneurship fund,22,23,Female Entrepreneurship Fund,agency
 provider,ff,18,2,FinnFund,agency
 provider,ffo,5,7,Federal Foreign Office,agency
-provider,ffp,909,94,Fostering Fiscal Policy for Climate Change in Latin America and the Caribbean,agency
 provider,fg,18,1,Finnish Government,agency
 provider,fi,18,,Finland,iso2
 provider,fida,988,,IFAD,listing_fr
@@ -993,9 +781,7 @@ provider,finlandia,18,,Finland,resolvekit
 provider,finnfund,18,2,FinnFund,agency
 provider,finnia,18,,Finland,resolvekit
 provider,finnish government,18,1,Finnish Government,agency
-provider,finnish technical assistance program,909,45,Finnish Technical Assistance Program,agency
 provider,finnland,18,,Finland,resolvekit
-provider,finnvera,18,72,FinnVera,agency
 provider,fk,8,9,Norwegian Agency for Exchange Cooperation,agency
 provider,flanders official regional ministries,2,70,Flanders Official Regional Ministries,agency
 provider,flux fiscaux pre-affectes aux ong,6,101,Earmarked fiscal flows to NGOs,agency
@@ -1004,11 +790,8 @@ provider,flux fiscaux pre-affectes aux organisations religieuses,6,102,Earmarked
 provider,fm of defense,1,11,FM of Defense,agency
 provider,"fm of education, science and research",1,9,"Federal Ministry of Women's Affairs, Science and Research",agency
 provider,fma,966,1,WFP,agency
-provider,fmi,907,1,IMF,agency
 provider,fmi (fonds fiduciaires concessionnels),958,,IMF (Concessional Trust Funds),listing_fr
 provider,fmi concessionnel,958,1,IMF concessional,agency
-provider,fmm,909,84,Specialized Financial Intermediary Development Fund,agency
-provider,fmo,7,5,FMO,agency
 provider,fnuap,974,,UNFPA,listing_fr
 provider,foen,11,10,Federal Office for the Environment,agency
 provider,folke bernadotte academy,10,20,Folke Bernadotte Academy,agency
@@ -1091,7 +874,6 @@ provider,fonds neerlandais pour une bonne croissance - entrepreneurs neerlandais
 provider,fonds neerlandais pour une bonne croissance - financement des pme locales,7,16,Dutch Good Growth Fund – Financing Local SMEs,agency
 provider,fonds opep,951,1,OPEC Fund,agency
 provider,fonds opep pour le developpement international,951,,OPEC Fund for International Development,listing_fr
-provider,fonds pour l'entrepreneuriat feminin,22,23,Female Entrepreneurship Fund,agency
 provider,fonds pour l'environnement mondial,811,,Global Environment Facility,listing_fr
 provider,fonds pour les migrants et les refugies,1013,2,Migrant and Refugee Fund,agency
 provider,fonds pour les pays les moins avances (fpma),811,12,Least Developed Countries Trust Fund (LDCF),agency
@@ -1101,35 +883,28 @@ provider,fonds special pour le changement climatique (fscc),811,13,Special Clima
 provider,fonds uk-inde pour la creation d'entreprises technologiques,12,26,UK-India Tech Start-up Fund,agency
 provider,fonds vert pour le climat,1016,,Green Climate Fund,listing_fr
 provider,fonprode,50,60,Development Promotion Fund,agency
-provider,food aid,701,6,FOOD AID,agency
 provider,food and agriculture organisation,932,,Food and Agriculture Organisation,listing
 provider,food and agriculture organization (fao),932,,Food and Agriculture Organisation,resolvekit
 provider,ford foundation,1627,,Ford Foundation,listing
 provider,foreign & commonwealth office,12,3,Foreign & Commonwealth Office,agency
 provider,foreign affairs and international trade canada,301,6,Foreign Affairs and International Trade Canada,agency
 provider,"foreign, commonwealth and development office",12,17,"Foreign, Commonwealth and Development Office",agency
-provider,formas,10,81,Formas,agency
 provider,formosa,732,,Chinese Taipei,resolvekit
 provider,fort-hercule,26,,Monaco,resolvekit
-provider,fostering fiscal policy for climate change in latin america and the caribbean,909,94,Fostering Fiscal Policy for Climate Change in Latin America and the Caribbean,agency
 provider,found,5,17,Foundations/Societies/Misc. (non federal),agency
 provider,foundations/societies/misc. (non federal),5,17,Foundations/Societies/Misc. (non federal),agency
 provider,fr,4,,France,iso2
 provider,fra,4,,France,iso3
-provider,framework readiness preparatory support,909,105,Framework Readiness Preparatory Support,agency
 provider,franca,4,,France,resolvekit
 provider,france,4,,France,listing
-provider,france-idb natural capital lab fund,909,99,France-IDB Natural Capital Lab Fund,agency
 provider,francia,4,,France,resolvekit
 provider,frankreich,4,,France,resolvekit
-provider,frc,909,95,French Climate Fund for Latin America and the Caribbean,agency
 provider,free and hanseatic city of hamburg,5,81,Free and Hanseatic City of Hamburg,agency
 provider,free china,732,,Chinese Taipei,resolvekit
 provider,free hanseatic city of bremen,5,83,Free Hanseatic City of Bremen,agency
 provider,free state of bavaria,5,88,Free State of Bavaria,agency
 provider,free state of saxony,5,94,Free State of Saxony,agency
 provider,free state of thuringia,5,95,Free State of Thuringia,agency
-provider,french climate fund for latin america and the caribbean,909,95,French Climate Fund for Latin America and the Caribbean,agency
 provider,french development agency,4,3,French Development Agency,agency
 provider,french republic,4,,France,resolvekit
 provider,fsd africa (fsda),12,23,FSD Africa (FSDA),agency
@@ -1137,9 +912,7 @@ provider,fsda,12,23,FSD Africa (FSDA),agency
 provider,fsdpsf,915,13,Financial Sector Development Partnership Special Fund,agency
 provider,fso,909,2,Fund for Special Operations,agency
 provider,fso-orc,909,3,Fund for Special Operations-Ordinary Capital,agency
-provider,fta,909,45,Finnish Technical Assistance Program,agency
 provider,ftc,302,23,Federal Trade Commission,agency
-provider,fti,997,1,FTI,agency
 provider,fund for african private sector assistance,913,16,Fund for African Private Sector Assistance,agency
 provider,fund for increasing productivity and promoting inclusive economic growth,909,20,Fund for Increasing Productivity and Promoting Inclusive Economic Growth,agency
 provider,fund for special operations,909,2,Fund for Special Operations,agency
@@ -1147,9 +920,7 @@ provider,fund for special operations-ordinary capital,909,3,Fund for Special Ope
 provider,furstentum liechtenstein,70,,Liechtenstein,resolvekit
 provider,g b,12,,United Kingdom,resolvekit
 provider,gac,301,3,Global Affairs Canada,agency
-provider,gaf,909,13,Global Agriculture & Food Security Program Trust Fund,agency
 provider,gap,1014,6,GAP,agency
-provider,garantiinstituttet for eksportkreditt,8,71,Garantiinstituttet for eksportkreditt,agency
 provider,gates foundation,1601,,Bill & Melinda Gates Foundation,resolvekit
 provider,gatsby charitable foundation,1616,,Gatsby Charitable Foundation,listing
 provider,gavi,1311,1,GAVI,agency
@@ -1157,21 +928,12 @@ provider,gb,12,,United Kingdom,iso2
 provider,gbff,811,19,Global Biodiversity Framework Fund (GBFF),agency
 provider,gbr,12,,United Kingdom,iso3
 provider,gcf,1016,,Green Climate Fund,curated
-provider,geapp energy access and transition trust fund,915,75,GEAPP Energy Access and Transition Trust Fund,agency
-provider,geeref,1018,1,Global Energy Efficiency and Renewable Energy Fund,agency
 provider,gef,811,,Global Environment Facility,curated
 provider,gef (general),811,1,GEF (general),agency
-provider,gef - earmarked,811,18,GEF - earmarked,agency
-provider,gef - regional and global,811,17,GEF - regional and global,agency
 provider,gef capacity building initiative for transparency,811,15,GEF Capacity Building Initiative for Transparency,agency
-provider,gef least developed countries fund,915,76,GEF Least Developed Countries Fund ,agency
 provider,gef multi-trust funds,811,16,GEF Multi-Trust Funds,agency
-provider,gef special climate change fund,915,77,GEF Special Climate Change Fund ,agency
 provider,gef trust fund,811,11,GEF Trust Fund,agency
 provider,gendarmerie royale du canada,301,8,Royal Canadian Mounted Police of Canada,agency
-provider,gender and development cooperation fund,915,41,Gender and Development Cooperation Fund,agency
-provider,gender and diversity multidonor fund,909,72,Gender and Diversity Multidonor Fund,agency
-provider,general directorate of migration,336,12,General Directorate of Migration,agency
 provider,german bundestag,5,70,German Bundestag,agency
 provider,german postcode lottery,1647,,German Postcode Lottery,listing
 provider,german speaking official regional ministries,2,94,German speaking Official Regional Ministries,agency
@@ -1179,25 +941,16 @@ provider,germania,5,,Germany,resolvekit
 provider,germany,5,,Germany,listing
 provider,ggpi,1313,1,Green Growth Planning and Implementation,agency
 provider,giappone,701,,Japan,resolvekit
-provider,giek,8,71,Garantiinstituttet for eksportkreditt,agency
-provider,gif,909,46,Guyana REDD+ Investment Fund,agency
 provider,gis,1313,4,Green Investment Services,agency
 provider,giz,5,52,Deutsche Gesellschaft für Internationale Zusammenarbeit (GIZ) GmbH,agency
 provider,global affairs canada,301,3,Global Affairs Canada,agency
-provider,global agriculture & food security program trust fund,909,13,Global Agriculture & Food Security Program Trust Fund,agency
-provider,global agriculture and food security program,915,57,Global Agriculture and Food Security Program,agency
 provider,global alliance for vaccines and immunization,1311,,Global Alliance for Vaccines and Immunization,listing
 provider,global biodiversity framework fund (gbff),811,19,Global Biodiversity Framework Fund (GBFF),agency
-provider,global concessional financing facility trust fund,909,92,Global Concessional Financing Facility Trust Fund,agency
 provider,global energy efficiency and renewable energy fund,1018,,Global Energy Efficiency and Renewable Energy Fund,listing
 provider,global environment facility,811,,Global Environment Facility,listing
-provider,global environment facility (gef),909,108,Global Environment Facility (GEF),agency
 provider,global fund,1312,,Global Fund,listing
 provider,global green growth institute,1313,,Global Green Growth Institute,listing
-provider,global infrastructure facility,909,44,Global Infrastructure Facility,agency
 provider,global partnership for education,997,,Global Partnership for Education,listing
-provider,global partnership for education fund,909,106,Global Partnership for Education Fund,agency
-provider,global partnership for education fund,915,58,Global Partnership for Education Fund,agency
 provider,gode,982,,GODE,listing
 provider,good ventures foundation,1650,,Good Ventures Foundation,listing
 provider,gordon and betty moore foundation,1626,,Gordon and Betty Moore Foundation,listing
@@ -1227,17 +980,14 @@ provider,gov,576,25,Other Government Entities,agency
 provider,gov,611,1,Government of Azerbaijan,agency
 provider,gov,613,2,Government of the Republic of Kazakhstan,agency
 provider,gov,801,5,Australian Government,agency
-provider,governance cooperation fund,915,42,Governance Cooperation Fund,agency
 provider,government,4,1,Government,agency
 provider,government grants administered by kfaed,552,2,Government Grants administered by KFAED,agency
 provider,government of azerbaijan,611,1,Government of Azerbaijan,agency
 provider,government of monaco,26,1,Government of Monaco,agency
-provider,government of spain - quincentennial fund,909,80,Government of Spain - Quincentennial Fund,agency
 provider,government of the republic of kazakhstan,613,2,Government of the Republic of Kazakhstan,agency
 provider,government of the republic of lithuania,84,1,Government of the Republic of Lithuania,agency
 provider,governments and agencies and other public institutions and agencies,84,20,Governments and Agencies and Other public institutions and Agencies,agency
 provider,gp,9,1,Portuguese Government,agency
-provider,gpe,909,106,Global Partnership for Education Fund,agency
 provider,gr,40,,Greece,iso2
 provider,grand duchy of luxembourg,22,,Luxembourg,resolvekit
 provider,grand-duche de luxembourg,22,,Luxembourg,resolvekit
@@ -1254,24 +1004,17 @@ provider,greek administration of southern cyprus,30,,Cyprus,resolvekit
 provider,greek cypriot state,30,,Cyprus,resolvekit
 provider,greek republic,40,,Greece,resolvekit
 provider,green climate fund,1016,,Green Climate Fund,listing
-provider,green climate fund for the asean catalytic green finance facility - green recovery program,915,78,Green Climate Fund for the ASEAN Catalytic Green Finance Facility - Green Recovery Program,agency
-provider,green climate fund for the community resilience partnership program investment fund,915,79,Green Climate Fund for the Community Resilience Partnership Program Investment Fund,agency
 provider,green growth planning and implementation,1313,1,Green Growth Planning and Implementation,agency
-provider,green growth planning and implementation,1313,5,Green Growth Planning and Implementation,agency
 provider,green investment services,1313,4,Green Investment Services,agency
 provider,grf,909,6,Grant Facility,agency
 provider,grf,909,18,IDB Grant Facility,agency
 provider,griechenland,40,,Greece,resolvekit
-provider,grn,909,85,Green Climate Fund,agency
 provider,grossbritannien und nordirland,12,,United Kingdom,resolvekit
 provider,grossherzogtum luxemburg,22,,Luxembourg,resolvekit
 provider,groupe du developpement des infrastructures privees,1014,,Private Infrastructure Development Group,listing_fr
-provider,grp,909,105,Framework Readiness Preparatory Support,agency
 provider,guarantco,1014,3,GuarantCo,agency
-provider,guyana redd+ investment fund,909,46,Guyana REDD+ Investment Fund,agency
 provider,h&m foundation,1612,,H&M Foundation,listing
 provider,haiti espanol,340,,Dominican Republic,resolvekit
-provider,haiti reconstruction fund,909,47,Haiti Reconstruction Fund,agency
 provider,hamburg,5,81,Free and Hanseatic City of Hamburg,agency
 provider,hanguk,742,,Korea,resolvekit
 provider,hcr,967,,UNHCR,listing_fr
@@ -1282,7 +1025,6 @@ provider,hellenic republic,40,,Greece,resolvekit
 provider,hessen,5,85,Land Hesse,agency
 provider,hhs,302,14,Department of Health and Human Services,agency
 provider,hibernia,21,,Ireland,resolvekit
-provider,high-level technology fund,915,43,High-Level Technology Fund,agency
 provider,hm revenue and customs,12,15,HM Revenue and Customs,agency
 provider,hmrc,12,15,HM Revenue and Customs,agency
 provider,ho,12,6,Home Office,agency
@@ -1308,19 +1050,13 @@ provider,iapon,701,,Japan,resolvekit
 provider,ibrd,901,,International Bank for Reconstruction and Development,curated
 provider,icd,976,3,Islamic Corporation for the Development of the Private Sector,agency
 provider,icdf,732,2,International Cooperation and Development Fund,agency
-provider,ice,909,96,Development Fund for the Ecuador-Colombia Border Integration Zone,agency
 provider,iceida,20,2,ICEIDA,agency
 provider,iceland,20,,Iceland,listing
 provider,icelandic republic,20,,Iceland,resolvekit
-provider,icf - dp,1014,1,Infrastructure Crisis Facility – Debt Pool,agency
 provider,icgeb,1052,1,"ICGEB Core, developmental",agency
 provider,"icgeb core, developmental",1052,1,"ICGEB Core, developmental",agency
-provider,"icgeb core, global activities",1052,2,"ICGEB Core, global activities",agency
 provider,icmp,1049,1,ICMP core resources,agency
 provider,icmp core resources,1049,1,ICMP core resources,agency
-provider,icmp non-core resources,1049,2,ICMP Non-core resources,agency
-provider,ico,50,1,Instituto de Credito Oficial,agency
-provider,icp,909,97,Development Fund for the Colombia-Peru Border Integration Zone,agency
 provider,icru,20,3,ICRU,agency
 provider,id,738,,Indonesia,iso2
 provider,ida,905,,International Development Association,curated
@@ -1331,14 +1067,11 @@ provider,idrc,301,2,International Development Research Centre,agency
 provider,ie,21,,Ireland,iso2
 provider,ifad,988,,IFAD,listing
 provider,ifdk,3,3,Impact Fund Denmark ,agency
-provider,ifdk pi,3,6,Public infrastructure,agency
 provider,iffim,1311,2,International Finance Facility for Immunisation ,agency
 provider,ihc,576,7,International Humanitarian City,agency
 provider,iib,1037,1,International Investment Bank,agency
 provider,ikea foundation,1608,,IKEA Foundation,listing
 provider,il,546,,Israel,iso2
-provider,ilo,1022,6,ILO,agency
-provider,imf,907,1,IMF,agency
 provider,imf (concessional trust funds),958,,IMF (Concessional Trust Funds),listing
 provider,imf concessional,958,1,IMF concessional,agency
 provider,imf resilience and sustainability trust,1058,,IMF Resilience and Sustainability Trust,listing
@@ -1346,39 +1079,21 @@ provider,imf trust fund,956,,IMF Trust Fund,listing
 provider,"immigration, refugees and citizenship canada",301,10,"Immigration, Refugees and Citizenship Canada",agency
 provider,"immigration, refuges et citoyennete canada",301,10,"Immigration, Refugees and Citizenship Canada",agency
 provider,impact fund denmark,3,3,Impact Fund Denmark ,agency
-provider,imss,358,22,Mexican Social Security Institute,agency
 provider,in,8,7,Innovation Norway,agency
-provider,in-kind contributions,928,4,In-kind contributions,agency
-provider,in-kind contributions - regional and global (non-developmental),928,9,In-kind contributions - regional and global (non-developmental),agency
-provider,inai,358,24,Federal Institute for Access to Public Information and Data Protection,agency
 provider,indes orientales neerlandaises,738,,Indonesia,resolvekit
 provider,indonesia,738,,Indonesia,listing
-provider,indonesian agency for international development,738,20,Indonesian Agency for International Development,agency
-provider,indonesian aid,738,20,Indonesian Agency for International Development,agency
-provider,indonesian national police,738,11,Indonesian National Police,agency
 provider,indonesie,738,,Indonesia,listing_fr
 provider,indonesien,738,,Indonesia,resolvekit
-provider,ine,358,19,National Electoral Institute,agency
-provider,ine,460,3,National Institute of Statistics,agency
-provider,inegi,358,20,Institute National Institute of Statistics and Geography,agency
-provider,inei,454,3,National Institute of Statistics and Informatics,agency
 provider,infraco africa,1014,5,InfraCo Africa,agency
 provider,infraco asia,1014,4,InfraCo Asia,agency
-provider,infrastructure crisis facility – debt pool,1014,1,Infrastructure Crisis Facility – Debt Pool,agency
-provider,"infrastructure planning center, regional infrastructure development agency",738,13,"Infrastructure Planning Center, Regional Infrastructure Development Agency",agency
 provider,innovation norway,8,7,Innovation Norway,agency
 provider,innovative ventures and technologies for development,12,28,Innovative Ventures and Technologies for Development,agency
-provider,inpi,358,18,National Institute for the Development of Indigenous Peoples,agency
 provider,institut de doha,561,2,Doha Institute,agency
 provider,institut de recherche pour le developpement,4,47,IRD,agency
 provider,institut des nations unies pour la recherche sur le desarmement,1038,,UN Institute for Disarmament Research,listing_fr
 provider,institut mondial de la croissance verte,1313,,Global Green Growth Institute,listing_fr
-provider,institute for social security and services for state workers,358,23,Institute for Social Security and Services for State Workers,agency
-provider,institute national institute of statistics and geography,358,20,Institute National Institute of Statistics and Geography,agency
-provider,institutional capacity strengthening thematic fund,909,49,Institutional Capacity Strengthening Thematic Fund,agency
 provider,institutions de l'ue,918,,EU Institutions,listing_fr
 provider,institutions federales,5,14,Federal Institutions,agency
-provider,instituto de credito oficial,50,1,Instituto de Credito Oficial,agency
 provider,int,4,12,Ministry of Interior,agency
 provider,int,40,1,Ministry of the Interior,agency
 provider,int,50,13,Ministry of Interior,agency
@@ -1391,17 +1106,11 @@ provider,int,76,3,Ministry of Interior and Administration,agency
 provider,int,77,20,Ministry of Internal Affairs,agency
 provider,int,84,12,Ministry of the Interior,agency
 provider,int,302,9,Department of the Interior,agency
-provider,int,909,50,INTAL,agency
-provider,intal,909,50,INTAL,agency
-provider,integrated disaster risk management fund,915,44,Integrated Disaster Risk Management Fund,agency
-provider,inter-american committee on ports,1056,5,Inter-American Committee on Ports,agency
 provider,inter-american development bank,909,,Inter-American Development Bank,listing
 provider,inter-american development bank (iadb),909,,Inter-American Development Bank,resolvekit
 provider,inter-american development bank group,909,1,Ordinary Capital,agency
 provider,inter-american development foundation,302,21,Inter-American Development Foundation,agency
 provider,interdepartmental,4,15,Expertise France,agency
-provider,intergovernmental science-policy platform on biodiversity and ecosystem services (ipbes) - voluntary contributions non-core - developmental,807,24,Intergovernmental Science-Policy Platform on Biodiversity and Ecosystem Services (IPBES) - Voluntary Contributions Non-core - developmental,agency
-provider,intergovernmental science-policy platform on biodiversity and ecosystem services - (ipbes) voluntary contributions non-core - tossd only,807,25,Intergovernmental Science-Policy Platform on Biodiversity and Ecosystem Services - (IPBES) Voluntary Contributions Non-core - TOSSD only,agency
 provider,intermin,4,15,Expertise France,agency
 provider,interministeriel,4,15,Expertise France,agency
 provider,internal special funds,1024,2,Internal Special Funds,agency
@@ -1412,7 +1121,6 @@ provider,international bank for reconstruction and development (ibrd),901,,Inter
 provider,international centre for genetic engineering and biotechnology,1052,,International Centre for Genetic Engineering and Biotechnology,listing
 provider,international commission on missing persons,1049,,International Commission on Missing Persons,listing
 provider,international cooperation and development fund,732,2,International Cooperation and Development Fund,agency
-provider,international cooperation area (aci) of mideplan,336,1,International Cooperation Area (ACI) of MIDEPLAN,agency
 provider,international development association,905,,International Development Association,listing
 provider,international development association (ida),905,,International Development Association,resolvekit
 provider,international development finance corporation,302,34,International Development Finance Corporation,agency
@@ -1432,11 +1140,6 @@ provider,international trade centre - regular budget,1401,1,International Trade 
 provider,interpol,1043,,Interpol,listing
 provider,invent,12,28,Innovative Ventures and Technologies for Development,agency
 provider,investment and policy solutions division,1313,2,Investment and Policy Solutions Division,agency
-provider,investment and policy solutions division,1313,6,Investment and Policy Solutions Division,agency
-provider,investment climate facilitation fund,915,45,Investment Climate Facilitation Fund,agency
-provider,iom,1022,10,IOM,agency
-provider,ipbes pow non-core - tossd only,807,25,Intergovernmental Science-Policy Platform on Biodiversity and Ecosystem Services - (IPBES) Voluntary Contributions Non-core - TOSSD only,agency
-provider,ipbes pownon-core - developmental,807,24,Intergovernmental Science-Policy Platform on Biodiversity and Ecosystem Services (IPBES) - Voluntary Contributions Non-core - developmental,agency
 provider,ipsd,1313,2,Investment and Policy Solutions Division,agency
 provider,iq,543,,Iraq,iso2
 provider,irak,543,,Iraq,listing_fr
@@ -1445,7 +1148,6 @@ provider,iraque,543,,Iraq,resolvekit
 provider,ircc,301,10,"Immigration, Refugees and Citizenship Canada",agency
 provider,ird,4,47,IRD,agency
 provider,ireland,21,,Ireland,listing
-provider,ireland trust fund for building climate change and disaster resilience in small island developing states,915,46,Ireland Trust Fund for Building Climate Change and Disaster Resilience in Small Island Developing States,agency
 provider,irish republic,21,,Ireland,resolvekit
 provider,irl,21,,Ireland,iso3
 provider,irland,21,,Ireland,resolvekit
@@ -1470,44 +1172,27 @@ provider,israel,546,,Israel,listing
 provider,israel mashav,546,1,Israel MASHAV,agency
 provider,israele,546,,Israel,resolvekit
 provider,israeli public universities,546,2,Israeli public universities,agency
-provider,issste,358,23,Institute for Social Security and Services for State Workers,agency
 provider,it,6,,Italy,iso2
 provider,ita,6,,Italy,iso3
 provider,italia,6,,Italy,resolvekit
-provider,italian fund for innovative projects,1013,8,Italian Fund for Innovative Projects,agency
-provider,italian fund for technical cooperation projects,909,51,Italian Fund for Technical Cooperation Projects,agency
 provider,italian republic,6,,Italy,resolvekit
 provider,italian society for enterprises abroad,6,14,Italian Society for Enterprises Abroad,agency
-provider,italian trade agency,6,18,Italian Trade Agency,agency
-provider,italian trust fund for regional competitiveness,909,48,Italian Trust Fund for Regional Competitiveness,agency
-provider,italian trust fund for the preparation of mif projects,909,52,Italian Trust Fund for the Preparation of MIF Projects,agency
 provider,italie,6,,Italy,listing_fr
 provider,italien,6,,Italy,resolvekit
 provider,italy,6,,Italy,listing
 provider,itc,1401,1,International Trade Centre - Regular budget,agency
 provider,itfc,976,5,International Islamic Trade Finance Corporation,agency
-provider,itm,909,52,Italian Trust Fund for the Preparation of MIF Projects,agency
 provider,jacobs foundation,1636,,Jacobs Foundation,listing
 provider,jamahiriya arabe libyenne,133,,Libya,resolvekit
 provider,japan,701,,Japan,listing
-provider,japan agency for medical research and development,701,16,Japan Agency for Medical Research and Development,agency
 provider,japan bank for international co-operation,701,11,Japan Bank for International Co-operation,agency
-provider,japan fund for information and communication technology,915,47,Japan Fund for Information and Communication Technology,agency
-provider,japan fund for prosperous and resilient asia and the pacific,915,6,Japan Fund for Prosperous and Resilient Asia and the Pacific,agency
-provider,japan fund for the joint crediting mechanism,915,48,Japan Fund for the Joint Crediting Mechanism,agency
 provider,japan overseas development co-operation,701,10,Japan Overseas Development Co-operation,agency
-provider,japan private public partnership financing account,909,55,Japan Private Public Partnership Financing Account,agency
-provider,japan special fund,909,56,Japan Special Fund,agency
 provider,japan special fund,915,5,Japan Special Fund,agency
-provider,japan special fund poverty reduction program,909,54,Japan Special Fund Poverty Reduction Program,agency
-provider,japanese consultants fund,909,53,Japanese Consultants Fund,agency
 provider,japanese international co-operation agency,701,8,Japanese International Co-operation Agency,agency
 provider,japao,701,,Japan,resolvekit
 provider,japon,701,,Japan,listing_fr
 provider,jbic,701,11,Japan Bank for International Co-operation,agency
-provider,jcf,909,53,Japanese Consultants Fund,agency
 provider,jd,8,16,Ministry of Justice and Public Security,agency
-provider,jenv,7,6,Ministry for Justice and Security,agency
 provider,jica,701,8,Japanese International Co-operation Agency,agency
 provider,jodc,701,10,Japan Overseas Development Co-operation,agency
 provider,john & catherine macarthur foundation,1619,1,John & Catherine MacArthur Foundation,agency
@@ -1517,7 +1202,6 @@ provider,joint sustainable development goals fund,1048,,Joint Sustainable Develo
 provider,jp,701,,Japan,iso2
 provider,jpn,701,,Japan,iso3
 provider,jsf,915,5,Japan Special Fund,agency
-provider,judicial branch,336,10,Judicial Branch,agency
 provider,justice,62,7,"Ministry of Justice, Administration and Digital Transformatio",agency
 provider,justice,68,11,Ministry of Justice,agency
 provider,justice,75,8,Ministry of Justice,agency
@@ -1535,7 +1219,6 @@ provider,kazakhstan,613,,Kazakhstan,listing
 provider,kazakistan,613,,Kazakhstan,resolvekit
 provider,kbz,576,17,Khalifa Bin Zayed Al Nahyan Foundation,agency
 provider,kd,8,14,Ministry of Education and Research,agency
-provider,kef,909,57,Knowledge Multidonor Economy Fund,agency
 provider,kexim,742,2,Export-Import Bank of Korea,agency
 provider,kfaed,552,1,Kuwait Fund for Arab Economic Development (KFAED),agency
 provider,kfw,5,2,KfW Bankengruppe (KfW banking group),agency
@@ -1554,8 +1237,6 @@ provider,kingdom of spain,50,,Spain,resolvekit
 provider,kingdom of sweden,10,,Sweden,resolvekit
 provider,kingdom of thailand,764,,Thailand,resolvekit
 provider,kingdom of the netherlands,7,,Netherlands,resolvekit
-provider,knowledge multidonor economy fund,909,57,Knowledge Multidonor Economy Fund,agency
-provider,knowledge partnership korea fund for technology and innovation,909,60,Knowledge Partnership Korea Fund for Technology and Innovation,agency
 provider,koica,742,4,Korea International Cooperation Agency,agency
 provider,kolumbien,437,,Colombia,resolvekit
 provider,konigreich belgien,2,,Belgium,resolvekit
@@ -1563,10 +1244,7 @@ provider,kor,742,,Korea,iso3
 provider,korea,742,,Korea,listing
 provider,"korea (republik korea, sudkorea)",742,,Korea,resolvekit
 provider,korea (south),742,,Korea,resolvekit
-provider,korea infrastructure development co-financing facility for latin america and the caribbean,909,58,Korea Infrastructure Development Co-Financing Facility for Latin America and the Caribbean,agency
 provider,korea international cooperation agency,742,4,Korea International Cooperation Agency,agency
-provider,korea poverty reduction fund,909,61,Korea Poverty Reduction Fund,agency
-provider,korea private sector development and innovation fund,909,62,Korea Private Sector Development and Innovation Fund,agency
 provider,korea republic,742,,Korea,resolvekit
 provider,"korea, rep.",742,,Korea,resolvekit
 provider,"korea, republic of",742,,Korea,resolvekit
@@ -1588,7 +1266,6 @@ provider,la caixa banking foundation,1639,,La Caixa Banking Foundation,listing
 provider,la madre patria,50,,Spain,resolvekit
 provider,la piel de toro,50,,Spain,resolvekit
 provider,labor,302,17,Department of Labor,agency
-provider,laif grant to cc and w&s,909,63,LAIF grant to CC and W&S,agency
 provider,land baden-wurttemberg,5,87,Land Baden-Württemberg,agency
 provider,land berlin,5,90,Land Berlin,agency
 provider,land brandenburg,5,91,Land Brandenburg,agency
@@ -1613,7 +1290,6 @@ provider,land rhineland-palatinate,5,86,Land Rhineland-Palatinate,agency
 provider,land saarland,5,89,Land Saarland,agency
 provider,land saxony-anhalt,5,93,Land Saxony-Anhalt,agency
 provider,land schleswig-holstein,5,80,Land Schleswig-Holstein,agency
-provider,lapsif,915,24,Leading Asia's Private Sector Infrastructure Fund,agency
 provider,lat,83,,Latvia,resolvekit
 provider,latveja,83,,Latvia,resolvekit
 provider,latvejas republika,83,,Latvia,resolvekit
@@ -1623,11 +1299,8 @@ provider,latvija,83,,Latvia,resolvekit
 provider,latvijas republika,83,,Latvia,resolvekit
 provider,laudes foundation,1613,,Laudes Foundation,listing
 provider,lby,133,,Libya,iso3
-provider,lce,909,98,Low Carbon Energy Fund for People and Planet,agency
 provider,ldcf,811,12,Least Developed Countries Trust Fund (LDCF),agency
 provider,le bureau de cooperation regionale,546,11,The Office for Regional Cooperation,agency
-provider,leading asia's private infrastructure fund 2,915,80,Leading Asia's Private Infrastructure Fund 2,agency
-provider,leading asia's private sector infrastructure fund,915,24,Leading Asia's Private Sector Infrastructure Fund,agency
 provider,least developed countries trust fund (ldcf),811,12,Least Developed Countries Trust Fund (LDCF),agency
 provider,lego foundation,1633,,LEGO Foundation,listing
 provider,leona m. and harry b. helmsley charitable trust,1648,,Leona M. and Harry B. Helmsley Charitable Trust,listing
@@ -1660,15 +1333,11 @@ provider,local,83,3,Local and regional governments,agency
 provider,local administration - municipalities and metropolitan cities,6,82,Local administration - Municipalities and metropolitan cities,agency
 provider,local administration - regions and autonomous provinces,6,81,Local administration - Regions and autonomous provinces,agency
 provider,local administration - unspecified,6,8,Local administration - Unspecified,agency
-provider,local and regional governments,69,30,Local and Regional governments,agency
 provider,local and regional governments,83,3,Local and regional governments,agency
 provider,local authorites,82,4,Local Authorites,agency
 provider,local authorities,4,8,Local authorities,agency
 provider,local authorities,84,30,Local Authorities,agency
-provider,local government,336,7,Local government ,agency
 provider,local government - municipal authorities,546,5,local government - Municipal authorities,agency
-provider,low carbon agriculture for avoided deforestation and poverty reduction,909,64,Low Carbon Agriculture for Avoided Deforestation and Poverty Reduction,agency
-provider,low carbon energy fund for people and planet,909,98,Low Carbon Energy Fund for People and Planet,agency
 provider,lt,84,,Lithuania,iso2
 provider,ltu,84,,Lithuania,iso3
 provider,lu,22,,Luxembourg,iso2
@@ -1682,34 +1351,23 @@ provider,luxemburgo,22,,Luxembourg,resolvekit
 provider,lv,83,,Latvia,iso2
 provider,lva,83,,Latvia,iso3
 provider,ly,133,,Libya,iso2
-provider,ma,460,2,Ministry of Environment,agency
-provider,maate,440,6,"Ministry of Environment, Water and Ecologic Transition",agency
 provider,macro-financial assistance,918,5,Macro-Financial Assistance,agency
 provider,madf,40,11,Ministry of Agricultural Development & Food,agency
 provider,mae,4,6,Ministry of Foreign Affairs,agency
 provider,mae,9,17,Ministry of Environment and Energy,agency
 provider,mae/agence internationale de developpement,611,4,MFA/Azerbaijan International Development Agency,agency
-provider,mae/coop,4,9,MAE/COOP,agency
 provider,mae/fsp,4,7,MAE/FSP,agency
 provider,maeci,6,12,Ministry of Foreign Affairs and International Cooperation,agency
 provider,maff,701,1,"Ministry of Agriculture, Forestry and Fisheries",agency
-provider,mag,440,2,Ministry of Agriculture and Livestock,agency
 provider,mai,9,13,Ministry of Internal Administration,agency
 provider,maint,22,6,Ministry of home affairs,agency
-provider,malaria elimination blending facility,909,70,Malaria Elimination Blending Facility,agency
 provider,malta,45,,Malta,listing
 provider,malta island,45,,Malta,resolvekit
 provider,malte,45,,Malta,listing_fr
 provider,mam,9,19,Ministry of Agriculture and Sea,agency
-provider,map pow assessed - tossd only,807,27,Mediterranean Action Plan (MAP) - Voluntary Contributions Non-core - TOSSD only,agency
-provider,map pow assessed- developmental,807,26,Mediterranean Action Plan (MAP) - Assessed contributions - developmental,agency
-provider,map pow non-core - developmental,807,28,Mediterranean Action Plan (MAP) - Voluntary Contributions Non-core - developmental,agency
-provider,map pows non-core - tossd only,807,29,Mediterranean Action Plan (MAP) - Voluntary Contributions Non-core - TOSSD only,agency
 provider,mare,9,9,Ministry of Deputy and State Reform,agency
-provider,marena,340,4,Ministry of Environment and Natural Resources,agency
 provider,margaret a. cargill foundation,1638,,Margaret A. Cargill Foundation,listing
 provider,marm,50,10,Ministry of the Environment and Rural and Marine Environs,agency
-provider,masdar,576,5,Abu Dhabi Future Energy Co.,agency
 provider,mase,6,15,Ministry of Environment and Energy Security,agency
 provider,massif,7,14,MASSIF,agency
 provider,mastercard foundation,1606,,Mastercard Foundation,listing
@@ -1718,7 +1376,6 @@ provider,"mava, fondation pour la nature",1610,,MAVA Foundation,listing_fr
 provider,mbr,576,18,Mohammed Bin Rashid Al Maktoum Humanitarian and Charity Establishment,agency
 provider,mbz,576,8,Mohamed Bin Zayed Species Conservation Fund,agency
 provider,mc,26,,Monaco,iso2
-provider,mcb,909,86,MIF- Clinton Bush Haiti Fund,agency
 provider,mcc,302,18,Millennium Challenge Corporation,agency
 provider,mch,75,5,Ministry of Human Capacities,agency
 provider,mcjd,9,18,"Ministry of Culture, Youth and Sport",agency
@@ -1728,41 +1385,25 @@ provider,mco,26,,Monaco,iso3
 provider,mcp,40,13,Ministry of Citizen Protection,agency
 provider,mct,40,14,Ministry of Culture & Tourism,agency
 provider,mcult,22,4,Ministry of Culture,agency
-provider,mcv pow assessed contributions,807,30,Minamata Convention on Mercury (MCV) - Assessed Contributions,agency
-provider,mcv pow non-core - developmental,807,31,Minamata Convention on Mercury (MCV) - Voluntary Contributions Non-core - developmental,agency
-provider,mcv pow non-core - tossd only,807,32,Minamata Convention on Mercury (MCV) - Voluntary Contributions Non-core - TOSSD only,agency
-provider,mcyp,440,3,Ministry of Culture and Heritage,agency
 provider,mdcs,40,5,"Ministry of Development, Competitiveness & Shipping",agency
 provider,mdn,9,10,Ministry of National Defence,agency
 provider,me,9,8,Ministry of Economy and Territorial Cohesion,agency
-provider,mec,431,12,Ministry of Education,agency
-provider,mecb,22,7,"Ministry of the Environment, climate and biodiversity",agency
 provider,meci,9,14,"Ministry of Education, Science and Innovation",agency
 provider,mecklenburg-vorpommern,5,92,Land Mecklenburg-Western Pomerania,agency
-provider,mediterranean action plan (map) - assessed contributions - developmental,807,26,Mediterranean Action Plan (MAP) - Assessed contributions - developmental,agency
-provider,mediterranean action plan (map) - voluntary contributions non-core - developmental,807,28,Mediterranean Action Plan (MAP) - Voluntary Contributions Non-core - developmental,agency
-provider,mediterranean action plan (map) - voluntary contributions non-core - tossd only,807,27,Mediterranean Action Plan (MAP) - Voluntary Contributions Non-core - TOSSD only,agency
-provider,mediterranean action plan (map) - voluntary contributions non-core - tossd only,807,29,Mediterranean Action Plan (MAP) - Voluntary Contributions Non-core - TOSSD only,agency
 provider,meecc,40,6,"Ministry of the Environment, Energy & Climate Change",agency
 provider,mef,6,13,Ministry of Economy and Finance,agency
 provider,mejico,358,,Mexico,resolvekit
 provider,melllr,40,7,"Ministry of Education, Life Long Learning & Religions",agency
 provider,men,4,17,"Ministry of Education, Higher education and Research",agency
 provider,men/educ-nationale,4,17,"Ministry of Education, Higher education and Research",agency
-provider,mepyd,340,1,"Ministry of Economy, Plannning and Development",agency
 provider,merica,302,,United States,resolvekit
-provider,mescyt,340,9,"Ministry of Higher Education, Science and Technology",agency
-provider,mesoamerica health facility,909,73,Mesoamerica Health Facility,agency
 provider,mess,40,9,Ministry of Employment & Social Security,agency
 provider,messico,358,,Mexico,resolvekit
-provider,"meteorological, climatological, and geophysical agency",738,5,"Meteorological, Climatological, and Geophysical Agency",agency
 provider,metlife,1605,1,MetLife Foundation,agency
 provider,metlife foundation,1605,,MetLife Foundation,listing
 provider,metropolitan denmark,3,,Denmark,resolvekit
 provider,mex,358,,Mexico,iso3
-provider,mexican agency for international development cooperation,358,1,Mexican Agency for International Development Cooperation,agency
 provider,mexican republic,358,,Mexico,resolvekit
-provider,mexican social security institute,358,22,Mexican Social Security Institute,agency
 provider,mexican united states,358,,Mexico,resolvekit
 provider,mexico,358,,Mexico,listing
 provider,mexiko,358,,Mexico,resolvekit
@@ -1802,26 +1443,15 @@ provider,mhr,909,17,Human Resource Facility,agency
 provider,mhss,40,10,Ministry of Health & Social Solidarity,agency
 provider,micad,576,9,Ministry of International Cooperation and Development,agency
 provider,michael & susan dell foundation,1621,,Michael & Susan Dell Foundation,listing
-provider,midagri,454,5,Ministry of Agricultural Development and Irrigation,agency
-provider,midis,454,6,Ministry of Development and Social Inclusion,agency
 provider,mie,50,9,Ministry of Industry and Energy,agency
-provider,mies,440,5,Ministry of Economic and Social Inclusion,agency
 provider,mif,909,5,Multilateral Investment Fund,agency
-provider,mif- clinton bush haiti fund,909,86,MIF- Clinton Bush Haiti Fund,agency
 provider,migrant and refugee fund,1013,2,Migrant and Refugee Fund,agency
-provider,migrant and refugee fund,1013,4,Migrant and Refugee Fund,agency
 provider,mih,9,11,Ministry of Infrastructure and Housing,agency
 provider,millennium challenge corporation,302,18,Millennium Challenge Corporation,agency
-provider,mimp,454,7,Ministry for Women and Vulnerable Population Groups,agency
 provider,min,1,2,Various ministries,agency
 provider,min/equipement,4,30,Water agencies,agency
 provider,min/sante,4,36,MIN/SANTE,agency
-provider,min/transports,4,35,MIN/TRANSPORTS,agency
 provider,min/travail,4,37,MIN/TRAVAIL,agency
-provider,minamata convention on mercury (mcv) - assessed contributions,807,30,Minamata Convention on Mercury (MCV) - Assessed Contributions,agency
-provider,minamata convention on mercury (mcv) - voluntary contributions non-core - developmental,807,31,Minamata Convention on Mercury (MCV) - Voluntary Contributions Non-core - developmental,agency
-provider,minamata convention on mercury (mcv) - voluntary contributions non-core - tossd only,807,32,Minamata Convention on Mercury (MCV) - Voluntary Contributions Non-core - TOSSD only,agency
-provider,mincetur,454,4,Ministry of Foreign Trade and Tourism,agency
 provider,minefi,4,10,"Ministry of Economy, Finance and Industry",agency
 provider,minefi/bdf,4,42,MINEFI/BDF,agency
 provider,minefi/natexis,4,2,BPI France,agency
@@ -1833,7 +1463,6 @@ provider,ministere de l'agriculture,84,11,Ministry of Agriculture,agency
 provider,ministere de l'agriculture,546,7,Ministry of Agriculture,agency
 provider,ministere de l'agriculture et de la mer,9,19,Ministry of Agriculture and Sea,agency
 provider,ministere de l'agriculture et des cooperatives,764,4,Ministry of Agriculture and Cooperatives,agency
-provider,ministere de l'agriculture et des forets,18,10,Ministry of Agriculture and Forestry,agency
 provider,ministere de l'agriculture et du developpement regionale,77,30,Ministry of Agriculture and Regional Development,agency
 provider,"ministere de l'agriculture, de la sylviculture et de la peche",701,1,"Ministry of Agriculture, Forestry and Fisheries",agency
 provider,"ministere de l'agriculture, la sylviculture et de la peche",62,5,"Ministry of Agriculture, Forestry and Fisheries",agency
@@ -1841,7 +1470,6 @@ provider,"ministere de l'agriculture, peche et alimentation",50,4,"Ministry of A
 provider,ministere de l'aliya et de l'integration,546,4,Ministry of Aliyah and Integration,agency
 provider,"ministere de l'amenagement du territoire, de la construction et des domaines de l'etat",62,26,"Ministry of Physical Planning, Construction and State Property",agency
 provider,ministere de l'ecologie et des ressources naturelles,611,9,Ministry of Ecology and Natural Resources,agency
-provider,ministere de l'economie,62,27,Ministry of Economy,agency
 provider,ministere de l'economie,84,6,Ministry of Economy,agency
 provider,ministere de l'economie,546,10,Ministry of Economics,agency
 provider,ministere de l'economie (anciennement ministere de l'economie et du developpement durable),62,19,Ministry of Economy (formerly Ministry of Economy and Sustainable Development),agency
@@ -1855,7 +1483,6 @@ provider,ministere de l'education,546,3,Ministry of Education,agency
 provider,ministere de l'education,566,7,Ministry of Education,agency
 provider,ministere de l'education,764,8,Ministry of Education,agency
 provider,ministere de l'education de la formation continue et des religions,40,7,"Ministry of Education, Life Long Learning & Religions",agency
-provider,ministere de l'education et de la culture,18,9,Ministry of Education and Culture,agency
 provider,ministere de l'education et de la recherche,8,14,Ministry of Education and Research,agency
 provider,ministere de l'education et de la recherche scientifique,77,28,Ministry of Education and Scientific Research,agency
 provider,ministere de l'education et de la science,84,7,Ministry of Education and Science,agency
@@ -1869,7 +1496,6 @@ provider,ministere de l'energie,84,9,Ministry of Energy,agency
 provider,ministere de l'energie,764,9,Ministry of Energy,agency
 provider,ministere de l'enivironnment et du changement climatique,77,32,Ministry of Environment and Climate Change,agency
 provider,"ministere de l'enseignement superieur, des sciences et de l'innovation",61,6,"Ministry of Higher Education, Science and Innovation",agency
-provider,ministere de l'environnement,18,14,Ministry of the Environment,agency
 provider,ministere de l'environnement,50,10,Ministry of the Environment and Rural and Marine Environs,agency
 provider,ministere de l'environnement,84,4,Ministry of Environment,agency
 provider,ministere de l'environnement,546,12,Ministry of the Environment,agency
@@ -1877,13 +1503,11 @@ provider,ministere de l'environnement et de l'energie,9,17,Ministry of Environme
 provider,ministere de l'environnement et de la securite energetique,6,15,Ministry of Environment and Energy Security,agency
 provider,"ministere de l'environnement, de l'energie et du changement climatique",40,6,"Ministry of the Environment, Energy & Climate Change",agency
 provider,"ministere de l'environnement, du climat et de l'energie",61,5,"Ministry of the Environment, Climate and Energy",agency
-provider,"ministere de l'environnement, du climat et de la biodiversite",22,7,"Ministry of the Environment, climate and biodiversity",agency
 provider,ministere de l'industrie,764,10,Ministry of Industry,agency
 provider,ministere de l'industrie et de l'energie,50,9,Ministry of Industry and Energy,agency
 provider,ministere de l'innovation et de la technologie,75,9,Ministry for Innovation and Technology,agency
 provider,ministere de l'interieur,1,12,Ministry of Interior,agency
 provider,ministere de l'interieur,4,12,Ministry of Interior,agency
-provider,ministere de l'interieur,18,6,Ministry of the Interior,agency
 provider,ministere de l'interieur,40,1,Ministry of the Interior,agency
 provider,ministere de l'interieur,50,13,Ministry of Interior,agency
 provider,ministere de l'interieur,61,3,Ministry of the Interior,agency
@@ -1901,7 +1525,6 @@ provider,ministere de la culture,22,4,Ministry of Culture,agency
 provider,ministere de la culture,68,22,Ministry of Culture,agency
 provider,ministere de la culture,77,17,Ministry of Culture,agency
 provider,ministere de la culture,84,15,Ministry of Culture,agency
-provider,ministere de la culture,764,6,Ministry of Culture,agency
 provider,ministere de la culture et des medias,62,21,Ministry of Culture and Media,agency
 provider,ministere de la culture et du tourisme,40,14,Ministry of Culture & Tourism,agency
 provider,ministere de la culture et du tourisme,611,6,Ministry of Culture and Tourism,agency
@@ -1909,7 +1532,6 @@ provider,"ministere de la culture, de la jeunesse et des sports",9,18,"Ministry 
 provider,ministere de la defense,4,14,Ministry of Defence,agency
 provider,ministere de la defense,8,11,Ministry of Defence,agency
 provider,ministere de la defense,12,8,Ministry of Defence,agency
-provider,ministere de la defense,18,7,Ministry of Defence,agency
 provider,ministere de la defense,50,19,Ministry of Defense,agency
 provider,ministere de la defense,61,4,Ministry of Defence,agency
 provider,ministere de la defense,62,25,Ministry of Defense,agency
@@ -1923,16 +1545,13 @@ provider,ministere de la defense nationale,40,4,Ministry of National Defense,age
 provider,ministere de la defense nationale,84,3,Ministry of National Defense,agency
 provider,ministere de la defense nationale,301,7,Department of National Defence,agency
 provider,ministere de la demographie et de l'immigration,62,6,Ministry for Demography and Immigration,agency
-provider,ministere de la demographie et de l'immigration,62,28,Ministry of Demography and Immigration,agency
 provider,"ministere de la famille, des solidarites, du vivre ensemble et de l'accueil",22,8,"Ministry of family affairs, solidarity, living together and reception of refugees",agency
 provider,ministere de la finance publique,77,2,Ministry of Public Finance,agency
 provider,ministere de la jeunesse et des sports,611,7,Ministry of Youth and Sport,agency
 provider,ministere de la justice,9,12,Ministry of Justice,agency
-provider,ministere de la justice,18,5,Ministry of Justice,agency
 provider,ministere de la justice,75,8,Ministry of Justice,agency
 provider,ministere de la justice,77,14,Ministry of Justice,agency
 provider,ministere de la justice,764,12,Ministry of Justice,agency
-provider,ministere de la justice et de la securite,7,6,Ministry for Justice and Security,agency
 provider,ministere de la justice et de la securite publique,8,16,Ministry of Justice and Public Security,agency
 provider,"ministere de la justice, de la transparence et des droits humains",40,12,"Ministry of Justice, Transparency & Human Rights",agency
 provider,"ministere de la justice, l'administration et de la transformation numerique",62,7,"Ministry of Justice, Administration and Digital Transformatio",agency
@@ -1958,7 +1577,6 @@ provider,"ministere de la science, de la recherche et de l'economie",1,15,"Minis
 provider,"ministere de la science, l'education et de la jeunesse",62,8,"Ministry of Science, Education and Youth",agency
 provider,ministere de la securite sociale et du travail,84,13,Ministry of Social Security and Labour,agency
 provider,ministere de la societe d'information,77,23,Ministry of Information Society,agency
-provider,ministere des affaires economiques et de l'emploi,18,12,Ministry of Economic Affairs and Employment,agency
 provider,ministere des affaires etrangeres,3,1,Ministry of Foreign Affairs,agency
 provider,ministere des affaires etrangeres,4,6,Ministry of Foreign Affairs,agency
 provider,ministere des affaires etrangeres,8,4,Ministry of Foreign Affairs,agency
@@ -1991,13 +1609,11 @@ provider,ministere des affaires etrangeres et europeennes,61,2,Ministry of Forei
 provider,ministere des affaires etrangeres et europeennes,62,1,Ministry of Foreign and European Affairs,agency
 provider,ministere des affaires interieures,22,6,Ministry of home affairs,agency
 provider,ministere des affaires interieures,77,20,Ministry of Internal Affairs,agency
-provider,ministere des affaires sociales et de la sante,18,13,Ministry of Social Affairs and Health,agency
 provider,ministere des anciens combattants,62,2,Ministry of Veterans,agency
 provider,ministere des capacites humaines,75,5,Ministry of Human Capacities,agency
 provider,ministere des familles et des enfants,8,15,Ministry of Children and Families,agency
 provider,ministere des finances,8,13,Ministry of Finance,agency
 provider,ministere des finances,9,6,Ministry of Finance,agency
-provider,ministere des finances,18,8,Ministry of Finance,agency
 provider,ministere des finances,20,4,Ministry of Finance,agency
 provider,ministere des finances,22,3,Ministry of Finance,agency
 provider,ministere des finances,40,2,Ministry of Finance,agency
@@ -2021,7 +1637,6 @@ provider,ministere des situations d'urgence,611,3,Ministry of Emergency Situatio
 provider,ministere des sports et de la jeunesse,77,13,Youth and Sports Ministry,agency
 provider,ministere des transports,546,19,Ministry of Transportation,agency
 provider,ministere des transports,764,18,Ministry of Transport,agency
-provider,ministere des transports et des communications,18,11,Ministry of Transport and Communications,agency
 provider,ministere des transports et des communications,84,8,Ministry of Transport and Communications,agency
 provider,ministere des travaux publics,50,8,Ministry of Public Works,agency
 provider,ministere du bien-etre et des services sociaux,546,13,Ministry of Welfare and Social Services,agency
@@ -2061,8 +1676,6 @@ provider,ministere federal des affaires europeennes et internationales,1,5,Feder
 provider,ministere federal des finances,1,1,Federal Ministry of Finance,agency
 provider,ministere federal des finances,5,5,Federal Ministry of Finance,agency
 provider,ministere federal des transports,5,67,Federal Ministry of Transport,agency
-provider,"ministere federal du logement, du developpement urbain et de la construction",5,72,"Federal Ministry for Housing, Urban Development and Building",agency
-provider,ministere federal du numerique et de la modernisation de l'etat,5,73,Federal Ministry for Digital Transformation and Government Modernisation,agency
 provider,ministere federal du travail et des affaires sociales,5,71,Federal Ministry of Labour and Social Affairs,agency
 provider,ministere public,77,33,Public Ministry,agency
 provider,ministeres divers,1,2,Various ministries,agency
@@ -2075,54 +1688,34 @@ provider,ministry for demography and immigration,62,6,Ministry for Demography an
 provider,"ministry for education, arts and culture",1,14,"Ministry for Education, Arts and Culture",agency
 provider,"ministry for immigration, integration and housing",3,5,"Ministry for Immigration, Integration and Housing",agency
 provider,ministry for innovation and technology,75,9,Ministry for Innovation and Technology,agency
-provider,ministry for justice and security,7,6,Ministry for Justice and Security,agency
 provider,ministry for national economy,75,13,Ministry for National Economy,agency
 provider,"ministry for science, research and economy",1,15,"Ministry for Science, Research and Economy",agency
-provider,ministry for women and vulnerable population groups,454,7,Ministry for Women and Vulnerable Population Groups,agency
-provider,ministry for women empowerment and child protection,738,6,Ministry for Women Empowerment and Child Protection ,agency
-provider,ministry of  welfare,358,5,Ministry of  Welfare,agency
-provider,ministry of agrarian development and family agriculture,431,25,Ministry of Agrarian Development and Family Agriculture,agency
-provider,"ministry of agrarian, territorial and urban development",358,15,"Ministry of Agrarian, Territorial and Urban Development",agency
 provider,ministry of agricultural development & food,40,11,Ministry of Agricultural Development & Food,agency
-provider,ministry of agricultural development and irrigation,454,5,Ministry of Agricultural Development and Irrigation,agency
 provider,ministry of agriculture,4,13,Ministry of Agriculture,agency
 provider,ministry of agriculture,68,19,Ministry of Agriculture,agency
 provider,ministry of agriculture,75,7,Ministry of Agriculture,agency
 provider,ministry of agriculture,84,11,Ministry of Agriculture,agency
 provider,ministry of agriculture,546,7,Ministry of Agriculture,agency
-provider,ministry of agriculture,738,9,Ministry of Agriculture,agency
 provider,ministry of agriculture and cooperatives,764,4,Ministry of Agriculture and Cooperatives,agency
-provider,ministry of agriculture and forestry,18,10,Ministry of Agriculture and Forestry,agency
-provider,ministry of agriculture and livestock,431,21,Ministry of Agriculture and Livestock,agency
-provider,ministry of agriculture and livestock,440,2,Ministry of Agriculture and Livestock,agency
 provider,ministry of agriculture and regional development,77,30,Ministry of Agriculture and Regional Development,agency
-provider,ministry of agriculture and rural development,358,9,Ministry of Agriculture and Rural Development,agency
 provider,ministry of agriculture and sea,9,19,Ministry of Agriculture and Sea,agency
 provider,"ministry of agriculture, fisheries, and food",50,4,"Ministry of Agriculture, Fisheries, and Food",agency
 provider,"ministry of agriculture, forestry and fisheries",62,5,"Ministry of Agriculture, Forestry and Fisheries",agency
 provider,"ministry of agriculture, forestry and fisheries",701,1,"Ministry of Agriculture, Forestry and Fisheries",agency
 provider,ministry of aliyah and integration,546,4,Ministry of Aliyah and Integration,agency
 provider,ministry of children and families,8,15,Ministry of Children and Families,agency
-provider,ministry of cities,431,22,Ministry of Cities,agency
 provider,ministry of citizen protection,40,13,Ministry of Citizen Protection,agency
 provider,ministry of climate and environment,8,12,Ministry of Climate and Environment,agency
 provider,ministry of climate and environment,76,6,Ministry of Climate and Environment,agency
 provider,ministry of commerce,764,5,Ministry of Commerce,agency
 provider,ministry of communication,546,21,Ministry of Communication,agency
-provider,ministry of communication and information technology,738,10,Ministry of Communication and Information Technology,agency
-provider,ministry of communications,431,24,Ministry of Communications,agency
 provider,ministry of construction and housing,546,8,Ministry of Construction and Housing,agency
 provider,ministry of construction and transport,75,11,Ministry of Construction and Transport,agency
 provider,ministry of culture,22,4,Ministry of Culture,agency
 provider,ministry of culture,68,22,Ministry of Culture,agency
 provider,ministry of culture,77,17,Ministry of Culture,agency
 provider,ministry of culture,84,15,Ministry of Culture,agency
-provider,ministry of culture,340,3,Ministry of Culture,agency
-provider,ministry of culture,358,17,Ministry of Culture,agency
-provider,ministry of culture,431,23,Ministry of Culture,agency
-provider,ministry of culture,764,6,Ministry of Culture,agency
 provider,ministry of culture & tourism,40,14,Ministry of Culture & Tourism,agency
-provider,ministry of culture and heritage,440,3,Ministry of Culture and Heritage,agency
 provider,ministry of culture and media,62,21,Ministry of Culture and Media,agency
 provider,ministry of culture and tourism,611,6,Ministry of Culture and Tourism,agency
 provider,"ministry of culture, national heritage and sport",76,4,"Ministry of Culture, National Heritage and Sport",agency
@@ -2130,43 +1723,28 @@ provider,"ministry of culture, youth and sport",9,18,"Ministry of Culture, Youth
 provider,ministry of defence,4,14,Ministry of Defence,agency
 provider,ministry of defence,8,11,Ministry of Defence,agency
 provider,ministry of defence,12,8,Ministry of Defence,agency
-provider,ministry of defence,18,7,Ministry of Defence,agency
 provider,ministry of defence,61,4,Ministry of Defence,agency
 provider,ministry of defence,68,7,Ministry of Defence,agency
 provider,ministry of defence,75,6,Ministry of Defence,agency
-provider,ministry of defence,358,3,Ministry of Defence,agency
-provider,ministry of defence,431,16,Ministry of Defence,agency
 provider,ministry of defence,611,10,Ministry of Defence,agency
 provider,ministry of defense,50,19,Ministry of Defense,agency
 provider,ministry of defense,62,25,Ministry of Defense,agency
 provider,ministry of defense,561,8,Ministry of Defense ,agency
-provider,ministry of demography and immigration,62,28,Ministry of Demography and Immigration,agency
 provider,ministry of deputy and state reform,9,9,Ministry of Deputy and State Reform,agency
-provider,"ministry of development and social assistance, family and fight against hunger",431,4,"Ministry of Development and Social Assistance, Family and Fight against Hunger",agency
-provider,ministry of development and social inclusion,454,6,Ministry of Development and Social Inclusion,agency
 provider,"ministry of development, competitiveness & shipping",40,5,"Ministry of Development, Competitiveness & Shipping",agency
-provider,"ministry of development, industry, trade and services",431,20,"Ministry of Development, Industry, Trade and Services",agency
 provider,ministry of digital economy and society,764,7,Ministry of Digital Economy and Society,agency
 provider,ministry of ecology and natural resources,611,9,Ministry of Ecology and Natural Resources,agency
-provider,ministry of economic affairs and employment,18,12,Ministry of Economic Affairs and Employment,agency
-provider,ministry of economic and social inclusion,440,5,Ministry of Economic and Social Inclusion,agency
 provider,ministry of economics,546,10,Ministry of Economics,agency
-provider,ministry of economy,62,27,Ministry of Economy,agency
 provider,ministry of economy,84,6,Ministry of Economy,agency
-provider,ministry of economy,358,8,Ministry of Economy,agency
 provider,ministry of economy (formerly ministry of economy and sustainable development),62,19,Ministry of Economy (formerly Ministry of Economy and Sustainable Development),agency
 provider,ministry of economy and business,50,6,Ministry of Economy and Business,agency
 provider,ministry of economy and finance,6,13,Ministry of Economy and Finance,agency
 provider,"ministry of economy and finance funds, administered by cdp",6,171,"Ministry of Economy and Finance funds, administered by CDP",agency
 provider,ministry of economy and territorial cohesion,9,8,Ministry of Economy and Territorial Cohesion,agency
 provider,"ministry of economy, finance and industry",4,10,"Ministry of Economy, Finance and Industry",agency
-provider,"ministry of economy, plannning and development",340,1,"Ministry of Economy, Plannning and Development",agency
-provider,ministry of education,431,12,Ministry of Education,agency
 provider,ministry of education,546,3,Ministry of Education,agency
 provider,ministry of education,566,7,Ministry of Education,agency
 provider,ministry of education,764,8,Ministry of Education,agency
-provider,ministry of education and culture,18,9,Ministry of Education and Culture,agency
-provider,ministry of education and culture,738,16,Ministry of Education and Culture,agency
 provider,ministry of education and higher education,561,10,Ministry of Education and Higher Education,agency
 provider,ministry of education and research,8,14,Ministry of Education and Research,agency
 provider,ministry of education and science,76,2,Ministry of Education and Science,agency
@@ -2184,25 +1762,17 @@ provider,ministry of employment & social security,40,9,Ministry of Employment & 
 provider,ministry of endowments and islamic affairs,561,9,Ministry of Endowments and Islamic Affairs,agency
 provider,ministry of energy,75,12,Ministry of Energy,agency
 provider,ministry of energy,84,9,Ministry of Energy,agency
-provider,ministry of energy,358,7,Ministry of Energy,agency
 provider,ministry of energy,764,9,Ministry of Energy,agency
-provider,ministry of energy and mines,340,11,Ministry of Energy and Mines,agency
-provider,"ministry of entrepreneurship, micro-enterprise and small business",431,28,"Ministry of Entrepreneurship, Micro-enterprise and Small Business",agency
 provider,ministry of environment,68,15,Ministry of Environment,agency
 provider,ministry of environment,84,4,Ministry of Environment,agency
-provider,ministry of environment,460,2,Ministry of Environment,agency
 provider,ministry of environment and climate change,77,32,Ministry of Environment and Climate Change,agency
 provider,ministry of environment and energy,9,17,Ministry of Environment and Energy,agency
 provider,ministry of environment and energy security,6,15,Ministry of Environment and Energy Security,agency
 provider,"ministry of environment and energy security, funds administered by cdp",6,172,"Ministry of Environment and Energy Security, funds administered by CDP",agency
-provider,ministry of environment and natural resources,340,4,Ministry of Environment and Natural Resources,agency
-provider,ministry of environment and natural resources,358,6,Ministry of Environment and Natural Resources,agency
-provider,"ministry of environment, water and ecologic transition",440,6,"Ministry of Environment, Water and Ecologic Transition",agency
 provider,ministry of environmental protection and green transition,62,12,Ministry of Environmental Protection and Green Transition,agency
 provider,"ministry of family affairs, solidarity, living together and reception of refugees",22,8,"Ministry of family affairs, solidarity, living together and reception of refugees",agency
 provider,ministry of finance,8,13,Ministry of Finance,agency
 provider,ministry of finance,9,6,Ministry of Finance,agency
-provider,ministry of finance,18,8,Ministry of Finance,agency
 provider,ministry of finance,20,4,Ministry of Finance,agency
 provider,ministry of finance,22,3,Ministry of Finance,agency
 provider,ministry of finance,40,2,Ministry of Finance,agency
@@ -2214,13 +1784,9 @@ provider,ministry of finance,69,3,Ministry of Finance,agency
 provider,ministry of finance,75,1,Ministry of Finance,agency
 provider,ministry of finance,76,5,Ministry of Finance,agency
 provider,ministry of finance,84,5,Ministry of Finance,agency
-provider,ministry of finance,431,15,Ministry of Finance,agency
 provider,ministry of finance,546,18,Ministry of Finance,agency
 provider,ministry of finance,566,9,Ministry of Finance,agency
-provider,ministry of finance,738,3,Ministry of Finance,agency
 provider,ministry of finance,764,2,Ministry of Finance,agency
-provider,ministry of finance and public credit,358,4,Ministry of Finance and Public Credit,agency
-provider,ministry of fisheries and aquaculture,431,35,Ministry of Fisheries and Aquaculture,agency
 provider,ministry of foreign affairs,3,1,Ministry of Foreign Affairs,agency
 provider,ministry of foreign affairs,4,6,Ministry of Foreign Affairs,agency
 provider,ministry of foreign affairs,8,4,Ministry of Foreign Affairs,agency
@@ -2236,20 +1802,14 @@ provider,ministry of foreign affairs,77,1,Ministry of Foreign Affairs,agency
 provider,ministry of foreign affairs,82,1,Ministry of Foreign Affairs,agency
 provider,ministry of foreign affairs,83,1,Ministry of Foreign Affairs,agency
 provider,ministry of foreign affairs,84,2,Ministry of Foreign Affairs,agency
-provider,ministry of foreign affairs,340,2,Ministry of Foreign Affairs,agency
-provider,ministry of foreign affairs,358,2,Ministry of Foreign Affairs,agency
-provider,ministry of foreign affairs,431,2,Ministry of Foreign Affairs,agency
-provider,ministry of foreign affairs,454,11,Ministry of Foreign Affairs,agency
 provider,ministry of foreign affairs,546,15,Ministry of Foreign Affairs,agency
 provider,ministry of foreign affairs,561,4,Ministry of Foreign Affairs,agency
 provider,ministry of foreign affairs,566,2,Ministry of Foreign Affairs,agency
 provider,ministry of foreign affairs,611,2,Ministry of Foreign Affairs,agency
 provider,ministry of foreign affairs,613,1,Ministry of Foreign Affairs,agency
 provider,ministry of foreign affairs,701,2,Ministry of Foreign Affairs,agency
-provider,ministry of foreign affairs,738,1,Ministry of Foreign Affairs,agency
 provider,ministry of foreign affairs,764,3,Ministry of Foreign Affairs,agency
 provider,ministry of foreign affairs and co-operation,50,5,Ministry of Foreign Affairs and Co-operation,agency
-provider,ministry of foreign affairs and human mobility,440,1,Ministry of Foreign Affairs and Human Mobility,agency
 provider,ministry of foreign affairs and international cooperation,6,12,Ministry of Foreign Affairs and International Cooperation,agency
 provider,ministry of foreign affairs and trade,75,2,Ministry of Foreign Affairs and Trade,agency
 provider,ministry of foreign affairs and trade,742,3,Ministry of Foreign Affairs and Trade,agency
@@ -2259,7 +1819,6 @@ provider,ministry of foreign and european affairs,22,2,Ministry of Foreign and E
 provider,ministry of foreign and european affairs,61,2,Ministry of Foreign and European Affairs,agency
 provider,ministry of foreign and european affairs,62,1,Ministry of Foreign and European Affairs,agency
 provider,ministry of foreign and european affairs (mzvaez),69,1,Ministry of Foreign and European Affairs (MZVaEZ),agency
-provider,ministry of foreign trade and tourism,454,4,Ministry of Foreign Trade and Tourism,agency
 provider,ministry of health,9,15,Ministry of Health,agency
 provider,ministry of health,22,5,Ministry of Health,agency
 provider,ministry of health,50,11,Ministry of Health,agency
@@ -2267,32 +1826,20 @@ provider,ministry of health,62,4,Ministry of Health,agency
 provider,ministry of health,68,8,Ministry of Health,agency
 provider,ministry of health,77,22,Ministry of Health,agency
 provider,ministry of health,84,10,Ministry of Health,agency
-provider,ministry of health,358,13,Ministry of Health,agency
-provider,ministry of health,431,13,Ministry of Health,agency
 provider,ministry of health,546,14,Ministry of Health,agency
 provider,ministry of health,611,8,Ministry of Health,agency
-provider,ministry of health,738,7,Ministry of Health,agency
 provider,ministry of health & social solidarity,40,10,Ministry of Health & Social Solidarity,agency
-provider,ministry of health (minsa),336,5,Ministry of Health (MINSA),agency
 provider,ministry of health and care services,8,18,Ministry of Health and Care Services,agency
 provider,"ministry of higher education, science and innovation",61,6,"Ministry of Higher Education, Science and Innovation",agency
-provider,"ministry of higher education, science and technology",340,9,"Ministry of Higher Education, Science and Technology",agency
 provider,"ministry of higher education, science, research and innovation",764,21,"Ministry of Higher Education, Science, Research and Innovation",agency
 provider,ministry of home affairs,22,6,Ministry of home affairs,agency
-provider,"ministry of housing, construction and sanitation",454,8,"Ministry of Housing, Construction and Sanitation",agency
 provider,ministry of human capacities,75,5,Ministry of Human Capacities,agency
-provider,ministry of human rights and citizenship,431,27,Ministry of Human Rights and Citizenship,agency
-provider,ministry of indigenous peoples,431,37,Ministry of Indigenous Peoples,agency
-provider,ministry of industry,738,8,Ministry of Industry,agency
 provider,ministry of industry,764,10,Ministry of Industry,agency
 provider,ministry of industry and energy,50,9,Ministry of Industry and Energy,agency
 provider,ministry of industry and trade,68,9,Ministry of Industry and Trade,agency
-provider,"ministry of industry, commerce and msmes",340,13,"Ministry of Industry, Commerce and MSMEs",agency
 provider,ministry of information society,77,23,Ministry of Information Society,agency
 provider,ministry of infrastructure and housing,9,11,Ministry of Infrastructure and Housing,agency
-provider,"ministry of infrastructure, communications and transport",358,10,"Ministry of Infrastructure, Communications and Transport",agency
 provider,"ministry of infrastructure, transport and networks",40,8,"Ministry of Infrastructure, Transport and Networks",agency
-provider,ministry of integration and regional development,431,26,Ministry of Integration and Regional Development,agency
 provider,ministry of interior,1,12,Ministry of Interior,agency
 provider,ministry of interior,4,12,Ministry of Interior,agency
 provider,ministry of interior,50,13,Ministry of Interior,agency
@@ -2305,7 +1852,6 @@ provider,ministry of internal administration,9,13,Ministry of Internal Administr
 provider,ministry of internal affairs,77,20,Ministry of Internal Affairs,agency
 provider,ministry of international cooperation and development,576,9,Ministry of International Cooperation and Development,agency
 provider,ministry of justice,9,12,Ministry of Justice,agency
-provider,ministry of justice,18,5,Ministry of Justice,agency
 provider,ministry of justice,68,11,Ministry of Justice,agency
 provider,ministry of justice,75,8,Ministry of Justice,agency
 provider,ministry of justice,77,14,Ministry of Justice,agency
@@ -2313,12 +1859,8 @@ provider,ministry of justice,84,14,Ministry of Justice,agency
 provider,ministry of justice,546,20,Ministry of Justice,agency
 provider,ministry of justice,764,12,Ministry of Justice,agency
 provider,ministry of justice and public security,8,16,Ministry of Justice and Public Security,agency
-provider,ministry of justice and public security,431,31,Ministry of Justice and Public Security,agency
 provider,"ministry of justice, administration and digital transformatio",62,7,"Ministry of Justice, Administration and Digital Transformatio",agency
 provider,"ministry of justice, transparency & human rights",40,12,"Ministry of Justice, Transparency & Human Rights",agency
-provider,ministry of labor and employment,431,39,Ministry of Labor and Employment,agency
-provider,ministry of labor and social welfare,358,14,Ministry of Labor and Social Welfare,agency
-provider,ministry of labour,340,5,Ministry of Labour,agency
 provider,ministry of labour,764,13,Ministry of Labour,agency
 provider,ministry of labour and social affairs,68,12,Ministry of Labour and Social Affairs,agency
 provider,ministry of labour and social inclusion,8,17,Ministry of Labour and Social Inclusion,agency
@@ -2326,56 +1868,31 @@ provider,"ministry of labour, family, social protection and elderly",77,8,"Minis
 provider,"ministry of labour, migration and social security",50,12,"Ministry of Labour, Migration and Social Security",agency
 provider,"ministry of labour, pensions, family and social policy",62,13,"Ministry of Labour, Pensions, Family and Social Policy",agency
 provider,"ministry of labour, solidarity and social security",9,16,"Ministry of Labour, Solidarity and Social Security",agency
-provider,ministry of management and innovation in public service,431,18,Ministry of Management and Innovation in Public Service,agency
-provider,ministry of maritime affairs and fisheries,738,14,Ministry of Maritime Affairs and Fisheries ,agency
-provider,ministry of mines and energy,431,33,Ministry of Mines and Energy,agency
 provider,ministry of national defence,9,10,Ministry of National Defence,agency
 provider,ministry of national defence,77,4,Ministry of National Defence,agency
 provider,ministry of national defense,40,4,Ministry of National Defense,agency
 provider,ministry of national defense,84,3,Ministry of National Defense,agency
-provider,ministry of national development planning,738,2,Ministry of National Development Planning,agency
 provider,ministry of natural resources and environment,764,14,Ministry of natural Resources and Environment,agency
 provider,"ministry of physical planning, construction and state property",62,26,"Ministry of Physical Planning, Construction and State Property",agency
-provider,ministry of planning and budget,431,19,Ministry of Planning and Budget,agency
-provider,ministry of ports and airports,431,36,Ministry of Ports and Airports,agency
-provider,"ministry of production, international trade, investment and fisheries",440,4,"Ministry of Production, International Trade, Investment and Fisheries",agency
-provider,ministry of public education,358,12,Ministry of Public Education,agency
-provider,ministry of public education (mep),336,2,Ministry of Public Education (MEP),agency
 provider,ministry of public finance,77,2,Ministry of Public Finance,agency
-provider,ministry of public function,358,11,Ministry of Public Function,agency
 provider,ministry of public health,561,5,Ministry of Public Health,agency
 provider,ministry of public health,764,15,Ministry of Public Health,agency
-provider,ministry of public health and social assistance,340,12,Ministry of Public Health and Social Assistance,agency
 provider,ministry of public works,50,8,Ministry of Public Works,agency
-provider,ministry of public works and communications,340,10,Ministry of Public Works and Communications,agency
-provider,ministry of public works and housing,738,12,Ministry of Public Works and Housing,agency
-provider,ministry of racial equality,431,29,Ministry of Racial Equality,agency
 provider,ministry of regional development,68,20,Ministry of Regional Development,agency
 provider,ministry of regional development and eu funding of croatia,62,23,Ministry of Regional Development and EU Funding of Croatia,agency
 provider,ministry of regional development and public administration,77,16,Ministry of Regional Development and Public Administration,agency
-provider,ministry of research and technology,738,18,Ministry of Research and Technology,agency
 provider,ministry of science,546,17,Ministry of Science,agency
 provider,ministry of science and technology,50,18,Ministry of Science and Technology,agency
 provider,"ministry of science, education and youth",62,8,"Ministry of Science, Education and Youth",agency
-provider,"ministry of science, technology and innovation",431,5,"Ministry of Science, Technology and Innovation",agency
-provider,ministry of social affairs and health,18,13,Ministry of Social Affairs and Health,agency
 provider,ministry of social development and human security,764,16,Ministry of Social Development and Human Security,agency
 provider,ministry of social security and labour,84,13,Ministry of Social Security and Labour,agency
-provider,ministry of social welfare,431,38,Ministry of Social Welfare,agency
-provider,ministry of sport,431,17,Ministry of Sport,agency
-provider,ministry of state secretariat,738,4,Ministry of State Secretariat ,agency
 provider,ministry of strategy and finance,742,1,Ministry of Strategy and Finance,agency
-provider,ministry of telecomunications and information society,440,8,Ministry of Telecomunications and Information Society,agency
 provider,"ministry of the economy, tourism and sport",61,7,"Ministry of the Economy, Tourism and Sport",agency
 provider,ministry of the environment,10,11,Ministry of the Environment,agency
-provider,ministry of the environment,18,14,Ministry of the Environment,agency
 provider,ministry of the environment,546,12,Ministry of the Environment,agency
-provider,ministry of the environment and climate change,431,32,Ministry of the Environment and Climate Change,agency
 provider,ministry of the environment and rural and marine environs,50,10,Ministry of the Environment and Rural and Marine Environs,agency
-provider,"ministry of the environment, climate and biodiversity",22,7,"Ministry of the Environment, climate and biodiversity",agency
 provider,"ministry of the environment, climate and energy",61,5,"Ministry of the Environment, Climate and Energy",agency
 provider,"ministry of the environment, energy & climate change",40,6,"Ministry of the Environment, Energy & Climate Change",agency
-provider,ministry of the interior,18,6,Ministry of the Interior,agency
 provider,ministry of the interior,40,1,Ministry of the Interior,agency
 provider,ministry of the interior,61,3,Ministry of the Interior,agency
 provider,ministry of the interior,62,14,Ministry of the Interior,agency
@@ -2383,26 +1900,17 @@ provider,ministry of the interior,84,12,Ministry of the Interior,agency
 provider,ministry of the presidency,9,7,Ministry of the Presidency,agency
 provider,"ministry of the sea, transport and infrastructure",62,24,"Ministry of the Sea, Transport and Infrastructure",agency
 provider,ministry of tourism,77,35,Ministry of Tourism,agency
-provider,ministry of tourism,340,6,Ministry of Tourism,agency
-provider,ministry of tourism,431,41,Ministry of Tourism,agency
 provider,ministry of tourism,546,16,Ministry of Tourism,agency
 provider,ministry of tourism and sports,62,9,Ministry of Tourism and Sports,agency
 provider,ministry of tourism and sports,764,17,Ministry of Tourism and Sports,agency
-provider,ministry of trade,738,15,Ministry of Trade ,agency
 provider,ministry of transport,764,18,Ministry of Transport,agency
-provider,ministry of transport and communications,18,11,Ministry of Transport and Communications,agency
 provider,ministry of transport and communications,84,8,Ministry of Transport and Communications,agency
-provider,ministry of transportation,431,40,Ministry of Transportation,agency
 provider,ministry of transportation,546,19,Ministry of Transportation,agency
 provider,ministry of veterans,62,2,Ministry of Veterans,agency
 provider,ministry of welfare and social services,546,13,Ministry of Welfare and Social Services,agency
-provider,ministry of women,340,7,Ministry of Women,agency
-provider,ministry of women's affairs,431,34,Ministry of Women's Affairs,agency
 provider,ministry of youth and sport,611,7,Ministry of Youth and Sport,agency
 provider,"minstere de l'education superieure, de la science, de la recherche et de l'innovation",764,21,"Ministry of Higher Education, Science, Research and Innovation",agency
-provider,mintel,440,8,Ministry of Telecomunications and Information Society,agency
 provider,mintrade,75,2,Ministry of Foreign Affairs and Trade,agency
-provider,mirex,340,2,Ministry of Foreign Affairs,agency
 provider,misc,1,99,Miscellaneous,agency
 provider,misc,2,99,Miscellaneous,agency
 provider,misc,3,99,Miscellaneous,agency
@@ -2415,7 +1923,6 @@ provider,misc,9,99,Miscellaneous,agency
 provider,misc,10,99,Miscellaneous,agency
 provider,misc,11,99,Miscellaneous,agency
 provider,misc,12,99,Miscellaneous,agency
-provider,misc,18,99,Miscellaneous,agency
 provider,misc,20,99,Miscellaneous,agency
 provider,misc,21,99,Miscellaneous,agency
 provider,misc,22,99,Miscellaneous,agency
@@ -2431,11 +1938,9 @@ provider,misc,76,99,Miscellaneous,agency
 provider,misc,77,99,Miscellaneous,agency
 provider,misc,301,99,Miscellaneous,agency
 provider,misc,302,99,Miscellaneous,agency
-provider,misc,358,99,Miscellaneous,agency
 provider,misc,552,99,Miscellaneous,agency
 provider,misc,566,99,Miscellaneous,agency
 provider,misc,576,99,Miscellaneous,agency
-provider,misc,613,99,Miscellaneous,agency
 provider,misc,701,99,Miscellaneous,agency
 provider,misc,742,99,Miscellaneous,agency
 provider,misc,801,99,Miscellaneous,agency
@@ -2453,7 +1958,6 @@ provider,miscellaneous,9,99,Miscellaneous,agency
 provider,miscellaneous,10,99,Miscellaneous,agency
 provider,miscellaneous,11,99,Miscellaneous,agency
 provider,miscellaneous,12,99,Miscellaneous,agency
-provider,miscellaneous,18,99,Miscellaneous,agency
 provider,miscellaneous,20,99,Miscellaneous,agency
 provider,miscellaneous,21,99,Miscellaneous,agency
 provider,miscellaneous,22,99,Miscellaneous,agency
@@ -2469,28 +1973,21 @@ provider,miscellaneous,76,99,Miscellaneous,agency
 provider,miscellaneous,77,99,Miscellaneous,agency
 provider,miscellaneous,301,99,Miscellaneous,agency
 provider,miscellaneous,302,99,Miscellaneous,agency
-provider,miscellaneous,358,99,Miscellaneous,agency
 provider,miscellaneous,552,99,Miscellaneous,agency
 provider,miscellaneous,561,99,Miscellaneous,agency
 provider,miscellaneous,566,99,Miscellaneous,agency
 provider,miscellaneous,576,99,Miscellaneous,agency
-provider,miscellaneous,613,99,Miscellaneous,agency
 provider,miscellaneous,701,99,Miscellaneous,agency
-provider,miscellaneous,738,99,miscellaneous,agency
 provider,miscellaneous,742,99,Miscellaneous,agency
 provider,miscellaneous,801,99,Miscellaneous,agency
 provider,miscellaneous,820,99,Miscellaneous,agency
 provider,miscellaneous,918,99,Miscellaneous,agency
 provider,mit,68,9,Ministry of Industry and Trade,agency
-provider,mit,340,5,Ministry of Labour,agency
 provider,mitn,40,8,"Ministry of Infrastructure, Transport and Networks",agency
-provider,mitur,340,6,Ministry of Tourism,agency
-provider,mixes social aid institute,336,11,Mixes Social Aid Institute,agency
 provider,mj,9,12,Ministry of Justice,agency
 provider,mjthr,40,12,"Ministry of Justice, Transparency & Human Rights",agency
 provider,mlt,45,,Malta,iso3
 provider,mmr,68,20,Ministry of Regional Development,agency
-provider,mmujer,340,7,Ministry of Women,agency
 provider,mnd,40,4,Ministry of National Defense,agency
 provider,mne,9,5,Ministry of Foreign Affairs,agency
 provider,mobiliser des financements pour les forets,12,25,Mobilising Finance for Forests,agency
@@ -2514,19 +2011,14 @@ provider,molsa,68,12,Ministry of Labour and Social Affairs,agency
 provider,mon,26,,Monaco,resolvekit
 provider,monaco,26,,Monaco,listing
 provider,montreal protocol,812,,Montreal Protocol,listing
-provider,mopc,340,10,Ministry of Public Works and Communications,agency
 provider,mosf,742,1,Ministry of Strategy and Finance,agency
 provider,mp,9,7,Ministry of the Presidency,agency
-provider,mpceip,440,4,"Ministry of Production, International Trade, Investment and Fisheries",agency
 provider,mpf,909,20,Fund for Increasing Productivity and Promoting Inclusive Economic Growth,agency
-provider,mpfn,454,9,National Prosecution Ministry,agency
 provider,mprb,2,91,Brussels Official Regional Ministries,agency
 provider,mprf,2,70,Flanders Official Regional Ministries,agency
 provider,mprg,2,94,German speaking Official Regional Ministries,agency
 provider,mprw,2,80,Walloon Official Regional Ministries,agency
-provider,mptfo,1022,1,MPTFO,agency
 provider,mpw,50,8,Ministry of Public Works,agency
-provider,mremh,440,1,Ministry of Foreign Affairs and Human Mobility,agency
 provider,ms,9,15,Ministry of Health,agency
 provider,msan,22,5,Ministry of Health,agency
 provider,mse,909,15,Small Enterprise Development Facility,agency
@@ -2538,13 +2030,6 @@ provider,msvvs,69,4,"Ministry of Education, Science, Rese (MSVVS)",agency
 provider,mt,45,,Malta,iso2
 provider,mtf,811,16,GEF Multi-Trust Funds,agency
 provider,mtss,9,16,"Ministry of Labour, Solidarity and Social Security",agency
-provider,multi-donor fund for the transformation of technical and vocational education and training,909,102,Multi-Donor Fund for the Transformation of Technical and Vocational Education and Training,agency
-provider,multi-donor regional integration fund,909,71,Multi-Donor Regional Integration Fund,agency
-provider,multidonor aquafund,909,65,Multidonor AquaFund,agency
-provider,multidonor disaster prevention fund,909,69,Multidonor Disaster Prevention Fund ,agency
-provider,multidonor fund for biodiversity and ecosystem services,909,67,Multidonor Fund for Biodiversity and Ecosystem Services,agency
-provider,multidonor fund for citizen security,909,68,Multidonor Fund for Citizen Security,agency
-provider,multidonor trust fund for the development of sustainable cities in latin america and the caribbean,909,93,Multidonor Trust Fund for the Development of Sustainable Cities in Latin America and the Caribbean,agency
 provider,multilateral fund under the montreal protocol on substances that deplete the ozone layer,807,3,Multilateral Fund under the Montreal Protocol on Substances that Deplete the Ozone Layer,agency
 provider,multilateral investment fund,909,5,Multilateral Investment Fund,agency
 provider,multilateral investment guarantee agency,902,,Multilateral Investment Guarantee Agency,listing
@@ -2561,46 +2046,24 @@ provider,municipalities,40,15,Municipalities,agency
 provider,municipalities,50,16,Municipalities,agency
 provider,municipalities,70,2,Municipalities,agency
 provider,murica,302,,United States,resolvekit
-provider,mvcs,454,8,"Ministry of Housing, Construction and Sanitation",agency
 provider,mx,358,,Mexico,iso2
 provider,mzvaez,69,1,Ministry of Foreign and European Affairs (MZVaEZ),agency
 provider,nadb,1045,1,North American Development Bank,agency
 provider,nagoya protocol implementation fund (npif),811,14,Nagoya Protocol Implementation Fund (NPIF),agency
 provider,naija,261,,Nigeria,resolvekit
-provider,nama facility account,909,101,Nama Facility Account,agency
-provider,nasa,302,35,National Aeronautics and Space Administration,agency
-provider,national aeronautics and space administration,302,35,National Aeronautics and Space Administration,agency
 provider,national agency for fiscal administration,77,18,National Agency for Fiscal Administration,agency
 provider,national agency for state reserves and special problems,77,38,National Agency for State Reserves and Special Problems,agency
 provider,national agency of civil servants,77,12,National Agency of Civil Servants,agency
-provider,national agency of drug and food control,738,17,National Agency of Drug and Food Control ,agency
 provider,national anticorruption directorate,77,34,National Anticorruption Directorate,agency
 provider,national board of trade,10,39,National Board of Trade,agency
-provider,national civil service authority,454,1,National Civil Service Authority,agency
-provider,national commission of the retirement savings system,358,21,National Commission of the Retirement Savings System,agency
-provider,national council for disabilities' equality,440,7,National Council for Disabilities' Equality,agency
-provider,national council for science and technology,358,16,National Council for Science and Technology,agency
-provider,national council for scientific and technological development,431,6,National Council for Scientific and Technological Development,agency
-provider,national electoral institute,358,19,National Electoral Institute,agency
-provider,national institute for the development of indigenous peoples,358,18,National Institute for the Development of Indigenous Peoples,agency
-provider,national institute of cancer,431,9,National Institute of Cancer,agency
-provider,national institute of statistics,460,3,National Institute of Statistics,agency
-provider,national institute of statistics and informatics,454,3,National Institute of Statistics and Informatics,agency
 provider,national integrity agency,77,6,National Integrity Agency,agency
-provider,national prosecution ministry,454,9,National Prosecution Ministry,agency
 provider,national protection and rescue directorate,62,3,National Protection and Rescue Directorate,agency
-provider,national school of public administration,431,10,National School of Public Administration ,agency
-provider,national water and sanitation agency,431,7,National Water and Sanitation Agency,agency
-provider,national women institute,336,9,National Women Institute,agency
 provider,nationalist china,732,,Chinese Taipei,resolvekit
-provider,ncl,909,99,France-IDB Natural Capital Lab Fund,agency
 provider,ncm,7,33,NCM Credit Management Worldwide,agency
 provider,ncm credit management worldwide,7,33,NCM Credit Management Worldwide,agency
 provider,nd,576,23,Noor Dubai,agency
 provider,ndb,1044,1,New Development Bank,agency
-provider,ndc pipeline accelerator multidonor trust fund,909,22,NDC Pipeline Accelerator Multidonor Trust Fund,agency
 provider,ndf,104,1,Nordic Development Fund,agency
-provider,ndv,909,87,Nordic Development Fund,agency
 provider,nederland,7,,Netherlands,resolvekit
 provider,netherlands,7,,Netherlands,listing
 provider,netherlands (kingdom of the),7,,Netherlands,resolvekit
@@ -2613,7 +2076,6 @@ provider,new zealand international aid and development agency,820,2,New Zealand 
 provider,nexi,701,71,Nippon Export and Investment Insurance,agency
 provider,ng,261,,Nigeria,iso2
 provider,nga,261,,Nigeria,iso3
-provider,ngg,909,100,Norwegian Grant for Guyana,agency
 provider,niederlande,7,,Netherlands,resolvekit
 provider,niedersachsen,5,82,Land Lower-Saxony,agency
 provider,nigeria,261,,Nigeria,listing
@@ -2625,14 +2087,7 @@ provider,nippon-koku,701,,Japan,resolvekit
 provider,nl,7,,Netherlands,iso2
 provider,nld,7,,Netherlands,iso3
 provider,nld gov. through nld inv bank for developing countries,7,4,NLD Gov. through NLD Inv Bank for Developing Countries,agency
-provider,nma,909,101,Nama Facility Account,agency
 provider,no,8,,Norway,iso2
-provider,non-core (other than covax),1311,4,non-core (other than COVAX),agency
-provider,non-core resources,1039,1,Non-core resources,agency
-provider,non-core resources - developmental,1043,2,Non-core resources - developmental,agency
-provider,non-core resources - other,1043,3,Non-core resources - other,agency
-provider,non-core resources - tossd only,1057,2,Non-core resources - TOSSD only,agency
-provider,nonsovereign revolving trust fund,915,81,Nonsovereign Revolving Trust Fund,agency
 provider,noor dubai,576,23,Noor Dubai,agency
 provider,nor,8,,Norway,iso3
 provider,norad,8,1,Norwegian Agency for Development Co-operation,agency
@@ -2640,10 +2095,6 @@ provider,nordic development fund,104,,Nordic Development Fund,listing
 provider,nordrhein-westfalen,5,84,Land North Rhine-Westphalia,agency
 provider,norfund,8,8,NORFUND,agency
 provider,north american development bank,1045,,North American Development Bank,listing
-provider,northwest pacific action plan (nowpap) - assessed contributions - developmental,807,33,Northwest Pacific Action Plan (NOWPAP) - Assessed Contributions - developmental,agency
-provider,northwest pacific action plan (nowpap) - assessed contributions - tossd only,807,34,Northwest Pacific Action Plan (NOWPAP) - Assessed Contributions - TOSSD only,agency
-provider,northwest pacific action plan (nowpap) - voluntary contributions non-core - developmental,807,35,Northwest Pacific Action Plan (NOWPAP) - Voluntary Contributions Non-core - developmental,agency
-provider,northwest pacific action plan (nowpap) - voluntary contributions non-core - tossd only,807,36,Northwest Pacific Action Plan (NOWPAP) - Voluntary Contributions Non-core - TOSSD only,agency
 provider,noruega,8,,Norway,resolvekit
 provider,norvege,8,,Norway,listing_fr
 provider,norvege‏,8,,Norway,resolvekit
@@ -2652,18 +2103,12 @@ provider,norway,8,,Norway,listing
 provider,norwegen,8,,Norway,resolvekit
 provider,norwegian agency for development co-operation,8,1,Norwegian Agency for Development Co-operation,agency
 provider,norwegian agency for exchange cooperation,8,9,Norwegian Agency for Exchange Cooperation,agency
-provider,norwegian grant (other projects),915,65,Norwegian Grant (Other Projects),agency
-provider,norwegian grant for guyana,909,100,Norwegian Grant for Guyana,agency
 provider,norwegian postcode lottery,1634,,Norwegian Postcode Lottery,listing
 provider,nouvelle banque de developpement,1044,1,New Development Bank,agency
 provider,nouvelle-zelande,820,,New Zealand,listing_fr
 provider,nova hollandia,801,,Australia,resolvekit
 provider,nova zelandia,820,,New Zealand,resolvekit
 provider,novo nordisk foundation,1649,,Novo Nordisk Foundation,listing
-provider,nowpap pow assessed - developmental,807,33,Northwest Pacific Action Plan (NOWPAP) - Assessed Contributions - developmental,agency
-provider,nowpap pow assessed - tossd only,807,34,Northwest Pacific Action Plan (NOWPAP) - Assessed Contributions - TOSSD only,agency
-provider,nowpap pow non-core - developmental,807,35,Northwest Pacific Action Plan (NOWPAP) - Voluntary Contributions Non-core - developmental,agency
-provider,nowpap pow non-core - tossd only,807,36,Northwest Pacific Action Plan (NOWPAP) - Voluntary Contributions Non-core - TOSSD only,agency
 provider,npif,811,14,Nagoya Protocol Implementation Fund (NPIF),agency
 provider,nrb,68,21,Czech National Development Bank,agency
 provider,ntf,914,2,NTF,agency
@@ -2678,15 +2123,8 @@ provider,nzl,820,,New Zealand,iso3
 provider,oag,8,10,Office of the Auditor General,agency
 provider,oak foundation,1611,,Oak Foundation,listing
 provider,oapec,952,,OAPEC,listing
-provider,oas/ded,1056,3,Directorate of Economic Development,agency
-provider,oas/dhdee,1056,2,Directorate of Human Development Education and Employment,agency
-provider,oas/dsd,1056,4,Directorate of Sustainable Development,agency
-provider,oas/sedi,1056,1,Executive Secretariat for Integral Development,agency
-provider,ocean resilience and coastal adaptation trust fund,915,82,Ocean Resilience and Coastal Adaptation Trust Fund,agency
-provider,ocha,1022,2,OCHA,agency
 provider,ocr,976,1,Ordinary Capital Resources,agency
 provider,odc,701,15,Ordinance-designed Cities,agency
-provider,odl,22,22,Ducroire Office,agency
 provider,oecf,701,5,OECF,agency
 provider,oeeb,1,13,Austrian Development Bank,agency
 provider,oekb,1,4,Oesterreichische Kontrollbank AG,agency
@@ -2701,7 +2139,6 @@ provider,office of immigration and nationality,75,3,Office of Immigration and Na
 provider,office of the auditor general,8,10,Office of the Auditor General,agency
 provider,official federal service of finance,2,30,Official Federal Service of Finance,agency
 provider,official federal service of foreign affaires (excl. dgcd),2,20,Official Federal Service of Foreign Affaires (excl. DGCD),agency
-provider,ogpi,6,3,OGPI,agency
 provider,omc – organisation mondiale du commerce,1404,1,WTO - World Trade Organization,agency
 provider,"omidyar network fund, inc.",1622,,"Omidyar Network Fund, Inc.",listing
 provider,oms-plan strategique de preparation et de reponse,1050,,WHO-Strategic Preparedness and Response Plan,listing_fr
@@ -2736,15 +2173,11 @@ provider,organisation of american states,1056,,Organisation of American States,l
 provider,organisation pour l'alimentation et l'agriculture,932,,Food and Agriculture Organisation,listing_fr
 provider,organisation pour la securite et la cooperation en europe,978,1,Organisation for Security and Co-operation in Europe,agency
 provider,oriental republic of uruguay,460,,Uruguay,resolvekit
-provider,ortf,4,94,ORTF,agency
 provider,osce,978,,OSCE,listing
 provider,osterreich,1,,Austria,resolvekit
 provider,osttimor,765,,Timor-Leste,resolvekit
 provider,oth. min,701,12,Other Ministries,agency
 provider,other,83,2,Other ministries and institutions,agency
-provider,other,336,99,Other,agency
-provider,other,358,25,Other,agency
-provider,other,440,99,Other,agency
 provider,other arab agencies,983,,Other Arab Agencies,listing
 provider,other government entities,576,25,Other Government Entities,agency
 provider,other governmental entities,566,4,Other Governmental Entities,agency
@@ -2755,44 +2188,20 @@ provider,other ministries,69,18,Other ministries,agency
 provider,other ministries,82,2,Other Ministries,agency
 provider,other ministries,701,12,Other Ministries,agency
 provider,other ministries and institutions,83,2,Other ministries and institutions,agency
-provider,other non-core resources,906,10,Other non-core resources,agency
-provider,other non-core resources,915,25,Other non-core resources,agency
 provider,other official federal services,2,39,Other Official Federal Services,agency
 provider,other public bodies,1,98,Other Public Bodies,agency
 provider,other public sector institutions,82,3,Other Public Sector Institutions,agency
-provider,other support - developmental,807,8,Other Support to UNEP POW,agency
-provider,other support - tossd-only,807,9,Other Support to UNEP POW,agency
-provider,other support to unep pow,807,8,Other Support to UNEP POW,agency
-provider,other support to unep pow,807,9,Other Support to UNEP POW,agency
-provider,others,340,99,Others,agency
-provider,others,431,99,Others,agency
-provider,others,454,99,Others,agency
-provider,others,460,99,Others,agency
 provider,others ministries,50,22,Others ministries,agency
 provider,overseas fishery co-operation foundation,701,7,Overseas Fishery Co-operation Foundation,agency
 provider,overseas private investment corporation,302,22,Overseas Private Investment Corporation,agency
-provider,ozone pow assessed - developmental,807,37,Ozone Treaties (Montreal Protocol and Vienna Convention) - Assessed Contributions - developmental,agency
-provider,ozone pow assessed - tossd only,807,38,Ozone Treaties (Montreal Protocol and Vienna Convention) - Assessed Contributions - TOSSD only,agency
-provider,ozone pow non-core - developmental,807,39,Ozone Treaties (Montreal Protocol and Vienna Convention)  - Voluntary Contributions Non-core - developmental,agency
-provider,ozone pow non-core - tossd only,807,40,Ozone Treaties (Montreal Protocol and Vienna Convention)  - Voluntary Contributions Non-core - TOSSD only,agency
-provider,ozone treaties (montreal protocol and vienna convention)  - voluntary contributions non-core - developmental,807,39,Ozone Treaties (Montreal Protocol and Vienna Convention)  - Voluntary Contributions Non-core - developmental,agency
-provider,ozone treaties (montreal protocol and vienna convention)  - voluntary contributions non-core - tossd only,807,40,Ozone Treaties (Montreal Protocol and Vienna Convention)  - Voluntary Contributions Non-core - TOSSD only,agency
-provider,ozone treaties (montreal protocol and vienna convention) - assessed contributions - developmental,807,37,Ozone Treaties (Montreal Protocol and Vienna Convention) - Assessed Contributions - developmental,agency
-provider,ozone treaties (montreal protocol and vienna convention) - assessed contributions - tossd only,807,38,Ozone Treaties (Montreal Protocol and Vienna Convention) - Assessed Contributions - TOSSD only,agency
 provider,paesi bassi,7,,Netherlands,resolvekit
 provider,paises baixos,7,,Netherlands,resolvekit
 provider,paises bajos,7,,Netherlands,resolvekit
 provider,paises bajos (reino de los),7,,Netherlands,resolvekit
 provider,pakistan earthquake fund,915,4,Pakistan Earthquake Fund,agency
-provider,pakistan economic corridors programme,915,56,Pakistan Economic Corridors Programme,agency
 provider,palestinian authority,551,,Palestinian Authority,listing
-provider,palestinian international cooperation agency,551,1,Palestinian International Cooperation Agency,agency
 provider,pam,966,,WFP,listing_fr
-provider,pandemic prevention response fund,909,104,Pandemic Prevention Response Fund,agency
-provider,pandemic prevention response fund,915,64,Pandemic Prevention Response Fund,agency
 provider,partenariat mondial pour l'education,997,,Global Partnership for Education,listing_fr
-provider,"partnership for maternal, newborn & child health",928,14,"Partnership for Maternal, Newborn & Child Health",agency
-provider,partnership trust fund for poverty reduction in latin america,909,25,Partnership Trust Fund for Poverty Reduction in Latin America,agency
 provider,pays-bas,7,,Netherlands,listing_fr
 provider,pays-bas (royaume des),7,,Netherlands,resolvekit
 provider,pc,701,13,Public Corporations,agency
@@ -2802,32 +2211,23 @@ provider,peace corps,302,10,Peace Corps,agency
 provider,pef,915,4,Pakistan Earthquake Fund,agency
 provider,people's democratic republic of algeria,130,,Algeria,resolvekit
 provider,people's postcode lottery,1604,,People's Postcode Lottery,listing
-provider,people's republic of china (prc) poverty reduction and regional cooperation fund (formerly prc regional cooperation and poverty reduction fund),915,50,People's Republic of China (PRC) Poverty Reduction and Regional Cooperation Fund (formerly PRC Regional Cooperation and Poverty Reduction Fund) ,agency
 provider,per,454,,Peru,iso3
 provider,permanent electoral authority,77,26,Permanent Electoral Authority,agency
 provider,perou,454,,Peru,listing_fr
 provider,peru,454,,Peru,listing
-provider,peru compras,454,2,Public Procurement Office,agency
 provider,pf,12,13,Prosperity Fund,agency
-provider,pgr,340,8,Attorney General's Office,agency
-provider,pica,551,1,Palestinian International Cooperation Agency,agency
 provider,pl,76,,Poland,iso2
-provider,pmnch,928,14,"Partnership for Maternal, Newborn & Child Health",agency
 provider,pnud,959,,UNDP,listing_fr
 provider,pnue,807,,UNEP,listing_fr
 provider,pol,76,,Poland,iso3
 provider,poland,76,,Poland,listing
 provider,polen,76,,Poland,resolvekit
-provider,police,68,6,Police,agency
 provider,pologne,76,,Poland,listing_fr
 provider,polonia,76,,Poland,resolvekit
 provider,portogallo,9,,Portugal,resolvekit
 provider,portugal,9,,Portugal,listing
 provider,portuguese government,9,1,Portuguese Government,agency
 provider,portuguese republic,9,,Portugal,resolvekit
-provider,portuguese technical cooperation trust fund,909,75,Portuguese Technical Cooperation Trust Fund,agency
-provider,ppf,909,104,Pandemic Prevention Response Fund,agency
-provider,pprf,915,64,Pandemic Prevention Response Fund,agency
 provider,prathet thai,764,,Thailand,resolvekit
 provider,prefectures,701,14,Prefectures,agency
 provider,prf,701,14,Prefectures,agency
@@ -2840,16 +2240,8 @@ provider,principality of monaco,26,,Monaco,resolvekit
 provider,principato di monaco,26,,Monaco,resolvekit
 provider,principatu de munegu,26,,Monaco,resolvekit
 provider,principaute de monaco,26,,Monaco,resolvekit
-provider,private,9,23,Private flows,agency
-provider,private,302,40,Private flows,agency
-provider,private flows,9,23,Private flows,agency
-provider,private flows,302,40,Private flows,agency
 provider,private infrastructure development group,1014,,Private Infrastructure Development Group,listing
 provider,private sector facility,1016,2,Private Sector Facility,agency
-provider,project preparation and implementation support trust fund,915,83,Project Preparation and Implementation Support Trust Fund,agency
-provider,project readiness improvement trust fund,915,51,Project Readiness Improvement Trust Fund ,agency
-provider,project specific contribution account,909,107,Project Specific Contribution Account,agency
-provider,projection preparation fund,1044,2,Projection Preparation Fund,agency
 provider,proparco,4,44,Proparco,agency
 provider,prosperity fund,12,13,Prosperity Fund,agency
 provider,protocole de montreal,812,,Montreal Protocol,listing_fr
@@ -2858,19 +2250,12 @@ provider,provinces/municipalities,2,60,provinces/municipalities,agency
 provider,provincial governments and municipalities,301,9,Provincial Governments and municipalities,agency
 provider,"provincial governments, local communities",1,6,"Provincial governments, local communities",agency
 provider,prt,9,,Portugal,iso3
-provider,psc,909,107,Project Specific Contribution Account,agency
 provider,pspr-developpement,1050,1,SPRP–Developmental,agency
 provider,psychological defence agency,10,40,Psychological Defence Agency,agency
 provider,pt,9,,Portugal,iso2
-provider,ptt,4,93,PTT,agency
-provider,public capacity building korea fund for economic development,909,59,Public Capacity Building Korea Fund for Economic Development,agency
 provider,public corporations,701,13,Public Corporations,agency
-provider,public infrastructure,3,6,Public infrastructure,agency
 provider,public ministry,77,33,Public Ministry,agency
-provider,public procurement office,454,2,Public Procurement Office,agency
-provider,public procurement regulatory agency,454,10,Public Procurement Regulatory Agency,agency
 provider,public universities,50,20,Public Universities,agency
-provider,public universities,431,14,Public Universities,agency
 provider,public universities and research institutes and italian red cross,6,11,Public universities and research institutes and Italian red cross,agency
 provider,qa,561,,Qatar,iso2
 provider,qat,561,,Qatar,iso3
@@ -2891,23 +2276,14 @@ provider,rbtc,940,2,Regular Budget Technical Cooperation,agency
 provider,rca,576,22,UAE Red Crescent Authority,agency
 provider,rcif,915,12,Regional Cooperation and Integration Fund (RCIF),agency
 provider,rcmp,301,8,Royal Canadian Mounted Police of Canada,agency
-provider,rcn,8,19,The Research Council of Norway,agency
-provider,readiness fund of the forest carbon partnership facility,909,41,Readiness Fund of the Forest Carbon Partnership Facility,agency
 provider,reg,1,6,"Provincial governments, local communities",agency
 provider,regional cooperation and integration fund (rcif),915,12,Regional Cooperation and Integration Fund (RCIF),agency
-provider,regional fund for agriculture technology,909,76,Regional Fund for Agriculture Technology,agency
 provider,regional governments and municipalities,68,14,Regional Governments and Municipalities,agency
-provider,regional housing programme,1013,5,Regional Housing Programme,agency
-provider,regional housing programme eu,1013,6,Regional Housing Programme EU,agency
-provider,regional housing programme usa,1013,11,Regional Housing Programme USA,agency
 provider,regno unito,12,,United Kingdom,resolvekit
 provider,regular budget,940,1,Regular Budget,agency
 provider,regular budget (developmental),1040,3,Regular budget (developmental),agency
-provider,regular budget (tossd only),1040,4,Regular budget (TOSSD only),agency
-provider,regular budget - regional and global (non-developmental part),940,5,Regular Budget - regional and global (non-developmental part),agency
 provider,regular budget supplementary account,940,3,Regular Budget Supplementary Account,agency
 provider,regular budget technical cooperation,940,2,Regular Budget Technical Cooperation,agency
-provider,regular budget technical cooperation - regional and global (non-developmental part),940,6,Regular Budget Technical Cooperation - regional and global (non-developmental part),agency
 provider,reino de espana,50,,Spain,resolvekit
 provider,reino unido,12,,United Kingdom,resolvekit
 provider,reino unido de gran bretana e irlanda del norte,12,,United Kingdom,resolvekit
@@ -2936,7 +2312,6 @@ provider,republic of ireland,21,,Ireland,resolvekit
 provider,republic of italy,6,,Italy,resolvekit
 provider,republic of kazakhstan,613,,Kazakhstan,resolvekit
 provider,republic of korea,742,,Korea,resolvekit
-provider,republic of korea e-asia and knowledge partnership fund,915,52,Republic of Korea e-Asia and Knowledge Partnership Fund,agency
 provider,republic of latvia,83,,Latvia,resolvekit
 provider,republic of lithuania,84,,Lithuania,resolvekit
 provider,republic of malta,45,,Malta,resolvekit
@@ -2988,13 +2363,9 @@ provider,royal canadian mounted police of canada,301,8,Royal Canadian Mounted Po
 provider,royaume de belgique,2,,Belgium,resolvekit
 provider,royaume-uni,12,,United Kingdom,listing_fr
 provider,royaume-uni de grande-bretagne et d'irlande du nord,12,,United Kingdom,resolvekit
-provider,rree,454,11,Ministry of Foreign Affairs,agency
-provider,rsas pow assessed contributions,807,41,"Convention for the Marine and Coastal Environment of the Atlantic Coast of the West, Central and Southern Africa Region - Assessed Contributions",agency
-provider,rsas pow non-core,807,42,"Convention for the Marine and Coastal Environment of the Atlantic Coast of the West, Central and Southern Africa Region - Non-core",agency
 provider,ru,87,,Russia,iso2
 provider,rumania,77,,Romania,resolvekit
 provider,rumanien,77,,Romania,resolvekit
-provider,rural water supply & sanitation,913,20,Rural Water Supply & Sanitation,agency
 provider,rus,87,,Russia,iso3
 provider,rusia,87,,Russia,resolvekit
 provider,russia,87,,Russia,listing
@@ -3011,12 +2382,9 @@ provider,sace,6,74,Sezione Speciale per l'Assicurazione del Credito all'Esportaz
 provider,sachsen,5,94,Free State of Saxony,agency
 provider,sachsen-anhalt,5,93,Land Saxony-Anhalt,agency
 provider,samrs,69,2,Slovak Agency for International Deve (SAMRS),agency
-provider,sanitation financing partnership trust fund under the water financing partnership facility,915,53,Sanitation Financing Partnership Trust Fund under the Water Financing Partnership Facility,agency
 provider,santo domingo,340,,Dominican Republic,resolvekit
-provider,sarec,10,4,SAREC,agency
 provider,sarre,5,89,Land Saarland,agency
 provider,sau,566,,Saudi Arabia,iso3
-provider,saude,431,13,Ministry of Health,agency
 provider,saudi,566,,Saudi Arabia,resolvekit
 provider,saudi arabia,566,,Saudi Arabia,listing
 provider,saudi campaigns,566,5,Saudi Campaigns,agency
@@ -3024,19 +2392,11 @@ provider,saudi development and reconstruction program for yemen,566,10,Saudi Dev
 provider,saudi development fund,566,6,Saudi Development Fund,agency
 provider,saudi red crescent authority,566,8,Saudi Red Crescent Authority,agency
 provider,saudi-arabien,566,,Saudi Arabia,resolvekit
-provider,scbd pow assessed contributions,807,43,Convention on Biological Diversity (CBD) - Assessed Contributions,agency
-provider,scbd pow non-core - developmental,807,44,Convention on Biological Diversity (CBD) - Voluntary Contributions Non-core - developmental,agency
-provider,scbd pow non-core - tossd only,807,45,Convention on Biological Diversity (CBD) - Voluntary Contributions Non-core - TOSSD only,agency
-provider,scc,909,88,Special Climate Change Fund,agency
 provider,sccf,811,13,Special Climate Change Trust Fund (SCCF),agency
-provider,scf,913,26,Strategic Climat Fund,agency
-provider,scf,915,15,Strategic Climate Fund,agency
 provider,scf,1011,20,Strategic Climate Fund,agency
 provider,scf - fip,1011,21,Strategic Climate Fund - FIP,agency
 provider,scf - ppcr,1011,22,Strategic Climate Fund - PPCR,agency
 provider,scf - srep,1011,23,Strategic Climate Fund - SREP,agency
-provider,scf-fip,915,16,Strategic Climate Fund - Forest Investment Program,agency
-provider,scf-surelicp,915,17,Strategic Climate Fund - Scaling Up Renewable Energy in LICs Program,agency
 provider,schleswig-holstein,5,80,Land Schleswig-Holstein,agency
 provider,schweden,10,,Sweden,resolvekit
 provider,schweiz,11,,Switzerland,resolvekit
@@ -3047,55 +2407,31 @@ provider,sdc,11,4,Swiss Agency for Development and Co-operation,agency
 provider,sdf,566,6,Saudi Development Fund,agency
 provider,sdrpy,566,10,Saudi Development and Reconstruction Program for Yemen,agency
 provider,se,10,,Sweden,iso2
-provider,sebien,358,5,Ministry of  Welfare,agency
 provider,seco,11,5,State Secretariat for Economic Affairs,agency
-provider,secon,358,8,Ministry of Economy,agency
 provider,secretariat d'etat a l'economie,11,5,State Secretariat for Economic Affairs,agency
 provider,"secretariat d'etat a la formation, a la recherche et a l'innovation",11,7,"State Secretariat for Education, Research and Innovation",agency
 provider,secretariat d'etat aux migrations,11,8,State Secretariat for Migration,agency
 provider,secretariat des nations unies,1036,,UN Secretariat,listing_fr
-provider,secretariat for hemispheric affairs,1056,7,Secretariat for Hemispheric Affairs,agency
-provider,secretariat for strengthening of democracy,1056,6,Secretariat for Strengthening of Democracy,agency
-provider,sedatu,358,9,Ministry of Agriculture and Rural Development,agency
-provider,sedatu,358,15,"Ministry of Agrarian, Territorial and Urban Development",agency
-provider,sedena,358,3,Ministry of Defence,agency
-provider,sefa,913,23,The Sustainable Energy Fund for Africa,agency
 provider,sefri,11,7,"State Secretariat for Education, Research and Innovation",agency
-provider,seif,915,66,Smart Energy Innovation Fund,agency
 provider,sem,11,8,State Secretariat for Migration,agency
-provider,semarnat,358,6,Ministry of Environment and Natural Resources,agency
-provider,"semi-aggregates, non-core",906,99,"semi-aggregates, non-core ",agency
 provider,senat de roumanie,77,3,Senate of Romania,agency
 provider,senate of romania,77,3,Senate of Romania,agency
-provider,sener,358,7,Ministry of Energy,agency
-provider,senescyt,440,9,"Department of Higher Education, Science, Technology and Innovation",agency
-provider,sep,358,12,Ministry of Public Education,agency
 provider,service croate pour l'emploi,62,30,Croatian Employment Service,agency
 provider,service meteorologique et hydrologique croate,62,15,Croatian Meteorological and Hydrological Service,agency
 provider,service public federal des affaires etrangeres (hors. dgcd),2,20,Official Federal Service of Foreign Affaires (excl. DGCD),agency
 provider,service public federal des finances,2,30,Official Federal Service of Finance,agency
-provider,servir,454,1,National Civil Service Authority,agency
 provider,sesric,1026,,SESRIC,listing
-provider,seu,4,92,SEU,agency
 provider,sezione speciale per l'assicurazione del credito all'esportazione,6,74,Sezione Speciale per l'Assicurazione del Credito all'Esportazione,agency
-provider,sfp,358,11,Ministry of Public Function,agency
-provider,sg,10,3,SG,agency
 provider,sg,12,21,Scottish Government,agency
-provider,sha,1056,7,Secretariat for Hemispheric Affairs,agency
-provider,shcp,358,4,Ministry of Finance and Public Credit,agency
 provider,si,61,,Slovenia,iso2
 provider,siam,764,,Thailand,resolvekit
-provider,sict,358,10,"Ministry of Infrastructure, Communications and Transport",agency
 provider,sida,10,6,Swedish International Development Authority,curated
 provider,sifem,11,22,Swiss Investment Fund for Emerging Markets,agency
 provider,silla,742,,Korea,resolvekit
 provider,simest,6,14,Italian Society for Enterprises Abroad,agency
-provider,single-agency thematic funds,1046,3,Single-agency thematic funds,agency
-provider,single-agency thematic funds - global and tossd-only recipients,1046,6,Single-agency thematic funds - global and TOSSD-only recipients,agency
 provider,sk,69,,Slovak Republic,iso2
 provider,slovacchia,69,,Slovak Republic,resolvekit
 provider,slovak agency for international deve (samrs),69,2,Slovak Agency for International Deve (SAMRS),agency
-provider,slovak inclusive growth account,1013,12,Slovak Inclusive Growth Account,agency
 provider,slovak republic,69,,Slovak Republic,listing
 provider,slovakia,69,,Slovak Republic,resolvekit
 provider,slovaquie,69,,Slovak Republic,resolvekit
@@ -3107,13 +2443,10 @@ provider,slowakei (slowakische republik),69,,Slovak Republic,resolvekit
 provider,slowenien,61,,Slovenia,resolvekit
 provider,small enterprise development facility,909,15,Small Enterprise Development Facility,agency
 provider,small enterprise investment fund,909,16,Small Enterprise Investment Fund,agency
-provider,smart energy innovation fund,915,66,Smart Energy Innovation Fund,agency
 provider,social impact account,1013,3,Social Impact Account,agency
-provider,social progress trust fund,909,81,Social Progress Trust Fund,agency
 provider,socialist people's libyan arab jamahiriya,133,,Libya,resolvekit
 provider,societa italiana per le imprese all'estero,6,14,Italian Society for Enterprises Abroad,agency
 provider,societe belge d'investissement pour les pays en developpement,2,22,Belgian Investment Company for Developing Countries,agency
-provider,societe de l'energie du future abu dhabi,576,5,Abu Dhabi Future Energy Co.,agency
 provider,societe financiere international,903,,International Finance Corporation,listing_fr
 provider,sofid sociedade para o financiamento do desenvolvimento,9,4,SOFID Sociedade para o Financiamento do Desenvolvimento,agency
 provider,sofid societe pour le financement du developpement,9,4,SOFID Sociedade para o Financiamento do Desenvolvimento,agency
@@ -3127,30 +2460,15 @@ provider,spagna,50,,Spain,resolvekit
 provider,spain,50,,Spain,listing
 provider,spanien,50,,Spain,resolvekit
 provider,spanish agency for international development co-operation,50,21,Spanish Agency for International Development Co-operation,agency
-provider,spanish cooperation fund for technical assistance,915,84,Spanish Cooperation Fund for Technical Assistance,agency
-provider,spanish fund for water and sanitation,909,78,Spanish Fund for Water and Sanitation,agency
-provider,spanish general cooperation fund,909,43,Spanish General Cooperation Fund,agency
 provider,spanish haiti,340,,Dominican Republic,resolvekit
-provider,spanish social cohesion account,1013,9,Spanish Social Cohesion Account ,agency
 provider,spanish state,50,,Spain,resolvekit
-provider,spanish trust fund for the entrepreneurship program,909,42,Spanish Trust Fund for the Entrepreneurship Program,agency
 provider,special arab aid fund for africa,954,,Special Arab Aid Fund for Africa,listing
 provider,special assistance,976,6,Special Assistance,agency
-provider,special climate change fund,909,88,Special Climate Change Fund,agency
 provider,special climate change trust fund (sccf),811,13,Special Climate Change Trust Fund (SCCF),agency
-provider,specialized financial intermediary development fund,909,83,Specialized Financial Intermediary Development Fund,agency
-provider,specialized financial intermediary development fund,909,84,Specialized Financial Intermediary Development Fund,agency
 provider,spff,2,30,Official Federal Service of Finance,agency
 provider,sprp,1050,1,SPRP–Developmental,agency
-provider,sprp - developmental tossd recipients only,1050,3,SPRP - Developmental TOSSD recipients only,agency
-provider,"sprp developmental, earmarked resources",1050,2,"SPRP Developmental, earmarked resources",agency
-provider,sprp – global and regional activities,1050,4,SPRP – Global and regional activities,agency
 provider,sprp–developmental,1050,1,SPRP–Developmental,agency
-provider,spt,909,81,Social Progress Trust Fund,agency
 provider,srca,566,8,Saudi Red Crescent Authority,agency
-provider,sre,358,2,Ministry of Foreign Affairs,agency
-provider,ssa,358,13,Ministry of Health,agency
-provider,ssm,1056,6,Secretariat for Strengthening of Democracy,agency
 provider,staat libyen,133,,Libya,resolvekit
 provider,state,302,11,State Department,agency
 provider,state customs committee,611,5,State Customs Committee,agency
@@ -3165,27 +2483,17 @@ provider,state secretariat for economic affairs,11,5,State Secretariat for Econo
 provider,"state secretariat for education, research and innovation",11,7,"State Secretariat for Education, Research and Innovation",agency
 provider,state secretariat for migration,11,8,State Secretariat for Migration,agency
 provider,stati uniti,302,,United States,resolvekit
-provider,statistics sweden,10,80,Statistics Sweden,agency
 provider,statutory contribution (general budget) - developmental,1054,1,Statutory contribution (General budget) - Developmental,agency
-provider,statutory contribution (general budget) – global,1054,4,Statutory contribution (General Budget) – Global,agency
-provider,statutory contribution and voluntary contribution from woah regional representations – global,1054,5,Statutory contribution and voluntary contribution from WOAH Regional Representations – Global,agency
 provider,statutory contribution and voluntary contributions from host country (woah regional representations) - developmental,1054,2,Statutory contribution and voluntary contributions from host country (WOAH Regional Representations) - Developmental,agency
-provider,stc,909,82,Swiss Technical Cooperation Fund for Consulting Services and Training,agency
 provider,sti,976,7,IsDB Group Science Technology and Innovation,agency
 provider,stoa,4,45,STOA,agency
-provider,stps,358,14,Ministry of Labor and Social Welfare,agency
 provider,stralia,801,,Australia,resolvekit
-provider,strategic climat fund,913,26,Strategic Climat Fund,agency
 provider,strategic climate fund,909,14,Strategic Climate Fund,agency
-provider,strategic climate fund,915,15,Strategic Climate Fund,agency
 provider,strategic climate fund,1011,20,Strategic Climate Fund,agency
 provider,strategic climate fund - fip,1011,21,Strategic Climate Fund - FIP,agency
-provider,strategic climate fund - forest investment program,915,16,Strategic Climate Fund - Forest Investment Program,agency
 provider,strategic climate fund - ppcr,1011,22,Strategic Climate Fund - PPCR,agency
-provider,strategic climate fund - scaling up renewable energy in lics program,915,17,Strategic Climate Fund - Scaling Up Renewable Energy in LICs Program,agency
 provider,strategic climate fund - srep,1011,23,Strategic Climate Fund - SREP,agency
 provider,straya,801,,Australia,resolvekit
-provider,strengthening healthcare infrastructure for all (shifa),1013,14,Strengthening Healthcare Infrastructure for All (SHIFA),agency
 provider,stria,801,,Australia,resolvekit
 provider,sudkorea,742,,Korea,resolvekit
 provider,suecia,10,,Sweden,resolvekit
@@ -3197,9 +2505,6 @@ provider,sujb,68,16,State Office for Nuclear Saftey,agency
 provider,suomen tasavalta,18,,Finland,resolvekit
 provider,suomi,18,,Finland,resolvekit
 provider,susan t. buffett foundation,1641,,Susan T. Buffett Foundation,listing
-provider,sustainable colombia facility,909,34,Sustainable Colombia Facility,agency
-provider,sustainable emerging cities multidonor trust fund,909,40,Sustainable Emerging Cities Multidonor Trust Fund,agency
-provider,sustainable energy and climate change multi-donor trust fund,909,74,Sustainable Energy and Climate Change Multi-donor Trust Fund,agency
 provider,svezia,10,,Sweden,resolvekit
 provider,svizzera,11,,Switzerland,resolvekit
 provider,svk,69,,Slovak Republic,iso3
@@ -3227,7 +2532,6 @@ provider,swiss,11,,Switzerland,resolvekit
 provider,swiss agency for development and co-operation,11,4,Swiss Agency for Development and Co-operation,agency
 provider,swiss confederation,11,,Switzerland,resolvekit
 provider,swiss investment fund for emerging markets,11,22,Swiss Investment Fund for Emerging Markets,agency
-provider,swiss technical cooperation fund for consulting services and training,909,82,Swiss Technical Cooperation Fund for Consulting Services and Training,agency
 provider,switzerland,11,,Switzerland,listing
 provider,taf,1014,7,Technical Assistance Facility,agency
 provider,tailandia,764,,Thailand,resolvekit
@@ -3242,10 +2546,8 @@ provider,tasf,915,11,Technical Assistance Special Fund (TASF),agency
 provider,tchequia,68,,Czechia,resolvekit
 provider,tchequie,68,,Czechia,listing_fr
 provider,tda,302,12,Trade and Development Agency,agency
-provider,tdf,909,83,Specialized Financial Intermediary Development Fund,agency
 provider,technical assistance facility,1014,7,Technical Assistance Facility,agency
 provider,technical assistance special fund (tasf),915,11,Technical Assistance Special Fund (TASF),agency
-provider,technical cooperation and small projects swiss fund,909,77,Technical Cooperation and Small Projects Swiss Fund,agency
 provider,th,764,,Thailand,iso2
 provider,tha,764,,Thailand,iso3
 provider,thai,764,,Thailand,resolvekit
@@ -3326,7 +2628,6 @@ provider,the republic of qazaqstan,613,,Kazakhstan,resolvekit
 provider,the republic of slovenia,61,,Slovenia,resolvekit
 provider,the republic of turkey,55,,Türkiye,resolvekit
 provider,the republic of turkiye,55,,Türkiye,resolvekit
-provider,the research council of norway,8,19,The Research Council of Norway,agency
 provider,the roc,732,,Chinese Taipei,resolvekit
 provider,the russian federation,87,,Russia,resolvekit
 provider,the slovak republic,69,,Slovak Republic,resolvekit
@@ -3336,7 +2637,6 @@ provider,the state of kuwait,552,,Kuwait,resolvekit
 provider,the state of libya,133,,Libya,resolvekit
 provider,the state of qatar,561,,Qatar,resolvekit
 provider,the states,302,,United States,resolvekit
-provider,the sustainable energy fund for africa,913,23,The Sustainable Energy Fund for Africa,agency
 provider,the swedish research council,10,29,The Swedish Research Council,agency
 provider,the swiss confederation,11,,Switzerland,resolvekit
 provider,the taiwan province of china,732,,Chinese Taipei,resolvekit
@@ -3367,12 +2667,8 @@ provider,timor-leste,765,,Timor-Leste,listing
 provider,timor-oriental,765,,Timor-Leste,resolvekit
 provider,tl,765,,Timor-Leste,iso2
 provider,tls,765,,Timor-Leste,iso3
-provider,tossd-only recipients,1047,2,TOSSD-only recipients,agency
-provider,tossd-only recipients,1048,2,TOSSD-only recipients,agency
 provider,tr,55,,Türkiye,iso2
 provider,trade and development agency,302,12,Trade and Development Agency,agency
-provider,transparency trust fund,909,21,Transparency Trust Fund,agency
-provider,tresor,4,91,TRESOR,agency
 provider,trust fund,976,8,Trust Fund,agency
 provider,trust funds,910,2,Trust funds,agency
 provider,tschechien,68,,Czechia,resolvekit
@@ -3384,7 +2680,6 @@ provider,turkey,55,,Türkiye,resolvekit
 provider,turkiye,55,,Türkiye,listing
 provider,turquia,55,,Türkiye,resolvekit
 provider,turquie,55,,Türkiye,resolvekit
-provider,tvt,909,102,Multi-Donor Fund for the Transformation of Technical and Vocational Education and Training,agency
 provider,tw,732,,Chinese Taipei,iso2
 provider,twn,732,,Chinese Taipei,iso3
 provider,u k,12,,United Kingdom,resolvekit
@@ -3395,13 +2690,10 @@ provider,u.s.a.,302,,United States,resolvekit
 provider,uae red crescent authority,576,22,UAE Red Crescent Authority,agency
 provider,ubs optimus foundation,1629,,UBS Optimus Foundation,listing
 provider,uk,12,,United Kingdom,resolvekit
-provider,uk blue carbon fund,909,90,UK Blue Carbon Fund,agency
 provider,uk climate investments,12,30,UK Climate Investments,agency
-provider,uk sustainable energy for the eastern caribbean fund,906,3,UK Sustainable Energy for the Eastern Caribbean Fund,agency
 provider,uk-india tech start-up fund,12,26,UK-India Tech Start-up Fund,agency
 provider,ukci,12,30,UK Climate Investments,agency
 provider,ukidcf,12,26,UK-India Tech Start-up Fund,agency
-provider,ukraine solidarity fund,1013,15,Ukraine Solidarity Fund,agency
 provider,un agencies,992,,UN AGENCIES,listing
 provider,un capital development fund,1039,,UN Capital Development Fund,listing
 provider,un covid-1,1047,1,COVID-19 Response and Recovery Multi-Partner Trust Fund,agency
@@ -3421,16 +2713,11 @@ provider,unctad,962,2,United Nations Conference on Trade and Development - Regul
 provider,undco core resources,1057,1,UNDCO core resources,agency
 provider,under funded,1020,2,Under Funded,agency
 provider,undp,959,,UNDP,listing
-provider,undp- global and regional activities,959,3,UNDP- Global and regional activities,agency
 provider,unece,948,,UNECE,listing
 provider,unep,807,,UNEP,listing
 provider,unep - assessed contributions,807,1,Assessed contributions - UN regular budget,agency
 provider,unep - ef,807,2,Environment Fund,agency
 provider,unep - mfmp,807,3,Multilateral Fund under the Montreal Protocol on Substances that Deplete the Ozone Layer,agency
-provider,unep programme support,807,7,UNEP programme support,agency
-provider,"unep, core and earmarked, developmental",807,46,"UNEP, core and earmarked, developmental",agency
-provider,unescwa extra-budgetary non-core funding – developmental,1403,2,UNESCWA extra-budgetary non-core funding – developmental,agency
-provider,unescwa extra-budgetary non-core funding – non-developmental,1403,3,UNESCWA extra-budgetary non-core funding – non-developmental,agency
 provider,unfpa,974,,UNFPA,listing
 provider,ungarn,75,,Hungary,resolvekit
 provider,ungheria,75,,Hungary,resolvekit
@@ -3438,17 +2725,10 @@ provider,unhcr,967,,UNHCR,listing
 provider,unicef,963,,UNICEF,listing
 provider,unidir,1038,1,UNIDIR Trust Fund (core resources),agency
 provider,unidir trust fund (core resources),1038,1,UNIDIR Trust Fund (core resources),agency
-provider,unidir trust fund (core resources) - non-developmental,1038,3,UNIDIR Trust Fund (core resources) - non-developmental,agency
-provider,unidir trust fund (non-core resources),1038,2,UNIDIR Trust Fund (non-core resources),agency
-provider,unidir trust fund (non-core resources) - non-developmental,1038,4,UNIDIR Trust Fund (non-core resources) - non-developmental,agency
 provider,unido,1406,1,UNIDO,agency
 provider,united arab emirates,576,,United Arab Emirates,listing
 provider,united kingdom,12,,United Kingdom,listing
-provider,united kingdom fund for asia regional trade and connectivity,915,59,United Kingdom Fund for Asia Regional Trade and Connectivity,agency
-provider,united kingdom infrastructure fund,906,4,United Kingdom Infrastructure Fund,agency
 provider,united kingdom of great britain and northern ireland,12,,United Kingdom,resolvekit
-provider,united kingdom sustainable infrastructure program,909,79,United Kingdom Sustainable Infrastructure Program,agency
-provider,united kingdom-asean catalytic green finance facility trust fund,915,67,United Kingdom-ASEAN Catalytic Green Finance Facility Trust Fund,agency
 provider,united mexican states,358,,Mexico,resolvekit
 provider,united nations children's fund (unicef),963,,UNICEF,resolvekit
 provider,united nations conference on trade and development,962,,United Nations Conference on Trade and Development,listing
@@ -3470,23 +2750,17 @@ provider,universite du qatar,561,6,Qatar University,agency
 provider,universites et institutions de recherche publiques et croix rouge italienne,6,11,Public universities and research institutes and Italian red cross,agency
 provider,universites publiques israeliennes,546,2,Israeli public universities,agency
 provider,universities,68,13,Universities,agency
-provider,unops,1022,7,UNOPS,agency
 provider,unpbf,923,1,UNPBF,agency
 provider,unrwa,964,,UNRWA,listing
 provider,unta,960,,UNTA,listing
-provider,unwomen,1022,5,UNWOMEN,agency
 provider,unwto-extra-budgetary project,1023,2,UNWTO-Extra-Budgetary Project,agency
 provider,unwto-extra-budgetary project in-kind,1023,3,UNWTO-Extra-Budgetary Project In-Kind,agency
 provider,unwto-rb,1023,1,UNWTO-Regular Budget,agency
 provider,unwto-regular budget,1023,1,UNWTO-Regular Budget,agency
 provider,unwto-xbp,1023,2,UNWTO-Extra-Budgetary Project,agency
 provider,unwto-xbpi,1023,3,UNWTO-Extra-Budgetary Project In-Kind,agency
-provider,urban climate change resilience trust fund,915,54,Urban Climate Change Resilience Trust Fund,agency
-provider,urban environmental infrastructure fund,915,55,Urban Environmental Infrastructure Fund,agency
-provider,urban resilience trust fund,915,86,Urban Resilience Trust Fund,agency
 provider,uruguai,460,,Uruguay,resolvekit
 provider,uruguay,460,,Uruguay,listing
-provider,uruguayan agency of international co-operation,460,1,Uruguayan Agency of International Co-operation,agency
 provider,ury,460,,Uruguay,iso3
 provider,us,302,,United States,iso2
 provider,us of a,302,,United States,resolvekit
@@ -3498,7 +2772,6 @@ provider,uy,460,,Uruguay,iso2
 provider,van leer foundation,1609,,Bernard van Leer Foundation,resolvekit
 provider,various ministries,1,2,Various ministries,agency
 provider,vc unearmarked,1401,3,VC unearmarked ,agency
-provider,"vc unearmarked, tossd-only activities",1401,5,"VC unearmarked, TOSSD-only activities",agency
 provider,vereinigte arabische emirate,576,,United Arab Emirates,resolvekit
 provider,vereinigte konigreich grossbritannien und nordirland,12,,United Kingdom,resolvekit
 provider,vereinigte staaten,302,,United States,resolvekit
@@ -3509,62 +2782,21 @@ provider,ville libre et hanseatique de hambourg,5,81,Free and Hanseatic City of 
 provider,ville libre hanseatique de breme,5,83,Free Hanseatic City of Bremen,agency
 provider,villes designees par ordonnance,701,15,Ordinance-designed Cities,agency
 provider,volontaires du developpement (« peace corps »),302,10,Peace Corps,agency
-provider,voluntary contributions,928,5,Voluntary contributions,agency
-provider,voluntary contributions (earmarked and unearmarked) – non-developmental,1042,2,Voluntary contributions (earmarked and unearmarked) – non-developmental,agency
-provider,voluntary contributions (earmarked funding) – developmental,1042,1,Voluntary contributions (earmarked funding) – developmental,agency
-provider,voluntary contributions - regional and global (non-developmental),928,10,Voluntary contributions - regional and global (non-developmental),agency
-provider,voluntary core – global and tossd-only recipients,1046,4,Voluntary core – global and TOSSD-only recipients,agency
-provider,voluntary earmarked contributions - global and tossd-only activities,932,4,Voluntary earmarked contributions - global and TOSSD-only activities,agency
-provider,voluntary earmarked contributions – developmental,932,2,Voluntary earmarked contributions – developmental,agency
-provider,voluntary earmarked resources,962,1,Voluntary earmarked resources,agency
-provider,voluntary non-core,948,2,Voluntary non-core,agency
-provider,voluntary non-core,1046,2,Voluntary non-core,agency
-provider,voluntary non-core funding,959,2,Voluntary non-core funding,agency
-provider,voluntary non-core funding,963,2,Voluntary non-core funding,agency
-provider,voluntary non-core funding,964,2,Voluntary non-core funding,agency
-provider,voluntary non-core funding,966,2,Voluntary non-core funding,agency
-provider,voluntary non-core funding,967,2,Voluntary non-core funding,agency
-provider,voluntary non-core funding,971,2,Voluntary non-core funding,agency
-provider,voluntary non-core funding,974,2,Voluntary non-core funding,agency
-provider,voluntary non-core funding,1023,4,Voluntary non-core funding,agency
-provider,voluntary non-core funding,1401,2,Voluntary non-core funding,agency
-provider,voluntary non-core funding (developmental),1040,1,Voluntary non-core funding (developmental),agency
-provider,voluntary non-core funding (non-developmental),1040,2,Voluntary non-core funding (non-developmental),agency
-provider,voluntary non-core funding - developmental,940,4,Voluntary non-core funding - developmental,agency
-provider,voluntary non-core funding - global and tossd-only,971,4,Voluntary non-core funding - global and TOSSD-only,agency
-provider,voluntary non-core funding - global and tossd-only recipients,974,4,Voluntary non-core funding - global and TOSSD-only recipients,agency
-provider,voluntary non-core funding – regional and global (non developmental part),940,7,Voluntary non-core funding – regional and global (non developmental part),agency
-provider,"voluntary non-core funding, tossd-only activities",1401,4,"Voluntary non-core funding, TOSSD-only activities",agency
-provider,voluntary non-core – global and tossd-only recipients,1046,5,Voluntary Non-Core – global and TOSSD-only recipients,agency
-provider,vuc,69,30,Local and Regional governments,agency
 provider,wag,12,22,Welsh Assembly Government,agency
 provider,walloon official regional ministries,2,80,Walloon Official Regional Ministries,agency
 provider,waqf,976,9,WAQF,agency
 provider,water agencies,4,30,Water agencies,agency
 provider,water authority,546,6,Water Authority,agency
-provider,water innovation trust fund under the water financing partnership facility,915,49,Water Innovation Trust Fund under the Water Financing Partnership Facility,agency
-provider,water resilience trust fund,915,85,Water Resilience Trust Fund,agency
-provider,we-fi,915,63,Women Entrepreneurs Finance Initiative,agency
-provider,wef,909,103,Women Entrepreneurs Finance Initiative (We-Fi),agency
 provider,wellcome trust,1628,,Wellcome Trust,listing
 provider,welsh assembly government,12,22,Welsh Assembly Government,agency
 provider,west germany,5,,Germany,resolvekit
-provider,western balkans investment framework,1013,7,Western Balkans Investment Framework,agency
 provider,wfp,966,,WFP,listing
 provider,who,928,1,WHO,agency
-provider,who - regional and global (non-developmental),928,6,WHO - regional and global (non-developmental),agency
 provider,who assessed contributions,928,2,WHO Assessed contributions,agency
-provider,who assessed contributions - regional and global (non-developmental),928,7,WHO Assessed contributions - regional and global (non-developmental),agency
 provider,who core voluntary contributions,928,3,WHO Core Voluntary contributions,agency
-provider,who core voluntary contributions - regional and global (non-developmental),928,8,WHO Core Voluntary contributions - regional and global (non-developmental),agency
-provider,who framework convention on tobacco control,928,11,WHO Framework Convention on Tobacco Control,agency
-provider,who framework convention on tobacco control – non-developmental,928,12,WHO Framework Convention on Tobacco Control – non-developmental,agency
 provider,who-strategic preparedness and response plan,1050,,WHO-Strategic Preparedness and Response Plan,listing
 provider,william & flora hewlett foundation,1624,1,William & Flora Hewlett Foundation,agency
 provider,william and flora hewlett foundation,1624,,William and Flora Hewlett Foundation,listing
-provider,women entrepreneurs finance initiative,915,63,Women Entrepreneurs Finance Initiative,agency
-provider,women entrepreneurs finance initiative (we-fi),909,103,Women Entrepreneurs Finance Initiative (We-Fi),agency
-provider,world animal health and welfare fund (world fund),1054,3,World Animal Health and Welfare Fund (World Fund),agency
 provider,world diabetes foundation,1630,,World Diabetes Foundation,listing
 provider,world food programme (wfp),966,,WFP,resolvekit
 provider,world health organisation,928,,World Health Organisation,listing
@@ -3576,14 +2808,11 @@ provider,wto,1404,1,WTO - World Trade Organization,agency
 provider,wto - international trade centre,1401,,WTO - International Trade Centre,listing
 provider,wto - world trade organization,1404,1,WTO - World Trade Organization,agency
 provider,wto global trust fund,1404,4,WTO Global Trust Fund,agency
-provider,wto – non-core resources,1404,2,WTO – non-core resources,agency
-provider,wto – tossd only recipient (core and non-core),1404,3,WTO – TOSSD only recipient (core and non-core),agency
 provider,yisrael,546,,Israel,resolvekit
 provider,youth and sports ministry,77,13,Youth and Sports Ministry,agency
 provider,ysland,20,,Iceland,resolvekit
 provider,zayed bin sultan al nahyan charitable and humanitarian foundation,576,19,Zayed Bin Sultan Al Nahyan Charitable and Humanitarian Foundation,agency
 provider,zbs,576,19,Zayed Bin Sultan Al Nahyan Charitable and Humanitarian Foundation,agency
-provider,zimbabwe multi donor trust fund,913,21,Zimbabwe Multi Donor Trust Fund,agency
 provider,zypern,30,,Cyprus,resolvekit
 provider,австралия,801,,Australia,resolvekit
 provider,австрия,1,,Austria,resolvekit

@@ -18,7 +18,7 @@ Each row of the release's `disbursements` table is one CRS record's allocation t
 A commitment's `disbursed_low_usd`, `disbursed_usd`, and `disbursed_high_usd` sum its allocations' bounds. The release holds them to `0 <= disbursed_low_usd <= disbursed_usd <= disbursed_high_usd <= face_usd`.
 
 !!! note
-With `flow="commitments"`, `low`, `value`, and `high` are equal.
+    With `flow="commitments"`, `low`, `value`, and `high` are equal.
 
 ## Under several methods
 

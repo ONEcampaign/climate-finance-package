@@ -44,7 +44,7 @@ from climate_finance.query import (
 from climate_finance.release import Release
 from climate_finance.result import AMOUNTS, ROW_KEYS, ROW_VALUES
 from climate_finance.schema import ReleaseManifest
-from climate_finance.spec import Spec, SpecInputs
+from climate_finance.spec import Flow, Measure, Spec, SpecInputs, View
 from climate_finance.sums import ordered_sum
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
@@ -170,7 +170,7 @@ GRID = [
 
 @pytest.mark.parametrize("flow", FLOWS)
 @pytest.mark.parametrize("view", VIEWS)
-def test_value_stays_within_face_and_between_its_bounds(flow: str, view: str) -> None:
+def test_value_stays_within_face_and_between_its_bounds(flow: Flow, view: View) -> None:
     grid = MethodRange(methods=tuple(GRID))
     result = SNAP.spending(method=grid, flow=flow, view=view)
 
@@ -202,7 +202,7 @@ def without_code_2(tmp_path_factory: pytest.TempPathFactory) -> Release:
 @pytest.mark.parametrize("flow", FLOWS)
 @pytest.mark.parametrize("view", VIEWS)
 def test_code_2_rows_leave_every_total_unchanged(
-    without_code_2: Release, flow: str, view: str
+    without_code_2: Release, flow: Flow, view: View
 ) -> None:
     spec = Spec(method=cf.methods.RANGE, flow=flow, view=view)
     with_code_2 = SNAP.run(spec).table
@@ -218,7 +218,7 @@ def test_code_2_rows_leave_every_total_unchanged(
         Spec(),
         Spec(
             providers=(5, 905),
-            years=(2021, 2022, 2023),
+            years=(2021, 2022),
             method=cf.methods.RANGE,
             flow="commitments",
             view="provider",
@@ -388,7 +388,8 @@ def test_spec_restates_every_refusal_as_one_package_error(
         lambda: SNAP.reconcile(providers=[]),
         lambda: SNAP.spending().rows(provider=[]),
         lambda: SNAP.spending().rows(recipient=[]),
-        lambda: SNAP.reconcile().rows(provider=[], year=2021),
+        # The refusal under test: a type checker flags an empty list.
+        lambda: SNAP.reconcile().rows(provider=[], year=2021),  # ty: ignore[invalid-argument-type]
     ],
     ids=["quality", "reconcile", "rows provider", "rows recipient", "btr rows"],
 )
@@ -403,15 +404,15 @@ def test_an_empty_list_of_providers_or_recipients_raises(
     ("call", "message"),
     [
         (
-            lambda: SNAP.reconcile(parties="DEU"),
+            lambda: SNAP.reconcile(parties="DEU"),  # ty: ignore[unknown-argument]
             r"reconcile\(\) takes no keyword 'parties'; did you mean 'providers'\?",
         ),
         (
-            lambda: SNAP.quality(yeras=2022),
+            lambda: SNAP.quality(yeras=2022),  # ty: ignore[unknown-argument]
             r"quality\(\) takes no keyword 'yeras'; did you mean 'years'\?",
         ),
         (
-            lambda: SNAP.quality(flow="commitments"),
+            lambda: SNAP.quality(flow="commitments"),  # ty: ignore[unknown-argument]
             "quality\\(\\) takes no keyword 'flow'; it takes providers, years, method",
         ),
     ],
@@ -497,7 +498,7 @@ def test_covered_years_warn_nothing(call: Callable[[], object]) -> None:
 
 @pytest.mark.parametrize("flow", FLOWS)
 def test_the_provider_view_attributes_core_contributions_of_its_flow(
-    flow: str,
+    flow: Flow,
 ) -> None:
     # OECD has a share for every agency and year with a core contribution.
     rows = SNAP.spending(view="provider", flow=flow, method=OECD).rows(
@@ -1208,7 +1209,7 @@ def test_explain_names_the_method_view_and_units() -> None:
     [({}, False), ({"currency": "EUR"}, True), ({"prices": 2024}, True)],
 )
 def test_converted_results_carry_conversion_provenance(
-    monkeypatch: pytest.MonkeyPatch, spec: dict[str, object], converted: bool
+    monkeypatch: pytest.MonkeyPatch, spec: SpecInputs, converted: bool
 ) -> None:
     factors = pl.DataFrame(
         {"entity_code": [5, 20001], "year": [2022, 2022], "factor": [0.8, 0.5]},
@@ -1216,7 +1217,8 @@ def test_converted_results_carry_conversion_provenance(
     )
     monkeypatch.setattr(convert_module, "dac_factors", lambda **_: factors)
 
-    result = SNAP.spending(years=2022, **spec)
+    inputs: SpecInputs = {**spec, "years": 2022}
+    result = SNAP.spending(**inputs)
 
     assert (result.meta.conversion is not None) is converted
     if converted:
@@ -1261,7 +1263,7 @@ def test_a_share_result_reruns_from_its_own_spec() -> None:
     ],
 )
 def test_explain_and_title_name_the_measure(
-    measure: str, expected: str, absent: str
+    measure: Measure, expected: str, absent: str
 ) -> None:
     result = SNAP.spending(providers=5, years=2021, measure=measure)
 
@@ -1272,24 +1274,24 @@ def test_explain_and_title_name_the_measure(
 
 
 def test_the_title_names_providers_agencies_recipients_and_year_runs() -> None:
-    result = SNAP.spending(
-        providers=["EIB", 701], recipients="KEN", years=[2015, 2021, 2022, 2023]
-    )
+    with pytest.warns(CoverageWarning, match="year 2015 returns no rows"):
+        result = SNAP.spending(
+            providers=["EIB", 701], recipients="KEN", years=[2015, 2021, 2022, 2023]
+        )
 
     assert (
         "providers Japan, European Investment Bank (EU Institutions); recipients Kenya;"
-        " years 2015, 2021 to 2023"
+        " years 2015 and 2021 to 2023"
     ) in repr(result).splitlines()[0]
 
 
-@pytest.mark.parametrize(
-    ("field", "value"), [("measure", "share_of_total"), ("untraced", False)]
-)
+@pytest.mark.parametrize("inputs", [{"measure": "share_of_total"}, {"untraced": False}])
 def test_a_spec_serialises_only_the_later_fields_it_changes(
-    field: str, value: object
+    inputs: SpecInputs,
 ) -> None:
+    [field] = inputs
     assert f'"{field}"' not in Spec(flow="commitments").model_dump_json()
-    assert f'"{field}"' in Spec(**{field: value}).model_dump_json()
+    assert f'"{field}"' in Spec(**inputs).model_dump_json()
 
 
 SURVEY = "Fixture survey, p. 8"
@@ -1418,7 +1420,7 @@ def _repeat_jpn_2(frame: pl.DataFrame) -> pl.DataFrame:
 
 @pytest.mark.parametrize("flow", FLOWS)
 def test_a_repeat_and_the_disbursements_allocated_to_it_stay_out(
-    tmp_path: Path, flow: str
+    tmp_path: Path, flow: Flow
 ) -> None:
     release = copy_release(tmp_path / "release", edits={"commitments": _repeat_jpn_2})
 
@@ -1610,7 +1612,7 @@ def test_the_eu_constants_match_the_channels_the_build_maps_to_eu_institutions()
 def test_an_all_provider_total_counts_eu_money_once(
     eu_release: Release,
     method: Method,
-    flow: str,
+    flow: Flow,
     eu_own_agencies: set[int],
     eu_attributed: float,
 ) -> None:
@@ -1629,7 +1631,7 @@ def test_an_all_provider_total_counts_eu_money_once(
 @pytest.mark.parametrize("view", VIEWS)
 @pytest.mark.parametrize("flow", FLOWS)
 def test_eu_institutions_alone_return_their_own_spending(
-    eu_release: Release, flow: str, view: str
+    eu_release: Release, flow: Flow, view: View
 ) -> None:
     def eu_alone(method: Method) -> pl.DataFrame:
         result = eu_release.spending(
@@ -1649,7 +1651,7 @@ def test_eu_institutions_alone_return_their_own_spending(
 @pytest.mark.parametrize("view", VIEWS)
 @pytest.mark.parametrize("flow", FLOWS)
 def test_an_agency_returns_its_own_rows_and_no_modelled_line(
-    eu_release: Release, flow: str, view: str
+    eu_release: Release, flow: Flow, view: View
 ) -> None:
     eib = eu_release.spending(view=view, flow=flow, providers="EIB")
     eu = eu_release.spending(view=view, flow=flow, providers=EU_INSTITUTIONS)
@@ -1724,7 +1726,7 @@ def two_member_release(tmp_path_factory: pytest.TempPathFactory) -> Release:
 
 @pytest.mark.parametrize("flow", FLOWS)
 def test_eu_own_rows_count_less_the_contributions_of_queried_members(
-    two_member_release: Release, flow: str
+    two_member_release: Release, flow: Flow
 ) -> None:
     def value(providers: int | tuple[int, ...] | None, provider: int) -> float:
         result = two_member_release.spending(
@@ -1816,7 +1818,7 @@ def test_eu_untraced_rows_count_once_as_the_eus_own_rows_do(
 @pytest.mark.parametrize("flow", ["commitments", "disbursements"])
 @pytest.mark.parametrize("providers", [(EU_INSTITUTIONS,), (EU_INSTITUTIONS, 4)])
 def test_eu_shares_of_total_divide_by_the_rows_each_method_counts(
-    two_member_release: Release, flow: str, providers: tuple[int, ...]
+    two_member_release: Release, flow: Flow, providers: tuple[int, ...]
 ) -> None:
     result = two_member_release.spending(
         view="provider", method=RANGE, flow=flow, providers=providers
@@ -1967,7 +1969,7 @@ def test_quality_reads_a_method_by_name() -> None:
 
 @pytest.mark.parametrize("flow", FLOWS)
 def test_quality_reports_the_eu_rows_a_provider_total_leaves_out(
-    eu_release: Release, flow: str
+    eu_release: Release, flow: Flow
 ) -> None:
     # As a provider, the EU keeps its budget and EDF rows; the EIB's leave as a
     # channel's own rows under either method.
@@ -2021,7 +2023,7 @@ def _unmeasured_2022_spending(frame: pl.DataFrame) -> pl.DataFrame:
 
 @pytest.mark.parametrize("flow", FLOWS)
 def test_unmeasured_adaptation_stays_null_and_value_counts_mitigation(
-    tmp_path: Path, flow: str
+    tmp_path: Path, flow: Flow
 ) -> None:
     release = copy_release(
         tmp_path / "release",
@@ -2111,7 +2113,7 @@ _IMPUTED_COVERS = (
 )
 def test_explain_names_queried_years_without_attributed_finance(
     tmp_path: Path,
-    view: str,
+    view: View,
     method: Method | MethodRange,
     years: tuple[int, ...] | None,
     named: list[str],

@@ -80,3 +80,13 @@ def test_table_is_sorted_with_each_key_from_one_source() -> None:
     assert NAMES.equals(NAMES.sort("kind", "key", "code", "agency", nulls_last=False))
     sources = NAMES.group_by("kind", "key").agg(pl.col("source").n_unique())
     assert sources.filter(pl.col("source") > 1).is_empty()
+
+
+def test_every_agency_is_one_the_agency_listing_holds() -> None:
+    agencies = pl.read_csv(
+        (files("climate_finance") / "data" / "agencies.csv").read_bytes(),
+        schema_overrides={"code": pl.Int64, "agency": pl.Int64},
+    )
+    named = NAMES.drop_nulls("agency").select("code", "agency", "name").unique()
+
+    assert named.join(agencies, on=["code", "agency", "name"], how="anti").is_empty()

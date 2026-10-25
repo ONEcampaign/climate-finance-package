@@ -79,7 +79,7 @@ Every party you asked for appears in `table["party"]`. A missing party has no BT
 ## Troubleshooting
 
 - All comparators are null. The party reports no CRS data and has no DAC provider code.
-- The ratio is far from 1. Check `thin_comparator`, then read `unfccc_only_usd` beside `oecd_only_usd`, and on a local build read `rows(party, year)`.
+- The ratio is far from 1. Check `thin_comparator`, then read `unfccc_only_usd` beside `oecd_only_usd`, and on a local build read `reconciliation.rows(provider=..., year=...)`.
 
 ## Next
 
