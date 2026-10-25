@@ -272,3 +272,37 @@ def test_germany_counts_both_significant_disbursements_in_full(
     assert rows["crs_disbursed_at_party_weight"].item() == pytest.approx(
         5.45e9, rel=0.005
     )
+
+
+METHOD_SHARES = (
+    "crdf_method_share",
+    "crs_method_share",
+    "crs_grant_equivalent_method_share",
+)
+
+
+def _method_shares(reconciliation: Reconciliation, party: str) -> pl.Series:
+    """`party`'s method shares of 2021 and 2022, every comparator's alike."""
+    rows = reconciliation.table.to_polars().filter(party=party, method="ONE")
+    shares = rows.select(pl.concat_list(METHOD_SHARES).explode()).to_series()
+    assert shares.null_count() == 0
+    return shares
+
+
+def test_france_rests_mostly_on_provider_coefficients(
+    reconciliation_at_own_coefficients: Reconciliation,
+) -> None:
+    # AFD assesses each activity case by case, so most of France's comparators
+    # weigh at PROVIDER's coefficients.
+    shares = _method_shares(reconciliation_at_own_coefficients, "FRA")
+
+    assert shares.min() == pytest.approx(0.71, abs=0.005)
+    assert shares.max() == pytest.approx(0.86, abs=0.005)
+
+
+def test_canada_rests_on_its_own_coefficients(
+    reconciliation_at_own_coefficients: Reconciliation,
+) -> None:
+    shares = _method_shares(reconciliation_at_own_coefficients, "CAN")
+
+    assert shares.max() < 0.01

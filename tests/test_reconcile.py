@@ -162,16 +162,30 @@ def _french_agency_2(frame: pl.DataFrame) -> pl.DataFrame:
     return pl.concat([frame, agency_2])
 
 
+def _a_loan_at_agency_1(frame: pl.DataFrame) -> pl.DataFrame:
+    """France's 2022 grant equivalent of agency 1 halved, as a loan's would be."""
+    loan = (
+        (pl.col("provider_code") == 4)
+        & (pl.col("agency_code") == 1)
+        & (pl.col("year") == 2022)
+        & (pl.col("flow") == "grant_equivalent")
+    )
+    return frame.with_columns(
+        amount_usd=pl.when(loan).then(pl.col("amount_usd") / 2).otherwise("amount_usd")
+    )
+
+
 def test_a_mixed_basis_party_shows_its_method_shares(tmp_path: Path) -> None:
     # FRA-2 (12m) and France's Significant 2022 disbursement (4.8m) count at
     # PROVIDER's 0.4 under agency 1 and at France's 0.3 under agency 2, so 0.4 of
-    # every 0.7 rests on PROVIDER's coefficients.
+    # every 0.7 rests on PROVIDER's coefficients. Agency 1's grant equivalent is a
+    # loan's 2.16m against agency 2's 4.32m, so 0.864m of 2.16m rests on them.
     release = copy_release(
         tmp_path / "r",
         edits={
             "btr_totals": _france_reports,
             "commitments": _french_agency_2,
-            "total_flows": _french_agency_2,
+            "total_flows": lambda frame: _a_loan_at_agency_1(_french_agency_2(frame)),
         },
     )
     row = _row(cf.load(path=release).reconcile(parties="FRA"), "FRA", 2022)
@@ -181,6 +195,7 @@ def test_a_mixed_basis_party_shows_its_method_shares(tmp_path: Path) -> None:
     assert row["crdf_method_share"] == pytest.approx(4 / 7)
     assert row["crs_disbursed_at_party_weight"] == pytest.approx(0.7 * 4.8e6)
     assert row["crs_method_share"] == pytest.approx(4 / 7)
+    assert row["crs_grant_equivalent_method_share"] == pytest.approx(0.4)
 
 
 def _overlapping_coefficients(frame: pl.DataFrame) -> pl.DataFrame:

@@ -808,11 +808,7 @@ def splink_links(
         .join(candidates.select(*_PAIR, "programme_level"), on=_PAIR)
         .join(units.select("placed_year", right_id="unit_id"), on="right_id")
     )
-    best = linked_pairs(
-        taken.with_columns(p_model="probability"),
-        threshold=LINK_THRESHOLD,
-        rejected=rejected,
-    )
+    best = linked_pairs(taken, threshold=LINK_THRESHOLD, rejected=rejected)
     given = {
         "task": pl.lit("trace"),
         "left_id": pl.col("left_id"),

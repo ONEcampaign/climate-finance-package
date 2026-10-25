@@ -473,14 +473,17 @@ def reconcile(
     CRDF commitments so weighted; `crdf_at_100` the same commitments with
     Significant at 100%; `traced_climate_value` the climate value `method` gives
     what those commitments disbursed; `crs_disbursed_at_party_weight` the year's
-    CRS disbursements on Rio-marked records so weighted, by each record's higher
-    marker; and `crs_grant_equivalent_at_party_weight` their grant equivalent,
+    CRS disbursements on Rio-marked records so weighted, at the both-significant
+    coefficient for a record significant on both objectives where the provider
+    states one; and `crs_grant_equivalent_at_party_weight` their grant equivalent,
     weighted alike. `crdf_method_share` is the share of `crdf_at_party_weight` that
-    rests on `PROVIDER`'s coefficients in place of the party's own, and
-    `crs_method_share` the same share of `crs_disbursed_at_party_weight`, which the
-    grant equivalent shares; each is null where its comparator is zero or null,
-    and 1.0 for a party whose provider has no row. A party without a DAC provider
-    code has null comparators.
+    rests on `PROVIDER`'s coefficients in place of the party's own,
+    `crs_method_share` the same share of `crs_disbursed_at_party_weight`, and
+    `crs_grant_equivalent_method_share` that of
+    `crs_grant_equivalent_at_party_weight`, which differs from `crs_method_share`
+    where loans concentrate in agencies without coefficients of their own; each is
+    null where its comparator is zero or null, and 1.0 for a party whose provider
+    has no row. A party without a DAC provider code has null comparators.
 
     Each `btr_over_<comparator>` divides `btr_face` by it, null where the
     comparator is zero or null, and is null for a
@@ -602,12 +605,11 @@ def reconcile(
     crs = crs_at_party_weight("disbursements").rename(
         {"amount_usd": "crs_disbursed_at_party_weight"}
     )
-    # The grant equivalent weighs the disbursed records alike, so it shares their
-    # `crs_method_share`.
-    grant_equivalent = (
-        crs_at_party_weight("grant_equivalent")
-        .drop("crs_method_share")
-        .rename({"amount_usd": GRANT_EQUIVALENT_COMPARATOR})
+    grant_equivalent = crs_at_party_weight("grant_equivalent").rename(
+        {
+            "amount_usd": GRANT_EQUIVALENT_COMPARATOR,
+            "crs_method_share": "crs_grant_equivalent_method_share",
+        }
     )
     frames = []
     for each in method.methods if isinstance(method, MethodRange) else (method,):
@@ -669,6 +671,7 @@ def reconcile(
             "coefficient_basis",
             "crdf_method_share",
             "crs_method_share",
+            "crs_grant_equivalent_method_share",
             "btr_face",
             "btr_face_reported",
             "party_rate",
