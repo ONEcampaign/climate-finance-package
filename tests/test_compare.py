@@ -1,14 +1,17 @@
 """`cf.compare`, and how results, comparisons and methods print."""
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import polars as pl
 import pytest
 from make_fixture import FIXTURE_DIR
+from releases import copy_release
 
 import climate_finance as cf
 from climate_finance.errors import InvalidInputError
 from climate_finance.methods import ONE, RANGE
+from climate_finance.schema import ReleaseManifest
 
 SNAP = cf.load(path=FIXTURE_DIR)
 KEYS = ["year", "provider_code", "recipient_code", "bi_multi"]
@@ -27,6 +30,17 @@ COLUMNS = [
 def _fixed_table_width() -> Iterator[None]:
     with pl.Config(tbl_width_chars=200, tbl_cols=-1, tbl_rows=10):
         yield
+
+
+def _named_release(path: Path, name: str) -> cf.Release:
+    """A copy of the fixture release whose manifest names the release `name`."""
+    copy_release(path)
+    manifest_path = path / "release.json"
+    manifest = ReleaseManifest.model_validate_json(manifest_path.read_text())
+    manifest_path.write_text(
+        manifest.model_copy(update={"release": name}).model_dump_json()
+    )
+    return cf.load(path=path)
 
 
 def _values(result: cf.Result) -> pl.DataFrame:
@@ -87,6 +101,60 @@ def test_results_nothing_sets_apart_are_numbered() -> None:
     table = cf.compare(SNAP.spending(), SNAP.spending()).table
 
     assert table.columns[len(COLUMNS) :] == ["result 1: ONE", "result 2: ONE"]
+
+
+def test_results_of_two_releases_are_named_by_release(tmp_path: Path) -> None:
+    older = _named_release(tmp_path / "2025a", "2025a")
+    newer = _named_release(tmp_path / "2026a", "2026a")
+
+    table = cf.compare(older.spending(), newer.spending()).table
+
+    assert table.columns[len(COLUMNS) :] == ["2025a", "2026a"]
+
+
+def test_results_of_two_releases_under_several_methods_keep_the_release(
+    tmp_path: Path,
+) -> None:
+    older = _named_release(tmp_path / "2025a", "2025a")
+    newer = _named_release(tmp_path / "2026a", "2026a")
+
+    table = cf.compare(older.spending(method=RANGE), newer.spending(method=RANGE)).table
+
+    assert table.columns[len(COLUMNS) :] == [
+        "2025a: ONE",
+        "2025a: OECD",
+        "2025a: PROVIDER",
+        "2026a: ONE",
+        "2026a: OECD",
+        "2026a: PROVIDER",
+    ]
+
+
+def test_results_of_two_releases_and_two_specs_are_named_by_both(
+    tmp_path: Path,
+) -> None:
+    older = _named_release(tmp_path / "2025a", "2025a")
+
+    table = cf.compare(older.spending(years=2021), SNAP.spending(years=2022)).table
+
+    assert table.columns[len(COLUMNS) :] == [
+        "2025a, years 2021",
+        "fixture, years 2022",
+    ]
+
+
+def test_results_that_differ_only_in_years_are_named_by_years() -> None:
+    table = cf.compare(
+        SNAP.spending(years=2021),
+        SNAP.spending(years=[2021, 2022]),
+        SNAP.spending(),
+    ).table
+
+    assert table.columns[len(COLUMNS) :] == [
+        "years 2021",
+        "years 2021 to 2022",
+        "all years",
+    ]
 
 
 def test_compare_needs_a_result() -> None:

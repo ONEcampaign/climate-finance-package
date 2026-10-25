@@ -854,9 +854,11 @@ def compare(*results: Result) -> Comparison:
     """Set results side by side: one row per year, provider, recipient and Bi_Multi
     code, and one `value` column per result and method.
 
-    Columns are named by the spec fields that set the results apart, such as "ONE"
-    and "OECD", or "commitments" and "disbursements". A result under several methods
-    gives one column per method. A key a result has no row for is null in its column.
+    Columns are named by what sets the results apart: the release, then the spec
+    fields that differ, such as "2025a" and "2026a", "ONE" and "OECD", or
+    "commitments" and "disbursements". Fields the results share stay out of the
+    name. A result under several methods gives one column per method. A key a result
+    has no row for is null in its column.
 
     Raises:
         InvalidInputError: when no result is given, or any argument is not a
@@ -870,7 +872,7 @@ def compare(*results: Result) -> Comparison:
                 "compare() takes results as arguments, as cf.compare(a, b), or "
                 f"cf.compare(*results) for a list; got a {type(given).__name__}"
             )
-    names = _result_names([result.spec for result in results])
+    names = _result_names(results)
     frames = []
     for name, result in zip(names, results, strict=True):
         methods = [label(method) for method in result.spec.methods]
@@ -893,18 +895,20 @@ def compare(*results: Result) -> Comparison:
     )
 
 
-def _result_names(specs: Sequence[Spec]) -> list[str]:
-    """Per spec, the values of the fields that differ across `specs`, or its method
-    when none differ. Specs that nothing sets apart are numbered as well.
+def _result_names(results: Sequence[Result]) -> list[str]:
+    """Per result, the values of the fields that differ across `results`, release
+    first, or its method when none differ. Results that nothing sets apart are
+    numbered as well.
     """
+    fields = [
+        {"release": result.meta.release, **dict(result.spec)} for result in results
+    ]
     differing = [
-        field
-        for field in Spec.model_fields
-        if len({getattr(spec, field) for spec in specs}) > 1
+        field for field in fields[0] if len({given[field] for given in fields}) > 1
     ] or ["method"]
     names = [
-        ", ".join(_field_text(field, getattr(spec, field)) for field in differing)
-        for spec in specs
+        ", ".join(_field_text(field, given[field]) for field in differing)
+        for given in fields
     ]
     if len(set(names)) == len(names):
         return names

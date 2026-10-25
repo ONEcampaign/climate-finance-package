@@ -266,7 +266,7 @@ Returned by `Release.reconcile()`. It prints a title line, naming the providers,
 
 ## `compare(*results)` and `Comparison`
 
-`cf.compare(a, b, ...)` places results side by side. It returns a `Comparison` whose `table` has one row per year, provider, recipient, and Bi_Multi code, with the key columns `year`, `provider`, `recipient`, `provider_code`, `recipient_code`, and `bi_multi`, and one `value` column per result and method, named by the `Spec` fields that distinguish the results. A key absent from a result is null in its column. Calling `compare()` with no arguments, or with a list such as `cf.compare([a, b])`, raises `InvalidInputError`; `cf.compare(*results)` compares a list.
+`cf.compare(a, b, ...)` places results side by side. It returns a `Comparison` whose `table` has one row per year, provider, recipient, and Bi_Multi code, with the key columns `year`, `provider`, `recipient`, `provider_code`, `recipient_code`, and `bi_multi`, and one `value` column per result and method. A column is named by what distinguishes its result: the release (`2025a`), then each `Spec` field that differs across the results (`ONE`, `years 2021`), so `cf.compare(r2025, r2026)` gives columns `2025a` and `2026a`, and results that differ in both give `2025a, years 2021`. Fields all the results share stay out of the name. Results that nothing sets apart are numbered, as `result 1: ONE`. The bounds `low` and `high` stay on each `Result`. A key absent from a result is null in its column. Calling `compare()` with no arguments, or with a list such as `cf.compare([a, b])`, raises `InvalidInputError`; `cf.compare(*results)` compares a list.
 
 ## Listings
 
