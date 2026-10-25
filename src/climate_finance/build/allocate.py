@@ -42,10 +42,14 @@ as it would with no split rank at all.
 A disbursement record's own commitment in a group fills before the rest of the group
 (`_own_commitments`). That is the record itself where it also commits, else the one
 commitment record of the group whose real commitment date it carries and whose title
-shares at least `OWN_TITLE_SHARE` of its words. Each own commitment runs as a group of
-its own, in a pass just before the group's, so a donor that files a new module or phase
-under an old crs id keeps the new module's money on the new commitment, and the old
-module keeps its headroom. What the own commitment cannot take enters the group's pass.
+shares at least `OWN_TITLE_SHARE` of its words, else for IBRD and IDA the one
+commitment record of the group under the record's own project number, which names its
+sector line. Each own commitment runs as a group of its own, in a pass just before the
+group's, so a donor that files a new module or phase under an old crs id keeps the new
+module's money on the new commitment, and the old module keeps its headroom. A World
+Bank line's disbursement fills that line's commitment first, and only the remainder
+pools over the loan's other lines. What the own commitment cannot take enters the
+group's pass.
 
 Two per-donor switches change the order. A dated donor's record dated in its own
 year fills that year's commitments first. A window donor's other records fill first
@@ -75,7 +79,7 @@ from climate_finance.build.errors import AllocationInputError
 from climate_finance.build.fetch import last_complete_year
 from climate_finance.build.link.candidates import word_share
 from climate_finance.build.link.id_practice import period_of, untraceable
-from climate_finance.build.link.keys import line_date
+from climate_finance.build.link.keys import WORLD_BANK_DONORS, line_date
 from climate_finance.build.link.levels import title_words
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
@@ -567,7 +571,9 @@ def _own_commitments(
     record_id, c_idx). That is the record itself where it also commits, else the one
     commitment record of the group whose real commitment date (`line_date`) it
     carries and whose title shares at least `OWN_TITLE_SHARE` of its words
-    (`word_share`). A record with two such commitments in a group has none there."""
+    (`word_share`), else for IBRD and IDA the one commitment record of the group
+    under the record's own project number (`_own_lines`). A record that two
+    commitments of a group pass by one rule takes neither by that rule."""
     reached = (
         pairs.select("group_id", "record_id", "c_idx")
         .unique()
@@ -576,18 +582,35 @@ def _own_commitments(
     same = reached.filter(pl.col("record_id") == pl.col("c_record"))
     rest = reached.join(same, on=["group_id", "record_id"], how="anti")
     ids = pl.concat([rest["record_id"], rest["c_record"]]).unique().implode()
-    dates = (
+    facts = (
         crs.filter(pl.col("record_id").is_in(ids))
-        .select("record_id", date=line_date(pl.col("commitment_date")))
-        .drop_nulls("date")
+        .select(
+            "record_id",
+            "donor_code",
+            "project_number",
+            date=line_date(pl.col("commitment_date")),
+        )
         .collect()
     )
-    dated = rest.join(dates, on="record_id").join(
+    columns = ["group_id", "record_id", "c_idx"]
+    matched = _same_date_and_title(rest, facts=facts, crs=crs).select(columns)
+    unmatched = rest.join(matched, on=["group_id", "record_id"], how="anti")
+    lines = _own_lines(unmatched, facts=facts).select(columns)
+    return pl.concat([same.select(columns), matched, lines])
+
+
+def _same_date_and_title(
+    reached: pl.DataFrame, *, facts: pl.DataFrame, crs: pl.LazyFrame
+) -> pl.DataFrame:
+    """The pairs of `reached` whose records share a real commitment date and at
+    least `OWN_TITLE_SHARE` of their title words, where a record has one such
+    commitment in its group."""
+    dates = facts.select("record_id", "date").drop_nulls("date")
+    dated = reached.join(dates, on="record_id").join(
         dates.rename({"record_id": "c_record"}), on=["c_record", "date"]
     )
-    columns = ["group_id", "record_id", "c_idx"]
     if dated.is_empty():
-        return same.select(columns)
+        return dated
     # Each record read as a unit of its own, for its title words.
     involved = pl.concat([dated["record_id"], dated["c_record"]]).unique()
     words = title_words(
@@ -595,7 +618,7 @@ def _own_commitments(
         crs=crs,
     )
     agrees = word_share(pl.col("d_words"), pl.col("c_words")) >= OWN_TITLE_SHARE
-    matched = (
+    return (
         dated.join(
             words.select(record_id="unit_id", d_words="title_toks"), on="record_id"
         )
@@ -603,7 +626,26 @@ def _own_commitments(
         .filter(agrees.fill_null(value=False))
         .filter(pl.len().over("group_id", "record_id") == 1)
     )
-    return pl.concat([same.select(columns), matched.select(columns)])
+
+
+def _own_lines(reached: pl.DataFrame, *, facts: pl.DataFrame) -> pl.DataFrame:
+    """The pairs of `reached` whose IBRD or IDA records share their project number,
+    where a record has one such commitment in its group.
+
+    The project number names one sector line of one loan (`P163452.IDA61960.CRS3`),
+    and the `wb_loan` tier links a line's disbursement to every line of its loan,
+    since a line can disburse without committing. IBRD and IDA records mostly carry
+    31 December dates and no titles, so the date and title test finds no own line."""
+    numbers = facts.filter(pl.col("donor_code").is_in(WORLD_BANK_DONORS)).select(
+        "record_id", "project_number"
+    )
+    return (
+        reached.join(numbers, on="record_id")
+        .join(
+            numbers.rename({"record_id": "c_record"}), on=["c_record", "project_number"]
+        )
+        .filter(pl.len().over("group_id", "record_id") == 1)
+    )
 
 
 def _check_pooling(unit_pairs: pl.DataFrame) -> None:
