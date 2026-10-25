@@ -391,6 +391,23 @@ class Quality:
         """The Rio-marked CRS disbursement outside `disbursements`."""
         return self._untraced.collect()
 
+    def __repr__(self) -> str:
+        summary = self.summary()
+        return f"{self._title(summary)}\n{summary!r}"
+
+    def _repr_html_(self) -> str:
+        summary = self.summary()
+        return f"<p>{escape(self._title(summary))}</p>{summary._repr_html_()}"
+
+    def _title(self, summary: pl.DataFrame) -> str:
+        count = summary.height
+        providers = "provider" if count == 1 else "providers"
+        years = _years_text(self.table["year"])
+        return (
+            f"Quality: {count} {providers}, {years}; also .table .status "
+            ".eu_left_out .attribution .precision .untraced"
+        )
+
     def summary(self) -> pl.DataFrame:
         """Per provider: link rate, certain-route share, label sources, status split.
 
@@ -627,6 +644,12 @@ def year_runs(years: Sequence[int]) -> str:
     return f"{', '.join(rest)} and {last}" if rest else last
 
 
+def _years_text(years: pl.Series) -> str:
+    """The distinct `years` as running text, or "no years"."""
+    held = years.unique().sort().to_list()
+    return year_runs(held) if held else "no years"
+
+
 def _listing(codes: Sequence[int | str]) -> str:
     """`codes` as running text, such as "1, 3, 7 and 8"."""
     *rest, last = map(str, codes)
@@ -751,6 +774,23 @@ class Reconciliation:
     def table(self) -> pl.DataFrame:
         """The comparison, computed on first access."""
         return self._table.collect()
+
+    def __repr__(self) -> str:
+        return f"{self._title()}\n{self.table!r}"
+
+    def _repr_html_(self) -> str:
+        return f"<p>{escape(self._title())}</p>{self.table._repr_html_()}"
+
+    def _title(self) -> str:
+        table = self.table
+        if table.is_empty():
+            return "Reconciliation: no rows"
+        parties = table.select(pl.coalesce("provider", "party").unique().sort())
+        methods = table["method"].unique(maintain_order=True)
+        return (
+            f"Reconciliation: providers {', '.join(parties.to_series())}; "
+            f"years {_years_text(table['year'])}; {', '.join(methods)}"
+        )
 
     def rows(self, *, provider: str | int, year: int) -> pl.DataFrame:
         """The project-level link behind one party and year: each BTR row of every

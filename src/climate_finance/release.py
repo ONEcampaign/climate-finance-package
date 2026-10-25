@@ -53,6 +53,9 @@ INDEX_URL = (
 # Seconds a download may wait on the server before it fails.
 _TIMEOUT = 60
 _CHUNK = 1 << 20
+# The release name `tests/fixtures/snapshot` carries, whose figures are invented.
+# `cf-build release` refuses to publish a release of this name.
+SYNTHETIC_RELEASE = "fixture"
 # Where releases are published, for the error `load` gives before the first one.
 RELEASES_PAGE = "https://github.com/ONEcampaign/climate-finance-package/releases"
 # A warning names the first caller outside the package.
@@ -95,6 +98,21 @@ class Release:
         self.path = path
         self.manifest = manifest
         self._years: dict[str, tuple[int, ...]] = {}
+
+    def __repr__(self) -> str:
+        name = repr(self.manifest.release)
+        if self.manifest.release == SYNTHETIC_RELEASE:
+            name += ", synthetic figures"
+        flows = ", ".join(
+            f"{flow} {year_runs(years)}"
+            if (years := self._years_of(flow))
+            else f"no {flow}"
+            for flow in ("commitments", "disbursements")
+        )
+        tables = f"{len(self.manifest.tables)} tables"
+        if withheld := self.manifest.withheld_tables:
+            tables += f", withholding {', '.join(sorted(withheld))}"
+        return f"Release({name}): {flows}; {tables}"
 
     def table(self, name: str) -> pl.LazyFrame:
         """Scan one release table.

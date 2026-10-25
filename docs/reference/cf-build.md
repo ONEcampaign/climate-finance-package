@@ -89,7 +89,7 @@ Builds, gates, and packs a release. It writes `<out-dir>/climate-finance-<RELEAS
 
 - `--waive-precision REASON` packs despite failed precision and human-audit gates, marks the failed rows `waived`, and records the waiver and `REASON` in `release.json` as `precision_gate_waived` and `precision_waiver`.
 
-The command raises `GateFailedError` when a gate fails, and `BuildError` when a source lacks a licence entry.
+The command raises `GateFailedError` when a gate fails, and `BuildError` when a source lacks a licence entry or `RELEASE` is `fixture`, the name reserved for the synthetic test release. `release.upload_release` and `release.add_to_index` refuse a pack of that name too.
 
 ## `cf-build listings`
 

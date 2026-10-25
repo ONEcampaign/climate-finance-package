@@ -12,14 +12,14 @@ A release is a folder of parquet tables. `load()` opens the latest release in th
 import climate_finance as cf
 
 release = cf.load()
-print(release.manifest.release)
+print(release)
 ```
 
 ```output
-fixture
+Release('fixture', synthetic figures): commitments 2021 to 2022, disbursements 2021 to 2024; 17 tables
 ```
 
-Every result from `release` records this release name, so a figure always identifies its source data.
+The line names the release, marks its figures as synthetic, and gives the years each flow covers. Every result from `release` records the release name, so a figure always identifies its source data.
 
 ## Step 2. Ask for a figure
 

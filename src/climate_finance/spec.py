@@ -1,6 +1,6 @@
 """`Spec`: the frozen description of one query, which reruns to an identical frame."""
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from difflib import get_close_matches
 from numbers import Integral
 from typing import Annotated, Any, Literal, Self, TypedDict, Unpack
@@ -327,10 +327,29 @@ class Spec(Frozen):
             data.pop("untraced", None)
         return data
 
+    def __repr_args__(self) -> Iterator[tuple[str, object]]:
+        # Only the fields away from their defaults, a named method as the
+        # expression that returns it.
+        for name, field in type(self).model_fields.items():
+            value = getattr(self, name)
+            if value == field.default:
+                continue
+            named = [key for key, method in _METHODS.items() if method == value]
+            yield name, _Expression(f"cf.methods.{named[0]}") if named else value
+
     @property
     def methods(self) -> tuple[Method, ...]:
         """The methods `method` names: itself, or each method of a range."""
         return self.method.methods
+
+
+class _Expression(str):
+    """Text a repr prints as is, such as `cf.methods.OECD`."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return str.__str__(self)
 
 
 def _restated(error: ValidationError) -> InvalidInputError:

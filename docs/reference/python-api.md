@@ -36,6 +36,16 @@ fixture 2.0.0.dev0
 
 Represents one release on disk. `release.path` is its directory and `release.manifest` is the parsed `release.json`.
 
+A release prints its name, the years its commitments and disbursements cover, and its table count, naming any table it withholds. The synthetic test release carries the reserved name `fixture` and prints `synthetic figures` beside it; `cf-build release` refuses to cut or publish a release of that name.
+
+```python
+print(release)
+```
+
+```output
+Release('fixture', synthetic figures): commitments 2021 to 2022, disbursements 2021 to 2024; 17 tables
+```
+
 ### `Release.spending(*, providers, recipients, years, method, flow, view, currency, prices, oda_only, measure, untraced)`
 
 Returns a `Result`. Every argument is optional and keyword-only, and each is a `Spec` field that `Spec(...)` takes in the same forms:
@@ -158,6 +168,16 @@ print(release.spending(providers=["EIB", "Japan", 701]).spec.providers)
 (701, Agency(provider=918, agency=3))
 ```
 
+A spec prints only the fields away from their defaults, and a named method as the expression that returns it.
+
+```python
+print(repr(cf.Spec(providers="Japan", method="OECD")))
+```
+
+```output
+Spec(providers=(701,), method=cf.methods.OECD)
+```
+
 An agency selects the rows whose `provider_code` and `agency_code` match it. Attributed core contributions carry no agency, so an agency has none, and it has no modelled line. Under a method with `eu="provider"`, such as `cf.methods.OECD`, the provider view leaves out the EIB's own rows, so `providers="EIB"` returns no rows there.
 
 With `view="recipient"`, the query counts bilateral flows (Bi_Multi 1, 3, 7, and 8) and multilateral outflows (code 4). With `view="provider"`, it counts the bilateral flows plus each provider's core contributions multiplied by the receiving agency's climate share. Both views exclude code 2 rows from the release tables. The provider view adds attributed core contributions, which carry Bi_Multi 2, so each dollar counts once.
@@ -222,11 +242,13 @@ Returned by `Release.quality()`. Each attribute is a polars DataFrame, and each 
 - `precision` holds one row per provider with the columns: `provider`, `provider_code`, `estimate`, `lower`, `upper`, `passed`, `waived`, and `detail`. `estimate` is the share of allocated value whose link a blind sample verified, `lower` and `upper` are its interval, `passed` records whether the lower bound reached the release's threshold, and `waived` records whether a failure was waived. The table is empty for an ungated release.
 - `summary()` returns a DataFrame with one row per provider containing: `provider`, `provider_code`, `commitments`, `climate_usd`, `repeat_climate_usd`, `link_rate`, `certain_route_share`, `model_labelled_share`, `report_labelled_share`, `grant_equiv_coverage`, and a `<status>_share` for each status.
 
+A `Quality` prints a title line, with the number of providers, the years, and its other tables, above `summary()`.
+
 `link_rate` is the share of climate value whose CRDF rows match a CRS commitment, whether or not anything disbursed against it, so a provider can read a `link_rate` of 1.0 beside a `not_traceable_share` of 1.0. `certain_route_share` is the part of the climate value whose CRDF rows all reach their CRS commitment through certain routes. `grant_equiv_coverage` is the part of the linked commitments' allocated value whose record has a grant equivalent. `repeat_climate_usd` is the climate value of rows that repeat an earlier vintage, which every total excludes.
 
 ## `Reconciliation`
 
-Returned by `Release.reconcile()`. `table` has one row per party, year, status, and method, and rows with no status sit on their own row. The columns, in order:
+Returned by `Release.reconcile()`. It prints a title line, naming the providers, years, and methods, above `table`. `table` has one row per party, year, status, and method, and rows with no status sit on their own row. The columns, in order:
 
 - `party`, `provider`, `provider_code`, `year`, `status`, `method`, `party_weight`, `party_principal`, `weight_source`, `coefficient_basis`. The last four come from the provider's `provider_coefficients` row for every agency without a row of its own. `coefficient_basis` is `provider`, `default`, or `case_by_case`, as in `Result.rows()`, and null where the release holds no such row.
 - `crdf_method_share`, `crs_method_share`, and `crs_grant_equivalent_method_share`: the share of `crdf_at_party_weight`, of `crs_disbursed_at_party_weight`, and of `crs_grant_equivalent_at_party_weight` that rests on `PROVIDER`'s coefficients in place of the party's own, because the row's coefficients are case by case with no value for its marker or the provider has none in the release. The grant-equivalent comparator weighs the same records as the disbursed one, but a loan's grant equivalent is a fraction of its disbursement, so its share differs where loans concentrate in agencies that assess case by case, as at France's AFD. Each is null where its comparator is zero or null.

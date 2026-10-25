@@ -59,6 +59,14 @@ def test_providers_name_a_party_in_any_form(germany: str | int) -> None:
     assert set(rows["party"]) == {"DEU"}
 
 
+def test_a_reconciliation_prints_its_providers_years_methods_and_table() -> None:
+    reconciliation = SNAP.reconcile(method=["ONE", "OECD"])
+    title = "Reconciliation: providers Germany, Norway; years 2021 to 2022; OECD, ONE"
+
+    assert repr(reconciliation) == f"{title}\n{reconciliation.table!r}"
+    assert reconciliation._repr_html_().startswith(f"<p>{title}</p><div>")
+
+
 def test_rows_name_the_provider_and_keep_the_btr_recipient() -> None:
     rows = SNAP.reconcile().rows(provider="DEU", year=2021)
     btr = pl.read_parquet(FIXTURE_DIR / "btr.parquet").filter(
@@ -436,7 +444,10 @@ def test_a_release_with_no_btr_rows_reconciles_to_an_empty_table(
         ),
     )
 
-    assert cf.load(path=release).reconcile().table.is_empty()
+    reconciliation = cf.load(path=release).reconcile()
+
+    assert reconciliation.table.is_empty()
+    assert repr(reconciliation).startswith("Reconciliation: no rows\nshape: (0, ")
 
 
 def test_unlinked_rows_are_unfccc_only() -> None:

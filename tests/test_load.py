@@ -15,7 +15,7 @@ import climate_finance as cf
 from climate_finance import release as release_module
 from climate_finance.errors import ReleaseIntegrityError
 from climate_finance.release import IndexEntry, ReleaseIndex, release_dirname
-from climate_finance.schema import RELEASE_TABLES
+from climate_finance.schema import RELEASE_TABLES, ReleaseManifest
 
 
 @pytest.mark.parametrize("as_path", [Path, str])
@@ -25,6 +25,36 @@ def test_load_opens_the_fixture_with_its_manifest(as_path) -> None:
     assert isinstance(release, cf.Release)
     assert release.manifest.release == "fixture"
     assert release.table("commitments").collect().height == 14
+
+
+def test_a_release_prints_its_name_flow_years_and_tables(tmp_path: Path) -> None:
+    published = copy_release(tmp_path / "2026a")
+    path = published / "release.json"
+    manifest = ReleaseManifest.model_validate_json(path.read_text())
+    withheld = {"btr": "built locally", "btr_links": "built locally"}
+    path.write_text(
+        manifest.model_copy(
+            update={
+                "release": "2026a",
+                "tables": {
+                    name: entry
+                    for name, entry in manifest.tables.items()
+                    if name not in withheld
+                },
+                "withheld_tables": withheld,
+            }
+        ).model_dump_json()
+    )
+
+    # The fixture's name marks its figures as invented.
+    assert repr(cf.load(path=FIXTURE_DIR)) == (
+        "Release('fixture', synthetic figures): commitments 2021 to 2022, "
+        "disbursements 2021 to 2024; 17 tables"
+    )
+    assert repr(cf.load(path=published)) == (
+        "Release('2026a'): commitments 2021 to 2022, disbursements 2021 to 2024; "
+        "15 tables, withholding btr, btr_links"
+    )
 
 
 def _change_bytes(release: Path) -> None:

@@ -256,6 +256,31 @@ def test_a_spec_holds_sorted_codes_and_agencies_whatever_names_them() -> None:
     assert Spec(providers=["EU Institutions", "EIB"]).providers == (EU_INSTITUTIONS,)
 
 
+@pytest.mark.parametrize(
+    ("spec", "printed"),
+    [
+        (Spec(), "Spec()"),
+        (Spec(providers="Japan"), "Spec(providers=(701,))"),
+        (
+            Spec(providers="Japan", years=range(2021, 2023), method="OECD"),
+            "Spec(providers=(701,), years=(2021, 2022), method=cf.methods.OECD)",
+        ),
+        (
+            Spec(method=RANGE, untraced=False),
+            "Spec(method=cf.methods.RANGE, untraced=False)",
+        ),
+        (
+            Spec(method=ONE.replace(significant=0.5)),
+            f"Spec(method={ONE.replace(significant=0.5)!r})",
+        ),
+    ],
+)
+def test_a_spec_prints_the_fields_away_from_their_defaults(
+    spec: Spec, printed: str
+) -> None:
+    assert repr(spec) == printed
+
+
 def test_keyword_arguments_build_the_same_spec() -> None:
     result = SNAP.spending(providers=5, years=range(2021, 2023), view="provider")
 
@@ -1775,6 +1800,20 @@ def test_quality_refuses_a_range_of_methods(method: object) -> None:
     with pytest.raises(TypeError, match=r"quality\(\) reads one method; .* holds ONE"):
         # A range is outside the type quality() takes; the test checks the run time.
         SNAP.quality(method=method)  # ty: ignore[invalid-argument-type]
+
+
+def test_quality_prints_its_providers_years_and_summary() -> None:
+    quality = SNAP.quality()
+    title = (
+        "Quality: 6 providers, 2021 to 2022; also .table .status .eu_left_out "
+        ".attribution .precision .untraced"
+    )
+
+    assert repr(quality) == f"{title}\n{quality.summary()!r}"
+    assert quality._repr_html_().startswith(f"<p>{title}</p><div>")
+    assert repr(SNAP.quality(providers="Japan")).startswith(
+        "Quality: 1 provider, 2021 to 2022;"
+    )
 
 
 def test_quality_reads_a_method_by_name() -> None:
