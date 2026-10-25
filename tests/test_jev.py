@@ -14,7 +14,7 @@ import pytest
 from stage_runs import JEV_MODEL
 
 from climate_finance import schema
-from climate_finance.build.errors import CostCapExceededError
+from climate_finance.build.errors import CostCapExceededError, LinkThresholdError
 from climate_finance.build.jev_client import JevCacheMissError, JevClient
 from climate_finance.build.link.jev import (
     JEV_TEXT_CHARS,
@@ -22,7 +22,7 @@ from climate_finance.build.link.jev import (
     JevFitError,
     Logistic,
     adjudicate_band,
-    deployed_threshold,
+    best_link_threshold,
     pair_request,
 )
 from climate_finance.build.link.levels import LEVELS
@@ -31,7 +31,6 @@ from climate_finance.build.link.score import (
     HELDOUT,
     TRAIN,
     TruthScores,
-    best_threshold,
     classifier_links,
 )
 
@@ -238,7 +237,7 @@ def test_jev_adjudicates_the_band_and_the_combination_links(
     assert band.scale.coefs[0] > 0
     assert band.model == JEV_MODEL
 
-    # Jev lifts d061 over the combined threshold and drops d062 under it.
+    # Jev lifts d061 over the classifier's threshold and drops d062 under it.
     links = classifier_links(_scores(rows), jev=band)
     schema.validate(schema.LINKS, links)
     assert links.select("left_id", "link_method", "jev_model").rows() == [
@@ -253,43 +252,78 @@ def test_jev_adjudicates_the_band_and_the_combination_links(
         rows, _client(tmp_path, monkeypatch, offline=True, respond=_refuse)
     )
     assert again.answers.equals(band.answers)
-    assert (again.combined, again.scale, again.threshold) == (
+    assert (again.combined, again.scale, again.best_threshold) == (
         band.combined,
         band.scale,
-        band.threshold,
+        band.best_threshold,
     )
 
 
-def test_the_jev_threshold_is_tuned_on_the_links_the_build_makes() -> None:
-    # d1 and d2 each link their true pair over a false one; d3's true pair and d4's
-    # false one stand alone; d5's pair over the classifier's 0.5 outscores its true
-    # band pair.
-    rows = [
-        ("d1", "c1", 0.6, True),
-        ("d1", "c2", 0.5, False),
-        ("d2", "c3", 0.6, True),
-        ("d2", "c4", 0.5, False),
-        ("d3", "c5", 0.3, True),
-        ("d4", "c6", 0.2, False),
-        ("d5", "c7", 0.65, True),
-        ("d5", "c8", 0.95, False),
-    ]
-    pairs = pl.DataFrame(
+def test_a_band_pair_links_at_the_classifier_threshold_not_the_best_cut(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Jev reads d066 as 0.4 likely, which combines to between the band's best grid
+    # threshold and the classifier's.
+    def respond(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body["state"]["later_record"]["project_number"] != "Q066":
+            return _responses(request)
+        relation = {"probabilities": {"0": 0.6, "1": 0.0, "2": 0.4}}
+        return httpx.Response(
+            200,
+            json={
+                "model": body["model"],
+                "answers": {
+                    "relation": relation,
+                    "disbursement": {"noul": 0.4},
+                    "sibling": {"noul": 0.0},
+                },
+                "usage": {"input_tokens": 1000, "output_tokens": 10},
+            },
+        )
+
+    rows = [*_rows(), _pair(66, ELIGIBLE, 0.6, same_pn=False, true=False)]
+    band = _adjudicate(rows, _client(tmp_path, monkeypatch, respond=respond))
+    scores = _scores(rows)
+    p = band.answers.filter(left_id="d066")["p_combined"].item()
+    assert band.best_threshold < p < scores.threshold
+
+    links = classifier_links(scores, jev=band)
+    assert "d066" not in links["left_id"].to_list()
+
+
+def _labelled(strong: int) -> pl.DataFrame:
+    """`strong` disbursement units whose true pair scores 0.9, and one whose true
+    pair scores 0.3 over a false pair at 0.2."""
+    rows = [(f"s{i}", f"c{i}", 0.9, True) for i in range(strong)]
+    rows += [("w", "cw", 0.3, True), ("w", "cf", 0.2, False)]
+    return pl.DataFrame(
         rows, schema=["left_id", "right_id", "probability", "true_pair"], orient="row"
-    ).with_columns(
-        p_model="probability",
-        p_jev=pl.when(pl.col("right_id") != "c8").then(0.5),
-        programme_level=0,
-        placed_year=2018,
-    )
-    # The links of each disbursement peak at 0.21, where d3 links and d4 does not.
-    assert deployed_threshold(pairs, threshold=0.5) == 0.21
-    # F1 on band pairs counts false pairs that never link and a true one that never
-    # wins, and peaks at 0.51.
-    band = pairs.filter(pl.col("p_jev").is_not_null())
-    y = band["true_pair"].to_numpy()
-    p = band["probability"].to_numpy()
-    assert best_threshold(p, y, n_true=int(y.sum())) == 0.51
+    ).with_columns(programme_level=0, placed_year=2018)
+
+
+@pytest.mark.parametrize(
+    ("strong", "refuses"),
+    [
+        # F1 is 1 at the best threshold and 400/401 at 0.5.
+        (200, False),
+        # 4/5 at 0.5.
+        (2, True),
+    ],
+)
+def test_the_band_refuses_a_cut_far_below_its_best_f1(
+    strong: int, *, refuses: bool
+) -> None:
+    # Every grid threshold to 0.30 links the weak unit's true pair, so the best is
+    # the lowest; at 0.5 it does not link.
+    pairs = _labelled(strong)
+    if not refuses:
+        assert best_link_threshold(pairs, threshold=0.5) == 0.01
+        return
+    with pytest.raises(LinkThresholdError) as raised:
+        best_link_threshold(pairs, threshold=0.5)
+    assert (raised.value.threshold, raised.value.best_threshold) == (0.5, 0.01)
+    assert raised.value.best_f1 == 1.0
 
 
 def test_an_offline_build_refuses_a_cache_miss(

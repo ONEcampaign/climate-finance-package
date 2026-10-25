@@ -13,9 +13,14 @@ training-half pairs of single-id donors (`single_id_donors`), labelled by id tru
 
 - the band pairs, on which a logistic regression of the label on logit(model) and
   logit(Jev) gives an eligible band pair its final probability. A band pair links
-  when that probability reaches the threshold at which the links the build makes
-  among the training pairs of single-id donors have the highest F1
-  (`deployed_threshold`).
+  when that probability reaches the classifier's threshold (`score.LINK_THRESHOLD`),
+  so Jev's answer moves a pair across the cut it would face without one. The grid
+  threshold at which the links the build makes among the training pairs of
+  single-id donors have the highest F1 is kept (`JevBand.best_threshold`), and the
+  band refuses with `LinkThresholdError` when F1 at the cut falls more than
+  `score.F1_TOLERANCE` below it. F1 is flat over the cut: on the archive it varies
+  by under 0.001 between 0.30 and 0.49, and one flipped label moved its best
+  threshold by 0.04.
 - `SCALE_SAMPLE` pairs spread over the bands of the classifier's probability
   (`SCALE_BANDS`), on which a logistic regression of the label on logit(Jev) alone
   is the scale that turns Jev's answers on a Splink model's calibration sample into
@@ -43,12 +48,10 @@ from climate_finance.build.errors import BuildError
 from climate_finance.build.link.levels import unit_attributes
 from climate_finance.build.link.score import (
     ELIGIBLE,
-    THRESHOLDS,
     TRAIN,
     TruthScores,
-    first_pairs,
-    ranked_pairs,
-    reaches,
+    best_commitments,
+    checked_best_threshold,
 )
 from climate_finance.build.normalise.ids import content_id
 
@@ -158,14 +161,15 @@ class JevBand:
     """Jev's adjudication of the classifier's band.
 
     `answers` holds each eligible band pair's `p_jev` and final `p_combined`, which
-    links when it reaches `threshold`. `scale` maps Jev's answer alone to a
-    probability, fitted on the scale sample, and `model` names the Jev model that
-    answered.
+    links when it reaches the classifier's threshold. `best_threshold` is the grid
+    threshold of highest F1 for the links the build makes among the labelled
+    pairs. `scale` maps Jev's answer alone to a probability, fitted on the scale
+    sample, and `model` names the Jev model that answered.
     """
 
     answers: pl.DataFrame
     combined: Logistic
-    threshold: float
+    best_threshold: float
     scale: Logistic
     model: str
 
@@ -192,6 +196,9 @@ def adjudicate_band(
     Raises:
         JevFitError: when the training band pairs or the scale sample of single-id
             donors hold fewer than `MIN_FIT_OUTCOMES` of either outcome.
+        LinkThresholdError: when F1 of the links among the labelled pairs at the
+            classifier's threshold is more than `F1_TOLERANCE` below its best on
+            the grid.
         CostCapExceededError: when the uncached requests' estimate exceeds the cap.
         JevCacheMissError: when the build is offline and a request is not cached.
     """
@@ -241,7 +248,7 @@ def adjudicate_band(
         .select(*_PAIR, "p_jev", p_combined=p_combined)
         .sort(_PAIR),
         combined=combined,
-        threshold=deployed_threshold(tuned, threshold=scores.threshold),
+        best_threshold=best_link_threshold(tuned, threshold=scores.threshold),
         scale=fit_logistic(
             scale_on.join(answered, on=_PAIR).sort(_PAIR), inputs=["p_jev"], y="y"
         ),
@@ -249,35 +256,35 @@ def adjudicate_band(
     )
 
 
-def deployed_threshold(pairs: pl.DataFrame, *, threshold: float) -> float:
-    """The grid threshold for Jev's answers of highest F1, the lowest on ties, of
-    the links the build makes among `pairs` (`score.linked_pairs`), with
-    `threshold` for the pairs Jev did not answer.
+def best_link_threshold(pairs: pl.DataFrame, *, threshold: float) -> float:
+    """The grid threshold of highest F1 of the links the build makes among `pairs`
+    (`score.linked_pairs`), checked against `threshold`, the cut they link at
+    (`score.checked_best_threshold`).
 
     A link is right when its pair is true, and recall counts the disbursement units
     with a true pair among `pairs`. A disbursement unit links one commitment, so a
-    false pair that its true pair outscores costs nothing, and a true pair that a
-    pair over `threshold` outscores gains nothing.
+    false pair that its true pair outscores costs nothing, and a true pair that
+    another pair outscores gains nothing.
 
     Args:
-        pairs: labelled pairs with `p_model`, `true_pair`, `programme_level` and
-            `placed_year`, and where Jev answered, `p_jev` and the combined
-            `probability` (else `p_model`).
+        pairs: labelled pairs with `true_pair`, `programme_level`, `placed_year`,
+            and the combined `probability` where Jev answered, else `p_model`.
         threshold: the classifier's threshold.
+
+    Raises:
+        LinkThresholdError: F1 at `threshold` is more than `F1_TOLERANCE` below
+            its best on the grid.
     """
+    # Jev's labelled pairs are the single-id donors' alone, so recall counts their
+    # true pairs rather than id truth's.
     n_true = pairs.filter("true_pair")["left_id"].n_unique()
-    # A pair Jev did not answer and under the classifier's threshold never links.
-    # The pairs are ranked once; a threshold keeps a subset in the same order.
-    ranked = ranked_pairs(
-        pairs.filter(pl.col("p_jev").is_not_null() | (pl.col("p_model") >= threshold)),
-        probability="probability",
+    best = best_commitments(pairs, probability="probability")
+    return checked_best_threshold(
+        best["probability"].to_numpy(),
+        best["true_pair"].to_numpy(),
+        n_true=n_true,
+        threshold=threshold,
     )
-    f1 = []
-    for jev_threshold in THRESHOLDS:
-        reached = reaches(threshold=threshold, jev_threshold=float(jev_threshold))
-        links = first_pairs(ranked.filter(reached))
-        f1.append(2 * int(links["true_pair"].sum()) / (links.height + n_true))
-    return float(THRESHOLDS[int(np.argmax(f1))])
 
 
 def spread_sample(frame: pl.DataFrame, *, band: pl.Expr, n: int) -> pl.DataFrame:
