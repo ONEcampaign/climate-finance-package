@@ -47,7 +47,12 @@ from climate_finance.build.normalise.crs import (
 )
 from climate_finance.build.normalise.pairing import pair_one_to_one
 from climate_finance.build.normalise.project_numbers import normalise_pn
-from climate_finance.schema import EIB_AGENCY, EU_INSTITUTIONS, EURO_ISSUER
+from climate_finance.schema import (
+    COMMITMENT_KEY,
+    EIB_AGENCY,
+    EU_INSTITUTIONS,
+    EURO_ISSUER,
+)
 
 # Face values of a project-id or title pair, or of an EIB description pair with
 # more than one row on a side, agree within this share of the larger.
@@ -157,7 +162,7 @@ def _with_keys(rows: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
     rows = (
         rows.join(
             backed,
-            on=["provider_code", "crs_id", "year", "purpose_code"],
+            on=COMMITMENT_KEY,
             how="left",
             maintain_order="left",
         )

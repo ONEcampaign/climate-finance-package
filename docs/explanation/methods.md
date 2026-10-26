@@ -35,7 +35,7 @@ A release built with `jev_flags` on holds Jev's answers about the CRS records of
 - Could it work against climate goals, by raising emissions or locking in emission-intensive assets?
 - Would a well-informed reader be surprised to learn that it counts as climate finance?
 
-Two cuts turn answers into flags. `no_aim` holds where one less the larger of the two aim answers reaches 0.7, so the text shows no climate aim of either kind. On 200 stratified hand-labelled texts it has precision 1.00 and recall 0.93. `surprising` holds where the surprise answer reaches 0.8. On 240 hand-labelled texts it has precision 0.83 and recall 0.60, so it misses two in five of the records a reader would question.
+Two cuts turn answers into flags. `no_aim` holds where one less the larger of the two aim answers reaches 0.7, so the text shows no climate aim of either kind. On 200 stratified hand-labelled texts it has precision 1.00 and recall 0.93. `surprising` holds where the surprise answer reaches 0.8. On 240 hand-labelled texts it has precision 0.83 and recall 0.60, so it misses two in five of the records a reader would question. The question wording was revised against the same 240 texts, the 200 among them, so these rates may overstate how well the flags do on texts they were not tuned on.
 
 The answer to the third question ranks records and has no flag, because it also scores vehicle purchases and rural roads. The mitigation answer has no external check, and `release.jev_flags()` leaves it out unless called with `experimental=True`.
 

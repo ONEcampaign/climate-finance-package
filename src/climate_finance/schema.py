@@ -392,6 +392,9 @@ CRS_REFLOWS = _table(
 # a provider's 40000 total that no leaf itemises (`release.core_contributions`).
 # The key within which a provider's leaf channels sum to its `TOP_CHANNEL` row.
 CONTRIBUTION_KEY = ("provider_code", "year", "flow")
+# The key that ties a CRS commitment to the CRDF row of the same commitment: the
+# CRS commits money under it, and a CRDF row is backed where the CRS does.
+COMMITMENT_KEY = ("provider_code", "crs_id", "year", "purpose_code")
 # MULTI's total of a provider's core contributions, which sums every leaf channel
 # it reports, 30010 included. The intermediate aggregates (41000, 47000 and the
 # like) follow no code prefix, as MULTI files some 41xxx channels under 47000.

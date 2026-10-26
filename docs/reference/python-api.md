@@ -166,7 +166,7 @@ Returns a polars DataFrame of Jev's answers about the CRS records the release fl
 - `flagged` (`"no_aim" | "surprising" | None`). Keeps the records where that flag holds. `None` keeps every record, flagged or not.
 - `experimental` (`bool`, default `False`). Adds `mitigation_aim_p`, which no external check backs.
 
-Each row holds `no_aim_p`, `adaptation_aim_p`, `surprising_p` and `counterproductive_p`, the flags `no_aim` and `surprising`, and `short_text`, true for a text too short to ask, whose answers and flags are null. `counterproductive_p` ranks records and has no flag. `in_release` is true for a record that `disbursements` or `untraced` holds, or whose provider holds a `commitments` row with its CRS id, and false for a record the release's totals do not draw on. The flags change no total.
+Each row holds `no_aim_p`, `adaptation_aim_p`, `surprising_p` and `counterproductive_p`, the flags `no_aim` and `surprising`, and `short_text`, true for a text too short to ask, whose answers and flags are null. `counterproductive_p` ranks records and has no flag. `in_release` is true for a record that `disbursements` or `untraced` holds, or that reports a commitment matching a `commitments` row on provider, CRS id, year and purpose, the key that ties a CRS commitment to its CRDF row, leaving out rows that repeat an earlier vintage. It is false for a record the release's totals do not draw on. The flags change no total.
 
 Raises `MissingLabelsError` naming `jev_flags` for a release built with it off, and `InvalidInputError` for a `flagged` or `experimental` outside the values above, an empty list of providers or years, years in another form, or an unknown keyword, naming a close one.
 

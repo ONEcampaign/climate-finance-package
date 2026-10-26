@@ -314,8 +314,9 @@ class Release:
         shows no climate aim at all, and `"surprising"` those a well-informed reader
         would not expect to count as climate finance. The flags rank records for
         review and change no total. `counterproductive_p` ranks only. `in_release`
-        is true for a record that `disbursements` or `untraced` holds, or whose
-        provider holds a `commitments` row with its CRS id.
+        is true for a record that `disbursements` or `untraced` holds, or that
+        reports a commitment matching a counted `commitments` row on provider, CRS
+        id, year and purpose, the key that ties a CRS commitment to its CRDF row.
         `mitigation_aim_p` has no external check and comes only with
         `experimental=True`.
 

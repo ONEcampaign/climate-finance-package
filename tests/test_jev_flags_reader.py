@@ -17,9 +17,10 @@ from climate_finance.release import Release
 from climate_finance.schema import JEV_FLAG_PROBABILITIES, ReleaseManifest
 
 NORWAY = 8
-# A CRS id the fixture's DEU-1 commitment holds, and records of the fixture's
-# `disbursements` and `untraced` tables.
+# The CRS id and purpose of the fixture's DEU-1 commitment of 2021, and records of
+# the fixture's `disbursements` and `untraced` tables.
 DEU_COMMITMENT_CRS_ID = "202100DEU-1"
+DEU_COMMITMENT_PURPOSE = 41010
 IN_DISBURSEMENTS = "DEU-1-R0"
 IN_UNTRACED = "DEU-UNLINKED"
 OUT_OF_TOTALS = "DEU-NOT-IN-RELEASE"
@@ -31,6 +32,8 @@ def _flag(
     provider: int,
     year: int,
     crs_id: str | None = None,
+    purpose: int | None = None,
+    commitment: float = 1.0,
     no_aim: float = 0.1,
     surprising: float = 0.1,
     short_text: bool = False,
@@ -52,12 +55,12 @@ def _flag(
         "provider_code": provider,
         "agency_code": None,
         "recipient_code": 248,
-        "purpose_code": None,
+        "purpose_code": purpose,
         "flow_code": 11,
         "project_number": None,
         "crs_id": crs_id,
         "title": record_id,
-        "commitment_usd": 1.0,
+        "commitment_usd": commitment,
         "disbursement_usd": 1.0,
         "rio_adaptation": 1,
         "rio_mitigation": 0,
@@ -71,8 +74,32 @@ def _flag(
 FLAGS = [
     _flag(IN_DISBURSEMENTS, provider=DEU, year=2021, no_aim=0.9),
     _flag(IN_UNTRACED, provider=DEU, year=2022, surprising=0.9),
-    # In neither table, but its provider holds a commitment row with its CRS id.
-    _flag("DEU-COMMITTED", provider=DEU, year=2021, crs_id=DEU_COMMITMENT_CRS_ID),
+    # In neither table, but it commits under DEU-1's provider, CRS id, year and
+    # purpose.
+    _flag(
+        "DEU-COMMITTED",
+        provider=DEU,
+        year=2021,
+        crs_id=DEU_COMMITMENT_CRS_ID,
+        purpose=DEU_COMMITMENT_PURPOSE,
+    ),
+    # DEU-1's key on a record that disburses only.
+    _flag(
+        "DEU-DISBURSES",
+        provider=DEU,
+        year=2021,
+        crs_id=DEU_COMMITMENT_CRS_ID,
+        purpose=DEU_COMMITMENT_PURPOSE,
+        commitment=0.0,
+    ),
+    # DEU-1's CRS id and purpose in a year with no commitment row of it.
+    _flag(
+        "DEU-OTHER-YEAR",
+        provider=DEU,
+        year=2023,
+        crs_id=DEU_COMMITMENT_CRS_ID,
+        purpose=DEU_COMMITMENT_PURPOSE,
+    ),
     # The same CRS id under another provider names no commitment.
     _flag(
         OUT_OF_TOTALS,
@@ -87,6 +114,8 @@ IN_RELEASE = {
     IN_DISBURSEMENTS: True,
     IN_UNTRACED: True,
     "DEU-COMMITTED": True,
+    "DEU-DISBURSES": False,
+    "DEU-OTHER-YEAR": False,
     OUT_OF_TOTALS: False,
     "NOR-SHORT": False,
 }
@@ -144,9 +173,27 @@ def test_flagged_keeps_the_records_where_the_flag_holds(
 @pytest.mark.parametrize(
     ("inputs", "records"),
     [
-        ({"provider": "Germany"}, {IN_DISBURSEMENTS, IN_UNTRACED, "DEU-COMMITTED"}),
+        (
+            {"provider": "Germany"},
+            {
+                IN_DISBURSEMENTS,
+                IN_UNTRACED,
+                "DEU-COMMITTED",
+                "DEU-DISBURSES",
+                "DEU-OTHER-YEAR",
+            },
+        ),
         ({"provider": [NORWAY], "year": 2022}, {OUT_OF_TOTALS}),
-        ({"year": [2021, 2023]}, {IN_DISBURSEMENTS, "DEU-COMMITTED", "NOR-SHORT"}),
+        (
+            {"year": [2021, 2023]},
+            {
+                IN_DISBURSEMENTS,
+                "DEU-COMMITTED",
+                "DEU-DISBURSES",
+                "DEU-OTHER-YEAR",
+                "NOR-SHORT",
+            },
+        ),
     ],
 )
 def test_provider_and_year_filter_the_rows(

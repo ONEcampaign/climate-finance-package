@@ -105,6 +105,7 @@ from climate_finance.result import (
 from climate_finance.schema import (
     ADAPTATION_FIRST_YEAR,
     BILATERAL,
+    COMMITMENT_KEY,
     CORE_CONTRIBUTION,
     EIB_AGENCY,
     EU_INSTITUTIONS,
@@ -366,9 +367,10 @@ def jev_flags(
     when `experimental`, `mitigation_aim_p`; `flagged` keeps the rows where that
     flag holds.
 
-    A record is `in_release` when `disbursements` or `untraced` holds it, or a
-    `commitments` row of its provider holds its CRS id: the records the release's
-    totals draw on.
+    A record is `in_release` when the release's totals draw on it: `disbursements`
+    or `untraced` holds it, or it reports a commitment and a counted `commitments`
+    row, one that repeats no earlier vintage, shares its `COMMITMENT_KEY` (provider,
+    CRS id, year and purpose), the key that ties a CRS commitment to its CRDF row.
 
     Raises:
         MissingLabelsError: when the release was built with `jev_flags` off.
@@ -381,23 +383,27 @@ def jev_flags(
     conditions = _conditions(providers=providers, recipients=None, years=years)
     if flagged is not None:
         conditions.append(pl.col(flagged))
-    in_totals = pl.concat(
-        release.table(table).select("record_id")
-        for table in ("disbursements", "untraced")
-    ).select("record_id", in_totals=pl.lit(value=True))
+    in_totals = (
+        pl.concat(
+            release.table(table).select("record_id")
+            for table in ("disbursements", "untraced")
+        )
+        .unique()
+        .with_columns(in_totals=pl.lit(value=True))
+    )
     committed = (
-        release.table("commitments")
-        .select("provider_code", "crs_id", committed=pl.lit(value=True))
+        _counted_commitments(release)
+        .select(*COMMITMENT_KEY, committed=pl.lit(value=True))
         .unique()
     )
     flags = (
         release.table("jev_flags")
         .filter(*conditions)
-        .join(in_totals.unique("record_id"), on="record_id", how="left", validate="m:1")
-        .join(committed, on=["provider_code", "crs_id"], how="left", validate="m:1")
+        .join(in_totals, on="record_id", how="left", validate="m:1")
+        .join(committed, on=COMMITMENT_KEY, how="left", validate="m:1")
         .with_columns(
             in_release=pl.col("in_totals").is_not_null()
-            | pl.col("committed").is_not_null()
+            | ((pl.col("commitment_usd") > 0) & pl.col("committed").is_not_null())
         )
         .drop("in_totals", "committed")
     )
