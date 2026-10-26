@@ -129,7 +129,50 @@ Coefficients of providers 701: Fixture report, footnote 4.
 Coefficients of providers 5: Fixture survey, p. 8.
 ```
 
+## Net flows
+
+`flow="net_disbursements"` subtracts from gross disbursements the principal repaid on the loans they disbursed, and `flow="net_transfers"` subtracts the interest paid too. A repayment is a CRS record with a `usd_received` or `usd_interest` amount. The build keeps these records up to `crs_last_complete` and splits each over the parts of its loan.
+
+A repayment weighs like the disbursement it repays. The build finds a repayment's loan with the first of the trace's exact key tiers that reaches a commitment: a crs id, a World Bank loan number, or a project number. The loan's disbursement is every allocation of the CRS records traced to those commitments. Each commitment row the loan reached takes its share of the repayment, so a loan counted at 40% climate repays at 40%, and a development bank's loan counted at a climate share of 0.3 repays at 0.3. The marker on the repayment record itself weighs nothing. A record marked principal on a loan whose commitment is marked 0 repays at 0.
+
+Where the tiers reach no commitment, the build ties the repayment to the disbursement records that share its key. Gross counts those disbursements as untraced, so the repayment subtracts at the same record markers. `untraced=False` leaves out both.
+
+Some repayments stay out of every total. `release.quality().repayments` reports them, with a column for each basis:
+
+- Repayments of disbursement to commitments with no CRDF row in the release (`outside_release`) and of the excess beyond a full commitment (`excess`).
+- Repayments of an unlinked disbursement whose Rio markers no total counts (`unmeasured`).
+- Principal past what the loan disbursed (`beyond_disbursed`). Principal attributed to a loan stops at its disbursement, filled by year and then by record.
+- Repayments of loans with no disbursement in the CRS window (`no_disbursement`) and of repayments no key ties to a loan (`unlinked`). Spain's old loans fall here, as they were disbursed before the CRS years the build reads, and so do the aggregate rows and the EBRD, which has no project number and files a new crs id for each repayment.
+
+`measured_share` is the part of a provider's principal that a net flow subtracts. A provider with a low share repays loans the release cannot see, so its net flow subtracts less than it repaid.
+
+The development banks report their interest to the CRS up to 2018 and none after. From 2019 their net transfers equal their net disbursements, and `explain()` says so.
+
+Coefficients apply in the year of the repayment. Under `PROVIDER`, a repayment weighs at the coefficients the provider applies in the year it is repaid and not in the year the loan disbursed, so a provider that changed its practice repays a loan at a different share than it counted.
+
+Under `view="provider"`, bilateral repayments subtract and pass through the same once-only rule for EU Institutions as gross rows. Attributed core contributions count as disbursements in a net flow, since a core contribution is not repaid.
+
+Germany's repayments in the test release show the split. Of the USD 5.0m of principal it repaid in 2022, USD 4.0m reaches a commitment and the other USD 1.0m ties to no loan. All USD 4.0m repaid in 2023 falls on bases that no total counts.
+
+```python
+net = release.spending(
+    providers="Germany", years=range(2021, 2025), flow="net_disbursements"
+)
+repayments = release.quality(providers="Germany").repayments
+print(round(net.table["value"].sum() / 1e6, 1))
+for row in repayments.iter_rows(named=True):
+    received = round(row["received_usd"] / 1e6, 1)
+    counted = round(row["commitment_usd"] / 1e6, 1)
+    print(row["year"], received, counted, round(row["measured_share"], 2))
+```
+
+```output
+41.5
+2022 5.0 4.0 0.8
+2023 4.0 0.0 0.0
+```
+
 ## Next
 
 - [Python API](../reference/python-api.md) lists the fields of `Method` and the arguments of `spending()`.
-- [Release tables](../reference/release-tables.md) describes `agency_shares`, `core_contributions`, and `provider_coefficients`.
+- [Release tables](../reference/release-tables.md) describes `agency_shares`, `core_contributions`, `provider_coefficients`, and `reflows`.

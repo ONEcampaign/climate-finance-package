@@ -1,6 +1,6 @@
 # Low and high bounds
 
-Since 2.0, every row of a `spending()` table carries `low`, `value`, and `high`. `low` counts the disbursements whose whole path to a CRDF commitment is certain. `value` counts every disbursement the build allocated, estimated links included, and the untraced disbursement, Rio-marked CRS disbursement that reaches no commitment. `high` equals `value` for a single method. When a query asks for several methods, `low` is the lowest of their `low` bounds and `high` the highest of their values.
+Since 2.0, every row of a `spending()` table carries `low`, `value`, and `high`. `low` counts the disbursements whose whole path to a CRDF commitment is certain. `value` counts every disbursement the build allocated, estimated links included, and the untraced disbursement, Rio-marked CRS disbursement that reaches no commitment. `high` equals `value` for a single method of a gross flow. Net flows differ, as [Net flows](#net-flows) explains. When a query asks for several methods, `low` is the lowest of their `low` bounds and `high` the highest of their values.
 
 The bounds measure link certainty alone. A method's parameters, its coefficients and the agency shares it applies, weigh `low`, `value`, and `high` alike, so comparing methods shows what the parameters change.
 
@@ -20,9 +20,23 @@ A commitment's `disbursed_low_usd`, `disbursed_usd`, and `disbursed_high_usd` su
 !!! note
     With `flow="commitments"`, `low`, `value`, and `high` are equal.
 
+## Net flows
+
+`flow="net_disbursements"` and `flow="net_transfers"` subtract repayments from gross disbursements, and the bounds pair each with the gross bound that makes the interval widest:
+
+- `low` is gross `low` less every attributed repayment.
+- `value` is gross `value` less every attributed repayment.
+- `high` is gross `high` less the repayments whose link to the loan is certain.
+
+A repayment is certain when the tier that tied it to its loan is `wb_loan`, `crs_id_purpose`, `crs_id`, or `crs_id_parent` and its records agree on recipient and project number. A certain repayment subtracts from `high` in full on an untraced part, and on a `commitment` row for the share that certain links allocated to the row. A repayment tied by a project-number tier subtracts nothing from `high`. The `reflows` table holds each part's certain amount as `received_low_usd` and `interest_low_usd`.
+
+The pairing keeps `low <= value <= high` on every row. A repayment whose link is estimated might belong to another loan, so the highest net figure leaves it out, and the lowest net figure counts it against the smallest gross. Because `high` subtracts less than `value` does, `high` is above `value` for a single method and is not the central figure. A net figure can also be negative: when a provider repays more than it disburses in the years queried, `low` can fall below zero, and so can `value`.
+
+The interval is wider than a gross one. Gross `low` and `high` differ by link certainty alone, and a net flow adds the certainty of the repayments' own links. `release.quality().repayments` shows how much principal reaches a total at all.
+
 ## Under several methods
 
-`cf.methods.RANGE` computes ONE, OECD, and PROVIDER together. Every method carries a row for every year, provider, recipient, and Bi_Multi code that any of them holds, at zero where it has no money, and every method's row of a key carries the same `low` and `high`. `low` is the lowest of the three methods' `low` bounds, each counting only what certain links carried. `high` is the highest value any of the three gives, because each method's `high` equals its `value`. The rows of one method therefore sum to the table's bounds, and the range covers marker weights and link certainty.
+`cf.methods.RANGE` computes ONE, OECD, and PROVIDER together. Every method carries a row for every year, provider, recipient, and Bi_Multi code that any of them holds, at zero where it has no money, and every method's row of a key carries the same `low` and `high`. `low` is the lowest of the three methods' `low` bounds, each counting only what certain links carried. `high` is the highest value any of the three gives for a gross flow, because each method's `high` equals its `value`. For a net flow it is the highest `high` any of them gives. The rows of one method therefore sum to the table's bounds, and the range covers marker weights and link certainty.
 
 ## How to read a wide gap
 

@@ -66,6 +66,10 @@ GOLDEN_SPECS = {
     "oecd_commitments_recipient": Spec(method=OECD, flow="commitments"),
     "range_disbursements_provider": Spec(method=RANGE, view="provider"),
     "one_grant_equivalent_recipient": Spec(flow="grant_equivalent"),
+    "one_net_disbursements_recipient": Spec(flow="net_disbursements"),
+    "range_net_transfers_provider": Spec(
+        method=RANGE, view="provider", flow="net_transfers"
+    ),
 }
 # France's 2020 core contribution to AfDB, whose 2020 OECD share has no split.
 CLIMATE_ONLY_SPEC = Spec(view="provider", method=RANGE, providers=(4,), years=(2020,))
