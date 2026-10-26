@@ -25,9 +25,10 @@ converts it, and sums the rows into the result table. Rows have one of six origi
   (`reflows` basis `commitment`, and with `spec.untraced` basis `untraced`). A
   `commitment` part weighs as a disbursement allocated to that commitment does; an
   `untraced` part as an untraced row, by the disbursement records' own markers.
-  `amount` and `amount_low` subtract the whole part, and `amount_high` only what
-  certain links carried (`received_low_usd`, `interest_low_usd`), so each row keeps
-  low <= value <= high and `high` of a net flow sits above `value`. Every other
+  `amount` subtracts the whole part. Of the whole part and what certain links
+  carried (`received_low_usd`, `interest_low_usd`), `amount_low` subtracts the
+  larger and `amount_high` the smaller, so each row keeps low <= value <= high
+  whatever the sign; for a positive repayment `high` sits above `value`. Every other
   basis is unattributed and counts nowhere.
 - `attribution`: under `view="provider"`, a provider's core contribution of the
   spec's flow to an agency times the agency's climate share, of disbursements for a
@@ -1026,8 +1027,9 @@ def _reflow_rows(
     A `commitment` part joins its counted commitment and weighs by the markers and
     climate share it inherits, as a disbursement allocated to that commitment does.
     With `untraced`, an `untraced` part weighs by the disbursement records' own
-    markers, as `_untraced_rows` weighs them. `amount` and `amount_low` subtract the
-    part, and `amount_high` the part certain links carried.
+    markers, as `_untraced_rows` weighs them. `amount` subtracts the part; of the
+    part and what certain links carried, `amount_low` subtracts the larger and
+    `amount_high` the smaller.
     """
     reflows = release.table("reflows").filter(_in_view(view))
     commitments = _counted_commitments(release).select(
@@ -1067,16 +1069,20 @@ def _reflow_rows(
         "repayment": "received",
         **({"interest": "interest"} if interest else {}),
     }
-    # 0 - x keeps a zero amount +0.0, as a sum of zeros needs.
+
+    def subtracted(name: str) -> dict[str, pl.Expr]:
+        # 0 - x keeps a zero amount +0.0, as a sum of zeros needs. The CRS holds
+        # negative interest, so the bounds take the lower and higher of the whole
+        # part and its certain part, whatever their sign.
+        whole, certain = 0.0 - pl.col(f"{name}_usd"), 0.0 - pl.col(f"{name}_low_usd")
+        return {
+            "amount": whole,
+            "amount_low": pl.min_horizontal(whole, certain),
+            "amount_high": pl.max_horizontal(whole, certain),
+        }
+
     return pl.concat(
-        _conform(
-            part.with_columns(
-                origin=pl.lit(origin),
-                amount=0.0 - pl.col(f"{name}_usd"),
-                amount_low=0.0 - pl.col(f"{name}_usd"),
-                amount_high=0.0 - pl.col(f"{name}_low_usd"),
-            )
-        )
+        _conform(part.with_columns(origin=pl.lit(origin), **subtracted(name)))
         for part in parts
         for origin, name in amounts.items()
     )

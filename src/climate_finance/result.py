@@ -608,6 +608,12 @@ def explain(
                 "coefficients of the year it is repaid, not of the year its loan "
                 "disbursed."
             )
+        if spec.view == "provider" and any(m.eu == "channel" for m in methods):
+            lines.append(
+                "An EU Institutions repayment scales by the part of EU money no "
+                "queried member's attribution counts in the year it is repaid, as "
+                "its coefficients do."
+            )
         lines.append(
             "Gross disbursements: " + _FLOWS["disbursements"].removeprefix("Flow: ")
         )

@@ -2514,6 +2514,31 @@ def test_a_net_value_lies_between_its_bounds(flow: Flow, view: View) -> None:
     assert set(estimated["high"]) == {0.0}
 
 
+def _with_negative_interest(frame: pl.DataFrame) -> pl.DataFrame:
+    # The CRS holds negative interest. FRA-2's link is estimated, so none of it is
+    # certain.
+    record = pl.col("record_id") == "FRA-2-REPAY-2022"
+    return frame.with_columns(
+        pl.when(record).then(-pl.col(name)).otherwise(pl.col(name)).alias(name)
+        for name in ("interest_usd", "record_interest_usd")
+    )
+
+
+def test_negative_interest_keeps_its_value_between_its_bounds(tmp_path: Path) -> None:
+    release = cf.load(
+        path=copy_release(
+            tmp_path / "release", edits={"reflows": _with_negative_interest}
+        )
+    )
+    interest = release.spending(flow="net_transfers", method=ONE).rows(
+        origin="interest", record_id="FRA-2-REPAY-2022"
+    )
+
+    assert (interest["value"] > 0).all()
+    assert interest["low"].to_list() == [0.0]
+    assert interest["high"].to_list() == interest["value"].to_list()
+
+
 def test_only_the_parts_gross_counts_repay() -> None:
     """Spain's loan predates the window, so its repayment ties to no disbursement
     and its own marker of 2 weighs nothing; no unattributed part subtracts."""
@@ -2666,3 +2691,6 @@ def test_explain_says_how_a_net_flow_subtracts_repayments(flow: Flow) -> None:
         SNAP.spending(flow=flow).explain()
     )
     assert ("no interest after 2018" in text) == (flow == "net_transfers")
+    eu_rule = "EU Institutions repayment scales by"
+    assert eu_rule in SNAP.spending(flow=flow, view="provider").explain()
+    assert eu_rule not in text
