@@ -3,7 +3,7 @@
 from collections.abc import Iterable, Iterator, Mapping
 from difflib import get_close_matches
 from numbers import Integral
-from typing import Annotated, Any, ClassVar, Literal, TypedDict, Unpack
+from typing import Annotated, Any, ClassVar, Literal, Self, TypedDict, Unpack
 
 import polars as pl
 from pydantic import (
@@ -14,6 +14,7 @@ from pydantic import (
     StrictBool,
     Tag,
     model_serializer,
+    model_validator,
 )
 
 from climate_finance.catalogue import (
@@ -42,8 +43,15 @@ from climate_finance.methods import (
 from climate_finance.schema import BILATERAL as BILATERAL
 from climate_finance.schema import CORE_CONTRIBUTION as CORE_CONTRIBUTION
 from climate_finance.schema import MULTILATERAL_OUTFLOW as MULTILATERAL_OUTFLOW
+from climate_finance.schema import NET_FLOWS
 
-type Flow = Literal["commitments", "disbursements", "grant_equivalent"]
+type Flow = Literal[
+    "commitments",
+    "disbursements",
+    "grant_equivalent",
+    "net_disbursements",
+    "net_transfers",
+]
 type View = Literal["recipient", "provider"]
 type Currency = Literal["USD", "EUR", "GBP", "CAD"]
 type Measure = Literal["amount", "share_of_total"]
@@ -277,6 +285,11 @@ class Spec(Frozen):
     `measure="share_of_total"` divides the table's amounts by all CRS flows of the
     same key, as `Result.share_of_total` describes.
 
+    `flow="net_disbursements"` counts disbursements less the repayments of the
+    loans they disbursed, and `flow="net_transfers"` less their interest too. A net
+    flow refuses `measure="share_of_total"`, since the CRS totals hold no net
+    flows, and a method of `relevance="jev"`, since Jev labels no repayment.
+
     `untraced=False` leaves out the untraced rows of disbursements and grant
     equivalents: Rio-marked CRS disbursement that reaches no commitment. Commitments
     have none, so it changes nothing there.
@@ -316,6 +329,23 @@ class Spec(Frozen):
     _keyword_notes: ClassVar[Mapping[str, str]] = {
         "spec": "rerun a saved Spec with release.run(spec)"
     }
+
+    @model_validator(mode="after")
+    def _refuse_net_flow_measures(self) -> Self:
+        if self.flow not in NET_FLOWS:
+            return self
+        if self.measure == "share_of_total":
+            raise InvalidInputError(
+                f"measure='share_of_total' takes a gross flow; {self.flow!r} subtracts "
+                "repayments, which the CRS totals do not. Pass flow='disbursements'."
+            )
+        if any(method.relevance == "jev" for method in self.methods):
+            raise InvalidInputError(
+                f"relevance='jev' takes a gross flow; Jev labels no repayment, so "
+                f"{self.flow!r} cannot weigh by it. Pass a method of "
+                "relevance='markers'."
+            )
+        return self
 
     def __init__(self, **inputs: Unpack[SpecInputs]) -> None:
         # `SpecInputs` types the keywords. Type checkers derive a pydantic model's

@@ -154,6 +154,10 @@ FETCH_METHODS = ("http", "registered", "manual")
 PERSPECTIVES = ("provider", "recipient")
 ORG_ROLES = ("provider", "agency", "channel")
 FLOWS = ("commitments", "disbursements", "grant_equivalent")
+# The flows a query counts: the stored ones, and disbursements less the repayments
+# of their loans (`net_disbursements`) and less their interest too (`net_transfers`).
+NET_FLOWS = ("net_disbursements", "net_transfers")
+QUERY_FLOWS = (*FLOWS, *NET_FLOWS)
 FUNDING_CLASSES = ("oda", "oof", "other")
 DECISIONS = ("accept", "reject")
 # The first year the CRDF and the CRS measure adaptation: the DAC introduced the

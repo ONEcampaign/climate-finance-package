@@ -18,9 +18,9 @@ import numpy as np
 import polars as pl
 import pyarrow as pa
 import pytest
-from make_fixture import DEU, FIXTURE_DIR, FRA, GEF, JPN, LEDGER_RECORD
+from make_fixture import DEU, ESP, FIXTURE_DIR, FRA, GEF, JPN, LEDGER_RECORD
 from polars.testing import assert_frame_equal
-from releases import copy_release
+from releases import Edit, copy_release
 
 import climate_finance as cf
 from climate_finance import convert as convert_module
@@ -42,8 +42,8 @@ from climate_finance.query import (
     _aggregate,
 )
 from climate_finance.release import Release
-from climate_finance.result import AMOUNTS, ROW_KEYS, ROW_VALUES
-from climate_finance.schema import ReleaseManifest
+from climate_finance.result import AMOUNTS, ROW_KEYS, ROW_VALUES, Result
+from climate_finance.schema import NET_FLOWS, REFLOW_BASES, ReleaseManifest
 from climate_finance.spec import Flow, Measure, Spec, SpecInputs, View
 from climate_finance.sums import ordered_sum
 
@@ -83,6 +83,7 @@ def _tables() -> list[tuple[object, str]]:
         (SNAP.spending(), "modelled"),
         (quality, "table"),
         (quality, "untraced"),
+        (quality, "repayments"),
         (SNAP.reconcile(), "table"),
         (cf.compare(SNAP.spending(), SNAP.spending(flow="commitments")), "table"),
     ]
@@ -362,7 +363,7 @@ def test_spending_takes_keywords_only_and_run_reruns_a_spec() -> None:
     ("inputs", "message"),
     [
         ({"provider": "Japan"}, "no keyword 'provider'; did you mean 'providers'?"),
-        ({"flow": "commitment"}, "flow takes 'commitments', 'disbursements' or"),
+        ({"flow": "commitment"}, "flow takes 'commitments', 'disbursements',"),
         ({"years": []}, "years takes at least one year"),
         ({"providers": []}, "providers takes at least one name or code"),
         ({"recipients": ()}, "recipients takes at least one name or code"),
@@ -370,6 +371,14 @@ def test_spending_takes_keywords_only_and_run_reruns_a_spec() -> None:
         ({"oda_only": "yes"}, "oda_only: input should be a valid boolean"),
         ({"untraced": 1}, "untraced: input should be a valid boolean"),
         ({"method": {"significant": 2}}, "method.significant: input should be"),
+        (
+            {"flow": "net_disbursements", "measure": "share_of_total"},
+            "measure='share_of_total' takes a gross flow",
+        ),
+        (
+            {"flow": "net_transfers", "method": ONE.replace(relevance="jev")},
+            "relevance='jev' takes a gross flow",
+        ),
     ],
 )
 def test_spec_restates_every_refusal_as_one_package_error(
@@ -1078,6 +1087,7 @@ def test_rows_refuse_a_value_outside_a_fixed_vocabulary(
         Spec(method=RANGE, view="provider"),
         Spec(flow="commitments", view="provider"),
         Spec(flow="grant_equivalent"),
+        Spec(flow="net_transfers", method=RANGE, view="provider"),
     ],
 )
 def test_rows_hold_only_the_values_their_vocabularies_list(spec: Spec) -> None:
@@ -1954,7 +1964,7 @@ def test_quality_prints_its_providers_years_and_summary() -> None:
     quality = SNAP.quality()
     title = (
         "Quality: 6 providers, 2021 to 2022; also .table .status .eu_left_out "
-        ".attribution .precision .untraced"
+        ".attribution .precision .untraced .repayments"
     )
 
     assert repr(quality) == f"{title}\n{quality.summary()!r}"
@@ -2319,3 +2329,336 @@ def test_quality_reports_the_untraced_and_left_out_marked_disbursement() -> None
         (FRA, 2023, 0.0),
         (FRA, 2024, 0.0),
     ]
+
+
+REFLOWS = SNAP.table("reflows").collect()
+# The reflow parts a query subtracts; every other basis is unattributed.
+COUNTED_BASES = ("commitment", "untraced")
+
+
+# The columns a disbursement copies from the repayment it stands for.
+_REPAYMENT_FIELDS = (
+    "year", "provider_code", "agency_code", "recipient_code", "channel_code",
+    "bi_multi", "purpose_code", "flow_code", "project_number", "title",
+)  # fmt: skip
+
+
+def _repayments_as_disbursements(flow: Flow) -> dict[str, Edit]:
+    """Edits that add each counted reflow part as a disbursement of what `flow`
+    subtracts for it, in the repayment's year: a `commitment` part allocated to its
+    commitment at its inherited markers, and an `untraced` part as an untraced
+    record of the markers it weighs by. A gross query of the copy then counts each
+    repayment once more than the fixture does."""
+    repaid = pl.col("received_usd")
+    if flow == "net_transfers":
+        repaid = repaid + pl.col("interest_usd")
+    parts = REFLOWS.with_columns(
+        _repaid=repaid, record_id=pl.col("record_id") + "-AS-DISBURSED"
+    )
+
+    def disbursements(frame: pl.DataFrame) -> pl.DataFrame:
+        inherited = ("inherited_rio_adaptation", "inherited_rio_mitigation")
+        template = frame.unique("row_id", keep="first", maintain_order=True).drop(
+            "record_id", *_REPAYMENT_FIELDS, *inherited, "climate_share"
+        )
+        added = (
+            parts.filter(pl.col("basis") == "commitment")
+            .select(
+                "row_id",
+                "record_id",
+                *_REPAYMENT_FIELDS,
+                *inherited,
+                "climate_share",
+                allocated_usd="_repaid",
+                allocated_low_usd="_repaid",
+                allocated_high_usd="_repaid",
+                record_disbursement_usd="_repaid",
+                record_grant_equiv_usd=pl.lit(None, pl.Float64),
+            )
+            .join(
+                template.drop(
+                    "allocated_usd",
+                    "allocated_low_usd",
+                    "allocated_high_usd",
+                    "record_disbursement_usd",
+                    "record_grant_equiv_usd",
+                ),
+                on="row_id",
+                validate="m:1",
+            )
+        )
+        return pl.concat([frame, added.select(frame.columns).cast(frame.schema)])
+
+    def untraced(frame: pl.DataFrame) -> pl.DataFrame:
+        added = parts.filter(pl.col("basis") == "untraced").select(
+            "record_id",
+            *_REPAYMENT_FIELDS,
+            rio_adaptation="inherited_rio_adaptation",
+            rio_mitigation="inherited_rio_mitigation",
+            untraced_usd="_repaid",
+            reason=pl.lit("excess"),
+            record_disbursement_usd="_repaid",
+            record_grant_equiv_usd=pl.lit(None, pl.Float64),
+        )
+        return pl.concat([frame, added.select(frame.columns).cast(frame.schema)])
+
+    return {"disbursements": disbursements, "untraced": untraced}
+
+
+@pytest.fixture(scope="module")
+def repaid_twice(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Release]:
+    """Per net flow, the fixture with what it subtracts added as disbursements."""
+    return {
+        flow: cf.load(
+            path=copy_release(
+                tmp_path_factory.mktemp(flow) / "release",
+                edits=_repayments_as_disbursements(flow),
+            )
+        )
+        for flow in NET_FLOWS
+    }
+
+
+@pytest.mark.parametrize("method", [ONE, OECD, cf.methods.PROVIDER])
+@pytest.mark.parametrize("view", VIEWS)
+@pytest.mark.parametrize("flow", NET_FLOWS)
+def test_a_repayment_subtracts_what_its_part_would_add_as_a_disbursement(
+    repaid_twice: dict[str, Release], method: Method, flow: Flow, view: View
+) -> None:
+    keys = [*ROW_KEYS, "method"]
+    amounts = ("adaptation", "mitigation", "value", "untraced")
+
+    def table(result: Result, name: str) -> pl.DataFrame:
+        return result.table.select(
+            *keys, *(pl.col(amount).alias(f"{name}_{amount}") for amount in amounts)
+        )
+
+    gross = table(SNAP.spending(method=method, view=view), "gross")
+    net = table(SNAP.spending(flow=flow, method=method, view=view), "net")
+    twice = table(repaid_twice[flow].spending(method=method, view=view), "twice")
+    joined = gross.join(net, on=keys, how="full", coalesce=True, nulls_equal=True)
+    joined = joined.join(
+        twice, on=keys, how="full", coalesce=True, nulls_equal=True
+    ).fill_null(0.0)
+
+    # Net is gross less what the repayments add as disbursements: net + twice is
+    # twice gross on every key.
+    for amount in amounts:
+        assert (joined[f"gross_{amount}"] != joined[f"net_{amount}"]).any(), amount
+        assert (
+            joined[f"net_{amount}"] + joined[f"twice_{amount}"]
+        ).to_list() == pytest.approx((2 * joined[f"gross_{amount}"]).to_list())
+
+
+@pytest.mark.parametrize("flow", NET_FLOWS)
+def test_a_net_flow_attributes_the_core_contributions_of_disbursements(
+    flow: Flow,
+) -> None:
+    def attributed(flow: Flow) -> pl.DataFrame:
+        return SNAP.spending(flow=flow, view="provider", method=RANGE).rows(
+            origin="attribution"
+        )
+
+    gross = attributed("disbursements")
+    assert gross.height
+    assert_frame_equal(attributed(flow), gross)
+
+
+@pytest.mark.parametrize("view", VIEWS)
+def test_net_transfers_are_net_disbursements_less_interest(view: View) -> None:
+    disbursements = SNAP.spending(flow="net_disbursements", view=view, method=RANGE)
+    transfers = SNAP.spending(flow="net_transfers", view=view, method=RANGE)
+    rows = transfers.rows()
+    interest = pl.col("origin") == "interest"
+
+    assert_frame_equal(rows.filter(~interest), disbursements.rows())
+    paid = (
+        rows.filter(interest, pl.col("method") == "ONE")
+        .group_by("record_id")
+        .agg(pl.col("amount").sum())
+    )
+    expected = (
+        REFLOWS.filter(pl.col("basis").is_in(COUNTED_BASES))
+        .join(paid.select("record_id"), on="record_id", how="semi")
+        .group_by("record_id")
+        .agg(-pl.col("interest_usd").sum())
+    )
+    assert paid.height
+    assert dict(paid.rows()) == pytest.approx(dict(expected.rows()))
+
+
+@pytest.mark.parametrize("view", VIEWS)
+@pytest.mark.parametrize("flow", NET_FLOWS)
+def test_a_net_value_lies_between_its_bounds(flow: Flow, view: View) -> None:
+    result = SNAP.spending(
+        flow=flow, view=view, method=MethodRange(methods=tuple(GRID))
+    )
+
+    for frame in (result.rows(), result.table):
+        known = frame.drop_nulls("amount")
+        assert (known["low"] <= known["value"] + 1e-6).all()
+        assert (known["value"] <= known["high"] + 1e-6).all()
+    # Low subtracts every repayment, and high only what certain links carried:
+    # all of Germany's DEU-1 loan and none of France's FRA-2.
+    repaid = result.rows(origin="repayment")
+    assert_frame_equal(repaid.select("low"), repaid.select(low="value"))
+    certain = repaid.filter(pl.col("record_id") == "DEU-1-REPAY")
+    estimated = repaid.filter(pl.col("record_id").str.starts_with("FRA-2-REPAY"))
+    assert (certain["value"] < 0).any()
+    assert (estimated["value"] < 0).any()
+    assert_frame_equal(certain.select("high"), certain.select(high="value"))
+    assert set(estimated["high"]) == {0.0}
+
+
+def test_only_the_parts_gross_counts_repay() -> None:
+    """Spain's loan predates the window, so its repayment ties to no disbursement
+    and its own marker of 2 weighs nothing; no unattributed part subtracts."""
+    spain = REFLOWS.filter(pl.col("provider_code") == ESP)
+    assert spain.select("basis", "record_rio_adaptation").rows() == [("unlinked", 2)]
+
+    rows = SNAP.spending(flow="net_transfers", method=ONE).rows(origin="repayment")
+    counted = REFLOWS.filter(pl.col("basis").is_in(COUNTED_BASES))
+    assert sorted(rows.select("record_id", "row_id").rows(), key=str) == sorted(
+        counted.select("record_id", "row_id").rows(), key=str
+    )
+    assert rows.filter(pl.col("provider_code") == ESP).is_empty()
+
+
+@pytest.mark.parametrize("flow", NET_FLOWS)
+def test_a_net_result_refuses_shares_of_total(flow: Flow) -> None:
+    with pytest.raises(InvalidInputError, match="takes a gross flow"):
+        SNAP.spending(flow=flow).share_of_total()
+
+
+def _with_eu_repayments(frame: pl.DataFrame) -> pl.DataFrame:
+    """NOR-1's repayments, the part beyond what it disbursed included, copied to
+    each EU agency's copy of NOR-1, as `_with_eu_commitments` copies it."""
+    norway = frame.filter(pl.col("loan_id") == "crs_id:NOR-1")
+    assert norway.height
+    copies = [
+        norway.with_columns(
+            pl.col("record_id", "loan_id").str.replace("NOR-1", row_id),
+            row_id=pl.when(pl.col("row_id").is_not_null()).then(pl.lit(row_id)),
+            provider_code=pl.lit(EU_INSTITUTIONS, pl.Int32),
+            agency_code=pl.lit(agency, pl.Int32),
+        )
+        for row_id, agency in EU_AGENCIES.items()
+    ]
+    return pl.concat([frame, *copies])
+
+
+@pytest.fixture(scope="module")
+def eu_net_release(tmp_path_factory: pytest.TempPathFactory) -> Release:
+    release = copy_release(
+        tmp_path_factory.mktemp("eu-net") / "release",
+        edits={
+            "commitments": _with_eu_commitments,
+            "disbursements": _with_eu_commitments,
+            "reflows": _with_eu_repayments,
+            "core_contributions": _with_eu_contributions,
+            "agency_shares": _with_eu_shares,
+        },
+    )
+    return cf.load(path=release)
+
+
+@pytest.mark.parametrize(
+    ("method", "agencies_2022", "agencies_2023"),
+    [
+        # As a channel, the EU's own repayments leave an all-provider total in 2022,
+        # when France's contributions attribute, and stay in 2023.
+        (cf.methods.ONE, set(), {1, 2, EIB_AGENCY}),
+        # As a provider, the EU budget and the EDF keep theirs and the EIB's leave.
+        (ONE_EU_AS_PROVIDER, {1, 2}, {1, 2}),
+        (cf.methods.OECD, {1, 2}, {1, 2}),
+    ],
+)
+def test_eu_repayments_count_once_as_the_eus_own_rows_do(
+    eu_net_release: Release,
+    method: Method,
+    agencies_2022: set[int],
+    agencies_2023: set[int],
+) -> None:
+    rows = eu_net_release.spending(
+        flow="net_disbursements", view="provider", method=method
+    )
+    repaid = rows.rows(origin="repayment", provider_code=EU_INSTITUTIONS)
+
+    for year, agencies in ((2022, agencies_2022), (2023, agencies_2023)):
+        assert set(repaid.filter(pl.col("year") == year)["agency_code"]) == agencies
+
+
+def _repay_deu_1_as_oof(frame: pl.DataFrame) -> pl.DataFrame:
+    # An OOF loan's repayment on a commitment of the ODA flow category.
+    return frame.with_columns(
+        flow_code=pl.when(pl.col("record_id") == "DEU-1-REPAY")
+        .then(pl.lit(14, pl.Int32))
+        .otherwise(pl.col("flow_code"))
+    )
+
+
+def test_oda_only_reads_a_repayments_own_flow_code(tmp_path: Path) -> None:
+    release = cf.load(
+        path=copy_release(tmp_path / "release", edits={"reflows": _repay_deu_1_as_oof})
+    )
+
+    def repaid(*, oda_only: bool) -> set[str]:
+        result = release.spending(flow="net_disbursements", oda_only=oda_only)
+        return set(result.rows(origin="repayment")["record_id"])
+
+    everything = repaid(oda_only=False)
+    assert "DEU-1-REPAY" in everything
+    assert repaid(oda_only=True) == everything - {"DEU-1-REPAY"}
+
+
+def test_quality_reports_repayments_by_basis_and_what_net_subtracts() -> None:
+    repayments = SNAP.quality().repayments
+    key = ["provider_code", "year"]
+    face = REFLOWS.group_by(key).agg(
+        pl.col("received_usd", "interest_usd").sum(),
+        measured=pl.col("received_usd")
+        .filter(pl.col("basis").is_in(COUNTED_BASES))
+        .sum(),
+    )
+    subtracted = (
+        SNAP.spending(flow="net_disbursements")
+        .rows(origin="repayment")
+        .group_by(key)
+        .agg(climate=-pl.col("value").sum())
+    )
+    joined = (
+        repayments.join(face, on=key, validate="1:1", suffix="_expected")
+        .join(subtracted, on=key, how="left", validate="1:1")
+        .with_columns(pl.col("climate").fill_null(0.0))
+    )
+
+    assert joined.height == repayments.height == face.height
+    by_basis = repayments.select(
+        pl.sum_horizontal(f"{basis}_usd" for basis in REFLOW_BASES)
+    ).to_series()
+    assert by_basis.to_list() == pytest.approx(repayments["received_usd"].to_list())
+    for name in ("received_usd", "interest_usd"):
+        assert joined[name].to_list() == pytest.approx(
+            joined[f"{name}_expected"].to_list()
+        )
+    assert joined["repaid_climate_usd"].to_list() == pytest.approx(
+        joined["climate"].to_list()
+    )
+    assert joined["measured_share"].to_list() == pytest.approx(
+        (joined["measured"] / joined["received_usd"]).to_list()
+    )
+    # Spain's pre-window loan ties to no disbursement, so none of it is measured.
+    assert repayments.filter(provider_code=ESP)["measured_share"].to_list() == [0.0]
+
+
+@pytest.mark.parametrize("flow", NET_FLOWS)
+def test_explain_says_how_a_net_flow_subtracts_repayments(flow: Flow) -> None:
+    text = SNAP.spending(flow=flow, method=cf.methods.PROVIDER).explain()
+
+    assert "release.quality().repayments reports them" in text
+    assert "high sits above value" in text
+    assert "coefficients of the year it is repaid" in text
+    assert "coefficients of the year it is repaid" not in (
+        SNAP.spending(flow=flow).explain()
+    )
+    assert ("no interest after 2018" in text) == (flow == "net_transfers")

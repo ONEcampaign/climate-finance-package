@@ -5,8 +5,12 @@ onto one `Release.spending` call per source and flow:
 
 - `methodology` "ONE" and "OECD" map to `methods.ONE` and `methods.OECD`; "custom"
   takes the coefficients of `set_custom_spending_methodology`.
-- Flows "gross_disbursements", "commitments" and "grant_equivalent" map to
-  `flow="disbursements"`, `"commitments"` and `"grant_equivalent"`.
+- Flows "gross_disbursements", "commitments", "grant_equivalent" and
+  "net_disbursements" map to `flow="disbursements"`, `"commitments"`,
+  `"grant_equivalent"` and `"net_disbursements"`. 1.x net disbursements were the
+  climate rows' disbursements less their own `usd_received`; 2.0 subtracts the
+  principal repaid on the loans the disbursements count, at each loan's counted
+  share.
 - Every OECD source is answered from the release's traced commitments and
   disbursements in the recipient view, except "OECD_CRDF_DONOR", the provider
   perspective, which maps to `view="provider"`. The legacy names therefore select
@@ -48,6 +52,7 @@ _FLOWS: dict[str, Flow] = {
     "gross_disbursements": "disbursements",
     "commitments": "commitments",
     "grant_equivalent": "grant_equivalent",
+    "net_disbursements": "net_disbursements",
 }
 _VIEWS: dict[str, View] = {
     "OECD_CRS": "recipient",
@@ -67,8 +72,6 @@ _CURRENCIES: dict[str, Currency] = {
 _PROVIDERS_BY_TYPE = "climate_finance.providers.list(), which has a type column"
 # 1.x values that 2.0 cannot answer, with what to use instead.
 _NO_EQUIVALENT = {
-    "net_disbursements": "net disbursements have no 2.0 equivalent; releases hold "
-    "gross disbursements only",
     "UNFCCC": "UNFCCC data has no ClimateData equivalent; use "
     "Release.reconcile(), which compares BTR reports with OECD data",
 }

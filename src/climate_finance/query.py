@@ -1,7 +1,7 @@
 """Queries as lazy polars plans over release tables, weighted at query time.
 
 `spending()` builds one row per counted amount, weights it under each method,
-converts it, and sums the rows into the result table. Rows have one of four origins:
+converts it, and sums the rows into the result table. Rows have one of six origins:
 
 - `commitment`: a CRDF commitment at face value (`flow="commitments"`). Rows that
   repeat an earlier vintage are left out, and `quality()` reports them.
@@ -19,8 +19,19 @@ converts it, and sums the rows into the result table. Rows have one of four orig
   the record's own markers, with no published share to cap them. It counts in
   `high` and not in `low`, which holds what certain links carry to commitments.
   `spec.untraced=False` leaves these rows out.
+- `repayment` and `interest`: under `flow="net_disbursements"` and
+  `flow="net_transfers"`, the negative of a CRS repayment's principal, and under
+  `net_transfers` of its interest too, on the parts of its loan that gross counts
+  (`reflows` basis `commitment`, and with `spec.untraced` basis `untraced`). A
+  `commitment` part weighs as a disbursement allocated to that commitment does; an
+  `untraced` part as an untraced row, by the disbursement records' own markers.
+  `amount` and `amount_low` subtract the whole part, and `amount_high` only what
+  certain links carried (`received_low_usd`, `interest_low_usd`), so each row keeps
+  low <= value <= high and `high` of a net flow sits above `value`. Every other
+  basis is unattributed and counts nowhere.
 - `attribution`: under `view="provider"`, a provider's core contribution of the
-  spec's flow to an agency times the agency's climate share. An agency share with no
+  spec's flow to an agency times the agency's climate share, of disbursements for a
+  net flow, since core contributions are not repaid. An agency share with no
   split by objective counts in `unsplit`, with the objectives 0. `share_source` says
   where the share comes from: `computed`, `held` or `oecd`.
 
@@ -35,7 +46,8 @@ rows leave and contributions to it attribute.
 
 Every row holds `value` = adaptation + mitigation - cross_cutting + unsplit, or
 + cross_cutting under the highest-marker rule, whose objectives are disjoint, and
-`untraced`, its value on an untraced row and 0 on any other.
+`untraced`, its value on an untraced row or a repayment's `untraced` part and 0 on
+any other.
 Where the CRDF does not measure adaptation (commitments before 2010, and agency
 shares whose span reaches one), adaptation and cross_cutting are null and `value`
 is the mitigation value. A table row's adaptation and cross_cutting are null when
@@ -97,7 +109,9 @@ from climate_finance.schema import (
     EU_INSTITUTIONS,
     FLOWS,
     FUNDING_CLASSES,
+    NET_FLOWS,
     RECIPIENT_VIEW,
+    REFLOW_BASES,
     SHARE_ORIGINS,
     coefficient_overlaps,
 )
@@ -190,6 +204,8 @@ _WEIGHT_INPUTS: dict[str, pl.DataType] = {
     "principal": pl.Float64(),
     "both_significant": pl.Float64(),
     "adaptation_measured": pl.Boolean(),
+    # True on a row whose value counts in `untraced`.
+    "untraced_part": pl.Boolean(),
 }
 # The coefficient columns `_coefficients` sets, as `weights` takes them.
 _COEFFICIENT_INPUTS = {
@@ -235,9 +251,9 @@ def spending(release: Release, *, spec: Spec) -> Result:
     for method in methods:
         frame = base
         if spec.view == "provider":
-            everyone = _attributed_rows(release, flow=spec.flow, method=method).filter(
-                *others
-            )
+            everyone = _attributed_rows(
+                release, flow=_gross(spec.flow), method=method
+            ).filter(*others)
             attributed = everyone.filter(*named)
             kept = eu_kept[label(method)] = _eu_kept(
                 attributed=attributed, everyone=everyone
@@ -302,8 +318,9 @@ def quality(
 
     The status split covers the commitments the trace follows: bilateral rows and
     multilateral outflows, without core contributions. `eu_left_out` holds the EU
-    Institutions rows an all-provider provider view leaves out under `method`, and
-    `untraced` the Rio-marked CRS disbursement that reaches no commitment.
+    Institutions rows an all-provider provider view leaves out under `method`,
+    `untraced` the Rio-marked CRS disbursement that reaches no commitment, and
+    `repayments` the CRS repayments by where their principal goes.
     """
     conditions = _conditions(providers=providers, recipients=None, years=years)
     table = release.table("quality")
@@ -325,6 +342,11 @@ def quality(
         precision=with_names(_precision(release, providers=providers)),
         untraced=with_names(
             _untraced(release, conditions=conditions, method=method).sort(
+                "provider_code", "year"
+            )
+        ),
+        repayments=with_names(
+            _repayments(release, conditions=conditions, method=method).sort(
                 "provider_code", "year"
             )
         ),
@@ -362,6 +384,54 @@ def _untraced(
         .join(climate, on=key, how="left", validate="1:1")
         .with_columns(
             pl.col("excess_climate_usd", "unlinked_climate_usd").fill_null(0.0)
+        )
+    )
+
+
+# The `reflows` bases a net flow subtracts; every other basis is unattributed.
+_COUNTED_BASES = ("commitment", "untraced")
+
+
+def _repayments(
+    release: Release, *, conditions: Sequence[pl.Expr], method: Method
+) -> pl.LazyFrame:
+    """Per provider and repayment year, the `reflows` principal at face value in
+    total and by basis, the climate value of the principal a net flow subtracts
+    under `method` in the recipient view, the interest, and the share of principal
+    a net flow subtracts, in USD at current prices."""
+    key = ["provider_code", "year"]
+    rows = _reflow_rows(release, view="recipient", untraced=True, interest=False)
+    climate = (
+        _weigh(_coefficients(release, rows, method=method), method=method)
+        .filter(*conditions)
+        .group_by(key)
+        .agg(repaid_climate_usd=ordered_sum(0.0 - pl.col("value")))
+    )
+    basis = pl.col("basis")
+    received = pl.col("received_usd")
+    return (
+        release.table("reflows")
+        .filter(*conditions)
+        .group_by(key)
+        .agg(
+            ordered_sum(received),
+            *(
+                ordered_sum(received.filter(basis == name)).alias(f"{name}_usd")
+                for name in REFLOW_BASES
+            ),
+            interest_usd=ordered_sum(pl.col("interest_usd")),
+            measured_usd=ordered_sum(received.filter(basis.is_in(_COUNTED_BASES))),
+        )
+        .join(climate, on=key, how="left", validate="1:1")
+        .select(
+            *key,
+            "received_usd",
+            *(f"{name}_usd" for name in REFLOW_BASES),
+            pl.col("repaid_climate_usd").fill_null(0.0),
+            "interest_usd",
+            measured_share=pl.when(pl.col("received_usd") != 0).then(
+                pl.col("measured_usd") / pl.col("received_usd")
+            ),
         )
     )
 
@@ -864,11 +934,17 @@ def _in_view(view: View) -> pl.Expr:
     return pl.col("bi_multi").is_in(codes)
 
 
+def _gross(flow: Flow) -> Flow:
+    """The stored flow `flow` reads: disbursements for a net flow, else itself."""
+    return "disbursements" if flow in NET_FLOWS else flow
+
+
 def _base_rows(
     release: Release, *, flow: Flow, view: View, untraced: bool
 ) -> pl.LazyFrame:
     """The rows of `flow` that `view` counts, before weighting: commitments, or
-    disbursements and, with `untraced`, untraced rows."""
+    disbursements and, with `untraced`, untraced rows, and for a net flow the
+    repayments on them (`_reflow_rows`)."""
     shares = {
         **face_shares(),
         "share_unsplit": pl.lit(0.0),
@@ -926,9 +1002,84 @@ def _base_rows(
             **shares,
         )
     )
-    if not untraced:
-        return traced
-    return pl.concat([traced, _untraced_rows(release, view=view, factor=factor)])
+    rows = [traced]
+    if untraced:
+        rows.append(_untraced_rows(release, view=view, factor=factor))
+    if flow in NET_FLOWS:
+        rows.append(
+            _reflow_rows(
+                release,
+                view=view,
+                untraced=untraced,
+                interest=flow == "net_transfers",
+            )
+        )
+    return pl.concat(rows)
+
+
+def _reflow_rows(
+    release: Release, *, view: View, untraced: bool, interest: bool
+) -> pl.LazyFrame:
+    """The repayments `view` counts as negative rows of origin `repayment`, and with
+    `interest` of origin `interest` too, before weighting.
+
+    A `commitment` part joins its counted commitment and weighs by the markers and
+    climate share it inherits, as a disbursement allocated to that commitment does.
+    With `untraced`, an `untraced` part weighs by the disbursement records' own
+    markers, as `_untraced_rows` weighs them. `amount` and `amount_low` subtract the
+    part, and `amount_high` the part certain links carried.
+    """
+    reflows = release.table("reflows").filter(_in_view(view))
+    commitments = _counted_commitments(release).select(
+        "row_id",
+        "flow_category",
+        "status",
+        "face_usd",
+        "climate_usd",
+        "adaptation_usd",
+        "mitigation_usd",
+        "overlap_usd",
+    )
+    inherited = {
+        "rio_adaptation": pl.col("inherited_rio_adaptation"),
+        "rio_mitigation": pl.col("inherited_rio_mitigation"),
+        "share_unsplit": pl.lit(0.0),
+    }
+    parts = [
+        reflows.filter(pl.col("basis") == "commitment")
+        .join(commitments, on="row_id", how="inner", validate="m:1")
+        .with_columns(
+            **inherited,
+            **face_shares(),
+            adaptation_measured=pl.col("adaptation_usd").is_not_null(),
+        )
+    ]
+    if untraced:
+        parts.append(
+            reflows.filter(pl.col("basis") == "untraced").with_columns(
+                **inherited,
+                marker_source=pl.lit("record"),
+                adaptation_measured=pl.col("year") >= ADAPTATION_FIRST_YEAR,
+                untraced_part=pl.lit(value=True),
+            )
+        )
+    amounts = {
+        "repayment": "received",
+        **({"interest": "interest"} if interest else {}),
+    }
+    # 0 - x keeps a zero amount +0.0, as a sum of zeros needs.
+    return pl.concat(
+        _conform(
+            part.with_columns(
+                origin=pl.lit(origin),
+                amount=0.0 - pl.col(f"{name}_usd"),
+                amount_low=0.0 - pl.col(f"{name}_usd"),
+                amount_high=0.0 - pl.col(f"{name}_low_usd"),
+            )
+        )
+        for part in parts
+        for origin, name in amounts.items()
+    )
 
 
 def _untraced_rows(release: Release, *, view: View, factor: pl.Expr) -> pl.LazyFrame:
@@ -957,6 +1108,7 @@ def _untraced_rows(release: Release, *, view: View, factor: pl.Expr) -> pl.LazyF
             marker_source=pl.lit("record"),
             share_unsplit=pl.lit(0.0),
             adaptation_measured=pl.col("year") >= ADAPTATION_FIRST_YEAR,
+            untraced_part=pl.lit(value=True),
         )
     )
 
@@ -1379,7 +1531,7 @@ def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
         value=amount * climate,
         low=pl.col("amount_low") * climate,
         high=pl.col("amount_high") * climate,
-        untraced=pl.when(pl.col("origin") == "untraced")
+        untraced=pl.when(pl.col("untraced_part").fill_null(value=False))
         .then(amount * climate)
         .otherwise(0.0),
     ).drop(*_WEIGHT_INPUTS, "method_coefficient")
@@ -1486,7 +1638,8 @@ def _totals(
     eu_kept: Mapping[str, pl.LazyFrame],
     agency: pl.Expr | None,
 ) -> pl.LazyFrame:
-    """All CRS flows of `spec.flow` by the result's row keys and method, plus a row
+    """All CRS flows of `spec.flow`, of disbursements for a net flow, by the
+    result's row keys and method, plus a row
     per provider, year, Bi_Multi code and method with a null recipient that sums
     every recipient, for rows such as attribution that have none. With an `agency`
     key (`_agency_key`) the keys hold `agency_code`, as the result table's do.
@@ -1499,7 +1652,7 @@ def _totals(
     same rows as its amount.
     """
     flows = release.table("total_flows").filter(
-        pl.col("flow") == spec.flow, *conditions
+        pl.col("flow") == _gross(spec.flow), *conditions
     )
     if spec.flow == "commitments":
         flows = flows.with_columns(
@@ -1541,7 +1694,8 @@ def _totals(
 def _modelled(
     release: Release, *, spec: Spec, conditions: Sequence[pl.Expr]
 ) -> pl.LazyFrame:
-    """The "modelled, not reported" line, shown for recipient-view disbursements."""
+    """The "modelled, not reported" line, shown for recipient-view disbursements
+    and no net flow."""
     modelled = with_names(
         release.table("modelled").select(
             "year",
