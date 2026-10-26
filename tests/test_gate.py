@@ -16,7 +16,11 @@ import climate_finance as cf
 from climate_finance import schema
 from climate_finance.build import load_config, run_stages, write_table
 from climate_finance.build.cli import app
-from climate_finance.build.errors import GateFailedError, SampleDesignError
+from climate_finance.build.errors import (
+    GateFailedError,
+    ReviewDecisionsError,
+    SampleDesignError,
+)
 from climate_finance.build.evaluate import (
     allocated_pairs,
     batch_packet_path,
@@ -635,6 +639,33 @@ def test_each_gate_fails_on_a_release_doctored_to_break_it(
     assert named in row["detail"]
 
 
+def _drop_d21(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.filter(pl.col("record_id") != "d21")
+
+
+@pytest.mark.parametrize(
+    ("edit", "passed"),
+    [
+        # d21 lies after the last complete year, so allocation never reads it.
+        (_drop_d21, True),
+        # d20 lies inside it and loses half its allocation.
+        (_halve_d20, False),
+    ],
+)
+def test_conservation_covers_the_years_allocation_reads(
+    release_dir: Path, edit: Callable[[pl.DataFrame], pl.DataFrame], passed: bool
+) -> None:
+    manifest_path = release_dir / "assemble" / "release.json"
+    manifest = ReleaseManifest.model_validate_json(manifest_path.read_text())
+    manifest.settings["years.crs_last_complete"] = 2020
+    manifest_path.write_text(manifest.model_dump_json())
+    _edit(table_path(release_dir, "fill", "allocations"), edit)
+
+    row = _report(release_dir).filter(gate="conservation").row(0, named=True)
+
+    assert row["passed"] is passed
+
+
 def _drop_p20(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.filter(pl.col("record_id") != "p20")
 
@@ -1017,7 +1048,9 @@ def test_the_sample_and_gate_commands_read_decisions_from_the_config(
 
     assert drawn.exit_code == 0, drawn.output
     assert pl.read_parquet(design_path(out)).height == 2
-    assert isinstance(missing.exception, FileNotFoundError)
+    assert isinstance(missing.exception, ReviewDecisionsError)
+    assert str(decisions) in str(missing.exception)
+    assert "cf-build import-labels" in str(missing.exception)
     assert reported.exit_code == 0, reported.output
     assert f"precision {NOR}: FAIL; continue after 0 labels (census)" in (
         reported.output
