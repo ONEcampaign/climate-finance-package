@@ -10,6 +10,10 @@ tier, and a bilateral provider's through its crs id, while a reflow under neithe
 known crs id nor a project number, as the EBRD files them, links nothing. Review
 decisions and key repair do not apply.
 
+A reflow record with no Bi_Multi code takes no unit. Every view lists the Bi_Multi
+codes it counts, so none could count the repayment, and linking it would credit the
+loan with a repayment that no net flow subtracts.
+
 A reflow unit that reaches no commitment unit ties to its loan's disbursement units
 through the same tiers and floors, with disbursement units in place of commitment
 units (`target` `disbursement`). Gross counts a loan whose disbursements reach no
@@ -33,14 +37,16 @@ def build_reflow_units(reflows: pl.LazyFrame) -> pl.LazyFrame:
     """Sum `reflows` records into units, in the `reflow_units` schema.
 
     A unit's commitment date is its largest record's, by principal plus interest,
-    ties to the smaller record id. Placed and floor years follow `build_units`.
+    ties to the smaller record id. Placed and floor years follow `build_units`. A
+    record with no `bi_multi` is left out.
     """
     dated = pl.col("commitment_year") < pl.col("year")
     size = pl.col("received_usd").abs().fill_null(0) + pl.col(
         "interest_usd"
     ).abs().fill_null(0)
     return (
-        reflows.with_columns(
+        reflows.filter(pl.col("bi_multi").is_not_null())
+        .with_columns(
             project_number=normalise_pn(pl.col("project_number")),
             commitment_year=pl.col("commitment_date").dt.year().cast(pl.Int16),
         )

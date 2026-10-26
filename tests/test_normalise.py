@@ -207,6 +207,21 @@ def test_reflows_keep_records_with_a_repayment_in_usd_units(
     assert aggregate["interest_usd"] == pytest.approx(0.1e6)
 
 
+def test_reflows_keep_a_record_with_no_bi_multi() -> None:
+    # The bulk CRS leaves Bi_Multi empty on some repayment-only rows.
+    raw = pl.read_parquet(OECD / "CRS.parquet").with_columns(
+        bi_multi=pl.when(pl.col("crs_id") == "2023P170002")
+        .then(None)
+        .otherwise("bi_multi")
+    )
+
+    repaid = normalise_reflows(raw.lazy(), years=YEARS).collect()
+
+    schema.validate(schema.CRS_REFLOWS, repaid)
+    assert _row(repaid, crs_id="2023P170002")["bi_multi"] is None
+    assert repaid.height == 3
+
+
 def test_crs_record_ids_ignore_the_reflow_records(crs: pl.DataFrame) -> None:
     # The first 17 rows of the fixture are those it held before it gained its
     # repayment rows.

@@ -248,8 +248,8 @@ def _rio() -> Column:
     return Column(pl.Int8(), nullable=True, values=RIO_MARKERS)
 
 
-def _bi_multi() -> Column:
-    return Column(pl.Int8(), values=BI_MULTI_CODES)
+def _bi_multi(*, nullable: bool = False) -> Column:
+    return Column(pl.Int8(), nullable=nullable, values=BI_MULTI_CODES)
 
 
 def _table(name: str, sort_key: tuple[str, ...], **columns: Column) -> TableSchema:
@@ -359,6 +359,9 @@ CRS = _table(
 # year in the bulk file. A record that also has a commitment, disbursement or grant
 # equivalent keeps its `crs` record id. A record with only a repayment takes an id
 # salted with "reflow", which no `crs` id shares.
+# The bulk file leaves Bi_Multi empty on 4,401 repayment-only rows of 2018 to 2024
+# (USD 60bn of principal, mostly of 2018 to 2022, filed under France, Korea, the EU
+# and others), so they stay in the table with a null `bi_multi`.
 CRS_REFLOWS = _table(
     "reflows",
     ("record_id",),
@@ -372,7 +375,7 @@ CRS_REFLOWS = _table(
     recipient_code=_code(),
     purpose_code=_code(nullable=True),
     channel_code=_code(nullable=True),
-    bi_multi=_bi_multi(),
+    bi_multi=_bi_multi(nullable=True),
     flow_code=_code(),
     finance_t=_code(nullable=True),
     received_usd=_usd(nullable=True),
@@ -1149,7 +1152,8 @@ UNALLOCATED = _table(
 # carried, and on `commitment` rows only what certain allocations carried, so
 # 0 <= received_low <= received. `inherited_*` and `climate_share` weight the row:
 # the commitment's, or for `untraced` the disbursement records' own markers. The
-# record's own markers (`record_rio_*`) are for display.
+# record's own markers (`record_rio_*`) are for display. A record with no Bi_Multi code
+# is in no view, so it links to no loan and its rows are all `unlinked`.
 REFLOWS = _table(
     "reflows",
     (
@@ -1165,7 +1169,7 @@ REFLOWS = _table(
     agency_code=_code(nullable=True),
     recipient_code=_code(),
     channel_code=_code(nullable=True),
-    bi_multi=_bi_multi(),
+    bi_multi=_bi_multi(nullable=True),
     purpose_code=_code(nullable=True),
     flow_code=_code(),
     finance_t=_code(nullable=True),

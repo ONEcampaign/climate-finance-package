@@ -135,6 +135,15 @@ def test_a_reflow_with_no_commitment_ties_to_its_loans_disbursements(
     assert set(links["unit_id"]) <= set(units["unit_id"])
 
 
+def test_a_reflow_with_no_bi_multi_takes_no_unit() -> None:
+    # No view counts it, so linking it would credit its loan with a repayment that
+    # no net flow subtracts.
+    units = _reflow_units({"crs_id": "L1"}, {"crs_id": "L2", "bi_multi": None})
+
+    assert units.height == 1
+    assert units["crs_id"].to_list() == ["L1"]
+
+
 def test_reflow_unit_ids_differ_from_the_trace_units_of_the_same_key() -> None:
     record = {"crs_id": "A", "year": 2023}
     trace = build_units(
