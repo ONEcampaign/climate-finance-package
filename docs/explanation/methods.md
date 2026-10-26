@@ -148,7 +148,7 @@ Some repayments stay out of every total. `release.quality().repayments` reports 
 
 The development banks report their interest to the CRS up to 2018 and none after. From 2019 their net transfers equal their net disbursements, and `explain()` says so.
 
-Coefficients apply in the year of the repayment. Under `PROVIDER`, a repayment weighs at the coefficients the provider applies in the year it is repaid and not in the year the loan disbursed, so a provider that changed its practice repays a loan at a different share than it counted.
+Coefficients apply in the year of the repayment. Under `PROVIDER`, a repayment weighs at the coefficients the provider applies in the year it is repaid, whatever year the loan disbursed, so a provider that changed its practice repays a loan at a different share than it counted.
 
 Under `view="provider"`, bilateral repayments subtract and pass through the same once-only rule for EU Institutions as gross rows. Attributed core contributions count as disbursements in a net flow, since a core contribution is not repaid.
 

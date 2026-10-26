@@ -18,11 +18,10 @@ commitment, is `untraced` where the release counts it in `untraced`, at the
 record's own markers. Otherwise excess is `excess`, and the disbursement of a
 record linked to no commitment, which carries no Rio marker gross counts, is
 `unmeasured`. So a loan that reaches no CRDF commitment repays at what gross
-counted of it. Principal
-attributed per loan stops at D, filled by repayment year then record id, and the
-rest is `beyond_disbursed`. Interest takes the shares in full. A loan whose records
-disbursed nothing in the release's years is `no_disbursement`, and a repayment that
-no key tier ties to a loan is `unlinked`.
+counted of it. Principal attributed per loan stops at D, filled by repayment year
+then record id, and the rest is `beyond_disbursed`. Interest takes the shares in
+full. A loan whose records disbursed nothing in the release's years is
+`no_disbursement`, and a repayment that no key tier ties to a loan is `unlinked`.
 
 A part's low amount is its amount where the reflow link is certain, as
 `allocate._trace_links` decides for a trace link, and on a `commitment` row only

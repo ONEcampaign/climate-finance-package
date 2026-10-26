@@ -40,7 +40,7 @@ def run_normalise(context: StageContext) -> StageOutput:
     Reads only those files, and of the CRS, each CRDF perspective and MULTI only
     the years `raw_manifest` records for it, which an offline fetch may have
     narrowed. `reflows` holds the CRS records that report principal repaid or
-    interest paid, and `crs` those that report an amount; a record with both is in
+    interest paid, and `crs` those that report an amount. A record with both is in
     both under one `record_id`. `btr` holds the BTR workbooks' Table III.1 rows
     with the DAC rate of each row's currency and year and their amounts restated at
     it, and `btr_workbooks` what was read from each workbook. Both are written only

@@ -8,7 +8,7 @@ onto one `Release.spending` call per source and flow:
 - Flows "gross_disbursements", "commitments", "grant_equivalent" and
   "net_disbursements" map to `flow="disbursements"`, `"commitments"`,
   `"grant_equivalent"` and `"net_disbursements"`. 1.x net disbursements were the
-  climate rows' disbursements less their own `usd_received`; 2.0 subtracts the
+  climate rows' disbursements less their own `usd_received`. 2.0 subtracts the
   principal repaid on the loans the disbursements count, at each loan's counted
   share.
 - Every OECD source is answered from the release's traced commitments and

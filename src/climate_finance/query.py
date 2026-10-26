@@ -28,7 +28,7 @@ converts it, and sums the rows into the result table. Rows have one of six origi
   `amount` subtracts the whole part. Of the whole part and what certain links
   carried (`received_low_usd`, `interest_low_usd`), `amount_low` subtracts the
   larger and `amount_high` the smaller, so each row keeps low <= value <= high
-  whatever the sign; for a positive repayment `high` sits above `value`. Every other
+  whatever the sign. For a positive repayment `high` sits above `value`. Every other
   basis is unattributed and counts nowhere.
 - `attribution`: under `view="provider"`, a provider's core contribution of the
   spec's flow to an agency times the agency's climate share, of disbursements for a
@@ -389,7 +389,7 @@ def _untraced(
     )
 
 
-# The `reflows` bases a net flow subtracts; every other basis is unattributed.
+# The `reflows` bases a net flow subtracts. Every other basis is unattributed.
 _COUNTED_BASES = ("commitment", "untraced")
 
 
@@ -1027,7 +1027,7 @@ def _reflow_rows(
     A `commitment` part joins its counted commitment and weighs by the markers and
     climate share it inherits, as a disbursement allocated to that commitment does.
     With `untraced`, an `untraced` part weighs by the disbursement records' own
-    markers, as `_untraced_rows` weighs them. `amount` subtracts the part; of the
+    markers, as `_untraced_rows` weighs them. `amount` subtracts the part. Of the
     part and what certain links carried, `amount_low` subtracts the larger and
     `amount_high` the smaller.
     """
@@ -1645,9 +1645,9 @@ def _totals(
     agency: pl.Expr | None,
 ) -> pl.LazyFrame:
     """All CRS flows of `spec.flow`, of disbursements for a net flow, by the
-    result's row keys and method, plus a row
-    per provider, year, Bi_Multi code and method with a null recipient that sums
-    every recipient, for rows such as attribution that have none. With an `agency`
+    result's row keys and method, plus a row per provider, year, Bi_Multi code
+    and method with a null recipient that sums every recipient, for rows such as
+    attribution that have none. With an `agency`
     key (`_agency_key`) the keys hold `agency_code`, as the result table's do.
 
     CRDF commitments carry their provider's class, Bi_Multi 1 for a bilateral

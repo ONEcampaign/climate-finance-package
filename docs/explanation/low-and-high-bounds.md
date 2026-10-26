@@ -18,7 +18,7 @@ Each row of the release's `disbursements` table is one CRS record's allocation t
 A commitment's `disbursed_low_usd`, `disbursed_usd`, and `disbursed_high_usd` sum its allocations' bounds. The release holds them to `0 <= disbursed_low_usd <= disbursed_usd <= disbursed_high_usd <= face_usd`.
 
 !!! note
-    With `flow="commitments"`, `low`, `value`, and `high` are equal.
+With `flow="commitments"`, `low`, `value`, and `high` are equal.
 
 ## Net flows
 
@@ -30,7 +30,7 @@ A commitment's `disbursed_low_usd`, `disbursed_usd`, and `disbursed_high_usd` su
 
 A repayment is certain when the tier that tied it to its loan is `wb_loan`, `crs_id_purpose`, `crs_id`, or `crs_id_parent` and its records agree on recipient and project number. A certain repayment subtracts from `high` in full on an untraced part, and on a `commitment` row for the share that certain links allocated to the row. A repayment tied by a project-number tier subtracts nothing from `high`. The `reflows` table holds each part's certain amount as `received_low_usd` and `interest_low_usd`.
 
-The pairing keeps `low <= value <= high` on every row. A repayment whose link is estimated might belong to another loan, so the highest net figure leaves it out, and the lowest net figure counts it against the smallest gross. Because `high` subtracts less than `value` does, `high` is above `value` for a single method and is not the central figure. A net figure can also be negative: when a provider repays more than it disburses in the years queried, `low` can fall below zero, and so can `value`.
+The pairing keeps `low <= value <= high` on every row. A repayment whose link is estimated might belong to another loan, so the highest net figure leaves it out, and the lowest net figure counts it against the smallest gross. Because `high` subtracts less than `value` does, `high` is above `value` for a single method. A net figure can be negative. When a provider repays more than it disburses in the years queried, `low` can fall below zero, and so can `value`.
 
 The interval is wider than a gross one. Gross `low` and `high` differ by link certainty alone, and a net flow adds the certainty of the repayments' own links. `release.quality().repayments` shows how much principal reaches a total at all.
 
