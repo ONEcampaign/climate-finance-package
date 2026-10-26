@@ -56,6 +56,10 @@ _FACE_TOLERANCE = 0.10
 # within this share. On the archive build every such pair that looks true sits
 # within 0.003%, and two phases of one solar plant sit 9.1% apart.
 _EIB_DESCRIPTION_SINGLE = 0.005
+# EIB rows of one year that share these are one description group, here and in
+# the EIB recovery routes (`link.crdf_crs`), so a group the repeat rule pairs is a
+# group the routes can recover.
+EIB_DESCRIPTION_GROUP = ("perspective", "recipient_code", "description_key")
 # A title is specific when it keeps at least this many characters once normalised
 # and at most this many of the provider's rows carry it.
 _TITLE_MIN_CHARS = 15
@@ -391,15 +395,10 @@ def _eib_description_edges(
         pl.col("description").is_not_null(),
         pl.col("face_usd") > 0,
     )
-    key = ["perspective", "recipient_code", "description_key"]
+    key = list(EIB_DESCRIPTION_GROUP)
     groups = (
         _in_euro(eib, rates, year="year", amount="face_usd", into="euro")
-        .with_columns(
-            description_key=pl.col("description")
-            .str.to_lowercase()
-            .str.replace_all(r"\s+", " ")
-            .str.strip_chars()
-        )
+        .with_columns(description_key=eib_description_key())
         .group_by(*key, "year")
         .agg(
             pl.col("row_id"),
@@ -420,6 +419,17 @@ def _eib_description_edges(
         pairs.select("row_id", "year", other="row_id_other", other_year="year_other")
         .explode("row_id")
         .explode("other")
+    )
+
+
+def eib_description_key() -> pl.Expr:
+    """The row's description in lower case with runs of space collapsed, null where
+    it has none."""
+    return (
+        pl.col("description")
+        .str.to_lowercase()
+        .str.replace_all(r"\s+", " ")
+        .str.strip_chars()
     )
 
 

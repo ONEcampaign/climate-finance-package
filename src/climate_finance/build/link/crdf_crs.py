@@ -34,10 +34,13 @@ and projects closest amount first. A crosswalk pair within 0.01% keeps the metho
 `crosswalk_amount`, since the amount then only suggests the contract.
 
 The last two compare texts by TF-IDF cosine and link one commitment unit dated in
-the row's year or later. A unit's amount can match the row's face value or, when
-rows share a year, title and description, their sum. Those rows then share the
-unit and one group. A row links only when the units its rule accepts belong to one
-project, and then to the accepted unit with the highest cosine.
+the row's year or later, its amount in euros at the rate of the year the CRS
+reports it. A unit's amount can match the row's face value or the sum of its
+description group, the rows of its year that share its recipient and description
+(`vintages.EIB_DESCRIPTION_GROUP`, the groups the repeat rule pairs). Those rows
+then share the unit and one group. A row links only when the units its rule
+accepts belong to one project, and then to the accepted unit with the highest
+cosine.
 """
 
 from collections.abc import Callable, Collection
@@ -51,7 +54,11 @@ from climate_finance.build.link.keys import as_exact_links, group_id
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.normalise.pairing import pair_one_to_one
 from climate_finance.build.normalise.project_numbers import normalise_pn
-from climate_finance.build.normalise.vintages import match_eib
+from climate_finance.build.normalise.vintages import (
+    EIB_DESCRIPTION_GROUP,
+    eib_description_key,
+    match_eib,
+)
 from climate_finance.schema import EIB_AGENCY, EU_INSTITUTIONS, EURO_ISSUER
 
 # CRDF rows and CRS commitments that agree on these, the CRDF provider standing for
@@ -75,14 +82,12 @@ _GENERIC_TITLE = 10
 _TEXT_MATCH = 0.7
 _TEXT_AMOUNT_GAP = 0.10
 # `eib_amount` needs an absolute log ratio of at most this, about 0.02%, and a cosine
-# of at least this, unless the unit's long description is shorter than this many
-# characters, as "PSI Investment Loan" is, and so says nothing.
+# of at least this, unless the unit's text is generic: empty, or carried by more
+# than this many EIB commitment units, as "PSI Investment Loan" is (154 units on the
+# archive build, the next most shared text 5), and so names no project.
 _EXACT_AMOUNT_GAP = 2e-4
 _TEXT_CONSISTENT = 0.3
-_GENERIC_TEXT = 25
-# Rows sharing these are one description group, often one operation split by
-# recipient or purpose.
-_DESCRIPTION_GROUP = ("year", "title", "description")
+_GENERIC_TEXT_UNITS = 10
 
 type _Route = Callable[[pl.DataFrame], pl.DataFrame]
 
@@ -375,9 +380,9 @@ def _eib_units(
     crs: pl.LazyFrame, *, units: pl.LazyFrame, rates: pl.DataFrame
 ) -> pl.DataFrame:
     """Bulk EIB commitment units with a commitment date, with their commitment in
-    euros at their commitment year's rate, their project (normalised project
-    number, else the unit itself) and their first record's title and long
-    description."""
+    euros at the rate of the year the CRS reports it, their project (normalised
+    project number, else the unit itself), their first record's title and long
+    description as `text`, and whether that text is generic."""
     eib = (pl.col("donor_code") == EU_INSTITUTIONS) & (
         pl.col("agency_code") == EIB_AGENCY
     )
@@ -390,25 +395,35 @@ def _eib_units(
             "unit_id",
             "recipient_code",
             "commitment_usd",
-            year="commitment_year",
+            "year",
+            "commitment_year",
             project=pl.coalesce("project_number", "unit_id"),
             record_id=pl.col("record_ids").list.first(),
         )
         .join(texts, on="record_id", how="left")
+        .with_columns(
+            text=pl.concat_str(
+                "title", "long_description", separator=". ", ignore_nulls=True
+            ).fill_null("")
+        )
+        .with_columns(
+            words=pl.col("text").str.to_lowercase().str.replace_all(r"\s+", " ")
+        )
         .select(
             "unit_id",
             "recipient_code",
             "commitment_usd",
             "year",
+            "commitment_year",
             "project",
-            text=pl.concat_str(
-                "title", "long_description", separator=". ", ignore_nulls=True
-            ).fill_null(""),
-            generic=pl.col("long_description").fill_null("").str.len_chars()
-            < _GENERIC_TEXT,
+            "text",
+            generic=(pl.col("words").str.strip_chars() == "")
+            | (pl.len().over("words") > _GENERIC_TEXT_UNITS),
         )
         .collect()
     )
+    # The CRS converts a commitment at the rate of the year it reports it in, so
+    # that rate gives back its euros; the commitment year only dates it.
     return _in_euro(dated, rates, amount="commitment_usd")
 
 
@@ -430,7 +445,7 @@ def _scored_pairs(rows: pl.DataFrame, units: pl.DataFrame) -> pl.DataFrame:
                 "recipient_code",
                 "project",
                 "generic",
-                unit_year="year",
+                unit_year="commitment_year",
                 unit_euro="euro",
             ),
             on="recipient_code",
@@ -481,22 +496,27 @@ def _by_text_and_amount(
     them. A unit two matches take goes to the one with the higher cosine, ties to
     the smaller `group_row`.
 
-    A description group holds only `rows`, the rows no earlier route linked, since
-    a linked row's money is already accounted for and summing it in would match a
-    unit on it a second time. A row with neither title nor description is a group
-    of its own, as having no text says nothing about which operation it is.
+    A description group (`vintages.EIB_DESCRIPTION_GROUP`) holds only `rows`, the
+    rows no earlier route linked, since a linked row's money is already accounted
+    for and summing it in would match a unit on it a second time. A row with no
+    description is a group of its own, as it says nothing about which operation it
+    belongs to.
     """
-    textless = pl.coalesce("title", "description").is_null()
-    faces = rows.with_columns(
-        group=pl.when(textless)
-        .then(pl.col("row_id"))
-        .otherwise(pl.col("row_id").min().over(_DESCRIPTION_GROUP))
-    ).select(
-        "row_id",
-        "group",
-        row_euro="euro",
-        group_euro=pl.col("euro").sum().over("group"),
-        group_rows=pl.len().over("group"),
+    key = pl.col("description_key")
+    faces = (
+        rows.with_columns(description_key=eib_description_key())
+        .with_columns(
+            group=pl.when(key.is_null())
+            .then(pl.col("row_id"))
+            .otherwise(pl.col("row_id").min().over("year", *EIB_DESCRIPTION_GROUP))
+        )
+        .select(
+            "row_id",
+            "group",
+            row_euro="euro",
+            group_euro=pl.col("euro").sum().over("group"),
+            group_rows=pl.len().over("group"),
+        )
     )
     passing = (
         scored.join(faces, on="row_id")

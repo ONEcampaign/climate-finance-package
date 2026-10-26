@@ -170,13 +170,13 @@ WORLD_BANK_OWN_LINE_MOVED_BN = {
     "no_disbursement_record": 0.0277,
     "not_traceable": 0.0,
 }
-# The EIB text and amount routes link 21 EIB rows no key reaches, 15 by
-# `eib_amount` (USD 0.61bn) and 6 by `eib_text_amount`.
+# The EIB text and amount routes link 17 EIB rows no key reaches, all by
+# `eib_amount` (USD 0.61bn).
 EIB_ROUTES_MOVED_BN = {
-    "disbursed": 0.0044,
-    "partly_disbursed": 0.6132,
-    "no_disbursement_record": -0.0055,
-    "not_traceable": -0.6120,
+    "disbursed": 0.0085,
+    "partly_disbursed": 0.6175,
+    "no_disbursement_record": -0.0116,
+    "not_traceable": -0.6143,
 }
 TOLERANCE_BN = 0.001
 
