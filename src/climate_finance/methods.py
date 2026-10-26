@@ -1,5 +1,6 @@
-"""Climate weighting: `Method`, the named methods ONE, OECD, PROVIDER, RANGE, and the
-marker rules that turn Rio markers or climate components into objective weights."""
+"""Climate weighting: `Method`, the named methods ONE, OECD, PROVIDER, RANGE,
+OXFAM_LOW, OXFAM_HIGH and OXFAM, and the marker rules that turn Rio markers or
+climate components into objective weights."""
 
 from typing import Literal, Self
 
@@ -13,6 +14,9 @@ from climate_finance.schema import OBJECTIVES
 __all__ = [
     "OECD",
     "ONE",
+    "OXFAM",
+    "OXFAM_HIGH",
+    "OXFAM_LOW",
     "PROVIDER",
     "RANGE",
     "Method",
@@ -29,6 +33,13 @@ NOT_CLIMATE = "not_climate_relevant"
 
 class Method(Frozen):
     """Coefficients applied to face value by Rio marker level.
+
+    `coefficients="provider"` reads each provider's own coefficients, and the
+    method's where it states none. `coefficients="capped"` reads them too, at most
+    the method's: `significant` and `principal` are ceilings as well as the
+    fallback. A row significant for both objectives takes the provider's
+    `both_significant`, else its significant coefficient uncapped, else counts in
+    full, as Oxfam's high bound does.
 
     `relevance="jev"` reads Jev's adaptation level, where Jev labelled a
     disbursement's record, in place of the adaptation marker it inherits.
@@ -47,7 +58,7 @@ class Method(Frozen):
     significant: float = Field(ge=0.0, le=1.0)
     principal: float = Field(ge=0.0, le=1.0)
     highest_marker: StrictBool
-    coefficients: Literal["fixed", "provider"] = "fixed"
+    coefficients: Literal["fixed", "provider", "capped"] = "fixed"
     relevance: Literal["markers", "jev"] = "markers"
     eu: Literal["channel", "provider"] = "channel"
 
@@ -88,8 +99,26 @@ PROVIDER = Method(
     significant=0.4, principal=1.0, highest_marker=True, coefficients="provider"
 )
 RANGE = MethodRange(methods=(ONE, OECD, PROVIDER))
+# Oxfam's Climate-Specific Net Assistance bounds. Oxfam counts EU Institutions as a
+# developed provider and the EIB as a development bank, as the provider setting does.
+OXFAM_LOW = Method(significant=0.3, principal=0.85, highest_marker=True, eu="provider")
+OXFAM_HIGH = Method(
+    significant=0.5,
+    principal=1.0,
+    highest_marker=True,
+    coefficients="capped",
+    eu="provider",
+)
+OXFAM = MethodRange(methods=(OXFAM_LOW, OXFAM_HIGH))
 
-_NAMED = {"ONE": ONE, "OECD": OECD, "PROVIDER": PROVIDER}
+_NAMED = {
+    "ONE": ONE,
+    "OECD": OECD,
+    "PROVIDER": PROVIDER,
+    "OXFAM_LOW": OXFAM_LOW,
+    "OXFAM_HIGH": OXFAM_HIGH,
+}
+_RANGES = {"RANGE": RANGE, "OXFAM": OXFAM}
 
 
 def uses_imputed_shares(method: Method) -> bool:
@@ -112,8 +141,9 @@ def label(method: Method | MethodRange) -> str:
     the same float.
     """
     if isinstance(method, MethodRange):
-        if method == RANGE:
-            return "RANGE"
+        for name, named in _RANGES.items():
+            if method == named:
+                return name
         return f"range of {' / '.join(label(member) for member in method.methods)}"
     for name, named in _NAMED.items():
         if method == named:
@@ -133,11 +163,12 @@ def describe(method: Method | MethodRange) -> str:
     """What `method` counts, in plain language."""
     if isinstance(method, MethodRange):
         names = " / ".join(label(member) for member in method.methods)
-        return (
+        text = (
             f"Methods {names}, reported together; low is the lowest of their lows, "
             "which count only what certain links carried, and high the highest value "
             "across them."
         )
+        return text + _OXFAM if method == OXFAM else text
     rule = (
         "each activity counts once, under its higher Rio marker, with equal "
         "markers as cross-cutting"
@@ -151,11 +182,18 @@ def describe(method: Method | MethodRange) -> str:
         f"{method.principal:.0%}; {rule}. Climate-component rows from development "
         "banks count their reported climate share and ignore the coefficients."
     )
-    if method.coefficients == "provider":
+    if method.coefficients != "fixed":
         text += (
             " Each provider takes the coefficients it applies when reporting to the "
             "UNFCCC for the activity's year and agency, as the release records them "
             "with their source, and these coefficients where it states none."
+        )
+    if method.coefficients == "capped":
+        text += (
+            " These coefficients also cap the provider's own. An activity significant "
+            "for both objectives takes the provider's coefficient for such "
+            "activities, else its significant coefficient uncapped, else counts in "
+            "full."
         )
     if method.relevance == "jev":
         text += (
@@ -169,6 +207,23 @@ def describe(method: Method | MethodRange) -> str:
         )
     return text + _EU[method.eu]
 
+
+_OXFAM = (
+    " OXFAM_LOW and OXFAM_HIGH are the bounds of Oxfam's Climate-Specific Net "
+    "Assistance: significant markers at 30% and principal at 85% in the low bound, "
+    "each provider's own coefficients capped at 50% and 100% in the high bound. "
+    "Oxfam values commitments at an estimated grant element; under "
+    'flow="grant_equivalent" the package values disbursements at their own grant '
+    "equivalent. Development banks and climate funds count through each agency's "
+    "own climate spending, not the OECD's attribution shares Oxfam applies to "
+    "their outflows. Two rules of Oxfam's high bound differ, each moving its 2024 "
+    "total by under 1%. Oxfam gives a provider that assesses each activity case by "
+    "case the caps, where the package takes the default share it reports "
+    "(Australia's 30% for significant activities, 0.8% lower). Oxfam gives an "
+    "agency its provider's coefficients, where the package gives an agency that "
+    "assesses case by case (the AFD, FinDev Canada, Export Development Canada) the "
+    "caps (0.8% higher)."
+)
 
 _EU = {
     "channel": " In the provider view EU Institutions count as a channel: members' "

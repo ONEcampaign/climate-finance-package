@@ -32,6 +32,9 @@ from climate_finance.frozen import Frozen
 from climate_finance.methods import (
     OECD,
     ONE,
+    OXFAM,
+    OXFAM_HIGH,
+    OXFAM_LOW,
     PROVIDER,
     RANGE,
     Method,
@@ -137,7 +140,10 @@ def read_one_method(
 
 
 # The methods `method` takes by name, keyed by the names `cf.methods.list()` prints.
-_METHODS = {label(method): method for method in (ONE, OECD, PROVIDER, RANGE)}
+_METHODS = {
+    label(method): method
+    for method in (ONE, OECD, PROVIDER, RANGE, OXFAM_LOW, OXFAM_HIGH, OXFAM)
+}
 
 
 def read_years(years: int | Iterable[int] | None) -> tuple[int, ...] | None:

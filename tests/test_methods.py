@@ -4,18 +4,23 @@ from collections.abc import Callable
 
 import polars as pl
 import pytest
+from make_fixture import DEU, FIXTURE_DIR, FRA, JPN, NOR
 
 import climate_finance as cf
 from climate_finance.errors import InvalidInputError
 from climate_finance.methods import (
     OECD,
     ONE,
+    OXFAM,
+    OXFAM_HIGH,
+    OXFAM_LOW,
     Method,
     MethodRange,
     label,
     transform_markers_into_indicators,
     weights,
 )
+from climate_finance.query import _coefficients
 
 DISBURSED = 800_000.0
 
@@ -43,8 +48,19 @@ def _by_objective(frame: pl.DataFrame) -> dict[str, float]:
         (ONE, 1, 0, {"adaptation": pytest.approx(0.4 * DISBURSED)}),
         (ONE, 0, 2, {"mitigation": DISBURSED}),
         (OECD, 0, 2, {"mitigation": DISBURSED}),
+        (OXFAM_LOW, 1, 0, {"adaptation": pytest.approx(0.3 * DISBURSED)}),
+        (OXFAM_LOW, 0, 2, {"mitigation": pytest.approx(0.85 * DISBURSED)}),
+        (OXFAM_LOW, 1, 1, {"cross_cutting": pytest.approx(0.3 * DISBURSED)}),
     ],
-    ids=["OECD significant", "ONE significant", "ONE principal", "OECD principal"],
+    ids=[
+        "OECD significant",
+        "ONE significant",
+        "ONE principal",
+        "OECD principal",
+        "OXFAM_LOW significant",
+        "OXFAM_LOW principal",
+        "OXFAM_LOW both significant",
+    ],
 )
 def test_a_single_marker_counts_at_its_coefficient(
     method: Method, adaptation: int, mitigation: int, expected: dict[str, float]
@@ -122,6 +138,15 @@ def test_named_methods_print_their_names_and_custom_ones_their_coefficients() ->
     )
     assert label(ONE.replace(eu="provider")) == "ONE, EU as a provider"
     assert label(OECD.replace(eu="channel")) == "OECD, EU as a channel"
+    assert (label(OXFAM), label(OXFAM_LOW), label(OXFAM_HIGH)) == (
+        "OXFAM",
+        "OXFAM_LOW",
+        "OXFAM_HIGH",
+    )
+    assert label(MethodRange(methods=(OXFAM_HIGH, OXFAM_LOW))) == (
+        "range of OXFAM_HIGH / OXFAM_LOW"
+    )
+    assert cf.Spec(method="OXFAM").method == OXFAM
 
 
 def test_methods_with_close_coefficients_keep_distinct_labels() -> None:
@@ -211,3 +236,59 @@ def test_marker_relevance_ignores_a_jev_level() -> None:
     frame = _marker_row(1, 0, 2)
 
     assert frame.select(**weights(ONE)).row(0, named=True)["adaptation"] == 0.4
+
+
+_PARTS = ("adaptation", "mitigation", "overlap")
+
+
+def test_capped_coefficients_take_the_providers_up_to_the_methods() -> None:
+    # (provider, agency, year, adaptation, mitigation): the fixture's coefficients
+    # for each provider are in `make_fixture.PROVIDER_COEFFICIENTS`.
+    rows = [
+        (JPN, 2, 2022, 1, 0),  # Japan's 0.6 is above the 0.5 cap
+        (JPN, 2, 2021, 0, 2),  # Japan's 0.85 principal is below the 1.0 cap
+        (NOR, 1, 2022, 1, 0),  # Norway's 0.3 default is below the cap
+        (FRA, 1, 2022, 1, 0),  # France's agency 1 states none, so takes the cap
+        (DEU, 52, 2022, 1, 1),  # Germany's own 1.0 for both significant
+        (JPN, 2, 2022, 1, 1),  # Japan has none: its significant 0.6, uncapped
+        (FRA, 1, 2022, 1, 1),  # France's agency 1 has neither: counts in full
+    ]
+    frame = pl.LazyFrame(
+        rows,
+        schema={
+            "provider_code": pl.Int32,
+            "agency_code": pl.Int32,
+            "year": pl.Int16,
+            "rio_adaptation": pl.Int8,
+            "rio_mitigation": pl.Int8,
+        },
+        orient="row",
+    ).with_columns(
+        pl.lit(None, pl.Float64).alias(name)
+        for name in ("climate_share", *(f"share_{part}" for part in _PARTS))
+    )
+
+    weighed = _coefficients(cf.load(path=FIXTURE_DIR), frame, method=OXFAM_HIGH)
+    result = weighed.select(
+        "method_coefficient",
+        climate=weights(
+            OXFAM_HIGH,
+            **{
+                name: pl.col(name)
+                for name in ("significant", "principal", "both_significant")
+            },
+        )["climate"],
+    ).collect()
+
+    assert result["climate"].to_list() == pytest.approx(
+        [0.5, 0.85, 0.3, 0.5, 1.0, 0.6, 1.0]
+    )
+    assert result["method_coefficient"].to_list() == [
+        True,
+        False,
+        False,
+        True,
+        False,
+        False,
+        True,
+    ]

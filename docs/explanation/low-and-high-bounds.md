@@ -14,6 +14,7 @@ Each row of the release's `disbursements` table is one CRS record's allocation t
 - In the provider view, attributed core contributions count in full in the low bound. A contribution is the donor's own reported payment, and the agency's climate share applied to it is a method parameter.
 - The high bound is the allocated amount.
 - Untraced disbursement counts in `value` and `high` and at zero in `low`. It has no link and no commitment, so no route to it is certain. Counting it in `low` would let a lost link raise `low`: a record whose only link is estimated adds nothing to `low`, and without the link it would become untraced in full. The result's `untraced` column holds this part of `value`, and `untraced=False` leaves it out.
+- Under `flow="grant_equivalent"`, a disbursement whose CRS record has no grant equivalent, such as a loan or a disbursement filled from a source that reports no finance type, counts 0 in `low`, `value`, and `high`. Its grant equivalent is unknown, so no bound can hold it. The result's `no_grant_equivalent` column holds its climate value at face, beside every total.
 
 A commitment's `disbursed_low_usd`, `disbursed_usd`, and `disbursed_high_usd` sum its allocations' bounds. The release holds them to `0 <= disbursed_low_usd <= disbursed_usd <= disbursed_high_usd <= face_usd`.
 

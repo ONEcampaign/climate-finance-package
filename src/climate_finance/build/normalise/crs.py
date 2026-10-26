@@ -54,6 +54,9 @@ _OCCURRENCE = ("long_description", *_AMOUNTS.values())
 # description and their repayments.
 _REFLOW_OCCURRENCE = ("long_description", *_REFLOWS.values())
 _REFLOW_SALT = "reflow"
+# The CRS finance types of a grant: a standard grant (110) and an interest subsidy
+# (210). A grant's grant equivalent is its face value.
+_GRANT_FINANCE_TYPES = (110, 210)
 _IDS = ("crs_id", "project_number")
 _TEXT = ("project_title", "short_description", "long_description")
 
@@ -65,7 +68,9 @@ def normalise_crs(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFrame:
     non-zero. Records with only a grant equivalent carry negative grant equivalents
     and stay in. A negative grant equivalent on a positive disbursement is null, as
     for a record the CRS does not value, so no disbursement carries a negative grant
-    equivalent; the count of such records is logged. Bi_Multi is kept as published,
+    equivalent; the count of such records is logged. A grant (finance type 110 or
+    210) without a grant equivalent takes its disbursement as one, so every table
+    built from the records values grants at face. Bi_Multi is kept as published,
     core contributions included (see `trace_population`), and missing Rio markers
     stay null. A kept record carries the principal repaid and interest paid it
     publishes, and the records that publish only those are `normalise_reflows`'s.
@@ -83,12 +88,23 @@ def normalise_crs(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFrame:
             "disbursement; their grant equivalent is null",
             corrections,
         )
-    return _in_schema(
-        with_content_id(in_years, "record_id", _IDENTITY, order_by=_OCCURRENCE)
-    ).with_columns(
-        grant_equiv_usd=pl.when(
-            ~_is_correction("grant_equiv_usd", "disbursement_usd")
-        ).then(pl.col("grant_equiv_usd"))
+    return (
+        _in_schema(
+            with_content_id(in_years, "record_id", _IDENTITY, order_by=_OCCURRENCE)
+        )
+        .with_columns(
+            grant_equiv_usd=pl.when(
+                ~_is_correction("grant_equiv_usd", "disbursement_usd")
+            ).then(pl.col("grant_equiv_usd"))
+        )
+        .with_columns(
+            grant_equiv_usd=pl.coalesce(
+                "grant_equiv_usd",
+                pl.when(pl.col("finance_t").is_in(_GRANT_FINANCE_TYPES)).then(
+                    pl.col("disbursement_usd")
+                ),
+            )
+        )
     )
 
 

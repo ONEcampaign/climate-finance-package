@@ -528,12 +528,20 @@ def _methods() -> pl.DataFrame:
     # Imported here: methods.py binds its listing from this module at import time.
     from climate_finance import methods
 
-    named = {"ONE": methods.ONE, "OECD": methods.OECD, "PROVIDER": methods.PROVIDER}
+    named = (methods.ONE, methods.OECD, methods.PROVIDER)
+    oxfam = (methods.OXFAM_LOW, methods.OXFAM_HIGH)
     rows = [
-        {"name": name, "description": methods.describe(method), **method.model_dump()}
-        for name, method in named.items()
+        {
+            "name": methods.label(method),
+            "description": methods.describe(method),
+            **method.model_dump(),
+        }
+        for method in (*named, *oxfam)
     ]
-    rows.append({"name": "RANGE", "description": methods.describe(methods.RANGE)})
+    rows.extend(
+        {"name": methods.label(method), "description": methods.describe(method)}
+        for method in (methods.RANGE, methods.OXFAM)
+    )
     return pl.DataFrame(rows)
 
 

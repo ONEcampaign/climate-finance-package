@@ -7,7 +7,8 @@ converts it, and sums the rows into the result table. Rows have one of six origi
   repeat an earlier vintage are left out, and `quality()` reports them.
 - `disbursement`: a CRS record's allocation to a counted commitment at face value
   (`allocated_usd`, or for `flow="grant_equivalent"` the record's grant equivalent
-  times allocated_usd over the record's disbursement),
+  times allocated_usd over the record's disbursement, which for a grant the CRS
+  gives none is its disbursement, as `normalise_crs` builds it),
   weighted by the markers and climate share it inherits from that commitment. `low`
   and `high` weight the allocation's own bounds, `allocated_low_usd` and
   `allocated_high_usd`, converted to grant equivalents the same way: `low` counts
@@ -48,7 +49,10 @@ rows leave and contributions to it attribute.
 Every row holds `value` = adaptation + mitigation - cross_cutting + unsplit, or
 + cross_cutting under the highest-marker rule, whose objectives are disjoint, and
 `untraced`, its value on an untraced row or a repayment's `untraced` part and 0 on
-any other.
+any other. Under `flow="grant_equivalent"` a disbursement or untraced row whose
+record has no grant equivalent, a loan or a fill, counts 0 in `amount`, `value`,
+`low` and `high`, and `no_grant_equivalent` holds its value at face; it is 0 on
+every other row and under every other flow.
 Where the CRDF does not measure adaptation (commitments before 2010, and agency
 shares whose span reaches one), adaptation and cross_cutting are null and `value`
 is the mitigation value. A table row's adaptation and cross_cutting are null when
@@ -208,6 +212,9 @@ _WEIGHT_INPUTS: dict[str, pl.DataType] = {
     "adaptation_measured": pl.Boolean(),
     # True on a row whose value counts in `untraced`.
     "untraced_part": pl.Boolean(),
+    # Under `flow="grant_equivalent"`, the face value of a row whose record has no
+    # grant equivalent, which counts in `no_grant_equivalent`; null on other rows.
+    "no_grant_equivalent_usd": pl.Float64(),
 }
 # The coefficient columns `_coefficients` sets, as `weights` takes them.
 _COEFFICIENT_INPUTS = {
@@ -266,7 +273,12 @@ def spending(release: Release, *, spec: Spec) -> Result:
                         frame,
                         method=method,
                         kept=kept,
-                        columns=("amount", "amount_low", "amount_high"),
+                        columns=(
+                            "amount",
+                            "amount_low",
+                            "amount_high",
+                            "no_grant_equivalent_usd",
+                        ),
                     ),
                     attributed,
                 ]
@@ -427,7 +439,7 @@ def _untraced(
         _weigh(
             _coefficients(
                 release,
-                _untraced_rows(release, view="recipient", factor=pl.lit(1.0)),
+                _untraced_rows(release, view="recipient", flow="disbursements"),
                 method=method,
             ),
             method=method,
@@ -1047,17 +1059,14 @@ def _base_rows(
         .filter(_in_view(view))
         .join(_labels(release), on="record_id", how="left")
     )
-    # Grant equivalents per USD disbursed, null where the record has neither.
-    factor = pl.lit(1.0)
-    if flow == "grant_equivalent":
-        record = pl.col("record_disbursement_usd")
-        factor = pl.when(record != 0).then(pl.col("record_grant_equiv_usd") / record)
+    factor, missing = _grant_equivalent(flow)
     traced = _conform(
         disbursements.with_columns(
             origin=pl.lit("disbursement"),
             amount=allocated * factor,
             amount_low=pl.col("allocated_low_usd") * factor,
             amount_high=pl.col("allocated_high_usd") * factor,
+            no_grant_equivalent_usd=pl.when(missing).then(allocated),
             rio_adaptation=pl.col("inherited_rio_adaptation"),
             rio_mitigation=pl.col("inherited_rio_mitigation"),
             jev_level=_scoped_jev(pl.col("inherited_rio_adaptation")),
@@ -1066,7 +1075,7 @@ def _base_rows(
     )
     rows = [traced]
     if untraced:
-        rows.append(_untraced_rows(release, view=view, factor=factor))
+        rows.append(_untraced_rows(release, view=view, flow=flow))
     if flow in NET_FLOWS:
         rows.append(
             _reflow_rows(
@@ -1077,6 +1086,26 @@ def _base_rows(
             )
         )
     return pl.concat(rows)
+
+
+def _grant_equivalent(flow: Flow) -> tuple[pl.Expr, pl.Expr]:
+    """A disbursement's amount per USD disbursed under `flow`, and whether its
+    record has no grant equivalent.
+
+    Under `flow="grant_equivalent"` the factor is the record's grant equivalent over
+    its disbursement: 0 for a record without one, whose face value counts in
+    `no_grant_equivalent`, and null for a record that disburses nothing. Under any
+    other flow it is 1.
+    """
+    if flow != "grant_equivalent":
+        return pl.lit(1.0), pl.lit(value=False)
+    record, grant_equiv = (
+        pl.col("record_disbursement_usd"),
+        pl.col("record_grant_equiv_usd"),
+    )
+    missing = grant_equiv.is_null()
+    factor = pl.when(missing).then(0.0).when(record != 0).then(grant_equiv / record)
+    return factor, missing
 
 
 def _reflow_rows(
@@ -1149,15 +1178,16 @@ def _reflow_rows(
     )
 
 
-def _untraced_rows(release: Release, *, view: View, factor: pl.Expr) -> pl.LazyFrame:
-    """The `untraced` rows `view` counts, at `factor` per USD disbursed, weighed by
-    the record's own markers.
+def _untraced_rows(release: Release, *, view: View, flow: Flow) -> pl.LazyFrame:
+    """The `untraced` rows `view` counts, valued as `flow` values a disbursement
+    (`_grant_equivalent`), weighed by the record's own markers.
 
     No commitment publishes a share for them, so their shares stay null and cap no
     marker weight. The CRS measures adaptation from `ADAPTATION_FIRST_YEAR`; before
     it the release holds a null adaptation marker, as the CRDF does, and the row
     counts mitigation alone.
     """
+    factor, missing = _grant_equivalent(flow)
     amount = pl.col("untraced_usd") * factor
     return _conform(
         release.table("untraced")
@@ -1166,9 +1196,10 @@ def _untraced_rows(release: Release, *, view: View, factor: pl.Expr) -> pl.LazyF
         .with_columns(
             origin=pl.lit("untraced"),
             amount=amount,
-            # Null where the amount is, as for a record without a grant equivalent.
+            # Null where the amount is, as for a record that disburses nothing.
             amount_low=pl.when(amount.is_not_null()).then(0.0),
             amount_high=amount,
+            no_grant_equivalent_usd=pl.when(missing).then(pl.col("untraced_usd")),
             record_rio_adaptation=pl.col("rio_adaptation"),
             record_rio_mitigation=pl.col("rio_mitigation"),
             jev_level=_scoped_jev(pl.col("rio_adaptation")),
@@ -1454,7 +1485,9 @@ def _coefficients(
     row of its own, and `weights` gives an activity significant for both objectives
     the row's `both_significant`. Where the row gives no coefficient, because the
     provider assesses each activity case by case or has no row, the row takes the
-    method's.
+    method's. Under capped coefficients the method's coefficients also cap the
+    provider's, and a row significant for both objectives takes the provider's
+    `both_significant`, else its significant coefficient uncapped, else 1.
     `coefficient_basis` is `provider` for the provider's flat coefficients, `default`
     for the default share of a provider that assesses case by case, `case_by_case`
     where such a provider gives no default, and null where the release holds no row.
@@ -1462,7 +1495,10 @@ def _coefficients(
     coefficient, so its `coefficient_basis` and `coefficient_source` are null.
     `method_coefficient` is true for a marker row whose higher Rio marker weighs at
     the method's coefficient: its principal one for a Principal row, its significant
-    one for a Significant row without a `both_significant` of its own.
+    one for a Significant row without a `both_significant` of its own. Under capped
+    coefficients it is also true where the method's coefficient caps a higher one of
+    the provider's, and for a row significant for both objectives that counts in
+    full because the provider states neither coefficient.
     """
     # A frame without shares, such as `total_flows`, weighs every row by its markers.
     marker = (
@@ -1495,13 +1531,30 @@ def _coefficients(
     def pick(name: str) -> pl.Expr:
         return pl.when(own_agency).then(pl.col(name)).otherwise(pl.col(f"{name}_all"))
 
+    capped = method.coefficients == "capped"
+
+    def took(name: str, ceiling: float) -> pl.Expr:
+        held = pl.col(name)
+        return held.is_null() | (held > ceiling) if capped else held.is_null()
+
+    def coefficient(name: str, ceiling: float) -> pl.Expr:
+        if capped:
+            return pl.min_horizontal(pl.col(name), pl.lit(ceiling))
+        return pl.col(name).fill_null(ceiling)
+
     rio_a, rio_m = pl.col("rio_adaptation"), pl.col("rio_mitigation")
+    both = (rio_a == 1) & (rio_m == 1)
     took_method = (
         pl.when(pl.max_horizontal(rio_a, rio_m) == 2)
-        .then(pl.col("_principal").is_null())
-        .when((rio_a == 1) & (rio_m == 1) & pl.col("_both").is_not_null())
+        .then(took("_principal", method.principal))
+        .when(both & pl.col("_both").is_not_null())
         .then(pl.lit(value=False))
-        .otherwise(pl.col("_significant").is_null())
+        .when(both & capped)
+        .then(pl.col("_significant").is_null())
+        .otherwise(took("_significant", method.significant))
+    )
+    both_significant = (
+        pl.coalesce("_both", "_significant", pl.lit(1.0)) if capped else pl.col("_both")
     )
     return (
         frame.join(
@@ -1519,9 +1572,9 @@ def _coefficients(
         )
         .with_columns(pick(name).alias(name) for name in columns)
         .with_columns(
-            significant=pl.col("_significant").fill_null(method.significant),
-            principal=pl.col("_principal").fill_null(method.principal),
-            both_significant=pl.col("_both"),
+            significant=coefficient("_significant", method.significant),
+            principal=coefficient("_principal", method.principal),
+            both_significant=both_significant,
             coefficient_basis=pl.when(marker).then(pl.col("_basis")),
             coefficient_source=pl.when(marker).then(pl.col("_source")),
             method_coefficient=marker & took_method,
@@ -1582,7 +1635,7 @@ def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
     """Weight each row's amount by objective, unsplit and in total under `method`.
 
     Adaptation and cross_cutting are null where adaptation is not measured."""
-    amount = pl.col("amount")
+    amount, face = pl.col("amount"), pl.col("no_grant_equivalent_usd")
     fractions = weights(
         method, **_COEFFICIENT_INPUTS, published=pl.col("share_climate")
     )
@@ -1600,6 +1653,9 @@ def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
         high=pl.col("amount_high") * climate,
         untraced=pl.when(pl.col("untraced_part").fill_null(value=False))
         .then(amount * climate)
+        .otherwise(0.0),
+        no_grant_equivalent=pl.when(face.is_not_null())
+        .then(face * climate)
         .otherwise(0.0),
     ).drop(*_WEIGHT_INPUTS, "method_coefficient")
 
@@ -1661,7 +1717,8 @@ def _aggregate(
     bounds it when `Result` spans the bounds across methods.
 
     The columns start with the year, the names and the method and end with `value`,
-    `low`, `high` and `untraced`, so polars' truncated print shows them.
+    `low`, `high`, `untraced` and `no_grant_equivalent`, so polars' truncated print
+    shows them.
     """
     row_keys = ROW_KEYS if agency is None else AGENCY_ROW_KEYS
     keys = (*row_keys, "method")

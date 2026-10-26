@@ -50,7 +50,7 @@ from climate_finance.sums import ordered_sum
 
 AMOUNTS = (
     "amount", "adaptation", "mitigation", "cross_cutting", "unsplit", "value", "low",
-    "high", "untraced",
+    "high", "untraced", "no_grant_equivalent",
 )  # fmt: skip
 # Where each of `Result.rows()` comes from, as `query` describes.
 ORIGINS = (
@@ -114,7 +114,8 @@ class Result:
     spec names, and the bounds span the methods' shares.
 
     `table` starts `year`, `provider`, `recipient`, `method` and ends `value`, `low`,
-    `high`, `untraced`, so polars' truncated print shows them; `provider` and
+    `high`, `untraced`, `no_grant_equivalent`, so polars' truncated print shows
+    them; `provider` and
     `recipient` name the codes beside them, as do `provider`, `agency` and
     `recipient` in `rows()`, which start `origin`, `year`, `record_id`,
     `link_method`. A spec that names an agency keys `table` by `AGENCY_ROW_KEYS`,
@@ -203,7 +204,7 @@ class Result:
         provider = [
             label(method)
             for method in self.spec.methods
-            if method.coefficients == "provider"
+            if method.coefficients != "fixed"
         ]
         coefficients = None
         if provider:
@@ -576,7 +577,7 @@ def explain(
     lines = [f"Release {release}."]
     for method in methods:
         lines.append(describe(method))
-        if coefficients is not None and method.coefficients == "provider":
+        if coefficients is not None and method.coefficients != "fixed":
             lines.extend(
                 _coefficient_lines(
                     method, coefficients.filter(pl.col("method") == label(method))
@@ -602,7 +603,7 @@ def explain(
     lines.append(_FLOWS[spec.flow])
     if spec.flow in NET_FLOWS:
         lines.append(_REPAYMENTS)
-        if any(method.coefficients == "provider" for method in methods):
+        if any(method.coefficients != "fixed" for method in methods):
             lines.append(
                 "Under provider coefficients, a repayment weighs at the "
                 "coefficients of the year it is repaid, not of the year its loan "
@@ -852,8 +853,10 @@ _FLOWS = {
     "holds a disbursement range for commitments whose disbursements no source "
     "reports.",
     "grant_equivalent": "Flow: grant equivalent of disbursements, shared across the "
-    "commitments a record funds in proportion to the amount each receives; records "
-    "without one stay missing, and release.quality() reports coverage.",
+    "commitments a record funds in proportion to the amount each receives. A grant "
+    "the CRS gives no grant equivalent counts at face value. A loan or other record "
+    "without one counts 0 in value, low and high, and the no_grant_equivalent column "
+    "holds its climate value at face; release.quality() reports coverage.",
     "net_disbursements": "Flow: net disbursements, gross disbursements less the "
     "principal repaid on the loans whose disbursements the release counts.",
     "net_transfers": "Flow: net transfers, gross disbursements less the principal "
