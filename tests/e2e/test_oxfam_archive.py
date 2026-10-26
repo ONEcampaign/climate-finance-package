@@ -3,9 +3,6 @@ against the bulk file, the identities `flow="grant_equivalent"` holds for the
 multilateral outflows of the recipient view, and OXFAM_LOW and OXFAM_HIGH for the
 developed countries Oxfam counts. The `release` fixture in conftest.py builds the
 archive.
-
-The pins marked "pinned from the first archive run" hold a sentinel until the first
-run prints the figures.
 """
 
 from pathlib import Path
@@ -38,12 +35,10 @@ HELD_SNAPSHOT_2024 = (25.3, 34.0)
 # Multilateral outflows, 2015 to 2024, under ONE in the recipient view, as shares of
 # the climate-weighted disbursements: the part on records whose grant equivalent is
 # their disbursement, and the part on records with no grant equivalent.
-# pinned from the first archive run
-MULTILATERAL_SHARES = {"at_face": -1.0, "no_grant_equivalent": -1.0}
+MULTILATERAL_SHARES = {"at_face": 0.0990, "no_grant_equivalent": 0.9010}
 # OXFAM_LOW and OXFAM_HIGH `value` for 2024, in USD billion, under
 # `flow="grant_equivalent"` in the provider view.
-# pinned from the first archive run
-OXFAM_PINS = {"OXFAM_LOW": -1.0, "OXFAM_HIGH": -1.0}
+OXFAM_PINS = {"OXFAM_LOW": 25.77, "OXFAM_HIGH": 33.26}
 PINNED_TOLERANCE = 0.01
 TOLERANCE = 1e-9
 ONE_DOLLAR = 1.0
@@ -192,7 +187,6 @@ def test_multilateral_grants_at_face_hold_a_pinned_share(
     }
     print({name: round(share, 4) for name, share in shares.items()})
 
-    # pinned from the first archive run
     assert shares == pytest.approx(MULTILATERAL_SHARES, rel=PINNED_TOLERANCE)
 
 
@@ -229,7 +223,6 @@ def test_oxfam_bound_is_pinned(oxfam: dict[str, dict[str, float]], method: str) 
         f"the held-data snapshot is {low} to {high}"
     )
 
-    # pinned from the first archive run
     assert figures["value"] == pytest.approx(OXFAM_PINS[method], rel=PINNED_TOLERANCE)
 
 
