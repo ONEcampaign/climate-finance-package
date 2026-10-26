@@ -2,6 +2,7 @@
 
 import json
 import logging
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
@@ -70,17 +71,69 @@ def test_finances_one_reads_ida_credits_by_credit_number() -> None:
     assert _amount(ida, key="IDA90002") == 60_000
 
 
-def test_finances_one_refuses_a_snapshot_that_lists_a_loan_twice(
-    tmp_path: Path,
-) -> None:
+def _finances_one_2021(tmp_path: Path, edit: Callable[[list], list]) -> Path:
+    """A copy of the IBRD fixture snapshots with the 2021 rows passed through `edit`."""
     folder = LEDGERS / "finances_one"
     before, after = "DS00975_31-Dec-2020.json", "DS00975_31-Dec-2021.json"
     (tmp_path / before).write_text((folder / before).read_text())
     rows = json.loads((folder / after).read_text())
-    (tmp_path / after).write_text(json.dumps([*rows, rows[0]]))
+    (tmp_path / after).write_text(json.dumps(edit(rows)))
+    return tmp_path
 
-    with pytest.raises(SourceUnavailableError, match="IBRD90001"):
-        read_finances_one(tmp_path, dataset="DS00975", years=[2021])
+
+def _split(row: dict, *, first: float, **second: object) -> list[dict]:
+    """`row` as two rows holding `first` and the rest of its disbursement."""
+    rest = row["disbursed_amount"] - first
+    return [
+        {**row, "disbursed_amount": first, "loan_status": "Repaying"},
+        {**row, "disbursed_amount": rest, **second},
+    ]
+
+
+def test_finances_one_adds_up_a_loan_listed_in_several_rows(tmp_path: Path) -> None:
+    # IBRD90002 stands at 1,500,000 at the end of 2021, listed as 900,000 and 600,000.
+    folder = _finances_one_2021(
+        tmp_path, lambda rows: [rows[0], *_split(rows[1], first=900_000), *rows[2:]]
+    )
+
+    ibrd = read_finances_one(folder, dataset="DS00975", years=[2021])
+
+    assert ibrd.filter(key="IBRD90002").height == 1
+    assert _amount(ibrd, key="IBRD90002") == 500_000
+
+
+@pytest.mark.parametrize(
+    ("edit", "match"),
+    [
+        # A row repeated whole is a paging overlap, which summed reads as a phantom
+        # disbursement.
+        (lambda rows: [*rows, rows[0]], r"whole .* \['IBRD90001'\].* overlapped"),
+        (
+            lambda rows: [
+                *rows[:1],
+                *_split(rows[1], first=1, project_id="P0"),
+                *rows[2:],
+            ],
+            r"disagree on IBRD90002 \(project_id\)",
+        ),
+        (
+            lambda rows: [
+                *rows[:1],
+                *_split(rows[1], first=1, project_name_="X"),
+                *rows[2:],
+            ],
+            r"disagree on IBRD90002 \(title\)",
+        ),
+    ],
+    ids=["row-repeated-whole", "parts-of-two-projects", "parts-of-two-titles"],
+)
+def test_finances_one_refuses_rows_it_cannot_add_up(
+    tmp_path: Path, edit: Callable[[list], list], match: str
+) -> None:
+    with pytest.raises(SourceUnavailableError, match=match):
+        read_finances_one(
+            _finances_one_2021(tmp_path, edit), dataset="DS00975", years=[2021]
+        )
 
 
 def test_finances_one_names_a_missing_snapshot() -> None:
