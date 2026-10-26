@@ -41,8 +41,9 @@ CERTAIN_METHODS = ("wb_loan", "crs_id_purpose", "crs_id", "crs_id_parent")
 # The `crdf_crs` routes that tie a CRDF row to its CRS commitment by construction:
 # the same crs id in the same year, a contract matched within 0.01% in euros, and
 # the CRS record the row was cut from. Every other route, `eib_list`,
-# `crosswalk_amount` and `title_recipient` among them, is estimated, so a certain
-# trace link reached through it counts nothing in the low bound.
+# `crosswalk_amount`, `title_recipient`, `eib_text_amount` and `eib_amount` among
+# them, is estimated, so a certain trace link reached through it counts nothing in
+# the low bound.
 CERTAIN_ROUTES = ("within_year", "crosswalk", "aggregate_partition")
 KEY_REPAIR_METHODS = (
     "repair_new_crs_id",
@@ -69,6 +70,8 @@ LINK_METHODS = (
     "btr_id",
     "btr_splink",
     "human",
+    "eib_text_amount",
+    "eib_amount",
 )
 LINK_TASKS = ("crdf_crs", "trace", "btr_crs")
 REVIEW_REASONS = (
@@ -263,6 +266,8 @@ CRDF = _table(
     crs_id=_str(nullable=True),
     project_number=_str(nullable=True),
     title=_str(nullable=True),
+    # The CRDF row's long description.
+    description=_str(nullable=True),
     recipient_code=_code(),
     channel_code=_code(nullable=True),
     bi_multi=_bi_multi(),
