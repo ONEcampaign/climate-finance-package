@@ -217,7 +217,7 @@ Key `provider_code`, `agency_code`, `first_year`. The coefficients each provider
 
 ## `jev_flags`
 
-Key `record_id`. Jev's answers about each CRS record from `jev_flags_first_year` to `crs_last_complete` with a Rio mitigation or adaptation marker of 1 or 2 and a positive commitment or disbursement, beside the record's own facts. The table has no rows in a build with `jev_flags` off, and `release.json` records the switch under `settings`. `release.jev_flags()` reads it and adds `in_release`. The flags change no total:
+Key `record_id`. Jev's answers about each CRS record from `jev_flags_first_year` to `crs_last_complete` with a Rio mitigation or adaptation marker of 1 or 2 and a positive commitment or disbursement, beside the record's own facts. The table has no rows in a build with `jev_flags` off, and `release.json` records the switch under `settings`. `release.jev_flags()` reads it and adds `in_release`. The flags change no total. The columns are:
 
 - `record_id`, `year`: the CRS record and its year.
 - `provider_code`, `agency_code`, `recipient_code`, `purpose_code`, `flow_code`, `project_number`, `crs_id`, `title`: the record's own fields.

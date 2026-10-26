@@ -1093,8 +1093,8 @@ QUALITY = _table(
 )
 
 # The cuts on Jev's answers at which a `jev_flags` record is flagged. Measured on
-# hand-labelled texts of the climate-marked CRS: no aim has precision 1.00 and
-# recall 0.93 on 200 stratified texts, surprising 0.83 and 0.60 on 240.
+# hand-labelled texts of the climate-marked CRS, `no_aim` has precision 1.00 and
+# recall 0.93 on 200 stratified texts, and `surprising` 0.83 and 0.60 on 240.
 NO_AIM_CUT = 0.7
 SURPRISING_CUT = 0.8
 JEV_FLAG_PROBABILITIES = (

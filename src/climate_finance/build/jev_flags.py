@@ -5,13 +5,12 @@ from `jev_flags_first_year` to `years.crs_last_complete` with a Rio mitigation o
 adaptation marker of 1 or 2 and a positive commitment or disbursement, and answers
 whether the activity aims at mitigation, at adaptation, could work against climate
 goals, and would surprise a reader as climate finance. The `jev_flags` table holds
-the answers beside the record's own facts. The flags change no total: no stage or
+the answers beside the record's own facts. The flags change no total, and no stage or
 query weighs a record by them.
 
-The questions and requests are those of the scan that measured the cuts
-(`schema.NO_AIM_CUT`, `schema.SURPRISING_CUT`), byte for byte, so a client cache
-holding the scan's responses answers them. A change to any string asks Jev again
-and needs a new evaluation.
+The cuts (`schema.NO_AIM_CUT`, `schema.SURPRISING_CUT`) were measured on Jev's
+answers to these requests byte for byte, and a client cache of those answers
+replays them. A change to any string asks Jev again and needs a new evaluation.
 """
 
 from __future__ import annotations
@@ -131,7 +130,7 @@ FLAG_QUESTIONS = {
     "surprising": SURPRISING,
 }
 STATE_KEY = "aid_activity_description"
-# Texts shorter than this are not asked: a title alone tells Jev too little.
+# Texts shorter than this go unasked, as a title alone tells Jev too little.
 MIN_TEXT_CHARS = 60
 
 

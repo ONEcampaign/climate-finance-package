@@ -39,7 +39,7 @@ Two cuts turn answers into flags. `no_aim` holds where one less the larger of th
 
 The answer to the third question ranks records and has no flag, because it also scores vehicle purchases and rural roads. The mitigation answer has no external check, and `release.jev_flags()` leaves it out unless called with `experimental=True`.
 
-The flags point a reviewer at records to check. They change no total: no stage or query weighs a record by them, and `spending()` returns the same figures with the switch on or off. [Python API](../reference/python-api.md) describes the reader, and [Release tables](../reference/release-tables.md#jev_flags) the columns.
+The flags point a reviewer at records to check. They change no total. No stage or query weighs a record by them, and `spending()` returns the same figures with the switch on or off. [Python API](../reference/python-api.md) describes the reader, and [Release tables](../reference/release-tables.md#jev_flags) the columns.
 
 ## Attribution to providers
 
