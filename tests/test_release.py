@@ -222,7 +222,7 @@ def release_dir(tmp_path: Path, config: BuildConfig) -> Path:
             "crdf": CRDF,
             "crdf_span": _empty(schema.CRDF_SPAN),
             "crs": CRS,
-            "reflows": _empty(schema.REFLOWS),
+            "reflows": _empty(schema.CRS_REFLOWS),
             "core_contributions": CORE,
             "imputed_shares": _empty(schema.IMPUTED_SHARES),
             "external": _empty(schema.EXTERNAL),

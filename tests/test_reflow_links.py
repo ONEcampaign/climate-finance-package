@@ -47,8 +47,8 @@ def _reflow_units(*records: dict[str, object]) -> pl.DataFrame:
         _DEFAULTS | {"record_id": f"r{n}", "year": 2023} | record
         for n, record in enumerate(records)
     ]
-    reflows = pl.DataFrame(rows, schema=schema.REFLOWS.dtypes)
-    schema.validate(schema.REFLOWS, reflows)
+    reflows = pl.DataFrame(rows, schema=schema.CRS_REFLOWS.dtypes)
+    schema.validate(schema.CRS_REFLOWS, reflows)
     units = build_reflow_units(reflows.lazy()).collect()
     schema.validate(schema.REFLOW_UNITS, units)
     return units

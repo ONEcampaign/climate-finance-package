@@ -34,6 +34,10 @@ commitment: excess beyond a full commitment, and records linked to nothing
 fund records whose money the funds' IATI route counts. `schema.release_invariants`
 checks that these parts and the Rio-marked records' `disbursements` rows sum to
 `marked_usd`.
+
+`reflows` holds each CRS repayment split over what its loan's disbursements reached
+(`build.reflows`): the CRDF rows, whose markers it weighs by, and the parts no
+commitment in the release holds, each under its own `basis`.
 """
 
 from __future__ import annotations
@@ -75,6 +79,12 @@ from climate_finance.build.link.gap_fill import routed_records
 from climate_finance.build.measure import load_provider_facts
 from climate_finance.build.provenance import setting_value
 from climate_finance.build.readers.btr import party_provider
+from climate_finance.build.reflows import (
+    attribute_reflows,
+    loan_records,
+    loan_shares,
+    release_reflows,
+)
 from climate_finance.build.sums import ordered_sum
 from climate_finance.release import (
     SYNTHETIC_RELEASE,
@@ -305,6 +315,18 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         withheld=disbursements.lazy().filter(withheld),
     ).collect()
     linked_btr = btr_links(links, crs=crs).collect()
+    untraced = release_untraced(untraced_records(marked), crs=crs).collect()
+    reflows = context.read("normalise", "reflows").filter(pl.col("year") <= last_year)
+    reflow_units = context.read("link", "reflow_units")
+    reflow_links = context.read("link", "reflow_links")
+    shares = loan_shares(
+        loan_records(reflow_links, links=links, units=context.read("link", "units")),
+        allocations=allocations,
+        untraced=untraced.lazy(),
+    )
+    attributed = attribute_reflows(
+        reflows, reflow_units=reflow_units, reflow_links=reflow_links, shares=shares
+    )
     tables = {
         "commitments": commitments,
         "disbursements": disbursements,
@@ -333,8 +355,9 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
             objectives=objectives.lazy(),
             links=links,
         ).collect(),
-        "untraced": release_untraced(untraced_records(marked), crs=crs).collect(),
+        "untraced": untraced,
         "unallocated": unallocated(marked).collect(),
+        "reflows": release_reflows(attributed, reflows=reflows, crdf=crdf).collect(),
         "total_flows": total_flows(crs).collect(),
         "provider_coefficients": provider_coefficients(
             yaml.safe_load(PROVIDER_COEFFICIENTS_FILE.read_text(encoding="utf-8"))

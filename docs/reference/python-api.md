@@ -43,7 +43,7 @@ print(release)
 ```
 
 ```output
-Release('fixture', synthetic figures): commitments 2021 to 2022, disbursements 2021 to 2024; 17 tables
+Release('fixture', synthetic figures): commitments 2021 to 2022, disbursements 2021 to 2024; 18 tables
 ```
 
 ### `Release.spending(*, providers, recipients, years, method, flow, view, currency, prices, oda_only, measure, untraced)`

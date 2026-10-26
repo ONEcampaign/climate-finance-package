@@ -109,6 +109,19 @@ MARKER_SOURCES = ("components", "commitment", "record_differs")
 # Why a Rio-marked CRS record's disbursement reaches no commitment: it exceeds
 # what its linked commitments take, or the record is linked to none.
 UNTRACED_REASONS = ("excess", "unlinked")
+# Where a loan's repayment goes (`build.reflows`): to a CRDF commitment the loan's
+# disbursements reached, to commitments with no CRDF row, to the loan's excess that
+# gross leaves out or counts as `untraced`, past what the loan disbursed, or nowhere,
+# as the loan disbursed nothing in the window or no key tier reached it.
+REFLOW_BASES = (
+    "commitment",
+    "outside_release",
+    "excess",
+    "untraced",
+    "beyond_disbursed",
+    "no_disbursement",
+    "unlinked",
+)
 PAIR_LABEL_SOURCES = ("key", "rule", "jev", "human", "agent", "ledger")
 # Who decides a review pair: a person, or an agent reading a labelling packet.
 DECIDERS = ("human", "agent")
@@ -320,7 +333,7 @@ CRS = _table(
     grant_equiv_usd=_usd(nullable=True),
     # Principal repaid and interest paid on a loan in the year, as the bulk CRS
     # publishes them (`usd_received`, `usd_interest`). Most records that carry one
-    # carry no commitment or disbursement, and `REFLOWS` holds them.
+    # carry no commitment or disbursement, and `CRS_REFLOWS` holds them.
     received_usd=_usd(nullable=True),
     interest_usd=_usd(nullable=True),
     commitment_date=Column(pl.Date(), nullable=True),
@@ -336,7 +349,7 @@ CRS = _table(
 # year in the bulk file. A record that also has a commitment, disbursement or grant
 # equivalent keeps its `crs` record id. A record with only a repayment takes an id
 # salted with "reflow", which no `crs` id shares.
-REFLOWS = _table(
+CRS_REFLOWS = _table(
     "reflows",
     ("record_id",),
     record_id=_str(),
@@ -1111,6 +1124,59 @@ UNALLOCATED = _table(
     fund_unlinked_usd=_usd(),
 )
 
+# Each CRS repayment split over what its loan's disbursements reached, one row per
+# record and `basis` (`REFLOW_BASES`), and per CRDF row (`row_id`) for basis
+# `commitment` or pair of the disbursement records' own markers for `untraced`. A
+# loan is the reflow link's key group (`loan_id`), and its disbursement
+# (`loan_disbursement_usd`) the allocations of every CRS record of every
+# disbursement unit traced to a commitment unit the loan's reflows reach. A part's
+# share of the repayment is its share of that disbursement. Principal attributed
+# per loan stops at the loan's disbursement, filled by year then record id, and the
+# rest is `beyond_disbursed`. A record's rows sum to `record_received_usd` and
+# `record_interest_usd`. The low amounts hold the parts a certain reflow link
+# carried, and on `commitment` rows only what certain allocations carried, so
+# 0 <= received_low <= received. `inherited_*` and `climate_share` weight the row:
+# the commitment's, or for `untraced` the disbursement records' own markers. The
+# record's own markers (`record_rio_*`) are for display.
+REFLOWS = _table(
+    "reflows",
+    (
+        "record_id",
+        "basis",
+        "row_id",
+        "inherited_rio_adaptation",
+        "inherited_rio_mitigation",
+    ),
+    record_id=_str(),
+    year=_year(),
+    provider_code=_code(),
+    agency_code=_code(nullable=True),
+    recipient_code=_code(),
+    channel_code=_code(nullable=True),
+    bi_multi=_bi_multi(),
+    purpose_code=_code(nullable=True),
+    flow_code=_code(),
+    finance_t=_code(nullable=True),
+    project_number=_str(nullable=True),
+    title=_str(nullable=True),
+    row_id=_str(nullable=True),
+    basis=_str(values=REFLOW_BASES),
+    received_usd=_usd(),
+    received_low_usd=_usd(),
+    interest_usd=_usd(),
+    interest_low_usd=_usd(),
+    record_received_usd=_usd(),
+    record_interest_usd=_usd(),
+    loan_id=_str(nullable=True),
+    loan_disbursement_usd=_usd(nullable=True),
+    inherited_rio_adaptation=_rio(),
+    inherited_rio_mitigation=_rio(),
+    climate_share=_f64(nullable=True),
+    record_rio_adaptation=_rio(),
+    record_rio_mitigation=_rio(),
+    link_method=_str(nullable=True, values=KEY_TIERS),
+)
+
 # Every CRS flow, climate or not, summed. This is the denominator of `share_of_total`.
 # `agency_code` lets a query take out the EIB's flows where the EIB counts as a
 # channel. `rio_adaptation` and `rio_mitigation` are a record's Rio markers, 0 for
@@ -1243,6 +1309,7 @@ RELEASE_TABLES = _by_name(
     QUALITY,
     UNTRACED,
     UNALLOCATED,
+    REFLOWS,
     TOTAL_FLOWS,
     PROVIDER_COEFFICIENTS,
 )
@@ -1253,7 +1320,7 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
         CRDF,
         CRDF_SPAN,
         CRS,
-        REFLOWS,
+        CRS_REFLOWS,
         CORE_CONTRIBUTIONS,
         IMPUTED_SHARES,
         EXTERNAL,
@@ -1471,7 +1538,8 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     face and grant-equivalent sums within `BTR_TOTALS_TOLERANCE` of their size. The
     `untraced` checks are those of `_untraced_problems`, the `unallocated` total
     that of `_marked_problems`, and the `provider_coefficients` checks those of
-    `_coefficient_problems`. An empty list means every check passed.
+    `_coefficient_problems`, and the `reflows` checks those of `_reflow_problems`.
+    An empty list means every check passed.
     """
     commitments, problems, _ = _finite(tables["commitments"], name="commitments")
     disbursements, non_finite, flagged = _finite(
@@ -1643,6 +1711,9 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
         )
     )
     problems.extend(_coefficient_problems(tables["provider_coefficients"]))
+    reflows, non_finite, _ = _finite(tables["reflows"], name="reflows")
+    problems.extend(non_finite)
+    problems.extend(_reflow_problems(reflows, commitments=commitments))
     return problems
 
 
@@ -2017,6 +2088,138 @@ def _untraced_problems(
                 *key, column, part
             ).iter_rows()
         )
+    return problems
+
+
+# A reflow's amounts and the record totals its rows sum to.
+_REFLOW_SUMS = {
+    "received_usd": "record_received_usd",
+    "interest_usd": "record_interest_usd",
+}
+# The bases whose principal a loan's disbursement caps.
+_REFLOW_ATTRIBUTED = ("commitment", "outside_release", "excess", "untraced")
+
+
+def _reflow_problems(reflows: pl.DataFrame, *, commitments: pl.DataFrame) -> list[str]:
+    """`reflows` rows that a query would weigh wrongly or count twice.
+
+    Each low amount lies between 0 and its amount. A record's rows share one
+    `record_received_usd` and one `record_interest_usd` and sum to them, within
+    `INVARIANT_TOLERANCE_USD` or `INVARIANT_RELATIVE_TOLERANCE` of the total,
+    whichever is larger. A row names a `row_id` exactly where its basis is
+    `commitment`, and that row is a commitment of the release that repeats no
+    earlier vintage, whose markers and climate share the row carries. Each loan's
+    attributed principal, every basis it caps, sums to at most
+    `loan_disbursement_usd`, which all its rows share.
+    """
+
+    def label(row: Mapping[str, object]) -> str:
+        return f"reflows {row['record_id']} {row['basis']} {row['row_id']}"
+
+    problems = []
+    for amount in ("received", "interest"):
+        value, low = pl.col(f"{amount}_usd"), pl.col(f"{amount}_low_usd")
+        outside = (low * value.sign() < -INVARIANT_TOLERANCE_USD) | (
+            low.abs() - value.abs() > INVARIANT_TOLERANCE_USD
+        )
+        problems.extend(
+            f"{label(row)}: {amount}_low_usd outside 0 to {amount}_usd"
+            for row in reflows.filter(outside).iter_rows(named=True)
+        )
+    named = pl.col("row_id").is_not_null()
+    problems.extend(
+        f"{label(row)}: basis {row['basis']} with a row_id"
+        if row["row_id"] is not None
+        else f"{label(row)}: basis commitment without a row_id"
+        for row in reflows.filter(named != (pl.col("basis") == "commitment")).iter_rows(
+            named=True
+        )
+    )
+    rows = commitments.select(
+        "row_id",
+        "repeat_of",
+        "climate_share",
+        _rio_adaptation="rio_adaptation",
+        _rio_mitigation="rio_mitigation",
+        _known=pl.lit(value=True),
+    )
+    attributed = reflows.filter(named).join(rows, on="row_id", how="left")
+    problems.extend(
+        f"{label(row)}: no such commitment"
+        for row in attributed.filter(pl.col("_known").is_null()).iter_rows(named=True)
+    )
+    problems.extend(
+        f"{label(row)}: names a row that repeats an earlier vintage"
+        for row in attributed.filter(pl.col("repeat_of").is_not_null()).iter_rows(
+            named=True
+        )
+    )
+    differs = ~(
+        pl.col("inherited_rio_adaptation").eq_missing(pl.col("_rio_adaptation"))
+        & pl.col("inherited_rio_mitigation").eq_missing(pl.col("_rio_mitigation"))
+        & pl.col("climate_share").eq_missing(pl.col("climate_share_right"))
+    )
+    problems.extend(
+        f"{label(row)}: markers or climate share differ from the commitment's"
+        for row in attributed.filter(pl.col("_known"), differs).iter_rows(named=True)
+    )
+
+    def beyond(total: pl.Expr, part: pl.Expr) -> pl.Expr:
+        return (total - part).abs() > pl.max_horizontal(
+            pl.lit(INVARIANT_TOLERANCE_USD),
+            INVARIANT_RELATIVE_TOLERANCE * total.abs(),
+        )
+
+    for amount, total in _REFLOW_SUMS.items():
+        records = (
+            reflows.group_by("record_id")
+            .agg(
+                _shared=pl.col(total).n_unique() == 1,
+                _total=pl.col(total).first(),
+                _summed=pl.col(amount).sum(),
+            )
+            .sort("record_id")
+        )
+        problems.extend(
+            f"reflows record {record_id}: {total} differs between rows"
+            for record_id in records.filter(~pl.col("_shared"))["record_id"]
+        )
+        problems.extend(
+            f"reflows record {record_id}: {amount} sums to {summed!r}, not "
+            f"{total} {expected!r}"
+            for record_id, expected, summed in records.filter(
+                pl.col("_shared"), beyond(pl.col("_total"), pl.col("_summed"))
+            )
+            .select("record_id", "_total", "_summed")
+            .iter_rows()
+        )
+    loans = (
+        reflows.filter(pl.col("loan_id").is_not_null())
+        .group_by("loan_id")
+        .agg(
+            _shared=pl.col("loan_disbursement_usd").n_unique() == 1,
+            _disbursed=pl.col("loan_disbursement_usd").first(),
+            _attributed=pl.col("received_usd")
+            .filter(pl.col("basis").is_in(_REFLOW_ATTRIBUTED))
+            .sum(),
+        )
+        .sort("loan_id")
+    )
+    problems.extend(
+        f"reflows loan {loan_id}: loan_disbursement_usd differs between rows"
+        for loan_id in loans.filter(~pl.col("_shared"))["loan_id"]
+    )
+    problems.extend(
+        f"reflows loan {loan_id}: attributed principal {attributed!r} above "
+        f"loan_disbursement_usd {disbursed!r}"
+        for loan_id, disbursed, attributed in loans.filter(
+            pl.col("_shared"),
+            (pl.col("_attributed") > pl.col("_disbursed"))
+            & beyond(pl.col("_disbursed"), pl.col("_attributed")),
+        )
+        .select("loan_id", "_disbursed", "_attributed")
+        .iter_rows()
+    )
     return problems
 
 

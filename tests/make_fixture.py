@@ -245,6 +245,15 @@ UNLINKED = (
 # `untraced`.
 # The GEF, a route fund, has an unlinked record its IATI route covers.
 UNALLOCATED = ((DEU, 2022, 4e6, 0.0), (GEF, 2021, 0.0, 1.5e6))
+# CRS repayments: (record_id, provider, agency, recipient, year, flow_code,
+#  received_usd, interest_usd, row_id, loan_id, loan_disbursement_usd, link_method).
+# Japan's loan behind JPN-1 repays through a certain crs id link; Germany's under
+# no key a tier reaches is unlinked.
+REFLOWS = (
+    ("JPN-1-REPAY", JPN, 2, BGD, 2023, 13, 2e6, 0.5e6, "JPN-1", "crs_id:JPN-1",
+     40e6, "crs_id"),
+    ("DEU-REPAY", DEU, 52, KEN, 2022, 13, 1e6, 0.2e6, None, None, None, None),
+)  # fmt: skip
 # The build settings the fixture claims, as `release.json` records them.
 SETTINGS = {
     "offline": True,
@@ -575,6 +584,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
     tables = {
         "disbursements": disbursement_rows,
         "untraced": untraced_rows,
+        "reflows": [_reflow(commitments, *spec) for spec in REFLOWS],
         "objectives": objective_rows,
         "agency_shares": [
             {
@@ -743,6 +753,56 @@ def build_tables() -> dict[str, pl.DataFrame]:
         frames["core_contributions"],
     )
     return frames
+
+
+def _reflow(
+    commitments: dict[str, dict[str, object]],
+    record_id: str,
+    provider: int,
+    agency: int,
+    recipient: int,
+    year: int,
+    flow_code: int,
+    received: float,
+    interest: float,
+    row_id: str | None,
+    loan_id: str | None,
+    loan_disbursement: float | None,
+    link_method: str | None,
+) -> dict[str, object]:
+    """A repayment wholly on `row_id`, at its markers, or unlinked without one."""
+    commitment = commitments[row_id] if row_id is not None else {}
+    certain = link_method in CERTAIN_METHODS
+    return {
+        "record_id": record_id,
+        "year": year,
+        "provider_code": provider,
+        "agency_code": agency,
+        "recipient_code": recipient,
+        "channel_code": None,
+        "bi_multi": 1,
+        "purpose_code": 41010,
+        "flow_code": flow_code,
+        "finance_t": 421,
+        "project_number": f"PN-{record_id}",
+        "title": f"Loan repayment {record_id}",
+        "row_id": row_id,
+        "basis": "commitment" if row_id is not None else "unlinked",
+        "received_usd": received,
+        "received_low_usd": received if certain else 0.0,
+        "interest_usd": interest,
+        "interest_low_usd": interest if certain else 0.0,
+        "record_received_usd": received,
+        "record_interest_usd": interest,
+        "loan_id": loan_id,
+        "loan_disbursement_usd": loan_disbursement,
+        "inherited_rio_adaptation": commitment.get("rio_adaptation"),
+        "inherited_rio_mitigation": commitment.get("rio_mitigation"),
+        "climate_share": commitment.get("climate_share"),
+        "record_rio_adaptation": 0,
+        "record_rio_mitigation": 1,
+        "link_method": link_method,
+    }
 
 
 def _commitments(
@@ -978,7 +1038,8 @@ def sample_release(release: Path) -> dict[str, pl.DataFrame]:
     keeps the first row it repeats, which holds its allocations. `quality`,
     `modelled`, `core_contributions`, `total_flows`, `untraced` and `unallocated`
     keep the six providers' rows for the whole release, with `unallocated.marked_usd`
-    less the Rio-marked allocations the sample leaves out.
+    less the Rio-marked allocations the sample leaves out. `reflows` keeps every row
+    of the six providers' repayments whose commitment rows are all in the sample.
     """
     tables = {
         name: pl.read_parquet(release / f"{name}.parquet") for name in RELEASE_TABLES
@@ -1035,6 +1096,16 @@ def sample_release(release: Path) -> dict[str, pl.DataFrame]:
         sample[name] = tables[name].filter(
             pl.col("provider_code").is_in(SAMPLE_PROVIDERS)
         )
+    # Every row of each repayment whose commitment rows the sample keeps, so its
+    # rows still sum to the record's repayment.
+    dropped_rows = tables["reflows"].filter(
+        pl.col("row_id").is_not_null(), ~pl.col("row_id").is_in(row_ids)
+    )
+    sample["reflows"] = (
+        tables["reflows"]
+        .filter(pl.col("provider_code").is_in(SAMPLE_PROVIDERS))
+        .join(dropped_rows.select("record_id"), on="record_id", how="anti")
+    )
     # `marked_usd` leaves out the Rio-marked allocations the sample drops, so the
     # sample's parts still sum to it.
     key = ["provider_code", "year"]

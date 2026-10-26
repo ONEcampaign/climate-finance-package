@@ -9,8 +9,8 @@ import polars as pl
 from climate_finance.build.normalise.ids import text_digest, with_content_id
 from climate_finance.schema import (
     CORE_CONTRIBUTION,
+    CRS_REFLOWS,
     CRS_UNSPECIFIED_RECIPIENT,
-    REFLOWS,
     UNSPECIFIED_RECIPIENT,
 )
 
@@ -119,7 +119,7 @@ def normalise_reflows(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFr
         (*_IDENTITY, "_salt"),
         order_by=_REFLOW_OCCURRENCE,
     ).drop("_salt")
-    return _in_schema(pl.concat([kept, salted])).select(*REFLOWS.columns)
+    return _in_schema(pl.concat([kept, salted])).select(*CRS_REFLOWS.columns)
 
 
 def _has_value(sources: Mapping[str, str]) -> pl.Expr:

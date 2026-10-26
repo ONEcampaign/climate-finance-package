@@ -1153,7 +1153,7 @@ def test_a_rejected_key_link_frees_its_disbursement_and_stays_unlinked(
             if commit is not None
         ],
     )
-    reflows = pl.DataFrame(schema=schema.REFLOWS.dtypes)
+    reflows = pl.DataFrame(schema=schema.CRS_REFLOWS.dtypes)
     write_inputs(tmp_path, "normalise", {"crs": crs, "reflows": reflows, "crdf": crdf})
     write_fetched_years(tmp_path)
     linked = _link(_context(tmp_path, recoveries=False))

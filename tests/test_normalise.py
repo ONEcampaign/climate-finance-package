@@ -188,7 +188,7 @@ def test_crs_trims_ids(crs: pl.DataFrame) -> None:
 def test_reflows_keep_records_with_a_repayment_in_usd_units(
     reflows: pl.DataFrame,
 ) -> None:
-    schema.validate(schema.REFLOWS, reflows)
+    schema.validate(schema.CRS_REFLOWS, reflows)
     # 3 rows: the zero repayment drops out, and so do the records without one.
     assert reflows.height == 3
     loan = _row(reflows, crs_id="2022000101")

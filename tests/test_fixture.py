@@ -74,6 +74,7 @@ INVARIANT_TABLES = (
     "btr_links",
     "btr_totals",
     "provider_coefficients",
+    "reflows",
 )
 
 
@@ -316,6 +317,19 @@ def _edit_untraced(
     return edit
 
 
+def _edit_reflow(**values: object) -> Callable[[pl.DataFrame], pl.DataFrame]:
+    """An edit setting `values` on Japan's repayment of JPN-1."""
+
+    def edit(frame: pl.DataFrame) -> pl.DataFrame:
+        repayment = pl.col("record_id") == "JPN-1-REPAY"
+        return frame.with_columns(
+            pl.when(repayment).then(pl.lit(value)).otherwise(pl.col(name)).alias(name)
+            for name, value in values.items()
+        )
+
+    return edit
+
+
 def _overstate_excess(frame: pl.DataFrame) -> pl.DataFrame:
     # Japan's 2023 excess is JPN-SPLIT's 8m.
     is_row = (pl.col("provider_code") == 701) & (pl.col("year") == 2023)
@@ -432,6 +446,15 @@ def _coefficient_edit(
         ("agency_shares", _measure_ida_twice, "44002 2021"),
         ("agency_spending", _give_a_marker_row_components, "44002 2021 2 0"),
         ("agency_spending", _repeat_a_components_row, "46002 2022 None None"),
+        ("reflows", _edit_reflow(received_low_usd=3e6), "JPN-1-REPAY"),
+        ("reflows", _edit_reflow(interest_low_usd=-1.0), "JPN-1-REPAY"),
+        ("reflows", _edit_reflow(row_id=None), "JPN-1-REPAY"),
+        ("reflows", _edit_reflow(basis="excess"), "JPN-1-REPAY"),
+        ("reflows", _edit_reflow(row_id="NONE-1"), "JPN-1-REPAY"),
+        # The repayment of a loan marked 0 for adaptation weighs at the record's 2.
+        ("reflows", _edit_reflow(inherited_rio_adaptation=2), "JPN-1-REPAY"),
+        ("reflows", _edit_reflow(received_usd=1e6), "JPN-1-REPAY"),
+        ("reflows", _edit_reflow(loan_disbursement_usd=1e6), "crs_id:JPN-1"),
         # Japan's coefficients up to 2021 would also cover 2022.
         (
             "provider_coefficients",
