@@ -109,15 +109,21 @@ MARKER_SOURCES = ("components", "commitment", "record_differs")
 # Why a Rio-marked CRS record's disbursement reaches no commitment: it exceeds
 # what its linked commitments take, or the record is linked to none.
 UNTRACED_REASONS = ("excess", "unlinked")
+# What a reflow link reaches: its loan's commitment units, or where no key tier
+# reaches one, its loan's disbursement units.
+REFLOW_TARGETS = ("commitment", "disbursement")
 # Where a loan's repayment goes (`build.reflows`): to a CRDF commitment the loan's
-# disbursements reached, to commitments with no CRDF row, to the loan's excess that
-# gross leaves out or counts as `untraced`, past what the loan disbursed, or nowhere,
-# as the loan disbursed nothing in the window or no key tier reached it.
+# disbursements reached, to commitments with no CRDF row, to the loan's excess or
+# records linked to no commitment, which gross counts as `untraced` where they are
+# Rio-marked and leaves out otherwise (`excess`, `unmeasured`), past what the loan
+# disbursed, or nowhere, as the loan disbursed nothing in the window or no key tier
+# reached it (`unlinked`).
 REFLOW_BASES = (
     "commitment",
     "outside_release",
     "excess",
     "untraced",
+    "unmeasured",
     "beyond_disbursed",
     "no_disbursement",
     "unlinked",
@@ -628,14 +634,16 @@ REFLOW_UNITS = _table(
 )
 
 # Links from each reflow unit to every commitment unit its first matching key tier
-# reaches, under the trace's rules (`keys.link_by_tiers`). `records_disagree` is as
-# on a trace link (`flag_disagreement`), so a link is certain where its tier is in
-# `CERTAIN_METHODS` and its records agree.
+# reaches, under the trace's rules (`keys.link_by_tiers`), or where no tier reaches
+# one, to every disbursement unit its first matching tier reaches (`target`).
+# `records_disagree` is as on a trace link (`flag_disagreement`), so a link is
+# certain where its tier is in `CERTAIN_METHODS` and its records agree.
 REFLOW_LINKS = _table(
     "reflow_links",
     ("reflow_unit_id", "unit_id"),
     reflow_unit_id=_str(),
     unit_id=_str(),
+    target=_str(values=REFLOW_TARGETS),
     group_id=_str(),
     link_method=_str(values=KEY_TIERS),
     records_disagree=_bool(),
@@ -2097,7 +2105,13 @@ _REFLOW_SUMS = {
     "interest_usd": "record_interest_usd",
 }
 # The bases whose principal a loan's disbursement caps.
-_REFLOW_ATTRIBUTED = ("commitment", "outside_release", "excess", "untraced")
+_REFLOW_ATTRIBUTED = (
+    "commitment",
+    "outside_release",
+    "excess",
+    "untraced",
+    "unmeasured",
+)
 
 
 def _reflow_problems(reflows: pl.DataFrame, *, commitments: pl.DataFrame) -> list[str]:

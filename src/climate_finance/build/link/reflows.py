@@ -9,6 +9,13 @@ through `wb_loan` whatever crs id they carry, the AsDB's through a project-numbe
 tier, and a bilateral provider's through its crs id, while a reflow under neither a
 known crs id nor a project number, as the EBRD files them, links nothing. Review
 decisions and key repair do not apply.
+
+A reflow unit that reaches no commitment unit ties to its loan's disbursement units
+through the same tiers and floors, with disbursement units in place of commitment
+units (`target` `disbursement`). Gross counts a loan whose disbursements reach no
+CRDF commitment at those disbursements' own markers (`untraced`), so its repayments
+need the disbursements to subtract the same way. A loan with no disbursement in the
+build's years ties to nothing.
 """
 
 import polars as pl
@@ -63,7 +70,8 @@ def link_reflows(
     units: pl.DataFrame, reflow_units: pl.DataFrame, *, first_year: int
 ) -> pl.DataFrame:
     """Links from each of `reflow_units` to every eligible commitment unit of `units`
-    under its first matching tier, in the `reflow_links` schema.
+    under its first matching tier, or where none is, to every eligible disbursement
+    unit, in the `reflow_links` schema.
 
     `first_year` is the first CRS year the build loads. The reflow units take their
     keys beside the trace units (`key_columns`), which keep theirs.
@@ -74,19 +82,30 @@ def link_reflows(
             how="diagonal",
         )
     )
-    reflow_ids = reflow_units.select("unit_id")
-    links = link_by_tiers(
-        keyed.join(reflow_ids, on="unit_id", how="semi"),
+    reflows = keyed.join(reflow_units.select("unit_id"), on="unit_id", how="semi")
+    to_commitments = link_by_tiers(
+        reflows,
         commitments=keyed.filter(pl.col("commitment_usd") > 0),
+        first_year=first_year,
+    )
+    to_disbursements = link_by_tiers(
+        reflows.join(
+            to_commitments.select(unit_id="left_id"), on="unit_id", how="anti"
+        ),
+        commitments=keyed.filter(pl.col("disbursement_usd") > 0),
         first_year=first_year,
     )
     facts = ("unit_id", "recipient_code", "project_number")
     flagged = flag_disagreement(
-        links, units=pl.concat([units.select(facts), reflow_units.select(facts)])
+        pl.concat([to_commitments, to_disbursements]),
+        units=pl.concat([units.select(facts), reflow_units.select(facts)]),
     )
     return flagged.select(
         reflow_unit_id="left_id",
         unit_id="right_id",
+        target=pl.when(pl.col("left_id").is_in(to_commitments["left_id"].implode()))
+        .then(pl.lit("commitment"))
+        .otherwise(pl.lit("disbursement")),
         group_id="group_id",
         link_method="link_method",
         records_disagree="records_disagree",

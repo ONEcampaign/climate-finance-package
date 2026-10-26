@@ -323,6 +323,7 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         loan_records(reflow_links, links=links, units=context.read("link", "units")),
         allocations=allocations,
         untraced=untraced.lazy(),
+        crs=crs,
     )
     attributed = attribute_reflows(
         reflows, reflow_units=reflow_units, reflow_links=reflow_links, shares=shares

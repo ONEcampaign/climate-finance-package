@@ -3,16 +3,22 @@
 A loan is the key group of a reflow link (`reflow_links.group_id`): one crs id, loan
 number or project number under one tier. Its records (`loan_records`) are the CRS
 records of every disbursement unit with a final `trace` link to a commitment unit
-any of the loan's reflow units reach. Their allocations, over every row they reach
-(CRDF rows, commitments with no CRDF row, and excess), sum to the loan's
-disbursement D, so each part's share of D is a share of the loan, and the shares
-sum to 1 (`loan_shares`).
+any of the loan's reflow units reach, or where the reflow units reach no commitment
+unit, of the disbursement units they reach. Each record's allocations, over every
+row they reach (CRDF rows, commitments with no CRDF row, and excess), or a record
+linked to no commitment its whole disbursement, sum to the loan's disbursement D,
+so each part's share of D is a share of the loan, and the shares sum to 1
+(`loan_shares`).
 
 A repayment takes each part's share (`attribute_reflows`). The part on a CRDF row
 is basis `commitment` and weighs as the row's disbursements do, at the row's markers
 and climate share. Allocations to commitments with no CRDF row are
-`outside_release`. A record's excess is `untraced` where the release counts it in
-`untraced`, at the record's own markers, and `excess` otherwise. Principal
+`outside_release`. A record's excess, or the disbursement of a record linked to no
+commitment, is `untraced` where the release counts it in `untraced`, at the
+record's own markers. Otherwise excess is `excess`, and the disbursement of a
+record linked to no commitment, which carries no Rio marker gross counts, is
+`unmeasured`. So a loan that reaches no CRDF commitment repays at what gross
+counted of it. Principal
 attributed per loan stops at D, filled by repayment year then record id, and the
 rest is `beyond_disbursed`. Interest takes the shares in full. A loan whose records
 disbursed nothing in the release's years is `no_disbursement`, and a repayment that
@@ -38,50 +44,86 @@ def loan_records(
     reflow_links: pl.LazyFrame, *, links: pl.LazyFrame, units: pl.LazyFrame
 ) -> pl.LazyFrame:
     """Each loan (`loan_id`) and the CRS records (`record_id`) of every disbursement
-    unit with a `trace` link in `links` to a commitment unit the loan reaches."""
-    reached = reflow_links.select(loan_id="group_id", unit_id="unit_id").unique()
+    unit with a `trace` link in `links` to a commitment unit the loan reaches, and
+    of every disbursement unit it reaches (`target` `disbursement`)."""
+    reached = reflow_links.select(
+        "target", loan_id="group_id", unit_id="unit_id"
+    ).unique()
     trace = links.filter(pl.col("task") == "trace").select(
         unit_id="right_id", disbursement_unit_id="left_id"
+    )
+    disbursed = pl.concat(
+        [
+            reached.filter(pl.col("target") == "commitment").join(trace, on="unit_id"),
+            reached.filter(pl.col("target") == "disbursement").with_columns(
+                disbursement_unit_id="unit_id"
+            ),
+        ],
+        how="diagonal",
     )
     records = units.select(
         disbursement_unit_id="unit_id", record_id="record_ids"
     ).explode("record_id")
     return (
-        reached.join(trace, on="unit_id")
-        .join(records, on="disbursement_unit_id")
+        disbursed.join(records, on="disbursement_unit_id")
         .select("loan_id", "record_id")
         .unique()
     )
 
 
 def loan_shares(
-    loans: pl.LazyFrame, *, allocations: pl.LazyFrame, untraced: pl.LazyFrame
+    loans: pl.LazyFrame,
+    *,
+    allocations: pl.LazyFrame,
+    untraced: pl.LazyFrame,
+    crs: pl.LazyFrame,
 ) -> pl.LazyFrame:
     """Each loan's parts as shares of its disbursement, from `loans`
-    (`loan_records`), the CRS rows of `allocations` and the release's `untraced`.
+    (`loan_records`), the CRS rows of `allocations`, the release's `untraced` and
+    the `crs` records allocation holds no row of.
 
     A part is a loan, `basis`, `row_id` and pair of inherited markers, the markers
     set only on `untraced` parts. `share` and `low_share` are its allocated and
     certainly allocated amounts over the loan's disbursement
-    (`loan_disbursement_usd`); off a CRDF row `low_share` is `share`. A loan whose
-    records allocate nothing has no part.
+    (`loan_disbursement_usd`); off a CRDF row `low_share` is `share`. A record
+    allocation holds no row of is linked to no commitment, and its positive
+    disbursement is one part. A loan whose records allocate nothing has no part.
     """
-    excess = pl.col("rule") == "excess"
-    traced = untraced.filter(pl.col("reason") == "excess").select(
+    crs_allocations = allocations.filter(pl.col("disbursement_source") == "crs")
+    unallocated = (
+        crs.filter(pl.col("disbursement_usd") > 0)
+        .join(loans, on="record_id")
+        .join(crs_allocations, on="record_id", how="anti")
+        .select(
+            "loan_id",
+            "record_id",
+            allocated_usd="disbursement_usd",
+            rule=pl.lit("unlinked"),
+        )
+    )
+    # A linked record's excess is untraced as `excess`, and an unlinked record's
+    # disbursement as `unlinked` (`allocate.untraced_records`).
+    counted = untraced.select(
         "record_id",
+        rule="reason",
         untraced=pl.lit(value=True),
         inherited_rio_adaptation="rio_adaptation",
         inherited_rio_mitigation="rio_mitigation",
     )
+    off_row = pl.col("rule").is_in(("excess", "unlinked"))
     parts = (
-        allocations.filter(pl.col("disbursement_source") == "crs")
-        .join(loans, on="record_id")
-        .join(traced, on="record_id", how="left", validate="m:1")
+        pl.concat(
+            [crs_allocations.join(loans, on="record_id"), unallocated],
+            how="diagonal_relaxed",
+        )
+        .join(counted, on=["record_id", "rule"], how="left", validate="m:1")
         .with_columns(
-            basis=pl.when(excess & pl.col("untraced").fill_null(value=False))
+            basis=pl.when(off_row & pl.col("untraced").fill_null(value=False))
             .then(pl.lit("untraced"))
-            .when(excess)
+            .when(pl.col("rule") == "excess")
             .then(pl.lit("excess"))
+            .when(off_row)
+            .then(pl.lit("unmeasured"))
             .when(pl.col("row_id").is_null())
             .then(pl.lit("outside_release"))
             .otherwise(pl.lit("commitment")),

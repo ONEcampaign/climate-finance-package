@@ -33,6 +33,7 @@ def _repayment(record_id: str, **values: object) -> dict[str, object]:
         "rio_adaptation": 0,
         "rio_mitigation": 0,
         "loan": "g",
+        "target": "commitment",
         "method": "crs_id",
         "disagree": False,
     } | values
@@ -42,19 +43,25 @@ def _release(
     repayments: list[dict[str, object]],
     allocations: list[tuple[str | None, str, float, float, str]],
     *,
-    untraced: tuple[tuple[str, int, int], ...] = (),
+    untraced: tuple[tuple[str, int, int, str], ...] = (),
+    unallocated: dict[str, float] | None = None,
     loans: dict[str, list[str]] | None = None,
 ) -> pl.DataFrame:
     """The `reflows` rows of `repayments`, given each disbursement record's
-    allocations as (row_id, record_id, allocated, allocated_low, rule) and the
-    records of `untraced` as (record_id, rio_adaptation, rio_mitigation).
+    allocations as (row_id, record_id, allocated, allocated_low, rule), the
+    disbursements of the records allocation holds no row of (`unallocated`), and
+    the records of `untraced` as (record_id, rio_adaptation, rio_mitigation,
+    reason).
 
-    Each loan of `loans` reaches one commitment unit, traced from one disbursement
-    unit holding the loan's records; by default loan `g` holds every allocated
-    record.
+    Each loan of `loans` has one disbursement unit holding its records, which a
+    repayment reaches directly where its target is `disbursement`, and otherwise
+    through the unit's trace link to the loan's one commitment unit; by default
+    loan `g` holds every record.
     """
+    unallocated = unallocated or {}
     if loans is None:
-        loans = {"g": sorted({record for _, record, *_ in allocations})}
+        allocated = {record for _, record, *_ in allocations}
+        loans = {"g": sorted(allocated | set(unallocated))}
     reflows = pl.DataFrame(
         [
             {
@@ -84,7 +91,8 @@ def _release(
         [
             {
                 "reflow_unit_id": f"x-{r['record_id']}",
-                "unit_id": f"c-{r['loan']}",
+                "unit_id": f"{r['target'][0]}-{r['loan']}",
+                "target": r["target"],
                 "group_id": r["loan"],
                 "link_method": r["method"],
                 "records_disagree": r["disagree"],
@@ -125,9 +133,17 @@ def _release(
             "record_id": pl.String(),
             "rio_adaptation": pl.Int8(),
             "rio_mitigation": pl.Int8(),
+            "reason": pl.String(),
         },
         orient="row",
-    ).with_columns(reason=pl.lit("excess"))
+    )
+    crs = pl.DataFrame(
+        {
+            "record_id": list(unallocated),
+            "disbursement_usd": list(unallocated.values()),
+        },
+        schema={"record_id": pl.String(), "disbursement_usd": pl.Float64()},
+    )
     crdf = pl.DataFrame(
         [
             {"row_id": row_id, "rio_adaptation": a, "rio_mitigation": m}
@@ -146,6 +162,7 @@ def _release(
         loan_records(reflow_links.lazy(), links=links.lazy(), units=units.lazy()),
         allocations=allocated.lazy(),
         untraced=traced.lazy(),
+        crs=crs.lazy(),
     )
     attributed = attribute_reflows(
         reflows.lazy(),
@@ -225,7 +242,7 @@ def test_parts_off_a_crdf_row_take_their_own_basis() -> None:
             (None, "D1", 20.0, 0.0, "excess"),
             (None, "D2", 10.0, 0.0, "excess"),
         ],
-        untraced=(("D1", 1, 0),),
+        untraced=(("D1", 1, 0, "excess"),),
     )
 
     assert _received(released) == {
@@ -294,3 +311,69 @@ def test_a_repayment_weighs_at_its_commitments_markers_not_its_own() -> None:
         2,
         2,
     )
+
+
+def _tied(record_id: str, **values: object) -> dict[str, object]:
+    """A repayment of loan `g` that reaches its disbursement units, not a
+    commitment."""
+    return _repayment(record_id, target="disbursement", **values)
+
+
+def test_a_loan_gross_counts_as_untraced_repays_at_its_records_markers() -> None:
+    released = _release(
+        [_tied("P")],
+        [],
+        unallocated={"D1": 100.0},
+        untraced=(("D1", 0, 2, "unlinked"),),
+    )
+
+    assert released.select(
+        "basis", "received_usd", "inherited_rio_adaptation", "inherited_rio_mitigation"
+    ).rows() == [("untraced", 10.0, 0, 2)]
+    assert released["received_low_usd"].to_list() == [10.0]
+
+
+def test_a_tied_loans_unmarked_records_take_their_share_at_no_markers() -> None:
+    # D1 is Rio-marked and untraced; D2 is unmarked, which no total counts.
+    released = _release(
+        [_tied("P")],
+        [],
+        unallocated={"D1": 60.0, "D2": 40.0},
+        untraced=(("D1", 0, 2, "unlinked"),),
+    )
+
+    assert released.select(
+        "basis", "received_usd", "inherited_rio_mitigation", "loan_id"
+    ).rows() == [("unmeasured", 4.0, None, "g"), ("untraced", 6.0, 2, "g")]
+
+
+def test_a_marked_repayment_of_an_unmarked_tied_loan_weighs_nothing() -> None:
+    released = _release(
+        [_tied("P", rio_adaptation=2, rio_mitigation=2)],
+        [],
+        unallocated={"D1": 100.0},
+    ).row(0, named=True)
+
+    assert (released["basis"], released["loan_id"]) == ("unmeasured", "g")
+    assert (
+        released["inherited_rio_adaptation"],
+        released["inherited_rio_mitigation"],
+    ) == (None, None)
+
+
+def test_a_tied_loans_principal_stops_at_its_disbursement() -> None:
+    released = _release(
+        [
+            _tied("A", year=2020, received_usd=70.0),
+            _tied("B", year=2021, received_usd=50.0),
+        ],
+        [],
+        unallocated={"D1": 100.0},
+        untraced=(("D1", 0, 2, "unlinked"),),
+    )
+
+    assert released.select("record_id", "basis", "received_usd").rows() == [
+        ("A", "untraced", 70.0),
+        ("B", "beyond_disbursed", 20.0),
+        ("B", "untraced", 30.0),
+    ]

@@ -60,6 +60,7 @@ def _methods(commitment: dict[str, object], reflow: dict[str, object]) -> list[s
     links = link_reflows(units, _reflow_units(reflow), first_year=FIRST_YEAR)
     schema.validate(schema.REFLOW_LINKS, links)
     assert set(links["unit_id"]) <= set(units["unit_id"])
+    assert set(links["target"]) <= {"commitment"}
     return links["link_method"].to_list()
 
 
@@ -106,6 +107,32 @@ def test_a_reflow_dated_by_its_loan_reaches_the_loan() -> None:
     # The control for the pre-window case: a commitment date the build loads.
     dated = {"crs_id": "2019000101", "commitment_date": date(2019, 3, 1)}
     assert _methods({"crs_id": "2019000101"}, dated) == ["crs_id_purpose"]
+
+
+@pytest.mark.parametrize(
+    ("reflow", "targets"),
+    [
+        # A loan with no commitment the build sees repays under the crs id its
+        # disbursements carry.
+        ({"crs_id": "2019000101"}, [("disbursement", "crs_id_purpose")]),
+        # A loan whose disbursements predate the first CRS year the build loads
+        # does not tie to a later disbursement under its crs id.
+        ({"crs_id": "2019000101", "commitment_date": date(2005, 3, 1)}, []),
+    ],
+)
+def test_a_reflow_with_no_commitment_ties_to_its_loans_disbursements(
+    reflow: dict[str, object], targets: list[tuple[str, str]]
+) -> None:
+    records = {"d": {"crs_id": "2019000101", "year": 2019, "disbursement_usd": 4.0}}
+    units = build_units(
+        named_records(records, donor_code=5, recipient_code=238, purpose_code=23210)
+    ).collect()
+
+    links = link_reflows(units, _reflow_units(reflow), first_year=FIRST_YEAR)
+
+    schema.validate(schema.REFLOW_LINKS, links)
+    assert links.select("target", "link_method").rows() == targets
+    assert set(links["unit_id"]) <= set(units["unit_id"])
 
 
 def test_reflow_unit_ids_differ_from_the_trace_units_of_the_same_key() -> None:
