@@ -43,7 +43,7 @@ print(release)
 ```
 
 ```output
-Release('fixture', synthetic figures): commitments 2021 to 2022, disbursements 2021 to 2024; 18 tables
+Release('fixture', synthetic figures): commitments 2021 to 2022, disbursements 2021 to 2024; 19 tables
 ```
 
 ### `Release.spending(*, providers, recipients, years, method, flow, view, currency, prices, oda_only, measure, untraced)`
@@ -156,6 +156,19 @@ Compares each party's BTR Table III.1 total with OECD figures for its bilateral 
 - `providers` (`str | int | Iterable[str | int] | None`). The parties, named as `spending()` names providers, so `"Germany"`, `"DEU"`, and `5` name one party. `None` compares every party. An agency raises `InvalidInputError` naming its provider, since the BTR reports providers.
 - `years` (`int | Iterable[int] | None`). `None` takes every year the BTR tables hold.
 - `method` (`Method | MethodRange | str`, default `cf.methods.ONE`), in the forms `spending()` takes.
+
+### `Release.jev_flags(*, provider, year, flagged, experimental)`
+
+Returns a polars DataFrame of Jev's answers about the CRS records the release flags, one row per record, with the record's provider, agency, recipient, year, title, purpose, flow, commitment and disbursement, both Rio markers and CRS id. The table is empty unless the release was built with `jev_flags` on. [About the methods](../explanation/methods.md#jev-flags) describes the four questions and the cuts.
+
+- `provider` (`str | int | Iterable[str | int] | None`). Providers named as `quality()` names `providers`. An agency raises `InvalidInputError` naming its provider. `None` takes all.
+- `year` (`int | Iterable[int] | None`). The records' CRS years. `None` takes all.
+- `flagged` (`"no_aim" | "surprising" | None`). Keeps the records where that flag holds. `None` keeps every record, flagged or not.
+- `experimental` (`bool`, default `False`). Adds `mitigation_aim_p`, which no external check backs.
+
+Each row holds `no_aim_p`, `adaptation_aim_p`, `surprising_p` and `counterproductive_p`, the flags `no_aim` and `surprising`, and `short_text`, true for a text too short to ask, whose answers and flags are null. `counterproductive_p` ranks records and has no flag. `in_release` is true for a record that `disbursements` or `untraced` holds, or whose provider holds a `commitments` row with its CRS id, and false for a record the release's totals do not draw on. The flags change no total.
+
+Raises `MissingLabelsError` naming `jev_flags` for a release built with it off, and `InvalidInputError` for a `flagged` or `experimental` outside the values above, an empty list of providers or years, years in another form, or an unknown keyword, naming a close one.
 
 ### `Release.disbursement_profile()`
 
@@ -364,7 +377,7 @@ All errors inherit from `ClimateFinanceError`, and `climate_finance.errors` hold
 | `UnknownProviderError`, `UnknownRecipientError` | a provider, agency, or recipient name or code is absent from its listing.                                                                                                                                                                                                                                                                                                                                                                                       |
 | `ReleaseIntegrityError`                         | a release fails its check.                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `SourceUnavailableError`                        | a download fails.                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `MissingLabelsError`                            | a method with `relevance="jev"` queries a release with no Jev labels. The message names the `jev_labels` setting.                                                                                                                                                                                                                                                                                                                                               |
+| `MissingLabelsError`                            | a method with `relevance="jev"` queries a release with no Jev labels, or `jev_flags()` queries a release with no Jev flags. The message names the `jev_labels` or `jev_flags` setting.                                                                                                                                                                                                                                                                                                                                               |
 | `WithheldTableError`                            | `Release.table()` asks for a table the published release leaves out, `btr` or `btr_links`. `release.json` names each under `withheld_tables` with a note on how to build it.                                                                                                                                                                                                                                                                                    |
 | `SchemaError`                                   | a table fails to match its schema.                                                                                                                                                                                                                                                                                                                                                                                                                              |
 

@@ -38,6 +38,9 @@ checks that these parts and the Rio-marked records' `disbursements` rows sum to
 `reflows` holds each CRS repayment split over what its loan's disbursements reached
 (`build.reflows`): the CRDF rows, whose markers it weighs by, and the parts no
 commitment in the release holds, each under its own `basis`.
+
+`jev_flags` holds the flag stage's table (`build.jev_flags`), and no rows in a
+build with `jev_flags` off.
 """
 
 from __future__ import annotations
@@ -107,6 +110,7 @@ from climate_finance.schema import (
     DISBURSEMENT_PROFILE,
     DISBURSEMENTS,
     INVARIANT_TOLERANCE_USD,
+    JEV_FLAGS,
     MODELLED,
     MULTILATERAL_OUTFLOW,
     PROVIDER_COEFFICIENTS,
@@ -293,6 +297,7 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
     allocations = context.read("fill", "allocations")
     status = context.read("review", "commitments")
     objectives = context.read("label", "objectives").collect()
+    flags = _optional(context, "flag", JEV_FLAGS)
     marked = marked_records(
         allocations,
         crs=crs,
@@ -363,6 +368,7 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         "provider_coefficients": provider_coefficients(
             yaml.safe_load(PROVIDER_COEFFICIENTS_FILE.read_text(encoding="utf-8"))
         ),
+        "jev_flags": flags,
     }
     # The tables above read every record, so quality and `withheld_usd` count the
     # withheld ones; the release leaves out their rows.

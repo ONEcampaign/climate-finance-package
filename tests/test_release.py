@@ -268,7 +268,9 @@ def test_the_release_opens_and_matches_release_json(release_dir: Path) -> None:
         "jev_labels": False,
         "jev_links": False,
         "embed": False,
+        "jev_flags": False,
         "skip_eib_routes": [],
+        "jev_flags_first_year": 2015,
         # The settings as configured; `years` above holds what they resolved to.
         "years.crdf": "all",
         "years.crs": None,

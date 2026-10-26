@@ -17,7 +17,7 @@ from pathlib import Path
 
 import polars as pl
 
-from climate_finance.build import allocate, fetch, label, measure, release
+from climate_finance.build import allocate, fetch, jev_flags, label, measure, release
 from climate_finance.build.config import RELEASE_SETTINGS, BuildConfig
 from climate_finance.build.errors import StageInputMissingError
 from climate_finance.build.jev_client import JevClient
@@ -39,6 +39,7 @@ class Stage(StrEnum):
     FILL = "fill"
     REVIEW = "review"
     LABEL = "label"
+    FLAG = "flag"
     MEASURE = "measure"
     ASSEMBLE = "assemble"
 
@@ -202,6 +203,16 @@ REGISTRY: tuple[StageDef, ...] = (
         Stage.LABEL,
         label.run_label,
         settings=("jev.model", "jev_labels", "years.crs_last_complete"),
+    ),
+    _entry(
+        Stage.FLAG,
+        jev_flags.run_flag,
+        settings=(
+            "jev.model",
+            "jev_flags",
+            "jev_flags_first_year",
+            "years.crs_last_complete",
+        ),
     ),
     _entry(
         Stage.MEASURE,

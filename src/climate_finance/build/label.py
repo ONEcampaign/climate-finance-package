@@ -26,8 +26,9 @@ donor's marker. Mitigation has no human-coded set, so Jev labels adaptation only
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
@@ -326,27 +327,56 @@ def ask_jev(texts: pl.DataFrame, *, client: JevClient) -> pl.DataFrame:
         The id columns with Jev's `lenient` answer, `p_significant` and
         `p_principal`.
     """
-    unique = texts.select(pl.col("text").unique().sort())
-    responses = client.score(
-        [
-            {"state": {"project": text}, "questions": ADAPTATION_QUESTIONS}
-            for text in unique["text"]
-        ]
+
+    def read(answers: Mapping[str, Any]) -> tuple[float, ...]:
+        level = answers["level"]["probabilities"]
+        return (
+            float(answers["lenient"]["noul"]),
+            float(level["significant"]),
+            float(level["principal"]),
+        )
+
+    return ask_each_text(
+        texts,
+        client=client,
+        request=lambda text: {
+            "state": {"project": text},
+            "questions": ADAPTATION_QUESTIONS,
+        },
+        read=read,
+        columns=("lenient", "p_significant", "p_principal"),
     )
-    columns: dict[str, list[object]] = {
-        "lenient": [],
-        "p_significant": [],
-        "p_principal": [],
-    }
+
+
+def ask_each_text(
+    texts: pl.DataFrame,
+    *,
+    client: JevClient,
+    request: Callable[[str], Mapping[str, object]],
+    read: Callable[[Mapping[str, Any]], Sequence[float]],
+    columns: Sequence[str],
+) -> pl.DataFrame:
+    """Jev's answers for each text, each distinct text asked once.
+
+    Args:
+        texts: a `text` column and any id columns.
+        client: the build's Jev client.
+        request: the request for one text.
+        read: one response's `answers` as the values of `columns`.
+        columns: the answer columns, each Float64.
+
+    Returns:
+        The id columns with `columns`.
+    """
+    unique = texts.select(pl.col("text").unique().sort())
+    responses = client.score([request(text) for text in unique["text"]])
+    rows = []
     for response in responses:
         answers = response["answers"]
         assert isinstance(answers, dict)
-        level = answers["level"]["probabilities"]
-        columns["lenient"].append(answers["lenient"]["noul"])
-        columns["p_significant"].append(float(level["significant"]))
-        columns["p_principal"].append(float(level["principal"]))
-    answered = unique.with_columns(
-        pl.Series(name, values) for name, values in columns.items()
+        rows.append(read(answers))
+    answered = unique.hstack(
+        pl.DataFrame(rows, schema=dict.fromkeys(columns, pl.Float64), orient="row")
     )
     return texts.join(answered, on="text", how="left", validate="m:1").drop("text")
 

@@ -75,6 +75,7 @@ INVARIANT_TABLES = (
     "btr_totals",
     "provider_coefficients",
     "reflows",
+    "jev_flags",
 )
 
 

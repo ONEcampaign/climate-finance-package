@@ -147,7 +147,9 @@ class BuildConfig(_Section):
     `jev.band` and about each Splink model's calibration sample, and link what the
     calibrated Splink models score.
     `embed` adds embedding neighbours to the link stage's blocking, which needs the
-    `embed` extra unless `embedding.cache_dir` holds every vector.
+    `embed` extra unless `embedding.cache_dir` holds every vector. `jev_flags` has
+    the flag stage ask Jev four questions about each climate-marked CRS record from
+    `jev_flags_first_year` to `years.crs_last_complete`.
     """
 
     offline: bool = False
@@ -159,6 +161,8 @@ class BuildConfig(_Section):
     jev_labels: bool = False
     jev_links: bool = False
     embed: bool = False
+    jev_flags: bool = False
+    jev_flags_first_year: int = 2015
     years: Years
     sources: Sources
     jev: Jev
@@ -178,7 +182,7 @@ class BuildConfig(_Section):
 FILE_SETTINGS = ("sources.review_decisions",)
 
 # The settings `release.json` records, as dotted paths: every switch, the EIB
-# recovery routes left out, and every year range.
+# recovery routes left out, the first year Jev flags, and every year range.
 RELEASE_SETTINGS = (
     *(
         name
@@ -186,6 +190,7 @@ RELEASE_SETTINGS = (
         if field.annotation is bool
     ),
     "skip_eib_routes",
+    "jev_flags_first_year",
     *(f"years.{name}" for name in Years.model_fields),
 )
 

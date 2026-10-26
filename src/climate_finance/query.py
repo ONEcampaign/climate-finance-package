@@ -354,6 +354,58 @@ def quality(
     )
 
 
+def jev_flags(
+    release: Release,
+    *,
+    providers: tuple[int, ...] | None = None,
+    years: tuple[int, ...] | None = None,
+    flagged: str | None = None,
+    experimental: bool = False,
+) -> pl.DataFrame:
+    """The `jev_flags` rows for `providers` and `years`, with names, `in_release` and,
+    when `experimental`, `mitigation_aim_p`; `flagged` keeps the rows where that
+    flag holds.
+
+    A record is `in_release` when `disbursements` or `untraced` holds it, or a
+    `commitments` row of its provider holds its CRS id: the records the release's
+    totals draw on.
+
+    Raises:
+        MissingLabelsError: when the release was built with `jev_flags` off.
+    """
+    if not release.manifest.settings.get("jev_flags"):
+        raise MissingLabelsError(
+            "jev_flags() needs Jev's flags, and this release holds none: it was "
+            "built with jev_flags off"
+        )
+    conditions = _conditions(providers=providers, recipients=None, years=years)
+    if flagged is not None:
+        conditions.append(pl.col(flagged))
+    in_totals = pl.concat(
+        release.table(table).select("record_id")
+        for table in ("disbursements", "untraced")
+    ).select("record_id", in_totals=pl.lit(value=True))
+    committed = (
+        release.table("commitments")
+        .select("provider_code", "crs_id", committed=pl.lit(value=True))
+        .unique()
+    )
+    flags = (
+        release.table("jev_flags")
+        .filter(*conditions)
+        .join(in_totals.unique("record_id"), on="record_id", how="left", validate="m:1")
+        .join(committed, on=["provider_code", "crs_id"], how="left", validate="m:1")
+        .with_columns(
+            in_release=pl.col("in_totals").is_not_null()
+            | pl.col("committed").is_not_null()
+        )
+        .drop("in_totals", "committed")
+    )
+    if not experimental:
+        flags = flags.drop("mitigation_aim_p")
+    return with_names(flags).sort("provider_code", "year", "record_id").collect()
+
+
 def _untraced(
     release: Release, *, conditions: Sequence[pl.Expr], method: Method
 ) -> pl.LazyFrame:

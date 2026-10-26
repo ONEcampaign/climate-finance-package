@@ -112,13 +112,14 @@ def test_offline_reaches_every_stage(
 
 
 # Settings read only on paths the raw fixtures cannot take: embeddings and the Jev
-# step need models and a truth group, the fill needs bank ledgers, and review and
-# the Jev labels are off in build.toml.
+# step need models and a truth group, the fill needs bank ledgers, and review, the
+# Jev labels and the Jev flags are off in build.toml.
 UNREACHED = {
     "link": {"embedding.model", "embedding.revision", "jev.band", "jev.model"},
     "fill": {"sources.iati_publishers", "sources.ledgers", "years.crs_last_complete"},
     "review": {"jev.band", "sources.ledgers", "sources.review_decisions"},
     "label": {"jev.model"},
+    "flag": {"jev.model", "jev_flags_first_year", "years.crs_last_complete"},
 }
 
 
