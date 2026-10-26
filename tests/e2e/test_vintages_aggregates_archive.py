@@ -65,8 +65,8 @@ def test_repeats_across_vintages(recipient: pl.DataFrame) -> None:
     )
 
     # Every group has a row after its first year, so its first row names it.
-    assert repeats["repeat_of"].n_unique() == 79
-    assert repeats["climate_usd"].sum() / 1e9 == pytest.approx(2.69, abs=0.005)
+    assert repeats["repeat_of"].n_unique() == 85
+    assert repeats["climate_usd"].sum() / 1e9 == pytest.approx(3.01, abs=0.005)
 
     agra = recipient.filter(pl.col("title").str.starts_with("AGRA METRO RAIL"))
     first = agra.filter(year=2021)["row_id"].item()

@@ -1,7 +1,7 @@
 """Rows repeated across CRDF vintages.
 
 A commitment the OECD reports in one year's CRDF can reappear in a later year's,
-under a new id when the provider changed its id scheme. Four rules pair rows of
+under a new id when the provider changed its id scheme. Five rules pair rows of
 different years, within one perspective and provider:
 
 - same id: a row whose crs id the CRS knows, but with no CRS commitment under its
@@ -15,12 +15,26 @@ different years, within one perspective and provider:
   such as `UNKNOWN` name no project), different crs ids, face values within 10%.
 - title: same recipient and a specific title (at most three of the provider's rows
   carry it), different crs ids, face values within 10%.
+- EIB description: EIB rows of one year that share a recipient and a description
+  (lower case, spaces collapsed) form a group, and two groups of different years
+  pair when their face values sum to within 10% of the larger, in euros, or within
+  0.5% when each group is a single row. The 2023 CRDF titles EIB rows with
+  sentences, so the title rule misses their 2024 repeats, and one fund can be split
+  over several rows in one year and sit in one row in the other. A row restating
+  one euro contract matches almost exactly. On the archive build every such pair
+  that looks true sits within 0.003%, while a split fund's sum drifts (Pembani's ten
+  2023 rows come within 8.7% of its 2024 row), and two phases of one solar plant
+  with a shared description sit 9.1% apart. Every row of both groups joins one
+  repeat group. On the archive build the same rule over every provider pairs 396
+  description groups, 120 of them in Germany's provider view with USD 5.75bn in
+  their later rows, because other providers reuse a description across distinct
+  commitments, so it covers the EIB alone.
 
-A project-id or title pair repeats only when at least one of its rows has no CRS
-commitment under its own key; when both have one, the CRS itself reports two
-commitments (a tranche or a top-up). Paired rows form groups, and the rows of a
-group's earliest year count: every later row gets `repeat_of`, the row id of the
-group's first row by year and row id.
+A project-id, title or EIB description pair repeats only when at least one side
+has a row with no CRS commitment under its own key. When every row has one, the
+CRS itself reports two commitments (a tranche or a top-up). Paired rows form
+groups, and the rows of a group's earliest year count: every later row gets
+`repeat_of`, the row id of the group's first row by year and row id.
 """
 
 import polars as pl
@@ -35,8 +49,13 @@ from climate_finance.build.normalise.pairing import pair_one_to_one
 from climate_finance.build.normalise.project_numbers import normalise_pn
 from climate_finance.schema import EIB_AGENCY, EU_INSTITUTIONS, EURO_ISSUER
 
-# Face values of a project-id or title pair agree within this share of the larger.
+# Face values of a project-id or title pair, or of an EIB description pair with
+# more than one row on a side, agree within this share of the larger.
 _FACE_TOLERANCE = 0.10
+# An EIB description pair of one row each restates one euro contract, so it agrees
+# within this share. On the archive build every such pair that looks true sits
+# within 0.003%, and two phases of one solar plant sit 9.1% apart.
+_EIB_DESCRIPTION_SINGLE = 0.005
 # A title is specific when it keeps at least this many characters once normalised
 # and at most this many of the provider's rows carry it.
 _TITLE_MIN_CHARS = 15
@@ -117,6 +136,7 @@ def repeat_groups(
             _eib_edges(rows, crs=crs, exchange=exchange),
             _similar_edges(rows, key="project_id"),
             _similar_edges(rows, key="title_key"),
+            _eib_description_edges(rows, exchange=exchange),
         ]
     )
     return _union(edges)
@@ -354,6 +374,52 @@ def _similar_edges(rows: pl.DataFrame, *, key: str) -> pl.DataFrame:
     )
     return _edges(
         pairs.select("row_id", "year", other="row_id_other", other_year="year_other")
+    )
+
+
+def _eib_description_edges(
+    rows: pl.DataFrame, *, exchange: pl.DataFrame
+) -> pl.DataFrame:
+    """Every row of two EIB description groups of different years whose face values
+    agree in euros, paired with every row of the other."""
+    rates = exchange.filter(pl.col("iso_code") == EURO_ISSUER).select(
+        year=pl.col("year").cast(pl.Int16), euro_per_usd=pl.col("exchange_rate")
+    )
+    eib = rows.filter(
+        pl.col("provider_code") == EU_INSTITUTIONS,
+        pl.col("agency_code") == EIB_AGENCY,
+        pl.col("description").is_not_null(),
+        pl.col("face_usd") > 0,
+    )
+    key = ["perspective", "recipient_code", "description_key"]
+    groups = (
+        _in_euro(eib, rates, year="year", amount="face_usd", into="euro")
+        .with_columns(
+            description_key=pl.col("description")
+            .str.to_lowercase()
+            .str.replace_all(r"\s+", " ")
+            .str.strip_chars()
+        )
+        .group_by(*key, "year")
+        .agg(
+            pl.col("row_id"),
+            group_euro=pl.col("euro").sum(),
+            group_rows=pl.len(),
+            unbacked=(~pl.col("backed")).any(),
+        )
+    )
+    larger = pl.max_horizontal("group_euro", "group_euro_other")
+    single = (pl.col("group_rows") == 1) & (pl.col("group_rows_other") == 1)
+    tolerance = pl.when(single).then(_EIB_DESCRIPTION_SINGLE).otherwise(_FACE_TOLERANCE)
+    pairs = groups.join(groups, on=key, suffix="_other").filter(
+        pl.col("year") < pl.col("year_other"),
+        (pl.col("group_euro") - pl.col("group_euro_other")).abs() <= tolerance * larger,
+        pl.col("unbacked") | pl.col("unbacked_other"),
+    )
+    return _edges(
+        pairs.select("row_id", "year", other="row_id_other", other_year="year_other")
+        .explode("row_id")
+        .explode("other")
     )
 
 
