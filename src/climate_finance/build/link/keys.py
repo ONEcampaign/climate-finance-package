@@ -190,6 +190,23 @@ def link_by_keys(
     tier runs, so a unit whose links a tier's decisions reject all goes on to the
     later tiers.
     """
+    keyed = key_columns(units)
+    return link_by_tiers(
+        keyed.filter(pl.col("disbursement_usd") > 0),
+        commitments=keyed.filter(pl.col("commitment_usd") > 0),
+        first_year=first_year,
+        decide=decide,
+    )
+
+
+def key_columns(units: pl.DataFrame) -> pl.DataFrame:
+    """`units` with the columns the tiers key on.
+
+    `units` may hold reflow units (`reflows.build_reflow_units`) beside the trace
+    units, as rows that neither commit nor disburse. They take their keys from the
+    trace units and change none of theirs: `crs_key` counts trace units only, and
+    `_pn_key` and `split_components` read only commitments and disbursements.
+    """
     units = units.with_columns(
         crs_id=canonical_crs_id(pl.col("crs_id")),
         line_date=line_date(pl.col("commitment_date")),
@@ -200,9 +217,23 @@ def link_by_keys(
         parent_key=_parent_key(pl.col("crs_id")),
         pn_key=_pn_key(units),
     )
-    units = units.with_columns(award=split_components(units, number="pn_key"))
-    commitments = units.filter(pl.col("commitment_usd") > 0)
-    remaining = units.filter(pl.col("disbursement_usd") > 0).with_columns(
+    return units.with_columns(award=split_components(units, number="pn_key"))
+
+
+def link_by_tiers(
+    units: pl.DataFrame,
+    *,
+    commitments: pl.DataFrame,
+    first_year: int,
+    decide: Decide | None = None,
+) -> pl.DataFrame:
+    """`trace` links from each of `units` to every eligible unit of `commitments`
+    under its first matching tier, both keyed by `key_columns`, as `links` rows.
+
+    `decide` applies to each tier's links before the next tier runs, as in
+    `link_by_keys`.
+    """
+    remaining = units.with_columns(
         crs_parent=_parent_key(parent_id(pl.col("donor_code"), pl.col("crs_id"))),
         parent_floor_year=pl.when(pl.col("donor_code") != schema.EU_INSTITUTIONS).then(
             pl.col("floor_year")
@@ -270,13 +301,18 @@ def crs_key() -> pl.Expr:
     The AsDB, the IDB and the GEF reuse an id across projects, as for the AsDB's
     `LN3375-IND` in India and `TA9143-NAU` in Nauru. An id that holds one country
     and regional or unspecified recipients (`regional_codes`) names one project, and
-    keeps its regional lines."""
+    keeps its regional lines.
+
+    Only trace units, which commit or disburse, count, so a reflow unit
+    (`key_columns`) changes no trace unit's key."""
+    traced = (pl.col("commitment_usd") != 0) | (pl.col("disbursement_usd") != 0)
     country = ~pl.col("recipient_code").is_in(regional_codes())
+    recipients = pl.col("recipient_code").filter(traced)
     several = (
-        (pl.col("recipient_code").filter(country).n_unique() > 1)
+        (pl.col("recipient_code").filter(traced & country).n_unique() > 1)
         | (
-            (pl.col("recipient_code").n_unique() > 1)
-            & (pl.col("project_number").n_unique() > 1)
+            (recipients.n_unique() > 1)
+            & (pl.col("project_number").filter(traced).n_unique() > 1)
         )
     ).over("donor_code", "crs_id")
     return (

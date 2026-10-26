@@ -318,6 +318,11 @@ CRS = _table(
     commitment_usd=_usd(nullable=True),
     disbursement_usd=_usd(nullable=True),
     grant_equiv_usd=_usd(nullable=True),
+    # Principal repaid and interest paid on a loan in the year, as the bulk CRS
+    # publishes them (`usd_received`, `usd_interest`). Most records that carry one
+    # carry no commitment or disbursement, and `REFLOWS` holds them.
+    received_usd=_usd(nullable=True),
+    interest_usd=_usd(nullable=True),
     commitment_date=Column(pl.Date(), nullable=True),
     # The project's expected start and completion, which the window rule reads.
     expected_start_date=Column(pl.Date(), nullable=True),
@@ -325,6 +330,33 @@ CRS = _table(
     rio_adaptation=_rio(),
     rio_mitigation=_rio(),
     text_hash=_str(nullable=True),
+)
+
+# The CRS records that report principal repaid or interest paid: one row per loan and
+# year in the bulk file. A record that also has a commitment, disbursement or grant
+# equivalent keeps its `crs` record id. A record with only a repayment takes an id
+# salted with "reflow", which no `crs` id shares.
+REFLOWS = _table(
+    "reflows",
+    ("record_id",),
+    record_id=_str(),
+    year=_year(),
+    donor_code=_code(),
+    agency_code=_code(nullable=True),
+    crs_id=_str(nullable=True),
+    project_number=_str(nullable=True),
+    title=_str(nullable=True),
+    recipient_code=_code(),
+    purpose_code=_code(nullable=True),
+    channel_code=_code(nullable=True),
+    bi_multi=_bi_multi(),
+    flow_code=_code(),
+    finance_t=_code(nullable=True),
+    received_usd=_usd(nullable=True),
+    interest_usd=_usd(nullable=True),
+    commitment_date=Column(pl.Date(), nullable=True),
+    rio_adaptation=_rio(),
+    rio_mitigation=_rio(),
 )
 
 # One row per provider, channel, year and flow. The build writes every flow in FLOWS.
@@ -558,6 +590,42 @@ UNITS = _table(
     commitment_usd=_usd(),
     disbursement_usd=_usd(),
     record_ids=Column(pl.List(pl.String())),
+)
+
+# The `reflows` records summed as `UNITS` sums the trace's, under the same key, with
+# `unit_id` salted with "reflow" so no unit of the trace shares one.
+REFLOW_UNITS = _table(
+    "reflow_units",
+    ("unit_id",),
+    unit_id=_str(),
+    donor_code=_code(),
+    agency_code=_code(nullable=True),
+    crs_id=_str(nullable=True),
+    project_number=_str(nullable=True),
+    recipient_code=_code(),
+    purpose_code=_code(nullable=True),
+    year=_year(),
+    commitment_year=_year(nullable=True),
+    commitment_date=Column(pl.Date(), nullable=True),
+    placed_year=_year(),
+    floor_year=_year(nullable=True),
+    received_usd=_usd(),
+    interest_usd=_usd(),
+    record_ids=Column(pl.List(pl.String())),
+)
+
+# Links from each reflow unit to every commitment unit its first matching key tier
+# reaches, under the trace's rules (`keys.link_by_tiers`). `records_disagree` is as
+# on a trace link (`flag_disagreement`), so a link is certain where its tier is in
+# `CERTAIN_METHODS` and its records agree.
+REFLOW_LINKS = _table(
+    "reflow_links",
+    ("reflow_unit_id", "unit_id"),
+    reflow_unit_id=_str(),
+    unit_id=_str(),
+    group_id=_str(),
+    link_method=_str(values=KEY_TIERS),
+    records_disagree=_bool(),
 )
 
 ID_PRACTICE = _table(
@@ -1185,6 +1253,7 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
         CRDF,
         CRDF_SPAN,
         CRS,
+        REFLOWS,
         CORE_CONTRIBUTIONS,
         IMPUTED_SHARES,
         EXTERNAL,
@@ -1196,6 +1265,8 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
     "link": _by_name(
         LINKS,
         UNITS,
+        REFLOW_UNITS,
+        REFLOW_LINKS,
         ID_PRACTICE,
         PROGRAMME_STEMS,
         CANDIDATES,
