@@ -33,7 +33,7 @@ def _flag(
     year: int,
     crs_id: str | None = None,
     purpose: int | None = None,
-    commitment: float = 1.0,
+    commitment: float | None = 1.0,
     no_aim: float = 0.1,
     surprising: float = 0.1,
     short_text: bool = False,
@@ -92,6 +92,15 @@ FLAGS = [
         purpose=DEU_COMMITMENT_PURPOSE,
         commitment=0.0,
     ),
+    # DEU-1's key on a record with no commitment amount: false, never null.
+    _flag(
+        "DEU-NO-AMOUNT",
+        provider=DEU,
+        year=2021,
+        crs_id=DEU_COMMITMENT_CRS_ID,
+        purpose=DEU_COMMITMENT_PURPOSE,
+        commitment=None,
+    ),
     # DEU-1's CRS id and purpose in a year with no commitment row of it.
     _flag(
         "DEU-OTHER-YEAR",
@@ -115,6 +124,7 @@ IN_RELEASE = {
     IN_UNTRACED: True,
     "DEU-COMMITTED": True,
     "DEU-DISBURSES": False,
+    "DEU-NO-AMOUNT": False,
     "DEU-OTHER-YEAR": False,
     OUT_OF_TOTALS: False,
     "NOR-SHORT": False,
@@ -140,6 +150,7 @@ def test_in_release_follows_disbursements_untraced_and_commitments(
 ) -> None:
     flags = release.jev_flags()
 
+    assert flags["in_release"].null_count() == 0
     assert dict(zip(flags["record_id"], flags["in_release"], strict=True)) == IN_RELEASE
 
 
@@ -180,6 +191,7 @@ def test_flagged_keeps_the_records_where_the_flag_holds(
                 IN_UNTRACED,
                 "DEU-COMMITTED",
                 "DEU-DISBURSES",
+                "DEU-NO-AMOUNT",
                 "DEU-OTHER-YEAR",
             },
         ),
@@ -190,6 +202,7 @@ def test_flagged_keeps_the_records_where_the_flag_holds(
                 IN_DISBURSEMENTS,
                 "DEU-COMMITTED",
                 "DEU-DISBURSES",
+                "DEU-NO-AMOUNT",
                 "DEU-OTHER-YEAR",
                 "NOR-SHORT",
             },

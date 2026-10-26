@@ -403,7 +403,10 @@ def jev_flags(
         .join(committed, on=COMMITMENT_KEY, how="left", validate="m:1")
         .with_columns(
             in_release=pl.col("in_totals").is_not_null()
-            | ((pl.col("commitment_usd") > 0) & pl.col("committed").is_not_null())
+            | (
+                (pl.col("commitment_usd") > 0).fill_null(value=False)
+                & pl.col("committed").is_not_null()
+            )
         )
         .drop("in_totals", "committed")
     )
