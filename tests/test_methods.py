@@ -12,6 +12,7 @@ from climate_finance.methods import (
     OECD,
     ONE,
     OXFAM,
+    OXFAM_CAVEAT,
     OXFAM_HIGH,
     OXFAM_LOW,
     Method,
@@ -292,3 +293,12 @@ def test_capped_coefficients_take_the_providers_up_to_the_methods() -> None:
         False,
         True,
     ]
+
+
+@pytest.mark.parametrize("method", [OXFAM, OXFAM_LOW, OXFAM_HIGH, ONE])
+def test_explain_states_how_an_oxfam_bound_differs_from_oxfams_figures(
+    method: Method | MethodRange,
+) -> None:
+    text = cf.load(path=FIXTURE_DIR).spending(method=method).explain()
+
+    assert text.count(OXFAM_CAVEAT) == (0 if method == ONE else 1)

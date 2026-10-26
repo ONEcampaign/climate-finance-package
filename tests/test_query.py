@@ -919,25 +919,15 @@ def test_grant_equivalent_counts_a_record_without_one_in_its_own_column(
         assert rows["no_grant_equivalent"].to_list() == [0.0] * rows.height
 
 
-def test_share_of_total_divides_no_grant_equivalent_by_the_total() -> None:
+def test_share_of_total_leaves_no_grant_equivalent_null() -> None:
     result = SNAP.spending(flow="grant_equivalent")
-    keys = [*ROW_KEYS, "method"]
-    sums = result._sums.collect()
-    totals = result._totals.collect()
 
-    shares = result.share_of_total().table.join(
-        sums.join(totals, on=keys, how="left", nulls_equal=True),
-        on=keys,
-        nulls_equal=True,
-        suffix="_usd",
-    )
-
-    assert sums["no_grant_equivalent"].sum() == pytest.approx(
-        result.rows()["no_grant_equivalent"].sum()
-    )
-    assert (shares["no_grant_equivalent"] > 0).any()
-    assert shares["no_grant_equivalent"].to_list() == pytest.approx(
-        (shares["no_grant_equivalent_usd"] / shares["total"]).to_list(), nan_ok=True
+    assert result.table["no_grant_equivalent"].sum() > 0
+    assert result.share_of_total().table["no_grant_equivalent"].is_null().all()
+    assert (
+        result.share_of_total()
+        .rows()["no_grant_equivalent"]
+        .equals(result.rows()["no_grant_equivalent"])
     )
 
 

@@ -114,6 +114,9 @@ def test_crs_nulls_a_negative_grant_equivalent_on_a_disbursement(
         (210, None, 3e6),
         # A grant keeps the CRS's grant equivalent.
         (110, 2.0, 2e6),
+        # A grant's negative grant equivalent on a positive disbursement is a
+        # correction, nulled and then filled at face.
+        (110, -1.0, 3e6),
         # A loan, and a record of no finance type, stay without one.
         (421, None, None),
         (None, None, None),

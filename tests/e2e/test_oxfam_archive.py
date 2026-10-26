@@ -2,7 +2,8 @@
 against the bulk file, the identities `flow="grant_equivalent"` holds for the
 multilateral outflows of the recipient view, and OXFAM_LOW and OXFAM_HIGH for the
 developed countries Oxfam counts. The `release` fixture in conftest.py builds the
-archive.
+archive. The multilateral identities cover CRS records, and refuse a release whose
+multilateral rows include bank-ledger or IATI fills.
 """
 
 from pathlib import Path
@@ -37,7 +38,20 @@ HELD_SNAPSHOT_2024 = (25.3, 34.0)
 # their disbursement, and the part on records with no grant equivalent.
 MULTILATERAL_SHARES = {"at_face": 0.0990, "no_grant_equivalent": 0.9010}
 # OXFAM_LOW and OXFAM_HIGH `value` for 2024, in USD billion, under
-# `flow="grant_equivalent"` in the provider view.
+# `flow="grant_equivalent"` in the provider view. They sit 0.47bn above the
+# snapshot's low and 0.74bn below its high, and the two measure different things,
+# so no single cause accounts for either gap:
+# - The snapshot counts 2024 CRDF commitments, the pins 2024 CRS disbursements.
+# - The snapshot attributes development bank and climate fund outflows with the
+#   OECD's shares, 7.1bn of its low and 7.8bn of its high (oxfam/out/held.md). The
+#   pins attribute core contributions at each agency's own climate share.
+# - The snapshot values a bilateral ODA loan at its provider's CRS grant equivalent
+#   over disbursement for the year, the pins at each record's own, and both count
+#   other loans without grant-element data at 0 in either bound.
+# - The snapshot counts equity and other instruments at 0%; the pins count them at
+#   their CRS grant equivalent.
+# - OXFAM_HIGH gives Australia its 30% default and case-by-case agencies the caps,
+#   which moves the reproduction's 2024 high by -0.8% and +0.8%.
 OXFAM_PINS = {"OXFAM_LOW": 25.77, "OXFAM_HIGH": 33.26}
 PINNED_TOLERANCE = 0.01
 TOLERANCE = 1e-9
@@ -143,7 +157,13 @@ def multilateral(loaded: cf.Release, crs: pl.DataFrame) -> dict[str, pl.DataFram
             bi_multi=MULTILATERAL_OUTFLOW
         )
         joined = rows.join(kinds, on="record_id", how="left", validate="m:1")
-        assert joined["kind"].null_count() == 0
+        if (fills := joined.filter(pl.col("kind").is_null())).height:
+            pytest.fail(
+                f"{fills.height} multilateral rows under {flow} come from records "
+                "outside the normalised CRS, such as bank-ledger or IATI fills, "
+                f"with USD {fills['value'].sum() / 1e9:.2f}bn of value; the "
+                "identities cover CRS records only"
+            )
         sums[flow] = (
             joined.group_by("kind")
             .agg(pl.col("value").sum(), pl.col("no_grant_equivalent").sum())

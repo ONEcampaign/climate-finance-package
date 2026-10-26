@@ -85,7 +85,8 @@ def normalise_crs(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFrame:
     if corrections := in_years.select(correction.sum()).collect().item():
         logger.warning(
             "%d CRS records with a negative grant equivalent on a positive "
-            "disbursement; their grant equivalent is null",
+            "disbursement; their grant equivalent is null, or the disbursement for "
+            "a grant",
             corrections,
         )
     return (

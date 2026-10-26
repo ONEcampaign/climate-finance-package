@@ -168,7 +168,7 @@ def describe(method: Method | MethodRange) -> str:
             "which count only what certain links carried, and high the highest value "
             "across them."
         )
-        return text + _OXFAM if method == OXFAM else text
+        return f"{text} {OXFAM_CAVEAT}" if method == OXFAM else text
     rule = (
         "each activity counts once, under its higher Rio marker, with equal "
         "markers as cross-cutting"
@@ -208,21 +208,25 @@ def describe(method: Method | MethodRange) -> str:
     return text + _EU[method.eu]
 
 
-_OXFAM = (
-    " OXFAM_LOW and OXFAM_HIGH are the bounds of Oxfam's Climate-Specific Net "
+# Where OXFAM_LOW and OXFAM_HIGH differ from Oxfam's figures. `describe(OXFAM)` and
+# `Result.explain()` for either bound end with it.
+OXFAM_CAVEAT = (
+    "OXFAM_LOW and OXFAM_HIGH are the bounds of Oxfam's Climate-Specific Net "
     "Assistance: significant markers at 30% and principal at 85% in the low bound, "
     "each provider's own coefficients capped at 50% and 100% in the high bound. "
     "Oxfam values commitments at an estimated grant element; under "
     'flow="grant_equivalent" the package values disbursements at their own grant '
-    "equivalent. Development banks and climate funds count through each agency's "
-    "own climate spending, not the OECD's attribution shares Oxfam applies to "
-    "their outflows. Two rules of Oxfam's high bound differ, each moving its 2024 "
-    "total by under 1%. Oxfam gives a provider that assesses each activity case by "
-    "case the caps, where the package takes the default share it reports "
-    "(Australia's 30% for significant activities, 0.8% lower). Oxfam gives an "
-    "agency its provider's coefficients, where the package gives an agency that "
-    "assesses case by case (the AFD, FinDev Canada, Export Development Canada) the "
-    "caps (0.8% higher)."
+    "equivalent, and equity and other instruments that are neither grants nor "
+    "loans at the CRS grant equivalent where Oxfam counts them at 0%. Development "
+    "banks and climate funds count through each agency's own climate spending, not "
+    "the OECD's attribution shares Oxfam applies to their outflows. Two rules of "
+    "Oxfam's high bound differ, each moving its 2024 total by under 1%. Oxfam gives "
+    "a provider that assesses each activity case by case the caps, and activities "
+    "significant for both objectives 100%, where the package takes the default "
+    "share it reports for both (Australia's 30%, 0.8% lower, 0.7% of it on "
+    "activities significant for both). Oxfam gives an agency its provider's "
+    "coefficients, where the package gives an agency that assesses case by case "
+    "(the AFD, FinDev Canada, Export Development Canada) the caps (0.8% higher)."
 )
 
 _EU = {
