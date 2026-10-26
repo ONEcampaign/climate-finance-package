@@ -14,6 +14,11 @@ over-allocation:
   decision.
 - `conservation`: each linked CRS record's allocations, the unallocated excess
   included, sum to its disbursement.
+- `reflow_conservation`: by provider and year, the bulk CRS's principal repaid
+  (`usd_received`) and interest paid (`usd_interest`), the normalise `reflows`
+  table's and the release `reflows` table's, summed over every basis, agree from the
+  first CRS year to `years.crs_last_complete`. Both rows fail when the build lacks
+  the raw CRS, one of the tables or the years.
 - `over_allocation`: no commitment row is disbursed above its face value, and few
   of the commitment units behind the release's commitment rows are linked to more
   than `raw_factor` times their face.
@@ -31,12 +36,14 @@ over-allocation:
 Every value is a largest gap, a count or a share. A row passes at or below its
 threshold, except that the raw-links share passes below it, and precision's lower
 bound and the human-audit share pass at or above it. A gate with nothing to
-measure fails: no allocated pairs, no linked record with a disbursement, no linked
-commitment unit, no provider-year in the release or the published CRDF, no
-disbursement row, no provider code, or an empty sample. A precision or human_audit
-row that could not estimate says why in `code`: `no_allocated_pairs`, `no_sample`,
-`empty_sample` or `stale_sample`, and a precision row whose estimate or bound is NaN
-or infinite fails as `non_finite_estimate`. The other gates' rows carry no `code`.
+measure fails: no allocated pairs, no linked record with a disbursement, no
+repayment in the raw CRS, no linked commitment unit, no provider-year in the release
+or the published CRDF, no disbursement row, no provider code, or an empty sample. A
+precision or human_audit row that could not estimate says why in `code`:
+`no_allocated_pairs`, `no_sample`, `empty_sample` or `stale_sample`, and a precision
+row whose estimate or bound is NaN or infinite fails as `non_finite_estimate`. A
+reflow_conservation row that could not read an input fails as `missing_input`. The
+other gates' rows carry no `code`.
 `waive_precision` lets precision and human_audit rows fail.
 """
 
@@ -66,6 +73,7 @@ GATES = (
     "precision",
     "human_audit",
     "conservation",
+    "reflow_conservation",
     "over_allocation",
     "oecd_reconciliation",
     "drift",
@@ -89,6 +97,13 @@ RESULT_SCHEMA = pl.Schema(
 )
 # The provider-year totals the drift gate compares, from the `quality` table.
 DRIFT_MEASURES = ("climate_usd", "disbursed_climate_usd")
+# The reflow_conservation rows: each repayment's column in the raw CRS (USD million)
+# and in the `reflows` tables (USD).
+REFLOW_MEASURES = {
+    "received": ("usd_received", "received_usd"),
+    "interest": ("usd_interest", "interest_usd"),
+}
+_USD_PER_MILLION = 1e6
 # How many failing items a row's detail names.
 _SHOWN = 5
 # The gates `waive_precision` lets fail: both certify the blind sample.
@@ -113,6 +128,10 @@ class HumanAudit(_Section):
 
 
 class Conservation(_Section):
+    tolerance_usd: float
+
+
+class ReflowConservation(_Section):
     tolerance_usd: float
 
 
@@ -146,6 +165,7 @@ class GateConfig(_Section):
     precision: evaluate.PrecisionRule
     human_audit: HumanAudit
     conservation: Conservation
+    reflow_conservation: ReflowConservation
     over_allocation: OverAllocation
     oecd_reconciliation: Reconciliation
     drift: Drift
@@ -188,7 +208,8 @@ def run_gates(
         GateFailedError: when a row fails and is not waived, unless `report_only`.
         FileNotFoundError: when `sample` is given and `decisions` does not exist.
     """
-    from climate_finance.build.stages import table_path
+    from climate_finance.build.fetch import CRS_FILE
+    from climate_finance.build.stages import raw_dir, table_path
 
     gates = gates or load_gates()
     assembled = release_dir / "assemble"
@@ -202,6 +223,9 @@ def run_gates(
     manifest = ReleaseManifest.model_validate_json(
         (assembled / "release.json").read_text()
     )
+    raw_crs = raw_dir(release_dir) / CRS_FILE
+    first_year = manifest.years.get("crs", (None,))[0]
+    last_year = manifest.settings.get("years.crs_last_complete")
     links, units = scan("review", "links"), scan("link", "units")
     labels = (
         None
@@ -222,6 +246,19 @@ def run_gates(
                 units=units,
                 crs=trace_population(scan("normalise", "crs")),
                 config=gates.conservation,
+            ),
+            reflow_conservation_gate(
+                raw=pl.scan_parquet(raw_crs) if raw_crs.exists() else None,
+                staged=_scan_if_present(
+                    table_path(release_dir, "normalise", "reflows")
+                ),
+                released=_scan_if_present(assembled / "reflows.parquet"),
+                years=(
+                    (first_year, last_year)
+                    if isinstance(first_year, int) and isinstance(last_year, int)
+                    else None
+                ),
+                config=gates.reflow_conservation,
             ),
             over_allocation_gate(
                 commitments=released("commitments"),
@@ -297,6 +334,10 @@ def _row(
         ],
         schema=RESULT_SCHEMA,
     )
+
+
+def _scan_if_present(path: Path) -> pl.LazyFrame | None:
+    return scan_table(path) if path.exists() else None
 
 
 def _largest(values: pl.Series) -> float:
@@ -496,6 +537,134 @@ def conservation_gate(
             else "every linked record's disbursement is allocated or excess"
         ),
     )
+
+
+def reflow_conservation_gate(
+    *,
+    raw: pl.LazyFrame | None,
+    staged: pl.LazyFrame | None,
+    released: pl.LazyFrame | None,
+    years: tuple[int, int] | None,
+    config: ReflowConservation,
+) -> pl.DataFrame:
+    """Two rows, `received` and `interest`: the largest gap in USD, over provider
+    and year, between the bulk CRS's repayments (`raw`, in USD million), the
+    normalise `reflows` table's (`staged`) and the release `reflows` table's
+    (`released`), summed over every basis, for `years`, the first and last year
+    inclusive.
+
+    Both rows fail, coded `missing_input` and naming each input that is `None`, when
+    one cannot be read. A row also fails when no repayment of its kind is in any of
+    the three.
+    """
+    if raw is None or staged is None or released is None or years is None:
+        absent = [
+            name
+            for name, held in (
+                ("raw CRS", raw),
+                ("normalise reflows", staged),
+                ("release reflows", released),
+                ("CRS years", years),
+            )
+            if held is None
+        ]
+        return pl.concat(
+            _row(
+                "reflow_conservation",
+                subject=subject,
+                value=None,
+                threshold=config.tolerance_usd,
+                passed=False,
+                detail=f"cannot read {', '.join(absent)}: nothing to conserve",
+                code="missing_input",
+            )
+            for subject in REFLOW_MEASURES
+        )
+    key = ["provider_code", "year"]
+
+    def totals(
+        frame: pl.LazyFrame, *, provider: str, column: str, scale: float, name: str
+    ) -> pl.LazyFrame:
+        return (
+            frame.filter(pl.col("year").is_between(*years))
+            .select(
+                pl.col(provider).alias("provider_code"),
+                "year",
+                (pl.col(column).fill_null(0.0) * scale).alias("usd"),
+            )
+            .filter(pl.col("usd") != 0)
+            .group_by(key)
+            .agg(ordered_sum(pl.col("usd")).alias(name))
+        )
+
+    rows = []
+    for subject, (raw_column, column) in REFLOW_MEASURES.items():
+        sums = ["raw_usd", "staged_usd", "released_usd"]
+        compared = (
+            totals(
+                raw,
+                provider="donor_code",
+                column=raw_column,
+                scale=_USD_PER_MILLION,
+                name=sums[0],
+            )
+            .join(
+                totals(
+                    staged,
+                    provider="donor_code",
+                    column=column,
+                    scale=1.0,
+                    name=sums[1],
+                ),
+                on=key,
+                how="full",
+                coalesce=True,
+            )
+            .join(
+                totals(
+                    released,
+                    provider="provider_code",
+                    column=column,
+                    scale=1.0,
+                    name=sums[2],
+                ),
+                on=key,
+                how="full",
+                coalesce=True,
+            )
+            .select(
+                *key,
+                gap=pl.max_horizontal(pl.col(sums).fill_null(0.0))
+                - pl.min_horizontal(pl.col(sums).fill_null(0.0)),
+            )
+            .collect()
+        )
+        gaps = compared.filter(pl.col("gap") > config.tolerance_usd).sort(
+            "gap", *key, descending=[True, False, False]
+        )
+        named = [
+            f"{provider}/{year}" for provider, year in gaps.select(key).iter_rows()
+        ]
+        rows.append(
+            _row(
+                "reflow_conservation",
+                subject=subject,
+                value=None if compared.is_empty() else _largest(gaps["gap"]),
+                threshold=config.tolerance_usd,
+                passed=gaps.is_empty() and not compared.is_empty(),
+                detail=(
+                    f"no {subject} in the raw CRS, the normalise table or the "
+                    "release table: nothing to conserve"
+                    if compared.is_empty()
+                    else f"provider-years whose {subject} differs across the raw "
+                    f"CRS, the normalise table and the release table: {_named(named)}"
+                    if gaps.height
+                    else f"every provider-year's {subject} agrees across the raw "
+                    "CRS, the normalise table and the release table"
+                ),
+            )
+        )
+    return pl.concat(rows)
 
 
 def over_allocation_gate(

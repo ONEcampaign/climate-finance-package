@@ -29,6 +29,13 @@ human_audit:
 conservation:
   tolerance_usd: 1.0e-6
 
+# By provider and year, the raw CRS's repayments, the normalise `reflows` and the
+# release `reflows` summed over every basis agree. The gap is a sum of float
+# amounts, so a cent leaves room for rounding in the largest provider-years while
+# a dropped repayment is far larger.
+reflow_conservation:
+  tolerance_usd: 0.01
+
 # No commitment row above its face value, and few of the release's linked
 # commitments whose links bring more than `raw_factor` times their face. Certain
 # key-tier links put 8.5% of 2021-22 commitments over in the deterministic
