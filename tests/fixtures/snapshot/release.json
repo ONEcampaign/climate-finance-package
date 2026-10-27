@@ -51,6 +51,10 @@
       "sha256": "8ad93644528bf7178ab05f25dd121c1a5939bdfb670e14c4ce4dffb9dbc4fd73",
       "rows": 9
     },
+    "jev_flags": {
+      "sha256": "3a6f36a449b8348a6eae81d8447190a15d4b3c5bf117c59f9f4b7bc082dfeb66",
+      "rows": 0
+    },
     "commitments": {
       "sha256": "9c6976e78b96d85666b7ff57e81933bbb49e5c6c31e69cc2776c5fe9c119daa6",
       "rows": 14
@@ -95,7 +99,9 @@
     "jev_labels": false,
     "jev_links": false,
     "embed": false,
+    "jev_flags": false,
     "skip_eib_routes": [],
+    "jev_flags_first_year": 2015,
     "years.crdf": [
       2021,
       2022

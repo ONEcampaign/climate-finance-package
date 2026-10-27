@@ -349,7 +349,9 @@ SETTINGS = {
     "jev_labels": False,
     "jev_links": False,
     "embed": False,
+    "jev_flags": False,
     "skip_eib_routes": [],
+    "jev_flags_first_year": 2015,
     "years.crdf": [2021, 2022],
     "years.crs": [2021, 2023],
     "years.crs_last_complete": 2023,
@@ -805,6 +807,8 @@ def build_tables() -> dict[str, pl.DataFrame]:
                 (0.23, 0.31, 0.39, 0.46, 0.52, 0.58, 0.63, 0.67, 0.70)
             )
         ],
+        # The fixture claims a build with `jev_flags` off.
+        "jev_flags": [],
     }
     frames = {
         name: pl.from_dicts(rows, schema=_polars_schema(name))
@@ -1195,6 +1199,7 @@ BY_PROVIDER = (
     "total_flows",
     "untraced",
     "unallocated",
+    "jev_flags",
 )
 
 
@@ -1204,10 +1209,11 @@ def sample_release(release: Path) -> dict[str, pl.DataFrame]:
     Each commitment keeps every allocation and each record its objective labels, so
     the commitments' disbursed amounts still sum from their allocations. Each repeat
     keeps the first row it repeats, which holds its allocations. `quality`,
-    `modelled`, `core_contributions`, `total_flows`, `untraced` and `unallocated`
-    keep the six providers' rows for the whole release, with `unallocated.marked_usd`
-    less the Rio-marked allocations the sample leaves out. `reflows` keeps every row
-    of the six providers' repayments whose commitment rows are all in the sample.
+    `modelled`, `core_contributions`, `total_flows`, `untraced`, `unallocated` and
+    `jev_flags` keep the six providers' rows for the whole release, with
+    `unallocated.marked_usd` less the Rio-marked allocations the sample leaves out.
+    `reflows` keeps every row of the six providers' repayments whose commitment rows
+    are all in the sample.
     """
     tables = {
         name: pl.read_parquet(release / f"{name}.parquet") for name in RELEASE_TABLES

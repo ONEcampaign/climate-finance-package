@@ -49,11 +49,11 @@ def test_a_release_prints_its_name_flow_years_and_tables(tmp_path: Path) -> None
     # The fixture's name marks its figures as invented.
     assert repr(cf.load(path=FIXTURE_DIR)) == (
         "Release('fixture', synthetic figures): commitments 2021 to 2022, "
-        "disbursements 2021 to 2024; 18 tables"
+        "disbursements 2021 to 2024; 19 tables"
     )
     assert repr(cf.load(path=published)) == (
         "Release('2026a'): commitments 2021 to 2022, disbursements 2021 to 2024; "
-        "16 tables, withholding btr, btr_links"
+        "17 tables, withholding btr, btr_links"
     )
 
 

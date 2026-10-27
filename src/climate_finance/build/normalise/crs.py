@@ -8,6 +8,7 @@ import polars as pl
 
 from climate_finance.build.normalise.ids import text_digest, with_content_id
 from climate_finance.schema import (
+    COMMITMENT_KEY,
     CORE_CONTRIBUTION,
     CRS_REFLOWS,
     CRS_UNSPECIFIED_RECIPIENT,
@@ -184,7 +185,8 @@ def trace_population(crs: pl.LazyFrame) -> pl.LazyFrame:
 
 
 def commitment_keys(crs: pl.LazyFrame) -> pl.LazyFrame:
-    """The (provider, crs id, year, purpose) keys the CRS commits money under.
+    """The `COMMITMENT_KEY` keys (provider, crs id, year, purpose) the CRS commits
+    money under.
 
     Records are summed by donor, agency, crs id, project number, recipient, purpose,
     year and commitment year, and a key has a commitment when one of its sums is
@@ -205,12 +207,8 @@ def commitment_keys(crs: pl.LazyFrame) -> pl.LazyFrame:
         .group_by(units)
         .agg(pl.col("commitment_usd").sum().alias("unit_commitment"))
         .filter(pl.col("unit_commitment") > 0, pl.col("crs_id").is_not_null())
-        .select(
-            provider_code="donor_code",
-            crs_id="crs_id",
-            year="year",
-            purpose_code="purpose_code",
-        )
+        .rename({"donor_code": "provider_code"})
+        .select(COMMITMENT_KEY)
         .unique()
     )
 

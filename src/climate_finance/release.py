@@ -14,7 +14,7 @@ import warnings
 from collections.abc import Callable, Iterable, Mapping
 from importlib.resources import files
 from pathlib import Path
-from typing import Unpack
+from typing import Literal, Unpack
 
 import polars as pl
 import pyarrow as pa
@@ -295,6 +295,57 @@ class Release:
             providers=read_provider_codes(providers, reader="reconcile()"),
             years=read,
             method=read_method(method),
+        )
+
+    @_keywords
+    def jev_flags(
+        self,
+        *,
+        provider: str | int | Iterable[str | int] | None = None,
+        year: int | Iterable[int] | None = None,
+        flagged: Literal["no_aim", "surprising"] | None = None,
+        experimental: bool = False,
+    ) -> pl.DataFrame:
+        """Jev's answers about the release's climate-marked CRS records, one row per
+        record, with the record's facts for checking it.
+
+        `provider` and `year` take the forms `quality`'s `providers` and `years`
+        take; None takes every record. `flagged="no_aim"` keeps records whose text
+        shows no climate aim at all, and `"surprising"` those a well-informed reader
+        would not expect to count as climate finance. The flags rank records for
+        review and change no total. `counterproductive_p` ranks only. `in_release`
+        is true for a record that `disbursements` or `untraced` holds, or that
+        reports a commitment matching a counted `commitments` row on provider, CRS
+        id, year and purpose, the key that ties a CRS commitment to its CRDF row.
+        `mitigation_aim_p` has no external check and comes only with
+        `experimental=True`.
+
+        Raises:
+            MissingLabelsError: when the release was built with `jev_flags` off.
+            UnknownProviderError: for a provider name or code outside the listings.
+            InvalidInputError: for an agency, since the table counts providers,
+                naming its provider; for a year in a form `Spec` does not take; for
+                an empty list of providers or years; for a `flagged` or
+                `experimental` value outside those above; or for an unknown
+                keyword, naming a close one.
+        """
+        if flagged not in (None, "no_aim", "surprising"):
+            raise InvalidInputError(
+                f'flagged takes "no_aim" or "surprising"; None takes every record; '
+                f"got {flagged!r}"
+            )
+        if not isinstance(experimental, bool):
+            raise InvalidInputError(
+                f"experimental takes True or False; got {experimental!r}"
+            )
+        return query.jev_flags(
+            self,
+            providers=read_provider_codes(
+                provider, reader="jev_flags()", keyword="provider"
+            ),
+            years=read_years(year),
+            flagged=flagged,
+            experimental=experimental,
         )
 
     def disbursement_profile(self) -> pl.DataFrame:

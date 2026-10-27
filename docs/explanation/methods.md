@@ -26,6 +26,21 @@ Development banks report a climate share (the climate components) for their proj
 
 Where a release holds Jev's objective labels, `Method(relevance="jev")` reads Jev's adaptation level in place of the adaptation marker for disbursements whose CRS record Jev labelled. Jev labels only records whose commitment its donor marked adaptation and that carry no climate components, and untraced records that their own adaptation marker places among adaptation projects. A label replaces only the adaptation marker a row weighs by: the commitment's for a traced row and the record's own for an untraced one, where that marker is 1 or 2. Mitigation, commitments, and unlabelled records keep their CRS markers. Jev labels a record adaptation when its answer to a lenient adaptation question passes a cut fitted on human-coded projects, at level 2 when it finds principal likelier than significant and at level 1 otherwise. A record below the cut reads level 0. The method weighs these levels at the same coefficients as donor markers.
 
+## Jev flags
+
+A release built with `jev_flags` on holds Jev's answers about the CRS records of 2015 onward (`jev_flags_first_year`) that carry a Rio mitigation or adaptation marker of 1 or 2 and a positive commitment or disbursement. Jev reads each record's title and long description, and a text under 60 characters goes unasked. Jev answers four questions as probabilities:
+
+- Does the activity aim to mitigate climate change?
+- Does it aim to help people, economies or ecosystems adapt to climate change?
+- Could it work against climate goals, by raising emissions or locking in emission-intensive assets?
+- Would a well-informed reader be surprised to learn that it counts as climate finance?
+
+Two cuts turn answers into flags. `no_aim` holds where one less the larger of the two aim answers reaches 0.7, so the text shows no climate aim of either kind. On 200 stratified hand-labelled texts it has precision 1.00 and recall 0.93. `surprising` holds where the surprise answer reaches 0.8. On 240 hand-labelled texts it has precision 0.83 and recall 0.60, so it misses two in five of the records a reader would question. The question wording was revised against the same 240 texts, the 200 among them, so these rates may overstate how well the flags do on texts they were not tuned on.
+
+The answer to the third question ranks records and has no flag, because it also scores vehicle purchases and rural roads. The mitigation answer has no external check, and `release.jev_flags()` leaves it out unless called with `experimental=True`.
+
+The flags point a reviewer at records to check. They change no total. No stage or query weighs a record by them, and `spending()` returns the same figures with the switch on or off. [Python API](../reference/python-api.md) describes the reader, and [Release tables](../reference/release-tables.md#jev_flags) the columns.
+
 ## Attribution to providers
 
 `view="recipient"`, the default, counts bilateral flows (Bi_Multi 1, 3, 7, and 8) and multilateral outflows (code 4). It leaves out money a donor gives to a multilateral agency (code 2), because the agency's own outflows count when it spends the money.

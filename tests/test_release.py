@@ -18,6 +18,7 @@ from normalised import crdf_rows, crs_records
 from stage_runs import (
     BUILD_TOML,
     registered,
+    run_stage,
     stage_context,
     write_recorded,
     year_rows,
@@ -43,6 +44,7 @@ from climate_finance.build.allocate import (
 from climate_finance.build.errors import (
     ConfigError,
     ReleaseInvariantError,
+    StageInputMissingError,
     StaleStageError,
 )
 from climate_finance.build.fetch import YEAR_SOURCES
@@ -241,6 +243,14 @@ def _read(release_dir: Path, table: str) -> pl.DataFrame:
     return pl.read_parquet(table_path(release_dir, "assemble", table))
 
 
+def test_with_jev_flags_on_assemble_refuses_a_missing_flag_table(
+    release_dir: Path,
+) -> None:
+    # The fixture's build never ran the flag stage.
+    with pytest.raises(StageInputMissingError, match="jev_flags"):
+        run_stage("assemble", stage_context(release_dir, jev_flags=True))
+
+
 def test_the_release_opens_and_matches_release_json(release_dir: Path) -> None:
     loaded = cf.load(path=release_dir / "assemble")
 
@@ -268,7 +278,9 @@ def test_the_release_opens_and_matches_release_json(release_dir: Path) -> None:
         "jev_labels": False,
         "jev_links": False,
         "embed": False,
+        "jev_flags": False,
         "skip_eib_routes": [],
+        "jev_flags_first_year": 2015,
         # The settings as configured; `years` above holds what they resolved to.
         "years.crdf": "all",
         "years.crs": None,

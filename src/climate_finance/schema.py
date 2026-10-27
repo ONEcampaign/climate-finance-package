@@ -392,6 +392,9 @@ CRS_REFLOWS = _table(
 # a provider's 40000 total that no leaf itemises (`release.core_contributions`).
 # The key within which a provider's leaf channels sum to its `TOP_CHANNEL` row.
 CONTRIBUTION_KEY = ("provider_code", "year", "flow")
+# The key that ties a CRS commitment to the CRDF row of the same commitment: the
+# CRS commits money under it, and a CRDF row is backed where the CRS does.
+COMMITMENT_KEY = ("provider_code", "crs_id", "year", "purpose_code")
 # MULTI's total of a provider's core contributions, which sums every leaf channel
 # it reports, 30010 included. The intermediate aggregates (41000, 47000 and the
 # like) follow no code prefix, as MULTI files some 41xxx channels under 47000.
@@ -1089,6 +1092,50 @@ QUALITY = _table(
     grant_equiv_coverage=_f64(nullable=True),
 )
 
+# The cuts on Jev's answers at which a `jev_flags` record is flagged. Measured on
+# hand-labelled texts of the climate-marked CRS, `no_aim` has precision 1.00 and
+# recall 0.93 on 200 stratified texts, and `surprising` 0.83 and 0.60 on 240.
+NO_AIM_CUT = 0.7
+SURPRISING_CUT = 0.8
+JEV_FLAG_PROBABILITIES = (
+    "no_aim_p",
+    "adaptation_aim_p",
+    "mitigation_aim_p",
+    "surprising_p",
+    "counterproductive_p",
+)
+
+# Jev's answers about each CRS record of the flagged years with a Rio mitigation or
+# adaptation marker of 1 or 2 and a positive commitment or disbursement, with the
+# record's own facts. `no_aim_p` is 1 less the larger of the two aim answers, and
+# `no_aim` and `surprising` hold where `no_aim_p` and `surprising_p` reach
+# `NO_AIM_CUT` and `SURPRISING_CUT`. `counterproductive_p` ranks records and has no
+# cut. A record whose text is too short to ask (`short_text`) has null answers. The
+# table changes no total.
+JEV_FLAGS = _table(
+    "jev_flags",
+    ("record_id",),
+    record_id=_str(),
+    year=_year(),
+    provider_code=_code(),
+    agency_code=_code(nullable=True),
+    recipient_code=_code(),
+    purpose_code=_code(nullable=True),
+    flow_code=_code(),
+    project_number=_str(nullable=True),
+    crs_id=_str(nullable=True),
+    title=_str(nullable=True),
+    commitment_usd=_usd(nullable=True),
+    disbursement_usd=_usd(nullable=True),
+    rio_adaptation=_rio(),
+    rio_mitigation=_rio(),
+    short_text=_bool(),
+    **dict.fromkeys(JEV_FLAG_PROBABILITIES, _f64(nullable=True, minimum=0.0)),
+    no_aim=_bool(nullable=True),
+    surprising=_bool(nullable=True),
+    model=_str(),
+)
+
 # Rio-marked CRS disbursement that reaches no commitment in the release, one row
 # per CRS record, at face value. `untraced_usd` is a linked record's disbursement
 # beyond what its commitments take (`reason` `excess`), or the whole disbursement of a
@@ -1328,6 +1375,7 @@ RELEASE_TABLES = _by_name(
     REFLOWS,
     TOTAL_FLOWS,
     PROVIDER_COEFFICIENTS,
+    JEV_FLAGS,
 )
 
 STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
@@ -1362,6 +1410,7 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
     "fill": _by_name(ALLOCATIONS, COMMITMENT_STATUS, BANK_YEAR_OVERLAP),
     "review": _by_name(LINKS, REVIEW_QUEUE, PAIR_LABELS, COMMITMENT_STATUS),
     "label": _by_name(OBJECTIVE_LABELS),
+    "flag": _by_name(JEV_FLAGS),
     "measure": _by_name(AGENCY_SHARES, AGENCY_SPENDING, MODELLED),
     "assemble": RELEASE_TABLES,
 }
@@ -1371,11 +1420,13 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
 # names ledger sources.
 # `bank_year_overlap` is written by the bank-ledger gap fill, `review_queue` by the
 # review queue and `pair_labels` by the ledger check. With their switches off the two
-# stages pass the tables they carry forward through unchanged.
+# stages pass the tables they carry forward through unchanged. `jev_flags` is written
+# when `jev_flags` is on.
 OPTIONAL_STAGE_TABLES: Mapping[str, frozenset[str]] = {
     "normalise": frozenset({"btr", "btr_workbooks", "orgs", "ledger"}),
     "fill": frozenset({"bank_year_overlap"}),
     "review": frozenset({"review_queue", "pair_labels"}),
+    "flag": frozenset({"jev_flags"}),
 }
 
 
@@ -1554,8 +1605,9 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     face and grant-equivalent sums within `BTR_TOTALS_TOLERANCE` of their size. The
     `untraced` checks are those of `_untraced_problems`, the `unallocated` total
     that of `_marked_problems`, and the `provider_coefficients` checks those of
-    `_coefficient_problems`, and the `reflows` checks those of `_reflow_problems`.
-    An empty list means every check passed.
+    `_coefficient_problems`, the `reflows` checks those of `_reflow_problems`, and
+    the `jev_flags` checks those of `_jev_flag_problems`. An empty list means every
+    check passed.
     """
     commitments, problems, _ = _finite(tables["commitments"], name="commitments")
     disbursements, non_finite, flagged = _finite(
@@ -1730,7 +1782,34 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     reflows, non_finite, _ = _finite(tables["reflows"], name="reflows")
     problems.extend(non_finite)
     problems.extend(_reflow_problems(reflows, commitments=commitments))
+    problems.extend(_jev_flag_problems(tables["jev_flags"]))
     return problems
+
+
+def _jev_flag_problems(flags: pl.DataFrame) -> list[str]:
+    """Rows of `jev_flags` with an answer above 1, a flag that differs from its cut,
+    or an answer or flag null other than exactly where `short_text` holds."""
+    short = pl.col("short_text")
+    checks = {
+        "an answer above 1": pl.any_horizontal(
+            pl.col(name) > 1 for name in JEV_FLAG_PROBABILITIES
+        ),
+        "no_aim differs from no_aim_p >= NO_AIM_CUT": pl.col("no_aim").ne_missing(
+            pl.col("no_aim_p") >= NO_AIM_CUT
+        ),
+        "surprising differs from surprising_p >= SURPRISING_CUT": pl.col(
+            "surprising"
+        ).ne_missing(pl.col("surprising_p") >= SURPRISING_CUT),
+        "an answer null other than where short_text holds": pl.any_horizontal(
+            pl.col(name).is_null() != short
+            for name in (*JEV_FLAG_PROBABILITIES, "no_aim", "surprising")
+        ),
+    }
+    return [
+        f"jev_flags {record_id}: {check}"
+        for check, failing in checks.items()
+        for record_id in flags.filter(failing.fill_null(False))["record_id"]
+    ]
 
 
 _COEFFICIENTS = ("significant", "principal", "both_significant")

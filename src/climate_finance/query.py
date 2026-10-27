@@ -105,6 +105,7 @@ from climate_finance.result import (
 from climate_finance.schema import (
     ADAPTATION_FIRST_YEAR,
     BILATERAL,
+    COMMITMENT_KEY,
     CORE_CONTRIBUTION,
     EIB_AGENCY,
     EU_INSTITUTIONS,
@@ -352,6 +353,66 @@ def quality(
             )
         ),
     )
+
+
+def jev_flags(
+    release: Release,
+    *,
+    providers: tuple[int, ...] | None = None,
+    years: tuple[int, ...] | None = None,
+    flagged: str | None = None,
+    experimental: bool = False,
+) -> pl.DataFrame:
+    """The `jev_flags` rows for `providers` and `years`, with names, `in_release` and,
+    when `experimental`, `mitigation_aim_p`; `flagged` keeps the rows where that
+    flag holds.
+
+    A record is `in_release` when the release's totals draw on it: `disbursements`
+    or `untraced` holds it, or it reports a commitment and a counted `commitments`
+    row, one that repeats no earlier vintage, shares its `COMMITMENT_KEY` (provider,
+    CRS id, year and purpose), the key that ties a CRS commitment to its CRDF row.
+
+    Raises:
+        MissingLabelsError: when the release was built with `jev_flags` off.
+    """
+    if not release.manifest.settings.get("jev_flags"):
+        raise MissingLabelsError(
+            "jev_flags() needs Jev's flags, and this release holds none: it was "
+            "built with jev_flags off"
+        )
+    conditions = _conditions(providers=providers, recipients=None, years=years)
+    if flagged is not None:
+        conditions.append(pl.col(flagged))
+    in_totals = (
+        pl.concat(
+            release.table(table).select("record_id")
+            for table in ("disbursements", "untraced")
+        )
+        .unique()
+        .with_columns(in_totals=pl.lit(value=True))
+    )
+    committed = (
+        _counted_commitments(release)
+        .select(*COMMITMENT_KEY, committed=pl.lit(value=True))
+        .unique()
+    )
+    flags = (
+        release.table("jev_flags")
+        .filter(*conditions)
+        .join(in_totals, on="record_id", how="left", validate="m:1")
+        .join(committed, on=COMMITMENT_KEY, how="left", validate="m:1")
+        .with_columns(
+            in_release=pl.col("in_totals").is_not_null()
+            | (
+                (pl.col("commitment_usd") > 0).fill_null(value=False)
+                & pl.col("committed").is_not_null()
+            )
+        )
+        .drop("in_totals", "committed")
+    )
+    if not experimental:
+        flags = flags.drop("mitigation_aim_p")
+    return with_names(flags).sort("provider_code", "year", "record_id").collect()
 
 
 def _untraced(

@@ -215,6 +215,22 @@ Key `provider_code`, `agency_code`, `first_year`. The coefficients each provider
 - `case_by_case`: true for a provider that assesses each activity's climate share. Its coefficients are null, or the default its source gives for an activity whose share is unknown.
 - `source`, `locator`: the document, and the page, note, or paragraph that states the coefficients.
 
+## `jev_flags`
+
+Key `record_id`. Jev's answers about each CRS record from `jev_flags_first_year` to `crs_last_complete` with a Rio mitigation or adaptation marker of 1 or 2 and a positive commitment or disbursement, beside the record's own facts. The table has no rows in a build with `jev_flags` off, and `release.json` records the switch under `settings`. `release.jev_flags()` reads it and adds `in_release`. The flags change no total. The columns are:
+
+- `record_id`, `year`: the CRS record and its year.
+- `provider_code`, `agency_code`, `recipient_code`, `purpose_code`, `flow_code`, `project_number`, `crs_id`, `title`: the record's own fields.
+- `commitment_usd`, `disbursement_usd`: the record's face value.
+- `rio_adaptation`, `rio_mitigation`: the record's own markers.
+- `short_text`: true where the record's title and long description together are shorter than 60 characters, which the build does not ask Jev about. The probabilities and flags are null there.
+- `no_aim_p`: 1 less the larger of `adaptation_aim_p` and `mitigation_aim_p`.
+- `adaptation_aim_p`, `mitigation_aim_p`: Jev's probability that the text aims at adaptation or at mitigation. The reader gives `mitigation_aim_p` only with `experimental=True`.
+- `surprising_p`: Jev's probability that a well-informed reader would be surprised to see the activity counted as climate finance.
+- `counterproductive_p`: Jev's probability that the activity could work against climate goals. It ranks records and has no flag.
+- `no_aim`, `surprising`: true where `no_aim_p` reaches 0.7 and `surprising_p` reaches 0.8.
+- `model`: the Jev model version that answered.
+
 ## Terms by source
 
 `sources.json` is the authority for each release, and lists these terms:
