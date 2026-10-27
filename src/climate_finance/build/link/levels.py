@@ -9,7 +9,8 @@ commitment is the left record (`_l`) and the disbursement the right (`_r`). In
 `candidates` and `trace` links the disbursement unit is `left_id`.
 
 A unit reads its fields from its representative record, the largest by absolute
-commitment plus disbursement, ties to the smaller record id. The levels:
+commitment plus disbursement, ties to the smaller record id, except its purposes,
+which are every purpose code its records carry (`purpose_codes`). The levels:
 
 - project number, read from the unit's number (`keys.normalise_pn`, so spaces, a
   trailing `.0`, placeholders and rounded numbers decide nothing): 4 different
@@ -22,7 +23,8 @@ commitment plus disbursement, ties to the smaller record id. The levels:
   descriptions that agree (word Jaccard at least 0.7, or either missing), 4 the same
   title, 3 and 2 close titles or descriptions, 1 descriptions sharing a fifth of
   their words, else 0.
-- purpose: 2 the same code, 1 the same three-digit category, else 0.
+- purpose: 2 a code both units carry, 1 a three-digit category both carry, else 0;
+  -1 where either carries none.
 - recipient, channel, flow and finance type: 1 the same, else 0.
 - amount, the disbursement over the commitment: 4 from half to all of it, 3 from a
   tenth to half, 2 under a tenth, 1 up to 1.1 times, else 0; -1 without a commitment.
@@ -78,8 +80,8 @@ COMPARISON_COLUMNS = (
     "title_toks",
     "desc_norm",
     "desc_toks",
-    "purpose_code",
-    "purpose3",
+    "purpose_codes",
+    "purpose3s",
     "recipient_code",
     "channel_code",
     "flow_code",
@@ -145,8 +147,10 @@ def unit_attributes(
             donor_code="donor_code",
             provider="donor_code",
             recipient_code="recipient_code",
-            purpose_code="purpose_code",
-            purpose3=pl.col("purpose_code") // 100,
+            purpose_codes="purpose_codes",
+            purpose3s=(pl.col("purpose_codes").list.eval(pl.element() // 100))
+            .list.unique()
+            .list.sort(),
             channel_code="rep_channel_code",
             flow_code="rep_flow_code",
             finance_type_code="rep_finance_t",
@@ -247,9 +251,18 @@ def comparisons(
         cl.CustomComparison(
             output_column_name="purpose",
             comparison_levels=[
-                cll.NullLevel("purpose_code"),
-                cll.ExactMatchLevel("purpose_code"),
-                cll.ExactMatchLevel("purpose3"),
+                cll.CustomLevel(
+                    "coalesce(len(purpose_codes_l), 0) = 0 "
+                    "or coalesce(len(purpose_codes_r), 0) = 0"
+                ).configure(is_null_level=True),
+                cll.CustomLevel(
+                    "list_has_any(purpose_codes_l, purpose_codes_r)",
+                    label_for_charts="a purpose code in common",
+                ),
+                cll.CustomLevel(
+                    "list_has_any(purpose3s_l, purpose3s_r)",
+                    label_for_charts="a purpose category in common",
+                ),
                 cll.ElseLevel(),
             ],
         ),

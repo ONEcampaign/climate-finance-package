@@ -655,9 +655,10 @@ def purpose_lines(
     an earlier record year that carries its crs id, where that id committed to its
     recipient and purpose in or before its record year, and otherwise each that
     carries another crs id, where its own id commits elsewhere or is first recorded
-    after the commitment's year. Where the commitments of one record year have more
-    than one crs id, the unit continues one of them and nothing says which: those
-    pairs are `ambiguous`.
+    after the commitment's year. A unit carries each purpose its records do
+    (`purpose_codes`), and a pair holds where it holds for any purpose the two share.
+    Where the commitments of one record year have more than one crs id, the unit
+    continues one of them and nothing says which: those pairs are `ambiguous`.
 
     Args:
         units: the units, with `line_id`s.
@@ -670,6 +671,10 @@ def purpose_lines(
     line = [*_BY_PROJECT, "purpose_code"]
     place = ["donor_code", "crs_id", "recipient_code", "purpose_code"]
     units = units.filter(pl.col("donor_code").is_in(PURPOSE_LINE_DONORS))
+    purposes = units.select("unit_id", purpose_code="purpose_codes").explode(
+        "purpose_code"
+    )
+    units = units.drop("purpose_code").join(purposes, on="unit_id")
     anchors = (
         units.filter(pl.col("commitment_usd") > 0)
         .drop_nulls("crs_id")
@@ -678,6 +683,8 @@ def purpose_lines(
     )
     disbursements = (
         later.filter(pl.col("donor_code").is_in(PURPOSE_LINE_DONORS))
+        .drop("purpose_code")
+        .join(purposes, on="unit_id")
         .join(anchors, on=place, how="left")
         .select(
             "unit_id",
@@ -692,13 +699,14 @@ def purpose_lines(
     same_id = pl.col("crs_id_left") == pl.col("crs_id")
     new_line = pl.col("committed") | (pl.col("seen_year") > pl.col("year"))
     return (
-        commitments.join(units, on="unit_id", how="semi")
+        units.join(commitments, on="unit_id", how="semi")
         .select("unit_id", "year", "crs_id", *line)
         .join(disbursements, on=line, suffix="_left")
         .filter(
             pl.col("year_left") > pl.col("year"),
             pl.when("own").then(same_id).otherwise(~same_id & new_line),
         )
+        .unique(["unit_id_left", "unit_id"])
         .select(
             left_id="unit_id_left",
             right_id="unit_id",

@@ -357,13 +357,14 @@ def test_too_few_training_outcomes_refuse_the_fit(
 def test_pair_request_states_the_derived_facts() -> None:
     earlier = {
         "year": 2018, "donor_code": 901, "recipient_code": 1, "purpose_code": 23210,
-        "channel_code": None, "flow_code": 11, "finance_type_code": 110,
+        "purpose_codes": [23210], "channel_code": None, "flow_code": 11,
+        "finance_type_code": 110,
         "project_number": "P1", "title": "Solar Grid", "short_description": None,
         "long_description": "x " * 400, "commitment_usd": 2e6, "disbursement_usd": 0.0,
     }  # fmt: skip
     later = earlier | {
         "year": 2021, "title": "solar grid", "commitment_usd": None,
-        "disbursement_usd": 5e5, "purpose_code": 23220,
+        "disbursement_usd": 5e5, "purpose_code": 23220, "purpose_codes": [23220],
     }  # fmt: skip
     request = pair_request(earlier, later)
     facts = request["state"]["derived_facts"]  # ty: ignore[not-subscriptable]
@@ -380,3 +381,29 @@ def test_pair_request_states_the_derived_facts() -> None:
     record = request["state"]["earlier_record"]  # ty: ignore[not-subscriptable]
     assert len(record["long_description"]) == JEV_TEXT_CHARS + 3
     assert set(request["questions"]) == {"relation", "disbursement", "sibling"}  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize(
+    ("codes", "stated", "shared"),
+    [
+        # A unit of one purpose states its code, as before lines were units.
+        ([23220], 23220, False),
+        # A line filed under several purposes states each, and shares the later
+        # record's purpose when any of them is its.
+        ([23210, 41010], [23210, 41010], True),
+        ([], None, False),
+    ],
+)
+def test_a_request_states_every_purpose_of_a_line(
+    codes: list[int], stated: object, shared: bool
+) -> None:
+    unit = {
+        "year": 2018, "donor_code": 901, "recipient_code": 1, "purpose_codes": codes,
+        "channel_code": None, "flow_code": 11, "finance_type_code": 110,
+        "project_number": "P1", "title": "Solar Grid", "short_description": None,
+        "long_description": None, "commitment_usd": 2e6, "disbursement_usd": 0.0,
+    }  # fmt: skip
+    later = unit | {"year": 2021, "purpose_codes": [23210]}
+    state = pair_request(unit, later)["state"]
+    assert state["earlier_record"]["purpose_code"] == stated  # ty: ignore[not-subscriptable]
+    assert state["derived_facts"]["same_purpose_code"] is shared  # ty: ignore[not-subscriptable]

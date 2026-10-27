@@ -356,7 +356,10 @@ def pair_request(
     """Jev's request about a commitment unit and a later unit, wording v1.
 
     Each record gives its unit's fields, texts cut to `JEV_TEXT_CHARS`, and
-    `derived_facts` states the comparisons of dates and amounts.
+    `derived_facts` states the comparisons of dates and amounts. A unit's purpose
+    is its one purpose code, or the list of them for a line filed under several
+    (`_jev_purpose`), and the two share a purpose when they carry the same codes or
+    any code in common.
     """
     first, second = _jev_record(earlier), _jev_record(later)
     commitment = first["commitment_usd"]
@@ -374,7 +377,7 @@ def pair_request(
         ),
         "same_title": first["title"].lower() == second["title"].lower(),
         "same_recipient": first["recipient"] == second["recipient"],
-        "same_purpose_code": first["purpose_code"] == second["purpose_code"],
+        "same_purpose_code": _same_purpose(earlier, later),
         "later_disbursement_as_share_of_earlier_commitment": share,
         "later_record_also_has_its_own_commitment": second["commitment_usd"] > 0,
     }
@@ -393,7 +396,7 @@ def _jev_record(unit: Mapping[str, Any]) -> dict[str, Any]:
         "year": unit["year"],
         "provider": unit["donor_code"],
         "recipient": unit["recipient_code"],
-        "purpose_code": unit["purpose_code"],
+        "purpose_code": _jev_purpose(unit["purpose_codes"]),
         "channel_code": unit["channel_code"],
         "flow_code": unit["flow_code"],
         "finance_type_code": unit["finance_type_code"],
@@ -404,6 +407,18 @@ def _jev_record(unit: Mapping[str, Any]) -> dict[str, Any]:
         "commitment_usd": round(unit["commitment_usd"] or 0),
         "disbursement_usd": round(unit["disbursement_usd"] or 0),
     }
+
+
+def _jev_purpose(codes: list[int]) -> int | list[int] | None:
+    """A unit's one purpose code, its codes where it carries several, or None. A
+    unit of one purpose reads as it did when every unit was one purpose's, so its
+    requests keep their cached answers."""
+    return codes[0] if len(codes) == 1 else codes or None
+
+
+def _same_purpose(first: Mapping[str, Any], second: Mapping[str, Any]) -> bool:
+    codes = first["purpose_codes"], second["purpose_codes"]
+    return codes[0] == codes[1] or not set(codes[0]).isdisjoint(codes[1])
 
 
 def _jev_text(text: str | None) -> str:

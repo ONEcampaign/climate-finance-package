@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import duckdb
 import httpx
 import numpy as np
 import polars as pl
@@ -696,3 +697,29 @@ def test_isotonic_map_is_monotone() -> None:
     assert (np.diff(mapped) >= 0).all()
     assert mapped.min() >= 0
     assert mapped.max() <= 1
+
+
+def test_the_purpose_session_counts_a_line_once() -> None:
+    # The line commits under 23210 and 41010, and the later record carries both.
+    tables = {
+        splink_models.LEFT: {
+            "unique_id": ["c"],
+            "year": [2018],
+            "purpose_codes": [[23210, 41010]],
+        },
+        splink_models.RIGHT: {
+            "unique_id": ["d"],
+            "year": [2020],
+            "purpose_codes": [[23210, 41010]],
+        },
+    }
+    con = duckdb.connect()
+    for name, columns in tables.items():
+        frame = pl.DataFrame(
+            columns | {"donor_code": [5], "recipient_code": [238]},
+            schema_overrides={"purpose_codes": pl.List(pl.Int32)},
+        )
+        con.register("_frame", frame)
+        con.sql(f"create table {name} as select * from _frame")
+    sql = splink_models._blocked_pairs_sql(splink_models.EM_RULES[-1])
+    assert con.sql(sql).fetchone() == (1,)

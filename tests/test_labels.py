@@ -139,6 +139,15 @@ def test_a_packet_shows_ids_only_when_asked(tmp_path: Path, show_ids: bool) -> N
     assert "| Similar commitments | 1 | 1 |" in text
 
 
+def test_a_packet_shows_every_purpose_of_a_line(tmp_path: Path) -> None:
+    case = Case(tmp_path)
+    water = record("w19", 2019, crs_id="2019000001", title="Water", commit=10.0)
+    case.crs = pl.DataFrame([*RECORDS, water | {"purpose_code": 14030}], schema=CRS)
+    case.units = build_units(case.crs.lazy()).collect()
+    text = case.packet(show_ids=False).read_text(encoding="utf-8")
+    assert "| Purpose | 23210 | 14030; 23210 |" in text
+
+
 @pytest.mark.parametrize("show_ids", [True, False])
 def test_a_packet_renders_to_its_golden_text(tmp_path: Path, show_ids: bool) -> None:
     case = Case(tmp_path)

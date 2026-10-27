@@ -1,19 +1,18 @@
 """Candidate pairs for the scoring stage, and the programme stems that mark siblings.
 
-A candidate pairs a disbursement unit (left, as in `trace` links) with a commitment
-unit a CRDF row reaches (right) of the same donor and an earlier record year, when
-one of four blocking rules holds: the same recipient and purpose; the same project
+A candidate pairs a disbursement unit (left, as in `trace` links) with a commitment unit
+a CRDF row reaches (right) of the same donor and an earlier record year, when one of
+four blocking rules holds: the same recipient and a purpose in common; the same project
 number, held by at most `MAX_PN_UNITS` of the donor's disbursement units from years
 after the commitment's; the same title, held by at most `MAX_TITLE_UNITS` of them; or
-the same recipient and the same first two title words. At `RENUMBERED_DONORS` a
-fifth rule follows a project number to the crs ids it shares a record with: a
-disbursement pairs with the commitments of each such crs id's line (`line_id`),
-under the project-number rule's cap. A renumbered project's records under its old
-crs id carry its new number, so a later disbursement under a new crs id and the new
-number reaches the commitment that carries neither. With an embedder, a disbursement
-also pairs with a commitment that is its embedding neighbour (`embed`). A unit's
-title is its largest record's title, or that record's short description where it
-has none.
+the same recipient and the same first two title words. At `RENUMBERED_DONORS` a fifth
+rule follows a project number to the crs ids it shares a record with: a disbursement
+pairs with the commitments of each such crs id's line (`line_id`), under the
+project-number rule's cap. A renumbered project's records under its old crs id carry its
+new number, so a later disbursement under a new crs id and the new number reaches the
+commitment that carries neither. With an embedder, a disbursement also pairs with a
+commitment that is its embedding neighbour (`embed`). A unit's title is its largest
+record's title, or that record's short description where it has none.
 
 A pair is eligible for scoring when the keys left both units unlinked: no exact tier
 or key-repair rule took the disbursement, no disbursement of a later record year
@@ -98,7 +97,7 @@ MIN_SIMILARITY = 0.5
 # Blocking rules: a key the two units share, and the most later disbursement units
 # of the donor the key may hold for a commitment to pair through it.
 BLOCKING_RULES: tuple[tuple[tuple[str, ...], int | None], ...] = (
-    (("recipient_code", "purpose_code"), None),
+    (("recipient_code", "purpose_codes"), None),
     (("pn_block",), MAX_PN_UNITS),
     (("title_block",), MAX_TITLE_UNITS),
     (("recipient_code", "title_head"), None),
@@ -277,7 +276,7 @@ def generate_candidates(
         "crs_id",
         "project_number",
         "recipient_code",
-        "purpose_code",
+        "purpose_codes",
         "year",
         "placed_year",
         "floor_year",
@@ -483,7 +482,7 @@ def _sides(
                 "crs_id",
                 "project_number",
                 "recipient_code",
-                "purpose_code",
+                "purpose_codes",
                 "year",
                 "placed_year",
                 "floor_year",
@@ -536,6 +535,8 @@ def _block(
     later record year, under any blocking rule, and embedding neighbours
     (`embed.neighbour_pairs`) when `vectors` holds the units' text vectors.
 
+    A rule on `purpose_codes` keys on each purpose a unit carries, so a line filed
+    under several purposes pairs once with a disbursement that shares any of them.
     Under a capped rule a commitment pairs only when its key holds at most the cap of
     the reference disbursement units of later years, which `later_units` counts per
     rule, key and year, so a common project number or title adds no pairs. A
@@ -556,13 +557,13 @@ def _block(
     blocked = []
     for blocking, rule, cap in rules:
         key = ["donor_code", *rule]
-        left = blocking.drop_nulls(rule).select("unit", "year", *key)
+        left = _keyed(blocking, key=key)
         if cap is not None:
             narrow = _narrow_keys(left, later_units[rule], key=key, cap=cap)
             left = left.join(narrow, on=[*key, "year"], how="semi")
         blocked.append(
             left.join(
-                disbursements.drop_nulls(rule).select("unit", "year", *key),
+                _keyed(disbursements, key=key),
                 on=key,
                 suffix="_disbursement",
             )
@@ -572,6 +573,15 @@ def _block(
     if vectors is not None:
         blocked.append(neighbour_pairs(commitments, disbursements, vectors=vectors))
     return pl.concat(blocked).unique()
+
+
+def _keyed(units: pl.DataFrame, *, key: list[str]) -> pl.DataFrame:
+    """(unit, year, `key`) of `units`, a row per purpose code where `key` holds
+    `purpose_codes`, leaving out rows with a null key field."""
+    keyed = units.select("unit", "year", *key)
+    if "purpose_codes" in key:
+        keyed = keyed.explode("purpose_codes")
+    return keyed.drop_nulls(key)
 
 
 def _narrow_keys(

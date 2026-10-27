@@ -892,6 +892,38 @@ _UNPADDED = _line("d", "20182009631", recipient=358, year=2019, committed=False)
             ],
             {("x", "e", False)},
         ),
+        # A line committed under two purposes is continued under either, its
+        # smaller one included.
+        (
+            [
+                _line(
+                    "e",
+                    "20182009630003",
+                    recipient=358,
+                    year=2018,
+                    committed=True,
+                    purpose=15110,
+                ),
+                _line(
+                    "e_small",
+                    "20182009630003",
+                    recipient=358,
+                    year=2018,
+                    committed=True,
+                    purpose=31120,
+                )
+                | {"commitment_usd": 1.0},
+                _line(
+                    "x",
+                    "20182009630001",
+                    recipient=358,
+                    year=2020,
+                    committed=False,
+                    purpose=31120,
+                ),
+            ],
+            {("x", "e", False)},
+        ),
     ],
 )
 def test_a_contradicted_project_continues_by_project_and_recipient(

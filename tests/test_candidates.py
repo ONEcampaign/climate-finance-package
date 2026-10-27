@@ -364,6 +364,17 @@ def test_a_disbursement_pairs_once_with_a_line_split_by_purpose(purpose: int) ->
     assert set(candidates) == {("d", "energy_policy")}
 
 
+def test_the_recipient_and_purpose_rule_reads_every_purpose_of_a_line() -> None:
+    # The line commits mostly to water supply; d shares only its smaller purpose.
+    line = {"crs_id": "2020000001", "title": "solar mini grids kenya"}
+    records = {
+        "c_solar": _commitment(commitment_usd=5.0, **line),
+        "c_water": _commitment(purpose_code=14030, commitment_usd=20.0, **line),
+        "d": _disbursement(recipient_code=238, purpose_code=23210),
+    }
+    assert set(_candidates(records, commitments=("c_solar",))) == {("d", "c_solar")}
+
+
 @pytest.mark.parametrize(
     ("field", "value", "cap"),
     [

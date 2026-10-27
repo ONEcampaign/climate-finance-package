@@ -335,8 +335,8 @@ def _sides(
     crs: pl.LazyFrame,
     names: pl.DataFrame | None,
 ) -> pl.DataFrame:
-    """Each unit of `pairs` with its totals, its largest record's fields and the
-    names of its codes."""
+    """Each unit of `pairs` with its totals, its largest record's fields, the names
+    of its codes and its purposes (`_purposes`)."""
     ids = pl.concat([pairs["left_id"], pairs["right_id"]]).unique().to_frame("unit_id")
     wanted = units.join(ids.lazy(), on="unit_id", how="semi").collect()
     records = wanted.select("unit_id", record_id="record_ids").explode("record_id")
@@ -384,6 +384,8 @@ def _sides(
         )
     )
     for kind, keys in NAMED_CODES.items():
+        if kind == "purpose":
+            continue
         lookup = named.filter(kind=kind).select(
             *(["donor_code"] if len(keys) > 1 else []),
             pl.col("code").alias(keys[-1]),
@@ -394,7 +396,27 @@ def _sides(
             on=list(keys),
             how="left",
         )
-    return view
+    return view.join(_purposes(view, names=named), on="unit_id", how="left")
+
+
+def _purposes(view: pl.DataFrame, *, names: pl.DataFrame) -> pl.DataFrame:
+    """Each unit's purpose codes, named where `names` names them, joined by `; `,
+    as (unit_id, purposes). A line filed under several purposes shows each."""
+    lookup = names.filter(kind="purpose").select(purpose="code", name="name")
+    return (
+        view.select("unit_id", purpose="purpose_codes")
+        .explode("purpose")
+        .drop_nulls("purpose")
+        .join(lookup, on="purpose", how="left")
+        .sort("unit_id", "purpose")
+        .group_by("unit_id", maintain_order=True)
+        .agg(
+            purposes=pl.when(pl.col("name").is_not_null())
+            .then(pl.format("{} ({})", "name", "purpose"))
+            .otherwise(pl.col("purpose").cast(pl.String))
+        )
+        .with_columns(pl.col("purposes").list.join("; "))
+    )
 
 
 def _unit_rows(view: pl.DataFrame, *, crs: pl.LazyFrame) -> dict[str, pl.DataFrame]:
@@ -526,7 +548,7 @@ _FIELDS: list[_Field] = [
     ("Record year", lambda u: str(u["year"])),
     ("Commitment date", lambda u: str(u["commitment_date"] or "-")),
     ("Flow", lambda u: _code(u, "flow", "flow_code")),
-    ("Purpose", lambda u: _code(u, "purpose", "purpose_code")),
+    ("Purpose", lambda u: _text(u["purposes"])),
     ("Channel", lambda u: _code(u, "channel", "channel_code")),
     ("Commitment", lambda u: _usd(u["commitment_usd"])),
     ("Disbursement", lambda u: _usd(u["disbursement_usd"])),

@@ -201,6 +201,19 @@ def test_purpose_level(commitment: int | None, disbursement: int, level: int) ->
     assert pair["gamma_purpose"] == level
 
 
+@pytest.mark.parametrize(("disbursement", "level"), [(14030, 2), (14020, 1)])
+def test_the_purpose_level_reads_every_purpose_of_a_line(
+    disbursement: int, level: int
+) -> None:
+    # c's line commits mostly to 41010 and a little to 14030, under one crs id.
+    line: dict[str, object] = {"crs_id": "A", "year": 2020}
+    smaller = {"record_id": "e", "purpose_code": 14030, "commitment_usd": 1.0} | line
+    pair = _levels(
+        {"purpose_code": 41010} | line, {"purpose_code": disbursement}, smaller
+    )
+    assert pair["gamma_purpose"] == level
+
+
 @pytest.mark.parametrize(
     ("field", "level"),
     [
