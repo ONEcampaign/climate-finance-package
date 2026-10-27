@@ -13,6 +13,7 @@ its metadata.
 """
 
 import hashlib
+import struct
 from collections.abc import Sequence
 from functools import partial
 from typing import Literal
@@ -76,12 +77,18 @@ def target_factors(
     return rows.select("entity_code", "year", "factor").collect()
 
 
+# The little-endian `struct` code of each factor column's dtype, so the hash reads
+# the same bytes as the columns' memory without importing numpy into a base install.
+_PACKED = {pl.Int16: "h", pl.Int32: "i", pl.Float64: "d"}
+
+
 def factors_hash(factors: pl.DataFrame) -> str:
     """A SHA-256 over `factors` sorted by entity code, year and factor."""
     ordered = factors.sort("entity_code", "year", "factor")
     digest = hashlib.sha256()
-    for name in ordered.columns:
-        digest.update(ordered.get_column(name).to_numpy().tobytes())
+    for column in ordered.iter_columns():
+        values = column.to_list()
+        digest.update(struct.pack(f"<{len(values)}{_PACKED[column.dtype]}", *values))
     return digest.hexdigest()
 
 
