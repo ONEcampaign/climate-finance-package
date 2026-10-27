@@ -490,11 +490,16 @@ def _by_text_and_amount(
     absolute log ratio) of the row's face value or of its description group's, as
     (row_id, unit_id, group_row).
 
-    A row links only when the units passing belong to one project, and then to the
-    one with the highest cosine, ties to the smaller unit id. Rows of a description
-    group matched through its sum share their unit, under `group_row`, the first of
-    them. A unit two matches take goes to the one with the higher cosine, ties to
-    the smaller `group_row`.
+    A description group's money counts once. Its sum names one unit for the whole
+    group, and only when every unit its rows pass, on their own face values or on
+    the sum, belongs to one project. The sum then names the unit it matches with
+    the highest cosine, ties to the smaller unit id. A group whose rows pass units
+    of two projects links nothing through its sum, though a row whose own face
+    value passes still links on that. A row links only when the units passing
+    belong to one project, and then to the one with the highest cosine, ties to the
+    smaller unit id. Rows matched through their group's sum share its unit, under
+    `group_row`, the first of them. A unit two matches take goes to the one with
+    the higher cosine, ties to the smaller `group_row`.
 
     A description group (`vintages.EIB_DESCRIPTION_GROUP`) holds only `rows`, the
     rows no earlier route linked, since a linked row's money is already accounted
@@ -525,6 +530,17 @@ def _by_text_and_amount(
             pooled=(pl.col("group_rows") > 1) & (_log_gap("group_euro") <= gap),
         )
         .filter(pl.col("own") | pl.col("pooled"), text)
+    )
+    # The one unit the sum of each group whose rows pass one project names.
+    pooled_unit = (
+        passing.filter(pl.col("project").n_unique().over("group") == 1)
+        .filter("pooled")
+        .sort(["group", "cosine", "unit_id"], descending=[False, True, False])
+        .group_by("group", maintain_order=True)
+        .agg(pooled_unit=pl.col("unit_id").first())
+    )
+    passing = passing.join(pooled_unit, on="group", how="left").filter(
+        pl.col("own") | (pl.col("unit_id") == pl.col("pooled_unit"))
     )
     picked = (
         passing.filter(pl.col("project").n_unique().over("row_id") == 1)
