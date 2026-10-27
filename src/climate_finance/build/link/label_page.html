@@ -61,6 +61,7 @@
   #toast { position: fixed; left: 50%; bottom: 118px; transform: translateX(-50%); background: #222; color: #fff; padding: 6px 14px; border-radius: 16px; font-size: 13px; z-index: 4; }
   #toast a { color: #8ab4f8; cursor: pointer; margin-left: 8px; text-decoration: underline; }
   #error { color: var(--bad); font-weight: 600; }
+  .kind { color: var(--muted); font-size: 11px; }
   .done { text-align: center; margin: 60px 0; font-size: 18px; }
   #loading { text-align: center; margin: 60px 0; font-size: 18px; color: var(--muted); }
   #loading.failed { color: var(--bad); font-weight: 600; }
@@ -150,11 +151,13 @@ function showState(next) {
 }
 
 function showWhere() {
+  const where = $("where");
   const mine = data && state.providers.find((p) => p.provider === data.provider);
-  $("where").textContent = data
+  where.textContent = data
     ? `Pair ${(index + 1).toLocaleString()} of ${state.total.toLocaleString()}` +
-      (mine ? ` · ${mine.name ?? mine.provider}: ${mine.done} of ${mine.total} decided` : "")
+      (mine ? ` \u00b7 ${mine.name ?? mine.provider}: ${mine.done} of ${mine.total} decided` : "")
     : "";
+  if (data && data.kind) where.append(" ", el("small", data.kind, "kind"));
 }
 
 function fieldMap(pair) {

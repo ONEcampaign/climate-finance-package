@@ -4,7 +4,12 @@
 
 ## Your share
 
-The sample holds no link that joins a unit to itself, since such a link cannot be wrong and the precision gate counts it right. The `human_audit` gate requires a person to decide at least a tenth of the sample's draws. `cf-build label` queues that tenth for each provider. It orders a provider's pairs by a hash of their sample ids, which gives the same order on every run, and takes pairs until the draws they back reach `human_audit.min_share` of the provider's draws. A pair can back several draws, so the queue can hold fewer pairs than a tenth of the draws. A pair that anyone has decided is skipped, so stopping and starting again resumes where you left off.
+The sample holds no link that joins a unit to itself, since such a link cannot be wrong and the precision gate counts it right. The `human_audit` gate requires a person to decide at least a tenth of the sample's draws. `cf-build label` queues two kinds of pair.
+
+- Judgement calls are the pairs whose link did not come from a certain rule (`wb_loan`, `crs_id_purpose`, `crs_id` or `crs_id_parent`). The queue orders them by a hash of their sample ids, which gives the same order on every run, and takes pairs until the draws they back reach `human_audit.min_share` of all the sample's draws, the share the gate counts. A pair can back several draws, so the queue holds fewer pairs than a tenth of the draws.
+- Spot checks are 50 pairs a certain rule linked, taken in the same hash order, one provider after another a round at a time so they spread over providers. They sit among the judgement calls at even spacing, about one in 20, and check that the rule holds.
+
+On the 2026a-rc sample, 22,814 draws fall on 11,694 pairs, and 6,628 of those pairs (11,007 draws) come from certain rules. The queue holds 964 judgement calls backing 2,327 draws (10.2% of all draws) and 50 spot checks, 1,014 pairs in all. Decisions already in the decisions file stay valid and count toward the gate. A pair that anyone has decided stays in the queue, counted as done and skipped, so stopping and starting again resumes where you left off. The progress line names each pair a judgement call or a spot check and nothing more. Judge each pair on its two records alone.
 
 ## Steps
 

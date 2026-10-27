@@ -165,9 +165,10 @@ def label_command(
     browser: Annotated[bool, typer.Option(help="Open the page in a browser.")] = True,
 ) -> None:
     """Serve a page on 127.0.0.1 for labelling a person's share of the blind sample
-    in SAMPLE_DIR, a tenth of each provider's draws. Each answer is saved at once to
-    a labels CSV beside its packet and to the config's review decisions. Ctrl-C
-    stops the server."""
+    in SAMPLE_DIR: the pairs no certain rule linked, to a tenth of all draws, and 50
+    spot checks of the certain rules. Each answer is saved at once to a labels CSV
+    beside its packet and to the config's review decisions. Ctrl-C stops the
+    server."""
     session = labelling.Session(
         release_dir=release_dir,
         sample_dir=sample_dir,

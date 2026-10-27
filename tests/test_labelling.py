@@ -3,10 +3,13 @@ invented values."""
 
 import http.client
 import json
+import random
 import socket
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable, Iterator
+from itertools import pairwise
 from pathlib import Path
 
 import polars as pl
@@ -17,16 +20,18 @@ from climate_finance import schema
 from climate_finance.build.link.decisions import import_labels
 from climate_finance.build.link.keys import build_units
 from climate_finance.build.link.labelling import (
+    SPOT_CHECKS,
+    QueuedPair,
     Session,
     make_server,
     queue_pairs,
-    sample_pairs,
 )
 from climate_finance.build.link.packet import write_packet
 from climate_finance.build.stages import table_path
 
 # Provider 1 has 20 pairs over two packets and 25 draws, the first five pairs backing
-# two each; provider 2 has 10 pairs and 10 draws.
+# two each; provider 2 has 10 pairs and 10 draws. Pairs of even number are linked by
+# a certain rule.
 PROVIDERS = {1: 20, 2: 10}
 DOUBLED = 5
 SENTINELS = ("stratum-sentinel", "method-sentinel")
@@ -95,7 +100,9 @@ def _sample(tmp_path: Path) -> tuple[Path, Path]:
                     **row,
                     "provider_code": donor,
                     "stratum": SENTINELS[0],
-                    "link_method": SENTINELS[1],
+                    "link_method": "crs_id"
+                    if int(row["sample_id"][-3:]) % 2 == 0
+                    else SENTINELS[1],
                     "weight_usd": 1.0,
                 }
             ] * (2 if doubled else 1)
@@ -120,27 +127,78 @@ def _session(
     )
 
 
-def test_the_queue_is_a_stable_tenth_of_each_providers_draws(tmp_path: Path) -> None:
-    _, sample = _sample(tmp_path)
-    pairs = sample_pairs(sample)
+def _synthetic(*, judgement: int, certain: int, providers: int = 3) -> list[QueuedPair]:
+    """Pairs over `providers` providers, one to three draws each."""
+    return [
+        QueuedPair(
+            provider=n % providers,
+            packet=Path("batch-01.md"),
+            batch=1,
+            pair=n,
+            key=(f"s/{n:04d}", "trace", f"l{n}", f"r{n}"),
+            draws=1 + n % 3,
+            certain=n >= judgement,
+        )
+        for n in range(judgement + certain)
+    ]
+
+
+def test_the_queue_takes_judgement_calls_to_a_tenth_of_all_draws() -> None:
+    pairs = _synthetic(judgement=300, certain=120)
+    total = sum(pair.draws for pair in pairs)
 
     queue = queue_pairs(pairs, share=0.10)
 
-    assert queue == queue_pairs(reversed(pairs), share=0.10)
-    for provider in PROVIDERS:
-        taken = [pair for pair in queue if pair.provider == provider]
-        total = sum(pair.draws for pair in pairs if pair.provider == provider)
-        # At least a tenth, and not a pair more than needed.
-        assert sum(pair.draws for pair in taken) >= 0.10 * total
-        assert sum(pair.draws for pair in taken[:-1]) < 0.10 * total
-    assert {pair.provider for pair in queue} == set(PROVIDERS)
+    calls = [pair for pair in queue if not pair.certain]
+    drawn = sum(pair.draws for pair in calls)
+    # At least a tenth of every provider's draws together, and not a pair more.
+    assert drawn >= 0.10 * total
+    assert drawn - calls[-1].draws < 0.10 * total
+    # Judgement calls only until then: no certain pair beyond the spot checks.
+    assert len(queue) - len(calls) == SPOT_CHECKS
 
 
-def test_pairs_a_person_has_decided_are_skipped_and_progress_resumes(
+def test_the_queue_holds_fifty_spot_checks_spread_over_providers() -> None:
+    queue = queue_pairs(_synthetic(judgement=300, certain=120), share=0.10)
+
+    spot = [pair for pair in queue if pair.certain]
+
+    assert SPOT_CHECKS == 50
+    assert len(spot) == len({pair.key for pair in spot}) == SPOT_CHECKS
+    counts = Counter(pair.provider for pair in spot)
+    assert max(counts.values()) - min(counts.values()) <= 1
+    # Fewer certain pairs than the spot checks: all of them.
+    few = queue_pairs(_synthetic(judgement=30, certain=7), share=0.10)
+    assert sum(pair.certain for pair in few) == 7
+
+
+def test_the_queue_is_the_same_whatever_the_order_of_the_pairs() -> None:
+    pairs = _synthetic(judgement=300, certain=120)
+    shuffled = random.Random(7).sample(pairs, len(pairs))
+
+    assert queue_pairs(pairs, share=0.10) == queue_pairs(shuffled, share=0.10)
+    assert queue_pairs(pairs, share=0.10) == queue_pairs(reversed(pairs), share=0.10)
+
+
+def test_the_spot_checks_are_spread_through_the_queue() -> None:
+    queue = queue_pairs(_synthetic(judgement=900, certain=120), share=0.10)
+    at = [i for i, pair in enumerate(queue) if pair.certain]
+    calls = sum(not pair.certain for pair in queue)
+
+    gaps = [later - earlier for earlier, later in pairwise(at)]
+    # About one in every `calls / (SPOT_CHECKS + 1)` pairs, none bunched at an end.
+    assert max(gaps) <= calls / (SPOT_CHECKS + 1) + 2
+    assert at[0] <= calls / (SPOT_CHECKS + 1) + 1
+    assert len(queue) - at[-1] <= calls / (SPOT_CHECKS + 1) + 2
+
+
+def test_the_session_queue_is_fixed_by_the_design_and_counts_decided_pairs(
     tmp_path: Path,
 ) -> None:
     session = _session(tmp_path)
     first = session.queue[0]
+    assert {pair.certain for pair in session.queue} == {True, False}
+    assert sum(not pair.certain for pair in session.queue) >= 1
     labels = tmp_path / "other.csv"
     pl.DataFrame(
         {"pair": [first.pair], "label": ["match"], "confidence": [0.9], "reason": [""]}
@@ -154,14 +212,17 @@ def test_pairs_a_person_has_decided_are_skipped_and_progress_resumes(
         partial=True,
     )
 
-    state = Session(
+    resumed = Session(
         release_dir=tmp_path / "release",
         sample_dir=tmp_path / "sample",
         decisions=tmp_path / "decisions.parquet",
         reviewer="analyst",
         share=0.10,
-    ).state()
+    )
+    state = resumed.state()
 
+    # A decided pair stays in the queue, counted done and skipped.
+    assert resumed.queue == session.queue
     assert state["done"] == 1
     assert state["next"] == 1
     assert state["total"] == len(session.queue)
@@ -214,7 +275,10 @@ def test_a_pair_shows_what_the_packet_shows_and_nothing_more(
     ]
     assert session.state()["next"] == 0
     # Providers come by name, from the catalogue.
-    assert pair["provider_name"] == "Austria (1)"
+    assert pair["provider_name"] == session.provider_name(session.queue[0].provider)
+    assert pair["kind"] == (
+        "spot check" if session.queue[0].certain else "judgement call"
+    )
     assert session.state()["seconds_left"] is None
     assert [p["name"] for p in session.state()["providers"]] == [
         "Austria (1)",

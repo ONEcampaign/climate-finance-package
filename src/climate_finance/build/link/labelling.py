@@ -1,16 +1,19 @@
 """A local page for labelling a person's share of the blind sample.
 
-`queue_pairs` picks the share: per provider, the pairs in a stable hash order of
-their `sample_id` until the draws they back reach `human_audit`'s `min_share` of the
-provider's draws. `Session` holds the queue and a person's answers, builds each
-pair's fields with `packet.pair_views` (so the page is as blind as the packet) and
-saves every answer at once: it records the answer with `decisions.import_labels`,
-which replaces the person's earlier answer on the pair and leaves their other
-answers as they are, then rewrites the person's labels CSV beside the pair's packet,
-atomically. `make_server` serves a session on 127.0.0.1, one request at a time
-through the session. A pair the person cannot tell is set aside, recorded nowhere,
-and comes back once the others are decided. Two `cf-build label` runs, or one beside
-`cf-build import-labels`, on one decisions file can lose each other's updates.
+`queue_pairs` picks the share: the judgement calls, the pairs whose link did not come
+from a certain rule (`schema.CERTAIN_METHODS`), in a stable hash order of their
+`sample_id` until the draws they back reach `human_audit`'s `min_share` of all the
+design's draws, which is how the gate reads the share; and `SPOT_CHECKS` pairs a
+certain rule linked, spread over the queue, as a check on that rule. `Session` holds
+the queue and a person's answers, builds each pair's fields with
+`packet.pair_views` (so the page is as blind as the packet) and saves every answer at
+once: it records the answer with `decisions.import_labels`, which replaces the
+person's earlier answer on the pair and leaves their other answers as they are, then
+rewrites the person's labels CSV beside the pair's packet, atomically. `make_server`
+serves a session on 127.0.0.1, one request at a time through the session. A pair the
+person cannot tell is set aside, recorded nowhere, and comes back once the others
+are decided. Two `cf-build label` runs, or one beside `cf-build import-labels`, on
+one decisions file can lose each other's updates.
 """
 
 import hashlib
@@ -45,10 +48,13 @@ from climate_finance.build.link.packet import (
     code_names,
     pair_views,
 )
+from climate_finance.schema import CERTAIN_METHODS
 
 PAGE = Path(__file__).with_name("label_page.html")
 # How far from 0.5 a confidence of each strength lies, on the label's side.
 STRENGTHS = {"u": 0.0, "1": 0.1, "2": 0.3, "3": 0.45}
+# The pairs a certain rule linked that the queue holds, as a spot check of the rule.
+SPOT_CHECKS = 50
 # Pairs whose views are built in one read of the units and CRS rows.
 CHUNK = 50
 # The pace the time left reads: the last `PACE_WINDOW` gaps between a person's
@@ -94,6 +100,7 @@ class QueuedPair:
     pair: int
     key: PairKey
     draws: int
+    certain: bool
 
 
 def sample_pairs(sample_dir: Path) -> list[QueuedPair]:
@@ -109,9 +116,13 @@ def sample_pairs(sample_dir: Path) -> list[QueuedPair]:
             f"{sample_dir} holds no design.parquet; run `cf-build sample`"
         )
     draws = (
-        pl.read_parquet(design, columns=["sample_id", "provider_code"])
+        pl.read_parquet(design, columns=["sample_id", "provider_code", "link_method"])
         .group_by("sample_id")
-        .agg(provider=pl.col("provider_code").first(), draws=pl.len())
+        .agg(
+            provider=pl.col("provider_code").first(),
+            certain=pl.col("link_method").first().is_in(CERTAIN_METHODS),
+            draws=pl.len(),
+        )
     )
     parts = []
     for pairs_file in sorted(sample_dir.glob("*/batch-*.pairs.parquet")):
@@ -139,35 +150,59 @@ def sample_pairs(sample_dir: Path) -> list[QueuedPair]:
             pair=row["pair"],
             key=(row["sample_id"], row["task"], row["left_id"], row["right_id"]),
             draws=row["draws"],
+            certain=row["certain"],
         )
         for row in joined.iter_rows(named=True)
     ]
 
 
-def queue_pairs(pairs: Iterable[QueuedPair], *, share: float) -> list[QueuedPair]:
-    """The share of `pairs` to label: per provider, in the order of a hash of each
-    pair's `sample_id` (the same on every run), the first pairs whose draws reach
-    `share` of the provider's draws. Providers follow in code order."""
-    by_provider: dict[int, list[QueuedPair]] = {}
-    for pair in pairs:
-        by_provider.setdefault(pair.provider, []).append(pair)
+def queue_pairs(
+    pairs: Iterable[QueuedPair], *, share: float, spot_checks: int = SPOT_CHECKS
+) -> list[QueuedPair]:
+    """The pairs to label, in the order to show them.
+
+    The judgement calls (pairs not linked by a certain rule) come first in the
+    order of a hash of each pair's `sample_id`, the same on every run, until the
+    draws they back reach `share` of the draws of all `pairs`. Then `spot_checks`
+    pairs a certain rule linked: each provider's pairs in hash order, taken one
+    provider after another a round at a time, so the checks spread over providers.
+    The spot checks go in at even spacing among the judgement calls.
+    """
+    pairs = list(pairs)
+    target = share * sum(pair.draws for pair in pairs)
+    judgement = []
+    taken = 0
+    for pair in _hash_order(pair for pair in pairs if not pair.certain):
+        if taken >= target:
+            break
+        judgement.append(pair)
+        taken += pair.draws
+    seen: Counter[int] = Counter()
+    ranked = []
+    for pair in _hash_order(pair for pair in pairs if pair.certain):
+        ranked.append((seen[pair.provider], pair))
+        seen[pair.provider] += 1
+    # A stable sort by round keeps each round in hash order.
+    spot = [pair for _, pair in sorted(ranked, key=lambda entry: entry[0])]
+    spot = spot[:spot_checks]
     queue = []
-    for provider in sorted(by_provider):
-        ordered = sorted(
-            by_provider[provider],
-            key=lambda pair: (
-                hashlib.sha256(pair.key[0].encode()).hexdigest(),
-                pair.key,
-            ),
-        )
-        target = share * sum(pair.draws for pair in ordered)
-        taken = 0
-        for pair in ordered:
-            if taken >= target:
-                break
-            queue.append(pair)
-            taken += pair.draws
-    return queue
+    placed = 0
+    for count, pair in enumerate(judgement, start=1):
+        queue.append(pair)
+        while placed < len(spot) and count >= (placed + 1) * len(judgement) / (
+            len(spot) + 1
+        ):
+            queue.append(spot[placed])
+            placed += 1
+    return [*queue, *spot[placed:]]
+
+
+def _hash_order(pairs: Iterable[QueuedPair]) -> list[QueuedPair]:
+    """`pairs` in the order of a hash of each `sample_id`, then of the key."""
+    return sorted(
+        pairs,
+        key=lambda pair: (hashlib.sha256(pair.key[0].encode()).hexdigest(), pair.key),
+    )
 
 
 def read_answers(decisions: Path) -> dict[PairKey, Answer]:
@@ -338,6 +373,7 @@ class Session:
             "i": index,
             "provider": entry.provider,
             "provider_name": self.provider_name(entry.provider),
+            "kind": "spot check" if entry.certain else "judgement call",
             "batch": entry.batch,
             "view": asdict(view),
             "answer": None

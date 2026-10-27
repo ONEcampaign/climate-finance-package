@@ -65,7 +65,7 @@ The command raises `ReviewDecisionsError` when the packet differs from its pairs
 cf-build label RELEASE_DIR SAMPLE_DIR --reviewer NAME [--config build.toml] [--port N] [--browser | --no-browser]
 ```
 
-Serves a page on `127.0.0.1` for labelling one person's share of the blind sample in `SAMPLE_DIR`, and opens it in a browser. The share is the first pairs, in a stable hash order of their sample ids, whose draws reach `human_audit.min_share` of each provider's draws. A pair already decided by a person is skipped. `RELEASE_DIR` supplies the records the page shows.
+Serves a page on `127.0.0.1` for labelling one person's share of the blind sample in `SAMPLE_DIR`, and opens it in a browser. The share is the judgement calls, the pairs whose link no certain rule made, in a stable hash order of their sample ids until their draws reach `human_audit.min_share` of all the sample's draws, with 50 spot checks of pairs a certain rule linked spread among them. A pair already decided by a person stays in the queue, counted as done and skipped. `RELEASE_DIR` supplies the records the page shows.
 
 - `--reviewer` names the person in the decisions.
 - `--config` (default `build.toml`) names the file whose `sources.review_decisions` receives the decisions.
