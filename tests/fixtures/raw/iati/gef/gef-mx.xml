@@ -1,0 +1,395 @@
+<?xml version="1.0" encoding="utf-8"?>  
+
+	   <iati-activities version="2.03" generated-datetime="2026-07-13T11:52:02"><iati-activity last-updated-datetime="2026-03-24T11:24:36"
+	   xml:lang="EN" default-currency="USD" >
+       <iati-identifier>XI-BRIDGE-6385676864-12</iati-identifier>
+       <reporting-org ref="XI-BRIDGE-6385676864"  type="40">
+       <narrative>Global Environment Facility</narrative>
+       </reporting-org>
+       <title>
+       <narrative>Invented activity 15</narrative>
+       </title>
+       <description type="2">
+       <narrative>Invented text</narrative>
+	   </description><description type="4"><narrative>Note: Disbursement data provided is cumulative and covers disbursement made by the project Agency.</narrative></description><participating-org role="1" type="40" ref="47044" activity-id=""><narrative>Invented organisation</narrative></participating-org>
+	  <participating-org ref="44000" type="40" role="3" activity-id="">
+       <narrative>Invented organisation</narrative>
+       </participating-org><participating-org ref="" type="40" role="4" activity-id="">
+       <narrative>Invented organisation</narrative>
+       </participating-org> <activity-status code="3"></activity-status><activity-date type="1"  iso-date= "2006-09-01">
+	    <narrative>CEO Endorsement Date </narrative>
+	   </activity-date><activity-date type="2"  iso-date= "2006-10-05">
+	   <narrative>Actual Implementation Start Date </narrative>
+	   </activity-date><activity-date type="3"  iso-date= "2009-10-31">
+	   <narrative>Expected Completion Date </narrative> </activity-date><activity-date type="4"  iso-date= "2017-05-30">
+	    <narrative>Actual	 Completion Date </narrative> </activity-date> <contact-info type="1">
+       <organisation>
+       <narrative></narrative>
+       </organisation>
+       <department>
+       <narrative></narrative>
+       </department>
+       <person-name>
+       <narrative></narrative>
+       </person-name>
+       <job-title>
+       <narrative></narrative>
+       </job-title>
+       <telephone>+00 0000 0000</telephone>
+       <email></email>
+       <mailing-address>
+       <narrative></narrative>
+       </mailing-address>
+       </contact-info><activity-scope code="4"></activity-scope><recipient-country code="MX" percentage="100">
+       <narrative>Invented country</narrative>
+       </recipient-country> <sector code="41020"  vocabulary="1"  percentage="100.0 ">
+       <narrative>Invented sector</narrative>                                                                                                                                
+       </sector> <sector code="C"  vocabulary-uri="https://www.thegef.org/what-we-do/topics"  vocabulary="99"  percentage="100 ">
+       <narrative>Invented sector</narrative>                                                                                                                                
+       </sector><collaboration-type code="2"></collaboration-type>
+       <default-aid-type code="C01"></default-aid-type>
+       <default-tied-status code="5"></default-tied-status> <budget type="1">
+       <period-start iso-date="2006-09-01"></period-start> 
+       <period-end iso-date="2007-08-31"> </period-end>
+       <value currency="USD" value-date="2006-09-01">23700000 </value>
+       </budget> <budget type="1">
+       <period-start iso-date="2007-09-01"></period-start> 
+       <period-end iso-date="2008-08-31"> </period-end>
+       <value currency="USD" value-date="2007-09-01">23700000 </value>
+       </budget> <budget type="1">
+       <period-start iso-date="2008-09-01"></period-start> 
+       <period-end iso-date="2009-08-31"> </period-end>
+       <value currency="USD" value-date="2008-09-01">23700000 </value>
+       </budget> <budget type="1">
+       <period-start iso-date="2009-09-01"></period-start> 
+       <period-end iso-date="2010-08-31"> </period-end>
+       <value currency="USD" value-date="2009-09-01">23700000 </value>
+       </budget> <budget type="1">
+       <period-start iso-date="2010-09-01"></period-start> 
+       <period-end iso-date="2011-08-31"> </period-end>
+       <value currency="USD" value-date="2010-09-01">23700000 </value>
+       </budget><transaction>
+	  <transaction-type code="3"></transaction-type>
+       <transaction-date iso-date="2008-06-26"></transaction-date>
+       <value currency="USD" value-date="2008-06-26">0  </value>
+	   <provider-org provider-activity-id="44000">
+       <narrative>Invented organisation</narrative>
+       </provider-org>
+	   <receiver-org receiver-activity-id="">
+       <narrative>Invented organisation</narrative>
+       </receiver-org>
+       <finance-type code="110"></finance-type>
+       </transaction><transaction>
+	  <transaction-type code="3"></transaction-type>
+       <transaction-date iso-date="2010-11-29"></transaction-date>
+       <value currency="USD" value-date="2010-11-29">0  </value>
+	   <provider-org provider-activity-id="44000">
+       <narrative>Invented organisation</narrative>
+       </provider-org>
+	   <receiver-org receiver-activity-id="">
+       <narrative>Invented organisation</narrative>
+       </receiver-org>
+       <finance-type code="110"></finance-type>
+       </transaction><transaction>
+	  <transaction-type code="3"></transaction-type>
+       <transaction-date iso-date="2012-06-25"></transaction-date>
+       <value currency="USD" value-date="2012-06-25">0  </value>
+	   <provider-org provider-activity-id="44000">
+       <narrative>Invented organisation</narrative>
+       </provider-org>
+	   <receiver-org receiver-activity-id="">
+       <narrative>Invented organisation</narrative>
+       </receiver-org>
+       <finance-type code="110"></finance-type>
+       </transaction><transaction>
+	  <transaction-type code="3"></transaction-type>
+       <transaction-date iso-date="2013-03-07"></transaction-date>
+       <value currency="USD" value-date="2013-03-07">0  </value>
+	   <provider-org provider-activity-id="44000">
+       <narrative>Invented organisation</narrative>
+       </provider-org>
+	   <receiver-org receiver-activity-id="">
+       <narrative>Invented organisation</narrative>
+       </receiver-org>
+       <finance-type code="110"></finance-type>
+       </transaction><transaction>
+	  <transaction-type code="3"></transaction-type>
+       <transaction-date iso-date="2014-01-23"></transaction-date>
+       <value currency="USD" value-date="2014-01-23">0  </value>
+	   <provider-org provider-activity-id="44000">
+       <narrative>Invented organisation</narrative>
+       </provider-org>
+	   <receiver-org receiver-activity-id="">
+       <narrative>Invented organisation</narrative>
+       </receiver-org>
+       <finance-type code="110"></finance-type>
+       </transaction><transaction>
+	  <transaction-type code="3"></transaction-type>
+       <transaction-date iso-date="2014-12-11"></transaction-date>
+       <value currency="USD" value-date="2014-12-11">0  </value>
+	   <provider-org provider-activity-id="44000">
+       <narrative>Invented organisation</narrative>
+       </provider-org>
+	   <receiver-org receiver-activity-id="">
+       <narrative>Invented organisation</narrative>
+       </receiver-org>
+       <finance-type code="110"></finance-type>
+       </transaction><transaction>
+	  <transaction-type code="3"></transaction-type>
+       <transaction-date iso-date="2015-10-14"></transaction-date>
+       <value currency="USD" value-date="2015-10-14">0  </value>
+	   <provider-org provider-activity-id="44000">
+       <narrative>Invented organisation</narrative>
+       </provider-org>
+	   <receiver-org receiver-activity-id="">
+       <narrative>Invented organisation</narrative>
+       </receiver-org>
+       <finance-type code="110"></finance-type>
+       </transaction><transaction>
+	  <transaction-type code="3"></transaction-type>
+       <transaction-date iso-date="2017-02-06"></transaction-date>
+       <value currency="USD" value-date="2017-02-06">0  </value>
+	   <provider-org provider-activity-id="44000">
+       <narrative>Invented organisation</narrative>
+       </provider-org>
+	   <receiver-org receiver-activity-id="">
+       <narrative>Invented organisation</narrative>
+       </receiver-org>
+       <finance-type code="110"></finance-type>
+       </transaction><transaction>
+	  <transaction-type code="3"></transaction-type>
+       <transaction-date iso-date="2017-11-30"></transaction-date>
+       <value currency="USD" value-date="2017-11-30">0  </value>
+	   <provider-org provider-activity-id="44000">
+       <narrative>Invented organisation</narrative>
+       </provider-org>
+	   <receiver-org receiver-activity-id="">
+       <narrative>Invented organisation</narrative>
+       </receiver-org>
+       <finance-type code="110"></finance-type>
+       </transaction><transaction>
+	  <transaction-type code="2"></transaction-type>
+       <transaction-date iso-date="2006-09-01"></transaction-date>
+       <value currency="USD" value-date="2006-09-01">23000000  </value>
+		   
+	    <provider-org provider-activity-id="47044">
+       <narrative>Invented organisation</narrative>
+       </provider-org>
+       <receiver-org receiver-activity-id="World Bank">
+       <narrative></narrative>
+       </receiver-org>
+	   <finance-type code="110"></finance-type>
+       </transaction></iati-activity>
+<iati-activity last-updated-datetime="2026-03-24T11:32:27"
+	   xml:lang="EN" default-currency="USD" >
+       <iati-identifier>XI-BRIDGE-6385676864-10086</iati-identifier>
+       <reporting-org ref="XI-BRIDGE-6385676864"  type="40">
+       <narrative>Global Environment Facility</narrative>
+       </reporting-org>
+       <title>
+       <narrative>Invented activity 16</narrative>
+       </title>
+       <description type="2">
+       <narrative>Invented text</narrative>
+	   </description><description type="4"><narrative>Note: Disbursement data provided is cumulative and covers disbursement made by the project Agency.</narrative></description><description type="3"><narrative>Invented text with a stray < inside.</narrative></description><participating-org role="1" type="40" ref="47044" activity-id=""><narrative>Invented organisation</narrative></participating-org>
+	  <participating-org ref="41116" type="40" role="3" activity-id="">
+       <narrative>Invented organisation</narrative>
+       </participating-org><participating-org ref="" type="40" role="4" activity-id="">
+       <narrative>Invented organisation</narrative>
+       </participating-org> <activity-status code="2"></activity-status><activity-date type="1"  iso-date= "2020-12-05">
+	    <narrative>CEO Endorsement Date </narrative>
+	   </activity-date><activity-date type="2"  iso-date= "2021-06-07">
+	   <narrative>Actual Implementation Start Date </narrative>
+	   </activity-date><activity-date type="3"  iso-date= "2026-12-31">
+	   <narrative>Expected Completion Date </narrative> </activity-date> <contact-info type="1">
+       <organisation>
+       <narrative></narrative>
+       </organisation>
+       <department>
+       <narrative></narrative>
+       </department>
+       <person-name>
+       <narrative></narrative>
+       </person-name>
+       <job-title>
+       <narrative></narrative>
+       </job-title>
+       <telephone>+00 0000 0000</telephone>
+       <email></email>
+       <mailing-address>
+       <narrative></narrative>
+       </mailing-address>
+       </contact-info><activity-scope code="4"></activity-scope><recipient-country code="MX" percentage="100">
+       <narrative>Invented country</narrative>
+       </recipient-country><location>
+<location-reach code="1"/>
+<location-id vocabulary="G1" code="3521440"/>
+<name>
+<narrative>Invented text</narrative>
+</name>
+<point srsName="http://www.opengis.net/def/crs/EPSG/0/4326" >
+<pos>10.0 20.0</pos>
+</point>
+<exactness code="2"/>
+</location><location>
+<location-reach code="1"/>
+<location-id vocabulary="G1" code="8583265"/>
+<name>
+<narrative>Invented text</narrative>
+</name>
+<point srsName="http://www.opengis.net/def/crs/EPSG/0/4326" >
+<pos>10.0 20.0</pos>
+</point>
+<exactness code="2"/>
+</location><location>
+<location-reach code="1"/>
+<location-id vocabulary="G1" code="8583274"/>
+<name>
+<narrative>Invented text</narrative>
+</name>
+<point srsName="http://www.opengis.net/def/crs/EPSG/0/4326" >
+<pos>10.0 20.0</pos>
+</point>
+<exactness code="2"/>
+</location><location>
+<location-reach code="1"/>
+<location-id vocabulary="G1" code="8583276"/>
+<name>
+<narrative>Invented text</narrative>
+</name>
+<point srsName="http://www.opengis.net/def/crs/EPSG/0/4326" >
+<pos>10.0 20.0</pos>
+</point>
+<exactness code="2"/>
+</location> <sector code="32164"  vocabulary="1"  percentage="100.0 ">
+       <narrative>Invented sector</narrative>                                                                                                                                
+       </sector> <sector code="W"  vocabulary-uri="https://www.thegef.org/what-we-do/topics"  vocabulary="99"  percentage="100 ">
+       <narrative>Invented sector</narrative>                                                                                                                                
+       </sector><collaboration-type code="2"></collaboration-type>
+       <default-aid-type code="C01"></default-aid-type>
+       <default-tied-status code="5"></default-tied-status> <budget type="1">
+       <period-start iso-date="2020-12-05"></period-start> 
+       <period-end iso-date="2021-12-04"> </period-end>
+       <value currency="USD" value-date="2020-12-05">2000000 </value>
+       </budget> <budget type="1">
+       <period-start iso-date="2021-12-05"></period-start> 
+       <period-end iso-date="2022-12-04"> </period-end>
+       <value currency="USD" value-date="2021-12-05">2000000 </value>
+       </budget> <budget type="1">
+       <period-start iso-date="2022-12-05"></period-start> 
+       <period-end iso-date="2023-12-04"> </period-end>
+       <value currency="USD" value-date="2022-12-05">2000000 </value>
+       </budget> <budget type="1">
+       <period-start iso-date="2023-12-05"></period-start> 
+       <period-end iso-date="2024-12-04"> </period-end>
+       <value currency="USD" value-date="2023-12-05">2000000 </value>
+       </budget> <budget type="1">
+       <period-start iso-date="2024-12-05"></period-start> 
+       <period-end iso-date="2025-12-04"> </period-end>
+       <value currency="USD" value-date="2024-12-05">2000000 </value>
+       </budget><transaction>
+	  <transaction-type code="3"></transaction-type>
+       <transaction-date iso-date="2022-09-15"></transaction-date>
+       <value currency="USD" value-date="2022-09-15">360000  </value>
+	   <provider-org provider-activity-id="41116">
+       <narrative>Invented organisation</narrative>
+       </provider-org>
+	   <receiver-org receiver-activity-id="">
+       <narrative>Invented organisation</narrative>
+       </receiver-org>
+       <finance-type code="110"></finance-type>
+       </transaction><transaction>
+	  <transaction-type code="3"></transaction-type>
+       <transaction-date iso-date="2023-09-15"></transaction-date>
+       <value currency="USD" value-date="2023-09-15">980000  </value>
+	   <provider-org provider-activity-id="41116">
+       <narrative>Invented organisation</narrative>
+       </provider-org>
+	   <receiver-org receiver-activity-id="">
+       <narrative>Invented organisation</narrative>
+       </receiver-org>
+       <finance-type code="110"></finance-type>
+       </transaction><transaction>
+	  <transaction-type code="3"></transaction-type>
+       <transaction-date iso-date="2024-09-13"></transaction-date>
+       <value currency="USD" value-date="2024-09-13">380000  </value>
+	   <provider-org provider-activity-id="41116">
+       <narrative>Invented organisation</narrative>
+       </provider-org>
+	   <receiver-org receiver-activity-id="">
+       <narrative>Invented organisation</narrative>
+       </receiver-org>
+       <finance-type code="110"></finance-type>
+       </transaction><transaction>
+	  <transaction-type code="3"></transaction-type>
+       <transaction-date iso-date="2025-09-05"></transaction-date>
+       <value currency="USD" value-date="2025-09-05">590000  </value>
+	   <provider-org provider-activity-id="41116">
+       <narrative>Invented organisation</narrative>
+       </provider-org>
+	   <receiver-org receiver-activity-id="">
+       <narrative>Invented organisation</narrative>
+       </receiver-org>
+       <finance-type code="110"></finance-type>
+       </transaction><transaction>
+	  <transaction-type code="2"></transaction-type>
+       <transaction-date iso-date="2020-12-05"></transaction-date>
+       <value currency="USD" value-date="2020-12-05">7600000  </value>
+		   
+	    <provider-org provider-activity-id="47044">
+       <narrative>Invented organisation</narrative>
+       </provider-org>
+       <receiver-org receiver-activity-id="UNEP">
+       <narrative></narrative>
+       </receiver-org>
+	   <finance-type code="110"></finance-type>
+       </transaction><document-link format="application/pdf" url="https://example.org/document">
+	                <title xml:lang="en"><narrative>Invented text</narrative></title><category code="A07"/>
+<category code="A08"/>
+							 </document-link><result type="2">
+<title>
+<narrative>Invented text</narrative>
+</title>
+<indicator measure="1">
+<title>
+<narrative>Invented text</narrative>
+</title>
+<period>
+<period-start iso-date="2021-01-01"/>
+<period-end iso-date="2026-12-31"/>
+<target value="2100"/>
+<actual value="0"/>
+</period>
+</indicator>
+</result><result type="2">
+<title>
+<narrative>Invented text</narrative>
+</title>
+<indicator measure="1">
+<title>
+<narrative>Invented text</narrative>
+</title>
+<period>
+<period-start iso-date="2021-01-01"/>
+<period-end iso-date="2026-12-31"/>
+<target value="160"/>
+<actual value="61"/>
+</period>
+</indicator>
+</result><result type="2">
+<title>
+<narrative>Invented text</narrative>
+</title>
+<indicator measure="1">
+<title>
+<narrative>Invented text</narrative>
+</title>
+<period>
+<period-start iso-date="2021-01-01"/>
+<period-end iso-date="2026-12-31"/>
+<target value="90000"/>
+<actual value="108000"/>
+</period>
+</indicator>
+</result></iati-activity>
+</iati-activities>

@@ -18,4 +18,4 @@ def score_with_splink(
     client: JevClient,
 ) -> pl.LazyFrame:
     """Calibrated probabilities for providers outside the truth group."""
-    raise NotImplementedError("slice S13b")
+    raise NotImplementedError("score_with_splink is not implemented")

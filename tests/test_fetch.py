@@ -1,0 +1,649 @@
+import re
+import socket
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Literal
+
+import httpx
+import oda_reader
+import oda_reader.crs
+import pandas as pd
+import polars as pl
+import pytest
+from reads import record_reads
+from stage_runs import BUILD_TOML, stage_context, write_fetched_years
+
+import climate_finance.build
+from climate_finance.build import BuildConfig, Stage, build, fetch, load_config
+from climate_finance.build.config import LocalFile
+from climate_finance.build.errors import ConfigError
+from climate_finance.build.stages import REGISTRY, raw_dir
+from climate_finance.errors import SourceUnavailableError
+from climate_finance.schema import sha256_file
+
+FIXTURES = Path(__file__).parent / "fixtures" / "raw"
+CRS_URL = "https://webfs-dcd.oecd.org/files/dotStat/DSD_CRS/CRS.parquet"
+CRDF_FILES = {"recipient": "CRDF-RP_2024.xlsx", "provider": "CRDF-PP_2024.xlsx"}
+MANIFEST = Path("fetch/raw_manifest.parquet")
+# A row for every year, as the bulk CRS holds.
+CRS_YEARS = range(1973, 2026)
+
+
+class FakeSources:
+    """Stand-ins for the oda-reader, pydeflate and GCF calls, recording each call.
+
+    The CRDF and MULTI downloads hold a row for each year asked, MULTI from
+    `fetch.MULTISYSTEM_FIRST_YEAR`, less the years `lacking` names by source.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+        self.lacking: dict[str, set[int]] = {}
+        self.gcf_response = httpx.Response(
+            200,
+            content=(FIXTURES / "gcf" / "projects.json").read_bytes(),
+            headers={"etag": '"gcf-1"'},
+        )
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(oda_reader, "bulk_download_crs", self.bulk_download_crs)
+        monkeypatch.setattr(oda_reader.crs, "get_full_crs_parquet_url", lambda: CRS_URL)
+        monkeypatch.setattr(oda_reader, "list_crdf_files", self.list_crdf_files)
+        monkeypatch.setattr(oda_reader, "download_crdf", self.download_crdf)
+        monkeypatch.setattr(oda_reader, "download_multisystem", self.multisystem)
+        monkeypatch.setattr(oda_reader, "download_crdf_file", self.crdf_file)
+        # A stand-in module, so this file never imports pydeflate (and wbgapi).
+        pydeflate = SimpleNamespace(get_oecd_dac_exchange_rates=self.rates)
+        monkeypatch.setitem(sys.modules, "pydeflate", pydeflate)
+        transport = httpx.MockTransport(self.gcf)
+        monkeypatch.setattr(
+            fetch, "_http_client", lambda: httpx.Client(transport=transport)
+        )
+
+    def bulk_download_crs(self, *, save_to_path: Path) -> None:
+        self.calls.append(("bulk_download_crs", {}))
+        pd.DataFrame({"year": CRS_YEARS, "usd_grant_equiv": 1.0}).to_parquet(
+            Path(save_to_path) / "CRS.parquet"
+        )
+
+    def list_crdf_files(self) -> pd.DataFrame:
+        self.calls.append(("list_crdf_files", {}))
+        return pd.DataFrame(
+            [
+                ("CRDF-RP_2000-2009.xlsx", "recipient", 2000, 2009),
+                ("CRDF-RP_2024.xlsx", "recipient", 2024, 2024),
+                ("CRDF-PP_2013-2014.xlsx", "provider", 2013, 2014),
+                ("CRDF-PP_2024.xlsx", "provider", 2024, 2024),
+                ("Imputed_multilateral_shares.xlsx", None, None, None),
+            ],
+            columns=["name", "perspective", "start_year", "end_year"],
+        ).astype({"start_year": "Int32", "end_year": "Int32"})
+
+    def download_crdf(self, perspective: str, **kwargs: object) -> pd.DataFrame:
+        self.calls.append(("download_crdf", {"perspective": perspective, **kwargs}))
+        return pd.DataFrame(
+            {
+                "year": self._years(f"crdf_{perspective}", kwargs),
+                "source_file": CRDF_FILES[perspective],
+                "file_version": f'"{perspective}-etag"',
+            }
+        )
+
+    def multisystem(self, **kwargs: object) -> pd.DataFrame:
+        self.calls.append(("download_multisystem", kwargs))
+        return pd.DataFrame(
+            {
+                "year": self._years(
+                    "multisystem", kwargs, first=fetch.MULTISYSTEM_FIRST_YEAR
+                ),
+                "value": 1.0,
+            }
+        )
+
+    def _years(
+        self, source: str, kwargs: dict[str, object], *, first: int = 0
+    ) -> list[int]:
+        start, end = kwargs["start_year"], kwargs["end_year"]
+        assert isinstance(start, int) and isinstance(end, int)
+        lacking = self.lacking.get(source, set())
+        return [
+            year for year in range(max(start, first), end + 1) if year not in lacking
+        ]
+
+    def crdf_file(self, name: str, save_to_path: Path) -> Path:
+        self.calls.append(("download_crdf_file", {"name": name}))
+        Path(save_to_path).write_bytes(b"workbook")
+        return Path(save_to_path)
+
+    def rates(self, **kwargs: object) -> pd.DataFrame:
+        self.calls.append(("get_oecd_dac_exchange_rates", kwargs))
+        return pd.DataFrame(
+            {"iso_code": ["FRA"], "year": [2022], "exchange_rate": [0.9509]}
+        )
+
+    def gcf(self, request: httpx.Request) -> httpx.Response:
+        self.calls.append(("gcf", {"url": str(request.url)}))
+        return self.gcf_response
+
+    def names(self) -> list[str]:
+        return [name for name, _ in self.calls]
+
+
+@pytest.fixture
+def sources(monkeypatch: pytest.MonkeyPatch) -> FakeSources:
+    fakes = FakeSources()
+    fakes.install(monkeypatch)
+    return fakes
+
+
+@pytest.fixture
+def crs_file(tmp_path: Path) -> LocalFile:
+    path = tmp_path / "archive" / "CRS_v1.parquet"
+    path.parent.mkdir()
+    pd.DataFrame({"year": CRS_YEARS, "usd_grant_equiv": 2.0}).to_parquet(path)
+    return LocalFile(path=path, sha256=sha256_file(path))
+
+
+def _config(
+    *,
+    crdf_years: tuple[int, int] | Literal["all"] = (2015, 2024),
+    crs_years: tuple[int, int] | None = None,
+    **sources: object,
+) -> BuildConfig:
+    config = load_config(BUILD_TOML)
+    update = {
+        "iati_archive": FIXTURES / "iati",
+        "iati_publishers": ("caf", "gef"),
+        **sources,
+    }
+    return config.model_copy(
+        update={
+            "sources": config.sources.model_copy(update=update),
+            "years": config.years.model_copy(
+                update={"crdf": crdf_years, "crs": crs_years}
+            ),
+        }
+    )
+
+
+def _fetch(config: BuildConfig, out_dir: Path, *, offline: bool = False) -> Path:
+    build("r", config=config, out_dir=out_dir, stages=[Stage.FETCH], offline=offline)
+    return out_dir / "r"
+
+
+@pytest.mark.parametrize(
+    ("crdf_years", "crs_years", "resolved", "multisystem_held"),
+    [
+        (
+            (2015, 2024),
+            None,
+            {
+                "crs": (2015, 2025),
+                "crdf_recipient": (2015, 2024),
+                "crdf_provider": (2015, 2024),
+                "multisystem": (2015, 2024),
+            },
+            (2015, 2024),
+        ),
+        (
+            "all",
+            None,
+            {
+                "crs": (2000, 2025),
+                "crdf_recipient": (2000, 2024),
+                "crdf_provider": (2013, 2024),
+                "multisystem": (2000, 2024),
+            },
+            (2011, 2024),
+        ),
+        (
+            (2010, 2024),
+            (1990, 2024),
+            {
+                "crs": (1990, 2024),
+                "crdf_recipient": (2010, 2024),
+                "crdf_provider": (2013, 2024),
+                "multisystem": (2010, 2024),
+            },
+            (2011, 2024),
+        ),
+    ],
+)
+def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    crdf_years: tuple[int, int] | Literal["all"],
+    crs_years: tuple[int, int] | None,
+    resolved: dict[str, tuple[int, int]],
+    multisystem_held: tuple[int, int],
+) -> None:
+    config = _config(crs_file=crs_file, crdf_years=crdf_years, crs_years=crs_years)
+    registry, reads = record_reads(monkeypatch, config, REGISTRY)
+    monkeypatch.setattr(climate_finance.build, "REGISTRY", registry)
+
+    release = _fetch(config, tmp_path / "out")
+    raw = raw_dir(release)
+    manifest = pl.read_parquet(release / MANIFEST)
+
+    iati = [
+        f"external/iati/{publisher}/{xml.name}"
+        for publisher in ("caf", "gef")
+        for xml in sorted((FIXTURES / "iati" / publisher).glob("*.xml"))
+    ]
+    assert sorted(manifest["path"]) == sorted(
+        [
+            "oecd/CRS.parquet",
+            "oecd/crdf_recipient.parquet",
+            "oecd/crdf_provider.parquet",
+            "oecd/multisystem.parquet",
+            "oecd/Imputed_multilateral_shares.xlsx",
+            "external/gcf/projects.json",
+            "dac_exchange.parquet",
+            *iati,
+        ]
+    )
+    on_disk = sorted(
+        path.relative_to(raw).as_posix() for path in raw.rglob("*") if path.is_file()
+    )
+    assert on_disk == sorted(manifest["path"])
+    for path, sha256 in manifest.select("path", "sha256").iter_rows():
+        assert sha256_file(raw / path) == sha256
+    methods = dict(manifest.select("path", "method").iter_rows())
+    assert methods["oecd/CRS.parquet"] == "manual"
+    assert all(methods[path] == "manual" for path in iati)
+    assert methods["oecd/multisystem.parquet"] == "http"
+    years = manifest.filter(pl.col("first_year").is_not_null())
+    assert {
+        source: (first, last)
+        for source, first, last in years.select(
+            "source", "first_year", "last_year"
+        ).iter_rows()
+    } == resolved
+    # MULTI holds nothing before 2011; every other file holds the years asked.
+    held = resolved | {"multisystem": multisystem_held}
+    assert {
+        source: (first, last)
+        for source, first, last in years.select(
+            "source", "held_first_year", "held_last_year"
+        ).iter_rows()
+    } == held
+    assert fetch.read_years(manifest) == held
+    assert (raw / "oecd/CRS.parquet").read_bytes() == crs_file.path.read_bytes()
+    assert (raw / "external/gcf/projects.json").read_bytes() == (
+        FIXTURES / "gcf" / "projects.json"
+    ).read_bytes()
+    assert not (release / "raw.partial").exists()
+    assert reads[Stage.FETCH] == set(fetch.SETTINGS)
+
+    assert "bulk_download_crs" not in sources.names()
+    for perspective in ("recipient", "provider"):
+        first, last = resolved[f"crdf_{perspective}"]
+        assert (
+            "download_crdf",
+            {
+                "perspective": perspective,
+                "start_year": first,
+                "end_year": last,
+                "pre_process": True,
+            },
+        ) in sources.calls
+    first, last = resolved["multisystem"]
+    assert (
+        "download_multisystem",
+        {
+            "start_year": first,
+            "end_year": last,
+            "pre_process": True,
+            "dotstat_codes": True,
+        },
+    ) in sources.calls
+
+
+def test_offline_fetch_rewrites_its_stage_unchanged_with_no_network_call(
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(crs_file=crs_file)
+    release = _fetch(config, tmp_path / "out")
+    online = sha256_file(release / MANIFEST)
+    # The fetch stage's identity, which every later stage records.
+    record = (release / "fetch" / "stage.json").read_bytes()
+    calls = len(sources.calls)
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("an offline fetch opened a connection")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket, "getaddrinfo", refuse)
+
+    _fetch(config, tmp_path / "out", offline=True)
+
+    assert len(sources.calls) == calls
+    assert sha256_file(release / MANIFEST) == online
+    assert (release / "fetch" / "stage.json").read_bytes() == record
+
+
+def test_a_fetch_that_fails_before_its_manifest_keeps_the_last_fetch(
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(crs_file=crs_file)
+    release = _fetch(config, tmp_path / "out")
+    gcf = raw_dir(release) / "external/gcf/projects.json"
+    first = gcf.read_bytes()
+    sources.gcf_response = httpx.Response(200, json=[{"ProjectsID": 2}])
+
+    def full_disk(*args: object) -> str:
+        raise OSError("No space left on device")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(climate_finance.build, "write_table", full_disk)
+        with pytest.raises(OSError, match="No space"):
+            _fetch(config, tmp_path / "out")
+
+    assert gcf.read_bytes() == first
+    _fetch(config, tmp_path / "out", offline=True)
+
+
+@pytest.mark.parametrize(
+    ("crdf_years", "crs_years", "recorded"),
+    [
+        ((2015, 2024), None, (2015, 2025)),
+        ((2022, 2024), None, (2022, 2025)),
+        ((2022, 2024), (2016, 2024), (2016, 2024)),
+        ((2010, 2024), None, "crdf_recipient"),
+        ((2015, 2024), (2014, 2025), "crs"),
+        ("all", None, "years.crdf"),
+    ],
+)
+def test_offline_fetch_narrows_to_years_the_raw_files_hold_and_refuses_others(
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    crdf_years: tuple[int, int] | Literal["all"],
+    crs_years: tuple[int, int] | None,
+    recorded: tuple[int, int] | str,
+) -> None:
+    release = _fetch(_config(crs_file=crs_file), tmp_path / "out")
+    config = _config(crs_file=crs_file, crdf_years=crdf_years, crs_years=crs_years)
+
+    if isinstance(recorded, str):
+        with pytest.raises(SourceUnavailableError, match=re.escape(recorded)):
+            _fetch(config, tmp_path / "out", offline=True)
+        return
+    _fetch(config, tmp_path / "out", offline=True)
+    manifest = pl.read_parquet(release / MANIFEST).filter(
+        pl.col("first_year").is_not_null()
+    )
+    assert dict(
+        zip(
+            manifest["source"],
+            zip(manifest["first_year"], manifest["last_year"], strict=True),
+            strict=True,
+        )
+    ) == {
+        "crs": recorded,
+        "crdf_recipient": crdf_years,
+        "crdf_provider": crdf_years,
+        "multisystem": crdf_years,
+    }
+
+
+@pytest.mark.parametrize(
+    ("source", "lacking"),
+    [
+        # MULTI starts in 2011, so a file from 2012 lost a year.
+        ("multisystem", {2011}),
+        ("multisystem", {2018}),
+        ("multisystem", {2024}),
+        # The CRDF listing holds recipient years from 2000 and provider from 2013.
+        ("crdf_recipient", {2000}),
+        ("crdf_provider", {2013, 2014}),
+    ],
+)
+def test_an_online_fetch_refuses_a_download_short_of_the_years_the_source_holds(
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    source: str,
+    lacking: set[int],
+) -> None:
+    sources.lacking = {source: lacking}
+    config = _config(crs_file=crs_file, crdf_years="all")
+
+    with pytest.raises(SourceUnavailableError) as raised:
+        _fetch(config, tmp_path / "out")
+
+    assert re.search(
+        rf"{source} \(\d+ to 2024 asked\) lacks {', '.join(map(str, sorted(lacking)))}"
+        r"(;|$)",
+        str(raised.value),
+    )
+    assert not (tmp_path / "out" / "r" / MANIFEST).exists()
+
+
+@pytest.mark.parametrize(
+    ("crdf_years", "multisystem"),
+    [("all", (2011, 2024)), ((2010, 2024), (2011, 2024)), ((2012, 2024), (2012, 2024))],
+)
+def test_an_offline_fetch_reads_the_years_asked_that_the_files_hold(
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    crdf_years: tuple[int, int] | Literal["all"],
+    multisystem: tuple[int, int],
+) -> None:
+    release = _fetch(_config(crs_file=crs_file, crdf_years="all"), tmp_path / "out")
+    config = _config(crs_file=crs_file, crdf_years=crdf_years)
+
+    _fetch(config, tmp_path / "out", offline=True)
+
+    manifest = pl.read_parquet(release / MANIFEST)
+    asked = crdf_years if crdf_years != "all" else (2000, 2024)
+    assert fetch.read_years(manifest) == {
+        "crs": (asked[0], 2025),
+        "crdf_recipient": asked,
+        "crdf_provider": (max(asked[0], 2013), 2024),
+        "multisystem": multisystem,
+    }
+    # The years held stay those the online fetch found.
+    assert manifest.filter(source="multisystem").select(
+        "held_first_year", "held_last_year"
+    ).row(0) == (2011, 2024)
+
+
+def test_an_offline_fetch_of_all_years_reads_an_earlier_fetch_of_all_years(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    config = _config(crs_file=crs_file, crdf_years="all")
+    release = _fetch(config, tmp_path / "out")
+    online = sha256_file(release / MANIFEST)
+
+    _fetch(config, tmp_path / "out", offline=True)
+
+    assert sha256_file(release / MANIFEST) == online
+
+
+def test_a_provider_perspective_without_the_crdf_years_stops_the_fetch(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    config = _config(crs_file=crs_file, crdf_years=(2005, 2009))
+
+    with pytest.raises(SourceUnavailableError, match="provider-perspective"):
+        _fetch(config, tmp_path / "out")
+
+
+@pytest.mark.parametrize("change", ["missing", "changed", "unrecorded"])
+def test_offline_fetch_refuses_raw_files_that_differ_from_the_manifest(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path, change: str
+) -> None:
+    config = _config(crs_file=crs_file)
+    raw = raw_dir(_fetch(config, tmp_path / "out"))
+    target = raw / "external/gcf/projects.json"
+    match change:
+        case "missing":
+            target.unlink()
+        case "changed":
+            target.write_bytes(b"[]")
+        case "unrecorded":
+            target = raw / "external/iati/gef/extra.xml"
+            target.write_bytes(b"<iati-activities/>")
+
+    with pytest.raises(SourceUnavailableError, match=re.escape(str(target))):
+        _fetch(config, tmp_path / "out", offline=True)
+
+
+@pytest.mark.parametrize(
+    ("publishers", "named"),
+    [(("caf",), "iati_gef"), (("caf", "gef", "eib"), "iati_eib")],
+)
+def test_offline_fetch_refuses_a_manifest_for_other_sources(
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    publishers: tuple[str, ...],
+    named: str,
+) -> None:
+    _fetch(_config(crs_file=crs_file), tmp_path / "out")
+    config = _config(crs_file=crs_file, iati_publishers=publishers)
+
+    with pytest.raises(SourceUnavailableError, match=named):
+        _fetch(config, tmp_path / "out", offline=True)
+
+
+def test_offline_fetch_refuses_without_an_earlier_manifest(tmp_path: Path) -> None:
+    with pytest.raises(SourceUnavailableError, match="raw_manifest"):
+        _fetch(_config(), tmp_path / "out", offline=True)
+
+
+def test_offline_fetch_refuses_a_manifest_for_another_crs_file(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    _fetch(_config(crs_file=crs_file), tmp_path / "out")
+    other = LocalFile(path=crs_file.path, sha256="0" * 64)
+
+    with pytest.raises(SourceUnavailableError, match="CRS file"):
+        _fetch(_config(crs_file=other), tmp_path / "out", offline=True)
+
+
+@pytest.mark.parametrize(
+    ("setting", "value"),
+    [
+        ("crs_version", "v20270101"),
+        ("crdf_etags", {"CRDF-RP_2024.xlsx": '"other-etag"'}),
+        ("iati_archive", FIXTURES),
+    ],
+)
+def test_offline_fetch_refuses_settings_the_earlier_fetch_ran_without(
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    setting: str,
+    value: object,
+) -> None:
+    _fetch(_config(crs_file=crs_file), tmp_path / "out")
+
+    with pytest.raises(SourceUnavailableError, match=re.escape(f"sources.{setting}")):
+        _fetch(
+            _config(crs_file=crs_file, **{setting: value}),
+            tmp_path / "out",
+            offline=True,
+        )
+
+
+def test_offline_fetch_refuses_an_earlier_fetch_without_its_settings(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    config = _config(crs_file=crs_file)
+    release = _fetch(config, tmp_path / "out")
+    (release / "fetch" / "stage.json").unlink()
+
+    with pytest.raises(SourceUnavailableError, match=re.escape("stage.json")):
+        _fetch(config, tmp_path / "out", offline=True)
+
+
+def test_local_crs_file_with_another_sha256_stops_the_fetch(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    wrong = LocalFile(path=crs_file.path, sha256="0" * 64)
+
+    with pytest.raises(SourceUnavailableError, match="0" * 64):
+        _fetch(_config(crs_file=wrong), tmp_path / "out")
+    assert sources.calls == []
+
+
+def test_without_a_local_file_the_crs_is_downloaded(
+    sources: FakeSources, tmp_path: Path
+) -> None:
+    release = _fetch(_config(crs_file=None), tmp_path / "out")
+    crs = pl.read_parquet(release / MANIFEST).filter(source="crs").row(0, named=True)
+
+    assert crs["method"] == "http"
+    assert crs["url"] == CRS_URL
+    assert sha256_file(raw_dir(release) / crs["path"]) == crs["sha256"]
+
+
+def test_a_challenged_crs_download_stops_with_the_registration_call(
+    sources: FakeSources, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def challenged(**kwargs: object) -> None:
+        raise oda_reader.BulkDownloadChallengeError(
+            status_code=403, url=CRS_URL, body="", cf_ray=None, dataset="crs"
+        )
+
+    monkeypatch.setattr(oda_reader, "bulk_download_crs", challenged)
+
+    with pytest.raises(SourceUnavailableError, match="register_bulk_file") as error:
+        _fetch(_config(crs_file=None), tmp_path / "out")
+    assert isinstance(error.value.__cause__, oda_reader.BulkDownloadChallengeError)
+    assert sources.calls == []
+    assert not (tmp_path / "out" / "r" / "fetch").exists()
+
+
+@pytest.mark.parametrize(
+    "response",
+    [httpx.Response(503), httpx.Response(200, json={"error": "maintenance"})],
+    ids=["http-error", "not-a-list"],
+)
+def test_a_bad_gcf_response_stops_the_fetch(
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    response: httpx.Response,
+) -> None:
+    sources.gcf_response = response
+
+    with pytest.raises(SourceUnavailableError, match=fetch.GCF_URL):
+        _fetch(_config(crs_file=crs_file), tmp_path / "out")
+
+
+def test_crdf_workbooks_must_match_their_pinned_etags(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    pins = {"CRDF-RP_2024.xlsx": '"recipient-etag"', "CRDF-PP_2024.xlsx": '"old"'}
+
+    with pytest.raises(SourceUnavailableError, match=re.escape("CRDF-PP_2024.xlsx")):
+        _fetch(_config(crs_file=crs_file, crdf_etags=pins), tmp_path / "out")
+
+
+@pytest.mark.parametrize(
+    ("crs_years", "refused"), [((2010, 2024), False), ((2010, 2023), True)]
+)
+def test_later_stages_refuse_a_last_complete_year_outside_the_fetched_crs_years(
+    tmp_path: Path, crs_years: tuple[int, int], refused: bool
+) -> None:
+    write_fetched_years(tmp_path, crs=crs_years)
+    context = stage_context(tmp_path)
+
+    if refused:
+        with pytest.raises(ConfigError, match="crs_last_complete 2024"):
+            fetch.last_complete_year(context)
+    else:
+        assert fetch.last_complete_year(context) == 2024

@@ -1,20 +1,34 @@
+import shutil
 from pathlib import Path
 
 import polars as pl
 import pytest
+from normalised import IATI_PUBLISHERS, record_fetch, write_raw
+from reads import record_reads
+from stage_runs import BUILD_TOML
 
 import climate_finance.build
-from climate_finance.build import BuildConfig, build, load_config, run_stages
+from climate_finance.build import (
+    BuildConfig,
+    build,
+    load_config,
+    measure,
+    run_stages,
+)
 from climate_finance.build.errors import (
     BuildError,
     ConfigError,
     StageInputMissingError,
     StageOutputError,
 )
-from climate_finance.build.stages import REGISTRY, Stage, StageContext, StageDef
+from climate_finance.build.stages import (
+    REGISTRY,
+    Stage,
+    StageContext,
+    StageDef,
+    raw_dir,
+)
 from climate_finance.schema import STAGE_TABLES, Column, TableSchema
-
-BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 
 TABLE = TableSchema(
     name="numbers",
@@ -77,10 +91,10 @@ def test_offline_reaches_every_stage(
     argument: bool,
     configured: bool,
 ) -> None:
-    seen: list[bool] = []
+    seen: list[tuple[bool, bool]] = []
 
     def run(context: StageContext) -> dict[str, pl.DataFrame]:
-        seen.append(context.offline)
+        seen.append((context.offline, context.config.offline))
         return _numbers(["a"], [1.0])
 
     monkeypatch.setattr(
@@ -94,13 +108,55 @@ def test_offline_reaches_every_stage(
         offline=argument,
     )
 
-    assert seen == [True, True]
+    assert seen == [(True, True), (True, True)]
 
 
-def test_sorted_writes_hash_identically_whatever_the_row_order(
-    config: BuildConfig, tmp_path: Path
+@pytest.mark.parametrize("switches", [False, True])
+def test_every_stage_reads_the_settings_it_declares_and_no_others(
+    config: BuildConfig,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    switches: bool,
 ) -> None:
-    keys = ["b", "a", "b", "c", "a"]
+    # An earlier fetch laid the raw fixtures out, so the build runs offline from
+    # fetch on. Measure models no provider, since the fixtures hold too few.
+    config = config.model_copy(
+        update={
+            "offline": True,
+            "key_repair": switches,
+            "recoveries": switches,
+            "sources": config.sources.model_copy(
+                update={"crs_file": None, "iati_publishers": IATI_PUBLISHERS}
+            ),
+        }
+    )
+    manifest = write_raw(raw_dir(tmp_path))
+    record_fetch(tmp_path, manifest, config=config)
+    facts = measure.load_provider_facts()
+    monkeypatch.setattr(
+        measure,
+        "load_provider_facts",
+        lambda: facts.model_copy(update={"modelled": ()}),
+    )
+    registry, reads = record_reads(monkeypatch, config, REGISTRY)
+
+    run_stages(registry, release="r", release_dir=tmp_path, config=config)
+
+    assert reads == {stage.name: set(stage.settings) for stage in REGISTRY}
+
+
+@pytest.mark.parametrize(
+    "keys",
+    [
+        # Repeated keys sort by their values too.
+        ["b", "a", "b", "c", "a"],
+        # Unique keys alone decide the order.
+        ["b", "a", "e", "c", "d"],
+    ],
+)
+def test_sorted_writes_hash_identically_whatever_the_row_order(
+    config: BuildConfig, tmp_path: Path, keys: list[str]
+) -> None:
     values = [2.0, 1.0, 0.5, 3.0, -1.0]
     shuffled = [4, 2, 0, 3, 1]
 
@@ -160,6 +216,34 @@ def test_a_stage_reads_an_earlier_stage_from_disk(
     assert doubled["value"].to_list() == [3.0]
 
 
+@pytest.mark.parametrize("replaced", [False, True])
+def test_a_build_recovers_a_stage_swap_that_died_halfway(
+    config: BuildConfig, tmp_path: Path, replaced: bool
+) -> None:
+    registry = [
+        _stage("first", lambda _: _numbers(["a"], [1.5])),
+        _stage("second", lambda context: {"numbers": context.read("first", "numbers")}),
+    ]
+    run_stages(
+        registry, release="r", release_dir=tmp_path, config=config, stages=["first"]
+    )
+    # The build died with the last good stage moved aside, before or after the new
+    # one moved into its place.
+    first, old = tmp_path / "first", tmp_path / "first.old"
+    if replaced:
+        shutil.copytree(first, old)
+    else:
+        first.rename(old)
+
+    run_stages(
+        registry, release="r", release_dir=tmp_path, config=config, stages=["second"]
+    )
+
+    assert not old.exists()
+    assert pl.read_parquet(first / "numbers.parquet")["value"].to_list() == [1.5]
+    assert pl.read_parquet(tmp_path / "second" / "numbers.parquet").height == 1
+
+
 def test_a_stage_returning_undeclared_tables_writes_nothing(
     config: BuildConfig, tmp_path: Path
 ) -> None:
@@ -172,6 +256,24 @@ def test_a_stage_returning_undeclared_tables_writes_nothing(
         )
 
     assert not (tmp_path / "s").exists()
+
+
+@pytest.mark.parametrize(("returned", "left_out"), [("crdf", None), ("orgs", "crdf")])
+def test_only_optional_tables_may_be_left_out(
+    config: BuildConfig, tmp_path: Path, returned: str, left_out: str | None
+) -> None:
+    stage = StageDef(
+        name="normalise",
+        run=lambda _: {returned: _numbers(["a"], [1.0])["numbers"]},
+        tables={"crdf": TABLE, "orgs": TABLE},
+    )
+
+    if left_out is None:
+        manifest = run_stages([stage], release="r", release_dir=tmp_path, config=config)
+        assert list(manifest.tables["normalise"]) == [returned]
+        return
+    with pytest.raises(StageOutputError, match=left_out):
+        run_stages([stage], release="r", release_dir=tmp_path, config=config)
 
 
 def test_unknown_stage_is_refused(config: BuildConfig, tmp_path: Path) -> None:
@@ -191,6 +293,35 @@ def test_config_resolves_paths_against_its_file(config: BuildConfig) -> None:
     assert not config.offline
     assert config.jev.band == (0.3, 0.9)
     assert config.sources.btr_archive == BUILD_TOML.parent / "data/raw/unfccc_btr1"
+
+
+@pytest.mark.parametrize(
+    ("line", "replacement", "match"),
+    [
+        (
+            'crdf = "all"',
+            "crdf = [2015, 2024]\ncrs = [2010, 2023]",
+            "crs_last_complete",
+        ),
+        ('crdf = "all"', "crdf = [2025, 2026]", "crs_last_complete"),
+        ('crdf = "all"', 'crdf = "every"', "crdf"),
+        # Normalise reads only raw/, so no source names a table outside it.
+        (
+            'btr_archive = "data/raw/unfccc_btr1"',
+            'btr_archive = "data/raw/unfccc_btr1"\nbtr_table = "btr.parquet"',
+            "btr_table",
+        ),
+    ],
+)
+def test_invalid_config_is_refused(
+    tmp_path: Path, line: str, replacement: str, match: str
+) -> None:
+    text = BUILD_TOML.read_text()
+    assert line in text
+    (tmp_path / "build.toml").write_text(text.replace(line, replacement))
+
+    with pytest.raises(ConfigError, match=match):
+        load_config(tmp_path / "build.toml")
 
 
 def test_missing_config_raises_config_error(tmp_path: Path) -> None:

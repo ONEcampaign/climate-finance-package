@@ -25,6 +25,15 @@ class StageInputMissingError(BuildError):
         )
 
 
+class StaleStageError(BuildError):
+    """A stage reads an earlier stage built from other inputs or other settings."""
+
+    def __init__(self, *, stage: str, reason: str) -> None:
+        self.stage = stage
+        self.reason = reason
+        super().__init__(f"Stage {stage!r} {reason}; rerun the build from {stage!r}.")
+
+
 class StageOutputError(BuildError):
     """A stage returned tables other than the ones its schema declares."""
 
@@ -39,3 +48,20 @@ class CostCapExceededError(BuildError):
             f"Estimated cost USD {estimate_usd:.2f} exceeds the cap of "
             f"USD {cap_usd:.2f}."
         )
+
+
+class AllocationInputError(BuildError):
+    """Links that allocation cannot split without breaking a face cap or a total."""
+
+
+class LinkInputError(BuildError):
+    """Link-stage inputs that a linking route cannot use."""
+
+
+class ReleaseInvariantError(BuildError):
+    """Release tables break `schema.release_invariants`."""
+
+    def __init__(self, problems: list[str]) -> None:
+        self.problems = problems
+        shown = "; ".join(problems[:10])
+        super().__init__(f"{len(problems)} release invariant problems: {shown}")

@@ -23,13 +23,27 @@ class Frozen(BaseModel):
 
 
 class Method(Frozen):
-    """Coefficients applied to face value by Rio marker level."""
+    """Coefficients applied to face value by Rio marker level.
+
+    `eu` sets how EU Institutions (provider 918) count in the provider view. As a
+    `"channel"`, members' core contributions to the EU budget, the EDF and the EIB
+    carry the EU's climate share, and 918's own rows leave a result in each year
+    where it also holds such an attribution, so EU money counts once, inside its
+    members' totals. A query for 918 alone returns its own spending, the EIB's
+    included.
+    As a `"provider"`, 918 counts the EU budget and the EDF in its own right, and
+    contributions to them attribute nothing. The EIB is a channel, as the OECD counts
+    it: the EIB's own rows (agency 3) leave every result, and members' contributions
+    to it carry the EIB's climate share. A query for 918 alone returns the spending of
+    the EU budget and the EDF.
+    """
 
     significant: float = Field(ge=0.0, le=1.0)
     principal: float = Field(ge=0.0, le=1.0)
     highest_marker: bool
     coefficients: Literal["fixed", "provider"] = "fixed"
     relevance: Literal["markers", "jev"] = "markers"
+    eu: Literal["channel", "provider"] = "channel"
 
     @property
     def methods(self) -> tuple[Self, ...]:
@@ -60,13 +74,23 @@ class MethodRange(Frozen):
 
 
 ONE = Method(significant=0.4, principal=1.0, highest_marker=True)
-OECD = Method(significant=1.0, principal=1.0, highest_marker=False)
+# The OECD's imputed shares hold the EIB alone of the EU channels, because it counts
+# the EU budget and the EDF as a provider. PROVIDER reads ONE's agency shares, so it
+# keeps ONE's EU setting.
+OECD = Method(significant=1.0, principal=1.0, highest_marker=False, eu="provider")
 PROVIDER = Method(
     significant=0.4, principal=1.0, highest_marker=True, coefficients="provider"
 )
 RANGE = MethodRange(methods=(ONE, OECD, PROVIDER))
 
 _NAMED = {"ONE": ONE, "OECD": OECD, "PROVIDER": PROVIDER}
+
+
+def uses_imputed_shares(method: Method) -> bool:
+    """Whether `method` attributes core contributions with the OECD's imputed
+    shares, as OECD does with either EU setting. Any other method weighs the
+    agency's own spending."""
+    return method.replace(eu=OECD.eu) == OECD
 
 
 def _number(value: float) -> str:
@@ -88,11 +112,14 @@ def label(method: Method | MethodRange) -> str:
     for name, named in _NAMED.items():
         if method == named:
             return name
+        if method.replace(eu=named.eu) == named:
+            return f"{name}, EU as a {method.eu}"
     rule = "highest marker" if method.highest_marker else "each marker"
     return (
         f"significant {_number(method.significant)}, "
         f"principal {_number(method.principal)}, {rule}"
         f", {method.coefficients} coefficients, {method.relevance} relevance"
+        f", EU as a {method.eu}"
     )
 
 
@@ -123,7 +150,21 @@ def describe(method: Method | MethodRange) -> str:
             "UNFCCC for the activity's year and agency, as the release records them "
             "with their source, and these coefficients where it states none."
         )
-    return text
+    return text + _EU[method.eu]
+
+
+_EU = {
+    "channel": " In the provider view EU Institutions count as a channel: members' "
+    "core contributions to the EU budget, the EDF and the EIB carry the EU's climate "
+    "share, and EU Institutions' own rows, the EIB's lending among them, leave a "
+    "result in each year where it holds such an attribution, so EU spending counts "
+    "once.",
+    "provider": " In the provider view EU Institutions count as a provider and the "
+    "EIB as a channel: the rows of the EU budget and the EDF count in EU "
+    "Institutions' own right and contributions to them attribute nothing, while the "
+    "EIB's own rows leave and members' contributions to it carry the EIB's climate "
+    "share.",
+}
 
 
 def _coefficient(
@@ -143,10 +184,24 @@ def _markers() -> tuple[pl.Expr, pl.Expr]:
 
 
 def _marker_rules(
-    method: Method, *, significant: pl.Expr, principal: pl.Expr
+    method: Method,
+    *,
+    significant: pl.Expr,
+    principal: pl.Expr,
+    both_significant: pl.Expr | None = None,
 ) -> dict[str, tuple[pl.Expr, pl.Expr, pl.Expr]]:
-    """Per objective: whether a marker row counts towards it, its level, its weight."""
+    """Per objective: whether a marker row counts towards it, its level, its weight.
+
+    A row significant for both objectives takes `both_significant`, where it is set,
+    as its significant coefficient.
+    """
     rio_a, rio_m = _markers()
+    if both_significant is not None:
+        significant = (
+            pl.when((rio_a == 1) & (rio_m == 1))
+            .then(both_significant.fill_null(significant))
+            .otherwise(significant)
+        )
     coefficients = {"significant": significant, "principal": principal}
     if method.highest_marker:
         level = pl.max_horizontal(rio_a, rio_m)
@@ -174,16 +229,19 @@ def weights(
     *,
     significant: pl.Expr | None = None,
     principal: pl.Expr | None = None,
+    both_significant: pl.Expr | None = None,
 ) -> dict[str, pl.Expr]:
     """Fractions of a row's amount counted per objective, and in total, under `method`.
 
     Marker rows (null `climate_share`) weight `rio_adaptation` and `rio_mitigation`
     (nulls count as 0) by the method's coefficients. `significant` and `principal`
-    replace the method's coefficients, for example with per-provider columns. Under
-    the highest-marker rule a row goes to its higher marker and equal markers become
-    cross-cutting, so the three objectives are disjoint. Without it adaptation and
-    mitigation each count their own marker, and `cross_cutting` is their overlap, the
-    smaller of the two weighted shares, which `climate` counts once.
+    replace the method's coefficients, for example with per-provider columns, and a
+    row significant for both objectives takes `both_significant` where it is not
+    null. Under the highest-marker rule a row goes to its higher marker and equal
+    markers become cross-cutting, so the three objectives are disjoint. Without it
+    adaptation and mitigation each count their own marker, and `cross_cutting` is
+    their overlap, the smaller of the two weighted shares, which `climate` counts
+    once.
 
     Climate-component rows (non-null `climate_share`) ignore the coefficients and use
     `share_adaptation`, `share_mitigation` and `share_overlap`, fractions of the amount
@@ -201,6 +259,7 @@ def weights(
         method,
         significant=pl.lit(method.significant) if significant is None else significant,
         principal=pl.lit(method.principal) if principal is None else principal,
+        both_significant=both_significant,
     )
     fractions = {
         objective: pl.when(pl.col("climate_share").is_not_null())

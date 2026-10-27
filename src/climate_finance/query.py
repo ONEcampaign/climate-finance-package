@@ -3,16 +3,30 @@
 `spending()` builds one row per counted amount, weights it under each method,
 converts it, and sums the rows into the result table. Rows have one of three origins:
 
-- `commitment`: a CRDF commitment at face value (`flow="commitments"`). Repeats of an
-  earlier vintage, and aggregate rows rebuilt into child rows, are left out.
-- `disbursement`: a CRS record's allocation to a commitment at face value
+- `commitment`: a CRDF commitment at face value (`flow="commitments"`). Rows that
+  repeat an earlier vintage are left out, and `quality()` reports them.
+- `disbursement`: a CRS record's allocation to a counted commitment at face value
   (`allocated_usd`, or for `flow="grant_equivalent"` the record's grant equivalent
   times allocated_usd over the record's disbursement),
   weighted by the markers and climate share it inherits from that commitment. `low`
   and `high` weight the allocation's own bounds, `allocated_low_usd` and
   `allocated_high_usd`, converted to grant equivalents the same way.
 - `attribution`: under `view="provider"`, a provider's core contribution of the
-  spec's flow to an agency times the agency's climate share.
+  spec's flow to an agency times the agency's climate share. An agency share with no
+  split by objective counts in `unsplit`, with the objectives 0.
+
+Under `view="provider"` the method's `eu` setting counts EU Institutions once. As a
+channel, EU Institutions' own rows leave a result in each year where it also
+attributes another provider's contribution to an EU channel. As a provider, the EU
+budget and the EDF attribute nothing and count in EU Institutions' own rows, while
+the EIB is a channel: its own rows leave and contributions to it attribute.
+
+Every row holds `value` = adaptation + mitigation - cross_cutting + unsplit, or
++ cross_cutting under the highest-marker rule, whose objectives are disjoint.
+Where the CRDF does not measure adaptation (commitments before 2010, and agency
+shares whose span reaches one), adaptation and cross_cutting are null and `value`
+is the mitigation value. A table row's adaptation and cross_cutting are null when
+any of its rows with an amount has them null.
 
 The release's commitments are recipient-perspective CRDF rows only, so views filter
 on Bi_Multi alone and provider attribution comes only from core contributions.
@@ -28,7 +42,7 @@ import polars as pl
 
 from climate_finance import catalogue
 from climate_finance.convert import convert, provenance
-from climate_finance.methods import OECD, Method, label, weights
+from climate_finance.methods import Method, label, uses_imputed_shares, weights
 from climate_finance.result import (
     AMOUNTS,
     ROW_KEYS,
@@ -37,6 +51,7 @@ from climate_finance.result import (
     Result,
     Table,
 )
+from climate_finance.schema import EU_INSTITUTIONS
 from climate_finance.spec import (
     BILATERAL,
     CORE_CONTRIBUTION,
@@ -51,6 +66,10 @@ from climate_finance.sums import ordered_sum
 if TYPE_CHECKING:
     from climate_finance.snapshot import Snapshot
 
+# The channels of EU Institutions: the EU budget, the EDF and the EIB, as
+# build/providers.toml maps them, and the EIB's agency code.
+EU_BUDGET_AND_EDF, EIB_CHANNEL, EIB_AGENCY = (42001, 42003), 42004, 3
+EU_CHANNELS = (*EU_BUDGET_AND_EDF, EIB_CHANNEL)
 # The objective label a record shows when several sources label it: the bank's own
 # climate components first, then Jev, then the donor's markers.
 LABEL_PRECEDENCE = {"crdf": 0, "jev": 1, "marker": 2}
@@ -91,10 +110,17 @@ _WEIGHT_INPUTS: dict[str, pl.DataType] = {
     "share_adaptation": pl.Float64(),
     "share_mitigation": pl.Float64(),
     "share_overlap": pl.Float64(),
+    "share_unsplit": pl.Float64(),
     "amount_low": pl.Float64(),
     "amount_high": pl.Float64(),
     "significant": pl.Float64(),
     "principal": pl.Float64(),
+    "both_significant": pl.Float64(),
+    "adaptation_measured": pl.Boolean(),
+}
+# The coefficient columns `_coefficients` sets, as `weights` takes them.
+_COEFFICIENT_INPUTS = {
+    name: pl.col(name) for name in ("significant", "principal", "both_significant")
 }
 
 
@@ -119,13 +145,21 @@ def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
     base = _base_rows(snapshot, flow=spec.flow, view=spec.view).filter(*conditions)
     weighted = []
     for method in methods:
-        frames = [base]
+        frame = base
         if spec.view == "provider":
-            attributed = _attributed_rows(snapshot, flow=spec.flow, method=method)
-            frames.append(attributed.filter(*conditions))
-        weighted.extend(
+            attributed = _attributed_rows(
+                snapshot, flow=spec.flow, method=method
+            ).filter(*conditions)
+            if method.eu == "channel":
+                frame = _without_eu_own_rows(frame, attributed=attributed)
+            else:
+                frame = frame.filter(
+                    pl.col("provider_code").ne_missing(EU_INSTITUTIONS)
+                    | pl.col("agency_code").ne_missing(EIB_AGENCY)
+                )
+            frame = pl.concat([frame, attributed])
+        weighted.append(
             _weigh(_coefficients(snapshot, frame, method=method), method=method)
-            for frame in frames
         )
 
     rows = convert(
@@ -147,6 +181,7 @@ def spending(snapshot: Snapshot, *, spec: Spec) -> Result:
             release=snapshot.manifest.release,
             package_version=version("climate-finance"),
             source_versions=snapshot.manifest.source_versions,
+            years=snapshot.manifest.years,
             model_versions=snapshot.manifest.model_versions,
             conversion=provenance(currency=spec.currency, prices=spec.prices),
         ),
@@ -200,12 +235,13 @@ def _conditions(
 
 
 def _counted_commitments(snapshot: Snapshot) -> pl.LazyFrame:
-    """Commitments that count: no repeats, and no aggregate rebuilt into children."""
-    commitments = snapshot.table("commitments")
-    parents = commitments.select(row_id=pl.col("parent_row_id")).drop_nulls().unique()
-    return commitments.filter(pl.col("repeat_of").is_null()).join(
-        parents, on="row_id", how="anti"
-    )
+    """Commitments that count: every row except repeats of an earlier vintage.
+
+    The release leaves out aggregate rows rebuilt into children, so their children's
+    `parent_row_id` names a published CRDF row outside the release and nothing joins
+    on it.
+    """
+    return snapshot.table("commitments").filter(pl.col("repeat_of").is_null())
 
 
 def _in_view(view: View) -> pl.Expr:
@@ -215,9 +251,10 @@ def _in_view(view: View) -> pl.Expr:
 
 
 def _share(part: str) -> pl.Expr:
-    """`part` as a fraction of `face_usd`, 0 for a zero face value."""
+    """`part` as a fraction of `face_usd`, 0 for a zero face value or an unmeasured
+    part, which `adaptation_measured` flags."""
     face = pl.col("face_usd")
-    return pl.when(face != 0).then(pl.col(part) / face).otherwise(0.0)
+    return pl.when(face != 0).then(pl.col(part).fill_null(0.0) / face).otherwise(0.0)
 
 
 def _base_rows(snapshot: Snapshot, *, flow: Flow, view: View) -> pl.LazyFrame:
@@ -225,6 +262,8 @@ def _base_rows(snapshot: Snapshot, *, flow: Flow, view: View) -> pl.LazyFrame:
         "share_adaptation": _share("adaptation_usd"),
         "share_mitigation": _share("mitigation_usd"),
         "share_overlap": _share("overlap_usd"),
+        "share_unsplit": pl.lit(0.0),
+        "adaptation_measured": pl.col("adaptation_usd").is_not_null(),
     }
     if flow == "commitments":
         commitments = _counted_commitments(snapshot).filter(_in_view(view))
@@ -238,7 +277,7 @@ def _base_rows(snapshot: Snapshot, *, flow: Flow, view: View) -> pl.LazyFrame:
             )
         )
 
-    commitments = snapshot.table("commitments").select(
+    commitments = _counted_commitments(snapshot).select(
         "row_id",
         "status",
         "face_usd",
@@ -311,25 +350,36 @@ def _labels(snapshot: Snapshot) -> pl.LazyFrame:
 def _attributed_rows(snapshot: Snapshot, *, flow: Flow, method: Method) -> pl.LazyFrame:
     """Core contributions of `flow` times the agency's climate share by objective.
 
-    Under OECD the share is the OECD's imputed share. Under any other method it is
-    the agency's own climate spending in `agency_spending`, weighed with the method's
-    coefficients, so agency shares follow the method's coefficients as bilateral
-    rows do. Under provider coefficients agencies take the method's coefficients,
-    since `provider_coefficients` holds the providers' own. Where `agency_spending`
-    measures no share, the `one` rows of `agency_shares` stand in. The adaptation
-    and mitigation shares each include the cross-cutting share. An agency without a
-    share attributes nothing.
+    Under OECD, with either EU setting, the share is the OECD's imputed share. Under
+    any other method it is the agency's own climate spending in `agency_spending`,
+    weighed with the method's coefficients, so agency shares follow the method's
+    coefficients as bilateral rows do. Under provider coefficients agencies take the
+    method's coefficients, since `provider_coefficients` holds the providers' own.
+    Where `agency_spending` measures no share, the `one` rows of `agency_shares`
+    stand in. The adaptation and mitigation shares each include the cross-cutting
+    share. A share with no split by objective (a `climate` row) is the unsplit share,
+    and the three objective shares are 0. A null adaptation share is not measured,
+    and its row counts mitigation alone. An agency without a share attributes
+    nothing, and neither do the EU budget and the EDF when the method counts EU
+    Institutions as a provider.
     """
-    shares = _fixed_shares(snapshot, source="oecd" if method == OECD else "one")
-    if method != OECD:
-        measured = _measured_shares(snapshot, method=method)
+    source = "oecd" if uses_imputed_shares(method) else "one"
+    shares = _fixed_shares(snapshot, source=source)
+    if source == "one":
+        measured = measured_shares(snapshot.table("agency_spending"), method=method)
         shares = pl.concat(
             [measured, shares.join(measured, on=["channel_code", "year"], how="anti")]
         )
+    if method.eu == "provider":
+        shares = shares.filter(~pl.col("channel_code").is_in(EU_BUDGET_AND_EDF))
     return _conform(
         snapshot.table("core_contributions")
         .filter(pl.col("flow") == flow)
         .join(shares, on=["channel_code", "year"], how="inner")
+        .with_columns(
+            pl.col("share_adaptation", "share_overlap").fill_null(0.0),
+            adaptation_measured=pl.col("share_adaptation").is_not_null(),
+        )
         .with_columns(
             origin=pl.lit("attribution"),
             bi_multi=pl.lit(CORE_CONTRIBUTION, pl.Int8),
@@ -338,8 +388,32 @@ def _attributed_rows(snapshot: Snapshot, *, flow: Flow, method: Method) -> pl.La
             amount_high=pl.col("contribution_usd"),
             climate_share=pl.col("share_adaptation")
             + pl.col("share_mitigation")
-            - pl.col("share_overlap"),
+            - pl.col("share_overlap")
+            + pl.col("share_unsplit"),
         )
+    )
+
+
+def _without_eu_own_rows(
+    frame: pl.LazyFrame, *, attributed: pl.LazyFrame
+) -> pl.LazyFrame:
+    """`frame` without EU Institutions' own rows in the years where `attributed`
+    holds another provider's contribution to an EU channel, which already counts
+    that money. `attributed` carries one flow, the spec's."""
+    years = (
+        attributed.filter(
+            pl.col("channel_code").is_in(EU_CHANNELS),
+            pl.col("provider_code") != EU_INSTITUTIONS,
+        )
+        .select("year")
+        .unique()
+    )
+    own = frame.filter(pl.col("provider_code") == EU_INSTITUTIONS)
+    return pl.concat(
+        [
+            frame.filter(pl.col("provider_code").ne_missing(EU_INSTITUTIONS)),
+            own.join(years, on="year", how="anti"),
+        ]
     )
 
 
@@ -358,15 +432,19 @@ def _fixed_shares(snapshot: Snapshot, *, source: str) -> pl.LazyFrame:
             share_adaptation=share("adaptation"),
             share_mitigation=share("mitigation"),
             share_overlap=share("cross_cutting"),
+            share_unsplit=share("climate"),
         )
     )
 
 
-def _measured_shares(snapshot: Snapshot, *, method: Method) -> pl.LazyFrame:
-    """Each agency's climate shares by channel and year from `agency_spending`.
+def measured_shares(spending: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
+    """Each agency's climate shares by channel and year from `spending`, an
+    `agency_spending` table.
 
     Each row weighs as a commitment of its markers or components would under
-    `method`, with its `face_share` as the amount.
+    `method`, with its `face_share` as the amount. Every measured share is split
+    by objective, so the unsplit share is 0. The adaptation and cross-cutting shares
+    are null where a row is not `adaptation_measured`.
     """
     face = pl.col("face_share")
 
@@ -378,9 +456,9 @@ def _measured_shares(snapshot: Snapshot, *, method: Method) -> pl.LazyFrame:
     # The highest-marker rule takes the overlap out of adaptation and mitigation,
     # and the shares include it.
     added = overlap if method.highest_marker else pl.lit(0.0)
+    measured = pl.when(pl.col("adaptation_measured").all())
     return (
-        snapshot.table("agency_spending")
-        .with_columns(
+        spending.with_columns(
             climate_share=pl.col("adaptation_share")
             + pl.col("mitigation_share")
             - pl.col("overlap_share"),
@@ -390,10 +468,13 @@ def _measured_shares(snapshot: Snapshot, *, method: Method) -> pl.LazyFrame:
         )
         .group_by("channel_code", "year")
         .agg(
-            share_adaptation=ordered_sum(face * (fractions["adaptation"] + added)),
+            share_adaptation=measured.then(
+                ordered_sum(face * (fractions["adaptation"] + added))
+            ),
             share_mitigation=ordered_sum(face * (fractions["mitigation"] + added)),
-            share_overlap=ordered_sum(face * overlap),
+            share_overlap=measured.then(ordered_sum(face * overlap)),
         )
+        .with_columns(share_unsplit=pl.lit(0.0))
     )
 
 
@@ -409,14 +490,15 @@ def _conform(frame: pl.LazyFrame) -> pl.LazyFrame:
 def _coefficients(
     snapshot: Snapshot, frame: pl.LazyFrame, *, method: Method
 ) -> pl.LazyFrame:
-    """Set `significant`, `principal`, `coefficient_basis` and `coefficient_source`
-    for `method`.
+    """Set `significant`, `principal`, `both_significant`, `coefficient_basis` and
+    `coefficient_source` for `method`.
 
     Under provider coefficients each row takes the `provider_coefficients` row of its
     provider, year and agency, or of its provider and year for an agency without a
-    row of its own. An activity significant for both objectives takes the row's
-    `both_significant`. Where the row gives no coefficient, because the provider
-    assesses each activity case by case or has no row, the row takes the method's.
+    row of its own, and `weights` gives an activity significant for both objectives
+    the row's `both_significant`. Where the row gives no coefficient, because the
+    provider assesses each activity case by case or has no row, the row takes the
+    method's.
     `coefficient_basis` is `provider` for the provider's flat coefficients, `default`
     for the default share of a provider that assesses case by case, `case_by_case`
     where such a provider gives no default, and null where the release holds no row.
@@ -427,6 +509,7 @@ def _coefficients(
         return frame.with_columns(
             significant=pl.lit(method.significant),
             principal=pl.lit(method.principal),
+            both_significant=pl.lit(None, pl.Float64),
         )
     held = _coefficients_by_year(snapshot, years=frame).select(
         "provider_code",
@@ -450,8 +533,6 @@ def _coefficients(
     def pick(name: str) -> pl.Expr:
         return pl.when(own_agency).then(pl.col(name)).otherwise(pl.col(f"{name}_all"))
 
-    rio_a, rio_m = pl.col("rio_adaptation"), pl.col("rio_mitigation")
-    significant = pl.col("_significant").fill_null(method.significant)
     marker = pl.col("climate_share").is_null()
     return (
         frame.join(
@@ -469,10 +550,9 @@ def _coefficients(
         )
         .with_columns(pick(name).alias(name) for name in columns)
         .with_columns(
-            significant=pl.when((rio_a == 1) & (rio_m == 1))
-            .then(pl.col("_both").fill_null(significant))
-            .otherwise(significant),
+            significant=pl.col("_significant").fill_null(method.significant),
             principal=pl.col("_principal").fill_null(method.principal),
+            both_significant=pl.col("_both"),
             coefficient_basis=pl.when(marker).then(pl.col("_basis")),
             coefficient_source=pl.when(marker).then(pl.col("_source")),
         )
@@ -504,18 +584,23 @@ def _coefficients_by_year(snapshot: Snapshot, *, years: pl.LazyFrame) -> pl.Lazy
 
 
 def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
+    """Weight each row's amount by objective, unsplit and in total under `method`.
+
+    Adaptation and cross_cutting are null where adaptation is not measured."""
     amount = pl.col("amount")
-    fractions = weights(
-        method, significant=pl.col("significant"), principal=pl.col("principal")
-    )
+    fractions = weights(method, **_COEFFICIENT_INPUTS)
+    unsplit = pl.col("share_unsplit")
+    climate = fractions["climate"] + unsplit
+    measured = pl.col("adaptation_measured").fill_null(True)
     return frame.with_columns(
         method=pl.lit(label(method)),
-        adaptation=amount * fractions["adaptation"],
+        adaptation=pl.when(measured).then(amount * fractions["adaptation"]),
         mitigation=amount * fractions["mitigation"],
-        cross_cutting=amount * fractions["cross_cutting"],
-        value=amount * fractions["climate"],
-        low=pl.col("amount_low") * fractions["climate"],
-        high=pl.col("amount_high") * fractions["climate"],
+        cross_cutting=pl.when(measured).then(amount * fractions["cross_cutting"]),
+        unsplit=amount * unsplit,
+        value=amount * climate,
+        low=pl.col("amount_low") * climate,
+        high=pl.col("amount_high") * climate,
     ).drop(*_WEIGHT_INPUTS)
 
 
@@ -525,15 +610,30 @@ def _sum(name: str) -> pl.Expr:
     return pl.when(column.is_not_null().any()).then(ordered_sum(column))
 
 
+def _measured_sum(name: str) -> pl.Expr:
+    """`_sum(name)`, null when a row with an amount leaves `name` unmeasured."""
+    unmeasured = pl.col(name).is_null() & pl.col("amount").is_not_null()
+    return pl.when(~unmeasured.any()).then(_sum(name))
+
+
 def _aggregate(rows: pl.LazyFrame, *, methods: Sequence[str]) -> pl.LazyFrame:
     """Sum rows by `KEYS`. `low` and `high` then span every method for the same key.
+    Adaptation and cross_cutting are null where a row leaves them unmeasured.
 
     Every method in `methods` holds a row for every key any method holds, with zero
     amounts where it counts nothing, so a method that has no row for a key still
     bounds it.
     """
     summed = rows.group_by(KEYS).agg(
-        *(_sum(name).alias(name) for name in AMOUNTS), _held=pl.len()
+        *(
+            (
+                _measured_sum(name)
+                if name in ("adaptation", "cross_cutting")
+                else _sum(name)
+            ).alias(name)
+            for name in AMOUNTS
+        ),
+        _held=pl.len(),
     )
     grid = (
         summed.select(ROW_KEYS)
@@ -561,11 +661,22 @@ def _totals(
 ) -> pl.LazyFrame:
     """All CRS flows of `spec.flow` by `ROW_KEYS`, plus a row per provider, year and
     Bi_Multi code with a null recipient that sums every recipient, for rows such as
-    attribution that have none."""
+    attribution that have none.
+
+    CRDF commitments carry their provider's class, Bi_Multi 1 for a bilateral
+    provider, where the CRS splits bilateral flows over codes 1, 3, 7 and 8, so
+    commitment totals count those four codes as 1.
+    """
     flows = snapshot.table("total_flows").filter(
         pl.col("flow") == spec.flow, *conditions
     )
-    by_recipient = flows.select(*ROW_KEYS, total="amount_usd")
+    if spec.flow == "commitments":
+        flows = flows.with_columns(
+            bi_multi=pl.when(pl.col("bi_multi").is_in(BILATERAL))
+            .then(pl.lit(BILATERAL[0], pl.Int8))
+            .otherwise(pl.col("bi_multi"))
+        )
+    by_recipient = flows.group_by(ROW_KEYS).agg(total=pl.col("amount_usd").sum())
     all_recipients = (
         flows.group_by("year", "provider_code", "bi_multi")
         .agg(total=ordered_sum(pl.col("amount_usd")))

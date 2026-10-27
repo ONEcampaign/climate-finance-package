@@ -21,7 +21,6 @@ from climate_finance.schema import (
 MANIFEST = ReleaseManifest.model_validate_json(
     (FIXTURE_DIR / "release.json").read_text()
 )
-INVARIANT_TABLES = ("commitments", "disbursements", "provider_coefficients")
 
 
 def _read(table: str) -> pl.DataFrame:
@@ -63,6 +62,15 @@ def test_regenerating_the_fixture_gives_the_same_tables(tmp_path: Path) -> None:
         assert pl.read_parquet(tmp_path / f"{table}.parquet").equals(_read(table))
 
 
+INVARIANT_TABLES = (
+    "commitments",
+    "disbursements",
+    "agency_shares",
+    "agency_spending",
+    "provider_coefficients",
+)
+
+
 def test_fixture_holds_the_release_invariants() -> None:
     tables = {name: _read(name) for name in INVARIANT_TABLES}
 
@@ -91,6 +99,14 @@ def _break_face_cap(frame: pl.DataFrame) -> pl.DataFrame:
     is_row = pl.col("row_id") == "DEU-1"
     return frame.with_columns(
         face_usd=pl.when(is_row).then(1.0).otherwise(pl.col("face_usd"))
+    )
+
+
+def _revise_face_below_zero(frame: pl.DataFrame) -> pl.DataFrame:
+    # A downward revision may keep its row, but not the disbursement against it.
+    is_row = pl.col("row_id") == "DEU-1"
+    return frame.with_columns(
+        face_usd=pl.when(is_row).then(-1.0).otherwise(pl.col("face_usd"))
     )
 
 
@@ -137,6 +153,89 @@ def _orphan_allocation(frame: pl.DataFrame) -> pl.DataFrame:
     return pl.concat([frame, orphan])
 
 
+def _keep_a_parent_beside_its_child(frame: pl.DataFrame) -> pl.DataFrame:
+    # DEU-2 becomes a child of DEU-1, which the release still holds.
+    return frame.with_columns(
+        parent_row_id=pl.when(pl.col("row_id") == "DEU-2")
+        .then(pl.lit("DEU-1"))
+        .otherwise(pl.col("parent_row_id"))
+    )
+
+
+def _code_unspecified_as_the_bulk_crs_does(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(
+        recipient_code=pl.when(pl.col("recipient_code") == 998)
+        .then(9998)
+        .otherwise(pl.col("recipient_code"))
+    )
+
+
+def _split_a_climate_only_share(frame: pl.DataFrame) -> pl.DataFrame:
+    # AfDB's 2020 OECD share is climate-only; a mitigation row joins it.
+    split = frame.filter(objective="climate").with_columns(
+        objective=pl.lit("mitigation")
+    )
+    return pl.concat([frame, split])
+
+
+def _measure_ida_twice(frame: pl.DataFrame) -> pl.DataFrame:
+    # IDA's 2021 share is measured in agency_spending; a `one` row would count it
+    # twice.
+    one = frame.filter(channel_code=44002, year=2021, source="oecd").with_columns(
+        source=pl.lit("one")
+    )
+    return pl.concat([frame, one])
+
+
+def _give_a_marker_row_components(frame: pl.DataFrame) -> pl.DataFrame:
+    is_row = (pl.col("channel_code") == 44002) & (pl.col("year") == 2021)
+    is_row &= (pl.col("rio_adaptation") == 2) & (pl.col("rio_mitigation") == 0)
+    return frame.with_columns(
+        adaptation_share=pl.when(is_row).then(0.06).otherwise("adaptation_share")
+    )
+
+
+def _repeat_a_components_row(frame: pl.DataFrame) -> pl.DataFrame:
+    return pl.concat([frame, frame.filter(channel_code=46002, year=2022)])
+
+
+def _null_disbursed(frame: pl.DataFrame) -> pl.DataFrame:
+    is_row = pl.col("row_id") == "DEU-1"
+    return frame.with_columns(
+        disbursed_usd=pl.when(~is_row).then(pl.col("disbursed_usd"))
+    )
+
+
+def _null_allocation_bound(frame: pl.DataFrame) -> pl.DataFrame:
+    is_row = pl.col("record_id") == "DEU-1-R1"
+    return frame.with_columns(
+        allocated_low_usd=pl.when(~is_row).then(pl.col("allocated_low_usd"))
+    )
+
+
+def _null_record_disbursement(frame: pl.DataFrame) -> pl.DataFrame:
+    is_record = pl.col("record_id") == "JPN-SPLIT"
+    return frame.with_columns(
+        record_disbursement_usd=pl.when(~is_record).then(
+            pl.col("record_disbursement_usd")
+        )
+    )
+
+
+def _unlink_an_allocation(frame: pl.DataFrame) -> pl.DataFrame:
+    is_row = pl.col("record_id") == "DEU-1-R1"
+    return frame.with_columns(link_method=pl.when(~is_row).then(pl.col("link_method")))
+
+
+def _repeat_an_allocated_row(frame: pl.DataFrame) -> pl.DataFrame:
+    # DEU-1 holds allocations; as a repeat of DEU-2 its money drops out of totals.
+    return frame.with_columns(
+        repeat_of=pl.when(pl.col("row_id") == "DEU-1")
+        .then(pl.lit("DEU-2"))
+        .otherwise(pl.col("repeat_of"))
+    )
+
+
 def _coefficient_edit(
     provider: int, first_year: int | None, **changes: object
 ) -> Callable[[pl.DataFrame], pl.DataFrame]:
@@ -161,13 +260,25 @@ def _coefficient_edit(
     ("table", "edit", "row_id"),
     [
         ("disbursements", _break_allocation_bound, "DEU-1"),
+        ("commitments", _null_disbursed, "DEU-1"),
+        ("disbursements", _null_allocation_bound, "DEU-1"),
+        ("disbursements", _null_record_disbursement, "JPN-SPLIT"),
+        ("disbursements", _unlink_an_allocation, "DEU-1"),
+        ("commitments", _repeat_an_allocated_row, "DEU-1"),
         ("commitments", _break_disbursed_sum, "DEU-1"),
         ("commitments", _break_face_cap, "DEU-1"),
+        ("commitments", _revise_face_below_zero, "DEU-1"),
         ("disbursements", _orphan_allocation, "NONE-1"),
+        ("commitments", _keep_a_parent_beside_its_child, "DEU-1"),
+        ("disbursements", _code_unspecified_as_the_bulk_crs_does, "disbursements"),
         ("disbursements", _break_record_grant_equiv, "JPN-SPLIT"),
         ("disbursements", _break_record_disbursement, "JPN-SPLIT"),
         ("disbursements", _overdraw_record, "JPN-SPLIT"),
         ("disbursements", _negative_record_grant_equiv, "JPN-SPLIT"),
+        ("agency_shares", _split_a_climate_only_share, "46002 2020 oecd"),
+        ("agency_shares", _measure_ida_twice, "44002 2021"),
+        ("agency_spending", _give_a_marker_row_components, "44002 2021 2 0"),
+        ("agency_spending", _repeat_a_components_row, "46002 2022 None None"),
         # Japan's coefficients up to 2021 would also cover 2022.
         (
             "provider_coefficients",

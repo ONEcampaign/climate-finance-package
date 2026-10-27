@@ -87,8 +87,14 @@ class Snapshot:
         raise NotImplementedError("BTR reconciliation is not implemented")
 
     def disbursement_profile(self) -> pl.DataFrame:
-        """Cumulative disbursed share of traceable value by years since commitment."""
-        raise NotImplementedError("the disbursement profile is not implemented")
+        """Cumulative disbursed share of traceable climate value by years since
+        commitment.
+
+        One row per group (`all`, `bilateral`, `multilateral`) and year since
+        commitment, with `vintages`, the number of commitment years observed that
+        long.
+        """
+        return self.table("disbursement_profile").sort("group", "years_since").collect()
 
 
 def load(

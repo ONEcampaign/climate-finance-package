@@ -4,7 +4,7 @@
   "package_version": "2.0.0.dev0",
   "tables": {
     "disbursements": {
-      "sha256": "a5728bfecaa20342eac85990eab0dc1a022cf259aa9fa5551d9e6fcfa90c4632",
+      "sha256": "d5350b6e4f79027d98e29ce15466b6541b240fe6cfe4fc343de31d77e7c9a2c5",
       "rows": 36
     },
     "objectives": {
@@ -12,11 +12,11 @@
       "rows": 69
     },
     "agency_shares": {
-      "sha256": "c7ec641f1ed4357764a300b4e6628960831ebb365f92ad04c94e012edc9b68f1",
-      "rows": 12
+      "sha256": "2ce3f2ea7d30defc4770ed1fdd183c67416f59b2d9130503f85dece5148237f7",
+      "rows": 13
     },
     "agency_spending": {
-      "sha256": "c087deadb5c46726afcae35f7c0cc7b07ba6d86a2c40c850fc545ee005e1a180",
+      "sha256": "19b6a206a8ebf0228be63058c2c6586b78bc649f832064fa5a7dcbae82dda66c",
       "rows": 12
     },
     "modelled": {
@@ -24,8 +24,8 @@
       "rows": 3
     },
     "core_contributions": {
-      "sha256": "710184225fa326e3d8367e847f88a8ea82d877c20b222d441b68fb93aea50d96",
-      "rows": 18
+      "sha256": "0f0e22936884daaebd9c2bb821042a655a7803b8a586f2628fe9a96fecb23de2",
+      "rows": 21
     },
     "provider_coefficients": {
       "sha256": "a3e937e2080e9656ea977f54823c27a67db2b484d21a3ba80fc3a42f1c031561",
@@ -40,11 +40,11 @@
       "rows": 9
     },
     "commitments": {
-      "sha256": "6c867469c8a9f5b4442a4c0c6206010525d7a8506ff2adfd77f7cea60498b195",
+      "sha256": "5e6ae92144167eea737ffdb7b3809f96dff866d588f21c135f88feaa08c4ef55",
       "rows": 14
     },
     "quality": {
-      "sha256": "053ac5b1ac9d5f385bfcf7680e459e06f9d903f2994bb9e94f51f70773b0e1ce",
+      "sha256": "dbd3b73128a31f4b9e79f85fb0c791e8dc456d4b1204f324ed600f06cd19ca87",
       "rows": 12
     },
     "unallocated": {
@@ -52,14 +52,15 @@
       "rows": 3
     },
     "total_flows": {
-      "sha256": "86c54066aa5dddd4b64407eaa363b3cab1371583fada3533b14870c8494c34ea",
-      "rows": 89
+      "sha256": "7e5f2b374b36045ce00bc5817827fb1b6d63642242086b3f175c035cfebf6de9",
+      "rows": 92
     }
   },
   "source_versions": {
     "crs": "fixture",
     "crdf": "fixture"
   },
+  "years": {},
   "model_versions": {
     "jev": "jev-1.14.0"
   },
@@ -68,16 +69,17 @@
     "offline": true,
     "key_repair": true,
     "recoveries": true,
-    "years": {
-      "crdf": [
-        2021,
-        2022
-      ],
-      "crs": [
-        2021,
-        2023
-      ]
-    }
+    "gap_fill": false,
+    "review": false,
+    "years.crdf": [
+      2021,
+      2022
+    ],
+    "years.crs": [
+      2021,
+      2023
+    ],
+    "years.crs_last_complete": 2023
   },
   "precision_gate_waived": false,
   "previous_release": null

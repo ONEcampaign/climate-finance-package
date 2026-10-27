@@ -28,7 +28,7 @@ result = snap.spending(
 result.table.to_polars()
 ```
 
-`load()` opens the latest release, or the one in `path=` for a release on disk. The result table has one row per year, provider, recipient, Bi_Multi code and method, with adaptation, mitigation, cross-cutting and total climate `value` columns, and `low` and `high` bounds. Convert it with `to_polars()`, `to_pandas()` or `to_arrow()`.
+`load()` opens the latest release, or the one in `path=` for a release on disk. The result table has one row per year, provider, recipient, Bi_Multi code and method, with adaptation, mitigation, cross-cutting, `unsplit` and total climate `value` columns, and `low` and `high` bounds. `unsplit` holds attributed finance through agencies whose climate share has no split by objective, as the OECD gives before 2021. Convert it with `to_polars()`, `to_pandas()` or `to_arrow()`.
 
 Each query takes these arguments:
 

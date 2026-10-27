@@ -5,4 +5,4 @@ import polars as pl
 
 def assign_groups(links: pl.LazyFrame) -> pl.LazyFrame:
     """Set `group_id`, ties going to the older commitment."""
-    raise NotImplementedError("slice S14")
+    raise NotImplementedError("assign_groups is not implemented")

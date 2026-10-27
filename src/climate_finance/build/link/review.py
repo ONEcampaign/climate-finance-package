@@ -10,15 +10,24 @@ if TYPE_CHECKING:
 
 
 def run_review(context: StageContext) -> StageOutput:
-    """Check links against ledgers, build the queue, mark pending commitments."""
-    raise NotImplementedError("slice S14 (ledger step: slice S12b)")
+    """Check links against ledgers, build the queue, mark pending commitments.
+
+    With `review` off, pass the link stage's links and the fill stage's commitments
+    through unchanged.
+    """
+    if context.config.review:
+        raise NotImplementedError("the review stage (review = true) is not implemented")
+    return {
+        "links": context.read("link", "links"),
+        "commitments": context.read("fill", "commitments"),
+    }
 
 
 def write_queue_csv(*, release_dir: Path, out_path: Path) -> Path:
     """Write the review queue as a CSV with empty decision columns."""
-    raise NotImplementedError("slice S14")
+    raise NotImplementedError("write_queue_csv is not implemented")
 
 
 def apply_decisions(*, csv_path: Path, decisions_path: Path) -> Path:
     """Append reviewed decisions to the review-decisions parquet."""
-    raise NotImplementedError("slice S14")
+    raise NotImplementedError("apply_decisions is not implemented")

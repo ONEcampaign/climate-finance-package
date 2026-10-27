@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from html import escape
 from typing import TYPE_CHECKING
@@ -11,7 +11,13 @@ import polars as pl
 from pydantic import BaseModel, ConfigDict
 
 from climate_finance.convert import Conversion
-from climate_finance.methods import Method, MethodRange, describe, label
+from climate_finance.methods import (
+    Method,
+    MethodRange,
+    describe,
+    label,
+    uses_imputed_shares,
+)
 from climate_finance.schema import STATUSES
 from climate_finance.spec import (
     BILATERAL,
@@ -27,7 +33,8 @@ if TYPE_CHECKING:
     import pyarrow as pa
 
 AMOUNTS = (
-    "amount", "adaptation", "mitigation", "cross_cutting", "value", "low", "high",
+    "amount", "adaptation", "mitigation", "cross_cutting", "unsplit", "value", "low",
+    "high",
 )  # fmt: skip
 # The keys of a result table's rows, before the method.
 ROW_KEYS = ("year", "provider_code", "recipient_code", "bi_multi")
@@ -62,7 +69,8 @@ class Meta(BaseModel):
     """Where a result came from: release, package and source versions.
 
     `conversion` identifies the pydeflate version and exchange-rate or deflator factors
-    behind a converted result; it is None for USD at current prices.
+    behind a converted result; it is None for USD at current prices. `years` copies
+    the release's `years`.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -71,6 +79,7 @@ class Meta(BaseModel):
     package_version: str
     source_versions: dict[str, str]
     model_versions: dict[str, str]
+    years: dict[str, tuple[int, int]] = {}
     conversion: Conversion | None = None
 
 
@@ -149,10 +158,26 @@ class Result:
                 )
                 .collect()
             )
+        unsplit = (
+            self._rows.filter(pl.col("origin") == "attribution", pl.col("unsplit") != 0)
+            .group_by("method")
+            .agg(pl.col("channel_code").unique().sort())
+            .collect()
+        )
+        unmeasured = (
+            self._rows.filter(
+                pl.col("adaptation").is_null(), pl.col("amount").is_not_null()
+            )
+            .select(pl.col("year").unique().sort())
+            .collect()
+        )
         return explain(
             self.spec,
             release=self.meta.release,
             coefficients=coefficients,
+            unsplit=dict(unsplit.iter_rows()),
+            unmeasured=unmeasured["year"].to_list(),
+            years=self.meta.years,
             conversion=self.meta.conversion,
         )
 
@@ -160,7 +185,7 @@ class Result:
         """The same result with every amount divided by all CRS flows of its key.
 
         The denominator is the release's `total_flows` for the same flow, year,
-        provider, recipient and Bi_Multi code; a row without a recipient, such as
+        provider, recipient and Bi_Multi code. A row without a recipient, such as
         attributed finance, divides by the sum over recipients. Totals cover every
         flow code, so under `oda_only` the share is ODA climate finance over all
         flows. A key missing from `total_flows` gives null shares. The rows and the
@@ -209,12 +234,15 @@ class Quality:
     def summary(self) -> pl.DataFrame:
         """Per provider: link rate, certain-route share, label sources, status split.
 
-        Shares are of the climate value of commitments. `link_rate` is the share that
-        traces to CRS records, and `certain_route_share` the share that traces with
-        every CRDF row reaching its CRS commitment through `schema.CERTAIN_ROUTES`.
-        `grant_equiv_coverage` is the part of the linked commitments' allocated value
-        whose record has a grant equivalent, each year's weighted by linked climate
-        value over the years that have allocations.
+        Shares are of the climate value of counted commitments. `link_rate` is the
+        share that traces to CRS records, and `certain_route_share` the share that
+        traces with every CRDF row reaching its CRS commitment through
+        `schema.CERTAIN_ROUTES`. `grant_equiv_coverage` is the part of the linked
+        commitments' allocated value whose record has a grant equivalent, each year's
+        weighted by linked climate value over the years that have allocations.
+        `repeat_climate_usd` is the climate value of rows that repeat an earlier
+        vintage, which every total leaves out. Their disbursements count on the row
+        they repeat.
         """
         climate = ordered_sum(pl.col("climate_usd"))
         linked = ordered_sum(pl.col("linked_usd"))
@@ -224,6 +252,7 @@ class Quality:
             # A count, and an integer sum is exact in any order.
             pl.col("commitments").sum(),
             climate_usd=climate,
+            repeat_climate_usd=pl.col("repeat_climate_usd").sum(),
             link_rate=linked / climate,
             certain_route_share=ordered_sum(pl.col("certain_route_usd")) / climate,
             model_labelled_share=ordered_sum(pl.col("model_labelled_usd")) / climate,
@@ -252,15 +281,26 @@ def explain(
     *,
     release: str,
     coefficients: pl.DataFrame | None = None,
+    unsplit: Mapping[str, Sequence[int]] | None = None,
+    unmeasured: Sequence[int] = (),
+    years: Mapping[str, tuple[int, int]] | None = None,
     conversion: Conversion | None = None,
 ) -> str:
     """The method, view, flow, filters and units behind `spec`, in plain language.
 
     `coefficients` holds, per provider-coefficient method label (`method`), each
     `coefficient_basis` and `coefficient_source` its marker rows took, with the
-    `provider_code` and the list of `agency_code` values that took them.
-    `conversion` names the conversion factors of a converted result.
+    `provider_code` and the lists of `agency_code` and `year` values that took them.
+    `unsplit` maps a method's label to the agency channel codes whose climate share has
+    no split by objective. `unmeasured` lists the years with rows whose adaptation is
+    not measured. `years` is the release's `years`; under the provider view, the queried
+    years (`spec.years`, else the recipient CRDF's) outside those of
+    `core_contributions` or of the share table a method reads (`agency_shares` under the
+    OECD's imputed shares, else `agency_spending`) are named as holding no attributed
+    finance under that method. `conversion` names the conversion factors of a converted
+    result.
     """
+    unsplit = unsplit or {}
     methods = spec.methods
     lines = [f"Release {release}."]
     for method in methods:
@@ -271,10 +311,29 @@ def explain(
                     method, coefficients.filter(pl.col("method") == label(method))
                 )
             )
+        if channels := unsplit.get(label(method)):
+            lines.append(
+                f"Channels {', '.join(map(str, channels))}: the climate share has no "
+                "split by objective, so their attributed value sits in unsplit."
+            )
     if len(methods) > 1:
         lines.append("low and high are the lowest and highest bound across methods.")
+    if unmeasured:
+        lines.append(
+            f"Adaptation is not measured for rows in {_runs(unmeasured)}, as the "
+            "CRDF has no adaptation marker or climate components before 2010 and an "
+            "agency share of 2010 spans 2009. Their adaptation and cross_cutting are "
+            "null, and their climate value is mitigation only."
+        )
     lines.append(_VIEWS[spec.view])
+    if spec.view == "provider":
+        lines.extend(_coverage(methods, queried=spec.years, years=years or {}))
     lines.append(_FLOWS[spec.flow])
+    lines.append(
+        "Commitments that repeat an earlier vintage are left out, and their "
+        "disbursements count on the row they repeat; snap.quality() reports their "
+        "value."
+    )
     filters = [
         _field_text(field, getattr(spec, field))
         for field in ("providers", "recipients", "years")
@@ -313,10 +372,88 @@ def explain(
     return "\n".join(lines)
 
 
-def _listing(codes: Sequence[int]) -> str:
+# The share table each kind of method reads, and its name in running text.
+_SHARE_TABLES = {
+    True: ("agency_shares", "the OECD's imputed shares"),
+    False: ("agency_spending", "agency spending"),
+}
+
+
+def _coverage(
+    methods: Sequence[Method],
+    *,
+    queried: Sequence[int] | None,
+    years: Mapping[str, tuple[int, int]],
+) -> list[str]:
+    """A line per share table `methods` read, in their order, naming the queried
+    years outside the years of `core_contributions` or of that table."""
+    tables: dict[bool, list[str]] = {}
+    for method in methods:
+        tables.setdefault(uses_imputed_shares(method), []).append(label(method))
+    lines = []
+    for imputed, labels in tables.items():
+        table, text = _SHARE_TABLES[imputed]
+        if outside := _outside_attribution(queried, table=table, years=years):
+            lines.append(
+                f"Under {_listing(labels)}, attributed finance covers core "
+                f"contributions in {_span(years, 'core_contributions')} and {text} "
+                f"in {_span(years, table)}; the provider view attributes none in "
+                f"{_runs(outside)}."
+            )
+    return lines
+
+
+def _outside_attribution(
+    queried: Sequence[int] | None,
+    *,
+    table: str,
+    years: Mapping[str, tuple[int, int]],
+) -> list[int]:
+    """The queried years outside the years of `core_contributions` or `table`.
+    Without queried years, the recipient CRDF's are queried; a release that
+    records no years gives none."""
+    if not years:
+        return []
+    if queried is None:
+        if "crdf_recipient" not in years:
+            return []
+        first, last = years["crdf_recipient"]
+        queried = range(first, last + 1)
+    spans = [years.get(name) for name in ("core_contributions", table)]
+    return sorted(
+        year
+        for year in set(queried)
+        if any(span is None or not span[0] <= year <= span[1] for span in spans)
+    )
+
+
+def _span(years: Mapping[str, tuple[int, int]] | None, name: str) -> str:
+    """`name`'s years in `years` as text, or "no year"."""
+    if years is None or name not in years:
+        return "no year"
+    first, last = years[name]
+    return f"{first} to {last}"
+
+
+def _runs(years: Sequence[int]) -> str:
+    """Sorted `years` as running text, consecutive years as a span, such as
+    "2000 to 2014 and 2025"."""
+    runs: list[list[int]] = []
+    for year in years:
+        if runs and year == runs[-1][-1] + 1:
+            runs[-1].append(year)
+        else:
+            runs.append([year])
+    *rest, last = (
+        str(run[0]) if len(run) == 1 else f"{run[0]} to {run[-1]}" for run in runs
+    )
+    return f"{', '.join(rest)} and {last}" if rest else last
+
+
+def _listing(codes: Sequence[int | str]) -> str:
     """`codes` as running text, such as "1, 3, 7 and 8"."""
     *rest, last = map(str, codes)
-    return f"{', '.join(rest)} and {last}"
+    return f"{', '.join(rest)} and {last}" if rest else last
 
 
 # The order in which `explain` lists the bases of provider coefficients.
@@ -395,7 +532,8 @@ _FLOWS = {
     "disbursements": "Flow: disbursements allocated to climate commitments, weighted "
     "by the commitment's markers; low and high scale by each allocation's bounds. "
     "Attributed finance counts core contributions disbursed. The modelled table "
-    "holds providers that report no disbursements.",
+    "holds a disbursement range for commitments whose disbursements no source "
+    "reports.",
     "grant_equivalent": "Flow: grant equivalent of disbursements, shared across the "
     "commitments a record funds in proportion to the amount each receives; records "
     "without one stay missing, and snap.quality() reports coverage.",

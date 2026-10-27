@@ -116,6 +116,8 @@ def test_named_methods_print_their_names_and_custom_ones_their_coefficients() ->
     assert label(ONE.replace(significant=0.5)).startswith(
         "significant 0.5, principal 1,"
     )
+    assert label(ONE.replace(eu="provider")) == "ONE, EU as a provider"
+    assert label(OECD.replace(eu="channel")) == "OECD, EU as a channel"
 
 
 def test_methods_with_close_coefficients_keep_distinct_labels() -> None:

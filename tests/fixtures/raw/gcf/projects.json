@@ -1,0 +1,921 @@
+[
+ {
+  "ProjectsID": 90001,
+  "ApprovedRef": "FP001",
+  "ProjectName": "Invented project 1",
+  "ApprovalDate": "2015-11-05T00:00:00.000Z",
+  "Status": "Under Implementation",
+  "Countries": [
+   {
+    "ISO3": "PER"
+   }
+  ],
+  "TotalGCFFunding": 4800000,
+  "Funding": [
+   {
+    "BM": "B.11",
+    "Source": "GCF",
+    "Instrument": "Grants",
+    "Budget": 4800000,
+    "BudgetUSDeq": 4800000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.11",
+    "Source": "Co-Financing",
+    "Instrument": "Grants",
+    "Budget": 1100000,
+    "BudgetUSDeq": 1100000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.11",
+    "Source": "Co-Financing",
+    "Instrument": "Grants",
+    "Budget": 1600000,
+    "BudgetUSDeq": 1600000,
+    "Currency": "USD"
+   }
+  ],
+  "Disbursements": [
+   {
+    "AmountDisbursed": 1200000,
+    "AmountDisbursedUSDeq": 1200000,
+    "Currency": "USD",
+    "DateEffective": "2017-05-31",
+    "Entity": "Invented entity 1"
+   },
+   {
+    "AmountDisbursed": 500000,
+    "AmountDisbursedUSDeq": 500000,
+    "Currency": "USD",
+    "DateEffective": "2019-10-25",
+    "Entity": "Invented entity 1"
+   },
+   {
+    "AmountDisbursed": 3400000,
+    "AmountDisbursedUSDeq": 3400000,
+    "Currency": "USD",
+    "DateEffective": "2021-03-23",
+    "Entity": "Invented entity 1"
+   },
+   {
+    "AmountDisbursed": 1150000,
+    "AmountDisbursedUSDeq": 1150000,
+    "Currency": "USD",
+    "DateEffective": "2022-10-05",
+    "Entity": "Invented entity 1"
+   },
+   {
+    "AmountDisbursed": 275000,
+    "AmountDisbursedUSDeq": 275000,
+    "Currency": "USD",
+    "DateEffective": "2022-12-15",
+    "Entity": "Invented entity 1"
+   }
+  ]
+ },
+ {
+  "ProjectsID": 90002,
+  "ApprovedRef": "FP002",
+  "ProjectName": "Invented project 2",
+  "ApprovalDate": "2015-11-05T00:00:00.000Z",
+  "Status": "Under Implementation",
+  "Countries": [
+   {
+    "ISO3": "MWI"
+   }
+  ],
+  "TotalGCFFunding": 21000000,
+  "Funding": [
+   {
+    "BM": "B.11",
+    "Source": "GCF",
+    "Instrument": "Grants",
+    "Budget": 21000000,
+    "BudgetUSDeq": 21000000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.11",
+    "Source": "Co-Financing",
+    "Instrument": "Grants",
+    "Budget": 2300000,
+    "BudgetUSDeq": 2300000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.11",
+    "Source": "Co-Financing",
+    "Instrument": "Grants",
+    "Budget": 1600000,
+    "BudgetUSDeq": 1600000,
+    "Currency": "USD"
+   }
+  ],
+  "Disbursements": [
+   {
+    "AmountDisbursed": 4400000,
+    "AmountDisbursedUSDeq": 4400000,
+    "Currency": "USD",
+    "DateEffective": "2017-08-31",
+    "Entity": "Invented entity 2"
+   },
+   {
+    "AmountDisbursed": 6200000,
+    "AmountDisbursedUSDeq": 6200000,
+    "Currency": "USD",
+    "DateEffective": "2018-12-14",
+    "Entity": "Invented entity 2"
+   },
+   {
+    "AmountDisbursed": 4500000,
+    "AmountDisbursedUSDeq": 4500000,
+    "Currency": "USD",
+    "DateEffective": "2019-11-12",
+    "Entity": "Invented entity 2"
+   },
+   {
+    "AmountDisbursed": 3400000,
+    "AmountDisbursedUSDeq": 3400000,
+    "Currency": "USD",
+    "DateEffective": "2020-10-13",
+    "Entity": "Invented entity 2"
+   },
+   {
+    "AmountDisbursed": 2500000,
+    "AmountDisbursedUSDeq": 2500000,
+    "Currency": "USD",
+    "DateEffective": "2022-05-30",
+    "Entity": "Invented entity 2"
+   },
+   {
+    "AmountDisbursed": 3500000,
+    "AmountDisbursedUSDeq": 3500000,
+    "Currency": "USD",
+    "DateEffective": "2022-12-15",
+    "Entity": "Invented entity 2"
+   }
+  ]
+ },
+ {
+  "ProjectsID": 90003,
+  "ApprovedRef": "FP003",
+  "ProjectName": "Invented project 3",
+  "ApprovalDate": "2015-11-05T00:00:00.000Z",
+  "Status": "Under Implementation",
+  "Countries": [
+   {
+    "ISO3": "SEN"
+   }
+  ],
+  "TotalGCFFunding": 15200000,
+  "Funding": [
+   {
+    "BM": "B.11",
+    "Source": "GCF",
+    "Instrument": "Grants",
+    "Budget": 15200000,
+    "BudgetUSDeq": 15200000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.11",
+    "Source": "Co-Financing",
+    "Instrument": "Grants",
+    "Budget": 1220000,
+    "BudgetUSDeq": 1220000,
+    "Currency": "USD"
+   }
+  ],
+  "Disbursements": [
+   {
+    "AmountDisbursed": 1600000,
+    "AmountDisbursedUSDeq": 1600000,
+    "Currency": "USD",
+    "DateEffective": "2020-05-12",
+    "Entity": "Invented entity 3"
+   },
+   {
+    "AmountDisbursed": 1700000,
+    "AmountDisbursedUSDeq": 1700000,
+    "Currency": "USD",
+    "DateEffective": "2024-07-09",
+    "Entity": "Invented entity 3"
+   },
+   {
+    "AmountDisbursed": 3500000,
+    "AmountDisbursedUSDeq": 3500000,
+    "Currency": "USD",
+    "DateEffective": "2026-03-13",
+    "Entity": "Invented entity 3"
+   },
+   {
+    "AmountDisbursed": 850000,
+    "AmountDisbursedUSDeq": 850000,
+    "Currency": "USD",
+    "DateEffective": "2026-07-24",
+    "Entity": "Invented entity 3"
+   }
+  ]
+ },
+ {
+  "ProjectsID": 90004,
+  "ApprovedRef": "FP004",
+  "ProjectName": "Invented project 4",
+  "ApprovalDate": "2015-11-05T00:00:00.000Z",
+  "Status": "Under Implementation",
+  "Countries": [
+   {
+    "ISO3": "BGD"
+   }
+  ],
+  "TotalGCFFunding": 67000000,
+  "Funding": [
+   {
+    "BM": "B.11",
+    "Source": "GCF",
+    "Instrument": "Grants",
+    "Budget": 67000000,
+    "BudgetUSDeq": 67000000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.11",
+    "Source": "Co-Financing",
+    "Instrument": "Grants",
+    "Budget": 9000000,
+    "BudgetUSDeq": 9000000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.11",
+    "Source": "Co-Financing",
+    "Instrument": "Grants",
+    "Budget": 19000000,
+    "BudgetUSDeq": 19000000,
+    "Currency": "USD"
+   }
+  ],
+  "Disbursements": [
+   {
+    "AmountDisbursed": 280000,
+    "AmountDisbursedUSDeq": 280000,
+    "Currency": "USD",
+    "DateEffective": "2018-10-16",
+    "Entity": "Invented entity 4"
+   },
+   {
+    "AmountDisbursed": 5500000,
+    "AmountDisbursedUSDeq": 5500000,
+    "Currency": "USD",
+    "DateEffective": "2020-05-08",
+    "Entity": "Invented entity 4"
+   },
+   {
+    "AmountDisbursed": 900000,
+    "AmountDisbursedUSDeq": 900000,
+    "Currency": "USD",
+    "DateEffective": "2022-11-10",
+    "Entity": "Invented entity 4"
+   },
+   {
+    "AmountDisbursed": 1900000,
+    "AmountDisbursedUSDeq": 1900000,
+    "Currency": "USD",
+    "DateEffective": "2024-10-21",
+    "Entity": "Invented entity 4"
+   },
+   {
+    "AmountDisbursed": 8500000,
+    "AmountDisbursedUSDeq": 8500000,
+    "Currency": "USD",
+    "DateEffective": "2025-01-24",
+    "Entity": "Invented entity 4"
+   },
+   {
+    "AmountDisbursed": 32000000,
+    "AmountDisbursedUSDeq": 32000000,
+    "Currency": "USD",
+    "DateEffective": "2026-10-03",
+    "Entity": "Invented entity 4"
+   }
+  ]
+ },
+ {
+  "ProjectsID": 90005,
+  "ApprovedRef": "FP005",
+  "ProjectName": "Invented project 5",
+  "ApprovalDate": "2015-11-05T00:00:00.000Z",
+  "Status": "Under Implementation",
+  "Countries": [
+   {
+    "ISO3": "KEN"
+   },
+   {
+    "ISO3": "RWA"
+   }
+  ],
+  "TotalGCFFunding": 17500000,
+  "Funding": [
+   {
+    "BM": "B.11",
+    "Source": "GCF",
+    "Instrument": "Equity",
+    "Budget": 14000000,
+    "BudgetUSDeq": 14000000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.11",
+    "Source": "GCF",
+    "Instrument": "Grants",
+    "Budget": 3500000,
+    "BudgetUSDeq": 3500000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.11",
+    "Source": "Co-Financing",
+    "Instrument": "Equity",
+    "Budget": 147000000,
+    "BudgetUSDeq": 147000000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.11",
+    "Source": "Co-Financing",
+    "Instrument": "Grants",
+    "Budget": 6100000,
+    "BudgetUSDeq": 6100000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.11",
+    "Source": "Co-Financing",
+    "Instrument": "Equity",
+    "Budget": 6100000,
+    "BudgetUSDeq": 6100000,
+    "Currency": "USD"
+   }
+  ],
+  "Disbursements": [
+   {
+    "AmountDisbursed": 2700000,
+    "AmountDisbursedUSDeq": 2700000,
+    "Currency": "USD",
+    "DateEffective": "2016-09-07",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 180000,
+    "AmountDisbursedUSDeq": 180000,
+    "Currency": "USD",
+    "DateEffective": "2016-12-19",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 520000,
+    "AmountDisbursedUSDeq": 520000,
+    "Currency": "USD",
+    "DateEffective": "2017-04-03",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 240000,
+    "AmountDisbursedUSDeq": 240000,
+    "Currency": "USD",
+    "DateEffective": "2017-06-21",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 2200000,
+    "AmountDisbursedUSDeq": 2200000,
+    "Currency": "USD",
+    "DateEffective": "2017-09-22",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 320000,
+    "AmountDisbursedUSDeq": 320000,
+    "Currency": "USD",
+    "DateEffective": "2017-12-05",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 0,
+    "AmountDisbursedUSDeq": 0,
+    "Currency": "USD",
+    "DateEffective": "2018-03-30",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 0,
+    "AmountDisbursedUSDeq": 0,
+    "Currency": "USD",
+    "DateEffective": "2018-06-30",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 0,
+    "AmountDisbursedUSDeq": 0,
+    "Currency": "USD",
+    "DateEffective": "2018-09-30",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 0,
+    "AmountDisbursedUSDeq": 0,
+    "Currency": "USD",
+    "DateEffective": "2018-12-30",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 0,
+    "AmountDisbursedUSDeq": 0,
+    "Currency": "USD",
+    "DateEffective": "2019-04-17",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 290000,
+    "AmountDisbursedUSDeq": 290000,
+    "Currency": "USD",
+    "DateEffective": "2019-07-08",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 750000,
+    "AmountDisbursedUSDeq": 750000,
+    "Currency": "USD",
+    "DateEffective": "2019-10-18",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 3800000,
+    "AmountDisbursedUSDeq": 3800000,
+    "Currency": "USD",
+    "DateEffective": "2020-02-07",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 1600000,
+    "AmountDisbursedUSDeq": 1600000,
+    "Currency": "USD",
+    "DateEffective": "2020-05-20",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 250000,
+    "AmountDisbursedUSDeq": 250000,
+    "Currency": "USD",
+    "DateEffective": "2020-07-31",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 210000,
+    "AmountDisbursedUSDeq": 210000,
+    "Currency": "USD",
+    "DateEffective": "2020-11-26",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 60000,
+    "AmountDisbursedUSDeq": 60000,
+    "Currency": "USD",
+    "DateEffective": "2021-03-01",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 440000,
+    "AmountDisbursedUSDeq": 440000,
+    "Currency": "USD",
+    "DateEffective": "2021-06-29",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 100000,
+    "AmountDisbursedUSDeq": 100000,
+    "Currency": "USD",
+    "DateEffective": "2021-10-15",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 4200000,
+    "AmountDisbursedUSDeq": 4200000,
+    "Currency": "USD",
+    "DateEffective": "2021-10-15",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 1090000,
+    "AmountDisbursedUSDeq": 1090000,
+    "Currency": "USD",
+    "DateEffective": "2021-12-20",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 500000,
+    "AmountDisbursedUSDeq": 500000,
+    "Currency": "USD",
+    "DateEffective": "2022-11-30",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 860000,
+    "AmountDisbursedUSDeq": 860000,
+    "Currency": "USD",
+    "DateEffective": "2023-12-11",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 180000,
+    "AmountDisbursedUSDeq": 180000,
+    "Currency": "USD",
+    "DateEffective": "2024-04-09",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 110000,
+    "AmountDisbursedUSDeq": 110000,
+    "Currency": "USD",
+    "DateEffective": "2024-07-26",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 590000,
+    "AmountDisbursedUSDeq": 590000,
+    "Currency": "USD",
+    "DateEffective": "2025-02-28",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 250000,
+    "AmountDisbursedUSDeq": 250000,
+    "Currency": "USD",
+    "DateEffective": "2025-06-24",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 140000,
+    "AmountDisbursedUSDeq": 140000,
+    "Currency": "USD",
+    "DateEffective": "2025-12-02",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 660000,
+    "AmountDisbursedUSDeq": 660000,
+    "Currency": "USD",
+    "DateEffective": "2020-06-12",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 980000,
+    "AmountDisbursedUSDeq": 980000,
+    "Currency": "USD",
+    "DateEffective": "2021-12-15",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 940000,
+    "AmountDisbursedUSDeq": 940000,
+    "Currency": "USD",
+    "DateEffective": "2022-09-23",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 1680000,
+    "AmountDisbursedUSDeq": 1680000,
+    "Currency": "USD",
+    "DateEffective": "2023-09-07",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 1680000,
+    "AmountDisbursedUSDeq": 1680000,
+    "Currency": "USD",
+    "DateEffective": "2024-12-12",
+    "Entity": "Invented entity 5"
+   },
+   {
+    "AmountDisbursed": 2040000,
+    "AmountDisbursedUSDeq": 2040000,
+    "Currency": "USD",
+    "DateEffective": "2026-08-27",
+    "Entity": "Invented entity 5"
+   }
+  ]
+ },
+ {
+  "ProjectsID": 90006,
+  "ApprovedRef": "FP021",
+  "ProjectName": "Invented project 6",
+  "ApprovalDate": "2016-10-14T00:00:00.000Z",
+  "Status": "Under Implementation",
+  "Countries": [
+   {
+    "ISO3": "SEN"
+   }
+  ],
+  "TotalGCFFunding": 13200000,
+  "Funding": [
+   {
+    "BM": "B.14",
+    "Source": "GCF",
+    "Instrument": "Grants",
+    "Budget": 12000000,
+    "BudgetUSDeq": 13200000.0,
+    "Currency": "EUR"
+   },
+   {
+    "BM": "B.14",
+    "Source": "Co-Financing",
+    "Instrument": "Senior Loans",
+    "Budget": 97000000,
+    "BudgetUSDeq": 106700000.0,
+    "Currency": "EUR"
+   },
+   {
+    "BM": "B.14",
+    "Source": "Co-Financing",
+    "Instrument": "Equity",
+    "Budget": 11500000,
+    "BudgetUSDeq": 12650000.0,
+    "Currency": "EUR"
+   }
+  ],
+  "Disbursements": [
+   {
+    "AmountDisbursed": 2600000,
+    "AmountDisbursedUSDeq": 2860000.0,
+    "Currency": "EUR",
+    "DateEffective": "2019-04-01",
+    "Entity": "Invented entity 6"
+   },
+   {
+    "AmountDisbursed": 1500000,
+    "AmountDisbursedUSDeq": 1650000.0,
+    "Currency": "EUR",
+    "DateEffective": "2022-03-29",
+    "Entity": "Invented entity 6"
+   },
+   {
+    "AmountDisbursed": 12200000,
+    "AmountDisbursedUSDeq": 13420000.0,
+    "Currency": "EUR",
+    "DateEffective": "2023-12-11",
+    "Entity": "Invented entity 6"
+   },
+   {
+    "AmountDisbursed": 2600000,
+    "AmountDisbursedUSDeq": 2860000.0,
+    "Currency": "EUR",
+    "DateEffective": "2025-06-12",
+    "Entity": "Invented entity 6"
+   }
+  ]
+ },
+ {
+  "ProjectsID": 90007,
+  "ApprovedRef": "FP025",
+  "ProjectName": "Invented project 7",
+  "ApprovalDate": "2016-10-14T00:00:00.000Z",
+  "Status": "Under Implementation",
+  "Countries": [
+   {
+    "ISO3": "ARM"
+   },
+   {
+    "ISO3": "EGY"
+   },
+   {
+    "ISO3": "GEO"
+   },
+   {
+    "ISO3": "JOR"
+   },
+   {
+    "ISO3": "MDA"
+   },
+   {
+    "ISO3": "MNG"
+   },
+   {
+    "ISO3": "MAR"
+   },
+   {
+    "ISO3": "SRB"
+   },
+   {
+    "ISO3": "TJK"
+   },
+   {
+    "ISO3": "TUN"
+   }
+  ],
+  "TotalGCFFunding": 485000000,
+  "Funding": [
+   {
+    "BM": "B.14",
+    "Source": "GCF",
+    "Instrument": "Senior Loans",
+    "Budget": 450000000,
+    "BudgetUSDeq": 450000000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.14",
+    "Source": "GCF",
+    "Instrument": "Grants",
+    "Budget": 35000000,
+    "BudgetUSDeq": 35000000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.14",
+    "Source": "Co-Financing",
+    "Instrument": "Senior Loans",
+    "Budget": 680000000,
+    "BudgetUSDeq": 680000000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.14",
+    "Source": "Co-Financing",
+    "Instrument": "Grants",
+    "Budget": 35000000,
+    "BudgetUSDeq": 35000000,
+    "Currency": "USD"
+   }
+  ],
+  "Disbursements": [
+   {
+    "AmountDisbursed": 11000000,
+    "AmountDisbursedUSDeq": 11000000,
+    "Currency": "USD",
+    "DateEffective": "2018-08-07",
+    "Entity": "Invented entity 7"
+   },
+   {
+    "AmountDisbursed": 9900000,
+    "AmountDisbursedUSDeq": 10890000.0,
+    "Currency": "EUR",
+    "DateEffective": "2018-08-07",
+    "Entity": "Invented entity 7"
+   },
+   {
+    "AmountDisbursed": 39000000,
+    "AmountDisbursedUSDeq": 42900000.0,
+    "Currency": "EUR",
+    "DateEffective": "2018-08-07",
+    "Entity": "Invented entity 7"
+   },
+   {
+    "AmountDisbursed": 97000000,
+    "AmountDisbursedUSDeq": 97000000,
+    "Currency": "USD",
+    "DateEffective": "2019-11-25",
+    "Entity": "Invented entity 7"
+   },
+   {
+    "AmountDisbursed": 5300000,
+    "AmountDisbursedUSDeq": 5830000.0,
+    "Currency": "EUR",
+    "DateEffective": "2019-12-12",
+    "Entity": "Invented entity 7"
+   },
+   {
+    "AmountDisbursed": 0,
+    "AmountDisbursedUSDeq": 0,
+    "Currency": "USD",
+    "DateEffective": "2019-12-12",
+    "Entity": "Invented entity 7"
+   },
+   {
+    "AmountDisbursed": 97000000,
+    "AmountDisbursedUSDeq": 97000000,
+    "Currency": "USD",
+    "DateEffective": "2021-10-05",
+    "Entity": "Invented entity 7"
+   },
+   {
+    "AmountDisbursed": 16000000,
+    "AmountDisbursedUSDeq": 16000000,
+    "Currency": "USD",
+    "DateEffective": "2023-05-17",
+    "Entity": "Invented entity 7"
+   },
+   {
+    "AmountDisbursed": 14000000,
+    "AmountDisbursedUSDeq": 15400000.0,
+    "Currency": "EUR",
+    "DateEffective": "2023-05-17",
+    "Entity": "Invented entity 7"
+   },
+   {
+    "AmountDisbursed": 67000000,
+    "AmountDisbursedUSDeq": 67000000,
+    "Currency": "USD",
+    "DateEffective": "2025-01-24",
+    "Entity": "Invented entity 7"
+   },
+   {
+    "AmountDisbursed": 6100000,
+    "AmountDisbursedUSDeq": 6100000,
+    "Currency": "USD",
+    "DateEffective": "2025-01-24",
+    "Entity": "Invented entity 7"
+   },
+   {
+    "AmountDisbursed": 41000000,
+    "AmountDisbursedUSDeq": 41000000,
+    "Currency": "USD",
+    "DateEffective": "2025-02-28",
+    "Entity": "Invented entity 7"
+   },
+   {
+    "AmountDisbursed": 5200000,
+    "AmountDisbursedUSDeq": 5200000,
+    "Currency": "USD",
+    "DateEffective": "2025-02-28",
+    "Entity": "Invented entity 7"
+   },
+   {
+    "AmountDisbursed": 0,
+    "AmountDisbursedUSDeq": 0,
+    "Currency": "USD",
+    "DateEffective": "2025-10-22",
+    "Entity": "Invented entity 7"
+   },
+   {
+    "AmountDisbursed": 0,
+    "AmountDisbursedUSDeq": 0,
+    "Currency": "USD",
+    "Entity": "Invented entity 7"
+   },
+   {
+    "AmountDisbursed": 0,
+    "AmountDisbursedUSDeq": 0,
+    "Currency": "USD",
+    "Entity": "Invented entity 7"
+   }
+  ]
+ },
+ {
+  "ProjectsID": 90008,
+  "ApprovedRef": "FP029",
+  "ProjectName": "Invented project 8",
+  "ApprovalDate": "2016-12-15T00:00:00.000Z",
+  "Status": "Lapsed",
+  "Countries": [
+   {
+    "ISO3": "ZAF"
+   }
+  ],
+  "TotalGCFFunding": 18000000,
+  "Funding": [
+   {
+    "BM": "B.15",
+    "Source": "GCF",
+    "Instrument": "Equity",
+    "Budget": 18000000,
+    "BudgetUSDeq": 18000000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.15",
+    "Source": "Co-Financing",
+    "Instrument": "Equity",
+    "Budget": 18000000,
+    "BudgetUSDeq": 18000000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.15",
+    "Source": "Co-Financing",
+    "Instrument": "Equity",
+    "Budget": 9300000,
+    "BudgetUSDeq": 9300000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.15",
+    "Source": "Co-Financing",
+    "Instrument": "Equity",
+    "Budget": 2500000,
+    "BudgetUSDeq": 2500000,
+    "Currency": "USD"
+   },
+   {
+    "BM": "B.15",
+    "Source": "Co-Financing",
+    "Instrument": "Equity",
+    "Budget": 97000,
+    "BudgetUSDeq": 97000,
+    "Currency": "USD"
+   }
+  ],
+  "Disbursements": []
+ }
+]
