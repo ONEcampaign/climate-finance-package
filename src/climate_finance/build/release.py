@@ -574,7 +574,7 @@ def core_contributions(stage: pl.LazyFrame) -> pl.LazyFrame:
 
 def total_flows(crs: pl.LazyFrame) -> pl.LazyFrame:
     """Every CRS record's amounts by provider, agency, recipient, year, Bi_Multi,
-    flow and the record's higher Rio marker (0 for none).
+    flow and the record's two Rio markers (0 for none).
 
     `assemble` passes the records up to `years.crs_last_complete`, as allocation
     reads them, so the denominator covers the years `disbursements` does.
@@ -587,7 +587,8 @@ def total_flows(crs: pl.LazyFrame) -> pl.LazyFrame:
         "recipient_code",
         "year",
         "bi_multi",
-        "rio_marker",
+        "rio_adaptation",
+        "rio_mitigation",
     ]
     return (
         crs.select(
@@ -595,8 +596,8 @@ def total_flows(crs: pl.LazyFrame) -> pl.LazyFrame:
             "recipient_code",
             "year",
             "bi_multi",
+            pl.col("rio_adaptation", "rio_mitigation").fill_null(0).cast(pl.Int8),
             provider_code="donor_code",
-            rio_marker=_rio_marker(),
             **_FLOW_AMOUNTS,
         )
         .unpivot(
@@ -623,8 +624,8 @@ def btr_links(links: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame:
                 "title",
                 "commitment_usd",
                 "disbursement_usd",
+                pl.col("rio_adaptation", "rio_mitigation").fill_null(0).cast(pl.Int8),
                 provider_code="donor_code",
-                rio_marker=_rio_marker(),
             ),
             on="record_id",
             how="inner",
@@ -677,7 +678,10 @@ def btr_crs_unlinked(
         links.filter(pl.col("task") == "btr_crs").select(record_id="right_id").unique()
     )
     unlinked = (
-        crs.filter(pl.col("bi_multi").is_in(BILATERAL), _rio_marker() >= 1)
+        crs.filter(
+            pl.col("bi_multi").is_in(BILATERAL),
+            pl.max_horizontal("rio_adaptation", "rio_mitigation") >= 1,
+        )
         .join(reached, on="record_id", how="anti")
         .select("year", provider_code="donor_code", **flows)
         .unpivot(
@@ -758,13 +762,6 @@ def provider_coefficients(
         schema={
             name: column.dtype for name, column in PROVIDER_COEFFICIENTS.columns.items()
         },
-    )
-
-
-def _rio_marker() -> pl.Expr:
-    """A CRS record's higher Rio marker, 0 for none."""
-    return (
-        pl.max_horizontal("rio_adaptation", "rio_mitigation").fill_null(0).cast(pl.Int8)
     )
 
 

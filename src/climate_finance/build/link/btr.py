@@ -457,7 +457,8 @@ def linked_pairs(
     """The linked pairs `readers.btr.estimate_party_weights` reads, one per BTR
     row: party, the row's year and face value, the CRS amount it is set against (the
     disbursement for a disbursed row, else the commitment, summed over the row's
-    records) and the records' highest Rio marker."""
+    records), the records' highest Rio marker, and `significant_on_both`, true where
+    every record is Significant for both objectives."""
     pairs = links.filter(task="btr_crs").select(row_id="left_id", record_id="right_id")
     disbursed = pl.col("status") == "disbursed"
     return (
@@ -472,6 +473,7 @@ def linked_pairs(
                 "commitment_usd",
                 "disbursement_usd",
                 rio=pl.max_horizontal("rio_adaptation", "rio_mitigation"),
+                both=(pl.col("rio_adaptation") == 1) & (pl.col("rio_mitigation") == 1),
             ),
             on="record_id",
         )
@@ -481,9 +483,12 @@ def linked_pairs(
             .then(pl.col("disbursement_usd").sum())
             .otherwise(pl.col("commitment_usd").sum()),
             rio_marker=pl.col("rio").max().fill_null(0),
+            significant_on_both=pl.col("both").fill_null(value=False).all(),
         )
         .sort("row_id")
-        .select("party", "year", "btr_usd", "crs_usd", "rio_marker")
+        .select(
+            "party", "year", "btr_usd", "crs_usd", "rio_marker", "significant_on_both"
+        )
         .collect()
     )
 

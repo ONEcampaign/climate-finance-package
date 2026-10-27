@@ -57,15 +57,23 @@ def test_the_weights_sum_to_the_population_in_every_stratum() -> None:
 
 
 def test_a_small_provider_is_a_census_and_a_large_one_draws_to_the_cap() -> None:
-    design = sample_design(_pairs(), rule=RULE, release="r").sort("draw")
+    pairs = _pairs()
+    design = sample_design(pairs, rule=RULE, release="r").sort("draw")
 
     small = design.filter(provider_code=SMALL)
     assert small["design"].unique().to_list() == ["census"]
     assert small.select("left_id").is_unique().all()
     assert small.height == 20
     large = design.filter(provider_code=LARGE)
-    assert large["design"].unique().to_list() == ["pps"]
     assert large["draw"].to_list() == list(range(1, RULE.cap + 1))
+    # Provider 8's 20 model pairs, no more than `min_draws`, are each drawn once at
+    # their own value, and its larger strata are sampled.
+    designs = dict(large.select("stratum", "design").unique().iter_rows())
+    assert designs == {"key": "pps", "ledger": "pps", "model": "census"}
+    model = large.filter(stratum="model").sort("left_id")
+    expected = pairs.filter(provider_code=LARGE, stratum="model").sort("left_id")
+    assert model["left_id"].to_list() == expected["left_id"].to_list()
+    assert model["weight_usd"].to_list() == expected["allocated_usd"].to_list()
     # Every stratum is drawn in the first batch, the largest by value first.
     assert large.head(3)["stratum"].n_unique() == 3
     # A pair drawn twice keeps one sample id.
@@ -295,6 +303,34 @@ def test_a_stratum_read_from_one_draw_keeps_the_bounds_finite() -> None:
 def test_interim_bounds_are_at_least_as_wide_as_the_final_ones() -> None:
     with pytest.raises(ValidationError, match="interim_z"):
         RULE.model_validate(RULE.model_dump() | {"interim_z": 1.5})
+
+
+def test_a_census_stratum_read_in_full_is_exact_and_narrows_its_provider() -> None:
+    # Key draws hold 600 of value and are all right. The model stratum's 50 pairs
+    # hold 400 and 40 of them are right.
+    correct = np.ones(RULE.cap, dtype=bool)
+    correct[450::5] = False
+    model = pl.col("draw") > 450
+    sampled = _draws(correct[np.newaxis]).with_columns(
+        stratum=pl.when(model).then("stratum").otherwise(pl.lit("key")),
+        stratum_usd=pl.when(model).then(400.0).otherwise(600.0),
+        weight_usd=pl.when(model).then(8.0).otherwise(600.0 / 450),
+    )
+    mixed = sampled.with_columns(
+        design=pl.when(model).then(pl.lit("census")).otherwise("design")
+    )
+
+    row = estimate_precision(mixed, rule=RULE).row(0, named=True)
+    pps = estimate_precision(sampled, rule=RULE).row(0, named=True)
+    key, census = row["strata"]
+
+    assert (row["design"], row["labels"]) == ("pps", RULE.cap)
+    assert row["estimate"] == pytest.approx(pps["estimate"]) == pytest.approx(0.92)
+    assert (key["stratum"], census["stratum"]) == ("key", "model")
+    assert (census["estimate"], census["lower"], census["upper"]) == (
+        pytest.approx(0.8),
+    ) * 3
+    assert pps["lower"] < row["lower"] < row["estimate"]
 
 
 def test_a_census_decides_only_once_complete_and_then_exactly() -> None:

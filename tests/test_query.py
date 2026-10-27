@@ -1068,7 +1068,8 @@ def _with_eu_total_flows(frame: pl.DataFrame) -> pl.DataFrame:
                 "year": year,
                 "bi_multi": 1 if flow == "commitments" else 3,
                 "flow": flow,
-                "rio_marker": 0,
+                "rio_adaptation": 0,
+                "rio_mitigation": 0,
                 "amount_usd": agency * EU_FLOW_USD,
             }
             for agency in EU_AGENCIES.values()

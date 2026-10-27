@@ -560,7 +560,7 @@ ID_PRACTICE = _table(
     ("donor_code", "agency_code", "period"),
     donor_code=_code(),
     agency_code=_code(),
-    period=_str(values=("2010-2014", "2015-2018", "2019-2022")),
+    period=_str(values=("2000-2009", "2010-2014", "2015-2018", "2019-2022")),
     id_class=_str(values=ID_PRACTICE_CLASSES),
     open_commitments=_count(),
     id_share=_f64(nullable=True),
@@ -1040,8 +1040,9 @@ UNALLOCATED = _table(
 
 # Every CRS flow, climate or not, summed. This is the denominator of `share_of_total`.
 # `agency_code` lets a query take out the EIB's flows where the EIB counts as a
-# channel. `rio_marker` is the higher of a record's two Rio markers, 0 for none, so
-# the BTR reconciliation can weight same-year climate disbursements.
+# channel. `rio_adaptation` and `rio_mitigation` are a record's Rio markers, 0 for
+# none, so the BTR reconciliation can weight same-year climate disbursements as
+# `weights` weights commitments.
 TOTAL_FLOWS = _table(
     "total_flows",
     (
@@ -1051,7 +1052,8 @@ TOTAL_FLOWS = _table(
         "year",
         "bi_multi",
         "flow",
-        "rio_marker",
+        "rio_adaptation",
+        "rio_mitigation",
     ),
     provider_code=_code(),
     agency_code=_code(nullable=True),
@@ -1059,13 +1061,14 @@ TOTAL_FLOWS = _table(
     year=_year(),
     bi_multi=_bi_multi(),
     flow=_str(values=FLOWS),
-    rio_marker=Column(pl.Int8(), values=RIO_MARKERS),
+    rio_adaptation=Column(pl.Int8(), values=RIO_MARKERS),
+    rio_mitigation=Column(pl.Int8(), values=RIO_MARKERS),
     amount_usd=_usd(),
 )
 
 # Each BTR row's links to same-year CRS records of its party (`links` task
 # `btr_crs`), with the CRS record's facts, since the release holds no CRS records.
-# `rio_marker` is the higher of the record's two Rio markers.
+# `rio_adaptation` and `rio_mitigation` are the record's Rio markers, 0 for none.
 BTR_LINKS = _table(
     "btr_links",
     ("row_id", "record_id"),
@@ -1080,7 +1083,8 @@ BTR_LINKS = _table(
     title=_str(nullable=True),
     commitment_usd=_usd(nullable=True),
     disbursement_usd=_usd(nullable=True),
-    rio_marker=Column(pl.Int8(), values=RIO_MARKERS),
+    rio_adaptation=Column(pl.Int8(), values=RIO_MARKERS),
+    rio_mitigation=Column(pl.Int8(), values=RIO_MARKERS),
 )
 
 # Each party's BTR rows summed by year, status, funding class, currency and whether a

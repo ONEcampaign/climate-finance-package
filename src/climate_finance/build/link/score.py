@@ -66,7 +66,7 @@ scores highest, ties to the earlier placed year, then the smaller unit id
 allocation fills it under the commitment's face cap. Splink links follow the same
 rule (`splink_models.splink_links`). With `jev_links` on, Jev adjudicates the
 eligible pairs in the band (`jev.adjudicate_band`), and those it answered link as
-`classifier_jev` on their combined probability.
+`classifier_jev` when their combined probability reaches the same threshold.
 """
 
 from __future__ import annotations
@@ -962,13 +962,9 @@ def score_truth_group(
     best = best_commitments(train)
     p, correct = best["p_model"].to_numpy(), best["true_pair"].to_numpy()
     n_true = true_disbursements(truth, commitments=train["right_id"])
-    best_cut = best_threshold(p, correct, n_true=n_true)
-    f1 = link_f1(p, correct, n_true=n_true, threshold=LINK_THRESHOLD)
-    best_f1 = link_f1(p, correct, n_true=n_true, threshold=best_cut)
-    if f1 < best_f1 - F1_TOLERANCE:
-        raise LinkThresholdError(
-            threshold=LINK_THRESHOLD, f1=f1, best_threshold=best_cut, best_f1=best_f1
-        )
+    best_cut = checked_best_threshold(
+        p, correct, n_true=n_true, threshold=LINK_THRESHOLD
+    )
 
     model = _fit(x, y)
     maps = _isotonic_maps(raw, y, donors)
@@ -1020,25 +1016,17 @@ def best_commitments(
     """Each disbursement unit's best pair among `pairs` that are not siblings: the
     highest `probability`, ties to the earlier placed year, then the smaller
     commitment unit id."""
-    return first_pairs(ranked_pairs(pairs, probability=probability))
-
-
-def ranked_pairs(pairs: pl.DataFrame, *, probability: str = "p_model") -> pl.DataFrame:
-    """`pairs` that are not siblings, each disbursement unit's best first
-    (`best_commitments`)."""
-    return pairs.filter(pl.col("programme_level") != _SIBLING).sort(
-        "left_id",
-        probability,
-        "placed_year",
-        "right_id",
-        descending=[False, True, False, False],
+    return (
+        pairs.filter(pl.col("programme_level") != _SIBLING)
+        .sort(
+            "left_id",
+            probability,
+            "placed_year",
+            "right_id",
+            descending=[False, True, False, False],
+        )
+        .unique("left_id", keep="first", maintain_order=True)
     )
-
-
-def first_pairs(ranked: pl.DataFrame) -> pl.DataFrame:
-    """The first pair of each disbursement unit in `ranked` (`ranked_pairs`), or of
-    any subset of its rows."""
-    return ranked.unique("left_id", keep="first", maintain_order=True)
 
 
 def heldout_links(pairs: pl.DataFrame) -> pl.DataFrame:
@@ -1077,34 +1065,19 @@ def linked_pairs(
     pairs: pl.DataFrame,
     *,
     threshold: float,
-    jev_threshold: float | None = None,
     rejected: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Each disbursement unit's link among `pairs`: its best pair
-    (`best_commitments` on `probability`) among those that reach their threshold,
-    `jev_threshold` on `probability` where Jev answered (`p_jev` not null) and
-    `threshold` on `p_model` elsewhere. The pairs of `rejected` (`left_id`,
-    `right_id`), which review decisions rejected, are left out first, so a unit
-    whose best pair was rejected links its next best."""
+    (`best_commitments` on `probability`) among those whose `probability` reaches
+    `threshold`. The pairs of `rejected` (`left_id`, `right_id`), which review
+    decisions rejected, are left out first, so a unit whose best pair was rejected
+    links its next best."""
     if rejected is not None:
         pairs = pairs.join(
             rejected.select(*_PAIR), on=list(_PAIR), how="anti", maintain_order="left"
         )
     return best_commitments(
-        pairs.filter(reaches(threshold=threshold, jev_threshold=jev_threshold)),
-        probability="probability",
-    )
-
-
-def reaches(*, threshold: float, jev_threshold: float | None = None) -> pl.Expr:
-    """Whether a pair reaches its threshold (`linked_pairs`)."""
-    reached = pl.col("p_model") >= threshold
-    if jev_threshold is None:
-        return reached
-    return (
-        pl.when(pl.col("p_jev").is_not_null())
-        .then(pl.col("probability") >= jev_threshold)
-        .otherwise(reached)
+        pairs.filter(pl.col("probability") >= threshold), probability="probability"
     )
 
 
@@ -1117,9 +1090,9 @@ def classifier_links(
     """The classifier's `trace` links, in the `links` schema.
 
     With `jev` (`jev.adjudicate_band`), an eligible pair Jev answered takes its
-    combined probability and links at the combined threshold, as `classifier_jev`;
-    every other pair keeps the classifier's probability and threshold. No pair of
-    `rejected` links (`linked_pairs`).
+    combined probability, as `classifier_jev`, and every other pair keeps the
+    classifier's. Both link at the classifier's threshold. No pair of `rejected`
+    links (`linked_pairs`).
     """
     eligible = scores.pairs.filter(pl.col("split") == ELIGIBLE)
     if jev is None:
@@ -1130,12 +1103,7 @@ def classifier_links(
         weighed = eligible.join(jev.answers, on=list(_PAIR), how="left").with_columns(
             probability=pl.coalesce("p_combined", "p_model")
         )
-    best = linked_pairs(
-        weighed,
-        threshold=scores.threshold,
-        jev_threshold=None if jev is None else jev.threshold,
-        rejected=rejected,
-    )
+    best = linked_pairs(weighed, threshold=scores.threshold, rejected=rejected)
     method = (
         pl.when(pl.col("p_jev").is_not_null())
         .then(pl.lit(JEV_METHOD))
@@ -1260,6 +1228,26 @@ def _calibrate(
         rows = donors == donor
         out[rows] = maps.get(int(donor), maps[None]).predict(raw[rows])
     return out
+
+
+def checked_best_threshold(
+    p: np.ndarray, y: np.ndarray, *, n_true: int, threshold: float
+) -> float:
+    """The grid threshold of highest F1 (`best_threshold`) of links with
+    probabilities `p` and correctness `y`, against `n_true` right links in all.
+
+    Raises:
+        LinkThresholdError: F1 at `threshold`, the cut the links are made at, is
+            more than `F1_TOLERANCE` below F1 at the best grid threshold.
+    """
+    best_cut = best_threshold(p, y, n_true=n_true)
+    f1 = link_f1(p, y, n_true=n_true, threshold=threshold)
+    best_f1 = link_f1(p, y, n_true=n_true, threshold=best_cut)
+    if f1 < best_f1 - F1_TOLERANCE:
+        raise LinkThresholdError(
+            threshold=threshold, f1=f1, best_threshold=best_cut, best_f1=best_f1
+        )
+    return best_cut
 
 
 def best_threshold(p: np.ndarray, y: np.ndarray, *, n_true: int) -> float:

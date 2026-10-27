@@ -11,14 +11,18 @@ An agency is `unclassified` below `MIN_OPEN` open commitments, `neither` when un
 `MIN_CONTINUED` of its value continues, and otherwise `id_persistent`,
 `parent_id_persistent` or `pn_persistent` when that route carries at least
 `PERSISTENT_SHARE` of the continued value (the parent class counting id and parent
-together, with parent the larger), else `mixed`. A disbursement takes the class of its
-record year's period. Earlier years take the first period and later years the last;
-open commitments of years outside every period class no agency.
+together, with parent the larger), else `mixed`. The 2000-2009 period measures no
+class. Its rows carry the agency's 2010-2014 class, with the open commitments and
+route shares behind it. A disbursement takes the class of its record year's period.
+Earlier years take the first period and later years the last; open commitments of
+years outside every measured period class no agency.
 
 `keyed_disbursement_share` is the agency's disbursement value in the period on records
 with a usable key, over all its disbursement value there: a project number the
 normaliser accepts, or a crs id that a commitment of the same donor carries. Its
-disbursements fall in periods as its records do, by record year. An agency is
+disbursements fall in periods as its records do, by record year. A 2000-2009 row of
+an agency that disbursed nothing in those years takes its 2010-2014 share, as it takes
+its class. An agency is
 `untraceable` in a period when it is classed `neither` or keys under
 `MIN_KEYED_DISBURSED` of its disbursement value, since the CRS cannot then show
 whether its commitments were paid.
@@ -32,17 +36,21 @@ import polars as pl
 from climate_finance import schema
 
 PERIODS = {
+    "2000-2009": (2000, 2009),
     "2010-2014": (2010, 2014),
     "2015-2018": (2015, 2018),
     "2019-2022": (2019, 2022),
 }
-# The first record year a period measures. `period_of` gives an earlier year the
-# first period's class, which none of that year's commitments measured, and the ids
-# of those years do not persist as later ones do: on the archive 96 per cent of
-# 2000 to 2003 commitment crs ids end in a `z` that the later records drop, and
-# Italy reissued its ids in 2010, so 0.2 per cent of its 2005 to 2009 commitment
-# ids recur in a later disbursement, against 22 per cent of its 2010 to 2014 ones.
-FIRST_MEASURED_YEAR = min(first for first, _ in PERIODS.values())
+# The periods whose rows take another period's class, and its keyed share where the
+# agency disbursed nothing in their own years.
+INHERITS_FROM = {"2000-2009": "2010-2014"}
+# The first record year whose commitments a class measures. Earlier years carry the
+# 2010-2014 class, which none of their commitments measured, and their ids do not
+# persist as later ones do. On the archive 96 per cent of 2000 to 2003 commitment
+# crs ids end in a `z` that the later records drop, and Italy reissued its ids in
+# 2010, so 0.2 per cent of its 2005 to 2009 commitment ids recur in a later
+# disbursement, against 22 per cent of its 2010 to 2014 ones.
+FIRST_MEASURED_YEAR = 2010
 # Classes whose crs ids persist from commitment to disbursement.
 ID_PERSISTENT_CLASSES = ("id_persistent", "parent_id_persistent")
 # A commitment is open when more than this share is left after its own year.
@@ -54,8 +62,9 @@ MIN_OPEN = 10
 # years `period_of` gives it, split at this share. In 2019 to 2022 IFAD keys 0.18 of
 # its disbursement value, IDB Invest 0.32, the EBRD 0.34 and the NDB 0.37; the next
 # agency keys 0.53, and 142 of the 161 key 0.8 or more. In 2015 to 2018 the gap runs
-# from 0.35 to 0.50. In 2010 to 2014, which pools 2000 to 2014, it runs from 0.44
-# (JICA) to 0.53 (the AfDF), and 96 of the 122 key 0.8 or more.
+# from 0.35 to 0.50, and in 2010 to 2014 from 0.36 (Germany's agency 4) to 0.51
+# (its agency 34). In 2000 to 2009 it is 0.014, from 0.440 (JICA) to 0.454 (Germany's
+# agency 4), so that agency is traceable there by 0.004.
 MIN_KEYED_DISBURSED = 0.45
 
 # An EU contract's crs id is its 10-character decision id plus a contract number.
@@ -133,17 +142,35 @@ def classify_id_practice(
     """Class each (donor, agency) in each of `periods`, in the `id_practice` schema.
 
     `units` is the `units` table, and `periods` a subset of `PERIODS`. An agency
-    with no open commitment in a period gets no row for it.
+    with no open commitment in a period, or in the period it inherits from, gets no
+    row for it.
     """
     disbursed = _disbursed(units)
+    sources = {name: INHERITS_FROM.get(name, name) for name in periods}
+    classes = {
+        name: _classify(units, disbursed, first=first, last=last)
+        for name, (first, last) in PERIODS.items()
+        if name in sources.values()
+    }
+    shares = _keyed_shares(units)
     return (
         pl.concat(
-            _classify(units, disbursed, first=first, last=last).with_columns(
-                period=pl.lit(name)
-            )
-            for name, (first, last) in periods.items()
+            classes[source].with_columns(period=pl.lit(name), source=pl.lit(source))
+            for name, source in sources.items()
         )
-        .join(_keyed_shares(units), on=[*_AGENCY, "period"], how="left")
+        .join(shares, on=[*_AGENCY, "period"], how="left")
+        .join(
+            shares.rename(
+                {"period": "source", "keyed_disbursement_share": "source_share"}
+            ),
+            on=[*_AGENCY, "source"],
+            how="left",
+        )
+        .with_columns(
+            keyed_disbursement_share=pl.coalesce(
+                "keyed_disbursement_share", "source_share"
+            )
+        )
         .select(list(schema.ID_PRACTICE.columns))
     )
 

@@ -7,15 +7,20 @@ key-tier links without a ledger confirmation, every other link method (models,
 key-repair and recovery rules), and links people or agents accepted in the review
 queue.
 
-A provider with fewer than `census_below` pairs is labelled in full. Otherwise the
-sample is an ordered sequence of `cap` draws: the first draw of each stratum comes
-first, then each draw goes to the stratum furthest below its share of allocated
-value. Within a stratum a draw picks a pair with probability proportional to its
-allocated value, with replacement, so a pair can be drawn more than once and is
-labelled once. Each draw's weight is its stratum's allocated value over the
-stratum's draws, so a provider's weights sum to its allocated value. The design
-records each provider's population fingerprint (`population_fingerprints`), and the
-precision gate refuses a sample whose population the build no longer allocates.
+A stratum of at most `min_draws` pairs is a census: each of its pairs is drawn
+once, in random order, and weighs its own allocated value. Every stratum of a
+provider with fewer than `census_below` pairs is a census too. A provider whose
+strata are all census is a census and draws its pairs in one random order.
+Otherwise the sample is an ordered sequence of `cap` draws: the first draw of each
+stratum comes first, then each draw goes to the stratum furthest below its share of
+the draws. A census stratum's share is its pairs, and the other strata (`pps`)
+share the rest by allocated value. Within a pps stratum a draw picks a pair with
+probability proportional to its allocated value, with replacement, so a pair can be
+drawn more than once and is labelled once, and each draw weighs its stratum's
+allocated value over the stratum's draws. A provider's weights therefore sum to its
+allocated value. The design records each provider's population fingerprint
+(`population_fingerprints`), and the precision gate refuses a sample whose
+population the build no longer allocates.
 
 People or agents decide the sample from labelling packets (`packet.write_packet`),
 one per provider and batch, which show both units' ids and fields and no score,
@@ -29,10 +34,11 @@ weighted mean of the draws' decisions, combined by stratum value. Labelling runs
 batches, and a look reads the unbroken run of labelled draws from the first, cut to
 whole batches. The bounds are a Wilson interval at the estimate's effective sample
 size, at `interim_z` before the cap and `final_z` at it. A provider passes when the
-lower bound reaches the threshold. It fails when the upper bound falls below the
-threshold, when the lower bound could not reach it by the cap even with every later
-draw right (the cap's estimate is then one less the weight of the wrong draws read
-over the provider's allocated value), or at the cap. With the thresholds in
+lower bound reaches the threshold. A census provider decides once every pair is
+decided, when its estimate is exact. A pps provider fails when the upper bound falls
+below the threshold, when the lower bound could not reach it by the cap even with
+every later draw right (the cap's estimate is then one less the weight of the wrong
+draws read over the provider's allocated value), or at the cap. With the thresholds in
 `gates.yaml`, a provider whose true precision is 0.90 passes 2.6% of the time.
 The rule reads the provider's estimate, which blends its strata by value, so each
 stratum's estimate and interval at the same look are reported beside it: a
@@ -342,61 +348,75 @@ def sample_design(
 def _provider_draws(
     pairs: pl.DataFrame, *, rule: PrecisionRule, provider: int
 ) -> pl.DataFrame:
-    """One provider's draws: every pair once below `rule.census_below` pairs, else
-    `rule.cap` value-weighted draws spread over the strata by value share, with at
-    least `rule.min_draws` in each stratum, or as many as it has pairs (`_draw_shares`).
-    A draw's weight is its stratum's value over the stratum's draws, so a stratum
-    drawn above its value share counts at its share in the estimate."""
+    """One provider's draws. A census stratum, of at most `rule.min_draws` pairs or
+    in a provider of fewer than `rule.census_below`, draws each pair once at its
+    own value. When every stratum is census the provider's pairs come in one random
+    order. Otherwise the provider takes `rule.cap` draws: each census stratum its
+    pairs, and the other strata value-weighted draws by value share, with at least
+    `rule.min_draws` each (`_draw_shares`). A pps draw's weight is its stratum's
+    value over the stratum's draws, so a stratum drawn above its value share counts
+    at its share in the estimate."""
     rng = np.random.default_rng([rule.seed, provider])
     strata = (
         pairs.group_by("stratum")
         .agg(stratum_usd=ordered_sum(pl.col("allocated_usd")), stratum_pairs=pl.len())
         .sort("stratum_usd", "stratum", descending=[True, False])
+        .with_columns(
+            design=pl.when(
+                (pl.col("stratum_pairs") <= rule.min_draws)
+                | (pairs.height < rule.census_below)
+            )
+            .then(pl.lit("census"))
+            .otherwise(pl.lit("pps"))
+        )
     )
-    if pairs.height < rule.census_below:
+    census = (strata["design"] == "census").to_numpy()
+    if census.all():
         return (
             pairs[rng.permutation(pairs.height)]
             .join(strata, on="stratum", maintain_order="left")
             .with_columns(
-                design=pl.lit("census"),
-                draw=pl.int_range(1, pl.len() + 1),
-                weight_usd="allocated_usd",
+                draw=pl.int_range(1, pl.len() + 1), weight_usd="allocated_usd"
             )
         )
+    stratum_pairs = strata["stratum_pairs"].to_numpy()
     shares = _draw_shares(
         strata["stratum_usd"].to_numpy(),
-        floors=np.minimum(rule.min_draws, strata["stratum_pairs"].to_numpy()),
+        floors=np.where(census, stratum_pairs, rule.min_draws),
+        fixed=census,
         draws=rule.cap,
     )
     sequence = _stratum_sequence(shares, draws=rule.cap)
     picked = []
-    for index, (stratum, stratum_usd) in enumerate(
-        strata.select("stratum", "stratum_usd").iter_rows()
+    for index, (stratum, stratum_usd, design) in enumerate(
+        strata.select("stratum", "stratum_usd", "design").iter_rows()
     ):
         members = pairs.filter(stratum=stratum)
         positions = np.flatnonzero(sequence == index) + 1
-        value = members["allocated_usd"].to_numpy()
-        chosen = rng.choice(members.height, size=positions.size, p=value / value.sum())
-        picked.append(
-            members[chosen].with_columns(
-                draw=pl.Series(positions),
-                weight_usd=pl.lit(stratum_usd / positions.size),
+        if design == "census":
+            chosen = rng.permutation(members.height)
+            weight = pl.col("allocated_usd")
+        else:
+            value = members["allocated_usd"].to_numpy()
+            chosen = rng.choice(
+                members.height, size=positions.size, p=value / value.sum()
             )
+            weight = pl.lit(stratum_usd / positions.size)
+        picked.append(
+            members[chosen].with_columns(draw=pl.Series(positions), weight_usd=weight)
         )
-    return (
-        pl.concat(picked)
-        .join(strata, on="stratum")
-        .with_columns(design=pl.lit("pps"))
-        .sort("draw")
-    )
+    return pl.concat(picked).join(strata, on="stratum").sort("draw")
 
 
-def _draw_shares(usd: np.ndarray, *, floors: np.ndarray, draws: int) -> np.ndarray:
-    """Each stratum's share of `draws`: its share of `usd`, raised to `floors` draws
-    where that gives fewer, with the other strata sharing the rest by value. A
-    floored share times `draws` is a whole number, so `_stratum_sequence` gives the
-    stratum exactly its floor."""
-    floored = np.zeros(usd.size, dtype=bool)
+def _draw_shares(
+    usd: np.ndarray, *, floors: np.ndarray, fixed: np.ndarray, draws: int
+) -> np.ndarray:
+    """Each stratum's share of `draws`: `floors` draws where `fixed`, else its share
+    of `usd` among the unfixed strata, raised to `floors` draws where that gives
+    fewer, with the other strata sharing the rest by value. A floored share times
+    `draws` is a whole number, so `_stratum_sequence` gives the stratum exactly its
+    floor."""
+    floored = fixed.copy()
     while True:
         free = draws - floors[floored].sum()
         scaled = np.where(floored, floors, usd * free / usd[~floored].sum())
@@ -476,9 +496,10 @@ def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataF
         largest allocated value first: the draws the look reads in each, their
         weighted share right and its Wilson bounds at the provider's `z`. A census
         stratum with every pair decided is exact, and a stratum with no draw read
-        has null estimate and bounds.
+        has null estimate and bounds. A provider is a census when every draw is
+        (`DESIGN_SCHEMA`'s `design`), else pps.
     """
-    census = pl.col("design") == "census"
+    census = (pl.col("design") == "census").all().over("provider_code")
     known = pl.col("correct").is_not_null()
     ordered = labels.sort("provider_code", "draw").with_columns(
         unbroken=known.cast(pl.Int32).cum_min().over("provider_code"),
@@ -490,18 +511,14 @@ def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataF
     look = (pl.col("unbroken").sum() // rule.batch * rule.batch).clip(
         upper_bound=rule.cap
     )
+
+    # A census provider reads every decided pair, a pps one its look.
     read = ordered.with_columns(look=look.over("provider_code")).filter(
         pl.when(census).then(known).otherwise(pl.col("draw") <= pl.col("look"))
     )
-
-    # A census reads its decided pairs as one cell, a sample each stratum.
     cells = _cells(
         read.with_columns(
-            cell=pl.when(census).then(pl.lit("all")).otherwise("stratum"),
-            cell_usd=pl.when(census)
-            .then(pl.col("weight_usd").sum().over("provider_code"))
-            .otherwise("stratum_usd"),
-            cell_pairs="pairs",
+            cell="stratum", cell_usd="stratum_usd", cell_pairs="stratum_pairs"
         )
     )
     draws = pl.col("draws")
@@ -516,20 +533,15 @@ def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataF
         / ordered_sum(cell_usd) ** 2,
     )
     providers = (
-        labels.select("provider_code", "design")
-        .unique()
+        labels.group_by("provider_code")
+        .agg(
+            design=pl.when((pl.col("design") == "census").all())
+            .then(pl.lit("census"))
+            .otherwise(pl.lit("pps"))
+        )
         .join(providers, on="provider_code", how="left")
     )
-    strata = _stratum_estimates(
-        labels,
-        cells=_cells(
-            read.with_columns(
-                cell="stratum", cell_usd="stratum_usd", cell_pairs="stratum_pairs"
-            )
-        ),
-        providers=providers,
-        rule=rule,
-    )
+    strata = _stratum_estimates(labels, cells=cells, providers=providers, rule=rule)
     return (
         _decide(providers, rule=rule)
         .join(strata, on="provider_code", how="left", maintain_order="left")
@@ -540,8 +552,8 @@ def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataF
 
 def _cells(read: pl.DataFrame) -> pl.DataFrame:
     """Per provider and `cell`, the draws `read` holds, their weighted share right
-    (`p_cell`) and its variance (`v_cell`). A census cell of `cell_pairs` pairs
-    shrinks the variance by the share of them read."""
+    (`p_cell`) and its variance (`v_cell`). A census cell of `cell_pairs` pairs,
+    each drawn once, shrinks the variance by the share of them read."""
     weight, right = pl.col("weight_usd"), pl.col("correct").cast(pl.Float64)
     census = pl.col("design") == "census"
     cells = read.group_by("provider_code", "cell").agg(

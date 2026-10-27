@@ -235,8 +235,19 @@ def test_id_practice_reproduces_the_three_period_reference(
         == 0.0
     ).all()
 
+    # Each agency's 2000-2009 row carries its 2010-2014 class, and the reference
+    # holds the measured periods alone.
+    early, first = (
+        id_practice.filter(period=period)
+        .drop("period", "keyed_disbursement_share")
+        .sort("donor_code", "agency_code")
+        for period in ("2000-2009", "2010-2014")
+    )
+    assert early.equals(first)
+    measured = id_practice.filter(pl.col("period") != "2000-2009")
+
     monkeypatch.setattr(practice, "parent_id", _prototype_parent_id)
-    built = classify_id_practice(units)
+    built = classify_id_practice(units).filter(pl.col("period") != "2000-2009")
     rows = _compare(reference, built, _PERIOD_KEY)
 
     assert rows.height == reference.height == built.height == 798
@@ -275,7 +286,7 @@ def test_id_practice_reproduces_the_three_period_reference(
     assert (by_pn["pn_share_built"] < by_pn["pn_share"]).all()
     # Under its own parent rule only `parent_id` moves a row: less continues by
     # parent id, and some of it by project number.
-    moves = _compare(built, id_practice, _PERIOD_KEY)
+    moves = _compare(built, measured, _PERIOD_KEY)
     for column in ("open_commitments", "id_share"):
         assert (moves[column] == moves[f"{column}_built"]).all(), column
     # The 2019-2022 rows of `_FEWER_BY_PARENT` and 30 of earlier periods.

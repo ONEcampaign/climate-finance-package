@@ -422,15 +422,18 @@ def check_party_weights(
     fit and `share_at_stated` read the pairs of the span's years. A row with no
     stated coefficient, as
     for a provider that assesses each activity case by case, and a party with no
-    fitted coefficient are left out. The fit only takes the levels in
+    fitted coefficient are left out. A pair Significant for both objectives takes
+    the row's `both_significant` where it is set, as `methods.weights` weighs it, so
+    the fit leaves it out. The fit only takes the levels in
     `WEIGHT_LEVELS`, so a stated coefficient off them, such as 0.3, always differs;
     `share_at_stated` is the share of the party's Significant pairs whose ratio sits
-    within `LEVEL_TOLERANCE` of the stated coefficient, which says whether the pairs
-    bear it out.
+    within `LEVEL_TOLERANCE` of the coefficient the pair takes, which says whether
+    the pairs bear it out.
 
     Args:
         pairs: Linked BTR and CRS pairs, as `estimate_party_weights` takes them,
-            with the BTR row's `year`.
+            with the BTR row's `year` and `significant_on_both`, true for a pair
+            whose CRS records are all Significant for both objectives.
         coefficients: The release's `provider_coefficients` table.
 
     Returns:
@@ -439,14 +442,19 @@ def check_party_weights(
         (the stated coefficient's source and locator).
 
     Raises:
-        ValueError: when `pairs` has no `year`.
+        ValueError: when `pairs` has no `year` or `significant_on_both`.
     """
-    if "year" not in pairs.columns:
-        raise ValueError("Linked pairs lack the column year")
+    missing = sorted({"year", "significant_on_both"} - set(pairs.columns))
+    if missing:
+        raise ValueError(f"Linked pairs lack the columns {missing}")
     ratio = pl.col("btr_usd") / pl.col("crs_usd")
     stated = pl.col("stated")
     significant = pl.col("rio_marker") == _SIGNIFICANT
-    at_stated = significant & ((ratio - stated).abs() <= LEVEL_TOLERANCE * stated)
+    takes_both = (
+        significant & pl.col("significant_on_both") & pl.col("both").is_not_null()
+    )
+    taken = pl.when(takes_both).then(pl.col("both")).otherwise(stated)
+    at_stated = significant & ((ratio - taken).abs() <= LEVEL_TOLERANCE * taken)
     first, last, year = pl.col("first_year"), pl.col("last_year"), pl.col("year")
     providers = {party: party_provider(party) for party in pairs["party"].unique()}
     spans = (
@@ -463,6 +471,7 @@ def check_party_weights(
                 "first_year",
                 "last_year",
                 stated="significant",
+                both="both_significant",
                 source=pl.format("{}, {}", "source", "locator"),
             ),
             on="provider_code",
@@ -471,24 +480,20 @@ def check_party_weights(
     )
     span = ["party", "provider_code", "first_year", "last_year", "stated", "source"]
     rows = []
-    for key, members in spans.partition_by(span, as_dict=True).items():
-        estimate = estimate_party_weights(members)
+    for key, members in spans.partition_by([*span, "both"], as_dict=True).items():
+        estimate = estimate_party_weights(members.filter(~takes_both))
         if estimate.is_empty():
             continue
-        fitted = estimate.row(0, named=True)
-        share = (
-            members.filter(pl.col("crs_usd") > 0)
-            .select(
-                pl.when(significant.sum() > 0).then(at_stated.sum() / significant.sum())
-            )
-            .item()
-        )
+        counted = members.filter(pl.col("crs_usd") > 0)
+        share = counted.select(
+            pl.when(significant.sum() > 0).then(at_stated.sum() / significant.sum())
+        ).item()
         rows.append(
-            dict(zip(span, key, strict=True))
+            dict(zip(span, key[: len(span)], strict=True))
             | {
-                "fitted": fitted["significant"],
+                "fitted": estimate["significant"].item(),
                 "share_at_stated": share,
-                "pairs": fitted["pairs"],
+                "pairs": counted.height,
             }
         )
     columns = {

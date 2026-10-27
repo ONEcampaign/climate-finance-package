@@ -658,7 +658,8 @@ def build_tables() -> dict[str, pl.DataFrame]:
             | {
                 "recipient_code": KEN,
                 "title": f"Adaptation programme {link[1]}",
-                "rio_marker": 2,
+                "rio_adaptation": 2,
+                "rio_mitigation": 0,
             }
             for link in BTR_LINKS
         ],
@@ -706,14 +707,12 @@ def build_tables() -> dict[str, pl.DataFrame]:
                 frames["disbursements"].select(
                     *TOTAL_KEYS,
                     "allocated_usd",
-                    rio_marker=_rio_marker(
-                        "inherited_rio_adaptation", "inherited_rio_mitigation"
-                    ),
+                    **_markers("inherited_rio_adaptation", "inherited_rio_mitigation"),
                 ),
                 frames["untraced"].select(
                     *TOTAL_KEYS,
                     allocated_usd="untraced_usd",
-                    rio_marker=_rio_marker("rio_adaptation", "rio_mitigation"),
+                    **_markers("rio_adaptation", "rio_mitigation"),
                 ),
             ]
         ),
@@ -758,11 +757,11 @@ def _total_flows(
     """All CRS flows: four times the climate rows' amounts (0.9 of that for grant
     equivalent), plus 1.5 times each flow's core contributions to unspecified
     recipients, so every climate figure has a larger total. `disbursements` holds
-    the traced and untraced disbursements' keys, higher Rio markers and amounts."""
-    keys = [*TOTAL_KEYS, "rio_marker"]
+    the traced and untraced disbursements' keys, Rio markers and amounts."""
+    keys = [*TOTAL_KEYS, "rio_adaptation", "rio_mitigation"]
     committed = commitments.select(
         *TOTAL_KEYS,
-        rio_marker=_rio_marker("rio_adaptation", "rio_mitigation"),
+        **_markers("rio_adaptation", "rio_mitigation"),
         amount_usd=pl.col("face_usd") * 4,
     )
     disbursed = disbursements.select(*keys, amount_usd=pl.col("allocated_usd") * 4)
@@ -777,7 +776,8 @@ def _total_flows(
         recipient_code=pl.lit(UNS, pl.Int32),
         year="year",
         bi_multi=pl.lit(2, pl.Int8),
-        rio_marker=pl.lit(0, pl.Int8),
+        rio_adaptation=pl.lit(0, pl.Int8),
+        rio_mitigation=pl.lit(0, pl.Int8),
         flow="flow",
         amount_usd=pl.col("contribution_usd") * 1.5,
     )
@@ -790,8 +790,12 @@ def _total_flows(
     ).select(list(RELEASE_TABLES["total_flows"].columns))
 
 
-def _rio_marker(adaptation: str, mitigation: str) -> pl.Expr:
-    return pl.max_horizontal(adaptation, mitigation).fill_null(0).cast(pl.Int8)
+def _markers(adaptation: str, mitigation: str) -> dict[str, pl.Expr]:
+    """The `total_flows` markers from columns `adaptation` and `mitigation`."""
+    return {
+        "rio_adaptation": pl.col(adaptation).fill_null(0).cast(pl.Int8),
+        "rio_mitigation": pl.col(mitigation).fill_null(0).cast(pl.Int8),
+    }
 
 
 # Statuses of commitments that trace to at least one CRS record.
