@@ -127,7 +127,7 @@ def bake_names(*, aliases: Path = ALIASES_TOML) -> pl.DataFrame:
 def write_names(path: Path = NAMES_CSV) -> pl.DataFrame:
     """Bake the alias table and write it to `path`."""
     table = bake_names()
-    path.write_text(table.write_csv(), encoding="utf-8")
+    path.write_text(table.write_csv(), encoding="utf-8", newline="\n")
     return table
 
 
@@ -166,7 +166,7 @@ def _curated_rows(
     listings: dict[str, dict[int, str]],
     agencies: Agencies,
 ) -> Iterator[Row]:
-    curated = tomllib.loads(aliases.read_text())
+    curated = tomllib.loads(aliases.read_text(encoding="utf-8"))
     unknown = []
     for alias, code in curated.get("providers", {}).items():
         if code not in listings["provider"]:

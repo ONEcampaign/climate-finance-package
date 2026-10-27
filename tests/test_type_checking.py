@@ -50,13 +50,13 @@ def test_documented_calls_type_check_and_bad_values_are_flagged(
 ) -> None:
     pytest.importorskip("ty")
     script = tmp_path / "user.py"
-    script.write_text(SCRIPT)
+    script.write_text(SCRIPT, encoding="utf-8")
 
     command = [sys.executable, "-m", "ty", "check", "--python", sys.prefix]
     checked = subprocess.run(
         [*command, "--output-format", "concise", str(script)],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         check=False,
     )
 

@@ -159,7 +159,7 @@ def test_importing_the_package_warns_only_when_a_1x_name_is_used() -> None:
             "import climate_finance",
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         check=False,
     )
     assert quiet.returncode == 0, quiet.stderr

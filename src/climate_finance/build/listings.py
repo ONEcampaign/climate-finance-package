@@ -227,7 +227,7 @@ def refresh_listings(
         )
     for listing, frame in refreshed.items():
         (data_dir / LISTING_FILES[listing]).write_text(
-            frame.write_csv(), encoding="utf-8"
+            frame.write_csv(), encoding="utf-8", newline="\n"
         )
     return added
 

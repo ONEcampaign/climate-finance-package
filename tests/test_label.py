@@ -247,7 +247,7 @@ def _write_cache(
 ) -> None:
     """Cache Jev's `answers` under the requests `ask_jev` sends."""
     cache_dir.mkdir(parents=True, exist_ok=True)
-    with (cache_dir / f"{MODEL}.jsonl").open("w") as lines:
+    with (cache_dir / f"{MODEL}.jsonl").open("w", encoding="utf-8") as lines:
         for text, answer in answers.items():
             request = {
                 "model": MODEL,

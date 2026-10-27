@@ -61,8 +61,11 @@ def built_release(release_dir: Path, *, sources: tuple[str, ...] = ("crs",)) -> 
     rows."""
     shutil.copytree(FIXTURE_DIR, release_dir / "assemble")
     path = release_dir / "assemble" / "release.json"
-    manifest = ReleaseManifest.model_validate_json(path.read_text())
-    path.write_text(manifest.model_copy(update={"release": RELEASE}).model_dump_json())
+    manifest = ReleaseManifest.model_validate_json(path.read_text(encoding="utf-8"))
+    path.write_text(
+        manifest.model_copy(update={"release": RELEASE}).model_dump_json(),
+        encoding="utf-8",
+    )
     sources = (*sources, BTR_SOURCE)
     (release_dir / "fetch").mkdir()
     pl.DataFrame(
@@ -99,7 +102,7 @@ def gated(
     `indexed` lists), and a published release's settings, replaced setting by
     setting by `settings`."""
     path = release_dir / "assemble" / "release.json"
-    manifest = ReleaseManifest.model_validate_json(path.read_text())
+    manifest = ReleaseManifest.model_validate_json(path.read_text(encoding="utf-8"))
     gates = {name: [PASSED] for name in gate.GATES if name not in omit}
     gates["precision"] = [PASSED | {"subject": "4"}]
     path.write_text(
@@ -112,7 +115,8 @@ def gated(
                 "previous_pack_sha256": None if previous is None else previous_sha256,
                 "settings": manifest.settings | PUBLISHED_SETTINGS | (settings or {}),
             }
-        ).model_dump_json()
+        ).model_dump_json(),
+        encoding="utf-8",
     )
     return release_dir
 
@@ -249,7 +253,7 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
     release_dir = built_release(
         tmp_path / RELEASE, sources=("crs", "ledger_iati_44000", "crdf_recipient")
     )
-    (release_dir / "assemble" / "stage.json").write_text("{}\n")
+    (release_dir / "assemble" / "stage.json").write_text("{}\n", encoding="utf-8")
     first = release.pack_release(release_dir, out_path=tmp_path / "a" / PACK)
     second = release.pack_release(release_dir, out_path=tmp_path / "b" / PACK)
 
@@ -263,7 +267,7 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
         if path.name not in {"btr.parquet", "btr_links.parquet"}
     }
     built = ReleaseManifest.model_validate_json(
-        (release_dir / "assemble" / "release.json").read_text()
+        (release_dir / "assemble" / "release.json").read_text(encoding="utf-8")
     )
     manifest = ReleaseManifest.model_validate_json(
         packed[f"climate-finance-{RELEASE}/release.json"]
@@ -305,7 +309,7 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
 
 
 def test_sources_json_cites_every_report_providers_toml_cites(tmp_path: Path) -> None:
-    facts = tomllib.loads(PROVIDERS_TOML.read_text())["modelled"]
+    facts = tomllib.loads(PROVIDERS_TOML.read_text(encoding="utf-8"))["modelled"]
     cited = {
         ratio["source"] for entry in facts for ratio in entry.get("report_ratios", [])
     }
@@ -489,9 +493,10 @@ def test_cut_release_reuses_the_sources_an_earlier_build_fetched(
 ) -> None:
     config = tmp_path / "build.toml"
     config.write_text(
-        BUILD_TOML.read_text().replace(
+        BUILD_TOML.read_text(encoding="utf-8").replace(
             "offline = false", f"offline = {str(configured).lower()}"
-        )
+        ),
+        encoding="utf-8",
     )
     if fetched:
         (tmp_path / RELEASE / "fetch").mkdir(parents=True)
@@ -643,8 +648,11 @@ def test_only_a_published_name_is_cut_or_published(
 ) -> None:
     release_dir = gated(built_release(tmp_path / RELEASE))
     path = release_dir / "assemble" / "release.json"
-    manifest = ReleaseManifest.model_validate_json(path.read_text())
-    path.write_text(manifest.model_copy(update={"release": name}).model_dump_json())
+    manifest = ReleaseManifest.model_validate_json(path.read_text(encoding="utf-8"))
+    path.write_text(
+        manifest.model_copy(update={"release": name}).model_dump_json(),
+        encoding="utf-8",
+    )
     pack = release.pack_release(
         release_dir, out_path=tmp_path / f"climate-finance-{name}.tar.zst"
     )
@@ -691,7 +699,7 @@ def test_publish_creates_the_data_release_then_uploads_the_pack_and_the_index(
     }
     assert github.index() == {"latest": RELEASE, "releases": {RELEASE: entry}}
     assert published.index == tmp_path / publish.INDEX_ASSET
-    assert json.loads(published.index.read_text()) == github.index()
+    assert json.loads(published.index.read_text(encoding="utf-8")) == github.index()
     assert (published.url, published.latest) == (entry["url"], RELEASE)
 
 
@@ -948,7 +956,7 @@ def test_a_dry_run_changes_nothing_on_github_or_beside_the_pack(
     # The releases.json beside the pack is the one to ship, so a dry run leaves it.
     assert not (tmp_path / publish.INDEX_ASSET).exists()
     assert published.index.parent != tmp_path
-    assert json.loads(published.index.read_text())["latest"] == RELEASE
+    assert json.loads(published.index.read_text(encoding="utf-8"))["latest"] == RELEASE
 
 
 def test_a_draft_data_release_is_refused(tmp_path: Path) -> None:
@@ -1048,13 +1056,14 @@ def _double_climate(release_dir: Path) -> None:
     path = assemble / "quality.parquet"
     pl.read_parquet(path).with_columns(pl.col("climate_usd") * 2).write_parquet(path)
     manifest = ReleaseManifest.model_validate_json(
-        (assemble / "release.json").read_text()
+        (assemble / "release.json").read_text(encoding="utf-8")
     )
     entry = manifest.tables["quality"].model_copy(update={"sha256": sha256_file(path)})
     (assemble / "release.json").write_text(
         manifest.model_copy(
             update={"tables": manifest.tables | {"quality": entry}}
-        ).model_dump_json()
+        ).model_dump_json(),
+        encoding="utf-8",
     )
 
 
@@ -1080,7 +1089,9 @@ def test_the_drift_baseline_holds_the_bytes_of_the_pack_it_records(
     elif copy == "build-beside-its-pack":
         given, expected = previous, packed
     elif copy == "downloaded":
-        (previous / "assemble" / release_module.PACK_SHA256).write_text("a" * 64)
+        (previous / "assemble" / release_module.PACK_SHA256).write_text(
+            "a" * 64, encoding="utf-8"
+        )
         given, expected = previous / "assemble", ("a" * 64, rebuilt)
     else:
         pack.unlink()
@@ -1112,8 +1123,8 @@ def published(
         },
     )
     shipped = tmp_path / "releases.json"
-    shipped.write_text(index.model_dump_json())
-    (served / "releases.json").write_text(index.model_dump_json())
+    shipped.write_text(index.model_dump_json(), encoding="utf-8")
+    (served / "releases.json").write_text(index.model_dump_json(), encoding="utf-8")
     monkeypatch.setattr(release_module, "RELEASE_INDEX", shipped)
     monkeypatch.setattr(release_module, "INDEX_URL", f"{url}/releases.json")
     return index, served
@@ -1189,7 +1200,7 @@ def test_a_cached_release_from_another_pack_downloads_again(
     cache = tmp_path / "cache"
     stamp = cf.load(cache_dir=cache).path / release_module.PACK_SHA256
     # The cache holds a pack the index no longer names, as after a re-cut.
-    stamp.write_text("0" * 64)
+    stamp.write_text("0" * 64, encoding="utf-8")
     downloads = []
     fetch = release_module._fetch
 
@@ -1202,7 +1213,7 @@ def test_a_cached_release_from_another_pack_downloads_again(
     cf.load(cache_dir=cache)
 
     assert downloads == [index.releases[RELEASE].url]
-    assert stamp.read_text() == index.releases[RELEASE].sha256
+    assert stamp.read_text(encoding="utf-8") == index.releases[RELEASE].sha256
 
 
 @pytest.mark.parametrize("winner", ["same-pack", "other-pack"])
@@ -1222,7 +1233,9 @@ def test_two_loads_racing_on_one_release_both_open_it(
         monkeypatch.setattr(release_module, "_fetch", fetch)
         raced.append(cf.load(cache_dir=cache))
         if winner == "other-pack":  # as from an index listing a re-cut
-            (raced[0].path / release_module.PACK_SHA256).write_text("f" * 64)
+            (raced[0].path / release_module.PACK_SHA256).write_text(
+                "f" * 64, encoding="utf-8"
+            )
         return fetch(url, out_path=out_path)
 
     monkeypatch.setattr(release_module, "_fetch", racing)
@@ -1232,7 +1245,7 @@ def test_two_loads_racing_on_one_release_both_open_it(
     assert loaded.path == raced[0].path
     assert [path.name for path in cache.iterdir()] == [f"climate-finance-{RELEASE}"]
     stamp = loaded.path / release_module.PACK_SHA256
-    assert stamp.read_text() == index.releases[RELEASE].sha256
+    assert stamp.read_text(encoding="utf-8") == index.releases[RELEASE].sha256
 
 
 @pytest.mark.parametrize("other", ["moved-it-away", "replaced-it"])
@@ -1244,7 +1257,7 @@ def test_a_stale_copy_another_load_handles_first_is_left_to_it(
 ) -> None:
     cache = tmp_path / "cache"
     target = cf.load(cache_dir=cache).path
-    (target / release_module.PACK_SHA256).write_text("0" * 64)
+    (target / release_module.PACK_SHA256).write_text("0" * 64, encoding="utf-8")
     packed = release_module._packed_sha256
     fetch = release_module._fetch
     downloads = []
@@ -1319,7 +1332,7 @@ def test_refresh_reads_an_index_with_fields_this_package_does_not_know(
     newer = json.loads(index.model_dump_json())
     newer["generated"] = "2027-01-01"
     newer["releases"][RELEASE]["requires"] = ">=2.1"
-    (served / "releases.json").write_text(json.dumps(newer))
+    (served / "releases.json").write_text(json.dumps(newer), encoding="utf-8")
 
     loaded = cf.load(cache_dir=tmp_path / "cache", refresh=True)
 
@@ -1371,7 +1384,7 @@ def test_load_names_an_unlisted_release_and_an_unreachable_pack(
             }
         }
     )
-    (tmp_path / "releases.json").write_text(gone.model_dump_json())
+    (tmp_path / "releases.json").write_text(gone.model_dump_json(), encoding="utf-8")
     with pytest.raises(SourceUnavailableError, match="Could not download"):
         cf.load(cache_dir=tmp_path / "cache")
 

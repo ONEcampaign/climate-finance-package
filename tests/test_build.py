@@ -362,9 +362,11 @@ def test_config_resolves_paths_against_its_file(config: BuildConfig) -> None:
 def test_invalid_config_is_refused(
     tmp_path: Path, line: str, replacement: str, match: str
 ) -> None:
-    text = BUILD_TOML.read_text()
+    text = BUILD_TOML.read_text(encoding="utf-8")
     assert line in text
-    (tmp_path / "build.toml").write_text(text.replace(line, replacement))
+    (tmp_path / "build.toml").write_text(
+        text.replace(line, replacement), encoding="utf-8"
+    )
 
     with pytest.raises(ConfigError, match=match):
         load_config(tmp_path / "build.toml")

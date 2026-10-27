@@ -146,7 +146,11 @@ if TYPE_CHECKING:
 
 def _eu_agency_channels() -> dict[int, int]:
     """Each EU Institutions agency's channel, as build/providers.toml maps them."""
-    toml = files("climate_finance").joinpath("build", "providers.toml").read_text()
+    toml = (
+        files("climate_finance")
+        .joinpath("build", "providers.toml")
+        .read_text(encoding="utf-8")
+    )
     return {
         agency: row["channel_code"]
         for row in tomllib.loads(toml)["agencies"]

@@ -177,7 +177,9 @@ class FakeSources:
     def gcf(self, request: httpx.Request) -> httpx.Response:
         if str(request.url) == READINESS_URL:
             self.calls.append(("gcf_readiness", {}))
-            grants = json.loads((FIXTURES / "ledgers/gcf/readiness.json").read_text())
+            grants = json.loads(
+                (FIXTURES / "ledgers/gcf/readiness.json").read_text(encoding="utf-8")
+            )
             page = {"props": {"pageProps": {"data": {"data": grants}}}}
             return httpx.Response(
                 200,
@@ -700,7 +702,8 @@ def test_online_fetch_copies_the_btr_archive_it_lists(
     (archive / "unlisted.xlsx").write_bytes(b"draft")
     entry = {"party": "Netherlands", "name": name, "ok": True}
     (archive / "manifest.json").write_text(
-        json.dumps([entry | {"bytes": (archive / name).stat().st_size}])
+        json.dumps([entry | {"bytes": (archive / name).stat().st_size}]),
+        encoding="utf-8",
     )
     config = _config(crs_file=crs_file, btr_archive=archive)
 
@@ -913,7 +916,7 @@ def test_jev_labels_bring_the_pinned_adaptation_labels_into_raw(
     sources: FakeSources, crs_file: LocalFile, tmp_path: Path
 ) -> None:
     path = crs_file.path.with_name("wk.csv")
-    path.write_text("text,level\nSeawalls,2\n")
+    path.write_text("text,level\nSeawalls,2\n", encoding="utf-8")
     labels = LocalFile(path=path, sha256=sha256_file(path))
     config = _config(crs_file=crs_file, adaptation_labels=labels).model_copy(
         update={"jev_labels": True}

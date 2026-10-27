@@ -1205,9 +1205,12 @@ def _decide_a_pair(release_dir: Path, config: BuildConfig) -> BuildConfig:
 
 def _retire_a_setting(release_dir: Path, config: BuildConfig) -> BuildConfig:
     path = record_path(release_dir, "fetch")
-    record = StageRecord.model_validate_json(path.read_text())
+    record = StageRecord.model_validate_json(path.read_text(encoding="utf-8"))
     settings = {**record.settings, "sources.retired": 1}
-    path.write_text(record.model_copy(update={"settings": settings}).model_dump_json())
+    path.write_text(
+        record.model_copy(update={"settings": settings}).model_dump_json(),
+        encoding="utf-8",
+    )
     return config
 
 

@@ -137,11 +137,15 @@ def release(tmp_path_factory: pytest.TempPathFactory) -> Release:
         tmp_path_factory.mktemp("flags") / "release",
         edits={"jev_flags": lambda held: pl.DataFrame(FLAGS, schema=held.schema)},
     )
-    manifest = ReleaseManifest.model_validate_json((path / "release.json").read_text())
+    manifest = ReleaseManifest.model_validate_json(
+        (path / "release.json").read_text(encoding="utf-8")
+    )
     switched = manifest.model_copy(
         update={"settings": {**manifest.settings, "jev_flags": True}}
     )
-    (path / "release.json").write_text(switched.model_dump_json(indent=2))
+    (path / "release.json").write_text(
+        switched.model_dump_json(indent=2), encoding="utf-8"
+    )
     return cf.load(path=path)
 
 

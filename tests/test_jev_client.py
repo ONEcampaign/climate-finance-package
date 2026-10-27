@@ -123,7 +123,7 @@ def test_canonical_request_refuses_what_the_api_cannot_read(value: object) -> No
 
 
 def _import(cache_dir: Path):
-    states = json.loads((FIXTURES / "pair_states.json").read_text())
+    states = json.loads((FIXTURES / "pair_states.json").read_text(encoding="utf-8"))
     return import_prototype_cache(
         [
             PrototypeCache(
@@ -173,9 +173,10 @@ def test_imported_batch_replays_without_a_live_call(
     tmp_path: Path, offline: bool
 ) -> None:
     _import(tmp_path)
-    states = json.loads((FIXTURES / "pair_states.json").read_text())
+    states = json.loads((FIXTURES / "pair_states.json").read_text(encoding="utf-8"))
     records = [
-        json.loads(line) for line in (FIXTURES / "pairs.jsonl").read_text().splitlines()
+        json.loads(line)
+        for line in (FIXTURES / "pairs.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     transport, sent = _transport(lambda _: httpx.Response(500))
     client = _client(tmp_path, transport, offline=offline)

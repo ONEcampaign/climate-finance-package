@@ -1914,7 +1914,7 @@ def test_the_eu_constants_match_the_channels_the_build_maps_to_eu_institutions()
     None
 ):
     toml = Path(cf.__file__).parent / "build" / "providers.toml"
-    agencies = tomllib.loads(toml.read_text())["agencies"]
+    agencies = tomllib.loads(toml.read_text(encoding="utf-8"))["agencies"]
 
     channels = {
         row["channel_code"]: row["agency_codes"]
@@ -2504,7 +2504,7 @@ def test_explain_names_queried_years_without_attributed_finance(
 ) -> None:
     release = copy_release(tmp_path / "release")
     path = release / "release.json"
-    manifest = ReleaseManifest.model_validate_json(path.read_text())
+    manifest = ReleaseManifest.model_validate_json(path.read_text(encoding="utf-8"))
     # Each method's line names the years of the share table it reads.
     covered = {
         "crdf_recipient": (2015, 2024),
@@ -2512,7 +2512,10 @@ def test_explain_names_queried_years_without_attributed_finance(
         "agency_shares": (2020, 2022),
         "agency_spending": (2022, 2023),
     }
-    path.write_text(manifest.model_copy(update={"years": covered}).model_dump_json())
+    path.write_text(
+        manifest.model_copy(update={"years": covered}).model_dump_json(),
+        encoding="utf-8",
+    )
 
     text = cf.load(path=release).spending(view=view, method=method, years=years)
     lines = [

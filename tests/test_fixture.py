@@ -19,7 +19,7 @@ from climate_finance.schema import (
 )
 
 MANIFEST = ReleaseManifest.model_validate_json(
-    (FIXTURE_DIR / "release.json").read_text()
+    (FIXTURE_DIR / "release.json").read_text(encoding="utf-8")
 )
 
 

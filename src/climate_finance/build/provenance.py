@@ -104,7 +104,7 @@ def read_record(release_dir: Path, stage: str) -> StageRecord:
             stage=stage, reason=f"has no {STAGE_RECORD}, so its inputs are unknown"
         )
     try:
-        return StageRecord.model_validate_json(path.read_text())
+        return StageRecord.model_validate_json(path.read_text(encoding="utf-8"))
     except ValidationError as error:
         raise StaleStageError(
             stage=stage,

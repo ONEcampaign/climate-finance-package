@@ -296,7 +296,7 @@ def test_the_blind_sample_hides_the_score_and_lists_each_pair_once(
     )
     packet = batch_packet_path(out, provider=NOR, batch=1)
     sample = pl.read_parquet(packet_pairs_path(packet))
-    text = packet.read_text()
+    text = packet.read_text(encoding="utf-8")
 
     # Two pairs, under the census below 60 pairs, in one packet.
     assert sorted(out.glob("*/*.md")) == [packet]
@@ -714,9 +714,11 @@ def test_conservation_covers_the_years_allocation_reads(
     release_dir: Path, edit: Callable[[pl.DataFrame], pl.DataFrame], passed: bool
 ) -> None:
     manifest_path = release_dir / "assemble" / "release.json"
-    manifest = ReleaseManifest.model_validate_json(manifest_path.read_text())
+    manifest = ReleaseManifest.model_validate_json(
+        manifest_path.read_text(encoding="utf-8")
+    )
     manifest.settings["years.crs_last_complete"] = 2020
-    manifest_path.write_text(manifest.model_dump_json())
+    manifest_path.write_text(manifest.model_dump_json(), encoding="utf-8")
     _edit(table_path(release_dir, "fill", "allocations"), edit)
 
     row = _report(release_dir).filter(gate="conservation").row(0, named=True)
@@ -1058,13 +1060,15 @@ def test_quality_shows_each_providers_precision_interval(
     results = _report(release_dir, sample=design.parent)
     release = copy_release(tmp_path / "gated", source=release_dir / "assemble")
     manifest = ReleaseManifest.model_validate_json(
-        (release / "release.json").read_text()
+        (release / "release.json").read_text(encoding="utf-8")
     )
     gated = manifest.model_copy(update={"gates": gate_results_json(results)})
-    (release / "release.json").write_text(gated.model_dump_json())
+    (release / "release.json").write_text(gated.model_dump_json(), encoding="utf-8")
 
     precision = cf.load(path=release).quality().precision
-    recorded = json.loads((release / "release.json").read_text())["gates"]
+    recorded = json.loads((release / "release.json").read_text(encoding="utf-8"))[
+        "gates"
+    ]
 
     assert recorded["precision"][0]["strata"][0]["estimate"] == pytest.approx(0.4)
     assert precision.select("provider_code", "estimate", "lower", "passed").rows() == [
@@ -1079,10 +1083,11 @@ def test_the_sample_and_gate_commands_read_decisions_from_the_config(
     decisions = release_dir.parent / "labels" / "decisions.parquet"
     config = release_dir.parent / "build.toml"
     config.write_text(
-        BUILD_TOML.read_text().replace(
+        BUILD_TOML.read_text(encoding="utf-8").replace(
             'review_decisions = "data/review_decisions.parquet"',
             f'review_decisions = "{decisions}"',
-        )
+        ),
+        encoding="utf-8",
     )
     out = release_dir.parent / "sample"
 

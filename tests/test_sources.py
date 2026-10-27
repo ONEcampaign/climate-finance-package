@@ -143,7 +143,9 @@ def test_finances_one_saves_a_snapshot_sorted_by_loan(tmp_path: Path) -> None:
     )
 
     saved = json.loads(
-        (tmp_path / "ledgers" / "finances_one" / "DS00975_31-Dec-2021.json").read_text()
+        (tmp_path / "ledgers" / "finances_one" / "DS00975_31-Dec-2021.json").read_text(
+            encoding="utf-8"
+        )
     )
     assert [row["loan_number"] for row in saved] == [
         "DS00975-0000",
@@ -426,7 +428,9 @@ def test_gcf_projects_refuse_a_reply_that_is_not_a_list(tmp_path: Path) -> None:
 
 
 def test_gcf_readiness_is_cut_from_the_page_data(tmp_path: Path) -> None:
-    grants = json.loads((LEDGERS / "gcf" / "readiness.json").read_text())
+    grants = json.loads(
+        (LEDGERS / "gcf" / "readiness.json").read_text(encoding="utf-8")
+    )
     page = {"props": {"pageProps": {"data": {"result": True, "data": grants}}}}
     html = (
         '<html><body><script id="__NEXT_DATA__" type="application/json">'
@@ -443,7 +447,7 @@ def test_gcf_readiness_is_cut_from_the_page_data(tmp_path: Path) -> None:
 
     assert record["path"] == "ledgers/gcf/readiness.json"
     _manifest_row(record, tmp_path)
-    assert json.loads((tmp_path / record["path"]).read_text()) == grants
+    assert json.loads((tmp_path / record["path"]).read_text(encoding="utf-8")) == grants
     assert read_gcf_readiness(tmp_path / record["path"]).height == 5
 
 

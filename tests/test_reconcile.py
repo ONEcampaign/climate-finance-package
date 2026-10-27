@@ -578,7 +578,7 @@ def test_a_release_without_btr_rows_reconciles_from_its_totals(
 ) -> None:
     release = copy_release(tmp_path / "r")
     manifest = ReleaseManifest.model_validate_json(
-        (release / "release.json").read_text()
+        (release / "release.json").read_text(encoding="utf-8")
     )
     withheld = {"btr": "Build it.", "btr_links": "Build it."}
     published = manifest.model_copy(
@@ -591,7 +591,7 @@ def test_a_release_without_btr_rows_reconciles_from_its_totals(
             "withheld_tables": withheld,
         }
     )
-    (release / "release.json").write_text(published.model_dump_json())
+    (release / "release.json").write_text(published.model_dump_json(), encoding="utf-8")
     for name in withheld:
         (release / f"{name}.parquet").unlink()
 

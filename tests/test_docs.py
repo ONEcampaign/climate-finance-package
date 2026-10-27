@@ -46,7 +46,7 @@ class Block(NamedTuple):
 
 
 def blocks(page: Path) -> list[Block]:
-    text = page.read_text()
+    text = page.read_text(encoding="utf-8")
     return [
         Block(
             match["info"].strip(),
@@ -63,7 +63,7 @@ def fixture_as_latest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     through the loader's own cache path."""
     cache = tmp_path / "cache"
     cached = shutil.copytree(FIXTURE_DIR, cache / release_dirname("fixture"))
-    (cached / PACK_SHA256).write_text("0")
+    (cached / PACK_SHA256).write_text("0", encoding="utf-8")
     index = ReleaseIndex(
         latest="fixture",
         releases={
@@ -145,7 +145,9 @@ def test_cf_build_examples_use_real_commands_and_options(page: Path) -> None:
 
 
 def test_release_table_reference_names_every_table_and_column() -> None:
-    text = (ROOT / "docs" / "reference" / "release-tables.md").read_text()
+    text = (ROOT / "docs" / "reference" / "release-tables.md").read_text(
+        encoding="utf-8"
+    )
     missing = [
         f"{name}.{column}" if column else name
         for name, table in RELEASE_TABLES.items()
@@ -156,7 +158,7 @@ def test_release_table_reference_names_every_table_and_column() -> None:
 
 
 def test_python_reference_names_every_spec_and_method_field() -> None:
-    text = (ROOT / "docs" / "reference" / "python-api.md").read_text()
+    text = (ROOT / "docs" / "reference" / "python-api.md").read_text(encoding="utf-8")
     missing = [
         field
         for field in (*Spec.model_fields, *Method.model_fields)

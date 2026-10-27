@@ -37,9 +37,12 @@ def _named_release(path: Path, name: str) -> cf.Release:
     """A copy of the fixture release whose manifest names the release `name`."""
     copy_release(path)
     manifest_path = path / "release.json"
-    manifest = ReleaseManifest.model_validate_json(manifest_path.read_text())
+    manifest = ReleaseManifest.model_validate_json(
+        manifest_path.read_text(encoding="utf-8")
+    )
     manifest_path.write_text(
-        manifest.model_copy(update={"release": name}).model_dump_json()
+        manifest.model_copy(update={"release": name}).model_dump_json(),
+        encoding="utf-8",
     )
     return cf.load(path=path)
 

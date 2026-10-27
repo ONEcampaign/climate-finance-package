@@ -72,6 +72,7 @@ def run_gh(args: Sequence[str]) -> str:
             ["gh", *args],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=True,
             timeout=GH_TIMEOUT,
         )
@@ -174,7 +175,7 @@ def publish_release(
         updated = add_to_index(index, manifest=manifest, sha256=sha256, url=url)
         rendered = json.dumps(updated, indent=2) + "\n"
         staged = Path(scratch) / STAGED_INDEX_ASSET
-        staged.write_text(rendered)
+        staged.write_text(rendered, encoding="utf-8")
         create = (
             "release",
             "create",
@@ -197,7 +198,7 @@ def publish_release(
         swap = (delete,) if INDEX_ASSET in (assets or ()) else ()
         if dry_run:
             preview = Path(tempfile.mkdtemp()) / INDEX_ASSET
-            preview.write_text(rendered)
+            preview.write_text(rendered, encoding="utf-8")
             placeholder = f"repos/{repo}/releases/assets/<{STAGED_INDEX_ASSET}>"
             return Publication(
                 release=manifest.release,
@@ -211,7 +212,7 @@ def publish_release(
         # Written before GitHub changes, so a publish that stops leaves the index
         # that completes it where `_missing_index` names it.
         recovery.parent.mkdir(exist_ok=True)
-        recovery.write_text(rendered)
+        recovery.write_text(rendered, encoding="utf-8")
         for command in uploads:
             gh(command)
     rename = _rename(_asset_api_path(gh, repo=repo, name=STAGED_INDEX_ASSET))

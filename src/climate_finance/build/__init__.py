@@ -147,7 +147,9 @@ def write_stage(
             if provenance is None
             else provenance.record(sha256)
         )
-        (staging / STAGE_RECORD).write_text(record.model_dump_json(indent=2) + "\n")
+        (staging / STAGE_RECORD).write_text(
+            record.model_dump_json(indent=2) + "\n", encoding="utf-8"
+        )
         _replace_dir(staging, stage_dir(release_dir, stage.name))
     finally:
         shutil.rmtree(staging, ignore_errors=True)

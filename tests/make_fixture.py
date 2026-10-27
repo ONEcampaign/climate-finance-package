@@ -1346,7 +1346,9 @@ def sample_release(release: Path) -> dict[str, pl.DataFrame]:
 
 def write_sample(release: Path, out_dir: Path) -> ReleaseManifest:
     """Write a sample of `release` to `out_dir`, named after it."""
-    source = ReleaseManifest.model_validate_json((release / "release.json").read_text())
+    source = ReleaseManifest.model_validate_json(
+        (release / "release.json").read_text(encoding="utf-8")
+    )
     return _write_release(
         sample_release(release),
         out_dir,
@@ -1371,7 +1373,9 @@ def _write_release(
         sha256 = write_table(frame, RELEASE_TABLES[name], out_dir / f"{name}.parquet")
         entries[name] = TableEntry(sha256=sha256, rows=frame.height)
     written = manifest.model_copy(update={"tables": entries})
-    (out_dir / "release.json").write_text(written.model_dump_json(indent=2) + "\n")
+    (out_dir / "release.json").write_text(
+        written.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
     return written
 
 

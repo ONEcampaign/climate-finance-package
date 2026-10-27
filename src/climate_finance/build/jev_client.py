@@ -127,7 +127,7 @@ def _api_key() -> str:
     if key := os.environ.get(API_KEY_ENV):
         return key
     try:
-        return API_KEY_PATH.read_text().strip()
+        return API_KEY_PATH.read_text(encoding="utf-8").strip()
     except FileNotFoundError as error:
         raise JevError(f"No Jev API key in ${API_KEY_ENV} or {API_KEY_PATH}") from error
 

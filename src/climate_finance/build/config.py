@@ -239,7 +239,7 @@ def load_config(path: Path) -> BuildConfig:
         ConfigError: when the file is missing or a key is missing or invalid.
     """
     try:
-        raw: dict[str, Any] = tomllib.loads(path.read_text())
+        raw: dict[str, Any] = tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
         raise ConfigError(f"No build config at {path}") from error
     try:
