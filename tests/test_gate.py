@@ -924,16 +924,19 @@ def test_a_waiver_lets_an_empty_precision_gate_through(release_dir: Path) -> Non
     ]
 
 
-def _previous(release_dir: Path, *, factor: float) -> Path:
-    """The release at `release_dir` with every provider-year climate total scaled."""
-    return copy_release(
-        release_dir.parent / "previous",
-        source=release_dir / "assemble",
-        edits={
-            "quality": lambda frame: frame.with_columns(
-                climate_usd=pl.col("climate_usd") * factor
-            )
-        },
+def _previous(release_dir: Path, *, factor: float) -> cf.Release:
+    """The opened release at `release_dir` with every provider-year climate total
+    scaled."""
+    return cf.load(
+        path=copy_release(
+            release_dir.parent / "previous",
+            source=release_dir / "assemble",
+            edits={
+                "quality": lambda frame: frame.with_columns(
+                    climate_usd=pl.col("climate_usd") * factor
+                )
+            },
+        )
     )
 
 
@@ -1044,7 +1047,7 @@ def test_drift_compares_shared_years_and_gates_vanished_ones(
         _edit(table_path(release_dir, "assemble", "quality"), current)
 
     row = (
-        _report(release_dir, previous=before, first_release=False)
+        _report(release_dir, previous=cf.load(path=before), first_release=False)
         .filter(gate="drift")
         .row(0, named=True)
     )

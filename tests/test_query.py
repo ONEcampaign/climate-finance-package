@@ -1056,9 +1056,11 @@ def test_attributed_value_shows_and_sums_by_share_source(tmp_path: Path) -> None
     ).filter(pl.col("value") != 0)
 
     assert set(rows["share_source"]) == {"computed", "held"}
-    assert sorted(
-        columns.with_columns(pl.col("share_source").str.strip_suffix("_usd")).rows()
-    ) == pytest.approx(sorted(by_source.select(columns.columns).rows()))
+    shown = columns.with_columns(pl.col("share_source").str.strip_suffix("_usd"))
+    summed = by_source.select(columns.columns)
+    assert_frame_equal(
+        shown.sort(shown.columns), summed.sort(summed.columns), check_dtypes=False
+    )
     oecd_rows = release.spending(view="provider", method=OECD).rows(
         origin="attribution"
     )

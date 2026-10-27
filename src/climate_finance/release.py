@@ -18,11 +18,17 @@ import warnings
 from collections.abc import Callable, Iterable, Mapping
 from importlib.resources import files
 from pathlib import Path
-from typing import Annotated, Literal, Unpack
+from typing import Annotated, Literal, Self, Unpack
 
 import polars as pl
 import pyarrow as pa
-from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    StringConstraints,
+    ValidationError,
+    model_validator,
+)
 
 from climate_finance import query
 from climate_finance.catalogue import unknown_name
@@ -111,13 +117,19 @@ class IndexEntry(BaseModel):
 
 
 class ReleaseIndex(BaseModel):
-    """The contents of `releases.json`: every published release and the newest.
-    Fields a later package adds are ignored."""
+    """The contents of `releases.json`: every published release and the newest,
+    which `releases` must list. Fields a later package adds are ignored."""
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     latest: ReleaseName | None = None
     releases: dict[ReleaseName, IndexEntry] = {}
+
+    @model_validator(mode="after")
+    def _latest_is_listed(self) -> Self:
+        if self.latest is not None and self.latest not in self.releases:
+            raise ValueError(f"latest is {self.latest!r}, which releases does not list")
+        return self
 
 
 def check_release_name(release: str) -> str:
@@ -629,16 +641,21 @@ def _resolve(index: ReleaseIndex, release: str, *, refreshed: bool) -> str:
     """
     name = index.latest if release == "latest" else release
     if not index.releases:
-        raise unknown_name(
-            release,
-            kind="release",
-            choices=(),
-            note=(
+        if refreshed:
+            note = (
                 "No release is published yet. Open a release directory with "
                 "cf.load(path=...). Releases are built with `cf-build release` and "
                 f"published at {RELEASES_PAGE}."
-            ),
-        )
+            )
+        else:
+            # The index shipped in the wheel predates any release published since.
+            named = "" if release == "latest" else f"{release!r}, "
+            note = (
+                f"This package's index lists no release. cf.load({named}"
+                "refresh=True) reads the newest index online, and "
+                "cf.load(path=...) opens a release directory."
+            )
+        raise unknown_name(release, kind="release", choices=(), note=note)
     if name is None or name not in index.releases:
         note = None
         if not refreshed and index.latest is not None:
@@ -683,14 +700,10 @@ def _download(entry: IndexEntry, *, target: Path) -> None:
             raise ReleaseIntegrityError(
                 f"{entry.url} has sha256 {actual}, the release index has {entry.sha256}"
             )
-        unpacked = Path(tmp) / "unpacked"
-        with (
-            pa.input_stream(str(pack), compression="zstd") as stream,
-            tarfile.open(fileobj=stream, mode="r|") as tar,
-        ):
-            tar.extractall(unpacked, filter="data")
-        release_dir = unpacked / target.name
-        if not release_dir.is_dir():
+        release_dir = unpack_release(
+            pack, into=Path(tmp) / "unpacked", source=entry.url
+        )
+        if release_dir.name != target.name:
             raise ReleaseIntegrityError(f"{entry.url} holds no {target.name}/")
         (release_dir / PACK_SHA256).write_text(actual, encoding="utf-8")
         while True:
@@ -705,6 +718,30 @@ def _download(entry: IndexEntry, *, target: Path) -> None:
             if _packed_sha256(target) == actual:
                 return
             _discard(target, keep=actual)
+
+
+def unpack_release(pack: Path, *, into: Path, source: str | Path) -> Path:
+    """Unpack the pack at `pack` into the directory `into` and return the release
+    directory it holds. Errors name `source`, where the pack came from.
+
+    Raises:
+        ReleaseIntegrityError: when `pack` is no zstd tar, or holds anything but
+            one directory with a `release.json`.
+    """
+    try:
+        with (
+            pa.input_stream(str(pack), compression="zstd") as stream,
+            tarfile.open(fileobj=stream, mode="r|") as tar,
+        ):
+            tar.extractall(into, filter="data")
+    except (OSError, tarfile.TarError) as error:
+        raise ReleaseIntegrityError(
+            f"{source} is not a release pack: {error}"
+        ) from error
+    unpacked = list(into.iterdir()) if into.is_dir() else []
+    if len(unpacked) != 1 or not (unpacked[0] / "release.json").is_file():
+        raise ReleaseIntegrityError(f"{source} holds no release directory")
+    return unpacked[0]
 
 
 def _fetch(url: str, *, out_path: Path) -> str:
