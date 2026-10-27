@@ -11,6 +11,7 @@ from climate_finance.build.evaluate import (
     _stratum_sequence,
     estimate_precision,
     sample_design,
+    self_linked,
 )
 from climate_finance.build.gate import load_gates
 
@@ -113,6 +114,24 @@ def test_a_small_stratum_draws_its_minimum_and_counts_at_its_value_share() -> No
     assert row["estimate"] == pytest.approx(1 - 20 / 1_000_090)
 
 
+def test_self_linked_pairs_stay_out_of_the_sample() -> None:
+    pairs = _pairs()
+    # Each provider's largest pair, if it linked a unit to itself.
+    own = (
+        pairs.sort("allocated_usd", descending=True)
+        .unique("provider_code", keep="first")
+        .with_columns(right_id="left_id", allocated_usd=pl.col("allocated_usd") * 10)
+    )
+
+    design = sample_design(pairs, rule=RULE, release="r")
+    with_own = sample_design(pl.concat([pairs, own]), rule=RULE, release="r")
+
+    assert with_own.filter(self_linked()).is_empty()
+    assert with_own.sort("provider_code", "draw").equals(
+        design.sort("provider_code", "draw")
+    )
+
+
 def test_the_design_is_the_same_on_every_draw() -> None:
     pairs = _pairs()
 
@@ -209,7 +228,10 @@ def test_a_look_reads_whole_batches_of_unbroken_labels() -> None:
     assert row["decision"] == "continue"
 
 
-def test_strata_combine_by_allocated_value() -> None:
+@pytest.mark.parametrize(
+    ("share", "decision"), [(None, "fail"), (0.0, "fail"), (0.9, "pass")]
+)
+def test_strata_combine_by_allocated_value(share: float | None, decision: str) -> None:
     rule = PrecisionRule(
         threshold=0.9,
         batch=4,
@@ -236,11 +258,29 @@ def test_strata_combine_by_allocated_value() -> None:
         schema_overrides={"provider_code": pl.Int32, "draw": pl.Int32},
     )
 
-    row = estimate_precision(labels, rule=rule).row(0, named=True)
+    sampled = estimate_precision(labels, rule=rule).row(0, named=True)
+    certain = (
+        None
+        if share is None
+        else pl.DataFrame(
+            {"provider_code": [1], "self_linked_share": [share]},
+            schema_overrides={"provider_code": pl.Int32},
+        )
+    )
 
-    assert row["estimate"] == pytest.approx(0.9 * 0.75 + 0.1 * 1.0)
-    assert row["lower"] < row["estimate"] < row["upper"]
-    assert row["decision"] == "fail"
+    row = estimate_precision(labels, rule=rule, certain=certain).row(0, named=True)
+
+    assert sampled["estimate"] == pytest.approx(0.9 * 0.75 + 0.1 * 1.0)
+    assert sampled["lower"] < sampled["estimate"] < sampled["upper"]
+    assert sampled["decision"] == "fail"
+    # The self-linked share counts right, and the sample's figures fill the rest.
+    counted = share or 0.0
+    for figure in ("estimate", "lower", "upper"):
+        assert row[figure] == counted + (1 - counted) * sampled[figure]
+    if not share:
+        assert row == sampled
+    assert row["strata"] == sampled["strata"]
+    assert row["decision"] == decision
 
 
 def test_each_stratum_reports_its_own_precision_beside_the_providers() -> None:

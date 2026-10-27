@@ -7,6 +7,11 @@ key-tier links without a ledger confirmation, every other link method (models,
 key-repair and recovery rules), and links people or agents accepted in the review
 queue.
 
+A pair that links a unit to itself (`self_linked`) stays out of the sample: the
+unit's records committed and disbursed, so the link cannot be wrong. The sample
+draws from the other pairs (`sample_frame`), and the estimate counts the
+self-linked pairs' value as right.
+
 A stratum of at most `min_draws` pairs is a census: each of its pairs is drawn
 once, in random order, and weighs its own allocated value. Every stratum of a
 provider with fewer than `census_below` pairs is a census too. A provider whose
@@ -29,17 +34,21 @@ precision estimate and create no pair labels or link overrides. A decision count
 for a draw only when its pair is the draw's pair. The estimate counts an agent's
 decision as it counts a person's and reports the share agents decided.
 
-The estimate is the share of allocated value whose pair is right: per stratum the
-weighted mean of the draws' decisions, combined by stratum value. Labelling runs in
-batches, and a look reads the unbroken run of labelled draws from the first, cut to
-whole batches. The bounds are a Wilson interval at the estimate's effective sample
-size, at `interim_z` before the cap and `final_z` at it. A provider passes when the
-lower bound reaches the threshold. A census provider decides once every pair is
-decided, when its estimate is exact. A pps provider fails when the upper bound falls
-below the threshold, when the lower bound could not reach it by the cap even with
-every later draw right (the cap's estimate is then one less the weight of the wrong
-draws read over the provider's allocated value), or at the cap. With the thresholds in
-`gates.yaml`, a provider whose true precision is 0.90 passes 2.6% of the time.
+The estimate is the share of allocated value whose pair is right: the self-linked
+value, plus the sampled value times its estimate, over the provider's allocated
+value. The sampled estimate is per stratum the weighted mean of the draws'
+decisions, combined by stratum value, and the provider's bounds count the
+self-linked value the same way. Labelling runs in batches, and a look reads the
+unbroken run of labelled draws from the first, cut to whole batches. The sampled
+bounds are a Wilson interval at the estimate's effective sample size, at
+`interim_z` before the cap and `final_z` at it. A provider passes when the lower
+bound reaches the threshold. A census provider decides once every pair is decided,
+when its estimate is exact. A pps provider fails when the upper bound falls below
+the threshold, when the lower bound could not reach it by the cap even with every
+later draw right (the cap's sampled estimate is then one less the weight of the
+wrong draws read over the sampled value), or at the cap. With the thresholds in
+`gates.yaml`, a provider with no self-linked pairs whose true precision is 0.90
+passes 2.6% of the time.
 The rule reads the provider's estimate, which blends its strata by value, so each
 stratum's estimate and interval at the same look are reported beside it: a
 provider whose value is mostly key-tier links can pass while its model links are
@@ -74,6 +83,9 @@ DESIGNS = ("census", "pps")
 DECISIONS = ("pass", "fail", "continue")
 # The ledger checks that confirm a link.
 CONFIRMED = ("confirmed", "confirmed_undisbursed")
+# Seeds every population fingerprint, so a sample drawn from another sampling frame
+# than `sample_frame`'s is refused as stale. It changes when the frame does.
+_FRAME = b"allocated pairs less self-linked pairs"
 # One row per draw of a blind sample: the design file beside its packets.
 DESIGN_SCHEMA = pl.Schema(
     {
@@ -113,6 +125,7 @@ ESTIMATE_SCHEMA = pl.Schema(
         "upper": pl.Float64(),
         "decision": pl.String(),
         "agent_share": pl.Float64(),
+        "self_linked_share": pl.Float64(),
         "strata": pl.List(STRATUM_ESTIMATE),
     }
 )
@@ -230,23 +243,56 @@ def allocated_pairs(release_dir: Path, *, decisions: Path) -> pl.DataFrame:
     )
 
 
+def self_linked() -> pl.Expr:
+    """Whether a pair links a unit to itself: the disbursing unit (`left_id`) is
+    the commitment unit (`right_id`), whose records committed and disbursed, so
+    the link cannot be wrong."""
+    return pl.col("left_id") == pl.col("right_id")
+
+
+def sample_frame(pairs: pl.DataFrame) -> pl.DataFrame:
+    """The allocated pairs (`allocated_pairs`) the blind sample draws from: all but
+    the `self_linked` ones."""
+    return pairs.filter(~self_linked())
+
+
+def self_linked_shares(pairs: pl.DataFrame) -> pl.DataFrame:
+    """Per provider in `pairs` (`allocated_pairs`), `self_linked_share`: the share
+    of its allocated value on `self_linked` pairs, exactly 1 when every pair is."""
+    usd = pl.col("allocated_usd")
+    return (
+        pairs.sort("provider_code", *PAIR)
+        .group_by("provider_code", maintain_order=True)
+        .agg(
+            self_linked_share=pl.when(self_linked().all())
+            .then(1.0)
+            .otherwise(ordered_sum(usd.filter(self_linked())) / ordered_sum(usd))
+        )
+    )
+
+
 def population_fingerprints(pairs: pl.DataFrame) -> pl.DataFrame:
-    """Per provider in `pairs` (`allocated_pairs`), a sha256 of its allocated pairs:
-    each pair's identity, link method, stratum and allocated value.
+    """Per provider in the `sample_frame` of `pairs` (`allocated_pairs`), a sha256
+    of the pairs the sample draws from: each pair's identity, link method, stratum
+    and allocated value, after a tag of the frame's definition.
 
     The digest does not depend on the order of `pairs`, and any added, dropped or
-    changed pair changes it.
+    changed pair in the frame changes it, as does a change to the frame.
 
     Returns:
         A frame of `provider_code` and `population`, the hex digest.
     """
     columns = (*PAIR, "link_method", "stratum", "allocated_usd")
-    providers = pairs.select("provider_code", *columns).sort("provider_code", *columns)
+    providers = (
+        sample_frame(pairs)
+        .select("provider_code", *columns)
+        .sort("provider_code", *columns)
+    )
     digests = []
     for (provider,), group in providers.partition_by(
         "provider_code", as_dict=True, maintain_order=True
     ).items():
-        digest = hashlib.sha256()
+        digest = hashlib.sha256(_FRAME)
         for row in group.select(columns).iter_rows():
             digest.update(repr(row).encode())
         digests.append((provider, digest.hexdigest()))
@@ -310,7 +356,8 @@ def draw_blind_sample(
 def sample_design(
     pairs: pl.DataFrame, *, rule: PrecisionRule, release: str
 ) -> pl.DataFrame:
-    """One row per draw of the blind sample of `pairs` (`allocated_pairs`).
+    """One row per draw of the blind sample of `pairs` (`allocated_pairs`), drawn
+    from their `sample_frame`.
 
     Each row carries its provider's `population` (`population_fingerprints`). A
     pair's `sample_id` is `<release>/<provider>/<population>/<first draw>`, with the
@@ -321,7 +368,8 @@ def sample_design(
     """
     parts = [
         _provider_draws(group, rule=rule, provider=int(provider))
-        for (provider,), group in pairs.sort("provider_code", *PAIR)
+        for (provider,), group in sample_frame(pairs)
+        .sort("provider_code", *PAIR)
         .partition_by("provider_code", as_dict=True, maintain_order=True)
         .items()
     ]
@@ -481,7 +529,12 @@ def read_sample_labels(design: Path, *, decisions: Path) -> pl.DataFrame:
     return drawn.join(decided, on=key, how="left", maintain_order="left")
 
 
-def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataFrame:
+def estimate_precision(
+    labels: pl.DataFrame,
+    *,
+    rule: PrecisionRule,
+    certain: pl.DataFrame | None = None,
+) -> pl.DataFrame:
     """Per provider, the precision estimate at its latest look and the rule's
     decision (`pass`, `fail` or `continue`), with each stratum's estimate beside it.
 
@@ -490,13 +543,18 @@ def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataF
             `label_source` (`human` or `agent`) that decided it, both null while
             the pair is undecided (`read_sample_labels`).
         rule: the sequential rule.
+        certain: per provider, `self_linked_share` (`self_linked_shares`),
+            the share of its allocated value outside the sample and counted
+            right. A provider it does not list has none.
 
     Returns:
-        Rows in `ESTIMATE_SCHEMA`. `labels` counts the draws the look reads, and
-        `estimate`, `lower` and `upper` are null before the first look. A census
-        reads every decided pair and decides once all are decided, when its
-        estimate is exact. `agent_share` is the share of the draws read that an
-        agent decided. `strata` lists the provider's strata in `STRATUM_ESTIMATE`,
+        Rows in `ESTIMATE_SCHEMA`. `labels` counts the draws the look reads.
+        `estimate`, `lower` and `upper` count the `self_linked_share` right and
+        the rest at the sample's estimate and bounds, the rule decides on them,
+        and they are null before the first look. A census reads every decided
+        pair and decides once all are decided, when its estimate is exact.
+        `agent_share` is the share of the draws read that an agent decided.
+        `strata` lists the provider's sampled strata in `STRATUM_ESTIMATE`,
         largest allocated value first: the draws the look reads in each, their
         weighted share right and its Wilson bounds at the provider's `z`. A census
         stratum with every pair decided is exact, and a stratum with no draw read
@@ -545,6 +603,14 @@ def estimate_precision(labels: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataF
         )
         .join(providers, on="provider_code", how="left")
     )
+    if certain is None:
+        providers = providers.with_columns(self_linked_share=pl.lit(0.0))
+    else:
+        providers = providers.join(
+            certain.select("provider_code", "self_linked_share"),
+            on="provider_code",
+            how="left",
+        ).with_columns(pl.col("self_linked_share").fill_null(0.0))
     strata = _stratum_estimates(labels, cells=cells, providers=providers, rule=rule)
     return (
         _decide(providers, rule=rule)
@@ -646,7 +712,8 @@ def non_finite() -> pl.Expr:
 
 
 def _decide(providers: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataFrame:
-    """Wilson bounds at each provider's effective sample size, and the decision."""
+    """Wilson bounds at each provider's effective sample size, each figure with
+    the provider's self-linked value counted right, and the decision on them."""
     p, n = pl.col("estimate"), pl.col("labels").cast(pl.Float64)
     pps = pl.col("design") == "pps"
     complete = ~pps & (pl.col("decided") == pl.col("pairs"))
@@ -658,12 +725,18 @@ def _decide(providers: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataFrame:
     best = 1 - pl.col("wrong_usd") / pl.col("provider_usd")
     best_lower, _ = _wilson(best, pl.lit(float(rule.cap)), pl.lit(rule.final_z))
     threshold = rule.threshold
+    certain = pl.col("self_linked_share")
+
+    def counted(share: pl.Expr) -> pl.Expr:
+        return certain + (1 - certain) * share
+
     bounded = providers.with_columns(
-        lower=pl.when(complete).then(p).otherwise(lower),
-        upper=pl.when(complete).then(p).otherwise(upper),
-        hopeless=pps & (best_lower < threshold),
+        estimate=counted(p),
+        lower=counted(pl.when(complete).then(p).otherwise(lower)),
+        upper=counted(pl.when(complete).then(p).otherwise(upper)),
+        hopeless=pps & (counted(best_lower) < threshold),
     )
-    lower, upper = pl.col("lower"), pl.col("upper")
+    p, lower, upper = pl.col("estimate"), pl.col("lower"), pl.col("upper")
     # NaN sorts above every number, so a NaN bound would otherwise pass.
     decision = (
         pl.when(non_finite())

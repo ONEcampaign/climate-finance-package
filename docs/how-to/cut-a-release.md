@@ -18,7 +18,7 @@ Cutting a release requires the `build` extra, a `build.toml`, and the OECD bulk 
 
 2. Clear the review queue. Follow [How to review links](review-links.md) to write the queue, import decisions from people and agents, and rebuild. Repeat until the queue holds only pairs you accept leaving open.
 
-3. Draw the blind sample in batches per provider from the build's allocated links.
+3. Draw the blind sample in batches per provider from the build's allocated links. A link that joins a unit to itself stays out of the sample, and the precision gate counts its value right.
 
    ```bash
    cf-build sample releases/2026a --out sample
