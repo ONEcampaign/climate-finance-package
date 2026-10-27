@@ -8,9 +8,9 @@ from climate_finance import catalogue
 from climate_finance.errors import SchemaError
 from climate_finance.schema import (
     CERTAIN_ROUTES,
-    FLOWS,
     LINK_METHODS,
     PERSPECTIVES,
+    QUERY_FLOWS,
     RELEASE_TABLES,
     Column,
     TableSchema,
@@ -96,11 +96,8 @@ def test_non_finite_and_negative_amounts_are_refused(
 
 
 def test_the_query_vocabularies_match_the_schema() -> None:
-    assert (
-        set(get_args(Flow.__value__))
-        == set(FLOWS)
-        == set(catalogue.flows.list()["name"])
-    )
+    assert set(get_args(Flow.__value__)) == set(QUERY_FLOWS)
+    assert set(catalogue.flows.list()["name"]) == set(QUERY_FLOWS)
     assert set(get_args(View.__value__)) == set(PERSPECTIVES)
 
 

@@ -1,10 +1,10 @@
 # Release gates
 
-`cf-build release` (from 2.0) runs eight gates on a build before packing the release, and `cf-build gate` runs them on their own. A failed gate stops the release with `GateFailedError`. The results go into `release.json` under `gates`, and `release.quality().precision` reads the precision rows back.
+`cf-build release` (from 2.0) runs nine gates on a build before packing the release, and `cf-build gate` runs them on their own. A failed gate stops the release with `GateFailedError`. The results go into `release.json` under `gates`, and `release.quality().precision` reads the precision rows back.
 
-Each gate returns one or more rows with `gate`, `subject`, `value`, `lower`, `upper`, `threshold`, `passed`, `waived`, `detail`, `code`, and `strata`. On precision and human-audit rows, `code` names why a row could not estimate or why its estimate cannot be read, and is null on a row that estimated. Rows of the other gates carry no `code`. `strata` is null on every gate but precision. A row passes when its value is at or below its threshold, with three exceptions. The `raw_links` share must stay under its threshold. Precision's lower bound must reach its threshold, and so must the human-audit share. The thresholds live in `src/climate_finance/build/gates.yaml`.
+Each gate returns one or more rows with `gate`, `subject`, `value`, `lower`, `upper`, `threshold`, `passed`, `waived`, `detail`, `code`, and `strata`. On precision and human-audit rows, `code` names why a row could not estimate or why its estimate cannot be read, and is null on a row that estimated. A `reflow_conservation` row that could not read an input carries the code `missing_input`. Rows of the other gates carry no `code`. `strata` is null on every gate but precision. A row passes when its value is at or below its threshold, with three exceptions. The `raw_links` share must stay under its threshold. Precision's lower bound must reach its threshold, and so must the human-audit share. The thresholds live in `src/climate_finance/build/gates.yaml`.
 
-A gate with nothing to measure fails. Precision fails with no allocated links, the human audit with no blind sample or an empty one, conservation with no linked record that disbursed, the `raw_links` row with no linked commitment unit, `oecd_reconciliation` when neither the release nor the published CRDF holds a climate commitment, `withheld_rows` with an empty `disbursements` table, and `listed_codes` when no release table holds a provider code. Drift fails without a previous release to compare.
+A gate with nothing to measure fails. Precision fails with no allocated links, the human audit with no blind sample or an empty one, conservation with no linked record that disbursed, `reflow_conservation` with no repayment in the raw CRS, the `raw_links` row with no linked commitment unit, `oecd_reconciliation` when neither the release nor the published CRDF holds a climate commitment, `withheld_rows` with an empty `disbursements` table, and `listed_codes` when no release table holds a provider code. Drift fails without a previous release to compare.
 
 ## `precision`
 
@@ -23,6 +23,12 @@ Returns the share of the blind sample's draws, over every provider, whose standi
 ## `conservation`
 
 Returns the largest gap between a linked CRS record's disbursement and its allocations, excess included. The threshold is USD 0.000001.
+
+## `reflow_conservation`
+
+Returns two rows, `received` and `interest`. Each is the largest gap, by provider and year, between three sums of the same repayment: the bulk CRS's `usd_received` (or `usd_interest`) times one million, the normalise `reflows` table, and the release `reflows` table summed over every basis. The sums cover the CRS years from the first the build read to `years.crs_last_complete`. The threshold is USD 0.01, which leaves room for float rounding in the largest provider-years and sits far below any repayment. A repayment that the normalise stage drops, or that attribution loses or counts twice, shows as a gap.
+
+The gate fails with code `missing_input`, and a detail naming each input, when the raw CRS file, the normalise `reflows` table, the release `reflows` table, or the CRS years in `release.json` cannot be read. It also fails when no repayment of the row's kind is in any of the three. `cf-build gate --report` returns the rows without failing.
 
 ## `over_allocation`
 

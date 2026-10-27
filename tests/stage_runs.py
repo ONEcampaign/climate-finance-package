@@ -11,7 +11,7 @@ from climate_finance.build import write_stage
 from climate_finance.build.config import BuildConfig, Ledgers, load_config
 from climate_finance.build.fetch import YEAR_SOURCES, _ledger_files
 from climate_finance.build.normalise.crdf import normalise_crdf
-from climate_finance.build.normalise.crs import normalise_crs
+from climate_finance.build.normalise.crs import normalise_crs, normalise_reflows
 from climate_finance.build.provenance import Provenance
 from climate_finance.build.stages import REGISTRY, StageContext, StageDef, table_path
 from climate_finance.schema import RAW_MANIFEST
@@ -138,13 +138,13 @@ def write_fetched_years(
 
 
 def write_normalised(release_dir: Path) -> None:
-    """Write the normalise stage's `crs` and `crdf`, both perspectives, from the raw
-    OECD fixtures, and no other table, and a fetch `raw_manifest` recording the
-    years they were read for."""
+    """Write the normalise stage's `crs`, `reflows` and `crdf`, both perspectives,
+    from the raw OECD fixtures, and no other table, and a fetch `raw_manifest`
+    recording the years they were read for."""
     write_fetched_years(release_dir)
-    crs = normalise_crs(
-        pl.scan_parquet(OECD / "CRS.parquet"), years=(2010, 2025)
-    ).collect()
+    raw_crs = pl.scan_parquet(OECD / "CRS.parquet")
+    crs = normalise_crs(raw_crs, years=(2010, 2025)).collect()
+    reflows = normalise_reflows(raw_crs, years=(2010, 2025)).collect()
     crdf = pl.concat(
         normalise_crdf(
             pl.scan_parquet(OECD / f"crdf_{perspective}.parquet"),
@@ -153,4 +153,6 @@ def write_normalised(release_dir: Path) -> None:
         )
         for perspective in ("recipient", "provider")
     ).collect()
-    write_inputs(release_dir, "normalise", {"crs": crs, "crdf": crdf})
+    write_inputs(
+        release_dir, "normalise", {"crs": crs, "reflows": reflows, "crdf": crdf}
+    )

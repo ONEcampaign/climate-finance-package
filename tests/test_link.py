@@ -1037,6 +1037,8 @@ def test_run_link_writes_the_deterministic_tables_reproducibly(
     assert set(hashes) == {
         "links",
         "units",
+        "reflow_units",
+        "reflow_links",
         "id_practice",
         "programme_stems",
         "candidates",
@@ -1151,7 +1153,8 @@ def test_a_rejected_key_link_frees_its_disbursement_and_stays_unlinked(
             if commit is not None
         ],
     )
-    write_inputs(tmp_path, "normalise", {"crs": crs, "crdf": crdf})
+    reflows = pl.DataFrame(schema=schema.CRS_REFLOWS.dtypes)
+    write_inputs(tmp_path, "normalise", {"crs": crs, "reflows": reflows, "crdf": crdf})
     write_fetched_years(tmp_path)
     linked = _link(_context(tmp_path, recoveries=False))
     unit = {

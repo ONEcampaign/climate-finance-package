@@ -31,6 +31,7 @@ from climate_finance.build.link.id_practice import classify_id_practice
 from climate_finance.build.link.jev import JevFitError, adjudicate_band, jev_answers
 from climate_finance.build.link.key_repair import repair_keys
 from climate_finance.build.link.keys import build_units, link_by_keys
+from climate_finance.build.link.reflows import build_reflow_units, link_reflows
 from climate_finance.build.link.score import (
     classifier_links,
     provider_profile,
@@ -77,7 +78,9 @@ def run_link(context: StageContext) -> StageOutput:
     recipient or project number (`flag_disagreement`). People's and agents'
     queue decisions then override the links they decided (`override_links`). When the
     build has BTR rows, each links to the same-year CRS records of its party
-    (`link_btr`).
+    (`link_btr`). Reflow records sum into `reflow_units`, which reach their loan's
+    commitment units through the exact key tiers alone (`reflow_links`), without
+    review decisions or key repair.
 
     Raises:
         JevFitError: when `jev_links` is on and the build has no truth group to
@@ -96,6 +99,7 @@ def run_link(context: StageContext) -> StageOutput:
     crdf = context.read("normalise", "crdf").filter(perspective="recipient")
     population = trace_population(crs)
     units = build_units(population).collect()
+    reflow_units = build_reflow_units(context.read("normalise", "reflows")).collect()
     id_practice = classify_id_practice(units)
     trace = link_by_keys(units, first_year=first_year, decide=unrejected)
     crdf_crs = unrejected(link_within_year(crdf, units=units.lazy()).collect())
@@ -212,6 +216,8 @@ def run_link(context: StageContext) -> StageOutput:
     return {
         "links": override_links(pl.concat(linked), labels=decided),
         "units": units,
+        "reflow_units": reflow_units,
+        "reflow_links": link_reflows(units, reflow_units, first_year=first_year),
         "id_practice": id_practice,
         "programme_stems": stems,
         "candidates": candidates,

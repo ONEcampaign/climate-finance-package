@@ -50,6 +50,9 @@ _FLOWS = {
     "disbursements that reach no commitment, weighted by their own markers.",
     "grant_equivalent": "The grant equivalent of those disbursements; records "
     "without one stay missing.",
+    "net_disbursements": "Those disbursements less the principal repaid on the "
+    "loans they disbursed, at the share each loan was counted under.",
+    "net_transfers": "Net disbursements less the interest paid on those loans too.",
 }
 
 

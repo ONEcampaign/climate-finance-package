@@ -24,6 +24,7 @@ from climate_finance.build.evaluate import (
     draw_blind_sample,
     read_sample_labels,
 )
+from climate_finance.build.fetch import CRS_FILE
 from climate_finance.build.gate import (
     GATES,
     Drift,
@@ -35,8 +36,12 @@ from climate_finance.build.gate import (
     run_gates,
 )
 from climate_finance.build.link.decisions import import_labels
-from climate_finance.build.link.packet import MATCH_DEFINITION, packet_pairs_path
-from climate_finance.build.stages import REGISTRY, table_path
+from climate_finance.build.link.packet import (
+    MATCH_DEFINITION,
+    NAMED_CODES,
+    packet_pairs_path,
+)
+from climate_finance.build.stages import REGISTRY, raw_dir, table_path
 from climate_finance.schema import STAGE_TABLES, ReleaseManifest
 
 BUILD_TOML = Path(__file__).parents[1] / "build.toml"
@@ -51,6 +56,54 @@ CRS = crs_records(
 )
 CRDF = crdf_rows(
     {"row_id": "R1", "year": 2019, "crs_id": "X1", "climate_usd": 40.0, "face_usd": 1e2}
+)
+# Norway repays 24 of principal and 3 of interest on the loan in 2020, and 6 and 1
+# in 2021.
+REPAYMENTS = [(2020, 24.0, 3.0), (2021, 6.0, 1.0)]
+REFLOWS = pl.DataFrame(
+    [
+        {
+            "record_id": f"p{year % 100}",
+            "year": year,
+            "donor_code": NOR,
+            "agency_code": 1,
+            "crs_id": "X1",
+            "project_number": None,
+            "title": None,
+            "recipient_code": 248,
+            "purpose_code": 23210,
+            "channel_code": None,
+            "bi_multi": 1,
+            "flow_code": 13,
+            "finance_t": 421,
+            "received_usd": received,
+            "interest_usd": interest,
+            "commitment_date": None,
+            "rio_adaptation": 0,
+            "rio_mitigation": 2,
+        }
+        for year, received, interest in REPAYMENTS
+    ],
+    schema=schema.CRS_REFLOWS.dtypes,
+)
+# The bulk file's rows for them, in USD million, with the code columns
+# `draw_blind_sample` reads names from.
+RAW_CRS = pl.DataFrame(
+    {
+        "year": [year for year, *_ in REPAYMENTS],
+        "donor_code": [NOR] * len(REPAYMENTS),
+        "usd_received": [received / 1e6 for _, received, _ in REPAYMENTS],
+        "usd_interest": [interest / 1e6 for _, _, interest in REPAYMENTS],
+    },
+    schema={
+        "year": pl.Int16,
+        "donor_code": pl.Int32,
+        "usd_received": pl.Float64,
+        "usd_interest": pl.Float64,
+    },
+).with_columns(
+    *(pl.lit(None, pl.Int32).alias(f"{kind}_code") for kind in NAMED_CODES),
+    *(pl.lit(None, pl.String).alias(f"{kind}_name") for kind in NAMED_CODES),
 )
 CORE = pl.DataFrame(
     {
@@ -107,6 +160,7 @@ def release_dir(tmp_path: Path) -> Path:
             "crdf": CRDF,
             "crdf_span": _empty(schema.CRDF_SPAN),
             "crs": CRS,
+            "reflows": REFLOWS,
             "core_contributions": CORE,
             "imputed_shares": _empty(schema.IMPUTED_SHARES),
             "external": _empty(schema.EXTERNAL),
@@ -131,6 +185,8 @@ def release_dir(tmp_path: Path) -> Path:
         config=config,
         stages=LATER_STAGES,
     )
+    (raw_dir(release_dir) / CRS_FILE).parent.mkdir(parents=True)
+    RAW_CRS.write_parquet(raw_dir(release_dir) / CRS_FILE)
     return release_dir
 
 
@@ -160,6 +216,8 @@ def test_a_sound_release_passes_every_gate_but_the_samples_without_one(
         ("precision", str(NOR)): False,
         ("human_audit", None): False,
         ("conservation", None): True,
+        ("reflow_conservation", "received"): True,
+        ("reflow_conservation", "interest"): True,
         ("over_allocation", "above_face"): True,
         ("over_allocation", "raw_links"): True,
         ("oecd_reconciliation", None): True,
@@ -575,6 +633,83 @@ def test_each_gate_fails_on_a_release_doctored_to_break_it(
         pl.col("gate") == gate, pl.col("subject").eq_missing(subject)
     ).row(0, named=True)
     assert named in row["detail"]
+
+
+def _drop_p20(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.filter(pl.col("record_id") != "p20")
+
+
+def _overstate_interest(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(interest_usd=pl.col("interest_usd") + 1.0)
+
+
+def _understate_raw_received(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(usd_received=pl.col("usd_received") / 2)
+
+
+def _release_reflows(release_dir: Path) -> Path:
+    return table_path(release_dir, "assemble", "reflows")
+
+
+@pytest.mark.parametrize(
+    ("path", "edit", "failing", "named"),
+    [
+        # A repayment the normalise table drops, or the release table loses, leaves
+        # the raw CRS's total unmet for both amounts.
+        (
+            lambda release_dir: table_path(release_dir, "normalise", "reflows"),
+            _drop_p20,
+            {"received", "interest"},
+            f"{NOR}/2020",
+        ),
+        (_release_reflows, _drop_p20, {"received", "interest"}, f"{NOR}/2020"),
+        # Interest alone disagrees, or the raw file holds more principal.
+        (_release_reflows, _overstate_interest, {"interest"}, f"{NOR}/2020"),
+        (
+            lambda release_dir: raw_dir(release_dir) / CRS_FILE,
+            _understate_raw_received,
+            {"received"},
+            f"{NOR}/2021",
+        ),
+    ],
+)
+def test_reflow_conservation_fails_where_a_table_disagrees_with_the_others(
+    release_dir: Path,
+    path: Callable[[Path], Path],
+    edit: Callable[[pl.DataFrame], pl.DataFrame],
+    failing: set[str],
+    named: str,
+) -> None:
+    _edit(path(release_dir), edit)
+
+    rows = _report(release_dir).filter(gate="reflow_conservation")
+
+    assert {r["subject"] for r in rows.iter_rows(named=True) if not r["passed"]} == (
+        failing
+    )
+    for row in rows.filter(pl.col("subject").is_in(failing)).iter_rows(named=True):
+        assert named in row["detail"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        lambda release_dir: raw_dir(release_dir) / CRS_FILE,
+        lambda release_dir: table_path(release_dir, "normalise", "reflows"),
+    ],
+    ids=["raw CRS", "normalise reflows"],
+)
+def test_reflow_conservation_refuses_when_an_input_is_missing(
+    release_dir: Path, path: Callable[[Path], Path]
+) -> None:
+    path(release_dir).unlink()
+
+    rows = _report(release_dir).filter(gate="reflow_conservation")
+
+    assert rows.select("subject", "passed", "code").rows() == [
+        ("received", False, "missing_input"),
+        ("interest", False, "missing_input"),
+    ]
 
 
 def test_raw_links_leave_out_commitments_the_release_does_not_carry(

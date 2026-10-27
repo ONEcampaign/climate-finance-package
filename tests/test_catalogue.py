@@ -255,7 +255,7 @@ def test_method_info_is_the_method_description() -> None:
 
 @pytest.mark.parametrize(
     ("listing", "name", "kind"),
-    [(cf.flows, "net_disbursements", "flow"), (cf.providers, 99999, "provider")],
+    [(cf.flows, "gross_disbursements", "flow"), (cf.providers, 99999, "provider")],
 )
 def test_info_on_an_unknown_entry_names_the_listing(
     listing: Catalogue, name: str | int, kind: str

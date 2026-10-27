@@ -364,6 +364,8 @@ def test_run_link_writes_the_provider_profile_with_recoveries(
     assert set(hashes) == {
         "links",
         "units",
+        "reflow_units",
+        "reflow_links",
         "id_practice",
         "programme_stems",
         "candidates",

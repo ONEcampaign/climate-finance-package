@@ -41,7 +41,7 @@ def test_get_data_equals_spending_for_each_flow() -> None:
     climate_data = _climate_data(providers=[5, "France"], recipients="Kenya")
     with pytest.warns(CoverageWarning, match=UNCOVERED_COMMITMENTS):
         data = climate_data.load_spending_data(
-            flows=["gross_disbursements", "commitments"]
+            flows=["gross_disbursements", "commitments", "net_disbursements"]
         ).get_data()
 
     def spending(flow: Flow) -> cf.Result:
@@ -54,6 +54,7 @@ def test_get_data_equals_spending_for_each_flow() -> None:
     expected = _expected(
         ("OECD_CRS", "gross_disbursements", spending("disbursements")),
         ("OECD_CRS", "commitments", commitments),
+        ("OECD_CRS", "net_disbursements", spending("net_disbursements")),
     )
     assert len(data)
     pd.testing.assert_frame_equal(data, expected)
@@ -127,10 +128,6 @@ def test_constructing_climate_data_warns_with_the_replacement() -> None:
 @pytest.mark.parametrize(
     ("call", "replacement"),
     [
-        (
-            lambda: _climate_data().load_spending_data(flows="net_disbursements"),
-            "gross disbursements only",
-        ),
         (lambda: _climate_data().load_spending_data(source="UNFCCC"), "reconcile"),
         (lambda: _climate_data().as_share_of_total(), "share_of_total"),
         (lambda: ClimateData.available_flows(), "flows.list"),

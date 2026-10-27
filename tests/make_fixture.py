@@ -22,12 +22,18 @@ import argparse
 import itertools
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NamedTuple
 
 import polars as pl
 
 from climate_finance import __version__
 from climate_finance.build import write_table
 from climate_finance.build.fetch import BTR_SOURCE
+from climate_finance.build.reflows import (
+    attribute_reflows,
+    loan_shares,
+    release_reflows,
+)
 from climate_finance.build.release import btr_totals
 from climate_finance.schema import (
     CERTAIN_METHODS,
@@ -54,6 +60,7 @@ DEU, FRA, NOR, JPN, IDA, AFDB, IFC, EIB = 5, 4, 8, 701, 905, 913, 903, 918
 GEF = 811
 IDA_CH, AFDB_CH = 44002, 46002
 KEN, BGD, IRQ, UNS = 248, 666, 543, 998
+ESP = 50
 NO_RECORD = "no_disbursement_record"
 # FRA-1's project pays earlier tranches, and AFDB-2 is the id-less multilateral row.
 PROJECT_DISBURSING = {"FRA-1"}
@@ -245,6 +252,93 @@ UNLINKED = (
 # `untraced`.
 # The GEF, a route fund, has an unlinked record its IATI route covers.
 UNALLOCATED = ((DEU, 2022, 4e6, 0.0), (GEF, 2021, 0.0, 1.5e6))
+
+
+class Repayment(NamedTuple):
+    """A CRS repayment record: its fields, its key group and the tier that linked it.
+
+    `loan_id` is the key group (`tier:key`) a reflow link names, None where no tier
+    reaches a loan. `rio` is the record's own Rio markers, which the loan's
+    commitment markers replace in the weights.
+    """
+
+    record_id: str
+    provider: int
+    agency: int
+    recipient: int
+    year: int
+    received: float
+    interest: float
+    loan_id: str | None
+    link_method: str | None
+    rio: tuple[int | None, int | None]
+    bi_multi: int = 1
+    channel: int | None = None
+
+
+# CRS repayments. Each loan below names the CRDF rows whose CRS records it
+# disbursed, or its records outright.
+REPAYMENTS = (
+    # Japan's loan behind JPN-1 repays through a certain crs id link. Its
+    # disbursement takes in the split record, so the repayment reaches JPN-3 and the
+    # split's excess too.
+    Repayment("JPN-1-REPAY", JPN, 2, BGD, 2023, 2e6, 0.5e6, "crs_id:JPN-1", "crs_id",
+              (0, 2)),
+    # France's loan behind FRA-2 is counted at 40% (significant under ONE) and
+    # repays in two years. Its disbursements carry estimated links.
+    Repayment("FRA-2-REPAY-2022", FRA, 1, KEN, 2022, 0.5e6, 0.1e6, "crs_id:FRA-2",
+              "crs_id", (1, 0)),
+    Repayment("FRA-2-REPAY-2023", FRA, 1, KEN, 2023, 0.7e6, 0.1e6, "crs_id:FRA-2",
+              "crs_id", (1, 0)),
+    # Germany's loan behind DEU-1 has certain links all through.
+    Repayment("DEU-1-REPAY", DEU, 52, KEN, 2022, 4e6, 0.3e6, "crs_id:DEU-1",
+              "crs_id", (2, 0)),
+    # The IDA repays IDA-2 under a fresh crs id, which the loan number ties back. It
+    # reports no interest, and counts at the commitment's climate share.
+    Repayment("IDA-2-REPAY", IDA, 1, BGD, 2023, 5e6, 0.0, "wb_loan:IDA-2",
+              "wb_loan", (None, None), bi_multi=4, channel=IDA_CH),
+    # Norway's repayments of NOR-1 pass what it disbursed (17.1m) in 2023.
+    Repayment("NOR-1-REPAY-2022", NOR, 1, BGD, 2022, 10e6, 0.4e6, "crs_id:NOR-1",
+              "crs_id", (2, 1), bi_multi=3),
+    Repayment("NOR-1-REPAY-2023", NOR, 1, BGD, 2023, 10e6, 0.3e6, "crs_id:NOR-1",
+              "crs_id", (2, 1), bi_multi=3),
+    # France's loan behind its unlinked record repays at the record's own markers.
+    Repayment("FRA-UNLINKED-REPAY", FRA, 1, IRQ, 2023, 0.6e6, 0.1e6,
+              "crs_id:FRA-UNLINKED", "crs_id", (0, 1)),
+    # NOR-2's key reaches its commitment, which disbursed nothing.
+    Repayment("NOR-2-REPAY", NOR, 1, IRQ, 2023, 0.4e6, 0.05e6, "crs_id:NOR-2",
+              "crs_id", (0, 1)),
+    # Germany's under no key a tier reaches is unlinked.
+    Repayment("DEU-REPAY", DEU, 52, KEN, 2022, 1e6, 0.2e6, None, None, (0, 1)),
+    # Spain's loan predates the window, so no disbursement ties to its repayment, and
+    # the record's own marker of 2 weighs nothing.
+    Repayment("ESP-REPAY", ESP, 1, KEN, 2022, 8e6, 1e6, None, None, (2, 0)),
+    # A loan whose disbursements the release leaves out in three ways.
+    Repayment("DEU-OUT-REPAY", DEU, 52, KEN, 2023, 4e6, 0.2e6, "pn_recipient:DEU-OUT",
+              "pn_recipient", (0, 0)),
+)  # fmt: skip
+# The CRDF rows whose CRS records each loan disbursed.
+LOAN_ROWS = {
+    "crs_id:JPN-1": ("JPN-1",),
+    "crs_id:FRA-2": ("FRA-2",),
+    "crs_id:DEU-1": ("DEU-1",),
+    "wb_loan:IDA-2": ("IDA-2",),
+    "crs_id:NOR-1": ("NOR-1",),
+    "crs_id:NOR-2": ("NOR-2",),
+}
+# Loans reached through their disbursement records alone. DEU-OUT-A is Germany's
+# Rio-marked record allocated to a commitment with no CRDF row, which `UNALLOCATED`
+# holds as its 2022 outside-release amount. DEU-OUT-B is an unmarked record's
+# excess and DEU-OUT-C an unmarked record linked to no commitment. A release holds
+# no unmarked record's amounts, so those two sit in no table but the CRS.
+LOAN_RECORDS = {
+    "crs_id:FRA-UNLINKED": ("FRA-UNLINKED",),
+    "pn_recipient:DEU-OUT": ("DEU-OUT-A", "DEU-OUT-B", "DEU-OUT-C"),
+}
+# (record_id, rule, allocated_usd) of an allocation to no CRDF row, and
+# (record_id, disbursement_usd) of a record linked to no commitment.
+OFF_ROW_ALLOCATIONS = (("DEU-OUT-A", "fifo", 4e6), ("DEU-OUT-B", "excess", 2e6))
+OFF_ROW_RECORDS = (("DEU-OUT-C", 1e6),)
 # The build settings the fixture claims, as `release.json` records them.
 SETTINGS = {
     "offline": True,
@@ -719,6 +813,9 @@ def build_tables() -> dict[str, pl.DataFrame]:
     frames["commitments"] = _commitments(
         list(commitments.values()), frames["disbursements"]
     )
+    frames["reflows"] = _reflows(
+        frames["commitments"], frames["disbursements"], frames["untraced"]
+    )
     frames["quality"] = _quality(frames["commitments"], frames["disbursements"])
     frames["btr_totals"] = btr_totals(
         frames["btr"].lazy(), links=frames["btr_links"].lazy()
@@ -743,6 +840,137 @@ def build_tables() -> dict[str, pl.DataFrame]:
         frames["core_contributions"],
     )
     return frames
+
+
+def _reflows(
+    commitments: pl.DataFrame, disbursements: pl.DataFrame, untraced: pl.DataFrame
+) -> pl.DataFrame:
+    """`REPAYMENTS` split over their loans' disbursements by the build's own
+    `loan_shares`, `attribute_reflows` and `release_reflows`."""
+    crs = disbursements.filter(pl.col("disbursement_source") == "crs")
+    loans = pl.DataFrame(
+        [
+            {"loan_id": loan_id, "record_id": record_id}
+            for loan_id, row_ids in LOAN_ROWS.items()
+            for record_id in crs.filter(pl.col("row_id").is_in(row_ids))["record_id"]
+        ]
+        + [
+            {"loan_id": loan_id, "record_id": record_id}
+            for loan_id, record_ids in LOAN_RECORDS.items()
+            for record_id in record_ids
+        ]
+    ).unique()
+    # The fill's allocations: the release's CRS rows without its markers, a linked
+    # record's excess as a row of its own, and the allocations of records the
+    # release leaves out.
+    allocations = pl.concat(
+        [
+            crs.select(
+                "record_id",
+                "row_id",
+                "rule",
+                "allocated_usd",
+                "allocated_low_usd",
+                "disbursement_source",
+            ),
+            untraced.filter(pl.col("reason") == "excess").select(
+                "record_id",
+                row_id=pl.lit(None, pl.String),
+                rule=pl.lit("excess"),
+                allocated_usd="untraced_usd",
+                allocated_low_usd=pl.lit(0.0),
+                disbursement_source=pl.lit("crs"),
+            ),
+            pl.DataFrame(
+                [
+                    {
+                        "record_id": record_id,
+                        "row_id": None,
+                        "rule": rule,
+                        "allocated_usd": allocated,
+                        "allocated_low_usd": 0.0,
+                        "disbursement_source": "crs",
+                    }
+                    for record_id, rule, allocated in OFF_ROW_ALLOCATIONS
+                ],
+                schema_overrides={"row_id": pl.String},
+            ),
+        ]
+    )
+    unlinked = pl.concat(
+        [
+            untraced.filter(pl.col("reason") == "unlinked").select(
+                "record_id", disbursement_usd="untraced_usd"
+            ),
+            pl.DataFrame(
+                OFF_ROW_RECORDS,
+                schema={"record_id": pl.String, "disbursement_usd": pl.Float64},
+                orient="row",
+            ),
+        ]
+    )
+    shares = loan_shares(
+        loans.lazy(),
+        allocations=allocations.lazy(),
+        untraced=untraced.lazy(),
+        crs=unlinked.lazy(),
+    )
+    records = pl.DataFrame(
+        [
+            {
+                "record_id": repayment.record_id,
+                "year": repayment.year,
+                "donor_code": repayment.provider,
+                "agency_code": repayment.agency,
+                "recipient_code": repayment.recipient,
+                "channel_code": repayment.channel,
+                "bi_multi": repayment.bi_multi,
+                "purpose_code": 41010,
+                "flow_code": 13,
+                "finance_t": 421,
+                "project_number": f"PN-{repayment.record_id}",
+                "title": f"Loan repayment {repayment.record_id}",
+                "rio_adaptation": repayment.rio[0],
+                "rio_mitigation": repayment.rio[1],
+                "received_usd": repayment.received,
+                "interest_usd": repayment.interest,
+            }
+            for repayment in REPAYMENTS
+        ],
+        schema_overrides={
+            "bi_multi": pl.Int8,
+            "rio_adaptation": pl.Int8,
+            "rio_mitigation": pl.Int8,
+        },
+    )
+    linked = [repayment for repayment in REPAYMENTS if repayment.loan_id is not None]
+    attributed = attribute_reflows(
+        records.lazy(),
+        reflow_units=pl.LazyFrame(
+            {
+                "unit_id": [repayment.record_id for repayment in REPAYMENTS],
+                "record_ids": [[repayment.record_id] for repayment in REPAYMENTS],
+            }
+        ),
+        reflow_links=pl.LazyFrame(
+            {
+                "reflow_unit_id": [repayment.record_id for repayment in linked],
+                "group_id": [repayment.loan_id for repayment in linked],
+                "link_method": [repayment.link_method for repayment in linked],
+                "records_disagree": [False] * len(linked),
+            }
+        ),
+        shares=shares,
+    )
+    return (
+        release_reflows(attributed, reflows=records.lazy(), crdf=commitments.lazy())
+        .sort("record_id", "basis", "row_id", "inherited_rio_adaptation")
+        .select(
+            pl.col(name).cast(dtype)
+            for name, dtype in _polars_schema("reflows").items()
+        )
+        .collect()
+    )
 
 
 def _commitments(
@@ -978,7 +1206,8 @@ def sample_release(release: Path) -> dict[str, pl.DataFrame]:
     keeps the first row it repeats, which holds its allocations. `quality`,
     `modelled`, `core_contributions`, `total_flows`, `untraced` and `unallocated`
     keep the six providers' rows for the whole release, with `unallocated.marked_usd`
-    less the Rio-marked allocations the sample leaves out.
+    less the Rio-marked allocations the sample leaves out. `reflows` keeps every row
+    of the six providers' repayments whose commitment rows are all in the sample.
     """
     tables = {
         name: pl.read_parquet(release / f"{name}.parquet") for name in RELEASE_TABLES
@@ -1035,6 +1264,16 @@ def sample_release(release: Path) -> dict[str, pl.DataFrame]:
         sample[name] = tables[name].filter(
             pl.col("provider_code").is_in(SAMPLE_PROVIDERS)
         )
+    # Every row of each repayment whose commitment rows the sample keeps, so its
+    # rows still sum to the record's repayment.
+    dropped_rows = tables["reflows"].filter(
+        pl.col("row_id").is_not_null(), ~pl.col("row_id").is_in(row_ids)
+    )
+    sample["reflows"] = (
+        tables["reflows"]
+        .filter(pl.col("provider_code").is_in(SAMPLE_PROVIDERS))
+        .join(dropped_rows.select("record_id"), on="record_id", how="anti")
+    )
     # `marked_usd` leaves out the Rio-marked allocations the sample drops, so the
     # sample's parts still sum to it.
     key = ["provider_code", "year"]

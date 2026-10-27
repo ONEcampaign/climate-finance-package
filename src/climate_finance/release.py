@@ -33,6 +33,7 @@ from climate_finance.frozen import unknown_keyword
 from climate_finance.methods import ONE, Method, MethodRange
 from climate_finance.result import Quality, Reconciliation, Result, year_runs
 from climate_finance.schema import (
+    NET_FLOWS,
     RELEASE_TABLES,
     ReleaseManifest,
     scan_table,
@@ -69,6 +70,8 @@ _FLOW_TEXT = {
     "commitments": "commitments",
     "disbursements": "disbursements",
     "grant_equivalent": "grant equivalents",
+    "net_disbursements": "net disbursements",
+    "net_transfers": "net transfers",
 }
 
 
@@ -219,6 +222,8 @@ class Release:
         tables = ["commitments" if spec.flow == "commitments" else "disbursements"]
         if spec.flow != "commitments" and spec.untraced:
             tables.append("untraced")
+        if spec.flow in NET_FLOWS:
+            tables.append("reflows")
         if spec.view == "provider":
             tables.append("core_contributions")
         self._warn_uncovered(spec.years, tables=tables, holds=_FLOW_TEXT[spec.flow])

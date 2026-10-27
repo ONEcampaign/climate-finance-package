@@ -54,7 +54,7 @@ tar --zstd -xf releases/climate-finance-2026a.tar.zst -C unpacked
 python -c "import climate_finance as cf; print(list(cf.load(path='unpacked/climate-finance-2026a').manifest.gates))"
 ```
 
-`load()` verifies every table's sha256 against `release.json`, and the command prints the eight gate names.
+`load()` verifies every table's sha256 against `release.json`, and the command prints the nine gate names.
 
 ## Troubleshooting
 

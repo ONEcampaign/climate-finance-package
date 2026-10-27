@@ -32,6 +32,7 @@ from climate_finance.schema import (
     LABEL_SOURCES,
     LINK_METHODS,
     MULTILATERAL_OUTFLOW,
+    NET_FLOWS,
     SHARE_ORIGINS,
     STATUSES,
     UNTRACED_REASONS,
@@ -52,7 +53,14 @@ AMOUNTS = (
     "high", "untraced",
 )  # fmt: skip
 # Where each of `Result.rows()` comes from, as `query` describes.
-ORIGINS = ("commitment", "disbursement", "untraced", "attribution")
+ORIGINS = (
+    "commitment",
+    "disbursement",
+    "untraced",
+    "attribution",
+    "repayment",
+    "interest",
+)
 # The keys of a result table's rows, before the method.
 ROW_KEYS = ("year", "provider_code", "recipient_code", "bi_multi")
 # The keys of a result whose spec names an agency. `agency_code` holds the agency of
@@ -414,7 +422,13 @@ class Quality:
     climate value under the method (`excess_climate_usd`, `unlinked_climate_usd`),
     and the two amounts no total counts, allocations to commitments with no CRDF row
     (`outside_release_usd`) and the route funds' unlinked records
-    (`fund_unlinked_usd`).
+    (`fund_unlinked_usd`). `repayments` holds, by provider and repayment year, the
+    CRS principal repaid (`received_usd`) split by where it goes, one `<basis>_usd`
+    column per `schema.REFLOW_BASES` entry, the climate value of the principal a net
+    flow subtracts under the method in the recipient view (`repaid_climate_usd`),
+    the interest paid (`interest_usd`), and the share of principal tied to a
+    disbursement the release counts (`measured_share`, of bases `commitment` and
+    `untraced`).
     """
 
     def __init__(
@@ -426,6 +440,7 @@ class Quality:
         attribution: pl.LazyFrame,
         precision: pl.LazyFrame,
         untraced: pl.LazyFrame,
+        repayments: pl.LazyFrame,
     ) -> None:
         self._table = table
         self._status = status
@@ -433,6 +448,7 @@ class Quality:
         self._attribution = attribution
         self._precision = precision
         self._untraced = untraced
+        self._repayments = repayments
 
     @cached_property
     def table(self) -> pl.DataFrame:
@@ -464,6 +480,11 @@ class Quality:
         """The Rio-marked CRS disbursement outside `disbursements`."""
         return self._untraced.collect()
 
+    @cached_property
+    def repayments(self) -> pl.DataFrame:
+        """The CRS principal and interest repaid, by where the principal goes."""
+        return self._repayments.collect()
+
     def __repr__(self) -> str:
         summary = self.summary()
         return f"{self._title(summary)}\n{summary!r}"
@@ -478,7 +499,7 @@ class Quality:
         years = _years_text(self.table["year"])
         return (
             f"Quality: {count} {providers}, {years}; also .table .status "
-            ".eu_left_out .attribution .precision .untraced"
+            ".eu_left_out .attribution .precision .untraced .repayments"
         )
 
     def summary(self) -> pl.DataFrame:
@@ -579,6 +600,23 @@ def explain(
     if spec.view == "provider":
         lines.extend(_coverage(methods, queried=spec.years, years=years or {}))
     lines.append(_FLOWS[spec.flow])
+    if spec.flow in NET_FLOWS:
+        lines.append(_REPAYMENTS)
+        if any(method.coefficients == "provider" for method in methods):
+            lines.append(
+                "Under provider coefficients, a repayment weighs at the "
+                "coefficients of the year it is repaid, not of the year its loan "
+                "disbursed."
+            )
+        if spec.view == "provider" and any(m.eu == "channel" for m in methods):
+            lines.append(
+                "An EU Institutions repayment scales by the part of EU money no "
+                "queried member's attribution counts in the year it is repaid, as "
+                "its coefficients do."
+            )
+        lines.append(
+            "Gross disbursements: " + _FLOWS["disbursements"].removeprefix("Flow: ")
+        )
     if spec.flow != "commitments":
         lines.append(_UNTRACED[spec.untraced])
     lines.append(
@@ -816,7 +854,23 @@ _FLOWS = {
     "grant_equivalent": "Flow: grant equivalent of disbursements, shared across the "
     "commitments a record funds in proportion to the amount each receives; records "
     "without one stay missing, and release.quality() reports coverage.",
+    "net_disbursements": "Flow: net disbursements, gross disbursements less the "
+    "principal repaid on the loans whose disbursements the release counts.",
+    "net_transfers": "Flow: net transfers, gross disbursements less the principal "
+    "repaid and the interest paid on the loans whose disbursements the release "
+    "counts. The development banks report no interest after 2018, so from 2019 "
+    "their net transfers subtract principal only.",
 }
+# How a net flow subtracts repayments, after its `_FLOWS` line.
+_REPAYMENTS = (
+    "A repayment subtracts at the share its loan was counted under: the markers or "
+    "climate share of the commitments the loan's disbursements were allocated to, "
+    "or the disbursement records' own markers where gross counts them as untraced. "
+    "Repayments tied to no disbursement the release counts are left out, and "
+    "release.quality().repayments reports them. low subtracts every attributed "
+    "repayment and high only those whose link to the loan is certain, so for a net "
+    "flow high sits above value and is not the central figure."
+)
 
 
 _UNTRACED = {

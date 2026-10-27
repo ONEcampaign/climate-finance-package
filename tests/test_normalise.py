@@ -14,7 +14,11 @@ from climate_finance import schema
 from climate_finance.build.config import Ledgers, load_config
 from climate_finance.build.fetch import BTR_DIR, CRDF_FILES, CRS_FILE
 from climate_finance.build.normalise.crdf import CRDFNormaliseError, normalise_crdf
-from climate_finance.build.normalise.crs import normalise_crs, trace_population
+from climate_finance.build.normalise.crs import (
+    normalise_crs,
+    normalise_reflows,
+    trace_population,
+)
 from climate_finance.build.normalise.external import MULTI_COUNTRY
 from climate_finance.build.normalise.ids import content_id, with_content_id
 from climate_finance.build.stages import raw_dir, table_path
@@ -26,6 +30,13 @@ YEARS = (2010, 2025)
 @pytest.fixture(scope="module")
 def crs() -> pl.DataFrame:
     return normalise_crs(pl.scan_parquet(OECD / "CRS.parquet"), years=YEARS).collect()
+
+
+@pytest.fixture(scope="module")
+def reflows() -> pl.DataFrame:
+    return normalise_reflows(
+        pl.scan_parquet(OECD / "CRS.parquet"), years=YEARS
+    ).collect()
 
 
 def _crdf(
@@ -133,7 +144,7 @@ def test_crs_record_ids_are_unique_and_stable(crs: pl.DataFrame) -> None:
 
 def test_crs_record_ids_follow_long_descriptions_through_a_revision() -> None:
     # Two tranches agree on every identifying field; their long descriptions differ.
-    tranche = pl.col("crs_id") == "2022000101"
+    tranche = (pl.col("crs_id") == "2022000101") & pl.col("usd_received").is_null()
     raw = pl.read_parquet(OECD / "CRS.parquet").with_columns(
         long_description=pl.when(tranche)
         .then(pl.concat_str("long_description", pl.col("usd_commitment").cast(str)))
@@ -172,6 +183,122 @@ def test_crs_trims_ids(crs: pl.DataFrame) -> None:
     padded = normalise_crs(raw.lazy(), years=YEARS).collect()
 
     assert padded.equals(crs)
+
+
+def test_reflows_keep_records_with_a_repayment_in_usd_units(
+    reflows: pl.DataFrame,
+) -> None:
+    schema.validate(schema.CRS_REFLOWS, reflows)
+    # 3 rows: the zero repayment drops out, and so do the records without one.
+    assert reflows.height == 3
+    loan = _row(reflows, crs_id="2022000101")
+    assert loan["received_usd"] == pytest.approx(0.5e6)
+    assert loan["interest_usd"] == pytest.approx(0.05e6)
+    # A bank repays under a fresh crs id and keeps the loan's project number.
+    bank = _row(reflows, crs_id="2023P170002")
+    assert bank["project_number"] == "P170001"
+    assert bank["received_usd"] == pytest.approx(2e6)
+    assert bank["interest_usd"] is None
+    # An aggregate row has no crs id, and its recipient reads 998 as in `crs`.
+    aggregate = _row(reflows, donor_code=3)
+    assert aggregate["crs_id"] is None
+    assert aggregate["recipient_code"] == 998
+    assert aggregate["received_usd"] == pytest.approx(0.2e6)
+    assert aggregate["interest_usd"] == pytest.approx(0.1e6)
+
+
+def test_reflows_keep_a_record_with_no_bi_multi() -> None:
+    # The bulk CRS leaves Bi_Multi empty on some repayment-only rows.
+    raw = pl.read_parquet(OECD / "CRS.parquet").with_columns(
+        bi_multi=pl.when(pl.col("crs_id") == "2023P170002")
+        .then(None)
+        .otherwise("bi_multi")
+    )
+
+    repaid = normalise_reflows(raw.lazy(), years=YEARS).collect()
+
+    schema.validate(schema.CRS_REFLOWS, repaid)
+    assert _row(repaid, crs_id="2023P170002")["bi_multi"] is None
+    assert repaid.height == 3
+
+
+def test_crs_record_ids_ignore_the_reflow_records(crs: pl.DataFrame) -> None:
+    # The first 17 rows of the fixture are those it held before it gained its
+    # repayment rows.
+    raw = pl.read_parquet(OECD / "CRS.parquet")
+    before = normalise_crs(raw.head(17).lazy(), years=YEARS).collect()
+
+    assert crs.equals(before)
+
+
+def test_a_record_with_an_amount_and_a_repayment_is_in_both_tables(
+    crs: pl.DataFrame,
+) -> None:
+    # The larger tranche of 2022000101 repays 0.7 million as well. The smaller one
+    # has the same identity and takes the first number, so the larger takes the second.
+    both = (pl.col("crs_id") == "2022000101") & (pl.col("usd_disbursement") == 1.0)
+    raw = pl.read_parquet(OECD / "CRS.parquet").with_columns(
+        usd_received=pl.when(both).then(0.7).otherwise("usd_received")
+    )
+
+    paired_crs = normalise_crs(raw.lazy(), years=YEARS).collect()
+    paired_reflows = normalise_reflows(raw.lazy(), years=YEARS).collect()
+
+    # The repayment changes no `crs` id.
+    assert paired_crs["record_id"].sort().equals(crs["record_id"].sort())
+    in_crs = paired_crs.filter(pl.col("received_usd").is_not_null())
+    assert in_crs.height == 1
+    shared = paired_reflows.filter(pl.col("record_id") == in_crs["record_id"].item())
+    assert shared.height == 1
+    assert in_crs["received_usd"].item() == pytest.approx(0.7e6)
+    assert shared["received_usd"].item() == pytest.approx(0.7e6)
+    assert shared["crs_id"].item() == "2022000101"
+    # The three repayment-only rows and the tranche.
+    assert paired_reflows.height == 4
+    assert paired_reflows["record_id"].is_unique().all()
+
+
+def test_a_reflow_only_record_never_takes_a_crs_id() -> None:
+    # A repayment row that agrees with a commitment row on every identifying field.
+    raw = pl.read_parquet(OECD / "CRS.parquet")
+    twin = raw.filter(crs_id="2022000102").with_columns(
+        usd_commitment=pl.lit(None, pl.Float64), usd_received=pl.lit(1.0)
+    )
+    both = pl.concat([raw, twin])
+
+    crs_ids = normalise_crs(both.lazy(), years=YEARS).collect()["record_id"]
+    repaid = normalise_reflows(both.lazy(), years=YEARS).collect()
+
+    twin_id = _row(repaid, crs_id="2022000102")["record_id"]
+    assert twin_id not in crs_ids
+    assert not set(repaid["record_id"]) & set(crs_ids)
+
+
+def test_reflow_record_ids_are_stable_and_numbered_by_repayment() -> None:
+    # Two repayments of one loan agree on every identifying field and on their long
+    # description.
+    raw = pl.read_parquet(OECD / "CRS.parquet")
+    loan = raw.filter(crs_id="2022000101", usd_received=0.5)
+    raw = pl.concat([raw, loan.with_columns(usd_received=pl.lit(0.9))])
+    revised = raw.with_columns(
+        usd_commitment=pl.when(pl.col("crs_id") == "2022000102")
+        .then(4.5)
+        .otherwise(pl.col("usd_commitment"))
+    )
+
+    ids = [
+        normalise_reflows(variant.lazy(), years=YEARS)
+        .filter(crs_id="2022000101")
+        .select("received_usd", "record_id")
+        .sort("received_usd")
+        .collect()
+        for variant in (raw, raw.reverse(), revised)
+    ]
+
+    assert ids[0].height == 2
+    assert ids[0]["record_id"].is_unique().all()
+    assert ids[1].equals(ids[0])
+    assert ids[2].equals(ids[0])
 
 
 def test_numbering_repeated_identities_only_gives_the_same_ids() -> None:
@@ -574,6 +701,9 @@ def test_run_normalise_writes_every_table_from_raw(
     assert set(core["year"]) == core_held
     crs = pl.read_parquet(table_path(tmp_path, "normalise", "crs"))
     assert set(crs["year"]) == crs_held
+    # The three repayment rows of 2023 are in every range, and the zero one is not.
+    reflows = pl.read_parquet(table_path(tmp_path, "normalise", "reflows"))
+    assert reflows.height == 3
     if recoveries:
         orgs = pl.read_parquet(table_path(tmp_path, "normalise", "orgs"))
         eib = orgs.filter(role="agency", source_name="European Investment Bank")

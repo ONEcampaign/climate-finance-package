@@ -19,7 +19,7 @@ from climate_finance.build.fetch import (
 )
 from climate_finance.build.normalise.aggregates import rebuild_aggregates
 from climate_finance.build.normalise.crdf import normalise_crdf
-from climate_finance.build.normalise.crs import normalise_crs
+from climate_finance.build.normalise.crs import normalise_crs, normalise_reflows
 from climate_finance.build.normalise.external import normalise_external, to_usd
 from climate_finance.build.normalise.ledgers import normalise_ledgers
 from climate_finance.build.normalise.orgs import org_names, resolve_orgs
@@ -39,10 +39,12 @@ def run_normalise(context: StageContext) -> StageOutput:
 
     Reads only those files, and of the CRS, each CRDF perspective and MULTI only
     the years `raw_manifest` records for it, which an offline fetch may have
-    narrowed. `btr` holds the BTR workbooks' Table III.1 rows with the DAC rate of
-    each row's currency and year and their amounts restated at it, and
-    `btr_workbooks` what was read from each workbook. Both are written only when
-    the build config names a BTR archive. `crdf` marks rows repeated across
+    narrowed. `reflows` holds the CRS records that report principal repaid or
+    interest paid, and `crs` those that report an amount. A record with both is in
+    both under one `record_id`. `btr` holds the BTR workbooks' Table III.1 rows
+    with the DAC rate of each row's currency and year and their amounts restated at
+    it, and `btr_workbooks` what was read from each workbook. Both are written only
+    when the build config names a BTR archive. `crdf` marks rows repeated across
     vintages (`repeat_of`) and gains child rows for the bilateral aggregate rows
     the bulk records rebuild (`parent_row_id`). `crdf_span` holds the recipient
     rows of the year before the first CRDF year, which the recipient file holds
@@ -97,6 +99,7 @@ def run_normalise(context: StageContext) -> StageOutput:
         "crdf": crdf,
         "crdf_span": crdf_span,
         "crs": crs,
+        "reflows": normalise_reflows(raw_crs, years=years["crs"]),
         "core_contributions": read_multisystem(raw / MULTISYSTEM_FILE).filter(
             pl.col("year").is_between(*years["multisystem"])
         ),
