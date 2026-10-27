@@ -1275,6 +1275,43 @@ def test_a_stale_copy_another_load_handles_first_is_left_to_it(
     assert [path.name for path in cache.iterdir()] == [f"climate-finance-{RELEASE}"]
 
 
+@pytest.mark.parametrize(
+    "read", [release_module.PACK_SHA256, "release.json", "commitments.parquet"]
+)
+def test_a_cached_copy_moved_away_mid_check_downloads_again(
+    tmp_path: Path,
+    published: tuple[ReleaseIndex, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    read: str,
+) -> None:
+    cache = tmp_path / "cache"
+    target = cf.load(cache_dir=cache).path
+    fetch = release_module._fetch
+    downloads = []
+
+    def counted(url: str, *, out_path: Path) -> str:
+        downloads.append(url)
+        return fetch(url, out_path=out_path)
+
+    def moving(original):
+        # Another load moves the copy aside after this one found the file.
+        def opened(self: Path, *args, **kwargs):
+            if self == target / read and not downloads:
+                target.rename(tmp_path / "moved")
+            return original(self, *args, **kwargs)
+
+        return opened
+
+    monkeypatch.setattr(release_module, "_fetch", counted)
+    monkeypatch.setattr(Path, "read_text", moving(Path.read_text))
+    monkeypatch.setattr(Path, "open", moving(Path.open))
+
+    loaded = cf.load(cache_dir=cache)
+
+    assert len(downloads) == 1
+    assert loaded.spending().table.height > 0
+
+
 def test_refresh_reads_an_index_with_fields_this_package_does_not_know(
     tmp_path: Path, published: tuple[ReleaseIndex, Path]
 ) -> None:

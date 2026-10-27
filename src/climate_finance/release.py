@@ -492,14 +492,20 @@ def load(
         raise InvalidInputError(
             f"release {name!r} would unpack to {target}, outside the cache {cache}"
         )
-    if target.is_dir() and _packed_sha256(target) != entry.sha256:
-        _discard(target, keep=entry.sha256)
-    # A copy from the entry's pack, cached or placed by a concurrent load.
-    if target.is_dir() and _packed_sha256(target) == entry.sha256:
+    # Another load may move or replace `target` at any step, so each pass reads the
+    # stamp afresh and every discard leaves a copy from the entry's pack in place.
+    while (stamp := _packed_sha256(target)) is not None or target.is_dir():
+        if stamp != entry.sha256:
+            _discard(target, keep=entry.sha256)
+            continue
+        try:
+            opened = target.stat().st_ino
+        except FileNotFoundError:
+            continue
         try:
             return _open(target, release=name)
         except ReleaseIntegrityError:
-            _discard(target, keep=None)
+            _discard(target, keep=entry.sha256, failed=opened)
     _download(entry, target=target)
     return _open(target, release=name)
 
@@ -507,13 +513,15 @@ def load(
 def _packed_sha256(target: Path) -> str | None:
     """The sha256 of the pack the cached release in `target` came from, if
     recorded."""
-    stamp = target / PACK_SHA256
-    return stamp.read_text().strip() if stamp.is_file() else None
+    try:
+        return (target / PACK_SHA256).read_text().strip()
+    except (FileNotFoundError, NotADirectoryError):  # no stamp, or no directory
+        return None
 
 
-def _discard(target: Path, *, keep: str | None) -> None:
+def _discard(target: Path, *, keep: str, failed: int | None = None) -> None:
     """Delete the cached release in `target`, unless it came from the pack of sha256
-    `keep`.
+    `keep` and is not the directory of inode `failed`, a copy that failed its check.
 
     The copy moves to a unique name beside `target` before it is deleted, so a
     concurrent load never deletes a copy it did not move. A copy from `keep`'s pack
@@ -524,7 +532,7 @@ def _discard(target: Path, *, keep: str | None) -> None:
         target.rename(aside)
     except FileNotFoundError:  # another load moved it first
         return
-    if keep is not None and _packed_sha256(aside) == keep:
+    if _packed_sha256(aside) == keep and aside.stat().st_ino != failed:
         with contextlib.suppress(OSError):
             aside.rename(target)
             return
@@ -540,8 +548,6 @@ def _open(path: Path, *, release: str | None = None) -> Release:
     `ReleaseFormatError` before manifest validation can reject those fields.
     """
     manifest_path = path / "release.json"
-    if not manifest_path.is_file():
-        raise ReleaseIntegrityError(f"{path} has no release.json")
     try:
         text = manifest_path.read_text()
         raw = json.loads(text)
@@ -553,6 +559,8 @@ def _open(path: Path, *, release: str | None = None) -> Release:
                 supported=DATA_FORMAT,
             )
         manifest = ReleaseManifest.model_validate_json(text)
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError) as error:
+        raise ReleaseIntegrityError(f"{path} has no release.json") from error
     except ValueError as error:  # bad JSON, bad fields or undecodable bytes
         raise ReleaseIntegrityError(f"{manifest_path} is malformed: {error}") from error
     if manifest.data_format not in FORMAT_TABLES:
@@ -569,9 +577,12 @@ def _open(path: Path, *, release: str | None = None) -> Release:
         problems.append(f"release.json names release {manifest.release!r}")
     for name, entry in manifest.tables.items():
         file = path / f"{name}.parquet"
-        if not file.is_file():
+        try:
+            actual = sha256_file(file)
+        except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
             problems.append(f"{name}: {file.name} is missing")
-        elif (actual := sha256_file(file)) != entry.sha256:
+            continue
+        if actual != entry.sha256:
             problems.append(f"{name}: sha256 {actual}, release.json has {entry.sha256}")
     if problems:
         raise ReleaseIntegrityError(
