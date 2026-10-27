@@ -175,7 +175,15 @@ def test_a_code_the_listings_lack_raises_with_close_codes(
 
 def test_listings_hold_the_entries_the_api_accepts() -> None:
     assert set(cf.flows.list()["name"]) == set(get_args(Flow.__value__))
-    assert cf.methods.list()["name"].to_list() == ["ONE", "OECD", "PROVIDER", "RANGE"]
+    assert cf.methods.list()["name"].to_list() == [
+        "ONE",
+        "OECD",
+        "PROVIDER",
+        "OXFAM_LOW",
+        "OXFAM_HIGH",
+        "RANGE",
+        "OXFAM",
+    ]
     germany = cf.providers.list().filter(code=5).row(0, named=True)
     assert germany == {"code": 5, "name": "Germany", "type": "DAC member"}
     assert cf.recipients.list().filter(code=248)["name"].to_list() == ["Kenya"]

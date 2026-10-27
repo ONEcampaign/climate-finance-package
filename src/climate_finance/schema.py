@@ -340,6 +340,8 @@ CRS = _table(
     finance_t=_code(nullable=True),
     commitment_usd=_usd(nullable=True),
     disbursement_usd=_usd(nullable=True),
+    # The CRS's grant equivalent, or for a grant (finance type 110 or 210) that
+    # has none, its disbursement.
     grant_equiv_usd=_usd(nullable=True),
     # Principal repaid and interest paid on a loan in the year, as the bulk CRS
     # publishes them (`usd_received`, `usd_interest`). Most records that carry one
@@ -1039,7 +1041,9 @@ DISBURSEMENTS = _table(
     # record_grant_equiv_usd * allocated_usd / record_disbursement_usd, so a record
     # split across commitments counts once. A record's allocated_usd sums to at most
     # record_disbursement_usd; the rest is excess that reaches no commitment. A
-    # grant equivalent is never negative: null stands for one the CRS lacks.
+    # grant equivalent is never negative. A grant without a CRS grant equivalent
+    # holds its disbursement (`normalise_crs`), so null stands for a loan or other
+    # non-grant record the CRS gives none, and for a fill, which has no CRS record.
     record_disbursement_usd=_usd(),
     record_grant_equiv_usd=_usd(nullable=True, minimum=0.0),
     inherited_rio_adaptation=_rio(),

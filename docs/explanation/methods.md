@@ -18,6 +18,8 @@ Where a provider publishes its climate share of face value, that share caps each
 
 `cf.methods.RANGE` runs the three together. For each row, `low` becomes the lowest of their `low` bounds, which count only disbursements on certain links, and `high` becomes the highest value any of them gives.
 
+`cf.methods.OXFAM_LOW` and `cf.methods.OXFAM_HIGH` follow Oxfam's Climate-Specific Net Assistance, and `cf.methods.OXFAM` runs the two together. [Oxfam's method](#oxfams-method) describes them.
+
 Development banks report a climate share (the climate components) for their projects. Rows from these banks use that share under every method and ignore the coefficients.
 
 `Method` takes any other coefficients. Calling `cf.methods.ONE.replace(significant=0.5)` returns a valid method, and `result.explain()` describes it in words.
@@ -143,6 +145,36 @@ for line in result.explain().splitlines():
 Coefficients of providers 701: Fixture report, footnote 4.
 Coefficients of providers 5: Fixture survey, p. 8.
 ```
+
+## Oxfam's method
+
+Oxfam's Climate-Specific Net Assistance counts climate finance between two bounds. `cf.methods.OXFAM_LOW` holds the low bound: significant markers at 30% of face value and principal markers at 85%, for every provider. `cf.methods.OXFAM_HIGH` holds the high bound: each provider's own coefficients, capped at 50% for significant markers and 100% for principal ones, and the caps where a provider states none. An activity significant for both objectives takes the provider's coefficient for such activities, else its significant coefficient without the cap, else 100%. Both bounds count each activity once under its higher marker, count development banks' climate components at their reported share, and count EU Institutions as a provider and the EIB as a channel, as Oxfam does.
+
+`OXFAM_HIGH` sets `coefficients="capped"`, which reads `provider_coefficients` as PROVIDER does and caps each coefficient at the method's own. A row whose coefficient the cap lowers counts as weighed at the method's coefficient, as a row with no provider coefficient does.
+
+```python
+for name in ("OXFAM_LOW", "OXFAM_HIGH"):
+    result = release.spending(
+        providers=["Germany", "Japan"],
+        years=range(2021, 2024),
+        method=name,
+        flow="grant_equivalent",
+        view="provider",
+    )
+    print(name, round(result.table["value"].sum() / 1e6, 1))
+```
+
+```output
+OXFAM_LOW 105.5
+OXFAM_HIGH 140.7
+```
+
+Three choices separate these figures from Oxfam's published ones. Oxfam values commitments at an estimated grant element, by provider, year and concessionality. Under `flow="grant_equivalent"` the package values disbursements at their own grant equivalent from the CRS, grants at face value, and a loan without one at 0, with its face value in `no_grant_equivalent`. Equity and other instruments that are neither grants nor loans count at their CRS grant equivalent, where Oxfam counts them at 0%. In the reproduction they hold USD 2.2bn to 2.6bn of 2024 climate finance after the coefficients. Oxfam attributes development bank and climate fund outflows to developed countries with the OECD's attribution shares, which the package does not reproduce. `view="provider"` counts each provider's core contributions times the agency's own climate share, as [Attribution to providers](#attribution-to-providers) describes. Oxfam's scope is the developed countries of the OECD's USD 100bn reports, which `providers` selects.
+
+The package follows two of Oxfam's rules for the high bound only in part. Each moves the 2024 high bound by under 1% in a reproduction of Oxfam's figures from the CRDF:
+
+- Oxfam gives a provider that assesses each activity case by case the caps, and an activity significant for both objectives 100%. The package gives it the default share it reports where one exists, so Australia's significant activities count at 30%, including those significant for both objectives. This lowers the 2024 high bound by 0.8%, 0.7% of it on activities significant for both.
+- Oxfam gives an agency its provider's coefficients. The package gives an agency that assesses each activity case by case, the AFD, FinDev Canada and Export Development Canada, the caps. This raises the 2024 high bound by 0.8%.
 
 ## Net flows
 

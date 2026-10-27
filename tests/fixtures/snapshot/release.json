@@ -4,7 +4,7 @@
   "package_version": "2.0.0.dev0",
   "tables": {
     "disbursements": {
-      "sha256": "85cb9e8947b30d86ac4524e0842baa3f6510e55acf2c392bf6f8bbb5f68219ec",
+      "sha256": "a0da0f1146fcb0ae8ab85f73c461851fac5fa094aea9ff193036262a40616b1e",
       "rows": 36
     },
     "untraced": {
@@ -64,7 +64,7 @@
       "rows": 17
     },
     "quality": {
-      "sha256": "0777e0afd612e4ebbd269a846dc45ec1229e396157905b7ba7287bfb5528f8c4",
+      "sha256": "3e8efbf82c10beef60e26606808aad39ce01daf1a5fa8484a463225d09f6c34f",
       "rows": 12
     },
     "btr_totals": {

@@ -90,11 +90,11 @@ def test_crs_nulls_a_negative_grant_equivalent_on_a_disbursement(
 ) -> None:
     # The CRS publishes corrections as negative grant equivalents. On a record that
     # disburses, one would give the record a negative value; on a record with only
-    # a grant equivalent, it stays.
+    # a grant equivalent, it stays. The record is a loan, which takes no face value.
+    corrected = pl.col("crs_id") == "2022000601"
     raw = pl.read_parquet(OECD / "CRS.parquet").with_columns(
-        usd_grant_equiv=pl.when(pl.col("crs_id") == "2022000601")
-        .then(-1.0)
-        .otherwise(pl.col("usd_grant_equiv"))
+        usd_grant_equiv=pl.when(corrected).then(-1.0).otherwise("usd_grant_equiv"),
+        finance_t=pl.when(corrected).then(421).otherwise("finance_t"),
     )
 
     with caplog.at_level("WARNING"):
@@ -103,6 +103,39 @@ def test_crs_nulls_a_negative_grant_equivalent_on_a_disbursement(
     assert _row(crs, crs_id="2022000601")["grant_equiv_usd"] is None
     assert _row(crs, crs_id="2021000555")["grant_equiv_usd"] == pytest.approx(-0.3e6)
     assert [record.args for record in caplog.records] == [(1,)]
+
+
+@pytest.mark.parametrize(
+    ("finance_t", "grant_equiv", "expected"),
+    [
+        # A standard grant and an interest subsidy without a grant equivalent take
+        # their disbursement, 3m.
+        (110, None, 3e6),
+        (210, None, 3e6),
+        # A grant keeps the CRS's grant equivalent.
+        (110, 2.0, 2e6),
+        # A grant's negative grant equivalent on a positive disbursement is a
+        # correction, nulled and then filled at face.
+        (110, -1.0, 3e6),
+        # A loan, and a record of no finance type, stay without one.
+        (421, None, None),
+        (None, None, None),
+    ],
+)
+def test_crs_gives_a_grant_without_a_grant_equivalent_its_face_value(
+    finance_t: int | None, grant_equiv: float | None, expected: float | None
+) -> None:
+    record = pl.col("crs_id") == "2022000601"
+    raw = pl.read_parquet(OECD / "CRS.parquet").with_columns(
+        finance_t=pl.when(record).then(finance_t).otherwise("finance_t"),
+        usd_grant_equiv=pl.when(record)
+        .then(pl.lit(grant_equiv, pl.Float64))
+        .otherwise("usd_grant_equiv"),
+    )
+
+    crs = normalise_crs(raw.lazy(), years=YEARS).collect()
+
+    assert _row(crs, crs_id="2022000601")["grant_equiv_usd"] == pytest.approx(expected)
 
 
 def test_crs_keeps_the_expected_start_and_completion_dates() -> None:

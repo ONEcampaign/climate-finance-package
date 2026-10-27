@@ -883,11 +883,52 @@ def test_agency_shares_stand_in_where_agency_spending_measures_none(
     )
 
 
-def test_grant_equivalent_gaps_stay_missing() -> None:
-    rows = SNAP.spending(flow="grant_equivalent").rows()
+@pytest.mark.parametrize(
+    ("record_id", "ratio"),
+    [
+        # Germany's records are grants, the first of which the CRS gives no grant
+        # equivalent, so the build gives it face value.
+        ("DEU-1-R0", 1.0),
+        ("DEU-1-R1", 1.0),
+        # A loan's grant equivalent is 0.6 of its disbursement.
+        ("JPN-1-R1", 0.6),
+        # A loan record without one, traced and untraced, and a bank-ledger fill.
+        ("JPN-1-R0", None),
+        ("FRA-UNLINKED", None),
+        (LEDGER_RECORD, None),
+    ],
+)
+def test_grant_equivalent_counts_a_record_without_one_in_its_own_column(
+    record_id: str, ratio: float | None
+) -> None:
+    face = SNAP.spending().rows(record_id=record_id)
+    rows = SNAP.spending(flow="grant_equivalent").rows(record_id=record_id)
 
-    assert rows["amount"].null_count() > 0
-    assert rows.filter(pl.col("amount").is_null())["value"].is_null().all()
+    assert rows["origin"].to_list() == face["origin"].to_list()
+    assert face["no_grant_equivalent"].to_list() == [0.0] * face.height
+    if ratio is None:
+        counted = rows.select("amount", "value", "low", "high", "untraced")
+        assert counted.sum().row(0) == (0.0,) * 5
+        assert rows["no_grant_equivalent"].to_list() == pytest.approx(
+            face["value"].to_list()
+        )
+    else:
+        assert rows["value"].to_list() == pytest.approx(
+            [ratio * value for value in face["value"]]
+        )
+        assert rows["no_grant_equivalent"].to_list() == [0.0] * rows.height
+
+
+def test_share_of_total_leaves_no_grant_equivalent_null() -> None:
+    result = SNAP.spending(flow="grant_equivalent")
+
+    assert result.table["no_grant_equivalent"].sum() > 0
+    assert result.share_of_total().table["no_grant_equivalent"].is_null().all()
+    assert (
+        result.share_of_total()
+        .rows()["no_grant_equivalent"]
+        .equals(result.rows()["no_grant_equivalent"])
+    )
 
 
 def test_oda_only_counts_commitments_of_the_oda_flow_category() -> None:
@@ -994,9 +1035,10 @@ def test_a_result_table_prints_names_first_and_bounds_last() -> None:
     rows = result.rows()
 
     assert result.table.columns[:4] == ["year", "provider", "recipient", "method"]
-    assert result.table.columns[-4:] == ["value", "low", "high", "untraced"]
+    bounds = ["value", "low", "high", "untraced", "no_grant_equivalent"]
+    assert result.table.columns[-5:] == bounds
     assert rows.columns[:4] == ["origin", "year", "record_id", "link_method"]
-    assert rows.columns[-4:] == ["value", "low", "high", "untraced"]
+    assert rows.columns[-5:] == bounds
     assert set(rows.columns) == set(result._rows.collect_schema().names())
 
 

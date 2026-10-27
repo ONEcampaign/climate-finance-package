@@ -552,9 +552,12 @@ def build_tables() -> dict[str, pl.DataFrame]:
             continue
         disbursed_share = 1.0 if row_id in FULLY_DISBURSED else DISBURSED_SHARE[status]
         allocated = face * disbursed_share / 3
+        # The CRS gives each commitment's first record no grant equivalent, and
+        # `normalise_crs` gives a grant's its face value, so only loans lack one.
+        flow_code = _flow_code(commitment)
         for index in range(3):
             record_id = f"{row_id}-R{index}"
-            grant_equiv = allocated * GRANT_EQUIV_RATIO[_flow_code(commitment)]
+            grant_equiv = allocated * GRANT_EQUIV_RATIO[flow_code]
             allocate(
                 commitment,
                 record_id=record_id,
@@ -562,7 +565,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
                 allocated=allocated,
                 reserved=allocated * (2 - index),
                 record_disbursement=allocated,
-                record_grant_equiv=grant_equiv if index else None,
+                record_grant_equiv=grant_equiv if index or flow_code == 11 else None,
                 link_method=next(
                     certain_methods
                     if record_id in CERTAIN_RECORDS

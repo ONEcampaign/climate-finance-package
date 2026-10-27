@@ -20,6 +20,8 @@ from climate_finance.catalogue import (
 from climate_finance.convert import Conversion
 from climate_finance.errors import InvalidInputError
 from climate_finance.methods import (
+    OXFAM,
+    OXFAM_CAVEAT,
     Method,
     MethodRange,
     describe,
@@ -50,7 +52,7 @@ from climate_finance.sums import ordered_sum
 
 AMOUNTS = (
     "amount", "adaptation", "mitigation", "cross_cutting", "unsplit", "value", "low",
-    "high", "untraced",
+    "high", "untraced", "no_grant_equivalent",
 )  # fmt: skip
 # Where each of `Result.rows()` comes from, as `query` describes.
 ORIGINS = (
@@ -114,11 +116,11 @@ class Result:
     spec names, and the bounds span the methods' shares.
 
     `table` starts `year`, `provider`, `recipient`, `method` and ends `value`, `low`,
-    `high`, `untraced`, so polars' truncated print shows them; `provider` and
-    `recipient` name the codes beside them, as do `provider`, `agency` and
-    `recipient` in `rows()`, which start `origin`, `year`, `record_id`,
-    `link_method`. A spec that names an agency keys `table` by `AGENCY_ROW_KEYS`,
-    with `agency` after `provider`.
+    `high`, `untraced`, `no_grant_equivalent`, so polars' truncated print shows
+    them; `provider` and `recipient` name the codes beside them, as do `provider`,
+    `agency` and `recipient` in `rows()`, which start `origin`, `year`,
+    `record_id`, `link_method`. A spec that names an agency keys `table` by
+    `AGENCY_ROW_KEYS`, with `agency` after `provider`.
     """
 
     def __init__(
@@ -203,7 +205,7 @@ class Result:
         provider = [
             label(method)
             for method in self.spec.methods
-            if method.coefficients == "provider"
+            if method.coefficients != "fixed"
         ]
         coefficients = None
         if provider:
@@ -255,9 +257,10 @@ class Result:
         flow code, so under `oda_only` the share is ODA climate finance over all
         flows. In the provider view, EU Institutions' total holds the same rows as
         their amounts under each method, at the same scaling. A key missing from
-        `total_flows` gives null shares. The rows and the modelled line keep their
-        amounts. The result's spec has `measure="share_of_total"`, so rerunning it
-        returns the same shares.
+        `total_flows` gives null shares. `no_grant_equivalent` is null, since it
+        holds face value and the grant-equivalent total leaves its records out.
+        The rows and the modelled line keep their amounts. The result's spec has
+        `measure="share_of_total"`, so rerunning it returns the same shares.
         """
         if self.spec.measure == "share_of_total":
             return self
@@ -386,7 +389,8 @@ def _bounds(frame: pl.LazyFrame) -> pl.LazyFrame:
 
 def _shares(table: pl.LazyFrame, totals: pl.LazyFrame) -> pl.LazyFrame:
     """`table` with every amount divided by the total of its key and method in
-    `totals`."""
+    `totals`, and `no_grant_equivalent` null: it holds face value, which a total of
+    grant equivalents does not contain."""
     return (
         table.join(
             totals,
@@ -396,7 +400,12 @@ def _shares(table: pl.LazyFrame, totals: pl.LazyFrame) -> pl.LazyFrame:
             validate="m:1",
             maintain_order="left",
         )
-        .with_columns(pl.col(name) / pl.col("total") for name in AMOUNTS)
+        .with_columns(
+            pl.col(name) / pl.col("total")
+            for name in AMOUNTS
+            if name != "no_grant_equivalent"
+        )
+        .with_columns(no_grant_equivalent=pl.lit(None, pl.Float64))
         .drop("total")
     )
 
@@ -576,7 +585,7 @@ def explain(
     lines = [f"Release {release}."]
     for method in methods:
         lines.append(describe(method))
-        if coefficients is not None and method.coefficients == "provider":
+        if coefficients is not None and method.coefficients != "fixed":
             lines.extend(
                 _coefficient_lines(
                     method, coefficients.filter(pl.col("method") == label(method))
@@ -587,6 +596,8 @@ def explain(
                 f"Channels {', '.join(map(str, channels))}: the climate share has no "
                 "split by objective, so their attributed value sits in unsplit."
             )
+    if any(method in OXFAM.methods for method in methods):
+        lines.append(OXFAM_CAVEAT)
     if len(methods) > 1:
         lines.append("low and high are the lowest and highest bound across methods.")
     if unmeasured:
@@ -602,7 +613,7 @@ def explain(
     lines.append(_FLOWS[spec.flow])
     if spec.flow in NET_FLOWS:
         lines.append(_REPAYMENTS)
-        if any(method.coefficients == "provider" for method in methods):
+        if any(method.coefficients != "fixed" for method in methods):
             lines.append(
                 "Under provider coefficients, a repayment weighs at the "
                 "coefficients of the year it is repaid, not of the year its loan "
@@ -852,8 +863,10 @@ _FLOWS = {
     "holds a disbursement range for commitments whose disbursements no source "
     "reports.",
     "grant_equivalent": "Flow: grant equivalent of disbursements, shared across the "
-    "commitments a record funds in proportion to the amount each receives; records "
-    "without one stay missing, and release.quality() reports coverage.",
+    "commitments a record funds in proportion to the amount each receives. A grant "
+    "the CRS gives no grant equivalent counts at face value. A loan or other record "
+    "without one counts 0 in value, low and high, and the no_grant_equivalent column "
+    "holds its climate value at face; release.quality() reports coverage.",
     "net_disbursements": "Flow: net disbursements, gross disbursements less the "
     "principal repaid on the loans whose disbursements the release counts.",
     "net_transfers": "Flow: net transfers, gross disbursements less the principal "
