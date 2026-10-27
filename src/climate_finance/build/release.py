@@ -52,7 +52,8 @@ import json
 import shutil
 import tarfile
 import tempfile
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -80,6 +81,8 @@ from climate_finance.build.errors import (
     GateFailedError,
     ReleaseInvariantError,
     StageInputMissingError,
+    SyntheticReleaseError,
+    UnpublishedSettingsError,
 )
 from climate_finance.build.fetch import (
     BTR_SOURCE,
@@ -104,6 +107,7 @@ from climate_finance.release import (
     SYNTHETIC_RELEASE,
     load,
     release_dirname,
+    unpack_release,
 )
 from climate_finance.schema import (
     BILATERAL,
@@ -145,7 +149,10 @@ from climate_finance.schema import (
 if TYPE_CHECKING:
     from collections.abc import Collection, Generator, Mapping, Sequence
 
+    from pydantic import JsonValue
+
     from climate_finance.build.stages import StageContext
+    from climate_finance.release import Release
 
 # `disbursement_profile` groups and the Bi_Multi codes each pools. `all` holds the
 # codes the recipient view counts.
@@ -1214,55 +1221,61 @@ def cut_release(
 
     The gates read the blind-sample labels from the config's review decisions, the
     sample from the directory `sample` and the previous release from `previous`, a
-    pack or a directory (`previous_baseline`; see `gate.run_gates`). Their rows,
-    keyed by gate name, the previous release's name and pack sha256 and any waiver
-    go into `release.json`. The pack is
-    `<out_dir>/climate-finance-<release>.tar.zst`.
+    pack or a directory (`previous_baseline`). Their rows, keyed by gate name, the
+    previous release's name and pack sha256 and any waiver go into `release.json`.
+    The pack is `<out_dir>/climate-finance-<release>.tar.zst`.
+
+    Fetching and network access are two choices. Unset, `offline` leaves network
+    access to the config's `offline`, and an earlier build of `release` that
+    fetched its sources has the fetch reuse them, so the sample drawn and labelled
+    on that build describes the sources the release is cut from, while Jev
+    answers questions that review decisions made since raise.
 
     Args:
         waive_precision: the reason to let the precision and human-audit gates
             fail, recorded as `precision_waiver` with `precision_gate_waived` true.
-        offline: refuse network access, or fetch afresh. Unset, the build runs
-            offline when the config sets `offline` or an earlier build of `release`
-            fetched its sources, so the sample drawn and labelled on that build
-            describes the sources the release is cut from.
+        offline: True refuses all network access, so fetch reuses the earlier
+            sources and Jev answers from its cache alone. False fetches afresh and
+            lets Jev answer.
 
     Raises:
         GateFailedError: when a gate fails and is not waived.
-        BuildError: when `release` is `SYNTHETIC_RELEASE`, the test fixture's name,
-            or `waive_precision` gives a blank reason.
+        SyntheticReleaseError: when `release` is `SYNTHETIC_RELEASE`, the test
+            fixture's name.
+        UnpublishedSettingsError: when the config sets a setting of
+            `config.PUBLISHED_SETTINGS` at another value, before anything builds.
+        BuildError: when `waive_precision` gives a blank reason, or `previous`
+            does not exist.
+        ReleaseIntegrityError: when `previous` is no release or pack.
     """
     if release == SYNTHETIC_RELEASE:
-        raise BuildError(_SYNTHETIC_NAME)
+        raise SyntheticReleaseError(_SYNTHETIC_NAME)
     if waive_precision is not None and not waive_precision.strip():
         raise BuildError("--waive-precision needs a reason, recorded in release.json")
     release_dir = out_dir / release
     build_config = load_config(config)
-    if offline is None:
-        offline = build_config.offline or (release_dir / "fetch").exists()
-    with ExitStack() as stack:
-        # Fixed before the build, so a pack that changes while it runs is not read.
-        baseline, previous_sha256 = (
-            (None, None)
-            if previous is None
-            else stack.enter_context(previous_baseline(previous))
-        )
+    check_published_settings(
+        {name: setting_value(build_config, name) for name in PUBLISHED_SETTINGS},
+        source=config,
+    )
+    if offline is not None:
+        build_config = build_config.model_copy(update={"offline": offline})
+    # Fixed before the build, so a pack that changes while it runs is not read.
+    with previous_baseline(previous) as baseline:
         build_package.build(
             release,
-            config=build_config.model_copy(update={"offline": offline}),
+            config=build_config,
             out_dir=out_dir,
+            reuse_sources=offline is None and (release_dir / "fetch").exists(),
         )
         results = gate.run_gates(
             release_dir,
             decisions=build_config.sources.review_decisions,
             sample=sample,
-            previous=baseline,
+            previous=None if baseline is None else baseline.release,
             first_release=first_release,
             drift_causes=build_config.drift_causes,
             waive_precision=waive_precision is not None,
-        )
-        previous_name = (
-            None if baseline is None else load(path=baseline).manifest.release
         )
     manifest_path = release_dir / "assemble" / "release.json"
     manifest = ReleaseManifest.model_validate_json(
@@ -1273,8 +1286,10 @@ def cut_release(
             "gates": gate.gate_results_json(results),
             "precision_gate_waived": waive_precision is not None,
             "precision_waiver": waive_precision,
-            "previous_release": previous_name,
-            "previous_pack_sha256": previous_sha256,
+            "previous_release": (
+                None if baseline is None else baseline.release.manifest.release
+            ),
+            "previous_pack_sha256": None if baseline is None else baseline.pack_sha256,
         }
     )
     manifest_path.write_text(gated.model_dump_json(indent=2) + "\n", encoding="utf-8")
@@ -1283,10 +1298,20 @@ def cut_release(
     )
 
 
+@dataclass(frozen=True)
+class Baseline:
+    """The previous release the drift gate compares with, opened and checked once,
+    and the sha256 of the pack whose bytes it holds, or None when no pack records
+    it."""
+
+    release: Release
+    pack_sha256: str | None
+
+
 @contextmanager
-def previous_baseline(previous: Path) -> Generator[tuple[Path, str | None]]:
-    """The release directory the drift gate compares with, for `previous`, and
-    the sha256 of the pack whose bytes it holds, or None when no pack records it.
+def previous_baseline(previous: Path | None) -> Generator[Baseline | None]:
+    """The previous release `cf-build gate` and `cf-build release` compare with,
+    for `previous`, or None without one.
 
     A pack, given itself or lying beside a build's directory as
     `<out_dir>/climate-finance-<release>.tar.zst`, is copied to a private
@@ -1297,31 +1322,44 @@ def previous_baseline(previous: Path) -> Generator[tuple[Path, str | None]]:
     records no pack, which `cf-build publish` refuses once a release is published.
 
     Raises:
-        BuildError: when the pack holds no release directory.
+        BuildError: when `previous` does not exist.
+        ReleaseIntegrityError: when `previous` is no release or pack
+            (`release.unpack_release`), or the release fails `cf.load`'s checks.
     """
-    pack = previous
+    if previous is None:
+        yield None
+        return
+    if not previous.exists():
+        raise BuildError(f"--previous {previous} does not exist")
+    pack: Path | None = previous
     if previous.is_dir():
         directory = gate.release_path(previous)
         if (stamp := directory / PACK_SHA256).exists():
-            yield directory, stamp.read_text(encoding="utf-8").strip()
+            sha256 = stamp.read_text(encoding="utf-8").strip()
+            yield Baseline(load(path=directory), sha256)
             return
-        name = load(path=directory).manifest.release
-        pack = previous.parent / f"{release_dirname(name)}.tar.zst"
-        if directory == previous or not pack.is_file():
-            yield directory, None
+        pack = None if directory == previous else _pack_beside(directory)
+        if pack is None:
+            yield Baseline(load(path=directory), None)
             return
     with tempfile.TemporaryDirectory(prefix="previous-") as scratch:
         copy = Path(scratch) / pack.name
         shutil.copyfile(pack, copy)
-        with (
-            pa.input_stream(str(copy), compression="zstd") as stream,
-            tarfile.open(fileobj=stream, mode="r|") as tar,
-        ):
-            tar.extractall(Path(scratch) / "unpacked", filter="data")
-        unpacked = list((Path(scratch) / "unpacked").iterdir())
-        if len(unpacked) != 1 or not (unpacked[0] / "release.json").is_file():
-            raise BuildError(f"{pack} holds no release directory")
-        yield unpacked[0], sha256_file(copy)
+        unpacked = unpack_release(copy, into=Path(scratch) / "unpacked", source=pack)
+        yield Baseline(load(path=unpacked), sha256_file(copy))
+
+
+def _pack_beside(assembled: Path) -> Path | None:
+    """The pack beside the build whose `assemble/` is `assembled`, named for the
+    release its `release.json` records, or None when there is none or the name
+    cannot be read, which opening `assembled` then reports."""
+    try:
+        text = (assembled / "release.json").read_text(encoding="utf-8")
+        name = ReleaseManifest.model_validate_json(text).release
+    except (OSError, ValueError):
+        return None
+    pack = assembled.parent.parent / f"{release_dirname(name)}.tar.zst"
+    return pack if pack.is_file() else None
 
 
 def packed_manifest(pack: Path) -> ReleaseManifest:
@@ -1372,6 +1410,27 @@ def unpublishable(manifest: ReleaseManifest) -> list[str]:
     return problems
 
 
+def check_published_settings(
+    settings: Mapping[str, JsonValue], *, source: Path
+) -> None:
+    """Refuse `settings`, keyed by dotted path as `release.json` records them, from
+    the config or pack `source`, unless they hold every setting of
+    `config.PUBLISHED_SETTINGS` at its value.
+
+    Raises:
+        UnpublishedSettingsError: naming each setting at another value.
+    """
+    if changed := [
+        f"{name} = {settings.get(name)!r}, where a release sets {value!r}"
+        for name, value in PUBLISHED_SETTINGS.items()
+        if settings.get(name) != value
+    ]:
+        raise UnpublishedSettingsError(
+            f"{source} holds settings a published release does not use: "
+            f"{'; '.join(changed)}"
+        )
+
+
 def publishable(pack: Path) -> ReleaseManifest:
     """The `release.json` inside the packed release at `pack`, once its gates
     and settings allow publishing it.
@@ -1380,21 +1439,16 @@ def publishable(pack: Path) -> ReleaseManifest:
         GateFailedError: when the pack's `release.json` records a gate row
             neither passed nor waived, a waiver without its reason, or no result
             for a gate of `gate.GATES` (`unpublishable`).
-        BuildError: when the pack holds a release named `SYNTHETIC_RELEASE`, or
-            records a setting of `config.PUBLISHED_SETTINGS` at another value.
+        SyntheticReleaseError: when the pack holds a release named
+            `SYNTHETIC_RELEASE`.
+        UnpublishedSettingsError: when the pack records a setting of
+            `config.PUBLISHED_SETTINGS` at another value
+            (`check_published_settings`).
     """
     manifest = packed_manifest(pack)
     if manifest.release == SYNTHETIC_RELEASE:
-        raise BuildError(_SYNTHETIC_NAME)
+        raise SyntheticReleaseError(_SYNTHETIC_NAME)
     if problems := unpublishable(manifest):
         raise GateFailedError(problems)
-    if changed := [
-        f"{name} = {manifest.settings.get(name)!r}, where a release sets {value!r}"
-        for name, value in PUBLISHED_SETTINGS.items()
-        if manifest.settings.get(name) != value
-    ]:
-        raise BuildError(
-            f"{pack} was built with settings a published release does not use: "
-            f"{'; '.join(changed)}"
-        )
+    check_published_settings(manifest.settings, source=pack)
     return manifest

@@ -35,7 +35,7 @@ Cutting a release requires a source checkout with the `build` extra, the reposit
 
    The command prints every row, and without `--report` exits with status 1 when a row fails. Each precision row shows the number of labels read and the sequential rule's verdict: `pass`, `fail`, or `continue`. Label the next batch for every provider marked `continue`. A `fail` means the sample puts that provider's precision below the threshold, which blocks the release unless waived with `--waive-precision`.
 
-5. Cut the release. `release` builds, runs the gates, and packs the archive, stopping with `GateFailedError` if any gate fails. The build reads the review decisions, which hold the sample's labels, so `release` runs every stage. It runs offline when an earlier build of the release fetched its sources, so the release comes from the sources the sample was drawn on. `--no-offline` fetches afresh, and a source that changed makes the sample stale.
+5. Cut the release. `release` builds, runs the gates, and packs the archive, stopping with `GateFailedError` if any gate fails. The build reads the review decisions, which hold the sample's labels, so `release` runs every stage. When an earlier build of the release fetched its sources, the build reuses them, so the release comes from the sources the sample was drawn on, and Jev answers the questions the new labels raise. `--no-offline` fetches afresh, and a source that changed makes the sample stale. `--offline` refuses all network access, Jev included.
 
    ```bash
    cf-build release 2026a --config build.toml --out-dir releases --sample sample --previous releases/2025a

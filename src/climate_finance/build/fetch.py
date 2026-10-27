@@ -1,23 +1,24 @@
 """The fetch stage: every source into the build's raw directory, and `raw_manifest`.
 
-Fetch owns every network call of the build. It writes each source to its place in
-the raw layout and records one `raw_manifest` row per file, with its sha256, and
-for the CRS, the CRDF and MULTI the years asked (`resolve_years`) and the years the
-file holds of them (`held_in`). Every later stage reads the years asked that the
-file holds, through `fetched_years`. Each bank ledger file records the ledger years
-too, which later stages read through `ledger_years`. The raw layout sits in the
-fetch stage's directory as `<release_dir>/fetch/raw/`, so the raw files and the
-manifest that records them replace the previous ones in one directory swap. Online,
-fetch downloads into `<release_dir>/raw.partial/`, which `seal_fetch` moves into the new
-fetch directory, so a fetch that fails at any point leaves the previous files and
-manifest in place. Offline, it makes no network call. It checks that the previous fetch
-ran under the configured `SETTINGS`, other than the years, and that `raw/` holds exactly
-the files the previous `raw_manifest` records, each with its recorded sha256. It
-resolves the configured years against the years the previous fetch asked for, which must
-cover them, and returns the manifest with the resolved years asked and the held years as
-recorded, since the files are the bytes the online fetch checked. An offline fetch of
-unchanged settings therefore writes the `stage.json` the previous fetch wrote, and one
-of narrower years narrows every later stage to them.
+Fetch owns every network call of the build. It writes each source to its place in the
+raw layout and records one `raw_manifest` row per file, with its sha256, and for the
+CRS, the CRDF and MULTI the years asked (`resolve_years`) and the years the file holds
+of them (`held_in`). Every later stage reads the years asked that the file holds,
+through `fetched_years`. Each bank ledger file records the ledger years too, which later
+stages read through `ledger_years`. The raw layout sits in the fetch stage's directory
+as `<release_dir>/fetch/raw/`, so the raw files and the manifest that records them
+replace the previous ones in one directory swap. Online, fetch downloads into
+`<release_dir>/raw.partial/`, which `seal_fetch` moves into the new fetch directory, so
+a fetch that fails at any point leaves the previous files and manifest in place. When
+`StageContext.reuse_sources` is set, as an offline build sets it, fetch makes no
+network call. It checks that the previous fetch ran under the configured `SETTINGS`,
+other than the years, and that `raw/` holds exactly the files the previous
+`raw_manifest` records, each with its recorded sha256. It resolves the configured years
+against the years the previous fetch asked for, which must cover them, and returns the
+manifest with the resolved years asked and the held years as recorded, since the files
+are the bytes the online fetch checked. An offline fetch of unchanged settings therefore
+writes the `stage.json` the previous fetch wrote, and one of narrower years narrows
+every later stage to them.
 """
 
 from __future__ import annotations
@@ -141,12 +142,12 @@ def run_fetch(context: StageContext) -> StageOutput:
         SourceUnavailableError: when a source cannot be fetched, including a bulk
             CRS download that Cloudflare challenges (the message carries the
             `register_bulk_file` call for a browser download); or, under
-            `context.offline`, when there is no earlier `raw_manifest` or `raw/`
+            `context.reuse_sources`, when there is no earlier `raw_manifest` or `raw/`
             does not match it, or the earlier fetch ran under other `SETTINGS`,
             or the years it asked for do not cover the configured ones, or a raw
             file holds none of them.
     """
-    if context.offline:
+    if context.reuse_sources:
         try:
             recorded = context.read("fetch", RAW_MANIFEST.name).collect()
         except StageInputMissingError as error:
@@ -187,7 +188,7 @@ def seal_fetch(
     symbolic link as itself, so the current fetch directory stays whole until the
     new one replaces it.
     """
-    if context.offline:
+    if context.reuse_sources:
         shutil.copytree(
             context.raw_dir,
             out_dir / RAW,

@@ -205,12 +205,15 @@ def run_stages(
     config: BuildConfig,
     stages: Collection[str] | None = None,
     offline: bool = False,
+    reuse_sources: bool = False,
 ) -> BuildManifest:
     """Run the selected stages of `registry` in registry order.
 
     `offline=True` sets the config's `offline`, which stages and `release.json`
-    read. The stages share one Jev client, made when a stage first asks Jev, so
-    the cost cap holds across the build.
+    read. `reuse_sources=True`, implied by `offline`, has fetch reuse the sources
+    an earlier fetch recorded, while Jev and the embedder may still go online. The
+    stages share one Jev client, made when a stage first asks Jev, so the cost cap
+    holds across the build.
 
     Raises:
         BuildError: when `stages` names a stage the registry lacks.
@@ -240,6 +243,7 @@ def run_stages(
             release_dir=release_dir,
             config=config,
             offline=config.offline,
+            reuse_sources=reuse_sources or config.offline,
             provenance=provenance,
             jev_client=jev_client,
         )
@@ -260,11 +264,14 @@ def build(
     out_dir: Path = Path("releases"),
     stages: Sequence[Stage] | None = None,
     offline: bool = False,
+    reuse_sources: bool = False,
 ) -> BuildManifest:
     """Build `release` into `<out_dir>/<release>/<stage>/`.
 
     `stages` runs a subset, reading earlier stages' tables from disk. `offline=True`
     (or `offline = true` in the config) refuses network access.
+    `reuse_sources=True` has fetch reuse the sources an earlier fetch recorded and
+    leaves network access to `offline`, so Jev can answer new questions.
 
     Raises:
         InvalidInputError: when `release` is not one safe path segment
@@ -279,6 +286,7 @@ def build(
         config=build_config,
         stages=None if stages is None else [Stage(stage) for stage in stages],
         offline=offline,
+        reuse_sources=reuse_sources,
     )
 
 

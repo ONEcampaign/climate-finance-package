@@ -20,22 +20,38 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+import httpx
 import polars as pl
 import pyarrow as pa
 import pytest
 from make_fixture import FIXTURE_DIR
+from normalised import IATI_PUBLISHERS, record_fetch, write_raw
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
 import climate_finance as cf
+import climate_finance.build
 from climate_finance import release as release_module
-from climate_finance.build import gate, publish, release
+from climate_finance.build import fetch, gate, publish, release
 from climate_finance.build.cli import TRACEBACK_VAR, app
 from climate_finance.build.config import PUBLISHED_SETTINGS, BuildConfig, load_config
-from climate_finance.build.errors import BuildError, GateFailedError
+from climate_finance.build.errors import (
+    BuildError,
+    GateFailedError,
+    SyntheticReleaseError,
+    UnpublishedSettingsError,
+)
 from climate_finance.build.fetch import BTR_SOURCE
+from climate_finance.build.jev_client import API_KEY_ENV, JevClient
 from climate_finance.build.measure import PROVIDERS_TOML
 from climate_finance.build.provenance import setting_value
+from climate_finance.build.stages import (
+    REGISTRY,
+    Stage,
+    StageContext,
+    StageDef,
+    raw_dir,
+)
 from climate_finance.errors import (
     ReleaseIntegrityError,
     SourceUnavailableError,
@@ -46,7 +62,9 @@ from climate_finance.release import IndexEntry, ReleaseIndex
 from climate_finance.schema import (
     BTR_WORKBOOKS,
     DATA_FORMAT,
+    Column,
     ReleaseManifest,
+    TableSchema,
     sha256_file,
 )
 
@@ -54,6 +72,20 @@ from climate_finance.schema import (
 RELEASE = "2026a"
 PACK = f"climate-finance-{RELEASE}.tar.zst"
 BUILD_TOML = Path(__file__).parent / "fixtures" / "build.toml"
+
+
+def release_toml(directory: Path) -> Path:
+    """The fixture's `build.toml` in `directory` with the review stage and Jev
+    flags on, so it holds `PUBLISHED_SETTINGS` and `cut_release` takes it. Relative
+    paths in it resolve against `directory`."""
+    path = directory / "build.toml"
+    path.write_text(
+        BUILD_TOML.read_text(encoding="utf-8").replace(
+            "review = false", "review = true\njev_flags = true"
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def built_release(release_dir: Path, *, sources: tuple[str, ...] = ("crs",)) -> Path:
@@ -418,9 +450,11 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
 ) -> None:
     waive = waiver is not None
     calls = []
-    config = Path(shutil.copy(BUILD_TOML, tmp_path / "build.toml"))
+    config = release_toml(tmp_path)
 
-    def fake_build(name: str, *, config: BuildConfig, out_dir: Path) -> None:
+    def fake_build(
+        name: str, *, config: BuildConfig, out_dir: Path, reuse_sources: bool
+    ) -> None:
         built_release(out_dir / name)
 
     def fake_gates(
@@ -428,12 +462,13 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
         *,
         decisions: Path,
         sample: Path | None,
-        previous: Path | None,
+        previous: cf.Release | None,
         first_release: bool,
         drift_causes: object,
         waive_precision: bool,
     ) -> pl.DataFrame:
-        calls.append((release_dir, decisions, sample, previous, waive_precision))
+        assert previous is not None
+        calls.append((release_dir, decisions, sample, previous.path, waive_precision))
         return pl.DataFrame({"gate": ["precision", "drift"], "passed": [waive, True]})
 
     monkeypatch.setattr(release.build_package, "build", fake_build)
@@ -477,11 +512,14 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
 @pytest.mark.parametrize(
     ("configured", "fetched", "offline", "expected"),
     [
-        (False, False, None, False),
-        (False, True, None, True),
-        (True, False, None, True),
-        (False, True, False, False),
-        (True, False, False, False),
+        # (config.offline, reuse_sources) the build receives.
+        (False, False, None, (False, False)),
+        (False, True, None, (False, True)),
+        (True, False, None, (True, False)),
+        (True, True, None, (True, True)),
+        (False, True, False, (False, False)),
+        (True, False, False, (False, False)),
+        (False, True, True, (True, False)),
     ],
 )
 def test_cut_release_reuses_the_sources_an_earlier_build_fetched(
@@ -490,11 +528,11 @@ def test_cut_release_reuses_the_sources_an_earlier_build_fetched(
     configured: bool,
     fetched: bool,
     offline: bool | None,
-    expected: bool,
+    expected: tuple[bool, bool],
 ) -> None:
-    config = tmp_path / "build.toml"
+    config = release_toml(tmp_path)
     config.write_text(
-        BUILD_TOML.read_text(encoding="utf-8").replace(
+        config.read_text(encoding="utf-8").replace(
             "offline = false", f"offline = {str(configured).lower()}"
         ),
         encoding="utf-8",
@@ -503,8 +541,10 @@ def test_cut_release_reuses_the_sources_an_earlier_build_fetched(
         (tmp_path / RELEASE / "fetch").mkdir(parents=True)
     builds = []
 
-    def fake_build(name: str, *, config: BuildConfig, out_dir: Path) -> None:
-        builds.append(config.offline)
+    def fake_build(
+        name: str, *, config: BuildConfig, out_dir: Path, reuse_sources: bool
+    ) -> None:
+        builds.append((config.offline, reuse_sources))
         raise BuildError("built")
 
     monkeypatch.setattr(release.build_package, "build", fake_build)
@@ -512,6 +552,93 @@ def test_cut_release_reuses_the_sources_an_earlier_build_fetched(
     with pytest.raises(BuildError, match="built"):
         release.cut_release(RELEASE, config=config, out_dir=tmp_path, offline=offline)
     assert builds == [expected]
+
+
+def test_a_rerun_cut_reuses_the_fetched_sources_and_asks_jev_new_questions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A build fetched its sources and the sample was labelled since, so the link
+    # stage asks Jev a question its cache does not hold.
+    out_dir = tmp_path / "out"
+    config = load_config(release_toml(tmp_path))
+    config = config.model_copy(
+        update={
+            "sources": config.sources.model_copy(
+                update={
+                    "crs_file": None,
+                    "iati_publishers": IATI_PUBLISHERS,
+                    "btr_archive": None,
+                }
+            )
+        }
+    )
+    record_fetch(
+        out_dir / RELEASE, write_raw(raw_dir(out_dir / RELEASE)), config=config
+    )
+    monkeypatch.setattr(fetch, "new_client", pytest.fail)
+    sent: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "model": config.jev.model,
+                "answers": {"sibling": {"type": "noul", "noul": 0.5}},
+                "usage": {"input_tokens": 10, "output_tokens": 1},
+            },
+        )
+
+    def fake_jev(config: BuildConfig, *, offline: bool) -> JevClient:
+        return JevClient(
+            model=config.jev.model,
+            cost_cap_usd=1.0,
+            cache_dir=tmp_path / "jev-cache",
+            offline=offline,
+            transport=httpx.MockTransport(answer),
+        )
+
+    def link(context: StageContext) -> dict[str, pl.DataFrame]:
+        context.read(Stage.FETCH, "raw_manifest")
+        context.jev.score([{"inputs": {"pair": "new"}, "questions": {}}])
+        return {"numbers": pl.DataFrame({"key": ["a"], "value": [1.0]})}
+
+    [fetch_stage] = (stage for stage in REGISTRY if stage.name == Stage.FETCH)
+    numbers = TableSchema(
+        name="numbers",
+        columns={"key": Column(pl.String()), "value": Column(pl.Float64())},
+        sort_key=("key",),
+    )
+    monkeypatch.setenv(API_KEY_ENV, "key")
+    monkeypatch.setattr(release, "load_config", lambda path: config)
+    monkeypatch.setattr(climate_finance.build, "make_jev_client", fake_jev)
+    monkeypatch.setattr(
+        climate_finance.build,
+        "REGISTRY",
+        (fetch_stage, StageDef(name="link", run=link, tables={"numbers": numbers})),
+    )
+    monkeypatch.setattr(gate, "run_gates", _stop)
+
+    with pytest.raises(BuildError, match="gated"):
+        release.cut_release(RELEASE, config=tmp_path / "build.toml", out_dir=out_dir)
+    assert len(sent) == 1
+
+
+def _stop(release_dir: Path, **options: object) -> pl.DataFrame:
+    raise BuildError("gated")
+
+
+def test_cut_release_refuses_a_config_a_published_release_does_not_use(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(release.build_package, "build", pytest.fail)
+
+    with pytest.raises(UnpublishedSettingsError):
+        release.cut_release(
+            RELEASE,
+            config=Path(shutil.copy(BUILD_TOML, tmp_path / "build.toml")),
+            out_dir=tmp_path,
+        )
 
 
 def test_a_failed_gate_stops_cut_release_before_the_pack(
@@ -523,16 +650,12 @@ def test_a_failed_gate_stops_cut_release_before_the_pack(
     monkeypatch.setattr(
         release.build_package,
         "build",
-        lambda name, *, config, out_dir: built_release(out_dir / name),
+        lambda name, *, config, out_dir, reuse_sources: built_release(out_dir / name),
     )
     monkeypatch.setattr(gate, "run_gates", failed_gates)
 
     with pytest.raises(GateFailedError, match="precision"):
-        release.cut_release(
-            RELEASE,
-            config=Path(shutil.copy(BUILD_TOML, tmp_path / "build.toml")),
-            out_dir=tmp_path,
-        )
+        release.cut_release(RELEASE, config=release_toml(tmp_path), out_dir=tmp_path)
     assert not (tmp_path / PACK).exists()
 
 
@@ -629,7 +752,7 @@ def test_a_pack_built_with_other_settings_than_a_release_is_not_published(
     )
     github = FakeGitHub()
 
-    with pytest.raises(BuildError, match=next(iter(settings))):
+    with pytest.raises(UnpublishedSettingsError):
         publish.publish_release(pack, gh=github)
     assert github.calls == []
 
@@ -660,11 +783,11 @@ def test_only_a_published_name_is_cut_or_published(
     monkeypatch.setattr(release.build_package, "build", pytest.fail)
     github = FakeGitHub()
 
-    refused = "'fixture' is reserved" if name == "fixture" else "not a published name"
-    with pytest.raises(BuildError, match=refused):
+    refused = SyntheticReleaseError if name == "fixture" else BuildError
+    with pytest.raises(refused):
         publish.publish_release(pack, gh=github)
     if name == "fixture":
-        with pytest.raises(BuildError, match=refused):
+        with pytest.raises(SyntheticReleaseError):
             release.cut_release(name, config=BUILD_TOML, out_dir=tmp_path)
     assert github.calls == []
 
@@ -1089,8 +1212,11 @@ def _double_climate(release_dir: Path) -> None:
     )
 
 
-def _climate(directory: Path) -> float:
-    quality = cf.load(path=directory).table("quality")
+def _climate(opened: Path | cf.Release) -> float:
+    """The climate total of a release, given opened or as its directory."""
+    if isinstance(opened, Path):
+        opened = cf.load(path=opened)
+    quality = opened.table("quality")
     return quality.select(pl.col("climate_usd").sum()).collect().item()
 
 
@@ -1098,7 +1224,7 @@ def _climate(directory: Path) -> float:
     "copy", ["pack", "build-beside-its-pack", "downloaded", "bare"]
 )
 def test_the_drift_baseline_holds_the_bytes_of_the_pack_it_records(
-    tmp_path: Path, copy: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, copy: str
 ) -> None:
     previous = built_release(tmp_path / "old" / RELEASE)
     pack = release.pack_release(previous, out_path=tmp_path / "old" / PACK)
@@ -1119,11 +1245,108 @@ def test_the_drift_baseline_holds_the_bytes_of_the_pack_it_records(
         pack.unlink()
         given, expected = previous, (None, rebuilt)
 
-    with release.previous_baseline(given) as (baseline, sha256):
+    opened = _count_opens(monkeypatch)
+
+    with release.previous_baseline(given) as baseline:
+        assert baseline is not None
         if pack.exists():
             # The baseline was fixed on entry, so the pack may change now.
             pack.write_bytes(b"replaced")
-        assert (sha256, _climate(baseline)) == pytest.approx(expected)
+        assert len(opened) == 1
+        assert (baseline.pack_sha256, _climate(baseline.release)) == pytest.approx(
+            expected
+        )
+
+
+def _count_opens(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """The release directories `cf.load` opens and checks, in order."""
+    opened: list[Path] = []
+    real = release_module._open
+
+    def counted(path: Path, **options: Any) -> cf.Release:
+        opened.append(path)
+        return real(path, **options)
+
+    monkeypatch.setattr(release_module, "_open", counted)
+    return opened
+
+
+def test_gate_and_release_compare_with_the_bytes_of_the_previous_pack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    previous = built_release(tmp_path / "old" / RELEASE)
+    pack = release.pack_release(previous, out_path=tmp_path / "old" / PACK)
+    packed = _climate(previous / "assemble")
+    _double_climate(previous)
+    seen: list[tuple[str, float]] = []
+
+    def fake_gates(release_dir: Path, **options: Any) -> pl.DataFrame:
+        before = options["previous"]
+        seen.append((before.manifest.release, _climate(before)))
+        return pl.DataFrame(
+            {
+                "gate": ["drift"],
+                "subject": [None],
+                "passed": [True],
+                "waived": [False],
+                "detail": ["compared"],
+            }
+        )
+
+    monkeypatch.setattr(gate, "run_gates", fake_gates)
+    monkeypatch.setattr(
+        release.build_package,
+        "build",
+        lambda name, *, config, out_dir, reuse_sources: built_release(out_dir / name),
+    )
+    opened = _count_opens(monkeypatch)
+    config = str(release_toml(tmp_path))
+
+    for given in (pack, previous):
+        gated_run = CliRunner().invoke(
+            app,
+            ["gate", str(previous), "--config", config, "--previous", str(given)],
+        )
+        assert gated_run.exit_code == 0, gated_run.output
+    cut = CliRunner().invoke(
+        app,
+        [
+            *("release", RELEASE, "--config", config),
+            *("--out-dir", str(tmp_path / "new"), "--previous", str(pack)),
+        ],
+    )
+
+    assert cut.exit_code == 0, cut.output
+    assert seen == [(RELEASE, pytest.approx(packed))] * 3
+    assert len(opened) == 3
+
+
+@pytest.mark.parametrize("command", ["gate", "release"])
+@pytest.mark.parametrize("given", ["missing", "not-a-pack"])
+def test_a_previous_release_that_cannot_be_read_is_refused_in_one_line(
+    tmp_path: Path, command: str, given: str
+) -> None:
+    previous = tmp_path / "previous.tar.zst"
+    if given == "not-a-pack":
+        previous.write_text("not a pack", encoding="utf-8")
+    target = str(tmp_path / RELEASE) if command == "gate" else RELEASE
+    options = ["--out-dir", str(tmp_path)] if command == "release" else []
+
+    result = CliRunner().invoke(
+        app,
+        [
+            *(command, target, "--config", str(release_toml(tmp_path))),
+            *(*options, "--previous", str(previous)),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    [line] = [line for line in result.output.splitlines() if str(previous) in line]
+    if given == "missing":
+        assert line.startswith(f"BuildError: --previous {previous} does not exist")
+    else:
+        assert line.startswith("ReleaseIntegrityError: ")
 
 
 @pytest.fixture
