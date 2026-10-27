@@ -365,8 +365,11 @@ def _warn_absent_providers(release: Release, *, spec: Spec) -> None:
     Bi_Multi codes the view leaves out, such as an agency's own outflows (code 4) in
     the provider view, or a private donor's (code 6) in either view. The EIB's own
     rows leave the provider view under methods that count EU Institutions as a
-    provider. Recipients and `oda_only` narrow a query
-    without a warning, since a provider may give nothing to a recipient.
+    provider. In the provider view a provider's core contributions count only where
+    they survive the share join of `_attributed_rows` under one of the spec's
+    methods, so contributions to channels with no climate share in those years give
+    no rows and say so. Recipients and `oda_only` narrow a query without a warning,
+    since a provider may give nothing to a recipient.
     """
     if spec.providers is None:
         return
@@ -388,16 +391,27 @@ def _warn_absent_providers(release: Release, *, spec: Spec) -> None:
             .filter(pl.col("basis").is_in(bases))
             .select(columns)
         )
+    contributors: set[int] = set()
     if spec.view == "provider":
-        rows.append(
-            release.table("core_contributions")
-            .filter(pl.col("flow") == _gross(spec.flow))
-            .select(
-                "provider_code",
-                agency_code=pl.lit(None, pl.Int32),
-                bi_multi=pl.lit(CORE_CONTRIBUTION, pl.Int8),
-                year="year",
+        rows.extend(
+            _attributed_rows(release, flow=_gross(spec.flow), method=method).select(
+                columns
             )
+            for method in spec.methods
+        )
+        # A contribution carries no agency, so only a provider target has any.
+        provider_codes = tuple(t for t in spec.providers if isinstance(t, int))
+        contributors = set(
+            release.table("core_contributions")
+            .filter(
+                pl.col("flow") == _gross(spec.flow),
+                *_conditions(
+                    providers=provider_codes, recipients=None, years=spec.years
+                ),
+            )
+            .select("provider_code")
+            .unique()
+            .collect()["provider_code"]
         )
     held = (
         pl.concat(rows, how="vertical_relaxed")
@@ -417,7 +431,12 @@ def _warn_absent_providers(release: Release, *, spec: Spec) -> None:
     for target in spec.providers:
         name = name_of(target, kind="providers")
         codes = set(held.filter(provider_rows((target,)))["bi_multi"])
-        if not codes:
+        if not codes & counted and target in contributors:
+            absent.append(
+                f"{name}, whose core contributions go to channels with no climate "
+                "share in those years"
+            )
+        elif not codes:
             years = f" in {year_runs(spec.years)}" if spec.years else ""
             held_text = (
                 "disbursements or repayments" if spec.flow in NET_FLOWS else table

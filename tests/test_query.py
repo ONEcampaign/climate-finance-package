@@ -515,6 +515,41 @@ def test_spending_help_names_every_flow() -> None:
         assert f'"{flow}"' in (Release.spending.__doc__ or "")
 
 
+def _brazil_gives_to_a_channel_without_a_share(frame: pl.DataFrame) -> pl.DataFrame:
+    # Channel 40000 holds no agency share, so the contribution attributes nothing.
+    gift = pl.DataFrame(
+        {
+            "provider_code": [431],
+            "channel_code": [40000],
+            "year": [2021],
+            "flow": ["disbursements"],
+            "contribution_usd": [5e6],
+        },
+        schema=frame.schema,
+    )
+    return pl.concat([frame, gift])
+
+
+def test_a_provider_whose_contributions_attribute_nothing_warns_why(
+    tmp_path: Path,
+) -> None:
+    release = cf.load(
+        path=copy_release(
+            tmp_path / "release",
+            edits={"core_contributions": _brazil_gives_to_a_channel_without_a_share},
+        )
+    )
+
+    with pytest.warns(
+        CoverageWarning,
+        match="Brazil, whose core contributions go to channels with no climate "
+        "share in those years$",
+    ):
+        result = release.spending(providers="Brazil", view="provider", years=2021)
+
+    assert result.table.is_empty()
+
+
 def _without_norways_2023_disbursements(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.filter((pl.col("provider_code") != 8) | (pl.col("year") != 2023))
 
