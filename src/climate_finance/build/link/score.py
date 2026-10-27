@@ -22,7 +22,10 @@ two lines to one recipient in a year, a new line of that recipient continues one
 them and nothing says which. Those pairs are `unlabelled` and sit outside both
 training and measurement. Canada also tells lines apart by purpose, so a Canadian
 disbursement continues the commitments of its own project, recipient and purpose
-where there are any (see `purpose_lines`). Where a donor changes a project's number
+where there are any (see `purpose_lines`). Truth, like the candidates, holds one
+pair per disbursement and purpose-split line (`keys.purpose_units`), so the
+classifier trains, is measured and links on lines, and the line's unit follows
+from the disbursement's purpose. Where a donor changes a project's number
 or agency and then issues a new crs id, the new line continues what the records that
 bridge the change continue, and at the Adaptation Fund, which leaves no bridge, what
 its title continues (see `carried_continuations`).
@@ -96,6 +99,7 @@ from climate_finance.build.link.keys import (
     floor_loaded,
     links_frame,
     partner_recipient,
+    purpose_units,
     separator_free_pn,
 )
 from climate_finance.build.link.levels import (
@@ -384,7 +388,10 @@ def id_truth(
     continues what its own project's earlier records continue, and at
     `RENUMBERED_DONORS` what its title continues (see `carried_continuations`).
     A `PURPOSE_LINE_DONORS` unit that continues commitments of its own project,
-    recipient and purpose continues those alone (see `purpose_lines`).
+    recipient and purpose continues those alone (see `purpose_lines`). A
+    disbursement holds one pair per purpose-split line, with the unit
+    `keys.purpose_units` picks, and that pair is ambiguous only where every pair
+    of the line was.
 
     Args:
         crs: the CRS records the units sum, for their titles.
@@ -395,16 +402,14 @@ def id_truth(
     Returns:
         left_id, right_id, donor_code and ambiguous, sorted by pair.
     """
+    as_filed = units
     units = _with_lines(units)
     persistent = id_practice.filter(id_class="id_persistent").select(
         "donor_code", "agency_code", "period"
     )
+    reached = links.filter(task="crdf_crs").select(unit_id="right_id")
     commitments = (
-        units.join(
-            links.filter(task="crdf_crs").select(unit_id="right_id"),
-            on="unit_id",
-            how="semi",
-        )
+        units.join(reached, on="unit_id", how="semi")
         .drop_nulls("crs_id")
         .with_columns(period=period_of(pl.col("year")))
         .join(persistent, on=["donor_code", "agency_code", "period"], how="semi")
@@ -504,10 +509,17 @@ def id_truth(
         later=disbursements,
     )
     lines = purpose_lines(units, commitments=commitments, later=disbursements)
+    continued = (
+        pl.concat([found, carried]).join(lines, on="left_id", how="anti").vstack(lines)
+    )
+    # A pair the ids leave open counts only where no pair of its line is settled.
     truth = (
-        pl.concat([found, carried])
-        .join(lines, on="left_id", how="anti")
-        .vstack(lines)
+        purpose_units(
+            continued.sort("ambiguous", *_PAIR),
+            units=as_filed,
+            reached=reached["unit_id"],
+        )
+        .join(commitments.select(right_id="unit_id"), on="right_id", how="semi")
         .sort(*_PAIR)
     )
     if rejected is None:

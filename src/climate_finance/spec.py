@@ -24,7 +24,7 @@ from climate_finance.catalogue import (
     each_value,
     name_of,
     resolve,
-    target_of,
+    targets_of,
 )
 from climate_finance.errors import InvalidInputError, UnknownNameError
 from climate_finance.frozen import Frozen
@@ -101,10 +101,10 @@ def read_provider_codes(
         return None
     codes: set[int] = set()
     for value in each_value(providers, kind="providers"):
-        target = target_of(value, kind="providers")
-        if isinstance(target, Agency):
-            raise _agency_error(value, target, reader=reader, keyword=keyword)
-        codes.add(target)
+        for target in targets_of(value, kind="providers"):
+            if isinstance(target, Agency):
+                raise _agency_error(value, target, reader=reader, keyword=keyword)
+            codes.add(target)
     return tuple(sorted(codes))
 
 

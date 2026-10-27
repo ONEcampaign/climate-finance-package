@@ -9,7 +9,7 @@ from polars.testing import assert_frame_equal
 
 import climate_finance as cf
 from climate_finance.catalogue import Agency, Catalogue, resolve
-from climate_finance.spec import Flow, SpecInputs
+from climate_finance.spec import Flow, SpecInputs, read_provider_codes
 
 SNAP = cf.load(path=FIXTURE_DIR)
 
@@ -74,6 +74,9 @@ EIB = Agency(provider=918, agency=3)
         ([EIB, "KfW", 4, "4"], "providers", (4, Agency(provider=5, agency=2), EIB)),
         # Agency 0 and 1 stand for the provider itself, listed or not.
         (Agency(provider=4, agency=0), "providers", (Agency(provider=4, agency=0),)),
+        # A group names each of its providers.
+        ("World Bank", "providers", (901, 905)),
+        (["world bank", "IDA", EIB], "providers", (901, 905, EIB)),
         ("KEN", "recipients", (248,)),
         ("Kenia", "recipients", (248,)),
         (None, "providers", None),
@@ -115,6 +118,17 @@ def test_a_name_of_several_entries_raises_with_every_candidate(
     assert candidate in raised.value.suggestions
 
 
+def test_a_group_reads_as_its_providers_and_code_refuses_it() -> None:
+    assert read_provider_codes("World Bank", reader="reconcile()") == (901, 905)
+    with pytest.raises(cf.UnknownProviderError) as raised:
+        cf.providers.code("World Bank")
+
+    assert raised.value.suggestions == (
+        "International Bank for Reconstruction and Development",
+        "International Development Association",
+    )
+
+
 def test_an_unknown_name_suggests_the_display_names_of_close_keys() -> None:
     with pytest.raises(cf.UnknownProviderError) as raised:
         resolve("Dutchland", kind="providers")
@@ -138,6 +152,33 @@ def test_resolve_refuses_bools_other_types_and_recipient_agencies(
     with pytest.raises(TypeError):
         # The float row is outside the annotation on purpose.
         resolve(values, kind=kind)  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize(
+    ("listing", "name", "error", "other"),
+    [
+        (cf.recipients, "Iceland", cf.UnknownRecipientError, "provider Iceland"),
+        (cf.providers, "kenya", cf.UnknownProviderError, "recipient Kenya"),
+    ],
+)
+def test_a_name_of_the_other_listing_raises_naming_it_without_suggestions(
+    listing: Catalogue, name: str, error: type[cf.UnknownNameError], other: str
+) -> None:
+    with pytest.raises(error) as raised:
+        listing.code(name)
+
+    assert raised.value.suggestions == ()
+    assert raised.value.note == (
+        f"{name!r} names the {other}, which cf.{listing.kind} does not hold."
+    )
+
+
+def test_a_private_donors_info_says_no_view_counts_it() -> None:
+    assert cf.providers.info("Bill & Melinda Gates Foundation").endswith(
+        "Private donor. Neither view counts private flows, so spending() returns no "
+        "rows for it."
+    )
+    assert cf.providers.info("Japan") == "Japan (DAC code 701): DAC member."
 
 
 def test_an_agency_serialises_as_its_provider_and_agency_codes() -> None:
@@ -185,8 +226,40 @@ def test_listings_hold_the_entries_the_api_accepts() -> None:
         "OXFAM",
     ]
     germany = cf.providers.list().filter(code=5).row(0, named=True)
-    assert germany == {"code": 5, "name": "Germany", "type": "DAC member"}
+    assert germany == {"code": 5, "name": "Germany", "type": "DAC member", "mdb": False}
     assert cf.recipients.list().filter(code=248)["name"].to_list() == ["Kenya"]
+
+
+@pytest.mark.parametrize(
+    ("code", "mdb"),
+    [(905, True), (903, True), (1044, True), (918, False), (1016, False)],
+)
+def test_mdb_marks_the_providers_the_crdf_types_as_development_banks(
+    code: int, mdb: bool
+) -> None:
+    assert cf.providers.list().filter(code=code)["mdb"].to_list() == [mdb]
+
+
+@pytest.mark.parametrize(
+    ("code", "kind"),
+    [
+        # Slovenia and Croatia left the DAC recipient list and are still countries.
+        (61, "country"),
+        (62, "country"),
+        (248, "country"),
+        (298, "regional"),
+        # The CRDF puts the former Yugoslav states in Europe, so the code is regional.
+        (88, "regional"),
+        (998, "unspecified"),
+        (9998, "unspecified"),
+    ],
+)
+def test_recipient_type_follows_the_oecd_income_group_and_region(
+    code: int, kind: str
+) -> None:
+    recipients = cf.recipients.list()
+    assert recipients.filter(code=code)["type"].to_list() == [kind]
+    assert set(recipients["type"]) == {"country", "regional", "unspecified"}
 
 
 def test_listing_codes_are_unique() -> None:

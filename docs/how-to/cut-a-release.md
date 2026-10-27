@@ -1,12 +1,13 @@
 # How to cut a release
 
-Cutting a release requires the `build` extra, a `build.toml`, and the OECD bulk CRS file.
+Cutting a release requires a source checkout with the `build` extra, the repository's `build.toml`, and the OECD bulk CRS file. Publishing it requires the GitHub CLI, `gh`, logged in with an account that can write releases to the repository.
 
 ## Before you start
 
 - Download the bulk CRS parquet through a browser and set `[sources].crs_file` to its path and sha256. The OECD's bot challenge blocks scripted downloads, and the fetch stage attempts a direct download when `crs_file` is absent.
-- Check the switches in `build.toml`. The shipped file holds the settings of a published release: `key_repair`, `recoveries`, `review`, and `jev_links` on, the `[sources.ledgers]` section set for the ledger check, `gap_fill`, `jev_labels`, and `embed` off, and `crdf = "all"` under `[years]`. `release.json` records every switch under `settings`. [cf-build](../reference/cf-build.md) lists all switches.
-- Keep a previous release's directory on hand for the drift gate, or pass `--first-release` on the initial release.
+- Check the switches in `build.toml`. The repository's file holds the settings of a published release: `key_repair`, `recoveries`, `review`, `jev_links`, and `jev_flags` on, the `[sources.ledgers]` section set for the ledger check, `gap_fill`, `jev_labels`, and `embed` off, and `crdf = "all"` under `[years]`. `release.json` records every switch under `settings`, and `cf-build publish` refuses a pack built with any of these settings changed, or with an EIB route skipped. [cf-build](../reference/cf-build.md) lists all switches.
+- Keep the latest published release on hand for the drift gate: its pack, the copy `cf.load("2025a", refresh=True).path` downloads, or its build directory with its pack still beside it. Given a pack or a build directory beside one, the gate reads a private copy of the pack, never the build's own tables, which a rebuild may have changed. `release.json` records the sha256 of the pack the gate read, and `cf-build publish` refuses a pack whose drift gate compared it with any other release or another pack of that name, so `--first-release` serves only while no release is published.
+- Name the release as published releases are named: a year and a lowercase letter, with a revision after a re-cut, such as `2026a` or `2026a.1`. `cf-build publish` refuses any other name, so a candidate such as `2026a-rc` can be cut and checked but cannot be published.
 
 ## Steps
 
@@ -29,20 +30,31 @@ Cutting a release requires the `build` extra, a `build.toml`, and the OECD bulk 
 4. Check the gates after each batch. `--report` prints failures without stopping.
 
    ```bash
-   cf-build gate releases/2026a --sample sample/design.parquet --previous releases/2025a/assemble --report
+   cf-build gate releases/2026a --sample sample --previous releases/2025a --report
    ```
 
-   Each precision row shows the number of labels read and the sequential rule's verdict: `pass`, `fail`, or `continue`. Label the next batch for every provider marked `continue`. A `fail` means the sample puts that provider's precision below the threshold, which blocks the release unless waived with `--waive-precision`.
+   The command prints every row, and without `--report` exits with status 1 when a row fails. Each precision row shows the number of labels read and the sequential rule's verdict: `pass`, `fail`, or `continue`. Label the next batch for every provider marked `continue`. A `fail` means the sample puts that provider's precision below the threshold, which blocks the release unless waived with `--waive-precision`.
 
-5. Cut the release. `release` builds, runs the gates, and packs the archive, stopping with `GateFailedError` if any gate fails.
+5. Cut the release. `release` builds, runs the gates, and packs the archive, stopping with `GateFailedError` if any gate fails. The build reads the review decisions, which hold the sample's labels, so `release` runs every stage. It runs offline when an earlier build of the release fetched its sources, so the release comes from the sources the sample was drawn on. `--no-offline` fetches afresh, and a source that changed makes the sample stale.
 
    ```bash
-   cf-build release 2026a --config build.toml --out-dir releases --sample sample/design.parquet --previous releases/2025a/assemble
+   cf-build release 2026a --config build.toml --out-dir releases --sample sample --previous releases/2025a
    ```
 
    The command writes `releases/climate-finance-2026a.tar.zst` and records the gate rows in `release.json`. To pack with failed precision or human-audit gates, pass `--waive-precision` with the reason. The flag marks the failed rows `waived`, sets `precision_gate_waived` in `release.json`, which surfaces in `release.quality().precision`, and records the reason as `precision_waiver`.
 
-6. Publish the pack and register it in `releases.json`, which maps each release name to its URL and sha256 and marks the latest release. Call `release.upload_release` and `release.add_to_index` in `climate_finance.build`. Both raise `GateFailedError` for a pack whose `release.json` records no result for a gate, any recorded gate row that neither passed nor was waived, or a waiver without its reason, so `upload_release` puts no such pack at its URL. `add_to_index` also raises `BuildError` when its `release` differs from the release the pack holds. The pack's `sources.json` records each source's licence and the rows excluded from the release.
+6. Publish the pack. Every pack and the release index, `releases.json`, are assets of one GitHub release tagged `data`, where `cf.load(refresh=True)` reads the index. The index maps each release name to its pack's URL, sha256, and data format, and names the latest release. Check the pack against the published index first, then publish it.
+
+   ```bash
+   cf-build publish releases/climate-finance-2026a.tar.zst --dry-run
+   cf-build publish releases/climate-finance-2026a.tar.zst
+   ```
+
+   `publish` refuses a pack whose `release.json` records no result for a gate, a gate row that neither passed nor was waived, a waiver without its reason, or settings other than a release's. It also refuses a name that is not a published name or that the index already lists, and a pack whose drift gate compared it with anything but the latest published release's pack. Otherwise it uploads the pack to the `data` release, creating that release if it is missing, published and not marked latest. The new `releases.json` goes up as `releases.next.json`, replaces the old index by a delete and a rename, and is read back. The new index keeps every entry and field of the old one, and moves `latest` only to a later release. Each `gh` command prints as it runs, and `--dry-run` prints the commands that change GitHub without running them and writes the new index to a temporary file it names.
+
+   Run one publish at a time. When the index read back differs from the one written, another publish replaced it meanwhile, and `publish` stops with `BuildError`. Publish again. Before it changes anything on GitHub, `publish` writes the new index to `releases/publish-recovery/releases.json`. When a publish stops before its index is in place, the `data` release can hold packs but no `releases.json`, and the next `publish` refuses with the `gh release upload` command that attaches that recovery index. Upload it, then publish again.
+
+   Once the index reads back, `publish` moves it to `releases/releases.json`. Copy it to `src/climate_finance/data/releases.json` before the next package release, so `cf.load()` finds the release without `refresh=True`. The pack's `sources.json` records each source's licence and the rows excluded from the release.
 
 ## Verify it worked
 
@@ -60,7 +72,8 @@ python -c "import climate_finance as cf; print(list(cf.load(path='unpacked/clima
 
 - `GateFailedError` on `withheld_rows` means a row from a withheld source reached `disbursements`. [How linking works](../explanation/how-linking-works.md) lists the withheld sources.
 - `BuildError: Sources without a licence` means a fetched source is missing from `SOURCE_LICENCES` in `climate_finance/build/release.py`. Add its licence terms before packing.
-- When the drift gate fails on a provider that changed for a known reason, add an entry to `drift.causes` in `gates.yaml` with the release, provider, and year.
+- When the drift gate fails on a provider that changed for a known reason, add a `[[drift_causes]]` entry to `build.toml` with the release, provider code, year, and cause.
+- `BuildError: release '2026a' is already published` means the index lists a pack of that name, which users may have cached. Cut the release again under a new name, such as `2026a.1`.
 
 ## Next
 

@@ -8,7 +8,7 @@ recorded `conversion_factors.parquet`, so the seed makes no pydeflate call. The
 `raw_manifest` records the years `resolve_years` asks for the configured years
 against the years the files hold, and the years of them `held_in` finds in each file
 (MULTI from 2011). `archive_config`
-is `build.toml` with the archive's CRS and IATI files as its sources.
+is the tests' `build.toml` with the archive's CRS and IATI files as its sources.
 """
 
 from datetime import UTC, datetime
@@ -55,9 +55,10 @@ JOINED = {
 
 
 def archive_config(archive: Path, *, key_repair: bool, recoveries: bool) -> BuildConfig:
-    """`build.toml` with the CRS and IATI files of `archive` (CF_E2E_DATA/raw) as its
-    sources, no BTR archive, and `key_repair` and `recoveries` set."""
-    base = load_config(REPO / "build.toml")
+    """The tests' `build.toml` with the CRS and IATI files of `archive`
+    (CF_E2E_DATA/raw) as its sources, no BTR archive, and `key_repair` and
+    `recoveries` set."""
+    base = load_config(REPO / "tests" / "fixtures" / "build.toml")
     return BuildConfig.model_validate(
         base.model_dump()
         | {

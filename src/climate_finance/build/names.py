@@ -15,21 +15,24 @@ The sources, best first:
 
 1. `listing`: the listing's English name.
 2. `listing_fr`: the provider listing's French name.
-3. `curated`: `aliases.toml`.
-4. `iso3`, then `iso2`: the ISO codes of the resolvekit place carrying the listing
+3. `curated`: `aliases.toml`'s providers and agencies.
+4. `group`: `aliases.toml`'s groups, each a name with one row per provider it names.
+5. `iso3`, then `iso2`: the ISO codes of the resolvekit place carrying the listing
    code as its `oecd:provider` or `oecd:recipient` code.
-5. `resolvekit`: every name of the resolvekit places and organisations carrying the
+6. `resolvekit`: every name of the resolvekit places and organisations carrying the
    listing code.
-6. `agency`: the agency listing's names, and every name of the `org.governments`
+7. `agency`: the agency listing's names, and every name of the `org.governments`
    agencies whose `oecd:agency` code is the provider (a DAC code, or an ISO 3 code
    mapped through `geo.provider_code`) and the agency. Only agencies the agency
    listing holds, of providers the provider listing holds, have rows, so a name
    resolves only to an agency a release table can carry.
 
 Keys of digits alone are left out, since those read as DAC codes. Each key keeps its
-rows at its best source only. A key with one row resolves; a key with several rows at
-that source is ambiguous. The bake refuses a listing name that does not resolve to
-its own code, a curated name the listing or resolvekit lacks or a listing name hides,
+rows at its best source only. A key with one row resolves, and so does a group, to
+all its rows. A key with several rows at any other source is ambiguous. The bake
+refuses a listing name that does not resolve to its own code, a curated name or group
+member the listings lack, a curated name or group a listing name hides, a group of
+fewer than two providers, a key that is both a curated name and a group,
 and a key whose best rows widen one of a provider's agencies to the whole provider
 (an ISO code or resolvekit alias of the provider that is also the agency's name)
 unless `aliases.toml` settles the key. The table is sorted by `kind`, `key`, `code`
@@ -53,6 +56,7 @@ SOURCES = (
     "listing",
     "listing_fr",
     "curated",
+    "group",
     "iso3",
     "iso2",
     "resolvekit",
@@ -187,6 +191,20 @@ def _curated_rows(
             name=agencies[code, agency][0],
             source="curated",
         )
+    for alias, codes in curated.get("groups", {}).items():
+        if len(set(codes)) < 2:
+            unknown.append(f"{alias!r}: a group names two providers or more")
+        for code in codes:
+            if code not in listings["provider"]:
+                unknown.append(f"{alias!r}: provider {code} is not in the listing")
+                continue
+            yield _row(
+                "provider",
+                alias,
+                code=code,
+                name=listings["provider"][code],
+                source="group",
+            )
     if unknown:
         raise NamesError(
             f"{aliases.name} names targets that do not exist:\n" + "\n".join(unknown)
@@ -280,13 +298,18 @@ def _unresolved_listing_names(
 
 
 def _shadowed_curated_names(rows: pl.DataFrame) -> Iterator[str]:
-    """Curated names that a listing name hides, or that name two targets."""
-    curated = rows.filter(source="curated")
+    """Curated names and groups that a listing name hides, and curated names that
+    name two targets or are also a group."""
+    curated = rows.filter(pl.col("source").is_in(["curated", "group"]))
     listed = rows.filter(pl.col("source").is_in(["listing", "listing_fr"]))
     hidden = curated.join(listed, on=["kind", "key"], how="semi")
     for key in hidden["key"].unique().sort():
         yield f"curated {key!r} is a listing name, which outranks it"
-    for key in curated.filter(pl.len().over("kind", "key") > 1)["key"].unique().sort():
+    named = (pl.col("source") == "curated").sum().over("kind", "key")
+    twice = curated.filter(
+        (named > 1) | ((named > 0) & (pl.len().over("kind", "key") > named))
+    )
+    for key in twice["key"].unique().sort():
         yield f"curated {key!r} appears twice in {ALIASES_TOML.name}"
 
 

@@ -19,6 +19,7 @@ def test_cf_build_declares_every_command() -> None:
         "label",
         "ingest-unfccc",
         "release",
+        "publish",
         "names",
         "listings",
     }

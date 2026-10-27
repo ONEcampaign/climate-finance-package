@@ -26,7 +26,7 @@ print(data.columns.tolist())
 ```
 
 ```output
-['year', 'provider', 'recipient', 'method', 'provider_code', 'recipient_code', 'bi_multi', 'amount', 'adaptation', 'mitigation', 'cross_cutting', 'unsplit', 'value', 'low', 'high', 'untraced', 'no_grant_equivalent', 'flow', 'source']
+['year', 'provider', 'recipient', 'method', 'provider_code', 'recipient_code', 'bi_multi', 'flow', 'view', 'currency', 'prices', 'measure', 'amount', 'adaptation', 'mitigation', 'cross_cutting', 'unsplit', 'untraced', 'no_grant_equivalent', 'no_adaptation_marker', 'value', 'low', 'high', 'source']
 ```
 
 The 1.x frame was long, with one row per `indicator`. The 2.0 frame is wide, with one column per objective. A script that reads these columns changes as follows:
@@ -117,7 +117,7 @@ Importing a 1.x module raises `RemovedModuleError`, a `ModuleNotFoundError` that
 
 ## What else is different
 
-- The result is a polars table, with `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, `untraced`, and `no_grant_equivalent` columns. `result.rows()` returns the projects behind it.
+- The result is a polars table, with `adaptation`, `mitigation`, `cross_cutting`, `unsplit`, `value`, `low`, `high`, `untraced`, `no_grant_equivalent`, and `no_adaptation_marker` columns. `result.rows()` returns the projects behind it.
 - `value` is climate value only, in `ClimateData` too, and no row carries the 1.x indicator `not_climate_relevant`. A 1.x script that sums `value` over every indicator summed all development finance, and the 2.0 sum is climate value.
 - A result carries its `Spec`. `release.run(result.spec)` reruns it.
 - Names and codes resolve through `cf.providers` and `cf.recipients`. A misspelt name, or a code the listings lack, raises an error that suggests close matches.

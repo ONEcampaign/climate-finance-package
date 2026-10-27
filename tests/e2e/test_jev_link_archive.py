@@ -66,39 +66,40 @@ _PAIR = ["left_id", "right_id"]
 # A provider's figures are pinned when either classifier makes this many held-out
 # links of its commitments.
 MIN_PROVIDER_LINKS = 100
-# Each classifier's held-out links, link precision and monetary precision. Jev's
-# adjudication neither helps nor hurts out of sample overall: precision is 0.9139
-# for the classifier alone and 0.9164 with Jev, monetary precision 0.9473 and
-# 0.9460.
+# Each classifier's held-out links, link precision and monetary precision. A
+# disbursement pairs with a purpose-split line once (`purpose_units`). Jev's
+# adjudication lowers precision out of sample overall: precision is 0.9246 for
+# the classifier alone and 0.9204 with Jev, monetary precision 0.9503 and
+# 0.9417.
 OVERALL = {
-    "base": (25809, 0.9139, 0.9473),
-    "jev": (25860, 0.9164, 0.946),
+    "base": (25387, 0.9246, 0.9503),
+    "jev": (25619, 0.9204, 0.9417),
 }
 # The same figures for each provider with `MIN_PROVIDER_LINKS`, by donor code. Jev
-# changes precision most for Italy (6), from 0.8769 to 0.9157, and Slovenia (61),
-# from 0.4812 to 0.9412 on 68 links in place of 133. Denmark (3) and Canada (301)
-# stay below 0.8 under both.
+# changes precision most for Canada (301), from 0.7898 to 0.7529, and Germany (5),
+# from 0.8474 to 0.8230, and raises it most for Italy (6), from 0.8948 to 0.9149.
+# Slovenia (61) makes under `MIN_PROVIDER_LINKS` held-out links. Denmark (3) and
+# Canada (301) stay below 0.8 under both.
 PROVIDERS = {
-    1: {"base": (796, 0.8832, 0.9603), "jev": (802, 0.889, 0.9711)},
-    2: {"base": (312, 0.9423, 0.8816), "jev": (325, 0.9169, 0.883)},
-    3: {"base": (1037, 0.6307, 0.6405), "jev": (1079, 0.6376, 0.6525)},
-    4: {"base": (1432, 0.963, 0.9834), "jev": (1421, 0.9704, 0.9877)},
-    5: {"base": (614, 0.8339, 0.8364), "jev": (643, 0.8258, 0.8219)},
-    6: {"base": (1731, 0.8769, 0.8488), "jev": (1648, 0.9157, 0.894)},
-    7: {"base": (1265, 0.9945, 0.9977), "jev": (1264, 0.9953, 0.9978)},
-    8: {"base": (2506, 0.9988, 0.9995), "jev": (2505, 0.9992, 0.9996)},
-    10: {"base": (1359, 0.9691, 0.9865), "jev": (1360, 0.9684, 0.9865)},
-    11: {"base": (3280, 0.978, 0.9924), "jev": (3281, 0.9778, 0.9923)},
-    12: {"base": (1968, 0.9609, 0.9666), "jev": (1952, 0.9688, 0.9716)},
-    18: {"base": (1538, 0.946, 0.9267), "jev": (1538, 0.946, 0.9267)},
-    50: {"base": (870, 1.0, 1.0), "jev": (870, 1.0, 1.0)},
-    61: {"base": (133, 0.4812, 0.7233), "jev": (68, 0.9412, 0.9954)},
-    301: {"base": (2526, 0.768, 0.656), "jev": (2613, 0.7486, 0.6568)},
-    701: {"base": (1773, 0.8359, 0.9613), "jev": (1830, 0.8246, 0.9589)},
-    742: {"base": (832, 0.9627, 0.9801), "jev": (828, 0.9662, 0.9809)},
-    820: {"base": (396, 0.9141, 0.9724), "jev": (394, 0.9188, 0.9749)},
-    918: {"base": (133, 0.9549, 0.977), "jev": (130, 0.9692, 0.9887)},
-    1601: {"base": (973, 0.9928, 0.9961), "jev": (971, 0.9949, 0.9965)},
+    1: {"base": (802, 0.8791, 0.9529), "jev": (802, 0.8803, 0.9555)},
+    2: {"base": (310, 0.9645, 0.9279), "jev": (313, 0.9553, 0.9245)},
+    3: {"base": (1065, 0.6329, 0.6242), "jev": (1075, 0.6223, 0.6105)},
+    4: {"base": (1425, 0.9663, 0.9859), "jev": (1409, 0.9737, 0.986)},
+    5: {"base": (603, 0.8474, 0.8649), "jev": (644, 0.823, 0.8057)},
+    6: {"base": (1663, 0.8948, 0.8821), "jev": (1634, 0.9149, 0.8924)},
+    7: {"base": (1270, 0.9913, 0.9968), "jev": (1269, 0.9921, 0.9969)},
+    8: {"base": (2511, 0.9976, 0.9989), "jev": (2511, 0.9976, 0.9989)},
+    10: {"base": (1358, 0.9691, 0.9877), "jev": (1358, 0.9691, 0.9877)},
+    11: {"base": (3222, 0.9957, 0.997), "jev": (3219, 0.9966, 0.9982)},
+    12: {"base": (1957, 0.9663, 0.9789), "jev": (1949, 0.9702, 0.9805)},
+    18: {"base": (1529, 0.9509, 0.9411), "jev": (1529, 0.9509, 0.9411)},
+    50: {"base": (874, 0.9954, 0.9992), "jev": (874, 0.9954, 0.9992)},
+    301: {"base": (2398, 0.7898, 0.6589), "jev": (2630, 0.7529, 0.6472)},
+    701: {"base": (1719, 0.8441, 0.9582), "jev": (1738, 0.8418, 0.9564)},
+    742: {"base": (842, 0.9656, 0.9826), "jev": (838, 0.9654, 0.9824)},
+    820: {"base": (379, 0.942, 0.9782), "jev": (377, 0.9469, 0.9825)},
+    918: {"base": (132, 0.9545, 0.9883), "jev": (132, 0.9545, 0.9883)},
+    1601: {"base": (979, 0.9877, 0.995), "jev": (979, 0.9877, 0.995)},
 }
 
 

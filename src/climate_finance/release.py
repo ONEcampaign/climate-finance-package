@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import hashlib
 import inspect
@@ -12,6 +13,7 @@ import shutil
 import tarfile
 import tempfile
 import urllib.request
+import uuid
 import warnings
 from collections.abc import Callable, Iterable, Mapping
 from importlib.resources import files
@@ -20,7 +22,7 @@ from typing import Annotated, Literal, Unpack
 
 import polars as pl
 import pyarrow as pa
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
 
 from climate_finance import query
 from climate_finance.catalogue import unknown_name
@@ -56,11 +58,17 @@ from climate_finance.spec import (
 
 # The release index shipped in the wheel.
 RELEASE_INDEX = files("climate_finance") / "data" / "releases.json"
-# The newest release index, attached to every published release.
+# The newest release index, an asset of the GitHub release tagged `data`, which also
+# holds every pack. A fixed tag keeps the URL off GitHub's "latest" release, which
+# follows code releases.
 INDEX_URL = (
     "https://github.com/ONEcampaign/climate-finance-package"
-    "/releases/latest/download/releases.json"
+    "/releases/download/data/releases.json"
 )
+# The variable that moves the cache, else `~/.cache/climate-finance`.
+CACHE_DIR_VAR = "CLIMATE_FINANCE_CACHE_DIR"
+# The file in a cached release directory holding the sha256 of the pack it came from.
+PACK_SHA256 = "pack.sha256"
 # Seconds a download may wait on the server before it fails.
 _TIMEOUT = 60
 _CHUNK = 1 << 20
@@ -88,18 +96,25 @@ type ReleaseName = Annotated[str, StringConstraints(pattern=f"^{_RELEASE_NAME}$"
 
 
 class IndexEntry(BaseModel):
-    """Where one packed release is published and the sha256 of its pack."""
+    """Where one packed release is published, the sha256 of its pack and the data
+    format its `release.json` records.
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    Fields a later package adds are ignored, so an older install still reads the
+    index.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
 
     url: str
     sha256: str
+    data_format: int
 
 
 class ReleaseIndex(BaseModel):
-    """The contents of `releases.json`: every published release and the newest."""
+    """The contents of `releases.json`: every published release and the newest.
+    Fields a later package adds are ignored."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="ignore")
 
     latest: ReleaseName | None = None
     releases: dict[ReleaseName, IndexEntry] = {}
@@ -206,9 +221,11 @@ class Release:
             method: a `Method`, a `MethodRange`, a name from `cf.methods.list()`
                 ignoring case, such as `"OECD"`, or a list of methods and names,
                 which becomes a range. Default `cf.methods.ONE`.
-            flow: `"disbursements"` (default), `"commitments"` or
-                `"grant_equivalent"`.
-            view: `"recipient"` (default) or `"provider"`.
+            flow: `"disbursements"` (default), `"commitments"`,
+                `"grant_equivalent"`, `"net_disbursements"` or `"net_transfers"`.
+            view: `"recipient"` (default), finance that reaches recipients, or
+                `"provider"`, a provider's total with its core contributions to
+                multilateral agencies.
             currency: `"USD"` (default), `"EUR"`, `"GBP"` or `"CAD"`.
             prices: `"current"` (default) or a base year, such as `2022`.
             oda_only: True or False (default).
@@ -227,7 +244,10 @@ class Release:
                 `conversion_factors` hold for the currency.
 
         Warns:
-            CoverageWarning: for years the flow's tables hold no rows for.
+            CoverageWarning: for years the flow's tables hold no rows for, and for
+                named providers with no rows the query counts, naming why.
+            DoubleCountWarning: for a provider view that names EU Institutions,
+                whose rows then depend on which members the query names.
         """
         return self.run(Spec(**inputs))
 
@@ -245,7 +265,10 @@ class Release:
                 query reads, such as `reflows` for a net flow.
 
         Warns:
-            CoverageWarning: for years the flow's tables hold no rows for.
+            CoverageWarning: for years the flow's tables hold no rows for, and for
+                named providers with no rows the query counts, naming why.
+            DoubleCountWarning: for a provider view that names EU Institutions,
+                whose rows then depend on which members the query names.
         """
         if isinstance(spec, Mapping):
             spec = Spec.model_validate(spec)
@@ -438,9 +461,10 @@ def load(
 
     Without `path`, `release` is looked up in the release index shipped in the wheel,
     or with `refresh=True` in the newest index online. A release already in
-    `cache_dir` (else `CLIMATE_FINANCE_CACHE`, else `~/.cache/climate-finance`) opens
-    without network. Otherwise its pack downloads, its sha256 is checked against the
-    index, and it unpacks into `cache_dir`. A cached copy that fails its check
+    `cache_dir` (else `CLIMATE_FINANCE_CACHE_DIR`, else `~/.cache/climate-finance`)
+    opens without network when it came from the pack the index names. Otherwise its
+    pack downloads, its sha256 is checked against the index, and it unpacks into
+    `cache_dir`. A cached copy from another pack, or one that fails its check,
     downloads again.
     A relative `path` resolves against the working directory at load, so the
     release reads the files it verified after a later change of directory.
@@ -452,29 +476,75 @@ def load(
             table of its data format that it does not withhold is missing, a
             table's sha256 differs from `release.json`, or a pack's sha256 differs
             from the index.
-        ReleaseFormatError: when `release.json` records a data format newer than
-            `schema.DATA_FORMAT`, which a later version of the package reads.
+        ReleaseFormatError: when the index entry or `release.json` records a data
+            format newer than `schema.DATA_FORMAT`, which a later version of the
+            package reads. An index entry raises it before any download.
         UnknownNameError: when the index lists no release named `release`, or no
             release at all, which names `path=` and where releases come from.
-        SourceUnavailableError: when the index or a pack cannot be downloaded.
+            Without `refresh`, the message suggests `refresh=True`.
+        SourceUnavailableError: when the index or a pack cannot be downloaded, or
+            the index online is malformed.
     """
     if path is not None:
         return _open(Path(path).resolve())
     index = _fetch_index() if refresh else _shipped_index()
-    name = _resolve(index, release)
+    name = _resolve(index, release, refreshed=refresh)
+    entry = index.releases[name]
+    if entry.data_format > DATA_FORMAT:
+        raise ReleaseFormatError(
+            name, data_format=entry.data_format, supported=DATA_FORMAT
+        )
     cache = _cache_dir(cache_dir)
     target = cache / release_dirname(name)
     if not target.resolve().is_relative_to(cache.resolve()):
         raise InvalidInputError(
             f"release {name!r} would unpack to {target}, outside the cache {cache}"
         )
-    if target.is_dir():
+    # Another load may move or replace `target` at any step, so each pass reads the
+    # stamp afresh and every discard leaves a copy from the entry's pack in place.
+    while (stamp := _packed_sha256(target)) is not None or target.is_dir():
+        if stamp != entry.sha256:
+            _discard(target, keep=entry.sha256)
+            continue
+        try:
+            opened = target.stat().st_ino
+        except FileNotFoundError:
+            continue
         try:
             return _open(target, release=name)
         except ReleaseIntegrityError:
-            shutil.rmtree(target)
-    _download(index.releases[name], target=target)
+            _discard(target, keep=entry.sha256, failed=opened)
+    _download(entry, target=target)
     return _open(target, release=name)
+
+
+def _packed_sha256(target: Path) -> str | None:
+    """The sha256 of the pack the cached release in `target` came from, if
+    recorded."""
+    try:
+        return (target / PACK_SHA256).read_text().strip()
+    except (FileNotFoundError, NotADirectoryError):  # no stamp, or no directory
+        return None
+
+
+def _discard(target: Path, *, keep: str, failed: int | None = None) -> None:
+    """Delete the cached release in `target`, unless it came from the pack of sha256
+    `keep` and is not the directory of inode `failed`, a copy that failed its check.
+
+    The copy moves to a unique name beside `target` before it is deleted, so a
+    concurrent load never deletes a copy it did not move. A copy from `keep`'s pack
+    that another load placed after the caller's check moves back.
+    """
+    aside = target.with_name(f".stale-{uuid.uuid4().hex}")
+    try:
+        target.rename(aside)
+    except FileNotFoundError:  # another load moved it first
+        return
+    if _packed_sha256(aside) == keep and aside.stat().st_ino != failed:
+        with contextlib.suppress(OSError):
+            aside.rename(target)
+            return
+    shutil.rmtree(aside)
 
 
 def _open(path: Path, *, release: str | None = None) -> Release:
@@ -486,8 +556,6 @@ def _open(path: Path, *, release: str | None = None) -> Release:
     `ReleaseFormatError` before manifest validation can reject those fields.
     """
     manifest_path = path / "release.json"
-    if not manifest_path.is_file():
-        raise ReleaseIntegrityError(f"{path} has no release.json")
     try:
         text = manifest_path.read_text()
         raw = json.loads(text)
@@ -499,6 +567,8 @@ def _open(path: Path, *, release: str | None = None) -> Release:
                 supported=DATA_FORMAT,
             )
         manifest = ReleaseManifest.model_validate_json(text)
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError) as error:
+        raise ReleaseIntegrityError(f"{path} has no release.json") from error
     except ValueError as error:  # bad JSON, bad fields or undecodable bytes
         raise ReleaseIntegrityError(f"{manifest_path} is malformed: {error}") from error
     if manifest.data_format not in FORMAT_TABLES:
@@ -515,9 +585,12 @@ def _open(path: Path, *, release: str | None = None) -> Release:
         problems.append(f"release.json names release {manifest.release!r}")
     for name, entry in manifest.tables.items():
         file = path / f"{name}.parquet"
-        if not file.is_file():
+        try:
+            actual = sha256_file(file)
+        except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
             problems.append(f"{name}: {file.name} is missing")
-        elif (actual := sha256_file(file)) != entry.sha256:
+            continue
+        if actual != entry.sha256:
             problems.append(f"{name}: sha256 {actual}, release.json has {entry.sha256}")
     if problems:
         raise ReleaseIntegrityError(
@@ -539,11 +612,17 @@ def _fetch_index() -> ReleaseIndex:
         raise SourceUnavailableError(
             f"Could not fetch the release index from {INDEX_URL}: {error}"
         ) from error
-    return ReleaseIndex.model_validate_json(body)
+    try:
+        return ReleaseIndex.model_validate_json(body)
+    except ValidationError as error:
+        raise SourceUnavailableError(
+            f"The release index at {INDEX_URL} is malformed: {error}"
+        ) from error
 
 
-def _resolve(index: ReleaseIndex, release: str) -> str:
+def _resolve(index: ReleaseIndex, release: str, *, refreshed: bool) -> str:
     """The release `release` names in `index`. "latest" names the newest.
+    `refreshed` says whether `index` is the newest index online.
 
     Raises:
         UnknownNameError: when `index` lists no such release.
@@ -561,23 +640,36 @@ def _resolve(index: ReleaseIndex, release: str) -> str:
             ),
         )
     if name is None or name not in index.releases:
-        raise unknown_name(release, kind="release", choices=sorted(index.releases))
+        note = None
+        if not refreshed and index.latest is not None:
+            # A release published after this package shipped is only online.
+            note = (
+                f"Unknown release {release!r}. This package's index lists releases "
+                f"up to {index.latest}; cf.load({release!r}, refresh=True) reads "
+                "the newest index online."
+            )
+        # The refresh note replaces suggestions, which name only older releases.
+        choices = () if note else sorted(index.releases)
+        raise unknown_name(release, kind="release", choices=choices, note=note)
     return name
 
 
 def _cache_dir(cache_dir: str | Path | None) -> Path:
     if cache_dir is not None:
         return Path(cache_dir)
-    if env := os.environ.get("CLIMATE_FINANCE_CACHE"):
+    if env := os.environ.get(CACHE_DIR_VAR):
         return Path(env)
     return Path.home() / ".cache" / "climate-finance"
 
 
 def _download(entry: IndexEntry, *, target: Path) -> None:
-    """Download the pack at `entry.url`, check its sha256 and unpack it to `target`.
+    """Download the pack at `entry.url`, check its sha256 and unpack it to `target`,
+    recording the sha256 in `target / PACK_SHA256`.
 
     The pack downloads and unpacks in a temporary directory beside `target`, so a
-    failed download leaves nothing in its place.
+    failed download leaves nothing in its place. When another load places a copy
+    first, a copy from the same pack stays and `load` opens it, and a copy from
+    another pack is discarded.
 
     Raises:
         ReleaseIntegrityError: when the pack's sha256 differs from `entry`, or the
@@ -597,9 +689,22 @@ def _download(entry: IndexEntry, *, target: Path) -> None:
             tarfile.open(fileobj=stream, mode="r|") as tar,
         ):
             tar.extractall(unpacked, filter="data")
-        if not (unpacked / target.name).is_dir():
+        release_dir = unpacked / target.name
+        if not release_dir.is_dir():
             raise ReleaseIntegrityError(f"{entry.url} holds no {target.name}/")
-        (unpacked / target.name).rename(target)
+        (release_dir / PACK_SHA256).write_text(actual)
+        while True:
+            try:
+                release_dir.rename(target)
+            except OSError:
+                # A concurrent load renamed its copy into place first.
+                if not target.is_dir():
+                    raise
+            else:
+                return
+            if _packed_sha256(target) == actual:
+                return
+            _discard(target, keep=actual)
 
 
 def _fetch(url: str, *, out_path: Path) -> str:

@@ -1,6 +1,6 @@
 # Low and high bounds
 
-Since 2.0, every row of a `spending()` table carries `low`, `value`, and `high`. `low` counts the disbursements whose whole path to a CRDF commitment is certain. `value` counts every disbursement the build allocated, estimated links included, and the untraced disbursement, Rio-marked CRS disbursement that reaches no commitment. `high` equals `value` for a single method of a gross flow. Net flows differ, as [Net flows](#net-flows) explains. When a query asks for several methods, `low` is the lowest of their `low` bounds and `high` the highest of their values.
+Since 2.0, every row of a `spending()` table carries `low`, `value`, and `high`. `low` counts the disbursements whose whole path to a CRDF commitment is certain. `value` counts every disbursement the build allocated, estimated links included, and the untraced disbursement, Rio-marked CRS disbursement that reaches no commitment. `high` equals `value` for a single method of a gross flow. Net flows differ, as [Net flows](#net-flows) explains. When a query asks for several methods, each method's row keeps its own `low` and `high`, and `range_low` and `range_high` hold the lowest `low` and the highest `high` across the methods.
 
 The bounds measure link certainty alone. A method's parameters, its coefficients and the agency shares it applies, weigh `low`, `value`, and `high` alike, so comparing methods shows what the parameters change.
 
@@ -37,7 +37,7 @@ The interval is wider than a gross one. Gross `low` and `high` differ by link ce
 
 ## Under several methods
 
-`cf.methods.RANGE` computes ONE, OECD, and PROVIDER together. Every method carries a row for every year, provider, recipient, and Bi_Multi code that any of them holds, at zero where it has no money, and every method's row of a key carries the same `low` and `high`. `low` is the lowest of the three methods' `low` bounds, each counting only what certain links carried. `high` is the highest value any of the three gives for a gross flow, because each method's `high` equals its `value`. For a net flow it is the highest `high` any of them gives. The rows of one method therefore sum to the table's bounds, and the range covers marker weights and link certainty.
+`cf.methods.RANGE` computes ONE, OECD, and PROVIDER together. Every method carries a row for every year, provider, recipient, and Bi_Multi code that any of them holds, at zero where it has no money. Each method's row keeps that method's own `low` and `high`, so `result.rows(method="ONE")` sums to the ONE row's bounds. `range_low` and `range_high` span the methods, the same on every method's row of a key. `range_low` is the lowest of the three methods' `low` bounds, each counting only what certain links carried. `range_high` is the highest value any of the three gives for a gross flow, because each method's `high` equals its `value`. For a net flow it is the highest `high` any of them gives. The span covers marker weights and link certainty.
 
 ## How to read a wide gap
 
