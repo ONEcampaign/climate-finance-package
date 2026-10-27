@@ -1085,7 +1085,7 @@ def test_the_sample_and_gate_commands_read_decisions_from_the_config(
     config.write_text(
         BUILD_TOML.read_text(encoding="utf-8").replace(
             'review_decisions = "data/review_decisions.parquet"',
-            f'review_decisions = "{decisions}"',
+            f"review_decisions = {json.dumps(str(decisions))}",
         ),
         encoding="utf-8",
     )

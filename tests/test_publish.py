@@ -8,6 +8,7 @@ allows, so it reaches no outside network and takes well under a second.
 
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import tarfile
@@ -991,9 +992,30 @@ def test_the_publish_command_prints_each_gh_step_and_refuses_in_one_line(
     assert "gh release list" in dry.output
     assert "would run: gh release create data" in dry.output
     assert "would run: gh release upload data " in dry.output
-    assert f"{PACK} --clobber" in dry.output
+    upload = next(line for line in dry.output.splitlines() if "release upload" in line)
+    assert re.search(rf"[\\/]{re.escape(PACK)}[\"']? --clobber", upload)
     assert "new index previewed in" in dry.output
     assert github.writes == []
+
+
+@pytest.mark.parametrize(
+    ("platform", "path", "line"),
+    [
+        ("linux", "/tmp/a b/pack.tar.zst", "'/tmp/a b/pack.tar.zst' --clobber"),
+        (
+            "win32",
+            r"C:\Users\a b\pack.tar.zst",
+            r'"C:\Users\a b\pack.tar.zst" --clobber',
+        ),
+        ("win32", r"C:\Users\pack.tar.zst", r"C:\Users\pack.tar.zst --clobber"),
+    ],
+)
+def test_a_printed_command_is_quoted_for_the_platforms_shell(
+    monkeypatch: pytest.MonkeyPatch, platform: str, path: str, line: str
+) -> None:
+    monkeypatch.setattr(publish.sys, "platform", platform)
+
+    assert publish.shell_join([path, "--clobber"]) == line
 
 
 def test_a_refusal_prints_its_causes_and_the_traceback_on_request(
