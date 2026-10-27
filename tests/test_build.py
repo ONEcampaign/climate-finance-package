@@ -28,6 +28,7 @@ from climate_finance.build.stages import (
     StageDef,
     raw_dir,
 )
+from climate_finance.errors import InvalidInputError
 from climate_finance.schema import STAGE_TABLES, Column, TableSchema
 
 TABLE = TableSchema(
@@ -109,6 +110,16 @@ def test_offline_reaches_every_stage(
     )
 
     assert seen == [(True, True), (True, True)]
+
+
+@pytest.mark.parametrize("name", ["../victim", "a/b", ".hidden"])
+def test_build_refuses_a_release_name_that_is_not_one_path_segment(
+    config: BuildConfig, tmp_path: Path, name: str
+) -> None:
+    with pytest.raises(InvalidInputError):
+        build(name, config=config, out_dir=tmp_path)
+
+    assert list(tmp_path.iterdir()) == []
 
 
 # Settings read only on paths the raw fixtures cannot take: embeddings and the Jev
@@ -334,6 +345,12 @@ def test_config_resolves_paths_against_its_file(config: BuildConfig) -> None:
         ),
         ('crdf = "all"', "crdf = [2025, 2026]", "crs_last_complete"),
         ('crdf = "all"', 'crdf = "every"', "crdf"),
+        # The embedding cache key needs a commit hash, so a branch name is refused.
+        (
+            'revision = "614241f622f53c4eeff9890bdc4f31cfecc418b3"',
+            'revision = "main"',
+            "revision",
+        ),
         # Normalise reads only raw/, so no source names a table outside it.
         (
             'btr_archive = "data/raw/unfccc_btr1"',

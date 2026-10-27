@@ -14,12 +14,20 @@ current: the stage must have been built by the installed package, each setting i
 recorded must equal the build config's, and each stage it read must still have the
 identity it recorded, and be current itself. Otherwise the read raises
 `StaleStageError` naming the stage to rerun.
+
+`build_identity` collects what a release records about the code and environment that
+built it: the package source digest, the Python and library versions, the digest of
+the whole environment, and the identity of each stage the release was built from.
 """
 
 from __future__ import annotations
 
 import hashlib
+import platform
+import re
+from contextlib import suppress
 from functools import cache, reduce
+from importlib import metadata
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -29,14 +37,35 @@ from pydantic_core import to_jsonable_python
 import climate_finance
 from climate_finance.build.config import FILE_SETTINGS
 from climate_finance.build.errors import StaleStageError
-from climate_finance.schema import sha256_file
+from climate_finance.schema import BuildIdentity, sha256_file
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Mapping
+    from collections.abc import Collection, Iterable, Mapping
 
     from climate_finance.build.config import BuildConfig
 
 STAGE_RECORD = "stage.json"
+# The libraries whose versions a release records, those its results depend on.
+DEPENDENCIES = (
+    "duckdb",
+    "numpy",
+    "oda-reader",
+    "openpyxl",
+    "pandas",
+    "polars",
+    "pyarrow",
+    "pydantic",
+    "pydeflate",
+    "rapidfuzz",
+    "resolvekit",
+    "scikit-learn",
+    "scipy",
+    "sentence-transformers",
+    "splink",
+    "tokenizers",
+    "torch",
+    "transformers",
+)
 
 
 class StageRecord(BaseModel):
@@ -114,6 +143,42 @@ def source_sha256() -> str:
         if path.is_file() and not skipped:
             digest.update(f"{relative.as_posix()}\0{sha256_file(path)}\n".encode())
     return digest.hexdigest()
+
+
+def environment_sha256() -> str:
+    """The sha256 over the sorted `name==version` lines of every installed
+    distribution, with names lower-cased and `-`, `_` and `.` runs joined by `-`."""
+    lines = {
+        f"{re.sub(r'[-_.]+', '-', name).lower()}=={dist.version}"
+        for dist in metadata.distributions()
+        if (name := dist.metadata["Name"])
+    }
+    return hashlib.sha256("\n".join(sorted(lines)).encode()).hexdigest()
+
+
+def _installed_versions(names: Iterable[str]) -> dict[str, str]:
+    """The version of each of `names` that is installed."""
+    versions = {}
+    for name in names:
+        with suppress(metadata.PackageNotFoundError):
+            versions[name] = metadata.version(name)
+    return versions
+
+
+def build_identity(release_dir: Path, *, stages: Iterable[str]) -> BuildIdentity:
+    """The code and environment building the release in `release_dir`, with the
+    identity of each of `stages` that has written a `stage.json`."""
+    return BuildIdentity(
+        package_source_sha256=source_sha256(),
+        python=platform.python_version(),
+        environment_sha256=environment_sha256(),
+        dependencies=_installed_versions(DEPENDENCIES),
+        stage_identities={
+            stage: identity(release_dir, stage)
+            for stage in stages
+            if record_path(release_dir, stage).exists()
+        },
+    )
 
 
 class Provenance:

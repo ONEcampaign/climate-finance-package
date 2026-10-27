@@ -524,6 +524,82 @@ def test_rows_matched_through_their_description_groups_sum_share_a_group(
     assert set(links["group_id"]) == ({f"{method}|a"} if method else set())
 
 
+SOLAR_TITLE = "Solar power plants in the Sarajevo region"
+WATER_TITLE = "Water supply networks in the Sarajevo region"
+
+
+@pytest.mark.parametrize(
+    ("faces", "solar", "water_project", "b_title", "expected"),
+    [
+        # Neither row comes within 10% of a unit alone, and their sum fits both.
+        ((60.0, 40.0), 100.0, "91002", WATER_TITLE, set()),
+        # The first row's own amount fits the solar unit, so it keeps that match.
+        ((95.0, 5.0), 100.0, "91002", WATER_TITLE, {("a", "solar")}),
+        # The first row's own amount alone fits solar, and the sum fits water.
+        ((80.0, 20.0), 86.0, "91002", WATER_TITLE, {("a", "solar")}),
+        # Two units of one project: the group's sum names solar, which the first
+        # row's text matches more closely, and the second row, whose only match
+        # through the sum is water, does not link.
+        ((60.0, 40.0), 100.0, "91001", WATER_TITLE, {("a", "solar")}),
+        # One unit both matches the first row's own amount and the sum. The first
+        # row's own match and the second row's match through the sum are two
+        # matches of the unit at equal cosine, so the first row's takes it.
+        ((95.0, 5.0), 100.0, "91002", SOLAR_TITLE, {("a", "solar")}),
+    ],
+)
+def test_a_description_groups_sum_names_one_project_and_one_unit(
+    faces: tuple[float, float],
+    solar: float,
+    water_project: str,
+    b_title: str,
+    expected: set[tuple[str, str]],
+) -> None:
+    # Two rows share a description, and each one's title names a commitment the
+    # group's sum may fit.
+    description = "Shared umbrella facility"
+    rows = [
+        _row(
+            "a",
+            2023,
+            faces[0],
+            crs_id="2023900001",
+            title=SOLAR_TITLE,
+            description=description,
+        ),
+        _row(
+            "b",
+            2023,
+            faces[1],
+            crs_id="2023900002",
+            purpose_code=14020,
+            title=b_title,
+            description=description,
+        ),
+    ]
+    records = [
+        _committed(
+            "solar",
+            solar,
+            project_number="91001",
+            title="SOLAR POWER PLANTS SARAJEVO REGION",
+            long_description=f"{SOLAR_TITLE}. {description}",
+        ),
+        _committed(
+            "water",
+            100.0,
+            project_number=water_project,
+            title="WATER SUPPLY NETWORKS SARAJEVO REGION",
+            long_description=WATER_TITLE,
+        ),
+        *GENERIC_CROWD,
+    ]
+    links, units = _recover(rows, records)
+
+    linked = _linked(links, units)
+    assert {(row, record) for row, record, _ in linked} == expected
+    assert {method for _, _, method in linked} <= {"eib_text_amount"}
+
+
 def test_a_description_group_takes_over_a_repeat_of_any_of_its_rows() -> None:
     # The 2024 row repeats the fund's second 2023 row and holds its commitment
     # within its year. The fund's two rows sum to that commitment.

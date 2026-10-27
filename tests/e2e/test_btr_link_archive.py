@@ -5,6 +5,7 @@ the scoping `data/`."""
 import os
 import shutil
 from pathlib import Path
+from typing import NamedTuple
 
 import polars as pl
 import pytest
@@ -13,7 +14,11 @@ from climate_finance import schema
 from climate_finance.build import release as assemble
 from climate_finance.build.fetch import DAC_EXCHANGE_FILE
 from climate_finance.build.link.btr import (
+    ID_PATTERN,
     LINK_PROBABILITY,
+    MIN_ID_CHARS,
+    MIN_MAP_OUTCOMES,
+    _id_key,
     btr_rows,
     calibrate,
     crs_records,
@@ -22,6 +27,7 @@ from climate_finance.build.link.btr import (
     linked_pairs,
     score_party,
 )
+from climate_finance.build.link.score import is_heldout
 from climate_finance.build.normalise import btr_at_dac_rates
 from climate_finance.build.normalise.crs import normalise_crs
 from climate_finance.build.readers.btr import estimate_party_weights, ingest_unfccc
@@ -34,6 +40,25 @@ pytestmark = pytest.mark.slow
 # The prototype's party weights, by DAC provider code: 0.4 for the EU, Norway,
 # Sweden, the Netherlands and Switzerland, 0.5 for Germany.
 PROTOTYPE_WEIGHTS = {918: 0.4, 8: 0.4, 10: 0.4, 7: 0.4, 11: 0.4, 5: 0.5}
+
+# Agreement of the BTR model with the ids on held-out activities, measured only where
+# a row's ids resolve. The calibration map sees the training half's labels alone.
+# Held-out rows agree at 0.931
+# over 1,953 linked. Norway agrees at 0.981 held out against 0.983 in-sample, so the
+# calibration does not overfit. France and the UK fall below 0.8. Halving France's
+# labels leaves it short of `MIN_MAP_OUTCOMES`, so it takes the pooled map. Each
+# party with `MIN_PARTY_LINKED` rows linked has (rows linked, agreement, whether the
+# party holds its own map).
+HELDOUT_AGREEMENT = {"linked": 1953, "pooled_parties": 25, "agreement": 0.931}
+HELDOUT_BY_PARTY: dict[str, tuple[int, float, bool]] = {
+    "DEU": (451, 0.96, True),
+    "DNK": (383, 0.932, True),
+    "FRA": (128, 0.742, False),
+    "GBR": (164, 0.774, True),
+    "NLD": (249, 0.96, False),
+    "NOR": (577, 0.981, True),
+}
+MIN_PARTY_LINKED = 50
 
 
 @pytest.fixture(scope="module")
@@ -77,24 +102,142 @@ def test_uk_programme_numbers_find_their_programme_years(
     assert (years, found_years) == (291, 284)
 
 
-def test_norway_model_agrees_with_its_ids(btr: pl.LazyFrame, crs: pl.LazyFrame) -> None:
-    rows = btr_rows(btr.filter(party="NOR"))
-    records = crs_records(crs, rows=rows)
-    truth = link_by_ids(rows, records=records)
-    best = calibrate(score_party(rows, records=records), truth=truth)
-    checked = best.join(
-        truth.with_columns(correct=pl.lit(value=True)),
-        on=["row_id", "record_id"],
-        how="left",
-    ).join(truth, on="row_id", how="semi")
-    linked = checked.filter(pl.col("probability") >= LINK_PROBABILITY)
+class Scored(NamedTuple):
+    """Every party's BTR rows, their id links, and their best-scoring candidates."""
 
-    # 69 of the 1,234 are rows whose recipient is "Global", which keys as an
-    # aggregate and so partners any CRS recipient; all 69 agree with the ids.
-    assert linked.height == 1234
-    assert linked["correct"].fill_null(value=False).mean() == pytest.approx(
-        0.983, abs=0.001
+    rows: pl.DataFrame
+    truth: pl.DataFrame
+    best: pl.DataFrame
+
+
+def score_all(btr: pl.LazyFrame, crs: pl.LazyFrame) -> Scored:
+    """Every party's BTR rows, id links and best candidates. Slow: fits a Splink
+    model for each of the 28 parties with CRS records."""
+    rows = btr_rows(btr)
+    records = crs_records(crs, rows=rows)
+    parties = rows.filter(pl.col("donor_code").is_not_null())["party"].unique().sort()
+    return Scored(
+        rows=rows,
+        truth=link_by_ids(rows, records=records),
+        best=pl.concat(
+            [
+                score_party(rows.filter(party=party), records=records)
+                for party in parties
+            ]
+        ),
     )
+
+
+@pytest.fixture(scope="module")
+def scored(btr: pl.LazyFrame, crs: pl.LazyFrame) -> Scored:
+    return score_all(btr, crs)
+
+
+def label_counts(best: pl.DataFrame, *, truth: pl.DataFrame) -> pl.DataFrame:
+    """Each party's `right` and `wrong` calibration labels from `truth`: its best
+    candidates of id-linked rows that are, or are not, among the row's id records."""
+    return (
+        best.join(truth.select("row_id").unique(), on="row_id", how="semi")
+        .join(
+            truth.with_columns(right=pl.lit(value=True)),
+            on=["row_id", "record_id"],
+            how="left",
+        )
+        .group_by("party")
+        .agg(
+            right=pl.col("right").is_not_null().sum(),
+            wrong=pl.col("right").is_null().sum(),
+        )
+    )
+
+
+def _activities(rows: pl.DataFrame) -> pl.DataFrame:
+    """`row_id` and `activity` for each row that writes an id: its party and the
+    smallest id key among the ids of every row connected to it by a shared id, so
+    an activity keeps its years together."""
+    ids = (
+        rows.select(
+            "row_id",
+            "party",
+            key=pl.concat_str(
+                pl.col("title").fill_null(""),
+                pl.col("additional_information").fill_null(""),
+                separator=" ",
+            ).str.extract_all(ID_PATTERN),
+        )
+        .explode("key")
+        .with_columns(key=_id_key(pl.col("key")))
+        .filter(pl.col("key").str.len_chars() >= MIN_ID_CHARS)
+        .group_by("row_id", "party")
+        .agg(pl.col("key").unique().sort())
+    )
+    parent: dict[tuple[str, str], tuple[str, str]] = {}
+
+    def root(node: tuple[str, str]) -> tuple[str, str]:
+        parent.setdefault(node, node)
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    for party, keys in ids.select("party", "key").iter_rows():
+        for key in keys:
+            low, high = sorted((root((party, keys[0])), root((party, key))))
+            parent[high] = low
+    return pl.DataFrame(
+        {
+            "row_id": ids["row_id"],
+            "activity": [
+                "|".join(root((party, keys[0])))
+                for party, keys in ids.select("party", "key").iter_rows()
+            ],
+        }
+    )
+
+
+def _agreement(linked: pl.DataFrame) -> float:
+    """The share of `linked` rows whose candidate is in the truth."""
+    return linked.select(pl.col("correct").mean()).item()
+
+
+def test_model_agrees_with_ids_on_unseen_activities(scored: Scored) -> None:
+    # Agreement is measured only where a row's ids resolve, because a row whose ids
+    # find no CRS record carries no label and counts as wrong whatever it links to.
+    activities = _activities(scored.rows)
+    heldout = activities.filter(is_heldout(activities["activity"]))
+    training = scored.truth.join(heldout, on="row_id", how="anti")
+    calibrated = calibrate(scored.best, truth=training)
+    linked = (
+        calibrated.join(heldout.select("row_id"), on="row_id", how="semi")
+        .join(scored.truth.select("row_id").unique(), on="row_id", how="semi")
+        .filter(pl.col("probability") >= LINK_PROBABILITY)
+        .join(
+            scored.truth.with_columns(correct=pl.lit(value=True)),
+            on=["row_id", "record_id"],
+            how="left",
+        )
+        .with_columns(pl.col("correct").fill_null(value=False))
+    )
+    # A party whose training labels hold fewer than `MIN_MAP_OUTCOMES` of either
+    # outcome takes the pooled map, or none when the pool is short too.
+    own_map = label_counts(scored.best, truth=training).filter(
+        pl.min_horizontal("right", "wrong") >= MIN_MAP_OUTCOMES
+    )["party"]
+    overall = {
+        "linked": linked.height,
+        "pooled_parties": scored.best["party"].n_unique() - len(own_map),
+        "agreement": round(_agreement(linked), 3),
+    }
+    by_party = {
+        party: (frame.height, round(_agreement(frame), 3), party in own_map)
+        for (party,), frame in linked.group_by("party", maintain_order=True)
+        if frame.height >= MIN_PARTY_LINKED
+    }
+    print(f"held-out agreement with the ids: {overall}")
+    print(f"by party (linked, agreement, own map): {by_party}")
+
+    assert overall == HELDOUT_AGREEMENT
+    assert by_party == HELDOUT_BY_PARTY
 
 
 def test_links_cover_the_reported_dollars(

@@ -2,11 +2,13 @@
 from link to assemble, and the fill and review pass-through."""
 
 import json
+import platform
 import re
 import shutil
 import tarfile
 from collections.abc import Callable
 from datetime import UTC, date, datetime
+from importlib import metadata
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +22,7 @@ from stage_runs import (
     registered,
     run_stage,
     stage_context,
+    write_fetch,
     write_recorded,
     year_rows,
 )
@@ -211,12 +214,7 @@ def _measure() -> dict[str, pl.DataFrame]:
 @pytest.fixture
 def release_dir(tmp_path: Path, config: BuildConfig) -> Path:
     """A release built from hand-written fetch, normalise and measure tables."""
-    write_recorded(
-        tmp_path,
-        "fetch",
-        {"raw_manifest": _raw_manifest("v20261006")},
-        config=config,
-    )
+    write_fetch(tmp_path, _raw_manifest("v20261006"), config=config)
     write_recorded(
         tmp_path,
         "normalise",
@@ -241,6 +239,59 @@ def release_dir(tmp_path: Path, config: BuildConfig) -> Path:
 
 def _read(release_dir: Path, table: str) -> pl.DataFrame:
     return pl.read_parquet(table_path(release_dir, "assemble", table))
+
+
+def test_the_release_records_the_build_that_made_it(
+    release_dir: Path, tmp_path: Path
+) -> None:
+    build = cf.load(path=release_dir / "assemble").manifest.build
+
+    assert build.package_source_sha256 == provenance.source_sha256()
+    assert build.python == platform.python_version()
+    assert build.dependencies["polars"] == metadata.version("polars")
+    assert set(build.dependencies) <= set(provenance.DEPENDENCIES)
+    # The flag stage did not run, and assemble is the stage being sealed.
+    assert build.stage_identities == {
+        stage: provenance.identity(release_dir, stage)
+        for stage in (
+            "fetch", "normalise", "link", "allocate", "fill", "review", "label",
+            "measure",
+        )
+    }  # fmt: skip
+    pack = release.pack_release(release_dir, out_path=tmp_path / "r.tar.zst")
+    with (
+        pa.input_stream(str(pack), compression="zstd") as stream,
+        tarfile.open(fileobj=stream, mode="r|") as tar,
+    ):
+        packed = {Path(m.name).name: tar.extractfile(m).read() for m in tar}
+    assert schema.ReleaseManifest.model_validate_json(packed["release.json"]).build == (
+        build
+    )
+
+
+class _Distribution:
+    def __init__(self, name: str, version: str) -> None:
+        self.metadata = {"Name": name}
+        self.version = version
+
+
+def test_the_environment_digest_follows_the_installed_versions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def digest(*distributions: _Distribution) -> str:
+        monkeypatch.setattr(metadata, "distributions", lambda: iter(distributions))
+        return provenance.environment_sha256()
+
+    base = digest(
+        _Distribution("Scikit_Learn", "1.9.0"), _Distribution("numpy", "2.3.3")
+    )
+
+    assert base == digest(
+        _Distribution("numpy", "2.3.3"), _Distribution("scikit-learn", "1.9.0")
+    )
+    assert base != digest(
+        _Distribution("numpy", "2.3.4"), _Distribution("scikit-learn", "1.9.0")
+    )
 
 
 def test_with_jev_flags_on_assemble_refuses_a_missing_flag_table(

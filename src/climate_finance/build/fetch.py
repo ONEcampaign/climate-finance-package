@@ -66,7 +66,12 @@ from climate_finance.build.sources.gcf import (
     download_gcf_readiness,
 )
 from climate_finance.errors import SourceUnavailableError
-from climate_finance.schema import RAW_MANIFEST, sha256_file
+from climate_finance.schema import (
+    CONVERSION_FACTORS,
+    CURRENCIES,
+    RAW_MANIFEST,
+    sha256_file,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -122,6 +127,8 @@ IATI_DIR = Path("external/iati")
 BTR_DIR = Path("unfccc/btr1")
 BTR_SOURCE = "unfccc_btr1"
 DAC_EXCHANGE_FILE = Path("dac_exchange.parquet")
+# Every conversion a query makes, as assemble ships it in `conversion_factors`.
+CONVERSION_FACTORS_FILE = Path("conversion_factors.parquet")
 ADAPTATION_LABELS_FILE = Path("labels/adaptation_labels.csv")
 
 CRDF_URL = "https://webfs.oecd.org/climate/"
@@ -254,6 +261,7 @@ def fetch_sources(
         _download_imputed_shares(raw),
         *download_gcf_projects(raw, client=client),
         _download_dac_exchange(raw),
+        _download_conversion_factors(raw),
         *_copy_iati(
             raw, archive=sources.iati_archive, publishers=sources.iati_publishers
         ),
@@ -294,6 +302,7 @@ def expected_sources(config: BuildConfig) -> list[str]:
         "imputed_shares",
         "gcf_projects",
         "dac_exchange",
+        "conversion_factors",
         *(f"iati_{publisher}" for publisher in config.sources.iati_publishers),
         *([BTR_SOURCE] if config.sources.btr_archive is not None else []),
         *(["adaptation_labels"] if config.jev_labels else []),
@@ -835,6 +844,80 @@ def _download_dac_exchange(raw: Path) -> RawFile:
         source="dac_exchange",
         method="http",
         sha256=sha256_file(path),
+    )
+
+
+def _download_conversion_factors(raw: Path) -> RawFile:
+    """Write `conversion_factors`. For each of `CURRENCIES` it holds the factors at
+    current prices (except for USD) and at each base year the currency's DAC exchange
+    rates cover, as `dac_factors` gives them. The recorded version is pydeflate's.
+    """
+    from importlib.metadata import version
+
+    path = target(raw, CONVERSION_FACTORS_FILE)
+    conversion_factors().write_parquet(path)
+    return describe(
+        CONVERSION_FACTORS_FILE,
+        source="conversion_factors",
+        method="http",
+        version=f"pydeflate {version('pydeflate')}",
+        sha256=sha256_file(path),
+    )
+
+
+def conversion_factors() -> pl.DataFrame:
+    """Every target `dac_factors` gives, keyed by currency and base year (null for
+    current prices), sorted by `CONVERSION_FACTORS.sort_key`. USD at current prices
+    is the identity and has no rows."""
+    frames = []
+    for currency in CURRENCIES:
+        current = dac_factors(currency=currency, prices="current")
+        targets = [
+            (base_year, dac_factors(currency=currency, prices=base_year))
+            for base_year in current["year"].unique().sort()
+        ]
+        if currency != "USD":
+            targets.insert(0, (None, current))
+        frames.extend(
+            factors.with_columns(
+                currency=pl.lit(currency), base_year=pl.lit(base_year, pl.Int16)
+            )
+            for base_year, factors in targets
+        )
+    return (
+        pl.concat(frames)
+        .select(list(CONVERSION_FACTORS.columns))
+        .sort(CONVERSION_FACTORS.sort_key)
+    )
+
+
+def dac_factors(*, currency: str, prices: int | Literal["current"]) -> pl.DataFrame:
+    """Multipliers from current USD to `currency` at `prices`, by DAC code and year,
+    from pydeflate's DAC data. The factor is the exchange rate for current prices, or
+    the inverse of the deflator for constant prices of a base year.
+
+    Columns `entity_code` (Int32), `year` (Int16) and `factor` (Float64).
+    """
+    import pydeflate
+
+    if prices == "current":
+        rates = pydeflate.get_oecd_dac_exchange_rates(
+            target_currency=currency, use_source_codes=True
+        )
+        factor = pl.col("exchange_rate")
+    else:
+        rates = pydeflate.get_oecd_dac_deflators(
+            base_year=prices, target_currency=currency, use_source_codes=True
+        )
+        factor = 1 / pl.col("deflator")
+    return (
+        pl.from_pandas(rates)
+        .select(
+            pl.col("entity_code").cast(pl.Int32),
+            pl.col("year").cast(pl.Int16),
+            factor.cast(pl.Float64).alias("factor"),
+        )
+        .drop_nulls()
     )
 
 

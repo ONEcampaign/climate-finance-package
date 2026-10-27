@@ -35,13 +35,16 @@ from climate_finance.build.reflows import (
     release_reflows,
 )
 from climate_finance.build.release import btr_totals
+from climate_finance.convert import DAC_TOTAL
 from climate_finance.schema import (
     CERTAIN_METHODS,
     CERTAIN_ROUTES,
+    DATA_FORMAT,
     FLOWS,
     LINK_METHODS,
     RECIPIENT_VIEW,
     RELEASE_TABLES,
+    BuildIdentity,
     ReleaseManifest,
     TableEntry,
     measured_adaptation,
@@ -339,6 +342,23 @@ LOAN_RECORDS = {
 # (record_id, disbursement_usd) of a record linked to no commitment.
 OFF_ROW_ALLOCATIONS = (("DEU-OUT-A", "fifo", 4e6), ("DEU-OUT-B", "excess", 2e6))
 OFF_ROW_RECORDS = (("DEU-OUT-C", 1e6),)
+# Conversion factors for France, Germany, Norway, Japan and the DAC total in 2020 to
+# 2024, at current prices and in 2022 and 2024 prices. Every currency but USD
+# takes its rate per US dollar, raised 1% per provider in this order. A base year's
+# factor rises 2% for each year before it.
+CURRENCY_RATES = {"USD": 1.0, "EUR": 0.9, "GBP": 0.8, "CAD": 1.3}
+FACTOR_ENTITIES = (FRA, DEU, NOR, JPN, DAC_TOTAL)
+FACTOR_YEARS = range(2020, 2025)
+FACTOR_BASE_YEARS = (None, 2022, 2024)
+# The build the fixture claims, with fixed digests so the fixture stays the same
+# whichever package and environment regenerate it.
+BUILD = BuildIdentity(
+    package_source_sha256="1" * 64,
+    python="3.13.0",
+    environment_sha256="2" * 64,
+    dependencies={"polars": "2.0.0"},
+    stage_identities={"fetch": "3" * 64},
+)
 # The build settings the fixture claims, as `release.json` records them.
 SETTINGS = {
     "offline": True,
@@ -812,6 +832,22 @@ def build_tables() -> dict[str, pl.DataFrame]:
         ],
         # The fixture claims a build with `jev_flags` off.
         "jev_flags": [],
+        "conversion_factors": [
+            {
+                "currency": currency,
+                "base_year": base_year,
+                "entity_code": entity,
+                "year": year,
+                "factor": (rate * (1 + 0.01 * index) if currency != "USD" else 1.0)
+                * (1 + 0.02 * (base_year - year) if base_year else 1.0),
+            }
+            for currency, rate in CURRENCY_RATES.items()
+            for base_year in FACTOR_BASE_YEARS
+            # USD at current prices needs no factor.
+            if (currency, base_year) != ("USD", None)
+            for index, entity in enumerate(FACTOR_ENTITIES)
+            for year in FACTOR_YEARS
+        ],
     }
     frames = {
         name: pl.from_dicts(rows, schema=_polars_schema(name))
@@ -1166,13 +1202,16 @@ def write_fixture(out_dir: Path) -> ReleaseManifest:
         out_dir,
         manifest=ReleaseManifest(
             release=RELEASE,
+            data_format=DATA_FORMAT,
             created_at=datetime(2026, 10, 21, tzinfo=UTC),
             package_version=__version__,
+            build=BUILD,
             tables={},
             source_versions={
                 "crs": "fixture",
                 "crdf": "fixture",
                 BTR_SOURCE: "fixture",
+                "conversion_factors": "fixture",
             },
             model_versions={"jev": "jev-1.14.0"},
             gates={},

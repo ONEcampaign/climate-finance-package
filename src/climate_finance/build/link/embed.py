@@ -12,9 +12,10 @@ cosine is at least `MIN_COSINE`. Search is exact. Cosines are computed once per 
 of distinct texts, so units with equal texts tie exactly, and ties go to the
 smaller unit id.
 
-`TextEmbedder` reads vectors from a cache keyed by the sha256 of (model revision,
-text) and embeds only the texts the cache lacks. An offline embedder reads the cache
-only and refuses a miss, so two offline builds give identical candidates.
+`TextEmbedder` reads vectors from a cache keyed by the sha256 of (model, model
+revision, `PREPROCESSING_VERSION`, text) and embeds only the texts the cache lacks.
+An offline embedder reads the cache only and refuses a miss, so two offline builds
+give identical candidates.
 """
 
 import hashlib
@@ -33,6 +34,11 @@ logger = logging.getLogger(__name__)
 
 PREFIX = "query: "
 MAX_TOKENS = 128
+# Part of every cache key. Bump it whenever `PREFIX`, `MAX_TOKENS` or the
+# normalisation in `sentence_transformer` changes, so old vectors are not reused.
+# The key also assumes fixed sentence-transformers, transformers and torch
+# versions. Bump it when any of them changes.
+PREPROCESSING_VERSION = 1
 DIMENSIONS = 384
 NEIGHBOURS = 3
 MIN_COSINE = 0.90
@@ -53,18 +59,25 @@ class EmbeddingError(BuildError):
 class EmbeddingCacheMissError(BuildError):
     """An offline build needs vectors its embedding cache does not hold."""
 
-    def __init__(self, *, misses: int, revision: str) -> None:
+    def __init__(self, *, misses: int, model: str, revision: str) -> None:
         self.misses = misses
+        self.model = model
         self.revision = revision
         super().__init__(
-            f"{misses} texts have no vector at revision {revision} in the embedding "
-            "cache and the build is offline; run once online to embed them."
+            f"{misses} texts have no vector from {model} at revision {revision} in "
+            "the embedding cache and the build is offline; run once online to embed "
+            "them."
         )
 
 
-def text_key(text: str, *, revision: str) -> str:
-    """The cache key of `text` under the model `revision`."""
-    body = json.dumps([revision, text], ensure_ascii=False, separators=(",", ":"))
+def text_key(text: str, *, model: str, revision: str) -> str:
+    """The cache key of `text` under `model` at `revision` and the current
+    `PREPROCESSING_VERSION`."""
+    body = json.dumps(
+        [model, revision, PREPROCESSING_VERSION, text],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     return hashlib.sha256(body.encode()).hexdigest()
 
 
@@ -125,7 +138,10 @@ class TextEmbedder:
         wanted = pl.DataFrame(
             {
                 "text": texts,
-                "key": [text_key(text, revision=self.revision) for text in texts],
+                "key": [
+                    text_key(text, model=self.model, revision=self.revision)
+                    for text in texts
+                ],
             },
             schema={"text": pl.String, "key": pl.String},
         )
@@ -134,7 +150,7 @@ class TextEmbedder:
         if missing.height:
             if self.offline:
                 raise EmbeddingCacheMissError(
-                    misses=missing.height, revision=self.revision
+                    misses=missing.height, model=self.model, revision=self.revision
                 )
             cached = pl.concat([cached, self._embed(missing)])
         # Each text's row in `cached`, so the vectors are copied once, in order.

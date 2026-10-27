@@ -26,6 +26,7 @@ def _resolve(path: Path, info: ValidationInfo) -> Path:
 
 ConfigPath = Annotated[Path, AfterValidator(_resolve)]
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+GitCommit = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40}$")]
 
 
 class _Section(BaseModel):
@@ -132,7 +133,8 @@ class Embedding(_Section):
     the directory that caches its vectors."""
 
     model: str
-    revision: str
+    # A branch or tag name would let the model change under a cached key.
+    revision: GitCommit
     cache_dir: ConfigPath
 
 

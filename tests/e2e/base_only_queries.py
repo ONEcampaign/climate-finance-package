@@ -21,9 +21,9 @@ import polars as pl  # noqa: E402
 
 import climate_finance as cf  # noqa: E402
 
-# Dependencies of the build extra that no base dependency pulls in (pydeflate brings
-# resolvekit and oda-reader, and oda-reader brings openpyxl).
-BUILD_ONLY = ("typer", "httpx")
+# Dependencies of the build extra. pydeflate runs in the build only, since a release
+# ships its conversion factors.
+BUILD_ONLY = ("typer", "httpx", "pydeflate", "oda_reader", "openpyxl")
 
 
 def totals(result: cf.Result) -> dict[str, dict[str, float]]:

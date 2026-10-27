@@ -6,14 +6,17 @@ import numpy as np
 import polars as pl
 import pytest
 
+from climate_finance.build.link import embed
 from climate_finance.build.link.embed import (
     DIMENSIONS,
     SHARD_TEXTS,
     EmbeddingCacheMissError,
     TextEmbedder,
     record_text,
+    text_key,
 )
 
+MODEL = "intfloat/multilingual-e5-small"
 REVISION = "614241f622f53c4eeff9890bdc4f31cfecc418b3"
 
 
@@ -58,10 +61,11 @@ def _embedder(
     encoder: _Encoder,
     *,
     offline: bool = False,
+    model: str = MODEL,
     revision: str = REVISION,
 ) -> TextEmbedder:
     return TextEmbedder(
-        model="intfloat/multilingual-e5-small",
+        model=model,
         revision=revision,
         cache_dir=cache_dir,
         offline=offline,
@@ -100,3 +104,25 @@ def test_vectors_reach_the_cache_one_shard_at_a_time(tmp_path: Path) -> None:
 
     assert [len(call) for call in encoder.calls] == [SHARD_TEXTS, 1]
     assert len(list(tmp_path.glob("*.parquet"))) == 2
+
+
+def test_another_model_does_not_read_the_cached_vectors(tmp_path: Path) -> None:
+    small, base = _Encoder(), _Encoder()
+    _embedder(tmp_path, small)(["solar"])
+    _embedder(tmp_path, base, model="intfloat/multilingual-e5-base")(["solar"])
+
+    assert small.calls == base.calls == [["solar"]]
+    with pytest.raises(EmbeddingCacheMissError):
+        _embedder(tmp_path, _Encoder(), model="other", offline=True)(["solar"])
+
+
+def test_a_new_preprocessing_version_misses_the_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = text_key("solar", model=MODEL, revision=REVISION)
+    _embedder(tmp_path, _Encoder())(["solar"])
+    monkeypatch.setattr(embed, "PREPROCESSING_VERSION", embed.PREPROCESSING_VERSION + 1)
+
+    assert text_key("solar", model=MODEL, revision=REVISION) != key
+    with pytest.raises(EmbeddingCacheMissError):
+        _embedder(tmp_path, _Encoder(), offline=True)(["solar"])

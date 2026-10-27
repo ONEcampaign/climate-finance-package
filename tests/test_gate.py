@@ -9,7 +9,7 @@ import polars as pl
 import pytest
 from normalised import crdf_rows, crs_records
 from releases import copy_release
-from stage_runs import write_recorded, year_rows
+from stage_runs import write_fetch, write_recorded, year_rows
 from typer.testing import CliRunner
 
 import climate_finance as cf
@@ -156,7 +156,7 @@ def release_dir(tmp_path: Path) -> Path:
     manifest = year_rows().with_columns(
         version=pl.when(pl.col("source") == "crs").then(pl.lit("v20261006"))
     )
-    write_recorded(release_dir, "fetch", {"raw_manifest": manifest}, config=config)
+    write_fetch(release_dir, manifest, config=config)
     write_recorded(
         release_dir,
         "normalise",

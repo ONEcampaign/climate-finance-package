@@ -79,6 +79,35 @@ class WithheldTableError(ClimateFinanceError, LookupError):
         super().__init__(f"The release leaves out {table!r}. {note}")
 
 
+class ReleaseFormatError(ClimateFinanceError):
+    """A release's `release.json` records a data format newer than `supported`,
+    the newest this version of climate-finance reads."""
+
+    def __init__(self, release: str, *, data_format: int, supported: int) -> None:
+        self.release = release
+        self.data_format = data_format
+        self.supported = supported
+        super().__init__(
+            f"Release {release!r} has data format {data_format}, and this version "
+            f"of climate-finance reads data formats up to {supported}. Upgrade "
+            f"climate-finance to a version that reads data format {data_format}."
+        )
+
+
+class FormatTableError(WithheldTableError):
+    """A release table the release's data format, `data_format`, predates."""
+
+    def __init__(self, table: str, *, data_format: int) -> None:
+        self.data_format = data_format
+        super().__init__(
+            table,
+            note=(
+                f"Its data format, {data_format}, predates the table. Load a "
+                "release of a later data format to read it."
+            ),
+        )
+
+
 class MissingLabelsError(ClimateFinanceError):
     """A method reads labels the release does not hold."""
 

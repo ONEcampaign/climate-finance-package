@@ -2,6 +2,7 @@ import json
 import re
 import socket
 import sys
+from importlib.metadata import version
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Literal
@@ -33,6 +34,26 @@ MANIFEST = Path("fetch/raw_manifest.parquet")
 CRS_YEARS = range(1973, 2026)
 
 
+# The DAC exchange rates the pydeflate stand-in gives, by target currency, DAC code
+# (France, the DAC total) and year.
+RATES = {
+    currency: {
+        (entity, year): rate * (1 + 0.1 * (year - 2021)) * (1 + 0.01 * (entity == 4))
+        for entity in (4, 20001)
+        for year in (2021, 2022)
+    }
+    for currency, rate in {"USD": 1.0, "EUR": 0.9, "GBP": 0.8, "CAD": 1.3}.items()
+}
+
+
+def deflator(entity: int, year: int, *, base_year: int, currency: str) -> float | None:
+    """The stand-in's DAC deflator: none for France before the base year."""
+    if entity == 4 and year < base_year:
+        return None
+    rate = RATES[currency][(20001, base_year)]
+    return 100 * (1 + 0.05 * (year - base_year) + 0.01 * (entity == 4)) / rate
+
+
 class FakeSources:
     """Stand-ins for the oda-reader, pydeflate and GCF calls, recording each call.
 
@@ -57,7 +78,10 @@ class FakeSources:
         monkeypatch.setattr(oda_reader, "download_multisystem", self.multisystem)
         monkeypatch.setattr(oda_reader, "download_crdf_file", self.crdf_file)
         # A stand-in module, so this file never imports pydeflate (and wbgapi).
-        pydeflate = SimpleNamespace(get_oecd_dac_exchange_rates=self.rates)
+        pydeflate = SimpleNamespace(
+            get_oecd_dac_exchange_rates=self.rates,
+            get_oecd_dac_deflators=self.deflators,
+        )
         monkeypatch.setitem(sys.modules, "pydeflate", pydeflate)
         transport = httpx.MockTransport(self.gcf)
         monkeypatch.setattr(
@@ -120,9 +144,34 @@ class FakeSources:
         return Path(save_to_path)
 
     def rates(self, **kwargs: object) -> pd.DataFrame:
+        """Local currency per US dollar by ISO code, or with `use_source_codes`
+        `RATES` of the target currency by DAC code."""
         self.calls.append(("get_oecd_dac_exchange_rates", kwargs))
+        if not kwargs.get("use_source_codes"):
+            return pd.DataFrame(
+                {"iso_code": ["FRA"], "year": [2022], "exchange_rate": [0.9509]}
+            )
+        rates = RATES[str(kwargs["target_currency"])]
         return pd.DataFrame(
-            {"iso_code": ["FRA"], "year": [2022], "exchange_rate": [0.9509]}
+            [(entity, year, rate) for (entity, year), rate in rates.items()],
+            columns=["entity_code", "year", "exchange_rate"],
+        )
+
+    def deflators(self, **kwargs: object) -> pd.DataFrame:
+        """`deflator` by DAC code, None for France before the base year."""
+        self.calls.append(("get_oecd_dac_deflators", kwargs))
+        base_year, currency = kwargs["base_year"], str(kwargs["target_currency"])
+        assert isinstance(base_year, int)
+        return pd.DataFrame(
+            [
+                (
+                    entity,
+                    year,
+                    deflator(entity, year, base_year=base_year, currency=currency),
+                )
+                for entity, year in RATES[currency]
+            ],
+            columns=["entity_code", "year", "deflator"],
         )
 
     def gcf(self, request: httpx.Request) -> httpx.Response:
@@ -255,6 +304,7 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
             "oecd/Imputed_multilateral_shares.xlsx",
             "external/gcf/projects.json",
             "dac_exchange.parquet",
+            "conversion_factors.parquet",
             *iati,
         ]
     )
@@ -265,6 +315,8 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
     for path, sha256 in manifest.select("path", "sha256").iter_rows():
         assert sha256_file(raw / path) == sha256
     methods = dict(manifest.select("path", "method").iter_rows())
+    versions = dict(manifest.select("source", "version").iter_rows())
+    assert versions["conversion_factors"] == f"pydeflate {version('pydeflate')}"
     assert methods["oecd/CRS.parquet"] == "manual"
     assert all(methods[path] == "manual" for path in iati)
     assert methods["oecd/multisystem.parquet"] == "http"
@@ -320,6 +372,43 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
             "dotstat_codes": True,
         },
     ) in sources.calls
+
+
+@pytest.mark.usefixtures("sources")
+def test_the_conversion_factors_hold_every_target_as_pydeflate_gives_it() -> None:
+    factors = fetch.conversion_factors()
+
+    def target(currency: str, base_year: int | None) -> dict[tuple[int, int], float]:
+        rows = factors.filter(
+            pl.col("currency") == currency, pl.col("base_year").eq_missing(base_year)
+        )
+        return {
+            (entity, year): f
+            for entity, year, f in rows.select(
+                "entity_code", "year", "factor"
+            ).iter_rows()
+        }
+
+    assert set(factors["currency"]) == {"USD", "EUR", "GBP", "CAD"}
+    base_years = dict(
+        factors.group_by("currency")
+        .agg(pl.col("base_year").unique().sort())
+        .iter_rows()
+    )
+    # USD at current prices is the identity and has no rows.
+    assert base_years == {
+        "USD": [2021, 2022],
+        **{key: [None, 2021, 2022] for key in ("EUR", "GBP", "CAD")},
+    }
+    assert target("EUR", None) == pytest.approx(RATES["EUR"])
+    # A missing deflator, France's 2021 in 2022 prices, gives no row.
+    assert target("GBP", 2022) == pytest.approx(
+        {
+            key: 1 / value
+            for key in RATES["GBP"]
+            if (value := deflator(*key, base_year=2022, currency="GBP")) is not None
+        }
+    )
 
 
 def test_offline_fetch_rewrites_its_stage_unchanged_with_no_network_call(

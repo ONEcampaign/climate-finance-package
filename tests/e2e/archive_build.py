@@ -3,9 +3,11 @@
 The archive holds the CRDF and MULTI as two files each: the years from 2015, and the
 earlier years an online fetch of every year reads (recipient CRDF and MULTI from
 2000, provider CRDF from 2013). `seed_raw` joins each pair into one raw file and
-links every other source to its archive file. The `raw_manifest` records the years
-`resolve_years` asks for the configured years against the years the files hold, and
-the years of them `held_in` finds in each file (MULTI from 2011). `archive_config`
+links every other source to its archive file. The conversion factors come from a
+recorded `conversion_factors.parquet`, so the seed makes no pydeflate call. The
+`raw_manifest` records the years `resolve_years` asks for the configured years
+against the years the files hold, and the years of them `held_in` finds in each file
+(MULTI from 2011). `archive_config`
 is `build.toml` with the archive's CRS and IATI files as its sources.
 """
 
@@ -17,6 +19,7 @@ from normalised import record_fetch
 
 from climate_finance.build.config import BuildConfig, LocalFile, load_config
 from climate_finance.build.fetch import (
+    CONVERSION_FACTORS_FILE,
     CRDF_FILES,
     CRS_FILE,
     DAC_EXCHANGE_FILE,
@@ -76,7 +79,23 @@ def archive_config(archive: Path, *, key_repair: bool, recoveries: bool) -> Buil
 
 def seed_raw(release_dir: Path, *, archive: Path, config: BuildConfig) -> None:
     """Lay the files of `archive` (CF_E2E_DATA/raw) out under `release_dir`'s raw
-    directory and record them as an earlier fetch under `config`."""
+    directory and record them as an earlier fetch under `config`.
+
+    Raises:
+        FileNotFoundError: when `archive` holds no `conversion_factors.parquet`
+            (CF_E2E_DATA/raw/conversion_factors.parquet, beside the DAC exchange
+            rates), which `fetch.conversion_factors()` writes.
+    """
+    recorded = archive / CONVERSION_FACTORS_FILE
+    if not recorded.exists():
+        command = (
+            "from climate_finance.build.fetch import conversion_factors; "
+            f"conversion_factors().write_parquet({str(recorded)!r})"
+        )
+        raise FileNotFoundError(
+            f"{recorded} is missing. Write it once, online, with "
+            f'`uv run python -c "{command}"`.'
+        )
     raw = raw_dir(release_dir)
     placed = []
     for source, (relative, origins) in JOINED.items():
@@ -91,6 +110,7 @@ def seed_raw(release_dir: Path, *, archive: Path, config: BuildConfig) -> None:
         "imputed_shares": [(IMPUTED_SHARES_FILE, IMPUTED_SHARES_FILE)],
         "gcf_projects": [(Path("external/gcf_api/projects.json"), PROJECTS_FILE)],
         "dac_exchange": [(DAC_EXCHANGE_FILE, DAC_EXCHANGE_FILE)],
+        "conversion_factors": [(CONVERSION_FACTORS_FILE, CONVERSION_FACTORS_FILE)],
         **{
             f"iati_{publisher}": [
                 (origin.relative_to(archive), IATI_DIR / publisher / origin.name)

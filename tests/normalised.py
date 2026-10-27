@@ -16,6 +16,7 @@ from climate_finance import schema
 from climate_finance.build import write_table
 from climate_finance.build.config import BuildConfig, Ledgers, Years
 from climate_finance.build.fetch import (
+    CONVERSION_FACTORS_FILE,
     CRDF_FILES,
     CRS_FILE,
     DAC_EXCHANGE_FILE,
@@ -33,6 +34,7 @@ from climate_finance.build.stages import REGISTRY, Stage, table_path
 from climate_finance.schema import sha256_file
 
 RAW_FIXTURES = Path(__file__).parent / "fixtures" / "raw"
+SNAPSHOT = Path(__file__).parent / "fixtures" / "snapshot"
 # The publishers the IATI fixtures hold.
 IATI_PUBLISHERS = ("caf", "eib", "gcf", "gef")
 
@@ -120,12 +122,12 @@ def write_raw(
     ledgers: Ledgers | None = None,
 ) -> pl.DataFrame:
     """Lay the raw fixtures out under `raw` as fetch would, with a euro DAC rate
-    of 0.8, and return their `raw_manifest`, which records the years
-    `resolve_years` gives `crdf_years` against a CRS from 2000 to 2025, a
-    provider-perspective CRDF from 2013 and a recipient file from `recipient_first`
-    (by default the fixture's first year), as asked and held. With `ledgers`, the
-    ledger fixtures come too, and the files that hold the ledgers record the ledger
-    years."""
+    of 0.8 and the snapshot's conversion factors, and return their `raw_manifest`,
+    which records the years `resolve_years` gives `crdf_years` against a CRS from
+    2000 to 2025, a provider-perspective CRDF from 2013 and a recipient file from
+    `recipient_first` (by default the fixture's first year), as asked and held.
+    With `ledgers`, the ledger fixtures come too, and the files that hold the
+    ledgers record the ledger years."""
     oecd = RAW_FIXTURES / "oecd"
     files = [
         ("crs", oecd / "CRS.parquet", CRS_FILE),
@@ -144,6 +146,11 @@ def write_raw(
             IMPUTED_SHARES_FILE,
         ),
         ("gcf_projects", RAW_FIXTURES / "gcf" / "projects.json", PROJECTS_FILE),
+        (
+            "conversion_factors",
+            SNAPSHOT / "conversion_factors.parquet",
+            CONVERSION_FACTORS_FILE,
+        ),
         *(
             (f"iati_{publisher}", xml, IATI_DIR / publisher / xml.name)
             for publisher in IATI_PUBLISHERS

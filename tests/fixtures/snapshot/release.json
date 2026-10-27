@@ -1,7 +1,19 @@
 {
   "release": "fixture",
+  "data_format": 1,
   "created_at": "2026-10-21T00:00:00Z",
   "package_version": "2.0.0.dev0",
+  "build": {
+    "package_source_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "python": "3.13.0",
+    "environment_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "dependencies": {
+      "polars": "2.0.0"
+    },
+    "stage_identities": {
+      "fetch": "3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  },
   "tables": {
     "disbursements": {
       "sha256": "a0da0f1146fcb0ae8ab85f73c461851fac5fa094aea9ff193036262a40616b1e",
@@ -55,6 +67,10 @@
       "sha256": "3a6f36a449b8348a6eae81d8447190a15d4b3c5bf117c59f9f4b7bc082dfeb66",
       "rows": 0
     },
+    "conversion_factors": {
+      "sha256": "0a01df77fb75bf1f140caf959e00bbe6e491e735815757482761cf6bb08655e6",
+      "rows": 275
+    },
     "commitments": {
       "sha256": "9c6976e78b96d85666b7ff57e81933bbb49e5c6c31e69cc2776c5fe9c119daa6",
       "rows": 14
@@ -83,7 +99,8 @@
   "source_versions": {
     "crs": "fixture",
     "crdf": "fixture",
-    "unfccc_btr1": "fixture"
+    "unfccc_btr1": "fixture",
+    "conversion_factors": "fixture"
   },
   "years": {},
   "model_versions": {

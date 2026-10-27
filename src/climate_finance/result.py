@@ -38,6 +38,7 @@ from climate_finance.schema import (
     SHARE_ORIGINS,
     STATUSES,
     UNTRACED_REASONS,
+    BuildIdentity,
 )
 from climate_finance.spec import (
     ODA_FLOW_CATEGORY,
@@ -88,17 +89,19 @@ def named_keys(keys: Sequence[str]) -> tuple[str, ...]:
 
 
 class Meta(BaseModel):
-    """Where a result came from: release, package and source versions.
+    """Where a result came from: release, package and source versions, and the
+    `build` identity of the code and environment that built the release.
 
-    `conversion` identifies the pydeflate version and exchange-rate or deflator factors
-    behind a converted result; it is None for USD at current prices. `years` copies
-    the release's `years`.
+    `conversion` identifies the release's exchange-rate or deflator factors behind a
+    converted result, and is None for USD at current prices. `years` copies the
+    release's `years`.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     release: str
     package_version: str
+    build: BuildIdentity
     source_versions: dict[str, str]
     model_versions: dict[str, str]
     years: dict[str, tuple[int, int]] = {}
@@ -246,6 +249,7 @@ class Result:
             unmeasured=sorted(set(by_method["unmeasured"].explode().drop_nulls())),
             years=self.meta.years,
             conversion=self.meta.conversion,
+            build=self.meta.build,
         )
 
     def share_of_total(self) -> Result:
@@ -565,6 +569,7 @@ def explain(
     unmeasured: Sequence[int] = (),
     years: Mapping[str, tuple[int, int]] | None = None,
     conversion: Conversion | None = None,
+    build: BuildIdentity | None = None,
 ) -> str:
     """The method, view, flow, filters and units behind `spec`, in plain language.
 
@@ -578,11 +583,18 @@ def explain(
     of `core_contributions` or of the share table a method reads (`agency_shares`
     under the OECD's imputed shares, else `agency_spending`) are named as holding no
     attributed finance under that method. `conversion` names the conversion factors
-    of a converted result.
+    of a converted result. `build` names the digests of the package files and
+    environment that built the release.
     """
     unsplit = unsplit or {}
     methods = spec.methods
-    lines = [f"Release {release}."]
+    heading = f"Release {release}."
+    if build is not None:
+        heading += (
+            f" Built by package source SHA-256 {build.package_source_sha256} in "
+            f"environment SHA-256 {build.environment_sha256}."
+        )
+    lines = [heading]
     for method in methods:
         lines.append(describe(method))
         if coefficients is not None and method.coefficients != "fixed":
@@ -661,8 +673,8 @@ def explain(
     source = (
         ""
         if spec.currency == "USD" and spec.prices == "current"
-        else ", converted with OECD DAC exchange rates and deflators by provider "
-        "(the DAC total for providers without their own series)"
+        else ", converted with the OECD DAC exchange rates and deflators the release "
+        "ships, by provider (the DAC total for providers without their own series)"
     )
     units = f"{spec.currency} at {prices}{source}"
     if spec.measure == "share_of_total":
@@ -682,8 +694,9 @@ def explain(
         lines.append(f"Amounts in {units}.")
     if conversion is not None:
         lines.append(
-            f"Conversion factors: pydeflate {conversion.pydeflate_version}, "
-            f"SHA-256 {conversion.factors_sha256}."
+            "Conversion factors: the release's conversion_factors table, SHA-256 "
+            f"{conversion.table_sha256}; the rows read, SHA-256 "
+            f"{conversion.factors_sha256}."
         )
     return "\n".join(lines)
 

@@ -8,6 +8,9 @@ from climate_finance import catalogue
 from climate_finance.errors import SchemaError
 from climate_finance.schema import (
     CERTAIN_ROUTES,
+    CURRENCIES,
+    DATA_FORMAT,
+    FORMAT_TABLES,
     LINK_METHODS,
     PERSPECTIVES,
     QUERY_FLOWS,
@@ -16,7 +19,7 @@ from climate_finance.schema import (
     TableSchema,
     validate,
 )
-from climate_finance.spec import Flow, View
+from climate_finance.spec import Currency, Flow, View
 
 TABLE = TableSchema(
     name="example",
@@ -99,6 +102,13 @@ def test_the_query_vocabularies_match_the_schema() -> None:
     assert set(get_args(Flow.__value__)) == set(QUERY_FLOWS)
     assert set(catalogue.flows.list()["name"]) == set(QUERY_FLOWS)
     assert set(get_args(View.__value__)) == set(PERSPECTIVES)
+    assert get_args(Currency.__value__) == CURRENCIES
+
+
+def test_the_current_data_format_holds_every_release_table() -> None:
+    """A table added to `RELEASE_TABLES` needs a new `DATA_FORMAT`, so older
+    releases stay readable."""
+    assert FORMAT_TABLES[DATA_FORMAT] == frozenset(RELEASE_TABLES)
 
 
 def test_an_amount_paired_crosswalk_is_an_estimated_route() -> None:

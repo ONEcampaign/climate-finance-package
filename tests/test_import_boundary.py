@@ -21,10 +21,9 @@ BUILD_ONLY = (
     "sklearn",
     "openpyxl",
     "resolvekit",
+    "pydeflate",
 )
 COMPAT_ONLY = ("pandas",)
-# pydeflate imports pandas, so only a currency or price conversion may load it.
-CONVERSION_ONLY = ("pydeflate",)
 FIXTURE = Path(__file__).parent / "fixtures" / "snapshot"
 BASE_INSTALL = os.environ.get("CF_BASE_INSTALL") == "1"
 
@@ -36,7 +35,7 @@ def _run(code: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_queries_names_and_compare_load_no_build_compat_or_conversion() -> None:
+def test_queries_conversion_names_and_compare_load_no_build_or_compat() -> None:
     result = _run(
         "import sys\n"
         "from pathlib import Path\n"
@@ -53,7 +52,9 @@ def test_queries_names_and_compare_load_no_build_compat_or_conversion() -> None:
         "assert release.spending(providers='DEU', recipients='KEN').rows().height\n"
         "assert cf.providers.info('EIB')\n"
         "assert cf.providers.list().height and cf.methods.list().height\n"
-        f"loaded = {BUILD_ONLY + COMPAT_ONLY + CONVERSION_ONLY!r}\n"
+        "assert release.spending(currency='EUR', prices=2024).meta.conversion\n"
+        "assert release.spending(currency='GBP').table.height\n"
+        f"loaded = {BUILD_ONLY + COMPAT_ONLY!r}\n"
         "print(sorted(m for m in loaded if m in sys.modules))"
     )
 

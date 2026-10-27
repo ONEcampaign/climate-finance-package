@@ -136,7 +136,6 @@ dependencies = [
     { name = "polars" },
     { name = "pyarrow" },
     { name = "pydantic" },
-    { name = "pydeflate" },
 ]
 
 [package.optional-dependencies]
@@ -146,6 +145,7 @@ build = [
     { name = "numpy" },
     { name = "oda-reader" },
     { name = "openpyxl" },
+    { name = "pydeflate" },
     { name = "pyyaml" },
     { name = "rapidfuzz" },
     { name = "resolvekit" },
@@ -181,7 +181,7 @@ requires-dist = [
     { name = "polars", specifier = ">=2.0.0" },
     { name = "pyarrow", specifier = ">=16.1.0" },
     { name = "pydantic", specifier = ">=2.12.0" },
-    { name = "pydeflate", specifier = ">=2.6.2" },
+    { name = "pydeflate", marker = "extra == 'build'", specifier = ">=2.6.2" },
     { name = "pyyaml", marker = "extra == 'build'", specifier = ">=6.0.1" },
     { name = "rapidfuzz", marker = "extra == 'build'", specifier = ">=3.8.0" },
     { name = "resolvekit", marker = "extra == 'build'", specifier = ">=0.1.13" },

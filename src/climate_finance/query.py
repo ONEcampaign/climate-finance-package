@@ -80,7 +80,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from climate_finance.catalogue import Agency, agency_name, with_names
-from climate_finance.convert import convert, provenance
+from climate_finance.convert import convert, provenance, target_factors
 from climate_finance.errors import (
     MissingLabelsError,
     ReleaseIntegrityError,
@@ -232,6 +232,12 @@ def spending(release: Release, *, spec: Spec) -> Result:
     methods = spec.methods
     if any(method.relevance == "jev" for method in methods):
         _require_jev_labels(release)
+    factors = target_factors(
+        release.table("conversion_factors"),
+        release=release.manifest.release,
+        currency=spec.currency,
+        prices=spec.prices,
+    )
     named = _conditions(providers=spec.providers, recipients=None, years=None)
     others = _conditions(providers=None, recipients=spec.recipients, years=spec.years)
     filters = [*named, *others]
@@ -290,8 +296,8 @@ def spending(release: Release, *, spec: Spec) -> Result:
     rows = convert(
         pl.concat(weighted),
         columns=AMOUNTS,
-        currency=spec.currency,
-        prices=spec.prices,
+        factors=factors,
+        release=release.manifest.release,
     ).sort(
         "method", "origin", "provider_code", "year", "row_id", "record_id",
         "channel_code", nulls_last=True,
@@ -304,19 +310,28 @@ def spending(release: Release, *, spec: Spec) -> Result:
         table=_aggregate(
             rows, methods=[label(method) for method in methods], agency=agency
         ),
-        modelled=_modelled(release, spec=spec, conditions=modelled),
+        modelled=_modelled(release, spec=spec, conditions=modelled, factors=factors),
         rows=rows,
         totals=_totals(
-            release, spec=spec, conditions=filters, eu_kept=eu_kept, agency=agency
+            release,
+            spec=spec,
+            conditions=filters,
+            eu_kept=eu_kept,
+            agency=agency,
+            factors=factors,
         ),
         spec=spec,
         meta=Meta(
             release=release.manifest.release,
             package_version=version("climate-finance"),
+            build=release.manifest.build,
             source_versions=release.manifest.source_versions,
             years=release.manifest.years,
             model_versions=release.manifest.model_versions,
-            conversion=provenance(currency=spec.currency, prices=spec.prices),
+            conversion=provenance(
+                factors,
+                table_sha256=release.manifest.tables["conversion_factors"].sha256,
+            ),
         ),
     )
 
@@ -1761,6 +1776,7 @@ def _totals(
     conditions: Sequence[pl.Expr],
     eu_kept: Mapping[str, pl.LazyFrame],
     agency: pl.Expr | None,
+    factors: pl.DataFrame | None,
 ) -> pl.LazyFrame:
     """All CRS flows of `spec.flow`, of disbursements for a net flow, by the
     result's row keys and method, plus a row per provider, year, Bi_Multi code
@@ -1810,13 +1826,17 @@ def _totals(
     return convert(
         pl.concat([by_recipient, all_recipients]),
         columns=("total",),
-        currency=spec.currency,
-        prices=spec.prices,
+        factors=factors,
+        release=release.manifest.release,
     )
 
 
 def _modelled(
-    release: Release, *, spec: Spec, conditions: Sequence[pl.Expr]
+    release: Release,
+    *,
+    spec: Spec,
+    conditions: Sequence[pl.Expr],
+    factors: pl.DataFrame | None,
 ) -> pl.LazyFrame:
     """The "modelled, not reported" line, shown for recipient-view disbursements
     and no net flow."""
@@ -1835,6 +1855,6 @@ def _modelled(
     return convert(
         modelled.filter(*conditions),
         columns=("low", "high"),
-        currency=spec.currency,
-        prices=spec.prices,
+        factors=factors,
+        release=release.manifest.release,
     ).sort("provider_code", "year", "recipient_code", nulls_last=True)
