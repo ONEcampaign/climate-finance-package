@@ -12,6 +12,7 @@ paths, and the stage's `stage.json` records their values.
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import cached_property
 from pathlib import Path
 
 import polars as pl
@@ -19,10 +20,11 @@ import polars as pl
 from climate_finance.build import allocate, fetch, label, measure, release
 from climate_finance.build.config import RELEASE_SETTINGS, BuildConfig
 from climate_finance.build.errors import StageInputMissingError
+from climate_finance.build.jev_client import JevClient
 from climate_finance.build.link import gap_fill, review, run_link
 from climate_finance.build.normalise import run_normalise
 from climate_finance.build.provenance import Provenance
-from climate_finance.schema import STAGE_TABLES, TableSchema
+from climate_finance.schema import STAGE_TABLES, TableSchema, scan_table
 
 type StageOutput = Mapping[str, pl.DataFrame | pl.LazyFrame]
 
@@ -61,7 +63,9 @@ def raw_dir(release_dir: Path) -> Path:
 class StageContext:
     """What every stage function receives.
 
-    The runner sets `provenance`, which records the stages the stage reads.
+    The runner builds one context per stage and sets `provenance`, which records
+    the stages the stage reads, and `jev_client`, which returns the build's one Jev
+    client, so every stage that asks Jev shares one client and one cost cap.
     """
 
     release: str
@@ -69,6 +73,7 @@ class StageContext:
     config: BuildConfig
     offline: bool
     provenance: Provenance | None = None
+    jev_client: Callable[[], JevClient] | None = None
 
     @property
     def raw_dir(self) -> Path:
@@ -80,6 +85,14 @@ class StageContext:
         if self.provenance is not None:
             self.provenance.read_stage(Stage.FETCH)
         return raw_dir(self.release_dir)
+
+    @cached_property
+    def jev(self) -> JevClient:
+        """The build's Jev client from `jev_client`, or without one a client made
+        on first use from `config.jev`."""
+        if self.jev_client is not None:
+            return self.jev_client()
+        return make_jev_client(self.config, offline=self.offline)
 
     def read(self, stage: str, table: str) -> pl.LazyFrame:
         """Scan a table an earlier stage wrote.
@@ -93,7 +106,18 @@ class StageContext:
             raise StageInputMissingError(stage=stage, table=table, path=path)
         if self.provenance is not None:
             self.provenance.read_stage(stage)
-        return pl.scan_parquet(path)
+        return scan_table(path)
+
+
+def make_jev_client(config: BuildConfig, *, offline: bool) -> JevClient:
+    """A Jev client for `config.jev`."""
+    jev = config.jev
+    return JevClient(
+        model=jev.model,
+        cost_cap_usd=jev.cost_cap_usd,
+        cache_dir=jev.cache_dir,
+        offline=offline,
+    )
 
 
 type Seal = Callable[
@@ -136,15 +160,48 @@ REGISTRY: tuple[StageDef, ...] = (
     _entry(
         Stage.NORMALISE,
         run_normalise,
-        settings=("recoveries",),
+        settings=("recoveries", "sources.ledgers"),
     ),
-    _entry(Stage.LINK, run_link, settings=("key_repair", "recoveries")),
+    _entry(
+        Stage.LINK,
+        run_link,
+        settings=(
+            "embed",
+            "embedding.model",
+            "embedding.revision",
+            "jev.band",
+            "jev.model",
+            "jev_links",
+            "key_repair",
+            "recoveries",
+            "skip_eib_routes",
+            "sources.iati_publishers",
+            "sources.review_decisions",
+        ),
+    ),
     _entry(
         Stage.ALLOCATE, allocate.run_allocate, settings=("years.crs_last_complete",)
     ),
-    _entry(Stage.FILL, gap_fill.run_fill, settings=("gap_fill",)),
-    _entry(Stage.REVIEW, review.run_review, settings=("review",)),
-    _entry(Stage.LABEL, label.run_label),
+    _entry(
+        Stage.FILL,
+        gap_fill.run_fill,
+        settings=(
+            "gap_fill",
+            "sources.iati_publishers",
+            "sources.ledgers",
+            "years.crs_last_complete",
+        ),
+    ),
+    _entry(
+        Stage.REVIEW,
+        review.run_review,
+        settings=("jev.band", "review", "sources.ledgers", "sources.review_decisions"),
+    ),
+    _entry(
+        Stage.LABEL,
+        label.run_label,
+        settings=("jev.model", "jev_labels", "years.crs_last_complete"),
+    ),
     _entry(
         Stage.MEASURE,
         measure.run_measure,

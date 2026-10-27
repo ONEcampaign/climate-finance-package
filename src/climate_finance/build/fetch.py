@@ -4,30 +4,29 @@ Fetch owns every network call of the build. It writes each source to its place i
 the raw layout and records one `raw_manifest` row per file, with its sha256, and
 for the CRS, the CRDF and MULTI the years asked (`resolve_years`) and the years the
 file holds of them (`held_in`). Every later stage reads the years asked that the
-file holds, through `fetched_years`. The raw layout sits in the fetch stage's
-directory as `<release_dir>/fetch/raw/`, so the raw files and the manifest that
-records them replace the previous ones in one directory swap. Online, fetch
-downloads into `<release_dir>/raw.partial/`, which `seal_fetch` moves into the new
+file holds, through `fetched_years`. Each bank ledger file records the ledger years
+too, which later stages read through `ledger_years`. The raw layout sits in the
+fetch stage's directory as `<release_dir>/fetch/raw/`, so the raw files and the
+manifest that records them replace the previous ones in one directory swap. Online,
+fetch downloads into `<release_dir>/raw.partial/`, which `seal_fetch` moves into the new
 fetch directory, so a fetch that fails at any point leaves the previous files and
-manifest in place. Offline, it makes no network call.
-It checks that the previous fetch ran under the configured `SETTINGS`, other than
-the years, and that `raw/` holds exactly the files the previous `raw_manifest`
-records, each with its recorded sha256. It resolves the configured years against
-the years the previous fetch asked for, which must cover them, and returns the
-manifest with the resolved years asked and the held years as recorded, since the
-files are the bytes the online fetch checked. An offline fetch of unchanged
-settings therefore writes the `stage.json` the previous fetch wrote, and one of
-narrower years narrows every later stage to them.
+manifest in place. Offline, it makes no network call. It checks that the previous fetch
+ran under the configured `SETTINGS`, other than the years, and that `raw/` holds exactly
+the files the previous `raw_manifest` records, each with its recorded sha256. It
+resolves the configured years against the years the previous fetch asked for, which must
+cover them, and returns the manifest with the resolved years asked and the held years as
+recorded, since the files are the bytes the online fetch checked. An offline fetch of
+unchanged settings therefore writes the `stage.json` the previous fetch wrote, and one
+of narrower years narrows every later stage to them.
 """
 
 from __future__ import annotations
 
 import shutil
-from datetime import UTC, datetime
+from collections.abc import Collection
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypedDict
+from typing import TYPE_CHECKING, Literal
 
-import httpx
 import polars as pl
 
 from climate_finance.build.errors import (
@@ -36,25 +35,57 @@ from climate_finance.build.errors import (
     StaleStageError,
 )
 from climate_finance.build.provenance import read_record, setting_value
+from climate_finance.build.readers.ledgers import LEDGER_DIR
+from climate_finance.build.readers.ledgers.finances_one import (
+    PUBLISHERS as FINANCES_ONE_PUBLISHERS,
+)
+from climate_finance.build.readers.ledgers.finances_one import snapshot_years
+from climate_finance.build.readers.ledgers.gcf import (
+    PUBLISHER as GCF_PUBLISHER,
+)
+from climate_finance.build.readers.ledgers.gcf import (
+    READINESS_FILE,
+    READINESS_PUBLISHER,
+)
+from climate_finance.build.readers.ledgers.imf import SDR_FILE, needs_sdr
+from climate_finance.build.sources import finances_one, iati, imf
+from climate_finance.build.sources.files import (
+    RawFile,
+    describe,
+    import_archive,
+    new_client,
+    place,
+    target,
+)
+from climate_finance.build.sources.gcf import (
+    PROJECTS_SOURCE,
+    READINESS_SOURCE,
+    download_gcf_projects,
+    download_gcf_readiness,
+)
 from climate_finance.errors import SourceUnavailableError
 from climate_finance.schema import RAW_MANIFEST, sha256_file
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    import httpx
     import pandas as pd
 
-    from climate_finance.build.config import BuildConfig, LocalFile, Years
+    from climate_finance.build.config import BuildConfig, Ledgers, LocalFile, Years
     from climate_finance.build.stages import StageContext, StageOutput
 
 # The build settings fetch reads. An offline fetch needs the previous fetch's,
 # other than the years, which its `raw_manifest` years need only cover.
 SETTINGS = (
+    "jev_labels",
+    "sources.adaptation_labels",
     "sources.crdf_etags",
     "sources.crs_file",
     "sources.crs_version",
     "sources.iati_archive",
     "sources.iati_publishers",
+    "sources.ledgers",
     "years.crdf",
     "years.crs",
 )
@@ -84,30 +115,11 @@ type YearRange = tuple[int, int]
 MULTISYSTEM_FIRST_YEAR = 2011
 IMPUTED_SHARES_NAME = "Imputed_multilateral_shares.xlsx"
 IMPUTED_SHARES_FILE = Path("oecd") / IMPUTED_SHARES_NAME
-GCF_FILE = Path("external/gcf/projects.json")
 IATI_DIR = Path("external/iati")
 DAC_EXCHANGE_FILE = Path("dac_exchange.parquet")
+ADAPTATION_LABELS_FILE = Path("labels/adaptation_labels.csv")
 
 CRDF_URL = "https://webfs.oecd.org/climate/"
-GCF_URL = "https://api.gcfund.org/v1/projects"
-_TIMEOUT = httpx.Timeout(30.0, read=300.0)
-
-
-class RawFile(TypedDict):
-    """One fetched file: a `raw_manifest` row."""
-
-    source: str
-    url: str | None
-    path: str
-    sha256: str
-    etag: str | None
-    version: str | None
-    fetched_at: datetime
-    method: str
-    first_year: int | None
-    last_year: int | None
-    held_first_year: int | None
-    held_last_year: int | None
 
 
 def run_fetch(context: StageContext) -> StageOutput:
@@ -134,7 +146,10 @@ def run_fetch(context: StageContext) -> StageOutput:
         verify_raw(context.raw_dir, recorded=recorded, config=context.config)
         verify_settings(context.release_dir, config=context.config)
         years = resolve_years(
-            context.config.years, held=_recorded_years(recorded), source="raw_manifest"
+            context.config.years,
+            held=_recorded_years(recorded),
+            recipient_first=held_years(context.raw_dir / CRDF_FILES["recipient"])[0],
+            source="raw_manifest",
         )
         manifest = _with_years(recorded, years=years)
         read_years(manifest)
@@ -142,7 +157,7 @@ def run_fetch(context: StageContext) -> StageOutput:
 
     partial = _partial_dir(context.release_dir)
     shutil.rmtree(partial, ignore_errors=True)
-    with _http_client() as client:
+    with new_client() as client:
         files = fetch_sources(partial, config=context.config, client=client)
     return {RAW_MANIFEST.name: pl.DataFrame(files, schema=RAW_MANIFEST.dtypes)}
 
@@ -165,7 +180,7 @@ def seal_fetch(
             context.raw_dir,
             out_dir / RAW,
             symlinks=True,
-            copy_function=lambda origin, target: _place(Path(origin), Path(target)),
+            copy_function=lambda origin, linked: place(Path(origin), Path(linked)),
         )
     else:
         _partial_dir(context.release_dir).rename(out_dir / RAW)
@@ -182,8 +197,11 @@ def fetch_sources(
     """Fetch every source into `raw` and describe each file written.
 
     The bulk CRS comes first, so a challenge stops the fetch before the long
-    downloads. The years asked come from `resolve_years`, against the years the
-    CRS file and the CRDF folder hold, and `held_in` checks the files.
+    downloads, and the ledgers `config` names come last. The years asked come
+    from `resolve_years`, against the years the CRS file and the CRDF folder hold,
+    and `held_in` checks the files. The recipient CRDF file also holds the year
+    before the first CRDF year, where the folder holds it, from which normalise
+    builds `crdf_span`. Each ledger file records the ledger years.
 
     Raises:
         SourceUnavailableError: when a source cannot be fetched, or does not hold
@@ -193,7 +211,13 @@ def fetch_sources(
 
     sources = config.sources
     crs = (
-        _link_crs(raw, local=sources.crs_file, version=sources.crs_version)
+        _link_local(
+            raw,
+            local=sources.crs_file,
+            relative=CRS_FILE,
+            source="crs",
+            version=sources.crs_version,
+        )
         if sources.crs_file is not None
         else _download_crs(raw)
     )
@@ -201,13 +225,19 @@ def fetch_sources(
     years = resolve_years(
         config.years,
         held={"crs": held_years(raw / CRS_FILE), **listing},
+        recipient_first=listing["crdf_recipient"][0],
         source="source",
     )
+    first, last = years["crdf_recipient"]
+    downloads: dict[Perspective, YearRange] = {
+        "recipient": (max(first - 1, listing["crdf_recipient"][0]), last),
+        "provider": years["crdf_provider"],
+    }
     crdf = [
         _download_crdf(
             raw,
             perspective=perspective,
-            years=years[f"crdf_{perspective}"],
+            years=downloads[perspective],
             pins=sources.crdf_etags,
         )
         for perspective in CRDF_FILES
@@ -217,36 +247,79 @@ def fetch_sources(
         *crdf,
         _download_multisystem(raw, years=years["multisystem"]),
         _download_imputed_shares(raw),
-        _download_gcf(raw, client=client),
+        *download_gcf_projects(raw, client=client),
         _download_dac_exchange(raw),
         *_copy_iati(
             raw, archive=sources.iati_archive, publishers=sources.iati_publishers
         ),
     ]
+    if labels := _pinned_files(config).get("adaptation_labels"):
+        files.append(
+            _link_local(
+                raw,
+                local=labels,
+                relative=ADAPTATION_LABELS_FILE,
+                source="adaptation_labels",
+            )
+        )
+    if sources.ledgers is not None:
+        files.extend(_fetch_ledgers(raw, ledgers=sources.ledgers, client=client))
     held = held_in(raw, asked=years, crdf=listing)
     for file in files:
         if (name := file["source"]) in held:
             file["first_year"], file["last_year"] = years[name]
             file["held_first_year"], file["held_last_year"] = held[name]
+    if sources.ledgers is not None:
+        ledger_files = _ledger_files(sources.ledgers)
+        for file in files:
+            if file["source"] in ledger_files:
+                file["first_year"], file["last_year"] = sources.ledgers.years
     return files
 
 
 def expected_sources(config: BuildConfig) -> list[str]:
     """The `raw_manifest` source names a complete fetch under `config` records."""
     return [
-        "crs",
         *YEAR_SOURCES,
         "imputed_shares",
         "gcf_projects",
         "dac_exchange",
         *(f"iati_{publisher}" for publisher in config.sources.iati_publishers),
+        *(["adaptation_labels"] if config.jev_labels else []),
+        *(
+            _ledger_sources(config.sources.ledgers)
+            if config.sources.ledgers is not None
+            else []
+        ),
     ]
+
+
+def _pinned_files(config: BuildConfig) -> dict[str, LocalFile]:
+    """The local files `config` names for fetch to copy, by source name.
+
+    The adaptation labels count only when `jev_labels` is on, as only then does a
+    stage read them.
+    """
+    sources = config.sources
+    pinned = {"crs": sources.crs_file}
+    if config.jev_labels:
+        pinned["adaptation_labels"] = sources.adaptation_labels
+    return {source: local for source, local in pinned.items() if local is not None}
+
+
+def iati_ledger_publishers(publishers: Collection[str]) -> list[str]:
+    """The ledger publishers read from IATI files, which are the rest of
+    `publishers` once World Bank Finances One and the GCF's own files are set
+    aside."""
+    own = {*FINANCES_ONE_PUBLISHERS, GCF_PUBLISHER, READINESS_PUBLISHER}
+    return [publisher for publisher in publishers if publisher not in own]
 
 
 def resolve_years(
     years: Years,
     *,
     held: Mapping[str, YearRange],
+    recipient_first: int,
     source: Literal["source", "raw_manifest"],
 ) -> dict[str, YearRange]:
     """The years the build reads from each source in `YEAR_SOURCES`.
@@ -254,13 +327,18 @@ def resolve_years(
     The recipient-perspective CRDF and MULTI take `years.crdf`, or under `"all"`
     every year the recipient CRDF holds. The provider-perspective CRDF takes those
     of them it holds, and the CRS takes `years.crs`, or the first CRDF year to the
-    last year the CRS holds.
+    last year the CRS holds. Where the recipient CRDF holds the year before the
+    first CRDF year, normalise reads that year into `crdf_span` and the CRS starts
+    then too, so the first share year's CRDF rows and CRS commitments cover the
+    same years.
 
     Args:
         years: the configured years.
         held: the years each source holds, by `YEAR_SOURCES` name, or for an
             earlier fetch the years it asked for. The CRDF perspectives and the
             CRS are required; MULTI is checked when present.
+        recipient_first: the first year the recipient-perspective CRDF holds: its
+            workbook listing's, or the raw file's for an earlier fetch.
         source: what `held` describes, for the messages: `"source"` for the
             sources themselves, `"raw_manifest"` for an earlier fetch's record.
 
@@ -276,8 +354,9 @@ def resolve_years(
             f"The provider-perspective CRDF holds {_span(provider)}, none of the "
             f"CRDF years {_span(crdf)}."
         )
+    crs_first = crdf[0] - 1 if recipient_first < crdf[0] else crdf[0]
     resolved = {
-        "crs": years.crs or (crdf[0], held["crs"][1]),
+        "crs": years.crs or (crs_first, held["crs"][1]),
         "crdf_recipient": crdf,
         "crdf_provider": provider_years,
         "multisystem": crdf,
@@ -395,6 +474,35 @@ def last_complete_year(context: StageContext) -> int:
             f"crs_last_complete {complete} lies outside the CRS years {_span(crs)}"
         )
     return complete
+
+
+def ledger_years(context: StageContext) -> YearRange:
+    """The years of the bank ledgers, as the fetch stage's `raw_manifest` records
+    them on each ledger file.
+
+    Raises:
+        ConfigError: when the build config names no ledgers.
+        StageInputMissingError: when the fetch stage wrote no `raw_manifest`.
+        SourceUnavailableError: when it records no single range of years over the
+            ledger files.
+    """
+    ledgers = context.config.sources.ledgers
+    if ledgers is None:
+        raise ConfigError("build.toml names no ledgers under [sources.ledgers].")
+    ranges = (
+        context.read("fetch", RAW_MANIFEST.name)
+        .filter(pl.col("source").is_in(sorted(_ledger_files(ledgers))))
+        .select("first_year", "last_year")
+        .unique()
+        .collect()
+    )
+    if ranges.height != 1 or ranges.null_count().row(0) != (0, 0):
+        raise SourceUnavailableError(
+            "The raw_manifest records no single range of years for the ledgers; run "
+            "the fetch stage online."
+        )
+    first, last = ranges.row(0)
+    return first, last
 
 
 def _recorded_years(
@@ -526,10 +634,11 @@ def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> Non
 
     Raises:
         SourceUnavailableError: when the sources `recorded` holds differ from those
-            `config` names, in either direction, or `recorded` names a CRS file
-            other than the one `config` names, or when `raw` lacks a recorded file,
-            holds an unrecorded one, or holds one whose sha256 differs from the
-            recorded one. The message names every such source or file.
+            `config` names, in either direction, or `recorded` names a CRS or
+            adaptation label file other than the one `config` names, or when `raw`
+            lacks a recorded file, holds an unrecorded one, or holds one whose
+            sha256 differs from the recorded one. The message names every such
+            source or file.
     """
     expected, held = set(expected_sources(config)), set(recorded["source"])
     if expected != held:
@@ -538,14 +647,13 @@ def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> Non
             f"records {sorted(held - expected)}, which build.toml does not name; "
             "run the fetch stage online."
         )
-    crs = config.sources.crs_file
-    if crs is not None and recorded.filter(source="crs")["sha256"].to_list() != [
-        crs.sha256
-    ]:
-        raise SourceUnavailableError(
-            f"build.toml names the CRS file {crs.path} (sha256 {crs.sha256}), and "
-            "the raw_manifest records another; run the fetch stage online."
-        )
+    for source, local in _pinned_files(config).items():
+        if recorded.filter(source=source)["sha256"].to_list() != [local.sha256]:
+            raise SourceUnavailableError(
+                f"build.toml names the {_DESCRIPTIONS[source]} {local.path} (sha256 "
+                f"{local.sha256}), and the raw_manifest records another; run the "
+                "fetch stage online."
+            )
 
     on_disk = {
         path.relative_to(raw).as_posix() for path in raw.rglob("*") if path.is_file()
@@ -565,73 +673,35 @@ def verify_raw(raw: Path, *, recorded: pl.DataFrame, config: BuildConfig) -> Non
         )
 
 
-def _http_client() -> httpx.Client:
-    return httpx.Client(timeout=_TIMEOUT, follow_redirects=True)
+_DESCRIPTIONS = {"crs": "CRS file", "adaptation_labels": "adaptation label file"}
 
 
-def _record(
+def _link_local(
     raw: Path,
-    relative: Path,
     *,
+    local: LocalFile,
+    relative: Path,
     source: str,
-    method: str,
-    url: str | None = None,
-    etag: str | None = None,
     version: str | None = None,
-    sha256: str | None = None,
 ) -> RawFile:
-    return RawFile(
-        source=source,
-        url=url,
-        path=relative.as_posix(),
-        sha256=sha256 or sha256_file(raw / relative),
-        etag=etag,
-        version=version,
-        fetched_at=datetime.now(UTC),
-        method=method,
-        first_year=None,
-        last_year=None,
-        held_first_year=None,
-        held_last_year=None,
-    )
-
-
-def _target(raw: Path, relative: Path) -> Path:
-    path = raw / relative
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def _place(origin: Path, target: Path) -> None:
-    """Hard-link `origin` to `target`, or copy it where a link is refused."""
-    try:
-        target.hardlink_to(origin.resolve())
-    except OSError:
-        shutil.copyfile(origin, target)
-
-
-def _link_crs(raw: Path, *, local: LocalFile, version: str) -> RawFile:
-    """Put the browser-downloaded bulk CRS parquet in place, checking its sha256.
+    """Put a local file, such as the browser-downloaded bulk CRS, at `relative`,
+    checking its sha256.
 
     Raises:
         SourceUnavailableError: when the file is missing or its sha256 differs.
     """
     if not local.path.is_file():
         raise SourceUnavailableError(
-            f"build.toml names the CRS file {local.path}, which does not exist."
+            f"build.toml names the {_DESCRIPTIONS[source]} {local.path}, which does "
+            "not exist."
         )
     if (actual := sha256_file(local.path)) != local.sha256:
         raise SourceUnavailableError(
             f"{local.path} has sha256 {actual}, and build.toml expects {local.sha256}."
         )
-    _place(local.path, _target(raw, CRS_FILE))
-    return _record(
-        raw,
-        CRS_FILE,
-        source="crs",
-        method="manual",
-        version=version,
-        sha256=local.sha256,
+    place(local.path, target(raw, relative))
+    return describe(
+        relative, source=source, method="manual", version=version, sha256=local.sha256
     )
 
 
@@ -645,8 +715,8 @@ def _download_crs(raw: Path) -> RawFile:
     import oda_reader
     from oda_reader.crs import get_full_crs_parquet_url
 
-    target = _target(raw, CRS_FILE)
-    download = target.with_name("crs.download")
+    path = target(raw, CRS_FILE)
+    download = path.with_name("crs.download")
     download.mkdir()
     try:
         oda_reader.bulk_download_crs(save_to_path=download)
@@ -656,17 +726,26 @@ def _download_crs(raw: Path) -> RawFile:
             "under [sources] in build.toml."
         ) from error
     [saved] = download.iterdir()
-    saved.rename(target)
+    saved.rename(path)
     download.rmdir()
-    return _record(
-        raw, CRS_FILE, source="crs", method="http", url=get_full_crs_parquet_url()
+    return describe(
+        CRS_FILE,
+        source="crs",
+        method="http",
+        url=get_full_crs_parquet_url(),
+        sha256=sha256_file(path),
     )
 
 
 def _download_crdf(
-    raw: Path, *, perspective: Perspective, years: tuple[int, int], pins: dict[str, str]
+    raw: Path,
+    *,
+    perspective: Perspective,
+    years: YearRange,
+    pins: dict[str, str],
 ) -> RawFile:
-    """Write one perspective of the CRDF as oda-reader returns it.
+    """Write the `years` of one perspective of the CRDF, as oda-reader returns
+    them.
 
     Raises:
         SourceUnavailableError: when `pins` is not empty and a workbook read is
@@ -689,13 +768,14 @@ def _download_crdf(
                 f"CRDF workbooks differ from the ETags pinned in build.toml: {unpinned}"
             )
     relative = CRDF_FILES[perspective]
-    frame.to_parquet(_target(raw, relative), index=False)
-    return _record(
-        raw,
+    path = target(raw, relative)
+    frame.to_parquet(path, index=False)
+    return describe(
         relative,
         source=f"crdf_{perspective}",
         method="http",
         url=CRDF_URL,
+        sha256=sha256_file(path),
     )
 
 
@@ -706,50 +786,24 @@ def _download_multisystem(raw: Path, *, years: tuple[int, int]) -> RawFile:
     frame = oda_reader.download_multisystem(
         start_year=first, end_year=last, pre_process=True, dotstat_codes=True
     )
-    frame.to_parquet(_target(raw, MULTISYSTEM_FILE), index=False)
-    return _record(raw, MULTISYSTEM_FILE, source="multisystem", method="http")
+    path = target(raw, MULTISYSTEM_FILE)
+    frame.to_parquet(path, index=False)
+    return describe(
+        MULTISYSTEM_FILE, source="multisystem", method="http", sha256=sha256_file(path)
+    )
 
 
 def _download_imputed_shares(raw: Path) -> RawFile:
     import oda_reader
 
-    oda_reader.download_crdf_file(
-        IMPUTED_SHARES_NAME, _target(raw, IMPUTED_SHARES_FILE)
-    )
-    return _record(
-        raw,
+    path = target(raw, IMPUTED_SHARES_FILE)
+    oda_reader.download_crdf_file(IMPUTED_SHARES_NAME, path)
+    return describe(
         IMPUTED_SHARES_FILE,
         source="imputed_shares",
         method="http",
         url=f"{CRDF_URL}{IMPUTED_SHARES_NAME}",
-    )
-
-
-def _download_gcf(raw: Path, *, client: httpx.Client) -> RawFile:
-    """Save the GCF projects API response as served.
-
-    Raises:
-        SourceUnavailableError: when the request fails or the response is not a
-            JSON list of projects.
-    """
-    try:
-        response = client.get(GCF_URL)
-        response.raise_for_status()
-        projects = response.json()
-    except (httpx.HTTPError, ValueError) as error:
-        raise SourceUnavailableError(
-            f"{GCF_URL} could not be fetched: {error}"
-        ) from error
-    if not isinstance(projects, list):
-        raise SourceUnavailableError(f"{GCF_URL} did not return a list of projects.")
-    _target(raw, GCF_FILE).write_bytes(response.content)
-    return _record(
-        raw,
-        GCF_FILE,
-        source="gcf_projects",
-        method="http",
-        url=GCF_URL,
-        etag=response.headers.get("etag"),
+        sha256=sha256_file(path),
     )
 
 
@@ -763,8 +817,14 @@ def _download_dac_exchange(raw: Path) -> RawFile:
     rates = pydeflate.get_oecd_dac_exchange_rates(
         source_currency="USA", target_currency="LCU"
     )
-    rates.to_parquet(_target(raw, DAC_EXCHANGE_FILE), index=False)
-    return _record(raw, DAC_EXCHANGE_FILE, source="dac_exchange", method="http")
+    path = target(raw, DAC_EXCHANGE_FILE)
+    rates.to_parquet(path, index=False)
+    return describe(
+        DAC_EXCHANGE_FILE,
+        source="dac_exchange",
+        method="http",
+        sha256=sha256_file(path),
+    )
 
 
 def _copy_iati(
@@ -782,10 +842,85 @@ def _copy_iati(
             raise SourceUnavailableError(
                 f"The IATI archive {archive} holds no XML for publisher {publisher!r}."
             )
-        for origin in origins:
-            relative = IATI_DIR / publisher / origin.name
-            _place(origin, _target(raw, relative))
-            files.append(
-                _record(raw, relative, source=f"iati_{publisher}", method="manual")
-            )
+        files += import_archive(
+            {IATI_DIR / publisher / origin.name: origin for origin in origins},
+            raw_dir=raw,
+            source=f"iati_{publisher}",
+        )
     return files
+
+
+def _fetch_ledgers(
+    raw: Path, *, ledgers: Ledgers, client: httpx.Client
+) -> list[RawFile]:
+    """Put the ledgers `ledgers` names under `ledgers/`, from its archive if it has
+    one. The GCF ledger reads the projects file, which every fetch writes. With the
+    AfDB, whose ledger is in SDR, the IMF's US dollar rate of the SDR comes too.
+
+    Raises:
+        SourceUnavailableError: when a download fails or the archive lacks a file.
+    """
+    first, last = ledgers.years
+    archive = ledgers.archive
+
+    def archived(folder: Path) -> Path | None:
+        return None if archive is None else archive / folder.relative_to(LEDGER_DIR)
+
+    files: list[RawFile] = []
+    if datasets := _finances_one_datasets(ledgers):
+        files += finances_one.download_finances_one(
+            raw,
+            years=range(first, last + 1),
+            datasets=datasets,
+            archive=archived(finances_one.FOLDER),
+            client=client,
+        )
+    if publishers := iati_ledger_publishers(ledgers.publishers):
+        files += iati.download_iati_ledgers(
+            raw,
+            publishers=publishers,
+            archive=archived(iati.FOLDER),
+            client=client,
+        )
+    if READINESS_PUBLISHER in ledgers.publishers:
+        files += download_gcf_readiness(
+            raw, archive=archived(READINESS_FILE.parent), client=client
+        )
+    if needs_sdr(ledgers.publishers):
+        files += imf.download_sdr_rates(
+            raw, archive=archived(SDR_FILE.parent), client=client
+        )
+    return files
+
+
+def _ledger_sources(ledgers: Ledgers) -> list[str]:
+    first, last = ledgers.years
+    year_ends = snapshot_years(range(first, last + 1))
+    return [
+        *(
+            finances_one.source_name(dataset, year)
+            for dataset in _finances_one_datasets(ledgers)
+            for year in year_ends
+        ),
+        *(
+            iati.source_name(publisher)
+            for publisher in iati_ledger_publishers(ledgers.publishers)
+        ),
+        *([READINESS_SOURCE] if READINESS_PUBLISHER in ledgers.publishers else []),
+        *([imf.SOURCE] if needs_sdr(ledgers.publishers) else []),
+    ]
+
+
+def _ledger_files(ledgers: Ledgers) -> set[str]:
+    """The `raw_manifest` sources that hold the ledgers `ledgers` names: their
+    downloads, and the GCF projects file when the GCF ledger is named."""
+    gcf = [PROJECTS_SOURCE] if GCF_PUBLISHER in ledgers.publishers else []
+    return {*_ledger_sources(ledgers), *gcf}
+
+
+def _finances_one_datasets(ledgers: Ledgers) -> list[finances_one.Dataset]:
+    return [
+        FINANCES_ONE_PUBLISHERS[publisher]
+        for publisher in ledgers.publishers
+        if publisher in FINANCES_ONE_PUBLISHERS
+    ]

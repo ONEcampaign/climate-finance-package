@@ -42,6 +42,10 @@ class ReleaseIntegrityError(ClimateFinanceError):
     """A release table is missing or its sha256 differs from release.json."""
 
 
+class MissingLabelsError(ClimateFinanceError):
+    """A method reads labels the release does not hold."""
+
+
 class SchemaError(ClimateFinanceError):
     """A table does not match its schema. `problems` maps each bad column to why."""
 

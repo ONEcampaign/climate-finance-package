@@ -5,7 +5,8 @@ earlier years an online fetch of every year reads (recipient CRDF and MULTI from
 2000, provider CRDF from 2013). `seed_raw` joins each pair into one raw file and
 links every other source to its archive file. The `raw_manifest` records the years
 `resolve_years` asks for the configured years against the years the files hold, and
-the years of them `held_in` finds in each file (MULTI from 2011).
+the years of them `held_in` finds in each file (MULTI from 2011). `archive_config`
+is `build.toml` with the archive's CRS and IATI files as its sources.
 """
 
 from datetime import UTC, datetime
@@ -14,12 +15,11 @@ from pathlib import Path
 import polars as pl
 from normalised import record_fetch
 
-from climate_finance.build.config import BuildConfig
+from climate_finance.build.config import BuildConfig, LocalFile, load_config
 from climate_finance.build.fetch import (
     CRDF_FILES,
     CRS_FILE,
     DAC_EXCHANGE_FILE,
-    GCF_FILE,
     IATI_DIR,
     IMPUTED_SHARES_FILE,
     MULTISYSTEM_FILE,
@@ -27,9 +27,11 @@ from climate_finance.build.fetch import (
     held_years,
     resolve_years,
 )
+from climate_finance.build.readers.gcf import PROJECTS_FILE
 from climate_finance.build.stages import raw_dir
 from climate_finance.schema import RAW_MANIFEST, sha256_file
 
+REPO = Path(__file__).parents[2]
 CRS_ARCHIVE = Path("oecd/CRS_v20261006.parquet")
 CRS_SHA256 = "d24840a5fad50e718da4eb5831c3e1e333e7c5ef6b46c158e3510c7497518f06"
 # Each joined source's raw file and its archive files, earliest years first.
@@ -49,6 +51,27 @@ JOINED = {
 }
 
 
+def archive_config(archive: Path, *, key_repair: bool, recoveries: bool) -> BuildConfig:
+    """`build.toml` with the CRS and IATI files of `archive` (CF_E2E_DATA/raw) as its
+    sources, and `key_repair` and `recoveries` set."""
+    base = load_config(REPO / "build.toml")
+    return BuildConfig.model_validate(
+        base.model_dump()
+        | {
+            "key_repair": key_repair,
+            "recoveries": recoveries,
+            # The archive builds run offline with no Jev cache; the Jev step has its
+            # own measurement.
+            "jev_links": False,
+            "sources": base.sources.model_dump()
+            | {
+                "crs_file": LocalFile(path=archive / CRS_ARCHIVE, sha256=CRS_SHA256),
+                "iati_archive": archive / "external/iati",
+            },
+        }
+    )
+
+
 def seed_raw(release_dir: Path, *, archive: Path, config: BuildConfig) -> None:
     """Lay the files of `archive` (CF_E2E_DATA/raw) out under `release_dir`'s raw
     directory and record them as an earlier fetch under `config`."""
@@ -64,7 +87,7 @@ def seed_raw(release_dir: Path, *, archive: Path, config: BuildConfig) -> None:
     links = {
         "crs": [(CRS_ARCHIVE, CRS_FILE)],
         "imputed_shares": [(IMPUTED_SHARES_FILE, IMPUTED_SHARES_FILE)],
-        "gcf_projects": [(Path("external/gcf_api/projects.json"), GCF_FILE)],
+        "gcf_projects": [(Path("external/gcf_api/projects.json"), PROJECTS_FILE)],
         "dac_exchange": [(DAC_EXCHANGE_FILE, DAC_EXCHANGE_FILE)],
         **{
             f"iati_{publisher}": [
@@ -87,6 +110,7 @@ def seed_raw(release_dir: Path, *, archive: Path, config: BuildConfig) -> None:
     years = resolve_years(
         config.years,
         held={"crs": held_years(raw / CRS_FILE), **crdf},
+        recipient_first=crdf["crdf_recipient"][0],
         source="source",
     )
     held = held_in(raw, asked=years, crdf=crdf)

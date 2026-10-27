@@ -18,11 +18,14 @@ from climate_finance.methods import (
     label,
     uses_imputed_shares,
 )
-from climate_finance.schema import STATUSES
-from climate_finance.spec import (
+from climate_finance.schema import (
     BILATERAL,
     CORE_CONTRIBUTION,
     MULTILATERAL_OUTFLOW,
+    STATUSES,
+)
+from climate_finance.spec import (
+    ODA_FLOW_CATEGORY,
     ODA_FLOW_CODES,
     Spec,
 )
@@ -34,7 +37,7 @@ if TYPE_CHECKING:
 
 AMOUNTS = (
     "amount", "adaptation", "mitigation", "cross_cutting", "unsplit", "value", "low",
-    "high",
+    "high", "untraced",
 )  # fmt: skip
 # The keys of a result table's rows, before the method.
 ROW_KEYS = ("year", "provider_code", "recipient_code", "bi_multi")
@@ -86,8 +89,11 @@ class Meta(BaseModel):
 class Result:
     """The answer to one `Spec`: a table, the rows behind it, and its provenance.
 
-    `table` takes amounts. Under `spec.measure="share_of_total"` the result divides
-    them by `totals`, so a result always holds the measure its spec names.
+    `table` takes each method's amounts by key, with that method's own `low` and
+    `high`. Under `spec.measure="share_of_total"` the result divides each method's
+    amounts by its `totals`, so a result always holds the measure its spec names.
+    `low` and `high` then span every method of the key, the lowest `low` and the
+    highest `high`, in amounts or in shares.
     """
 
     def __init__(
@@ -100,9 +106,9 @@ class Result:
         spec: Spec,
         meta: Meta,
     ) -> None:
-        self.table = (
-            _shares(table, totals) if spec.measure == "share_of_total" else table
-        )
+        measured = _shares(table, totals) if spec.measure == "share_of_total" else table
+        self.table = Table(_bounds(measured._frame))
+        self._sums = table
         self.modelled = modelled
         self.spec = spec
         self.meta = meta
@@ -158,25 +164,27 @@ class Result:
                 )
                 .collect()
             )
-        unsplit = (
-            self._rows.filter(pl.col("origin") == "attribution", pl.col("unsplit") != 0)
-            .group_by("method")
-            .agg(pl.col("channel_code").unique().sort())
-            .collect()
-        )
-        unmeasured = (
-            self._rows.filter(
-                pl.col("adaptation").is_null(), pl.col("amount").is_not_null()
+        by_method = (
+            self._rows.group_by("method")
+            .agg(
+                unsplit=pl.col("channel_code")
+                .filter(pl.col("origin") == "attribution", pl.col("unsplit") != 0)
+                .unique()
+                .sort(),
+                unmeasured=pl.col("year")
+                .filter(pl.col("adaptation").is_null(), pl.col("amount").is_not_null())
+                .unique(),
             )
-            .select(pl.col("year").unique().sort())
             .collect()
         )
         return explain(
             self.spec,
             release=self.meta.release,
             coefficients=coefficients,
-            unsplit=dict(unsplit.iter_rows()),
-            unmeasured=unmeasured["year"].to_list(),
+            unsplit=dict(
+                zip(by_method["method"], by_method["unsplit"].to_list(), strict=True)
+            ),
+            unmeasured=sorted(set(by_method["unmeasured"].explode().drop_nulls())),
             years=self.meta.years,
             conversion=self.meta.conversion,
         )
@@ -188,14 +196,16 @@ class Result:
         provider, recipient and Bi_Multi code. A row without a recipient, such as
         attributed finance, divides by the sum over recipients. Totals cover every
         flow code, so under `oda_only` the share is ODA climate finance over all
-        flows. A key missing from `total_flows` gives null shares. The rows and the
-        modelled line keep their amounts. The result's spec has
-        `measure="share_of_total"`, so rerunning it returns the same shares.
+        flows. In the provider view, EU Institutions' total holds the same rows as
+        their amounts under each method, at the same scaling. A key missing from
+        `total_flows` gives null shares. The rows and the modelled line keep their
+        amounts. The result's spec has `measure="share_of_total"`, so rerunning it
+        returns the same shares.
         """
         if self.spec.measure == "share_of_total":
             return self
         return Result(
-            table=self.table,
+            table=self._sums,
             modelled=self.modelled,
             rows=self._rows,
             totals=self._totals,
@@ -204,12 +214,21 @@ class Result:
         )
 
 
+def _bounds(frame: pl.LazyFrame) -> pl.LazyFrame:
+    """`frame` with `low` and `high` spanning every method of the same key."""
+    return frame.with_columns(
+        low=pl.col("low").min().over(ROW_KEYS),
+        high=pl.col("high").max().over(ROW_KEYS),
+    )
+
+
 def _shares(table: Table, totals: pl.LazyFrame) -> Table:
-    """`table` with every amount divided by the total of its key in `totals`."""
+    """`table` with every amount divided by the total of its key and method in
+    `totals`."""
     return Table(
         table._frame.join(
             totals,
-            on=ROW_KEYS,
+            on=[*ROW_KEYS, "method"],
             how="left",
             nulls_equal=True,
             validate="m:1",
@@ -225,11 +244,27 @@ class Quality:
     """Link, coverage and status statistics for part of a release.
 
     `table` holds the release's `quality` rows by provider and year. `status` holds
-    climate value by provider and commitment status.
+    climate value by provider and commitment status. `eu_left_out` holds, by EU
+    Institutions agency, channel, year and flow, the value of the agency's own rows
+    that a provider view of every provider leaves out when EU Institutions count as
+    a channel, because members' contributions to that channel stand in for them.
+    Add it back to compare with totals that count EU Institutions as a provider.
+    `attribution` holds, by provider, year and flow, the value attributed through
+    core contributions, split by the agency share's source into `computed_usd`,
+    `held_usd` and `oecd_usd`. `untraced` holds, by provider and disbursement year,
+    the Rio-marked CRS disbursement outside `disbursements` at face value: the
+    excess and the unlinked records that disbursement totals count as untraced, with
+    their climate value under the method (`excess_climate_usd`,
+    `unlinked_climate_usd`), and the two amounts no total counts, allocations to
+    commitments with no CRDF row (`outside_release_usd`) and the route funds'
+    unlinked records (`fund_unlinked_usd`).
     """
 
     table: Table
     status: Table
+    eu_left_out: Table
+    attribution: Table
+    untraced: Table
 
     def summary(self) -> pl.DataFrame:
         """Per provider: link rate, certain-route share, label sources, status split.
@@ -291,14 +326,14 @@ def explain(
     `coefficients` holds, per provider-coefficient method label (`method`), each
     `coefficient_basis` and `coefficient_source` its marker rows took, with the
     `provider_code` and the lists of `agency_code` and `year` values that took them.
-    `unsplit` maps a method's label to the agency channel codes whose climate share has
-    no split by objective. `unmeasured` lists the years with rows whose adaptation is
-    not measured. `years` is the release's `years`; under the provider view, the queried
-    years (`spec.years`, else the recipient CRDF's) outside those of
-    `core_contributions` or of the share table a method reads (`agency_shares` under the
-    OECD's imputed shares, else `agency_spending`) are named as holding no attributed
-    finance under that method. `conversion` names the conversion factors of a converted
-    result.
+    `unsplit` maps a method's label to the agency channel codes whose climate share
+    has no split by objective. `unmeasured` lists the years with rows whose
+    adaptation is not measured. `years` is the release's `years`; under the provider
+    view, the queried years (`spec.years`, else the recipient CRDF's) outside those
+    of `core_contributions` or of the share table a method reads (`agency_shares`
+    under the OECD's imputed shares, else `agency_spending`) are named as holding no
+    attributed finance under that method. `conversion` names the conversion factors
+    of a converted result.
     """
     unsplit = unsplit or {}
     methods = spec.methods
@@ -329,6 +364,8 @@ def explain(
     if spec.view == "provider":
         lines.extend(_coverage(methods, queried=spec.years, years=years or {}))
     lines.append(_FLOWS[spec.flow])
+    if spec.flow != "commitments":
+        lines.append(_UNTRACED[spec.untraced])
     lines.append(
         "Commitments that repeat an earlier vintage are left out, and their "
         "disbursements count on the row they repeat; snap.quality() reports their "
@@ -341,12 +378,20 @@ def explain(
     ]
     if filters:
         lines.append(f"Filtered to {'; '.join(filters)}.")
+    if spec.view == "provider":
+        lines.append(
+            "Attributed rows carry share_source: computed shares are measured on the "
+            "agency's own commitments, held shares repeat its last share measured on "
+            "enough commitments, and oecd shares are the OECD's imputed share, which "
+            "OECD always uses and ONE uses where it has no share of its own."
+        )
     if spec.recipients is not None and spec.view == "provider":
         lines.append("Attributed finance has no recipient, so it drops out.")
     if spec.oda_only:
         lines.append(
-            f"ODA only: flow codes {_listing(ODA_FLOW_CODES)}; rows without a flow "
-            "code drop out, and core contributions count as ODA."
+            f"ODA only: commitments of flow category {ODA_FLOW_CATEGORY} and "
+            f"disbursements of flow codes {_listing(ODA_FLOW_CODES)}; rows without "
+            "either drop out, and core contributions count as ODA."
         )
     prices = "current prices" if spec.prices == "current" else f"{spec.prices} prices"
     source = (
@@ -362,6 +407,13 @@ def explain(
             "recipient and Bi_Multi code, every flow code included. The rows and the "
             f"modelled table hold amounts in {units}."
         )
+        if spec.view == "provider":
+            lines.append(
+                "EU Institutions' totals hold the same rows as their amounts, at the "
+                "same scaling: the EIB's flows leave them where EU Institutions count "
+                "as a provider, and each agency's flows scale with its own rows where "
+                "they count as a channel."
+            )
     else:
         lines.append(f"Amounts in {units}.")
     if conversion is not None:
@@ -530,13 +582,27 @@ _VIEWS = {
 _FLOWS = {
     "commitments": "Flow: commitments at face value; low and high equal value.",
     "disbursements": "Flow: disbursements allocated to climate commitments, weighted "
-    "by the commitment's markers; low and high scale by each allocation's bounds. "
+    "by the commitment's markers; low counts the disbursements linked by the "
+    "donor's CRS id or World Bank loan number where the linked records agree, and "
+    "bank-ledger and IATI fills in full, since they match on the publisher's own "
+    "id; high counts every linked disbursement and the untraced disbursement. "
     "Attributed finance counts core contributions disbursed. The modelled table "
     "holds a disbursement range for commitments whose disbursements no source "
     "reports.",
     "grant_equivalent": "Flow: grant equivalent of disbursements, shared across the "
     "commitments a record funds in proportion to the amount each receives; records "
     "without one stay missing, and snap.quality() reports coverage.",
+}
+
+
+_UNTRACED = {
+    True: "Untraced: CRS disbursement with a Rio marker that reaches no commitment, "
+    "the excess beyond a full commitment and records linked to none, weighted by "
+    "the record's own markers. It counts in value and high, not in low, and the "
+    "untraced column holds it; snap.quality() reports it with the marked "
+    "disbursement no total counts.",
+    False: "Untraced disbursement, Rio-marked CRS disbursement that reaches no "
+    "commitment, is left out.",
 }
 
 
@@ -631,6 +697,8 @@ def _field_text(field: str, value: object) -> str:
             return label(value)
         case "oda_only", bool():
             return "ODA only" if value else "all flows"
+        case "untraced", bool():
+            return "with untraced" if value else "traced only"
         case "measure", _:
             return "share of total" if value == "share_of_total" else "amounts"
         case "prices", _:
@@ -661,4 +729,6 @@ def _title(spec: Spec, *, release: str) -> str:
         parts[-1] = f"share of total; rows in {parts[-1]}"
     if spec.oda_only:
         parts.append("ODA only")
+    if not spec.untraced and spec.flow != "commitments":
+        parts.append("traced only")
     return f"Result: {'; '.join(parts)}; release {release}"

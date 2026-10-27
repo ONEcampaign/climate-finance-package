@@ -28,12 +28,12 @@ first. A crosswalk pair within 0.01% keeps the method `crosswalk`, a certain rou
 then only suggests the contract.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 
 import polars as pl
 
 from climate_finance.build.errors import LinkInputError
-from climate_finance.build.link.keys import as_exact_links
+from climate_finance.build.link.keys import as_exact_links, group_id
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.normalise.pairing import pair_one_to_one
 from climate_finance.build.normalise.project_numbers import normalise_pn
@@ -44,7 +44,8 @@ from climate_finance.schema import EIB_AGENCY, EU_INSTITUTIONS, EURO_ISSUER
 # the CRS donor, are one commitment. 99.5% of such keys pair one to one.
 WITHIN_YEAR_KEY = ("donor_code", "crs_id", "year", "purpose_code")
 
-# The EIB's IATI activity id: its project serial, then one finance contract number.
+# The EIB's IATI activity id carries its project serial, then one finance contract
+# number.
 _EIB_ACTIVITY = r"^XM-DAC-918-3-(?<serial>\d{8})-(?<contract>\d{5})$"
 # A project's commitments match a row's face value within this share, in euros.
 _AMOUNT_TOLERANCE = 0.10
@@ -75,9 +76,7 @@ def link_within_year(crdf: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.LazyFrame
         .select(
             left_id="row_id",
             right_id="unit_id",
-            group_id=pl.concat_str(
-                [pl.lit("within_year"), *WITHIN_YEAR_KEY], separator="|"
-            ),
+            group_id=group_id(pl.lit("within_year"), *WITHIN_YEAR_KEY),
             link_method=pl.lit("within_year"),
         ),
         task="crdf_crs",
@@ -92,6 +91,7 @@ def recover(
     crs: pl.LazyFrame,
     external: pl.LazyFrame,
     exchange: pl.DataFrame,
+    skip: Collection[str] = (),
 ) -> pl.DataFrame:
     """Add the recovery routes' links to the within-year `crdf_crs` links.
 
@@ -108,6 +108,8 @@ def recover(
         crs: Normalised CRS records.
         external: The `external` table, read for the EIB's IATI activity ids.
         exchange: DAC exchange rates with `iso_code`, `year` and `exchange_rate`.
+        skip: Names of EIB routes (`eib_list`, `crosswalk`, `title_recipient`) to
+            leave out, to measure what one route adds. A release builds with none.
 
     Returns:
         `within_year`, with groups taken over re-pointed to the row that took them,
@@ -116,7 +118,7 @@ def recover(
 
     Raises:
         LinkInputError: when the euro has no DAC rate for a year an EIB row or bulk
-            EIB commitment needs.
+            EIB commitment needs, or `skip` names a route that does not exist.
     """
     rates = exchange.filter(pl.col("iso_code") == EURO_ISSUER).select(
         year=pl.col("year").cast(pl.Int16), euro_per_usd=pl.col("exchange_rate")
@@ -133,18 +135,28 @@ def recover(
     )
     records = _eib_commitments(crs, units=units, rates=rates)
     crosswalk = _eib_crosswalk(external)
-    routes: tuple[_Route, ...] = (
-        lambda left: _by_project_list(
-            left, crs=crs, exchange=exchange, records=records
-        ).with_columns(link_method=pl.lit("eib_list")),
-        lambda left: _by_crosswalk(left, records, crosswalk),
-        lambda left: _by_title(left, records).with_columns(
-            link_method=pl.lit("title_recipient")
+    routes: tuple[tuple[str, _Route], ...] = (
+        (
+            "eib_list",
+            lambda left: _by_project_list(
+                left, crs=crs, exchange=exchange, records=records
+            ).with_columns(link_method=pl.lit("eib_list")),
+        ),
+        ("crosswalk", lambda left: _by_crosswalk(left, records, crosswalk)),
+        (
+            "title_recipient",
+            lambda left: _by_title(left, records).with_columns(
+                link_method=pl.lit("title_recipient")
+            ),
         ),
     )
+    if unknown := sorted(set(skip) - {name for name, _ in routes}):
+        raise LinkInputError(f"Unknown EIB recovery routes to skip: {unknown}")
     repeats = crdf.select(holder="row_id", first_row="repeat_of").collect()
     links = within_year
-    for route in routes:
+    for name, route in routes:
+        if name in skip:
+            continue
         left = rows.join(links.select(row_id="left_id"), on="row_id", how="anti")
         links = _settle(route(left), links=links, repeats=repeats)
     return pl.concat([links, _by_aggregate_record(crdf, units=units)])
@@ -177,12 +189,7 @@ def _by_aggregate_record(crdf: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataF
     method = pl.lit("aggregate_partition")
     pairs = (
         children.join(commitments, on=key, nulls_equal=True)
-        .with_columns(
-            group_id=pl.concat_str(
-                [method, pl.col("unit_id").min().over(key)],
-                separator="|",
-            )
-        )
+        .with_columns(group_id=group_id(method, pl.col("unit_id").min().over(key)))
         .collect()
     )
     to_records = pairs.select(
@@ -193,7 +200,7 @@ def _by_aggregate_record(crdf: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataF
         .select(
             left_id="unit_id",
             right_id="unit_id",
-            group_id=pl.concat_str([method, pl.col("unit_id")], separator="|"),
+            group_id=group_id(method, "unit_id"),
             link_method=method,
         )
         .unique()
@@ -367,16 +374,14 @@ def _settle(
         .select("group_id", "row_id", method="link_method")
         .unique()
     )
-    group = pl.concat_str([pl.col("method"), pl.col("row_id")], separator="|")
+    group = group_id(pl.col("method"), "row_id")
     moved = links.join(taken, on="group_id").select(
         left_id="row_id", right_id="right_id", group_id=group, link_method="method"
     )
     new = claimed.select(
         left_id="row_id",
         right_id="unit_id",
-        group_id=pl.concat_str(
-            [pl.col("link_method"), pl.col("row_id")], separator="|"
-        ),
+        group_id=group_id(pl.col("link_method"), "row_id"),
         link_method="link_method",
     )
     moved_and_new = as_exact_links(pl.concat([moved, new]), task="crdf_crs")

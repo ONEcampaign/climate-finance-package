@@ -9,12 +9,10 @@ import os
 from pathlib import Path
 
 import pytest
-from archive_build import CRS_ARCHIVE, CRS_SHA256, seed_raw
+from archive_build import archive_config, seed_raw
 
-from climate_finance.build import build, load_config
-from climate_finance.build.config import BuildConfig, LocalFile
+from climate_finance.build import build
 
-REPO = Path(__file__).parents[2]
 RELEASE = "e2e"
 
 
@@ -22,19 +20,7 @@ RELEASE = "e2e"
 def release(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Build the archive offline and return the release directory."""
     archive = Path(os.environ["CF_E2E_DATA"]) / "raw"
-    base = load_config(REPO / "build.toml")
-    config = BuildConfig.model_validate(
-        base.model_dump()
-        | {
-            "key_repair": False,
-            "recoveries": False,
-            "sources": base.sources.model_dump()
-            | {
-                "crs_file": LocalFile(path=archive / CRS_ARCHIVE, sha256=CRS_SHA256),
-                "iati_archive": archive / "external/iati",
-            },
-        }
-    )
+    config = archive_config(archive, key_repair=False, recoveries=False)
     out_dir = tmp_path_factory.mktemp("build")
     seed_raw(out_dir / RELEASE, archive=archive, config=config)
     # Slow: runs every stage over 5.1 million CRS records.

@@ -15,7 +15,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.0
       # --locked fails when uv.lock is out of date with pyproject.toml, so a PR that
       # edits a dependency without relocking cannot pass.
-      - run: uv sync --locked --python 3.12 --all-extras --all-groups
+      - run: uv sync --locked --python 3.12 --all-extras --no-extra embed --all-groups
       - run: uv run --no-sync ruff check
       - run: uv run --no-sync ruff format --check
       - run: uv run --no-sync ty check src
@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.0
-      - run: uv sync --locked --python ${{ matrix.python-version }} --all-extras --all-groups
+      - run: uv sync --locked --python ${{ matrix.python-version }} --all-extras --no-extra embed --all-groups
       # `integration` tests reach the network; `slow` tests need real data.
       - run: uv run --no-sync pytest -m "not integration and not slow"
 
@@ -43,7 +43,7 @@ jobs:
       # --isolated resolves every direct dependency to its floor in pyproject.toml
       # without rewriting uv.lock.
       - run: >
-          uv run --isolated --resolution lowest-direct --python 3.12 --all-extras
+          uv run --isolated --resolution lowest-direct --python 3.12 --all-extras --no-extra embed
           pytest -m "not integration and not slow"
 
   base-install:
@@ -61,4 +61,3 @@ jobs:
         env:
           CF_BASE_INSTALL: "1"
         run: /tmp/base/bin/python -m pytest -p no:cacheprovider test_import_boundary.py
-

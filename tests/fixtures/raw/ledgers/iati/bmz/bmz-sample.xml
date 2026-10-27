@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<iati-activities version="2.03">
+<iati-activity default-currency="EUR" xml:lang="en">
+  <iati-identifier>DE-1-900001</iati-identifier>
+  <reporting-org ref="DE-1" type="40">
+    <narrative>Invented Ministry</narrative>
+  </reporting-org>
+  <title>
+    <narrative>Invented vocational education project</narrative>
+  </title>
+  <other-identifier ref="900001" type="A1">
+    <owner-org>
+      <narrative>Invented Bank</narrative>
+    </owner-org>
+  </other-identifier>
+  <transaction>
+    <transaction-type code="2" />
+    <transaction-date iso-date="2010-12-21" />
+    <value value-date="2010-12-21">480000.00</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="4" />
+    <transaction-date iso-date="2011-03-31" />
+    <value value-date="2011-03-31">320000.00</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="4" />
+    <transaction-date iso-date="2011-09-30" />
+    <value value-date="2011-09-30">28000.00</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="4" />
+    <transaction-date iso-date="2012-06-30" />
+    <value value-date="2012-06-30">29000.00</value>
+  </transaction>
+</iati-activity>
+</iati-activities>

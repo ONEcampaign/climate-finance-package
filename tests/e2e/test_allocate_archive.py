@@ -1,6 +1,6 @@
 """Fetch through allocate on the archived source files, with recoveries off.
 
-The fetch is offline: the archive files take their places in the raw layout, with a
+The fetch is offline. The archive files take their places in the raw layout, with a
 `raw_manifest` that records them. One build runs with key repair off and pins the
 2021 to 2022 statuses; a second reuses its fetch and normalise tables, runs link and
 allocate with key repair on, and pins the no-record value the rules move.
@@ -11,17 +11,16 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-from archive_build import CRS_ARCHIVE, CRS_SHA256, seed_raw
+from archive_build import archive_config, seed_raw
 
 from climate_finance.build import Stage, build
-from climate_finance.build.config import BuildConfig, LocalFile, load_config
+from climate_finance.build.config import BuildConfig
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.stages import table_path
 from climate_finance.schema import KEY_REPAIR_METHODS, sha256_file
 
 pytestmark = pytest.mark.slow
 
-BUILD_TOML = Path(__file__).parents[2] / "build.toml"
 YEARS = (2021, 2022)
 # USD bn of 2021 to 2022 climate value per status.
 TOLERANCE_BN = 0.1
@@ -34,78 +33,233 @@ FIRST_ROWS_MOVED_BN = {
     "no_disbursement_record": 0.0,
     "not_traceable": -0.94,
 }
-# The reference keys a crs id alone, links project numbers only for agencies whose
-# ids do not persist, and takes any long crs id as a contract under its first ten
-# characters. `crs_key` splits an id that names projects in several recipients,
-# which gives each commitment its own recipient's disbursements (USD 0.35 bn more
-# disbursed, 0.53 bn more partly disbursed, 0.88 bn less with no record). The
-# project-number tiers for every agency move most of the rest.
+# The reference keys World Bank disbursements on their crs ids, which name projects;
+# the build's `wb_loan` tier keys them on their loan or credit numbers.
+LOAN_TIER_MOVED_BN = {
+    "disbursed": 1.60,
+    "partly_disbursed": 1.18,
+    "no_disbursement_record": -2.78,
+    "not_traceable": 0.0,
+}
+# The build's key tiers link more than the reference's: the project-number tiers
+# run for every agency, the crs-id tiers key an id that names several projects or
+# countries by recipient (`crs_key`) and compare unpadded line suffixes
+# (`canonical_crs_id`), and the project-number tiers compare numbers without `-` and
+# `_` (`pn_key`). That moves value from partly disbursed to disbursed, under the
+# reference's counting and under the release rule.
 KEY_TIERS_MOVED_BN = {
-    "disbursed": 0.61,
-    "partly_disbursed": 0.28,
-    "no_disbursement_record": -0.89,
+    "disbursed": 0.30,
+    "partly_disbursed": -0.28,
+    "no_disbursement_record": -0.02,
+    "not_traceable": 0.0,
+}
+KEY_TIERS_RELEASE_MOVED_BN = {
+    "disbursed": 0.30,
+    "partly_disbursed": -0.30,
+    "no_disbursement_record": 0.0,
+    "not_traceable": 0.0,
+}
+# Each project-number tier asks for one crs id over its own key (`Tier.unique_by`),
+# which links US awards and other donors' lines out of no record. The rows it moves
+# count the same under both rules.
+UNIQUE_BY_MOVED_BN = {
+    "disbursed": 0.14,
+    "partly_disbursed": 0.17,
+    "no_disbursement_record": -0.31,
+    "not_traceable": 0.0,
+}
+# `pn_recipient_date` puts German disbursements on the line whose commitment date
+# they repeat.
+DATE_TIER_MOVED_BN = {
+    "disbursed": 0.12,
+    "partly_disbursed": -0.08,
+    "no_disbursement_record": -0.04,
+    "not_traceable": 0.0,
+}
+# The reference links by key alone. The truth-group classifier (`link.score`) links
+# disbursements the keys left to commitments, which moves value out of no record.
+CLASSIFIER_MOVED_BN = {
+    "disbursed": 0.03,
+    "partly_disbursed": 0.11,
+    "no_disbursement_record": -0.15,
+    "not_traceable": 0.0,
+}
+CLASSIFIER_RELEASE_MOVED_BN = {
+    "disbursed": 0.03,
+    "partly_disbursed": 0.12,
+    "no_disbursement_record": -0.15,
+    "not_traceable": 0.0,
+}
+# A record's own commitment fills before older commitments of its key group
+# (`_own_commitments`), so where a donor files a new module or yearly grant under a
+# reused crs id, the new record's money stays out of the older module's headroom.
+# Mostly Dutch and British rows move from disbursed to partly disbursed, and own
+# commitments with no record take their records' money.
+OWN_FIRST_MOVED_BN = {
+    "disbursed": -0.50,
+    "partly_disbursed": 0.70,
+    "no_disbursement_record": -0.21,
+    "not_traceable": 0.0,
+}
+OWN_FIRST_RELEASE_MOVED_BN = {
+    "disbursed": -0.50,
+    "partly_disbursed": 0.63,
+    "no_disbursement_record": -0.14,
+    "not_traceable": 0.0,
+}
+# The figures above read CRDF 2015 to 2024 and CRS 2010 to 2025; each change below
+# is measured with the changes above it in place, in USD bn to four places. The
+# truth-group classifier labels pairs from `FIRST_MEASURED_YEAR` and reads each
+# commitment's sibling lines (`sibling_lines`), so it links less disbursement into
+# 2021 to 2022 rows.
+CLASSIFIER_SIBLINGS_MOVED_BN = {
+    "disbursed": -0.0217,
+    "partly_disbursed": -0.0586,
+    "no_disbursement_record": 0.0802,
+    "not_traceable": 0.0,
+}
+CLASSIFIER_SIBLINGS_RELEASE_MOVED_BN = {
+    "disbursed": -0.0216,
+    "partly_disbursed": -0.0669,
+    "no_disbursement_record": 0.0885,
+    "not_traceable": 0.0,
+}
+# The build reads every year the sources hold: CRDF and CRS from 2000.
+EVERY_YEAR_MOVED_BN = {
+    "disbursed": 0.0001,
+    "partly_disbursed": -0.0081,
+    "no_disbursement_record": 0.0080,
     "not_traceable": 0.0,
 }
 # Allocation reads CRS records up to `crs_last_complete`, so the early 2025 reports
 # no longer complete some 2021 to 2022 commitments.
 LAST_COMPLETE_YEAR_MOVED_BN = {
-    "disbursed": -0.12,
-    "partly_disbursed": 0.11,
-    "no_disbursement_record": 0.01,
+    "disbursed": -0.1516,
+    "partly_disbursed": 0.1433,
+    "no_disbursement_record": 0.0084,
     "not_traceable": 0.0,
 }
-# An agency keying under `MIN_KEYED_DISBURSED` of its disbursement is not traceable:
-# the EBRD's 2019 to 2022 rows (5.17 bn) and IFAD's (0.51 bn).
+# An agency keying under `MIN_KEYED_DISBURSED` of its disbursement is not traceable,
+# mostly the EBRD's and IFAD's rows.
 DISBURSEMENT_SIDE_MOVED_BN = {
     "disbursed": 0.0,
     "partly_disbursed": 0.0,
-    "no_disbursement_record": -5.68,
-    "not_traceable": 5.68,
+    "no_disbursement_record": -5.6023,
+    "not_traceable": 5.6023,
 }
-# Under the release rule the disbursement-side test moves USD 5.62 bn: the 2021 to
-# 2022 not-traceable pins measured with it and without it are 40.74 and 35.12 bn.
-RELEASE_DISBURSEMENT_SIDE_MOVED_BN = {
-    "disbursed": 0.0,
-    "partly_disbursed": 0.0,
-    "no_disbursement_record": -5.62,
-    "not_traceable": 5.62,
-}
-# A component award's disbursement reaches its own component (`split_components`),
-# mostly US awards.
-COMPONENT_AWARDS_MOVED_BN = {
-    "disbursed": 0.14,
-    "partly_disbursed": 0.14,
-    "no_disbursement_record": -0.28,
+# No row receives a record from before its CRDF year, which moves only the release
+# rule.
+TIME_ORDER_MOVED_BN = {
+    "disbursed": -0.0011,
+    "partly_disbursed": 0.0011,
+    "no_disbursement_record": 0.0,
     "not_traceable": 0.0,
 }
-# No row receives a record from before its CRDF year, which takes the earlier
-# records of Italian aggregate children, so it moves only the release rule.
-TIME_ORDER_MOVED_BN = {
+# Only an EU contract passes its floor in the parent tier, in allocation and in the
+# keys (`parent_floor_year`), and `crs_key` counts a missing project number as one
+# more project. Together they move only the release rule.
+PARENT_FLOOR_RELEASE_MOVED_BN = {
     "disbursed": 0.0,
-    "partly_disbursed": -0.08,
-    "no_disbursement_record": 0.08,
+    "partly_disbursed": -0.0024,
+    "no_disbursement_record": 0.0024,
+    "not_traceable": 0.0,
+}
+# A lettered record reaches its parent only in its recipient under its project
+# number (`_parent_key`).
+LETTERED_PARENT_MOVED_BN = {
+    "disbursed": 0.0015,
+    "partly_disbursed": -0.0068,
+    "no_disbursement_record": 0.0053,
+    "not_traceable": 0.0,
+}
+# A component award keys each component by purpose (`split_components`). The
+# purpose tier's `unique_by` already reaches each component, so the split only stops
+# links across components. The floor exemption under a disbursement's own crs id
+# (`same_crs_id`) moves no status.
+COMPONENT_AWARDS_MOVED_BN = {
+    "disbursed": -0.0011,
+    "partly_disbursed": -0.0020,
+    "no_disbursement_record": 0.0031,
+    "not_traceable": 0.0,
+}
+# The classifier links at the fixed cut of 0.40, below the best threshold of its
+# training F1 in this build (0.43), which moves a little value from partly disbursed
+# to disbursed.
+FIXED_CUT_MOVED_BN = {
+    "disbursed": 0.0003,
+    "partly_disbursed": -0.0003,
+    "no_disbursement_record": 0.0,
+    "not_traceable": 0.0,
+}
+FIXED_CUT_RELEASE_MOVED_BN = {
+    "disbursed": 0.0004,
+    "partly_disbursed": -0.0004,
+    "no_disbursement_record": 0.0,
+    "not_traceable": 0.0,
+}
+# `sibling_lines` counts a commitment's sibling lines over every link-stage unit,
+# which changes the classifier's links.
+SIBLING_LINES_MOVED_BN = {
+    "disbursed": -0.0081,
+    "partly_disbursed": 0.0166,
+    "no_disbursement_record": -0.0086,
+    "not_traceable": 0.0,
+}
+SIBLING_LINES_RELEASE_MOVED_BN = {
+    "disbursed": -0.0081,
+    "partly_disbursed": 0.0166,
+    "no_disbursement_record": -0.0085,
+    "not_traceable": 0.0,
+}
+# An IBRD or IDA record fills the commitment on its own sector line before the
+# loan's other lines (`_own_commitments`). The rows it moves count the same under
+# both rules.
+WORLD_BANK_OWN_LINE_MOVED_BN = {
+    "disbursed": 0.1526,
+    "partly_disbursed": -0.1803,
+    "no_disbursement_record": 0.0277,
     "not_traceable": 0.0,
 }
 # With aggregate children counted and their parents left out (the release rule).
 RELEASE_RULE_BN = {
-    "disbursed": 55.39,
-    "partly_disbursed": 105.09,
-    "no_disbursement_record": 33.98,
+    "disbursed": 56.37,
+    "partly_disbursed": 106.01,
+    "no_disbursement_record": 32.07,
     "not_traceable": 35.12,
 }
 # No-record value the key-repair rules move to partly or fully disbursed, counted
-# as the reference counts, by provider category (USD bn). A programme number links
-# only within the disbursement's recipient and purpose (`_programmes`), so fewer
-# units exceed `MAX_COMMITMENTS` and the rules move USD 0.37 bn more bilateral
-# value. The exact tiers' `crs_key` already reaches USD 0.74 bn of bank value the
-# rules moved; the title rule's count of rounded numbers adds back USD 0.11 bn.
-REPAIR_MOVED_BN = {"bilateral": 1.31, "banks": 3.91}
-# A number disbursed as well as committed in several countries is a programme too.
-REPAIR_PROGRAMMES_BN = {"bilateral": 0.0, "banks": -0.57}
+# as the reference counts, by provider category (USD bn). The `wb_loan` tier already
+# reaches the World Bank commitments the rules would, so the rules move no IBRD or
+# IDA value. Both builds carry classifier links. In the build without the rules, the
+# classifier already lifts USD 0.08 bn of bilateral rows out of no record through
+# commitments the rules reach, so the rules move that much less. A number committed
+# in several countries links within the disbursement's recipient and purpose
+# (`_programmes`); on the number alone a disbursement would reach more than
+# `MAX_COMMITMENTS` commitments and link to none. US numbers of that kind carry
+# USD 0.40 bn of the bilateral figure; the purpose tier's own guard
+# (`Tier.unique_by`) already links USD 0.20 bn more US value in the build without
+# the rules. A unit that disbursed no more than its own commitment is no
+# disbursement unit to the rules, and a line's spare commitment (`_spare_lines`)
+# joins the commitments a number reaches, so some US numbers reach more than
+# `MAX_COMMITMENTS`. Between them the two take USD 0.07 bn of US rows out of the
+# figure. Rounded AfDB project numbers are null, so `repair_title_recipient` also
+# takes AfDB commitments that the rounded numbers reach, which carry USD 0.18 bn of
+# the banks figure. A rounded AfDB number that also fits a spare line stands for two
+# full numbers, so `repair_afdb_scientific` links it to none (USD 0.05 bn).
+# `repair_stray_country` moves USD 0.01 bn of Canadian and Danish rows.
+REPAIR_MOVED_BN = {"bilateral": 0.85, "banks": 2.12}
+# The classifier links less into 2021 to 2022 rows, so the rules lift more bilateral
+# value out of no record, and so do the CRDF and CRS years from 2000.
+REPAIR_CLASSIFIER_SIBLINGS_BN = {"bilateral": 0.0324, "banks": 0.0}
+REPAIR_EVERY_YEAR_BN = {"bilateral": 0.0091, "banks": 0.0}
 # The EBRD's no-record rows become not traceable, leaving the rules less to move.
-REPAIR_DISBURSEMENT_SIDE_BN = {"bilateral": 0.0, "banks": -0.33}
-# The exact tiers reach US component value before the rules do.
-REPAIR_COMPONENT_AWARDS_BN = {"bilateral": -0.07, "banks": 0.03}
+REPAIR_DISBURSEMENT_SIDE_BN = {"bilateral": 0.0, "banks": -0.3130}
+# Key repair compares awards too (`split_components`), so its rules link within one
+# component where the award was ambiguous across them.
+REPAIR_COMPONENT_AWARDS_BN = {"bilateral": 0.1491, "banks": 0.0}
+# With `sibling_lines` counted over every link-stage unit, the build without the
+# rules holds less in no record, and the rules lift less bilateral value out of it.
+REPAIR_SIBLING_LINES_BN = {"bilateral": -0.0085, "banks": 0.0}
 REPAIR_TOLERANCE_BN = 0.05
 _CATEGORY = {
     "DAC member": "bilateral",
@@ -123,16 +277,7 @@ def data() -> Path:
 
 @pytest.fixture(scope="module")
 def config(data: Path) -> BuildConfig:
-    config = load_config(BUILD_TOML)
-    sources = config.sources.model_copy(
-        update={
-            "crs_file": LocalFile(path=data / "raw" / CRS_ARCHIVE, sha256=CRS_SHA256),
-            "iati_archive": data / "raw" / "external" / "iati",
-        }
-    )
-    return config.model_copy(
-        update={"key_repair": False, "recoveries": False, "sources": sources}
-    )
+    return archive_config(data / "raw", key_repair=False, recoveries=False)
 
 
 @pytest.fixture(scope="module")
@@ -164,7 +309,7 @@ def repaired(base: Path, config: BuildConfig) -> Path:
 
 
 def _rows(release_dir: Path) -> pl.DataFrame:
-    """2021 to 2022 recipient-perspective CRDF rows with their status; an aggregate
+    """2021 to 2022 recipient-perspective CRDF rows with their status. An aggregate
     parent left out of allocation has none."""
     crdf = pl.read_parquet(table_path(release_dir, "normalise", "crdf"))
     status = pl.read_parquet(table_path(release_dir, "allocate", "commitments"))
@@ -199,15 +344,27 @@ def test_statuses_reproduce_the_reference_without_recoveries(
     )
     built = _by_status(_prototype_count(_rows(base)))
     assert set(built) == set(reference["status"])
-    for status, usd_bn in reference.select("status", "usd_bn").iter_rows():
-        moved = (
-            FIRST_ROWS_MOVED_BN[status]
-            + KEY_TIERS_MOVED_BN[status]
-            + LAST_COMPLETE_YEAR_MOVED_BN[status]
-            + DISBURSEMENT_SIDE_MOVED_BN[status]
-            + COMPONENT_AWARDS_MOVED_BN[status]
-        )
-        assert built[status] == pytest.approx(usd_bn + moved, abs=TOLERANCE_BN), status
+    expected = {
+        status: usd_bn
+        + FIRST_ROWS_MOVED_BN[status]
+        + LOAN_TIER_MOVED_BN[status]
+        + KEY_TIERS_MOVED_BN[status]
+        + UNIQUE_BY_MOVED_BN[status]
+        + DATE_TIER_MOVED_BN[status]
+        + CLASSIFIER_MOVED_BN[status]
+        + OWN_FIRST_MOVED_BN[status]
+        + CLASSIFIER_SIBLINGS_MOVED_BN[status]
+        + EVERY_YEAR_MOVED_BN[status]
+        + LAST_COMPLETE_YEAR_MOVED_BN[status]
+        + DISBURSEMENT_SIDE_MOVED_BN[status]
+        + LETTERED_PARENT_MOVED_BN[status]
+        + COMPONENT_AWARDS_MOVED_BN[status]
+        + FIXED_CUT_MOVED_BN[status]
+        + SIBLING_LINES_MOVED_BN[status]
+        + WORLD_BANK_OWN_LINE_MOVED_BN[status]
+        for status, usd_bn in reference.select("status", "usd_bn").iter_rows()
+    }
+    assert built == pytest.approx(expected, abs=TOLERANCE_BN)
 
 
 def test_statuses_under_the_release_rule(base: Path) -> None:
@@ -221,10 +378,22 @@ def test_statuses_under_the_release_rule(base: Path) -> None:
     built = _by_status(rows.drop_nulls("status"))
     expected = {
         status: usd_bn
+        + KEY_TIERS_RELEASE_MOVED_BN[status]
+        + UNIQUE_BY_MOVED_BN[status]
+        + DATE_TIER_MOVED_BN[status]
+        + CLASSIFIER_RELEASE_MOVED_BN[status]
+        + OWN_FIRST_RELEASE_MOVED_BN[status]
+        + CLASSIFIER_SIBLINGS_RELEASE_MOVED_BN[status]
+        + EVERY_YEAR_MOVED_BN[status]
         + LAST_COMPLETE_YEAR_MOVED_BN[status]
-        + RELEASE_DISBURSEMENT_SIDE_MOVED_BN[status]
-        + COMPONENT_AWARDS_MOVED_BN[status]
+        + DISBURSEMENT_SIDE_MOVED_BN[status]
         + TIME_ORDER_MOVED_BN[status]
+        + PARENT_FLOOR_RELEASE_MOVED_BN[status]
+        + LETTERED_PARENT_MOVED_BN[status]
+        + COMPONENT_AWARDS_MOVED_BN[status]
+        + FIXED_CUT_RELEASE_MOVED_BN[status]
+        + SIBLING_LINES_RELEASE_MOVED_BN[status]
+        + WORLD_BANK_OWN_LINE_MOVED_BN[status]
         for status, usd_bn in RELEASE_RULE_BN.items()
     }
     assert built == pytest.approx(expected, abs=TOLERANCE_BN)
@@ -302,9 +471,11 @@ def test_key_repair_moves_no_record_value(
     for category, usd_bn in REPAIR_MOVED_BN.items():
         moved_bn = (
             usd_bn
-            + REPAIR_PROGRAMMES_BN[category]
+            + REPAIR_CLASSIFIER_SIBLINGS_BN[category]
+            + REPAIR_EVERY_YEAR_BN[category]
             + REPAIR_DISBURSEMENT_SIDE_BN[category]
             + REPAIR_COMPONENT_AWARDS_BN[category]
+            + REPAIR_SIBLING_LINES_BN[category]
         )
         assert by_category[category] == pytest.approx(
             moved_bn, abs=REPAIR_TOLERANCE_BN
@@ -315,7 +486,7 @@ def test_key_repair_moves_no_record_value(
 
 
 def test_units_rebuild_to_the_same_bits(base: Path, repaired: Path) -> None:
-    # The two builds form units from one normalise output, in separate runs; a
+    # The two builds form units from one normalise output, in separate runs. A
     # group sum that adds in thread order changes the last bit of some amounts.
     assert sha256_file(table_path(base, "link", "units")) == sha256_file(
         table_path(repaired, "link", "units")

@@ -1,3 +1,4 @@
+import json
 import re
 import socket
 import sys
@@ -16,8 +17,10 @@ from stage_runs import BUILD_TOML, stage_context, write_fetched_years
 
 import climate_finance.build
 from climate_finance.build import BuildConfig, Stage, build, fetch, load_config
-from climate_finance.build.config import LocalFile
+from climate_finance.build.config import Ledgers, LocalFile
 from climate_finance.build.errors import ConfigError
+from climate_finance.build.sources import files
+from climate_finance.build.sources.gcf import PROJECTS_URL, READINESS_URL
 from climate_finance.build.stages import REGISTRY, raw_dir
 from climate_finance.errors import SourceUnavailableError
 from climate_finance.schema import sha256_file
@@ -58,7 +61,7 @@ class FakeSources:
         monkeypatch.setitem(sys.modules, "pydeflate", pydeflate)
         transport = httpx.MockTransport(self.gcf)
         monkeypatch.setattr(
-            fetch, "_http_client", lambda: httpx.Client(transport=transport)
+            fetch, "new_client", lambda: httpx.Client(transport=transport)
         )
 
     def bulk_download_crs(self, *, save_to_path: Path) -> None:
@@ -123,6 +126,15 @@ class FakeSources:
         )
 
     def gcf(self, request: httpx.Request) -> httpx.Response:
+        if str(request.url) == READINESS_URL:
+            self.calls.append(("gcf_readiness", {}))
+            grants = json.loads((FIXTURES / "ledgers/gcf/readiness.json").read_text())
+            page = {"props": {"pageProps": {"data": {"data": grants}}}}
+            return httpx.Response(
+                200,
+                text='<script id="__NEXT_DATA__" type="application/json">'
+                f"{json.dumps(page)}</script>",
+            )
         self.calls.append(("gcf", {"url": str(request.url)}))
         return self.gcf_response
 
@@ -179,7 +191,7 @@ def _fetch(config: BuildConfig, out_dir: Path, *, offline: bool = False) -> Path
             (2015, 2024),
             None,
             {
-                "crs": (2015, 2025),
+                "crs": (2014, 2025),
                 "crdf_recipient": (2015, 2024),
                 "crdf_provider": (2015, 2024),
                 "multisystem": (2015, 2024),
@@ -276,11 +288,18 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
         FIXTURES / "gcf" / "projects.json"
     ).read_bytes()
     assert not (release / "raw.partial").exists()
-    assert reads[Stage.FETCH] == set(fetch.SETTINGS)
+    # The adaptation labels are read with jev_labels on.
+    assert reads[Stage.FETCH] == set(fetch.SETTINGS) - {"sources.adaptation_labels"}
 
     assert "bulk_download_crs" not in sources.names()
-    for perspective in ("recipient", "provider"):
-        first, last = resolved[f"crdf_{perspective}"]
+    # The recipient file starts a year early, where the listing holds that year,
+    # for the first share year's span.
+    first, last = resolved["crdf_recipient"]
+    asked = {
+        "recipient": (max(first - 1, 2000), last),
+        "provider": resolved["crdf_provider"],
+    }
+    for perspective, (first, last) in asked.items():
         assert (
             "download_crdf",
             {
@@ -308,7 +327,7 @@ def test_offline_fetch_rewrites_its_stage_unchanged_with_no_network_call(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = _config(crs_file=crs_file)
+    config = _config(crs_file=crs_file, ledgers=LEDGERS)
     release = _fetch(config, tmp_path / "out")
     online = sha256_file(release / MANIFEST)
     # The fetch stage's identity, which every later stage records.
@@ -320,6 +339,8 @@ def test_offline_fetch_rewrites_its_stage_unchanged_with_no_network_call(
 
     monkeypatch.setattr(socket.socket, "connect", refuse)
     monkeypatch.setattr(socket, "getaddrinfo", refuse)
+    # Every download, ledgers included, runs on the client `run_fetch` builds.
+    monkeypatch.setattr(fetch, "new_client", refuse)
 
     _fetch(config, tmp_path / "out", offline=True)
 
@@ -353,13 +374,41 @@ def test_a_fetch_that_fails_before_its_manifest_keeps_the_last_fetch(
 
 
 @pytest.mark.parametrize(
+    ("crdf_years", "crs"),
+    [
+        # The recipient CRDF holds 2014, which normalise reads into the first
+        # share year's span, so the CRS starts then too.
+        ((2015, 2024), (2014, 2025)),
+        # The CRDF starts in its first year, so the span is empty and the first
+        # share year's CRS commitments are its own year's alone.
+        ((2000, 2024), (2000, 2025)),
+        ("all", (2000, 2025)),
+    ],
+)
+def test_the_crs_starts_with_the_first_share_years_span(
+    crdf_years: tuple[int, int] | Literal["all"], crs: tuple[int, int]
+) -> None:
+    years = fetch.resolve_years(
+        _config(crdf_years=crdf_years).years,
+        held={
+            "crs": (1973, 2025),
+            "crdf_recipient": (2000, 2024),
+            "crdf_provider": (2013, 2024),
+        },
+        recipient_first=2000,
+        source="source",
+    )
+    assert years["crs"] == crs
+
+
+@pytest.mark.parametrize(
     ("crdf_years", "crs_years", "recorded"),
     [
-        ((2015, 2024), None, (2015, 2025)),
-        ((2022, 2024), None, (2022, 2025)),
+        ((2015, 2024), None, (2014, 2025)),
+        ((2022, 2024), None, (2021, 2025)),
         ((2022, 2024), (2016, 2024), (2016, 2024)),
         ((2010, 2024), None, "crdf_recipient"),
-        ((2015, 2024), (2014, 2025), "crs"),
+        ((2015, 2024), (2013, 2025), "crs"),
         ("all", None, "years.crdf"),
     ],
 )
@@ -448,7 +497,8 @@ def test_an_offline_fetch_reads_the_years_asked_that_the_files_hold(
     manifest = pl.read_parquet(release / MANIFEST)
     asked = crdf_years if crdf_years != "all" else (2000, 2024)
     assert fetch.read_years(manifest) == {
-        "crs": (asked[0], 2025),
+        # The recipient file holds 2000 on, so a span precedes 2010 and 2012 alone.
+        "crs": (asked[0] - 1 if asked[0] > 2000 else asked[0], 2025),
         "crdf_recipient": asked,
         "crdf_provider": (max(asked[0], 2013), 2024),
         "multisystem": multisystem,
@@ -516,6 +566,114 @@ def test_offline_fetch_refuses_a_manifest_for_other_sources(
 
     with pytest.raises(SourceUnavailableError, match=named):
         _fetch(config, tmp_path / "out", offline=True)
+
+
+LEDGERS = Ledgers(
+    years=(2021, 2022),
+    publishers=("ibrd", "ida", "asdb", "gcf", "gcf_readiness"),
+    archive=FIXTURES / "ledgers",
+)
+
+
+def test_online_fetch_copies_the_ledger_archive_with_a_source_per_ledger(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    release = _fetch(_config(crs_file=crs_file, ledgers=LEDGERS), tmp_path / "out")
+    manifest = pl.read_parquet(release / MANIFEST).filter(
+        pl.col("path").str.starts_with("ledgers/")
+    )
+
+    snapshots = [
+        (f"ledger_finances_one_{dataset}_{year}", f"{dataset}_31-Dec-{year}.json")
+        for dataset in ("DS00975", "DS00976")
+        for year in (2020, 2021, 2022)
+    ]
+    assert sorted(manifest.select("source", "path").rows()) == sorted(
+        [
+            *((source, f"ledgers/finances_one/{name}") for source, name in snapshots),
+            ("ledger_iati_asdb", "ledgers/iati/asdb/asdb-sample.xml"),
+            ("ledger_gcf_readiness", "ledgers/gcf/readiness.json"),
+        ]
+    )
+    assert set(manifest["method"]) == {"manual"}
+    # The GCF ledger reads the one projects file every fetch downloads.
+    assert sources.names().count("gcf") == 1
+
+
+def test_online_fetch_downloads_ledgers_without_an_archive(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    ledgers = Ledgers(years=(2021, 2022), publishers=("gcf", "gcf_readiness"))
+
+    release = _fetch(_config(crs_file=crs_file, ledgers=ledgers), tmp_path / "out")
+
+    readiness = (
+        pl.read_parquet(release / MANIFEST)
+        .filter(source="ledger_gcf_readiness")
+        .row(0, named=True)
+    )
+    assert (readiness["path"], readiness["method"], readiness["url"]) == (
+        "ledgers/gcf/readiness.json",
+        "http",
+        READINESS_URL,
+    )
+    assert sources.names().count("gcf_readiness") == 1
+
+
+def test_the_afdb_ledger_brings_the_imf_sdr_rate(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    ledgers = LEDGERS.model_copy(update={"publishers": ("afdb",)})
+
+    release = _fetch(_config(crs_file=crs_file, ledgers=ledgers), tmp_path / "out")
+
+    manifest = pl.read_parquet(release / MANIFEST).filter(
+        pl.col("path").str.starts_with("ledgers/")
+    )
+    # The AfDB's ledger is in SDR, which the DAC gives no rate for.
+    assert sorted(manifest.select("source", "path").rows()) == [
+        ("ledger_iati_afdb", "ledgers/iati/afdb/afdb-sample.xml"),
+        ("ledger_imf_sdr", "ledgers/imf/sdr_usd.xml"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("fetched", "offline", "named"),
+    [
+        (None, LEDGERS, "ledger_iati_asdb"),
+        (LEDGERS, None, "ledger_iati_asdb"),
+        (
+            LEDGERS,
+            LEDGERS.model_copy(update={"publishers": ("ibrd", "asdb")}),
+            "ledger_finances_one_DS00976_2020",
+        ),
+        (
+            LEDGERS,
+            LEDGERS.model_copy(update={"years": (2021, 2023)}),
+            "ledger_finances_one_DS00975_2023",
+        ),
+        (
+            LEDGERS,
+            LEDGERS.model_copy(update={"publishers": (*LEDGERS.publishers, "afdb")}),
+            "ledger_imf_sdr",
+        ),
+    ],
+    ids=["added", "dropped", "fewer-publishers", "more-years", "sdr"],
+)
+def test_offline_fetch_refuses_a_manifest_for_other_ledgers(
+    sources: FakeSources,
+    crs_file: LocalFile,
+    tmp_path: Path,
+    fetched: Ledgers | None,
+    offline: Ledgers | None,
+    named: str,
+) -> None:
+    _fetch(_config(crs_file=crs_file, ledgers=fetched), tmp_path / "out")
+
+    with pytest.raises(SourceUnavailableError, match=named):
+        _fetch(
+            _config(crs_file=crs_file, ledgers=offline), tmp_path / "out", offline=True
+        )
 
 
 def test_offline_fetch_refuses_without_an_earlier_manifest(tmp_path: Path) -> None:
@@ -617,10 +775,12 @@ def test_a_bad_gcf_response_stops_the_fetch(
     crs_file: LocalFile,
     tmp_path: Path,
     response: httpx.Response,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sources.gcf_response = response
+    monkeypatch.setattr(files.time, "sleep", lambda seconds: None)
 
-    with pytest.raises(SourceUnavailableError, match=fetch.GCF_URL):
+    with pytest.raises(SourceUnavailableError, match=PROJECTS_URL):
         _fetch(_config(crs_file=crs_file), tmp_path / "out")
 
 
@@ -631,6 +791,37 @@ def test_crdf_workbooks_must_match_their_pinned_etags(
 
     with pytest.raises(SourceUnavailableError, match=re.escape("CRDF-PP_2024.xlsx")):
         _fetch(_config(crs_file=crs_file, crdf_etags=pins), tmp_path / "out")
+
+
+def test_jev_labels_bring_the_pinned_adaptation_labels_into_raw(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    path = crs_file.path.with_name("wk.csv")
+    path.write_text("text,level\nSeawalls,2\n")
+    labels = LocalFile(path=path, sha256=sha256_file(path))
+    config = _config(crs_file=crs_file, adaptation_labels=labels).model_copy(
+        update={"jev_labels": True}
+    )
+
+    release = _fetch(config, tmp_path / "out")
+
+    row = (
+        pl.read_parquet(release / MANIFEST)
+        .filter(source="adaptation_labels")
+        .row(0, named=True)
+    )
+    assert (row["path"], row["method"], row["sha256"]) == (
+        "labels/adaptation_labels.csv",
+        "manual",
+        labels.sha256,
+    )
+    assert (raw_dir(release) / row["path"]).read_bytes() == path.read_bytes()
+    other = _config(
+        crs_file=crs_file,
+        adaptation_labels=LocalFile(path=path, sha256="0" * 64),
+    ).model_copy(update={"jev_labels": True})
+    with pytest.raises(SourceUnavailableError, match="adaptation label file"):
+        _fetch(other, tmp_path / "out", offline=True)
 
 
 @pytest.mark.parametrize(

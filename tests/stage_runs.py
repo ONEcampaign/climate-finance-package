@@ -1,15 +1,15 @@
 """One stage run by hand on inputs a test writes: the build.toml config, a context
 that records no provenance, and the registry entry that writes the stage."""
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
 
 from climate_finance.build import write_stage
-from climate_finance.build.config import BuildConfig, load_config
-from climate_finance.build.fetch import YEAR_SOURCES
+from climate_finance.build.config import BuildConfig, Ledgers, load_config
+from climate_finance.build.fetch import YEAR_SOURCES, _ledger_files
 from climate_finance.build.normalise.crdf import normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs
 from climate_finance.build.stages import REGISTRY, StageContext, StageDef, table_path
@@ -17,6 +17,8 @@ from climate_finance.schema import RAW_MANIFEST
 
 BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 OECD = Path(__file__).parent / "fixtures" / "raw" / "oecd"
+# The Jev model build.toml pins, which the price table must know.
+JEV_MODEL = load_config(BUILD_TOML).jev.model
 
 
 def stage_context(
@@ -56,28 +58,51 @@ def write_inputs(
 
 
 def year_rows(
-    *, crdf: tuple[int, int] = (2015, 2024), crs: tuple[int, int] = (2010, 2025)
+    *,
+    crdf: tuple[int, int] = (2015, 2024),
+    crs: tuple[int, int] = (2010, 2025),
+    ledgers: Ledgers | None = None,
 ) -> pl.DataFrame:
     """`raw_manifest` rows recording `crdf` for each CRDF perspective and MULTI and
-    `crs` for the CRS, asked and held, for files no test reads."""
-    return pl.DataFrame(
+    `crs` for the CRS, asked and held, plus `ledger_rows(ledgers)`, for files no
+    test reads."""
+    rows = pl.DataFrame(
         [
-            {
-                "source": source,
-                "path": f"{source}.parquet",
-                "sha256": "0" * 64,
-                "fetched_at": datetime(2026, 10, 21, tzinfo=UTC),
-                "method": "manual",
-                "first_year": first,
-                "last_year": last,
-                "held_first_year": first,
-                "held_last_year": last,
-            }
+            _row(source, first=first, last=last, held=True)
             for source in YEAR_SOURCES
             for first, last in [crs if source == "crs" else crdf]
         ],
         schema=RAW_MANIFEST.dtypes,
     )
+    return rows if ledgers is None else pl.concat([rows, ledger_rows(ledgers)])
+
+
+def ledger_rows(ledgers: Ledgers, *, skip: Collection[str] = ()) -> pl.DataFrame:
+    """`raw_manifest` rows of the files that hold the ledgers `ledgers` names, less
+    the sources in `skip`, each recording the ledger years as fetch does, for files
+    no test reads."""
+    first, last = ledgers.years
+    return pl.DataFrame(
+        [
+            _row(source, first=first, last=last, held=False)
+            for source in sorted(_ledger_files(ledgers) - set(skip))
+        ],
+        schema=RAW_MANIFEST.dtypes,
+    )
+
+
+def _row(source: str, *, first: int, last: int, held: bool) -> dict[str, object]:
+    return {
+        "source": source,
+        "path": f"{source}.parquet",
+        "sha256": "0" * 64,
+        "fetched_at": datetime(2026, 10, 21, tzinfo=UTC),
+        "method": "manual",
+        "first_year": first,
+        "last_year": last,
+        "held_first_year": first if held else None,
+        "held_last_year": last if held else None,
+    }
 
 
 def write_fetched_years(
@@ -85,9 +110,11 @@ def write_fetched_years(
     *,
     crdf: tuple[int, int] = (2015, 2024),
     crs: tuple[int, int] = (2010, 2025),
+    ledgers: Ledgers | None = None,
 ) -> None:
     """Write the fetch stage's `raw_manifest` as `year_rows` alone."""
-    write_inputs(release_dir, "fetch", {"raw_manifest": year_rows(crdf=crdf, crs=crs)})
+    rows = year_rows(crdf=crdf, crs=crs, ledgers=ledgers)
+    write_inputs(release_dir, "fetch", {"raw_manifest": rows})
 
 
 def write_normalised(release_dir: Path) -> None:

@@ -16,7 +16,7 @@ def _aggregate(row_id: str, recipient: int, climate: float, **fields: object) ->
         "row_id": row_id,
         "year": 2021,
         "recipient_code": recipient,
-        "flow_code": 21,
+        "flow_category": 21,
         "climate_usd": climate,
     } | fields
 
@@ -76,7 +76,7 @@ def test_records_roll_up_to_their_continents_row() -> None:
     child = children.row(0, named=True)
     assert child["agency_code"] == 6
     assert child["face_usd"] == pytest.approx(4e6)
-    assert (child["flow_code"], child["rio_mitigation"]) == (21, 2)
+    assert (child["flow_category"], child["rio_mitigation"]) == (21, 2)
 
 
 def test_a_record_goes_to_its_own_recipients_row_first() -> None:

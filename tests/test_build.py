@@ -111,6 +111,17 @@ def test_offline_reaches_every_stage(
     assert seen == [(True, True), (True, True)]
 
 
+# Settings read only on paths the raw fixtures cannot take: embeddings and the Jev
+# step need models and a truth group, the fill needs bank ledgers, and review and
+# the Jev labels are off in build.toml.
+UNREACHED = {
+    "link": {"embedding.model", "embedding.revision", "jev.band", "jev.model"},
+    "fill": {"sources.iati_publishers", "sources.ledgers", "years.crs_last_complete"},
+    "review": {"jev.band", "sources.ledgers", "sources.review_decisions"},
+    "label": {"jev.model"},
+}
+
+
 @pytest.mark.parametrize("switches", [False, True])
 def test_every_stage_reads_the_settings_it_declares_and_no_others(
     config: BuildConfig,
@@ -119,12 +130,14 @@ def test_every_stage_reads_the_settings_it_declares_and_no_others(
     switches: bool,
 ) -> None:
     # An earlier fetch laid the raw fixtures out, so the build runs offline from
-    # fetch on. Measure models no provider, since the fixtures hold too few.
+    # fetch on. Measure reads no agency and models no provider, since the fixtures
+    # hold too few, and the fixtures hold no truth group to set Jev's scale.
     config = config.model_copy(
         update={
             "offline": True,
             "key_repair": switches,
             "recoveries": switches,
+            "jev_links": False,
             "sources": config.sources.model_copy(
                 update={"crs_file": None, "iati_publishers": IATI_PUBLISHERS}
             ),
@@ -136,13 +149,19 @@ def test_every_stage_reads_the_settings_it_declares_and_no_others(
     monkeypatch.setattr(
         measure,
         "load_provider_facts",
-        lambda: facts.model_copy(update={"modelled": ()}),
+        lambda: facts.model_copy(update={"agencies": (), "modelled": ()}),
     )
     registry, reads = record_reads(monkeypatch, config, REGISTRY)
 
     run_stages(registry, release="r", release_dir=tmp_path, config=config)
 
-    assert reads == {stage.name: set(stage.settings) for stage in REGISTRY}
+    # Recoveries read the IATI publishers and the EIB routes to skip.
+    recoveries = set() if switches else {"sources.iati_publishers", "skip_eib_routes"}
+    unreached = UNREACHED | {"link": UNREACHED["link"] | recoveries}
+    assert reads == {
+        stage.name: set(stage.settings) - unreached.get(stage.name, set())
+        for stage in REGISTRY
+    }
 
 
 @pytest.mark.parametrize(
@@ -217,7 +236,7 @@ def test_a_stage_reads_an_earlier_stage_from_disk(
 
 
 @pytest.mark.parametrize("replaced", [False, True])
-def test_a_build_recovers_a_stage_swap_that_died_halfway(
+def test_a_build_recovers_a_stage_write_or_swap_that_died_halfway(
     config: BuildConfig, tmp_path: Path, replaced: bool
 ) -> None:
     registry = [
@@ -230,6 +249,9 @@ def test_a_build_recovers_a_stage_swap_that_died_halfway(
     # The build died with the last good stage moved aside, before or after the new
     # one moved into its place.
     first, old = tmp_path / "first", tmp_path / "first.old"
+    killed_write = tmp_path / ".second-k3x9q2ab"
+    killed_write.mkdir()
+    (killed_write / "numbers.parquet").write_bytes(b"half")
     if replaced:
         shutil.copytree(first, old)
     else:
@@ -240,6 +262,7 @@ def test_a_build_recovers_a_stage_swap_that_died_halfway(
     )
 
     assert not old.exists()
+    assert not killed_write.exists()
     assert pl.read_parquet(first / "numbers.parquet")["value"].to_list() == [1.5]
     assert pl.read_parquet(tmp_path / "second" / "numbers.parquet").height == 1
 

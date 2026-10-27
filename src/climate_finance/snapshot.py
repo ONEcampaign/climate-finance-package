@@ -12,7 +12,12 @@ from climate_finance import query
 from climate_finance.errors import ReleaseIntegrityError
 from climate_finance.methods import ONE, Method, MethodRange
 from climate_finance.result import Quality, Reconciliation, Result
-from climate_finance.schema import RELEASE_TABLES, ReleaseManifest, sha256_file
+from climate_finance.schema import (
+    RELEASE_TABLES,
+    ReleaseManifest,
+    scan_table,
+    sha256_file,
+)
 from climate_finance.spec import Currency, Flow, Measure, Spec, View
 
 
@@ -31,7 +36,7 @@ class Snapshot:
         """
         if name not in RELEASE_TABLES:
             raise KeyError(f"{name!r} is not a release table: {sorted(RELEASE_TABLES)}")
-        return pl.scan_parquet(self.path / f"{name}.parquet")
+        return scan_table(self.path / f"{name}.parquet")
 
     def spending(
         self,
@@ -46,6 +51,7 @@ class Snapshot:
         prices: int | Literal["current"] = "current",
         oda_only: bool = False,
         measure: Measure = "amount",
+        untraced: bool = True,
         spec: Spec | None = None,
     ) -> Result:
         """Climate finance under `method`, or under `spec` when given.
@@ -64,6 +70,7 @@ class Snapshot:
                 prices=prices,
                 oda_only=oda_only,
                 measure=measure,
+                untraced=untraced,
             )
         return query.spending(self, spec=spec)
 
@@ -72,9 +79,13 @@ class Snapshot:
         *,
         providers: str | int | Sequence[str | int] | None = None,
         years: int | Iterable[int] | None = None,
+        method: Method = ONE,
     ) -> Quality:
-        """Link, coverage and status statistics."""
-        return query.quality(self, providers=_as_tuple(providers), years=_years(years))
+        """Link, coverage and status statistics, and the EU Institutions rows that
+        `method`'s provider view leaves out."""
+        return query.quality(
+            self, providers=_as_tuple(providers), years=_years(years), method=method
+        )
 
     def reconcile(
         self,

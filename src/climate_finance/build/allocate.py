@@ -19,14 +19,37 @@ reuses a crs id for a top-up keeps the original commitment date, so the unit is
 placed years before the CRDF row it stands for, as Denmark's IFU places its 2023
 top-up under `2017320033` in 2017.
 
-Passes run by record year, then link method in `LINK_METHODS` order, then class:
-records with a date floor first, oldest floor first, then a dated donor's records
-dated in their own year, then the rest. Within a pass a group pools its records'
-disbursement and fills its commitments oldest `placed_year` first, pro rata to
-headroom within a year, capped at face value. A record whose unit carries groups of
-several methods enters one pass per group, in `LINK_METHODS` order, and each later
-pass receives only what the earlier ones left: the exact key tiers first, then the
-key-repair rules. What the last pass leaves is excess.
+Passes run by split rank first (see below), then certain groups first, then by
+record year, then link method in `LINK_METHODS` order, then class: records with a
+date floor first, oldest floor first, then a dated donor's records dated in their
+own year, then the rest. A group's pass is certain when every record pair of it is,
+so certain links fill a commitment before estimated links of any year, and an
+estimated link of an earlier year takes only what they left. Within a pass a group
+pools its records' disbursement and fills its commitments oldest `placed_year`
+first, pro rata to headroom within a year, capped at face value. A record whose unit
+carries groups of several methods enters one pass per group, in that order, and each
+later pass receives only what the earlier ones left: the exact key tiers first, then
+the key-repair rules. What the last pass leaves is excess.
+
+A trace group that review decisions split (`decisions.drop_pairs`) runs as one group
+per part. A part ranked after another (`LINKS.split_path`) runs, with its own
+commitments, in later passes, whatever its certainty and record year, so parts of one
+group may share a commitment. A part holding an accepted link ranks before the part
+holding none, and so claims a shared commitment's headroom first. A group that is not
+split ranks with the first part of a split one, so a build without decisions passes
+as it would with no split rank at all.
+
+A disbursement record's own commitment in a group fills before the rest of the group
+(`_own_commitments`). That is the record itself where it also commits, else the one
+commitment record of the group whose real commitment date it carries and whose title
+shares at least `OWN_TITLE_SHARE` of its words, else for IBRD and IDA the one
+commitment record of the group under the record's own project number, which names its
+sector line. Each own commitment runs as a group of its own, in a pass just before the
+group's, so a donor that files a new module or phase under an old crs id keeps the new
+module's money on the new commitment, and the old module keeps its headroom. A World
+Bank line's disbursement fills that line's commitment first, and only the remainder
+pools over the loan's other lines. What the own commitment cannot take enters the
+group's pass.
 
 Two per-donor switches change the order. A dated donor's record dated in its own
 year fills that year's commitments first. A window donor's other records fill first
@@ -37,6 +60,11 @@ A `crdf_crs` group's allocation is split over its CRDF rows by face value, over 
 larger of the group's CRS and CRDF face, so no row receives more than its face and
 no record gives more than it disbursed. Amounts stay at face value. The release
 query applies the climate share.
+
+An allocation's low bound is its amount when a certain link carried it (see
+`schema.CERTAIN_METHODS`) or the record disbursed against its own commitment, and
+the CRDF rows reach that commitment by certain routes alone
+(`schema.CERTAIN_ROUTES`). It is 0 otherwise. Its high bound is its amount.
 """
 
 from __future__ import annotations
@@ -49,10 +77,20 @@ import polars as pl
 
 from climate_finance.build.errors import AllocationInputError
 from climate_finance.build.fetch import last_complete_year
+from climate_finance.build.link.candidates import word_share
 from climate_finance.build.link.id_practice import period_of, untraceable
+from climate_finance.build.link.keys import WORLD_BANK_DONORS, line_date
+from climate_finance.build.link.levels import title_words
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
-from climate_finance.schema import EU_INSTITUTIONS, LINK_METHODS
+from climate_finance.schema import (
+    CERTAIN_METHODS,
+    CERTAIN_ROUTES,
+    EU_INSTITUTIONS,
+    LINK_METHODS,
+    RECIPIENT_VIEW,
+    measured_adaptation,
+)
 
 if TYPE_CHECKING:
     from climate_finance.build.stages import StageContext, StageOutput
@@ -76,9 +114,13 @@ DISBURSED_RATIO = 0.9
 NO_FLOOR_METHODS = ("crs_id_parent",)
 # Order offset that puts a commitment after every commitment-year order.
 _LATE = 10_000
+# A disbursement record's commitment record of the same real date is its own when
+# their titles share at least this word share.
+OWN_TITLE_SHARE = 0.5
 
 _FILLED_SCHEMA = pl.Schema(
     {
+        "pass": pl.UInt32(),
         "c_idx": pl.UInt32(),
         "record_id": pl.String(),
         "year": pl.Int16(),
@@ -93,6 +135,10 @@ _PAIRS_SCHEMA = pl.Schema(
         "year": pl.Int16(),
         "allocated_usd": pl.Float64(),
         "rule": pl.String(),
+        "certain": pl.Boolean(),
+        "pass": pl.UInt32(),
+        "link_method": pl.String(),
+        "commitment_unit_id": pl.String(),
     }
 )
 
@@ -263,7 +309,8 @@ def window_donors(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> list[int]:
 
 
 def _trace_links(links: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataFrame:
-    """The `trace` links as (disbursement unit, commitment unit, group, method).
+    """The `trace` links as (disbursement unit, commitment unit, group, method,
+    certain, split), `split` ordering the parts of split groups (`_split_order`).
 
     Raises:
         AllocationInputError: when a link lacks a group, a group spans two
@@ -278,9 +325,13 @@ def _trace_links(links: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataFrame:
             c_unit="right_id",
             group_id="group_id",
             method="link_method",
+            certain=pl.col("link_method").is_in(CERTAIN_METHODS)
+            & ~pl.col("records_disagree").fill_null(value=False),
+            split="split_path",
         )
         .collect()
     )
+    trace = trace.with_columns(split=_split_order(trace["split"]))
     if trace["group_id"].null_count():
         raise AllocationInputError("trace links without a group_id")
     spans = trace.group_by("group_id").agg(pl.col("method").n_unique())
@@ -305,6 +356,29 @@ def _trace_links(links: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataFrame:
             "positive disbursement (left) or commitment (right)"
         )
     return trace
+
+
+def _split_order(paths: pl.Series) -> pl.Series:
+    """Each split path's rank among `paths`, 0 for a group that is not split.
+
+    Paths compare rank by rank, outermost first, with the ranks a shorter path
+    lacks read as 0. So the parts of one split group take distinct ranks, a part
+    split again ranks its parts inside its own place, and a group that is not split
+    ranks with the first part of each split group.
+    """
+    depth = paths.list.len().max()
+    if not isinstance(depth, int) or depth == 0:
+        return pl.Series(paths.name, [0] * len(paths), dtype=pl.UInt32)
+    padded = pl.struct(
+        [
+            pl.col(paths.name)
+            .list.get(level, null_on_oob=True)
+            .fill_null(0)
+            .alias(str(level))
+            for level in range(depth)
+        ]
+    )
+    return paths.to_frame().select(padded.rank("dense") - 1).to_series()
 
 
 def _row_years(links: pl.LazyFrame, *, crdf: pl.LazyFrame) -> pl.LazyFrame:
@@ -403,6 +477,9 @@ def _trace_pairs(
             "d_unit",
             "c_unit",
             "year",
+            "certain",
+            "method",
+            "split",
             rank=rank,
             class_year=pl.coalesce(floor, pl.when(same_year).then(year)),
             order=order,
@@ -413,20 +490,6 @@ def _trace_pairs(
             .otherwise(pl.lit("fifo")),
         )
     )
-    key = ["year", "rank", "class_year"]
-    passes = (
-        unit_pairs.select(key)
-        .unique()
-        .sort(key, nulls_last=True)
-        .with_row_index("pass")
-    )
-    # The join gathers `pass` alone, so it copies none of the pairs' columns.
-    unit_pairs = unit_pairs.with_columns(
-        unit_pairs.select(key)
-        .join(passes, on=key, nulls_equal=True, maintain_order="left")
-        .get_column("pass")
-    )
-    _check_pooling(unit_pairs)
     commitments = (
         _commitment_records(units, crs=crs).sort("record_id").with_row_index("c_idx")
     )
@@ -438,24 +501,151 @@ def _trace_pairs(
         .collect()
         .join(disbursements.select("d_unit", "year"), on="d_unit")
     )
+    # A record that commits and disburses is certain of its own commitment, whatever
+    # link joined its unit to itself.
     pairs = (
         unit_pairs.join(records.drop("year"), on="d_unit")
         .join(
-            commitments.select("c_idx", c_unit="unit_id"),
+            commitments.select("c_idx", c_unit="unit_id", c_record="record_id"),
             on="c_unit",
         )
-        .select(
-            "pass",
-            "group_id",
-            "record_id",
-            "year",
-            "amount",
-            "c_idx",
-            "order",
-            "rule",
+        .with_columns(
+            certain=pl.col("certain") | (pl.col("record_id") == pl.col("c_record"))
         )
+        .drop("c_record")
+    )
+    own = _own_commitments(pairs, commitments=commitments, crs=crs)
+    # Each own commitment is a group of its own, holding the records whose own it
+    # is, so it shares no commitment with another group of its pass, and it runs
+    # before the group's pass (`later`).
+    pairs = pl.concat(
+        [
+            pairs.join(own, on=["group_id", "record_id", "c_idx"]).with_columns(
+                group_id=pl.concat_str(
+                    [pl.col("group_id"), pl.lit("own"), pl.col("c_idx")],
+                    separator="|",
+                ),
+                later=pl.lit(value=False),
+            ),
+            pairs.with_columns(later=pl.lit(value=True)),
+        ]
+    )
+    by = ["year", "rank", "class_year", "later"]
+    key = ["split", "estimated", *by]
+    # A group's pass is certain when all its pairs are, since the pass pools the
+    # group's disbursement over all its commitments.
+    pairs = pairs.with_columns(
+        estimated=(~pl.col("certain")).sum().over("group_id", *by) > 0
+    )
+    passes = (
+        pairs.select(key).unique().sort(key, nulls_last=True).with_row_index("pass")
+    )
+    # The join gathers `pass` alone, so it copies none of the pairs' columns.
+    pairs = pairs.with_columns(
+        pairs.select(key)
+        .join(passes, on=key, nulls_equal=True, maintain_order="left")
+        .get_column("pass")
+    )
+    _check_pooling(
+        pairs.filter("later").select("pass", "group_id", "d_unit", "c_unit").unique()
+    )
+    pairs = pairs.select(
+        "pass",
+        "group_id",
+        "record_id",
+        "year",
+        "amount",
+        "c_idx",
+        "order",
+        "rule",
+        "certain",
+        "method",
     )
     return pairs, commitments, records.select("record_id", "year", "amount")
+
+
+def _own_commitments(
+    pairs: pl.DataFrame, *, commitments: pl.DataFrame, crs: pl.LazyFrame
+) -> pl.DataFrame:
+    """Each disbursement record's own commitment record in a group, as (group_id,
+    record_id, c_idx). That is the record itself where it also commits, else the one
+    commitment record of the group whose real commitment date (`line_date`) it
+    carries and whose title shares at least `OWN_TITLE_SHARE` of its words
+    (`word_share`), else for IBRD and IDA the one commitment record of the group
+    under the record's own project number (`_own_lines`). A record that two
+    commitments of a group pass by one rule takes neither by that rule."""
+    reached = (
+        pairs.select("group_id", "record_id", "c_idx")
+        .unique()
+        .join(commitments.select("c_idx", c_record="record_id"), on="c_idx")
+    )
+    same = reached.filter(pl.col("record_id") == pl.col("c_record"))
+    rest = reached.join(same, on=["group_id", "record_id"], how="anti")
+    ids = pl.concat([rest["record_id"], rest["c_record"]]).unique().implode()
+    facts = (
+        crs.filter(pl.col("record_id").is_in(ids))
+        .select(
+            "record_id",
+            "donor_code",
+            "project_number",
+            date=line_date(pl.col("commitment_date")),
+        )
+        .collect()
+    )
+    columns = ["group_id", "record_id", "c_idx"]
+    matched = _same_date_and_title(rest, facts=facts, crs=crs).select(columns)
+    unmatched = rest.join(matched, on=["group_id", "record_id"], how="anti")
+    lines = _own_lines(unmatched, facts=facts).select(columns)
+    return pl.concat([same.select(columns), matched, lines])
+
+
+def _same_date_and_title(
+    reached: pl.DataFrame, *, facts: pl.DataFrame, crs: pl.LazyFrame
+) -> pl.DataFrame:
+    """The pairs of `reached` whose records share a real commitment date and at
+    least `OWN_TITLE_SHARE` of their title words, where a record has one such
+    commitment in its group."""
+    dates = facts.select("record_id", "date").drop_nulls("date")
+    dated = reached.join(dates, on="record_id").join(
+        dates.rename({"record_id": "c_record"}), on=["c_record", "date"]
+    )
+    if dated.is_empty():
+        return dated
+    # Each record read as a unit of its own, for its title words.
+    involved = pl.concat([dated["record_id"], dated["c_record"]]).unique()
+    words = title_words(
+        involved.to_frame("unit_id").with_columns(record_ids=pl.concat_list("unit_id")),
+        crs=crs,
+    )
+    agrees = word_share(pl.col("d_words"), pl.col("c_words")) >= OWN_TITLE_SHARE
+    return (
+        dated.join(
+            words.select(record_id="unit_id", d_words="title_toks"), on="record_id"
+        )
+        .join(words.select(c_record="unit_id", c_words="title_toks"), on="c_record")
+        .filter(agrees.fill_null(value=False))
+        .filter(pl.len().over("group_id", "record_id") == 1)
+    )
+
+
+def _own_lines(reached: pl.DataFrame, *, facts: pl.DataFrame) -> pl.DataFrame:
+    """The pairs of `reached` whose IBRD or IDA records share their project number,
+    where a record has one such commitment in its group.
+
+    The project number names one sector line of one loan (`P163452.IDA61960.CRS3`),
+    and the `wb_loan` tier links a line's disbursement to every line of its loan,
+    since a line can disburse without committing. IBRD and IDA records mostly carry
+    31 December dates and no titles, so the date and title test finds no own line."""
+    numbers = facts.filter(pl.col("donor_code").is_in(WORLD_BANK_DONORS)).select(
+        "record_id", "project_number"
+    )
+    return (
+        reached.join(numbers, on="record_id")
+        .join(
+            numbers.rename({"record_id": "c_record"}), on=["c_record", "project_number"]
+        )
+        .filter(pl.len().over("group_id", "record_id") == 1)
+    )
 
 
 def _check_pooling(unit_pairs: pl.DataFrame) -> None:
@@ -500,11 +690,14 @@ def allocate(
         windowed: window donors (see `window_donors`).
 
     Returns:
-        One row per (commitment record, disbursement record) that received an
-        amount: `commitment_id` (the commitment's CRS record_id), `record_id`,
-        `year` (the record's), `allocated_usd` and `rule`. It also holds a
-        `rule="excess"` row with a null `commitment_id` for each record its groups
-        could not take in full.
+        One row per pass and (commitment record, disbursement record) that received
+        an amount: `commitment_id` (the commitment's CRS record_id), `record_id`,
+        `year` (the record's), `allocated_usd`, `rule`, `certain`, whether a
+        certain pair carried it, and the trace link that carried it: `pass`, in
+        run order, its `link_method`, and `commitment_unit_id`, the commitment's
+        unit, which the link joins to the record's unit. It also holds a
+        `rule="excess"` row, not certain, with a null `commitment_id`, pass and
+        link for each record its groups could not take in full.
 
     Raises:
         AllocationInputError: when the links break the contract in the module
@@ -564,6 +757,7 @@ def allocate(
             filled.filter(pl.col("fill") > 0)
             .join(given, on="group_id")
             .select(
+                "pass",
                 "c_idx",
                 "record_id",
                 "year",
@@ -572,21 +766,28 @@ def allocate(
             )
         )
 
-    commitment_ids = commitments.select("c_idx", commitment_id="record_id")
+    commitment_ids = commitments.select(
+        "c_idx", commitment_id="record_id", commitment_unit_id="unit_id"
+    )
+    carried = pairs.select(
+        "pass", "record_id", "c_idx", "certain", link_method="method"
+    )
     filled_pairs = (
         pl.concat(allocated)
+        .join(carried, on=["pass", "record_id", "c_idx"], validate="1:1")
         .join(commitment_ids, on="c_idx")
         .drop("c_idx")
         .select(_PAIRS_SCHEMA.names())
     )
     excess = records.select(
-        commitment_id=pl.lit(None, dtype=pl.String),
-        record_id="record_id",
-        year="year",
+        "record_id",
+        "year",
         allocated_usd=pl.Series(left),
         rule=pl.lit("excess"),
+        certain=pl.lit(value=False),
     ).filter(pl.col("allocated_usd") > 0)
-    return pl.concat([filled_pairs.cast(_PAIRS_SCHEMA), excess.cast(_PAIRS_SCHEMA)])
+    # Excess has no pass, commitment or link, which the diagonal concat leaves null.
+    return pl.concat([filled_pairs, excess], how="diagonal_relaxed").cast(_PAIRS_SCHEMA)
 
 
 def _fill(candidates: pl.DataFrame, headroom: np.ndarray) -> pl.DataFrame:
@@ -725,13 +926,21 @@ def allocate_to_rows(
     (see `_commitment_groups`). The rest, and every pair whose commitment has no
     CRDF row, goes to a null `row_id`, so each record's rows sum to what `allocate`
     gave it, excess included. A repeat row's share then moves to the row it repeats
-    (see `_to_first_rows`). Bounds equal the allocation on every row, and no later
-    stage widens them, so an allocation through a link the build does not hold as
-    certain (a project-number tier or key repair, with a null link probability)
-    carries no bound.
+    (see `_to_first_rows`). `allocated_low_usd` sums the amounts certain pairs
+    carried to rows of groups whose `crdf_crs` links all take certain routes, and
+    `allocated_high_usd` equals `allocated_usd`. `link_method` and
+    `commitment_unit_id` name the trace link that carried the row's allocation:
+    that of the first pass to carry any of it, and within that pass the link that
+    carried the most over its commitment records, then the lowest commitment unit.
     """
     weights, spread, unit_groups = _commitment_groups(
         crdf, units=units, crs=crs, links=links
+    )
+    routes = (
+        links.filter(pl.col("task") == "crdf_crs")
+        .group_by("group_id")
+        .agg(route_certain=pl.col("link_method").is_in(CERTAIN_ROUTES).all())
+        .collect()
     )
     record_groups = (
         _commitment_records(units, crs=crs)
@@ -739,39 +948,69 @@ def allocate_to_rows(
         .select(commitment_id="record_id", group_id="group_id")
     )
     grouped = pairs.join(record_groups, on="commitment_id", how="left")
-    to_rows = grouped.join(weights, on="group_id").select(
-        "row_id",
+    carrier = ("pass", "link_method", "commitment_unit_id")
+    to_rows = (
+        grouped.join(weights, on="group_id")
+        .join(routes, on="group_id")
+        .select(
+            "row_id",
+            "record_id",
+            "year",
+            "rule",
+            "commitment_id",
+            *carrier,
+            certain=pl.col("certain") & pl.col("route_certain"),
+            allocated_usd=pl.col("allocated_usd") * pl.col("weight"),
+        )
+    )
+    to_rows = _to_first_rows(to_rows, crdf=crdf)
+    rest = grouped.join(spread, on="group_id", how="left").select(
+        pl.lit(None, dtype=pl.String).alias("row_id"),
         "record_id",
         "year",
         "rule",
         "commitment_id",
-        allocated_usd=pl.col("allocated_usd") * pl.col("weight"),
-    )
-    to_rows = _to_first_rows(to_rows, crdf=crdf)
-    rest = grouped.join(spread, on="group_id", how="left").select(
-        row_id=pl.lit(None, dtype=pl.String),
-        record_id="record_id",
-        year="year",
-        rule="rule",
-        commitment_id="commitment_id",
+        *carrier,
+        "certain",
         allocated_usd=pl.col("allocated_usd") * (1.0 - pl.col("spread").fill_null(0.0)),
     )
     amount = pl.col("allocated_usd")
+    row = ["row_id", "record_id", "year", "rule"]
+    given = pl.concat([to_rows, rest]).filter(amount > 0)
+    carriers = (
+        given.group_by(*row, *carrier)
+        .agg(carried=ordered_sum(amount))
+        .sort(
+            *row,
+            "pass",
+            "carried",
+            "commitment_unit_id",
+            descending=[False, False, False, False, False, True, False],
+            nulls_last=True,
+        )
+        .group_by(row, maintain_order=True)
+        .agg(pl.col("link_method", "commitment_unit_id").first())
+    )
+    # `ordered_sum` fixes each sum's order, so only the output rows need a sort.
     return (
-        pl.concat([to_rows, rest])
-        .filter(amount > 0)
-        .sort("row_id", "record_id", "year", "rule", "commitment_id")
-        .group_by("row_id", "record_id", "year", "rule", maintain_order=True)
-        .agg(ordered_sum(amount))
+        given.group_by(row)
+        .agg(
+            ordered_sum(amount),
+            allocated_low_usd=ordered_sum(amount.filter(pl.col("certain"))),
+        )
+        .sort(row)
+        .join(carriers, on=row, nulls_equal=True, maintain_order="left")
         .select(
             "row_id",
             "record_id",
             "year",
             "allocated_usd",
-            allocated_low_usd=amount,
-            allocated_high_usd=amount,
-            rule="rule",
-            disbursement_source=pl.lit("crs"),
+            "allocated_low_usd",
+            amount.alias("allocated_high_usd"),
+            "rule",
+            pl.lit("crs").alias("disbursement_source"),
+            "link_method",
+            "commitment_unit_id",
         )
     )
 
@@ -796,7 +1035,17 @@ def _to_first_rows(to_rows: pl.DataFrame, *, crdf: pl.LazyFrame) -> pl.DataFrame
             on="first",
             how="left",
         )
-        .sort("first", repeat, "row_id", "record_id", "year", "rule", "commitment_id")
+        .sort(
+            "first",
+            repeat,
+            "row_id",
+            "record_id",
+            "year",
+            "rule",
+            "commitment_id",
+            "pass",
+            "certain",
+        )
         .with_columns(before=amount.cum_sum().over("first") - amount)
         .with_columns(
             kept=pl.when(repeat)
@@ -804,7 +1053,16 @@ def _to_first_rows(to_rows: pl.DataFrame, *, crdf: pl.LazyFrame) -> pl.DataFrame
             .otherwise(amount)
         )
     )
-    columns = ("record_id", "year", "rule", "commitment_id")
+    columns = (
+        "record_id",
+        "year",
+        "rule",
+        "commitment_id",
+        "pass",
+        "link_method",
+        "commitment_unit_id",
+        "certain",
+    )
     return pl.concat(
         [
             ordered.select(
@@ -1045,4 +1303,93 @@ def years_since_commitment(
             .cum_sum()
             .over("row_id"),
         )
+    )
+
+
+def marked_records(
+    allocations: pl.LazyFrame,
+    *,
+    crs: pl.LazyFrame,
+    last_year: int,
+    routed: pl.LazyFrame,
+) -> pl.LazyFrame:
+    """Each Rio-marked CRS record's disbursement and where allocation put it.
+
+    A record enters when it is in the recipient view's Bi_Multi codes, disburses a
+    positive amount in a year up to `last_year`, as allocation reads them, and
+    carries an adaptation or mitigation marker above 0. An adaptation marker counts
+    from `ADAPTATION_FIRST_YEAR` (`schema.measured_adaptation`), as the CRDF's
+    does. `excess_usd` sums its `excess` allocations, and `outside_release_usd` its
+    other allocations to commitments with no CRDF row (a null `row_id`). `linked`
+    is whether allocation holds a row of it, and `route_fund` whether its record id
+    is in `routed`, the records whose money a fund's IATI route counts
+    (`gap_fill.routed_records`).
+    """
+    excess = pl.col("rule") == "excess"
+    amount = pl.col("allocated_usd")
+    by_record = (
+        allocations.filter(pl.col("disbursement_source") == "crs")
+        .group_by("record_id")
+        .agg(
+            excess_usd=ordered_sum(amount.filter(excess)),
+            outside_release_usd=ordered_sum(
+                amount.filter(~excess, pl.col("row_id").is_null())
+            ),
+            linked=pl.lit(value=True),
+        )
+    )
+    return (
+        crs.filter(
+            pl.col("year") <= last_year,
+            pl.col("bi_multi").is_in(RECIPIENT_VIEW),
+            pl.col("disbursement_usd") > 0,
+            (measured_adaptation(pl.col("rio_adaptation")) > 0)
+            | (pl.col("rio_mitigation") > 0),
+        )
+        .select(
+            "record_id",
+            "year",
+            "disbursement_usd",
+            provider_code="donor_code",
+        )
+        .join(by_record, on="record_id", how="left", validate="1:1")
+        .join(
+            routed.select("record_id", route_fund=pl.lit(value=True)),
+            on="record_id",
+            how="left",
+            validate="1:1",
+        )
+        .with_columns(
+            pl.col("excess_usd", "outside_release_usd").fill_null(0.0),
+            pl.col("linked", "route_fund").fill_null(value=False),
+        )
+    )
+
+
+def untraced_records(marked: pl.LazyFrame) -> pl.LazyFrame:
+    """The part of each record of `marked` (`marked_records`) that reaches no
+    commitment: a linked record's excess, as reason `excess`, and an unlinked
+    record's whole disbursement, as `unlinked`.
+
+    An unlinked record whose money a fund's IATI route counts (`route_fund`) stays
+    out. The CRS does not carry the GCF's and the GEF's own ids, so their records
+    link to few commitments, and with `gap_fill` on `gap_fill.route_funds` gives
+    those commitments the disbursements of the funds' IATI files. A fund record
+    whose fund key is that of a commitment the route filled is money the route
+    already counts (`gap_fill.routed_records`). The fund's other unlinked records,
+    whose commitment has no fund key or matches no IATI activity with
+    disbursements, are untraced like any other, as are every fund's unlinked
+    records with `gap_fill` off. A linked record's excess counts whatever its
+    provider, since a link reached a commitment that was already full.
+    """
+    unlinked = ~pl.col("linked")
+    return marked.filter(
+        (pl.col("linked") & (pl.col("excess_usd") > 0))
+        | (unlinked & ~pl.col("route_fund"))
+    ).select(
+        "record_id",
+        untraced_usd=pl.when(unlinked)
+        .then(pl.col("disbursement_usd"))
+        .otherwise(pl.col("excess_usd")),
+        reason=pl.when(unlinked).then(pl.lit("unlinked")).otherwise(pl.lit("excess")),
     )

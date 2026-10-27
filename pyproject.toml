@@ -27,17 +27,27 @@ dependencies = [
 
 [project.optional-dependencies]
 build = [
+    "duckdb>=1.4.1,<2",
     "httpx>=0.27.0",
+    "numpy>=2.3.3",
     "oda-reader>=1.12.0",
     "openpyxl>=3.0.10",
     "pyyaml>=6.0.1",
     "rapidfuzz>=3.8.0",
     "resolvekit>=0.1.13",
     "rich>=13.8.0",
+    "scikit-learn>=1.9.0",
+    "scipy>=1.16.2",
+    "splink>=5.0.0,<6",
+    "threadpoolctl>=3.1.0",
     "typer>=0.16.0",
 ]
 compat = [
     "pandas>=2.2.2",
+]
+# The embedding model behind the blocking's embedding neighbours (`embed = true`).
+embed = [
+    "sentence-transformers>=6.2.0",
 ]
 
 [project.scripts]
@@ -75,6 +85,10 @@ ignore = ["TRY003"]
 
 [tool.ty.environment]
 python-version = "3.12"
+
+[tool.ty.analysis]
+# The `embed` extra's model library, absent from a venv without that extra.
+allowed-unresolved-imports = ["sentence_transformers"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

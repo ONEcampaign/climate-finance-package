@@ -4,7 +4,7 @@ from link to assemble, and the fill and review pass-through."""
 import re
 import shutil
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import numpy as np
@@ -24,18 +24,33 @@ from climate_finance.build import (
     write_stage,
     write_table,
 )
-from climate_finance.build.errors import ReleaseInvariantError, StaleStageError
+from climate_finance.build.allocate import (
+    allocate,
+    allocate_to_rows,
+    counted_rows,
+    marked_records,
+    untraced_records,
+)
+from climate_finance.build.errors import (
+    ConfigError,
+    ReleaseInvariantError,
+    StaleStageError,
+)
 from climate_finance.build.fetch import YEAR_SOURCES
+from climate_finance.build.link.gap_fill import fill_allocations, routed_records
+from climate_finance.build.link.keys import build_units, link_by_keys
+from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.provenance import Provenance, StageRecord, record_path
 from climate_finance.build.stages import REGISTRY, Stage, StageContext, table_path
 from climate_finance.errors import SchemaError
 from climate_finance.schema import STAGE_TABLES
 
-NOR, IDA_CHANNEL = 8, 44002
+NOR, GEF, IDA_CHANNEL = 8, 811, 44002
 # Norway commits 100 in 2019 under crs id X1 and disburses 60 in 2020 and 70 in 2021,
 # so the commitment fills and 30 of 2021 is excess. Y1 commits 50 with no CRDF row
 # and disburses 20 to it; Z9 disburses 15 with no commitment, and Z8 disburses 5
-# with no Rio marker.
+# with no Rio marker. The GEF, a fund the fill stage can route through its IATI
+# files, disburses 7 under G1 with no commitment.
 CRS = crs_records(
     {"record_id": "c19", "year": 2019, "crs_id": "X1", "commitment_usd": 100.0},
     {"record_id": "d20", "year": 2020, "crs_id": "X1", "disbursement_usd": 60.0},
@@ -50,6 +65,13 @@ CRS = crs_records(
     {"record_id": "y19", "year": 2019, "crs_id": "Y1", "commitment_usd": 50.0},
     {"record_id": "y20", "year": 2020, "crs_id": "Y1", "disbursement_usd": 20.0},
     {"record_id": "z20", "year": 2020, "crs_id": "Z9", "disbursement_usd": 15.0},
+    {
+        "record_id": "g20",
+        "year": 2020,
+        "donor_code": GEF,
+        "crs_id": "G1",
+        "disbursement_usd": 7.0,
+    },
     {
         "record_id": "u20",
         "year": 2020,
@@ -142,9 +164,21 @@ def _raw_manifest(version: str) -> pl.DataFrame:
 
 
 @pytest.fixture
-def config() -> BuildConfig:
-    return load_config(BUILD_TOML).model_copy(
-        update={"key_repair": False, "recoveries": False}
+def config(tmp_path: Path) -> BuildConfig:
+    # The hand-written tables hold no truth group to set Jev's scale. No pair has
+    # been decided yet.
+    decisions = tmp_path / "decisions" / "review_decisions.parquet"
+    decisions.parent.mkdir()
+    _empty(schema.REVIEW_DECISIONS).write_parquet(decisions)
+    config = load_config(BUILD_TOML)
+    sources = config.sources.model_copy(update={"review_decisions": decisions})
+    return config.model_copy(
+        update={
+            "key_repair": False,
+            "recoveries": False,
+            "jev_links": False,
+            "sources": sources,
+        }
     )
 
 
@@ -159,8 +193,10 @@ def _measure() -> dict[str, pl.DataFrame]:
                     "year": 2022,
                     "rio_adaptation": 0,
                     "rio_mitigation": 2,
+                    "published": 1.0,
                     "face_share": 0.5,
                     "adaptation_measured": True,
+                    "share_source": "computed",
                 },
             ],
             schema=schema.AGENCY_SPENDING.dtypes,
@@ -183,6 +219,7 @@ def release_dir(tmp_path: Path, config: BuildConfig) -> Path:
         "normalise",
         {
             "crdf": CRDF,
+            "crdf_span": _empty(schema.CRDF_SPAN),
             "crs": CRS,
             "core_contributions": CORE,
             "imputed_shares": _empty(schema.IMPUTED_SHARES),
@@ -226,6 +263,10 @@ def test_the_release_opens_and_matches_release_json(release_dir: Path) -> None:
         "recoveries": False,
         "gap_fill": False,
         "review": False,
+        "jev_labels": False,
+        "jev_links": False,
+        "embed": False,
+        "skip_eib_routes": [],
         # The settings as configured; `years` above holds what they resolved to.
         "years.crdf": "all",
         "years.crs": None,
@@ -241,6 +282,29 @@ def test_commitments_leave_out_parents_and_keep_repeats_and_revisions(
     assert sorted(commitments["row_id"]) == ["C", "N", "R1", "R2"]
     r1 = commitments.row(by_predicate=pl.col("row_id") == "R1", named=True)
     assert (r1["status"], r1["disbursed_usd"]) == ("disbursed", 100.0)
+
+
+def test_commitments_carry_the_ledgers_undisbursed_confirmation() -> None:
+    # R1 reaches one unit the ledger confirms undisbursed; C reaches two, of which
+    # the ledger confirms one.
+    links = pl.LazyFrame(
+        {
+            "task": ["crdf_crs"] * 3 + ["trace"],
+            "left_id": ["R1", "C", "C", "u-d20"],
+            "right_id": ["u1", "u2", "u3", "u1"],
+            "ledger_check": ["confirmed_undisbursed"] * 2 + [None, "confirmed"],
+        }
+    )
+    status = _empty(STAGE_TABLES["review"]["commitments"]).lazy()
+
+    rows = release.release_commitments(CRDF.lazy(), status=status, links=links)
+
+    assert dict(rows.select("row_id", "ledger_undisbursed").collect().rows()) == {
+        "C": None,
+        "N": None,
+        "R1": True,
+        "R2": None,
+    }
 
 
 def test_disbursements_carry_the_record_and_its_link_and_leave_out_excess(
@@ -259,29 +323,104 @@ def test_disbursements_carry_the_record_and_its_link_and_leave_out_excess(
     assert rows["provider_code"].to_list() == [NOR, NOR]
 
 
-def test_an_allocation_moved_from_a_repeat_keeps_the_repeats_link() -> None:
-    # R2 repeats R1 and sits in the crdf_crs group that traced record d20; allocate
-    # moved d20's allocation from R2 to R1, which has no group of its own.
-    links = pl.LazyFrame(
+def test_a_fill_takes_its_commitments_facts_and_its_records_total() -> None:
+    # One ledger key and year fills R1 and C, which have no CRS record behind them.
+    fills = pl.LazyFrame(
         {
-            "task": ["crdf_crs", "trace"],
-            "left_id": ["R2", "u-d20"],
-            "right_id": ["u-c19", "u-c19"],
-            "group_id": ["g", None],
-            "probability": [1.0, 0.9],
-            "link_method": ["crs_id_purpose", "within_year"],
-            "ledger_check": [None, None],
-        }
+            "row_id": ["R1", "C"],
+            "record_id": ["ledger:ida:IDA1:2021"] * 2,
+            "year": [2021, 2021],
+            "allocated_usd": [6.0, 4.0],
+            "allocated_low_usd": [6.0, 4.0],
+            "allocated_high_usd": [6.0, 4.0],
+            "rule": ["bank_ledger"] * 2,
+            "disbursement_source": ["bank_ledger"] * 2,
+        },
+        schema_overrides={"year": pl.Int16},
     )
-    units = pl.LazyFrame({"unit_id": ["u-d20"], "record_ids": [["d20"]]})
-    allocated = pl.LazyFrame({"row_id": ["R1"], "record_id": ["d20"]})
 
-    carried = release.carrying_links(
-        allocated, crdf=CRDF.lazy(), units=units, links=links
+    rows = release.fill_disbursements(fills, crdf=CRDF.lazy()).collect().sort("row_id")
+
+    expected = CRDF.filter(pl.col("row_id").is_in(["C", "R1"])).sort("row_id")
+    for column in ("provider_code", "recipient_code", "bi_multi"):
+        assert rows[column].to_list() == expected[column].to_list(), column
+    assert rows["flow_code"].is_null().all()
+    assert rows["record_disbursement_usd"].to_list() == [10.0, 10.0]
+    assert rows["record_grant_equiv_usd"].is_null().all()
+    assert rows["link_method"].is_null().all()
+    assert rows.columns == list(schema.DISBURSEMENTS.columns)
+
+
+def test_a_disbursement_carries_the_ledger_check_of_the_link_that_filled_it() -> None:
+    # One CRDF row covers m1 and m2. d22 repeats m2's date and title, so its own
+    # commitment m2 takes all 60, and the row carries the ledger's check of that
+    # link, though m1's unit sorts first.
+    crs = crs_records(
+        {
+            "record_id": "m1",
+            "year": 2021,
+            "crs_id": "X2",
+            "commitment_usd": 100.0,
+            "commitment_date": date(2021, 6, 30),
+            "title": "Module one: rural water",
+        },
+        {
+            "record_id": "m2",
+            "year": 2022,
+            "crs_id": "X2",
+            "commitment_usd": 100.0,
+            "commitment_date": date(2022, 6, 30),
+            "title": "Module two: feeder roads",
+        },
+        {
+            "record_id": "d22",
+            "year": 2022,
+            "crs_id": "X2",
+            "disbursement_usd": 60.0,
+            "commitment_date": date(2022, 6, 30),
+            "title": "Feeder roads, module two",
+        },
+    )
+    crdf = counted_rows(
+        crdf_rows(
+            {"row_id": "R", "year": 2021, "crs_id": "X2", "face_usd": 200.0}
+        ).lazy()
+    )
+    units = build_units(crs.lazy()).collect()
+    m1, m2 = (
+        units.filter(pl.col("record_ids").list.contains(record))["unit_id"].item()
+        for record in ("m1", "m2")
+    )
+    assert m1 < m2
+    trace = link_by_keys(units, first_year=2010).with_columns(
+        ledger_check=pl.when(pl.col("right_id") == m2).then(pl.lit("confirmed"))
+    )
+    links = pl.concat(
+        [
+            trace,
+            trace.select(
+                task=pl.lit("crdf_crs"),
+                left_id=pl.lit("R"),
+                right_id="right_id",
+                group_id=pl.lit("g"),
+                probability=pl.lit(1.0),
+                link_method=pl.lit("within_year"),
+            ),
+        ],
+        how="diagonal",
+    ).lazy()
+    population = trace_population(crs.lazy())
+    pairs = allocate(units.lazy(), crs=population, links=links, crdf=crdf)
+    allocations = allocate_to_rows(
+        pairs, crdf=crdf, units=units.lazy(), crs=population, links=links
+    )
+
+    rows = release.release_disbursements(
+        allocations.lazy(), crdf=crdf, crs=crs.lazy(), units=units.lazy(), links=links
     ).collect()
 
-    assert carried.select("row_id", "record_id", "link_method").rows() == [
-        ("R1", "d20", "within_year")
+    assert rows.select("row_id", "allocated_usd", "ledger_check").rows() == [
+        ("R", 60.0, "confirmed")
     ]
 
 
@@ -297,6 +436,24 @@ def test_quality_counts_repeats_on_their_own_line(release_dir: Path) -> None:
     assert quality["certain_route_usd"] == 40.0
     # Of R1's 100 allocated, d21's 40 has a grant equivalent.
     assert quality["grant_equiv_coverage"] == 0.4
+    # R1's 100 disbursed came through certain links, at its 40% climate share.
+    assert quality["disbursed_climate_usd"] == 40.0
+    assert quality["certain_disbursed_climate_usd"] == 40.0
+    # With d21's 40 estimated, only d20's 60 counts.
+    estimated = _read(release_dir, "disbursements").with_columns(
+        allocated_low_usd=pl.when(pl.col("record_id") == "d21")
+        .then(0.0)
+        .otherwise(pl.col("allocated_low_usd"))
+    )
+    rebuilt = release.quality(
+        _read(release_dir, "commitments").lazy(),
+        disbursements=estimated.lazy(),
+        objectives=_read(release_dir, "objectives").lazy(),
+        links=pl.scan_parquet(table_path(release_dir, "review", "links")),
+    ).collect()
+    assert rebuilt.select("disbursed_climate_usd", "certain_disbursed_climate_usd").row(
+        0
+    ) == pytest.approx((40.0, 24.0))
 
 
 def test_quality_counts_certain_routes_only_where_every_link_takes_one() -> None:
@@ -305,6 +462,7 @@ def test_quality_counts_certain_routes_only_where_every_link_takes_one() -> None
             "row_id": ["A", "B", "C"],
             "provider_code": [NOR] * 3,
             "year": [2019] * 3,
+            "face_usd": [1.0, 2.0, 4.0],
             "climate_usd": [1.0, 2.0, 4.0],
             "repeat_of": [None, None, None],
         },
@@ -323,6 +481,8 @@ def test_quality_counts_certain_routes_only_where_every_link_takes_one() -> None
             "row_id": pl.String,
             "record_id": pl.String,
             "allocated_usd": pl.Float64,
+            "allocated_low_usd": pl.Float64,
+            "allocated_high_usd": pl.Float64,
             "record_grant_equiv_usd": pl.Float64,
         }
     )
@@ -340,28 +500,115 @@ def test_quality_counts_certain_routes_only_where_every_link_takes_one() -> None
     assert quality["grant_equiv_coverage"].to_list() == [None]
 
 
-def test_unallocated_and_release_rows_sum_to_the_marked_disbursement(
+def test_untraced_unallocated_and_release_rows_sum_to_the_marked_disbursement(
     release_dir: Path,
 ) -> None:
-    unallocated = _read(release_dir, "unallocated").sort("year")
+    unallocated = _read(release_dir, "unallocated").sort("provider_code", "year")
+    untraced = _read(release_dir, "untraced").sort("record_id")
     released = (
         _read(release_dir, "disbursements")
         .group_by("year")
         .agg(pl.col("allocated_usd").sum())
     )
-    marked = {2020: 60.0 + 20.0 + 15.0, 2021: 70.0}
+    marked = {2020: 60.0 + 20.0 + 15.0 + 7.0, 2021: 70.0}
 
-    assert unallocated.drop("provider_code").rows() == [
-        (2020, 0.0, 20.0, 15.0),
-        (2021, 30.0, 0.0, 0.0),
+    assert unallocated.rows() == [
+        (NOR, 2020, 95.0, 0.0, 20.0, 15.0, 0.0),
+        (NOR, 2021, 70.0, 30.0, 0.0, 0.0, 0.0),
+        (GEF, 2020, 7.0, 0.0, 0.0, 7.0, 0.0),
     ]
-    totals = unallocated.join(released, on="year").select(
-        "year",
-        pl.sum_horizontal(
-            "allocated_usd", "excess_usd", "outside_release_usd", "unlinked_marked_usd"
-        ),
+    # The excess and the unlinked records count as untraced, with the record's own
+    # disbursement and grant equivalent. The build runs no gap fill, so no IATI
+    # route counts the GEF's record.
+    assert untraced.select(
+        "record_id",
+        "reason",
+        "untraced_usd",
+        "record_disbursement_usd",
+        "record_grant_equiv_usd",
+    ).rows() == [
+        ("d21", "excess", 30.0, 70.0, 35.0),
+        ("g20", "unlinked", 7.0, 7.0, None),
+        ("z20", "unlinked", 15.0, 15.0, None),
+    ]
+    totals = (
+        unallocated.group_by("year")
+        .agg(pl.sum_horizontal(pl.exclude("provider_code", "year", "marked_usd")).sum())
+        .join(released, on="year")
+        .select("year", pl.sum_horizontal(pl.exclude("year")))
     )
     assert dict(totals.rows()) == marked
+    assert (
+        dict(unallocated.group_by("year").agg(pl.col("marked_usd").sum()).rows())
+        == marked
+    )
+
+
+@pytest.mark.parametrize(
+    ("filled", "untraced", "fund_unlinked"),
+    [(False, ["e20", "f20"], 0.0), (True, ["f20"], 7.0)],
+)
+def test_a_fund_record_stays_out_of_untraced_only_where_the_route_filled_its_key(
+    filled: bool, untraced: list[str], fund_unlinked: float
+) -> None:
+    # Two unlinked GEF records: e20 under GEF id 9001, the key of commitment E1,
+    # and f20 under 9002, which no commitment carries. With gap fill on, the IATI
+    # route fills E1, so it counts e20's money; with it off, nothing fills E1.
+    crs = crs_records(
+        {"record_id": "e20", "year": 2020, "donor_code": GEF, "project_number": "9001",
+         "disbursement_usd": 7.0},
+        {"record_id": "f20", "year": 2020, "donor_code": GEF, "project_number": "9002",
+         "disbursement_usd": 3.0},
+    ).lazy()  # fmt: skip
+    crdf = crdf_rows(
+        {"row_id": "E1", "year": 2018, "provider_code": GEF, "project_number": "9001"}
+    ).lazy()
+    route = pl.DataFrame(
+        {"row_id": ["E1"], "publisher": ["gef"], "key": ["9001"], "year": [2020]},
+        schema_overrides={"year": pl.Int16},
+    )
+    allocations = fill_allocations(
+        route.head(1 if filled else 0), source="iati", prefix="iati", amount=pl.lit(5.0)
+    ).lazy()
+
+    marked = marked_records(
+        allocations,
+        crs=crs,
+        last_year=2024,
+        routed=routed_records(crs, allocations=allocations, crdf=crdf),
+    )
+    records = untraced_records(marked).collect()
+    ledger = release.unallocated(marked).collect()
+
+    assert sorted(records["record_id"]) == untraced
+    assert ledger.select("marked_usd", "unlinked_marked_usd", "fund_unlinked_usd").row(
+        0
+    ) == (10.0, 10.0 - fund_unlinked, fund_unlinked)
+
+
+def test_untraced_records_before_the_adaptation_marker_count_mitigation_alone() -> None:
+    # Two unlinked 2009 records marked adaptation principal: one alone, which no
+    # measured marker selects, and one with mitigation significant.
+    crs = crs_records(
+        {"record_id": "a09", "year": 2009, "rio_adaptation": 2, "rio_mitigation": 0,
+         "disbursement_usd": 5.0},
+        {"record_id": "b09", "year": 2009, "rio_adaptation": 2, "rio_mitigation": 1,
+         "disbursement_usd": 4.0},
+    ).lazy()  # fmt: skip
+    allocations = _empty(schema.ALLOCATIONS).lazy()
+
+    marked = marked_records(
+        allocations,
+        crs=crs,
+        last_year=2024,
+        routed=pl.LazyFrame(schema={"record_id": pl.String}),
+    )
+    untraced = release.release_untraced(untraced_records(marked), crs=crs).collect()
+
+    assert untraced.select("record_id", "rio_adaptation", "rio_mitigation").rows() == [
+        ("b09", None, 1)
+    ]
+    assert release.unallocated(marked).collect()["unlinked_marked_usd"].sum() == 4.0
 
 
 def test_core_contributions_count_disbursements_as_grant_equivalent(
@@ -376,15 +623,100 @@ def test_core_contributions_count_disbursements_as_grant_equivalent(
     }
 
 
+def test_core_contributions_keep_leaf_channels_only() -> None:
+    # MULTI's 40000 and 44000 aggregate IDA's 44002; 47066 has no aggregate here.
+    stage = pl.LazyFrame(
+        {
+            "provider_code": [NOR] * 4,
+            "channel_code": [40000, 44000, IDA_CHANNEL, 47066],
+            "year": [2021] * 4,
+            "flow": ["disbursements"] * 4,
+            "contribution_usd": [15.0, 10.0, 10.0, 5.0],
+        },
+        schema_overrides={"channel_code": pl.Int32, "year": pl.Int16},
+    )
+
+    core = release.core_contributions(stage).collect()
+
+    assert set(core["channel_code"]) == {IDA_CHANNEL, 47066}
+    assert core.filter(flow="disbursements")["contribution_usd"].sum() == 15.0
+
+
+def _core(rows: list[tuple[int, int, float]]) -> pl.LazyFrame:
+    """Disbursement core contributions in 2021 as (provider, channel, amount)."""
+    return pl.LazyFrame(
+        [
+            (provider, channel, 2021, "disbursements", usd)
+            for provider, channel, usd in rows
+        ],
+        schema={n: c.dtype for n, c in schema.CORE_CONTRIBUTIONS.columns.items()},
+        orient="row",
+    )
+
+
+def test_core_contributions_keep_the_unitemised_remainder_on_the_top_channel() -> None:
+    # Norway's 40000 total of 20 holds 15 in leaves; 41000 and 44000 leave whatever
+    # they hold, as MULTI's intermediate aggregates do not follow the code prefixes.
+    stage = _core(
+        [
+            (NOR, 40000, 20.0),
+            (NOR, 41000, 3.0),
+            (NOR, 44000, 1.0),
+            (NOR, IDA_CHANNEL, 10.0),
+            (NOR, 47066, 5.0),
+        ]
+    )
+
+    core = release.core_contributions(stage).collect()
+
+    for flow in ("disbursements", "grant_equivalent"):
+        rows = core.filter(flow=flow).select("channel_code", "contribution_usd")
+        assert dict(rows.iter_rows()) == {40000: 5.0, IDA_CHANNEL: 10.0, 47066: 5.0}
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        # The leaves hold 15, above the 40000 total of 10.
+        [(NOR, 40000, 10.0), (NOR, IDA_CHANNEL, 10.0), (NOR, 47066, 5.0)],
+        # Norway reports the World Bank Group with no 40000 total to check it by.
+        [(NOR, 44000, 10.0), (NOR, IDA_CHANNEL, 10.0)],
+    ],
+)
+def test_core_contributions_refuse_leaves_the_top_channel_does_not_cover(
+    rows: list[tuple[int, int, float]],
+) -> None:
+    with pytest.raises(ReleaseInvariantError, match=f"{NOR} 2021 disbursements"):
+        release.core_contributions(_core(rows)).collect()
+
+
+def test_core_contributions_read_an_empty_stage_table(
+    tmp_path: Path, config: BuildConfig
+) -> None:
+    _write(
+        tmp_path, "normalise", {"core_contributions": _empty(schema.CORE_CONTRIBUTIONS)}
+    )
+    context = StageContext(
+        release="r", release_dir=tmp_path, config=config, offline=True
+    )
+
+    stage = context.read("normalise", "core_contributions")
+
+    assert release.core_contributions(stage).collect().is_empty()
+
+
 def test_total_flows_sum_every_crs_record(release_dir: Path) -> None:
     totals = _read(release_dir, "total_flows")
 
-    assert sorted(totals.select("year", "bi_multi", "flow", "amount_usd").rows()) == [
-        (2019, 1, "commitments", 150.0),
-        (2020, 1, "disbursements", 100.0),
-        (2021, 1, "disbursements", 70.0),
-        (2021, 1, "grant_equivalent", 35.0),
-        (2021, 2, "disbursements", 9.0),
+    assert sorted(
+        totals.select("provider_code", "year", "bi_multi", "flow", "amount_usd").rows()
+    ) == [
+        (NOR, 2019, 1, "commitments", 150.0),
+        (NOR, 2020, 1, "disbursements", 100.0),
+        (NOR, 2021, 1, "disbursements", 70.0),
+        (NOR, 2021, 1, "grant_equivalent", 35.0),
+        (NOR, 2021, 2, "disbursements", 9.0),
+        (GEF, 2020, 1, "disbursements", 7.0),
     ]
 
 
@@ -461,6 +793,22 @@ def _drop_the_crs_file(release_dir: Path, config: BuildConfig) -> BuildConfig:
     )
 
 
+def _decide_a_pair(release_dir: Path, config: BuildConfig) -> BuildConfig:
+    decision = {
+        "task": "trace",
+        "left_id": "d20",
+        "right_id": "c19",
+        "decision": "accept",
+        "label_source": "human",
+        "reviewer": "reviewer",
+        "decided_at": datetime(2026, 11, 2, tzinfo=UTC),
+    }
+    pl.DataFrame([decision], schema=schema.REVIEW_DECISIONS.dtypes).write_parquet(
+        config.sources.review_decisions
+    )
+    return config
+
+
 def _retire_a_setting(release_dir: Path, config: BuildConfig) -> BuildConfig:
     path = record_path(release_dir, "fetch")
     record = StageRecord.model_validate_json(path.read_text())
@@ -478,6 +826,8 @@ def _retire_a_setting(release_dir: Path, config: BuildConfig) -> BuildConfig:
         (_move_last_complete_year, "allocate", "years.crs_last_complete = 2024"),
         # A setting that becomes None changes like any other.
         (_drop_the_crs_file, "fetch", "and the build config sets None"),
+        # Link read the decisions file, whose contents changed.
+        (_decide_a_pair, "link", "sources.review_decisions = "),
         (_retire_a_setting, "fetch", "sources.retired = 1, which the build config no"),
     ],
 )
@@ -542,6 +892,22 @@ def test_a_stage_reruns_after_its_inputs_change(
     assert cf.load(path=release_dir / "assemble").manifest.release == "r"
 
 
+def test_the_same_decisions_at_another_path_leave_every_stage_current(
+    release_dir: Path, config: BuildConfig
+) -> None:
+    moved = release_dir / "moved" / "decisions.parquet"
+    moved.parent.mkdir()
+    config.sources.review_decisions.rename(moved)
+    sources = config.sources.model_copy(update={"review_decisions": moved})
+
+    run_stages(
+        REGISTRY, release="r", release_dir=release_dir,
+        config=config.model_copy(update={"sources": sources}), stages=["assemble"],
+    )  # fmt: skip
+
+    assert cf.load(path=release_dir / "assemble").manifest.release == "r"
+
+
 def test_years_after_the_last_complete_year_leave_the_release(
     release_dir: Path, config: BuildConfig
 ) -> None:
@@ -565,14 +931,17 @@ def test_years_after_the_last_complete_year_leave_the_release(
 
 
 @pytest.mark.parametrize(
-    ("stage", "switch", "carried"),
+    ("stage", "switch", "carried", "refused"),
     [
+        # The gap fill and the review stage's ledger check need ledger sources,
+        # which the config leaves out.
         (
             Stage.FILL,
             "gap_fill",
             {"allocations": "allocate", "commitments": "allocate"},
+            ConfigError,
         ),
-        (Stage.REVIEW, "review", {"links": "link", "commitments": "fill"}),
+        (Stage.REVIEW, "review", {"links": "link", "commitments": "fill"}, ConfigError),
     ],
 )
 def test_fill_and_review_pass_through_with_their_switch_off(
@@ -581,6 +950,7 @@ def test_fill_and_review_pass_through_with_their_switch_off(
     stage: Stage,
     switch: str,
     carried: dict[str, str],
+    refused: type[Exception],
 ) -> None:
     run = registered(stage).run
 
@@ -593,7 +963,7 @@ def test_fill_and_review_pass_through_with_their_switch_off(
     for table, source in carried.items():
         written = pl.read_parquet(table_path(release_dir, source, table))
         assert output[table].lazy().collect().equals(written)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(refused):
         run(context(on=True))
 
 
@@ -611,6 +981,7 @@ def _rerun_total_flows() -> pl.LazyFrame:
     crs = pl.LazyFrame(
         {
             "donor_code": np.arange(RERUN_ROWS) % 2,
+            "agency_code": 1,
             "recipient_code": 248,
             "year": 2021,
             "bi_multi": 1,
@@ -618,8 +989,9 @@ def _rerun_total_flows() -> pl.LazyFrame:
             "disbursement_usd": _amounts(2),
             "grant_equiv_usd": _amounts(3),
         },
-        schema_overrides={"donor_code": pl.Int32, "recipient_code": pl.Int32,
-                          "year": pl.Int16, "bi_multi": pl.Int8},
+        schema_overrides={"donor_code": pl.Int32, "agency_code": pl.Int32,
+                          "recipient_code": pl.Int32, "year": pl.Int16,
+                          "bi_multi": pl.Int8},
     )  # fmt: skip
     return release.total_flows(crs)
 
@@ -632,6 +1004,7 @@ def _rerun_commitments() -> pl.LazyFrame:
             "provider_code": row % 2,
             "year": 2019,
             "climate_usd": _amounts(4),
+            "face_usd": _amounts(5),
             "repeat_of": [None if i % 5 else "R0" for i in row],
         },
         schema_overrides={
@@ -649,6 +1022,8 @@ def _rerun_quality() -> pl.LazyFrame:
             record_id="row_id",
             allocated_usd="climate_usd",
             record_grant_equiv_usd="climate_usd",
+            allocated_low_usd="face_usd",
+            allocated_high_usd="climate_usd",
         ),
         objectives=commitments.select(
             record_id="row_id", label_source=pl.lit("jev")

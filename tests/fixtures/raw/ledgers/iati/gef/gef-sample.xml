@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<iati-activities version="2.03">
+<iati-activity default-currency="USD" xml:lang="en">
+  <iati-identifier>XI-BRIDGE-6385676864-9001</iati-identifier>
+  <reporting-org ref="XI-BRIDGE-6385676864" type="40">
+    <narrative>Invented Facility</narrative>
+  </reporting-org>
+  <title>
+    <narrative>Invented species project</narrative>
+  </title>
+  <description type="4">
+    <narrative>Note: Disbursement data provided is cumulative and covers disbursement made by the project Agency.</narrative>
+  </description>
+  <transaction>
+    <transaction-type code="2" />
+    <transaction-date iso-date="2018-03-18" />
+    <value currency="USD" value-date="2018-03-18">2700000  </value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2020-09-15" />
+    <value currency="USD" value-date="2020-09-15">280000  </value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2021-09-14" />
+    <value currency="USD" value-date="2021-09-14">750000  </value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2022-09-11" />
+    <value currency="USD" value-date="2022-09-11">350000  </value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2023-09-12" />
+    <value currency="USD" value-date="2023-09-12">0  </value>
+  </transaction>
+</iati-activity>
+<iati-activity default-currency="USD" xml:lang="en">
+  <iati-identifier>XI-BRIDGE-6385676864-9002</iati-identifier>
+  <reporting-org ref="XI-BRIDGE-6385676864" type="40">
+    <narrative>Invented Facility</narrative>
+  </reporting-org>
+  <title>
+    <narrative>Invented protected-area project</narrative>
+  </title>
+  <description type="4">
+    <narrative>Note: Disbursement data provided is cumulative and covers disbursement made by the project Agency.</narrative>
+  </description>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2015-10-14" />
+    <value currency="USD" value-date="2015-10-14">0  </value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2018-03-05" />
+    <value currency="USD" value-date="2018-03-05">0  </value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2020-02-13" />
+    <value currency="USD" value-date="2020-02-13">1000000  </value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2020-06-30" />
+    <value currency="USD" value-date="2020-06-30">6000000  </value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2020-09-05" />
+    <value currency="USD" value-date="2020-09-05">5000000  </value>
+  </transaction>
+</iati-activity>
+</iati-activities>

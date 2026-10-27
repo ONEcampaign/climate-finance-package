@@ -85,7 +85,9 @@ def test_one_shares_equal_the_oecds_for_component_banks(
     ).collect()
     schema.validate(schema.AGENCY_SPENDING, spending)
     shares = agency_shares(
-        read_imputed_shares(raw / "oecd" / "Imputed_multilateral_shares.xlsx").lazy()
+        read_imputed_shares(raw / "oecd" / "Imputed_multilateral_shares.xlsx").lazy(),
+        spending=spending.lazy(),
+        years=(2015, 2024),
     ).collect()
     schema.validate(schema.AGENCY_SHARES, shares)
     one = measured_shares(spending.lazy(), method=ONE).select(
@@ -97,7 +99,7 @@ def test_one_shares_equal_the_oecds_for_component_banks(
     )
 
     compared = (
-        _climate(shares)
+        _climate(shares.filter(pl.col("source") == "oecd"))
         .join(one.collect(), on=["channel_code", "year"])
         .filter(
             pl.col("channel_code").is_in(COMPONENT_BANKS),

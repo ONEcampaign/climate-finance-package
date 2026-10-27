@@ -25,17 +25,18 @@ class Frozen(BaseModel):
 class Method(Frozen):
     """Coefficients applied to face value by Rio marker level.
 
+    `relevance="jev"` reads Jev's adaptation level, where Jev labelled a
+    disbursement's record, in place of the adaptation marker it inherits.
+
     `eu` sets how EU Institutions (provider 918) count in the provider view. As a
     `"channel"`, members' core contributions to the EU budget, the EDF and the EIB
-    carry the EU's climate share, and 918's own rows leave a result in each year
-    where it also holds such an attribution, so EU money counts once, inside its
-    members' totals. A query for 918 alone returns its own spending, the EIB's
-    included.
-    As a `"provider"`, 918 counts the EU budget and the EDF in its own right, and
-    contributions to them attribute nothing. The EIB is a channel, as the OECD counts
-    it: the EIB's own rows (agency 3) leave every result, and members' contributions
-    to it carry the EIB's climate share. A query for 918 alone returns the spending of
-    the EU budget and the EDF.
+    carry the EU's climate share, and each EU agency's own rows count times one minus
+    the share of its channel's attributed contributions that year that come from the
+    providers in the query, so EU money counts once. As a `"provider"`, 918 counts the
+    EU budget and the EDF in its own right, and the EIB is a channel, as the OECD
+    counts it.
+    `describe` states each rule in full, and `quality()` reports the rows an
+    all-provider result leaves out.
     """
 
     significant: float = Field(ge=0.0, le=1.0)
@@ -128,8 +129,9 @@ def describe(method: Method | MethodRange) -> str:
     if isinstance(method, MethodRange):
         names = " / ".join(label(member) for member in method.methods)
         return (
-            f"Methods {names}, reported together; low and high are the lowest and "
-            "highest value across them."
+            f"Methods {names}, reported together; low is the lowest of their lows, "
+            "which count only what certain links carried, and high the highest value "
+            "across them."
         )
     rule = (
         "each activity counts once, under its higher Rio marker, with equal "
@@ -150,15 +152,29 @@ def describe(method: Method | MethodRange) -> str:
             "UNFCCC for the activity's year and agency, as the release records them "
             "with their source, and these coefficients where it states none."
         )
+    if method.relevance == "jev":
+        text += (
+            " Disbursements whose CRS record Jev labelled read Jev's adaptation "
+            "level (none, significant or principal) in place of the adaptation "
+            "marker, at the same coefficients, where that marker is significant or "
+            "principal. Jev labels only records whose "
+            "commitment is marked adaptation, and untraced records marked "
+            "adaptation themselves. Mitigation keeps its marker, as do "
+            "commitments and records Jev did not label."
+        )
     return text + _EU[method.eu]
 
 
 _EU = {
     "channel": " In the provider view EU Institutions count as a channel: members' "
     "core contributions to the EU budget, the EDF and the EIB carry the EU's climate "
-    "share, and EU Institutions' own rows, the EIB's lending among them, leave a "
-    "result in each year where it holds such an attribution, so EU spending counts "
-    "once.",
+    "share, and each EU agency's own rows count times one minus the share of its "
+    "channel's attributed contributions that come from the providers in the query, "
+    "so EU spending counts once. The EIB's own lending "
+    "reaches members' totals only through their paid-in capital, as every "
+    "development bank's own lending does: under ONE, USD 0.035bn attributed against "
+    "2.72bn the EIB disbursed in 2021 and 2022. It stays in the recipient view, and "
+    "quality() reports the EU rows left out.",
     "provider": " In the provider view EU Institutions count as a provider and the "
     "EIB as a channel: the rows of the EU budget and the EDF count in EU "
     "Institutions' own right and contributions to them attribute nothing, while the "
@@ -179,8 +195,13 @@ def _coefficient(
     )
 
 
-def _markers() -> tuple[pl.Expr, pl.Expr]:
-    return pl.col("rio_adaptation").fill_null(0), pl.col("rio_mitigation").fill_null(0)
+def _markers(*, jev: bool = False) -> tuple[pl.Expr, pl.Expr]:
+    """The adaptation and mitigation levels, nulls as 0. With `jev`, a row's
+    `jev_level` replaces its adaptation marker where set."""
+    adaptation = pl.col("rio_adaptation")
+    if jev:
+        adaptation = pl.coalesce("jev_level", adaptation)
+    return adaptation.fill_null(0), pl.col("rio_mitigation").fill_null(0)
 
 
 def _marker_rules(
@@ -195,7 +216,7 @@ def _marker_rules(
     A row significant for both objectives takes `both_significant`, where it is set,
     as its significant coefficient.
     """
-    rio_a, rio_m = _markers()
+    rio_a, rio_m = _markers(jev=method.relevance == "jev")
     if both_significant is not None:
         significant = (
             pl.when((rio_a == 1) & (rio_m == 1))
@@ -230,6 +251,7 @@ def weights(
     significant: pl.Expr | None = None,
     principal: pl.Expr | None = None,
     both_significant: pl.Expr | None = None,
+    published: pl.Expr | None = None,
 ) -> dict[str, pl.Expr]:
     """Fractions of a row's amount counted per objective, and in total, under `method`.
 
@@ -237,11 +259,18 @@ def weights(
     (nulls count as 0) by the method's coefficients. `significant` and `principal`
     replace the method's coefficients, for example with per-provider columns, and a
     row significant for both objectives takes `both_significant` where it is not
-    null. Under the highest-marker rule a row goes to its higher marker and equal
-    markers become cross-cutting, so the three objectives are disjoint. Without it
-    adaptation and mitigation each count their own marker, and `cross_cutting` is
-    their overlap, the smaller of the two weighted shares, which `climate` counts
-    once.
+    null. `published`, the climate share of face value the provider published (as
+    `face_shares()["share_climate"]`), caps each marker weight: IFAD publishes its
+    significant rows at 40% of face value, so no method counts them above that. A
+    null `published` caps nothing.
+
+    Under the highest-marker rule a row goes to its higher marker and equal markers
+    become cross-cutting, so the three objectives are disjoint. Without it adaptation
+    and mitigation each count their own marker, and `cross_cutting` is their overlap,
+    the smaller of the two weighted shares, which `climate` counts once.
+
+    Under `relevance="jev"` a marker row's `jev_level`, where set, replaces its
+    adaptation marker, and every rule above reads it as one.
 
     Climate-component rows (non-null `climate_share`) ignore the coefficients and use
     `share_adaptation`, `share_mitigation` and `share_overlap`, fractions of the amount
@@ -261,17 +290,37 @@ def weights(
         principal=pl.lit(method.principal) if principal is None else principal,
         both_significant=both_significant,
     )
-    fractions = {
+    marker = {
+        objective: pl.when(counts).then(weight).otherwise(0.0)
+        for objective, (counts, _, weight) in rules.items()
+    }
+    if published is not None:
+        marker = {
+            objective: pl.min_horizontal(fraction, published)
+            for objective, fraction in marker.items()
+        }
+    fractions: dict[str, pl.Expr] = {
         objective: pl.when(pl.col("climate_share").is_not_null())
         .then(component[objective])
-        .when(counts)
-        .then(weight)
-        .otherwise(0.0)
-        for objective, (counts, _, weight) in rules.items()
+        .otherwise(marker[objective])
+        for objective in OBJECTIVES
     }
     a, m, c = (fractions[objective] for objective in OBJECTIVES)
     fractions["climate"] = a + m + c if method.highest_marker else a + m - c
     return fractions
+
+
+def face_shares() -> dict[str, pl.Expr]:
+    """A commitment's climate, adaptation, mitigation and overlap value as fractions
+    of `face_usd`, 0 for a zero face value or a part the CRDF does not measure (a
+    null adaptation or overlap). They are the `share_*` inputs of `weights`."""
+    face = pl.col("face_usd")
+    return {
+        f"share_{part}": pl.when(face != 0)
+        .then(pl.col(f"{part}_usd").fill_null(0.0) / face)
+        .otherwise(0.0)
+        for part in ("climate", "adaptation", "mitigation", "overlap")
+    }
 
 
 def transform_markers_into_indicators(
@@ -284,9 +333,10 @@ def transform_markers_into_indicators(
     objective is the higher marker, or `cross_cutting` when they are equal. Without
     it each positive marker gives its own row, and a row with both also gives a
     `cross_cutting` row for the overlap. Rows with neither marker keep their value as
-    `not_climate_relevant` at level 0.
+    `not_climate_relevant` at level 0. Under `relevance="jev"`, a `jev_level`
+    column replaces the adaptation marker where set.
     """
-    rio_a, rio_m = _markers()
+    rio_a, rio_m = _markers(jev=method.relevance == "jev")
     parts = [
         frame.filter(counts).with_columns(
             objective=pl.lit(objective),

@@ -3,9 +3,10 @@
 Every stage directory holds `stage.json`, a `StageRecord`: the package version and
 the sha256 of the installed package's files (`source_sha256`), the sha256 of each
 table the stage wrote, the identity of each earlier stage it read, and the value of
-each build setting the stage declares in the registry. A stage's identity is the
-sha256 of its `stage.json`, so the fetch stage's identity covers its
-`raw_manifest`, and through it the raw files.
+each build setting the stage declares in the registry. A setting that names a file
+a stage reads (`config.FILE_SETTINGS`) records the sha256 of the file. A stage's
+identity is the sha256 of its `stage.json`, so the fetch stage's identity covers
+its `raw_manifest`, and through it the raw files.
 
 The runner gives each stage a `Provenance`, and `StageContext.read` and
 `StageContext.raw_dir` record each stage read through it. A stage read must be
@@ -26,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 from pydantic_core import to_jsonable_python
 
 import climate_finance
+from climate_finance.build.config import FILE_SETTINGS
 from climate_finance.build.errors import StaleStageError
 from climate_finance.schema import sha256_file
 
@@ -85,10 +87,17 @@ def read_record(release_dir: Path, stage: str) -> StageRecord:
 def setting_value(config: BuildConfig, setting: str) -> JsonValue:
     """The value of `setting`, a dotted path such as `years.crdf`, in `config`.
 
+    The value of a setting in `FILE_SETTINGS` is the sha256 of the file it names,
+    or None while there is no file.
+
     Raises:
         AttributeError: when `config` has no such setting.
     """
-    return to_jsonable_python(reduce(getattr, setting.split("."), config))
+    value: object = reduce(getattr, setting.split("."), config)
+    if setting in FILE_SETTINGS:
+        assert isinstance(value, Path)
+        return sha256_file(value) if value.exists() else None
+    return to_jsonable_python(value)
 
 
 @cache

@@ -10,20 +10,25 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
+from stage_runs import ledger_rows
 
 from climate_finance import schema
 from climate_finance.build import write_table
-from climate_finance.build.config import BuildConfig
+from climate_finance.build.config import BuildConfig, Ledgers, Years
 from climate_finance.build.fetch import (
     CRDF_FILES,
     CRS_FILE,
     DAC_EXCHANGE_FILE,
-    GCF_FILE,
     IATI_DIR,
     IMPUTED_SHARES_FILE,
     MULTISYSTEM_FILE,
+    _ledger_files,
+    held_years,
+    resolve_years,
 )
 from climate_finance.build.provenance import Provenance, record_path
+from climate_finance.build.readers.gcf import PROJECTS_FILE
+from climate_finance.build.readers.ledgers import LEDGER_DIR
 from climate_finance.build.stages import REGISTRY, Stage, table_path
 from climate_finance.schema import sha256_file
 
@@ -42,7 +47,7 @@ _CRDF_DEFAULTS: dict[str, object] = {
     "channel_code": None,
     "bi_multi": 1,
     "purpose_code": 23210,
-    "flow_code": 10,
+    "flow_category": 10,
     "objective": "mitigation",
     "rio_adaptation": 0,
     "rio_mitigation": 2,
@@ -107,11 +112,20 @@ def _frame(table: schema.TableSchema, rows: list[dict[str, object]]) -> pl.DataF
     return frame
 
 
-def write_raw(raw: Path, *, crdf_years: tuple[int, int] = (2015, 2024)) -> pl.DataFrame:
+def write_raw(
+    raw: Path,
+    *,
+    crdf_years: tuple[int, int] = (2015, 2024),
+    recipient_first: int | None = None,
+    ledgers: Ledgers | None = None,
+) -> pl.DataFrame:
     """Lay the raw fixtures out under `raw` as fetch would, with a euro DAC rate
-    of 0.8, and return their `raw_manifest`, which records the years an online
-    fetch of `crdf_years` resolves, with CRS years to 2025 and provider-perspective
-    CRDF years from 2013, as asked and held."""
+    of 0.8, and return their `raw_manifest`, which records the years
+    `resolve_years` gives `crdf_years` against a CRS from 2000 to 2025, a
+    provider-perspective CRDF from 2013 and a recipient file from `recipient_first`
+    (by default the fixture's first year), as asked and held. With `ledgers`, the
+    ledger fixtures come too, and the files that hold the ledgers record the ledger
+    years."""
     oecd = RAW_FIXTURES / "oecd"
     files = [
         ("crs", oecd / "CRS.parquet", CRS_FILE),
@@ -129,7 +143,7 @@ def write_raw(raw: Path, *, crdf_years: tuple[int, int] = (2015, 2024)) -> pl.Da
             RAW_FIXTURES / "imputed_shares" / "Imputed_multilateral_shares.xlsx",
             IMPUTED_SHARES_FILE,
         ),
-        ("gcf_projects", RAW_FIXTURES / "gcf" / "projects.json", GCF_FILE),
+        ("gcf_projects", RAW_FIXTURES / "gcf" / "projects.json", PROJECTS_FILE),
         *(
             (f"iati_{publisher}", xml, IATI_DIR / publisher / xml.name)
             for publisher in IATI_PUBLISHERS
@@ -143,14 +157,27 @@ def write_raw(raw: Path, *, crdf_years: tuple[int, int] = (2015, 2024)) -> pl.Da
         {"iso_code": ["EUI"] * 12, "year": range(2015, 2027), "exchange_rate": 0.8}
     ).write_parquet(raw / DAC_EXCHANGE_FILE)
     files.append(("dac_exchange", raw / DAC_EXCHANGE_FILE, DAC_EXCHANGE_FILE))
-    first, last = crdf_years
-    years = {
-        "crs": (first, 2025),
-        "crdf_recipient": crdf_years,
-        "crdf_provider": (max(first, 2013), last),
-        "multisystem": crdf_years,
-    }
-    return pl.DataFrame(
+    years = resolve_years(
+        Years(crdf=crdf_years, crs_last_complete=crdf_years[1]),
+        held={
+            "crs": (2000, 2025),
+            "crdf_recipient": crdf_years,
+            "crdf_provider": (2013, 2024),
+        },
+        recipient_first=recipient_first or held_years(raw / CRDF_FILES["recipient"])[0],
+        source="source",
+    )
+    held = set(years)
+    ledger = pl.DataFrame(schema=schema.RAW_MANIFEST.dtypes)
+    if ledgers is not None:
+        shutil.copytree(
+            RAW_FIXTURES / "ledgers",
+            raw / LEDGER_DIR,
+            ignore=shutil.ignore_patterns("*.md"),
+        )
+        years |= dict.fromkeys(_ledger_files(ledgers), ledgers.years)
+        ledger = ledger_rows(ledgers, skip=[source for source, _, _ in files])
+    listed = pl.DataFrame(
         [
             {
                 "source": source,
@@ -160,14 +187,15 @@ def write_raw(raw: Path, *, crdf_years: tuple[int, int] = (2015, 2024)) -> pl.Da
                 "method": "manual",
                 "first_year": first,
                 "last_year": last,
-                "held_first_year": first,
-                "held_last_year": last,
+                "held_first_year": first if source in held else None,
+                "held_last_year": last if source in held else None,
             }
             for source, _, target in files
             for first, last in [years.get(source, (None, None))]
         ],
         schema=schema.RAW_MANIFEST.dtypes,
     )
+    return pl.concat([listed, ledger])
 
 
 def record_fetch(

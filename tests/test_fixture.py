@@ -65,8 +65,11 @@ def test_regenerating_the_fixture_gives_the_same_tables(tmp_path: Path) -> None:
 INVARIANT_TABLES = (
     "commitments",
     "disbursements",
+    "untraced",
+    "unallocated",
     "agency_shares",
     "agency_spending",
+    "core_contributions",
     "provider_coefficients",
 )
 
@@ -178,6 +181,36 @@ def _split_a_climate_only_share(frame: pl.DataFrame) -> pl.DataFrame:
     return pl.concat([frame, split])
 
 
+def _publish_more_climate_than_face(frame: pl.DataFrame) -> pl.DataFrame:
+    # DEU-1's Rio markers count its 40m face value at most, not 80m.
+    return frame.with_columns(
+        climate_usd=pl.when(pl.col("row_id") == "DEU-1")
+        .then(pl.col("climate_usd") * 2)
+        .otherwise(pl.col("climate_usd"))
+    )
+
+
+def _keep_an_aggregate_channel(frame: pl.DataFrame) -> pl.DataFrame:
+    # 44000, the World Bank Group, holds IDA's 44002.
+    aggregate = frame.filter(channel_code=44002).with_columns(
+        channel_code=pl.lit(44000, pl.Int32)
+    )
+    return pl.concat([frame, aggregate])
+
+
+def _mix_share_sources(frame: pl.DataFrame) -> pl.DataFrame:
+    # One of IDA's 2021 spending rows is held, the others computed.
+    first = (
+        (pl.col("channel_code") == 44002)
+        & (pl.col("year") == 2021)
+        & (pl.col("rio_adaptation") == 2)
+        & (pl.col("rio_mitigation") == 0)
+    )
+    return frame.with_columns(
+        share_source=pl.when(first).then(pl.lit("held")).otherwise("share_source")
+    )
+
+
 def _measure_ida_twice(frame: pl.DataFrame) -> pl.DataFrame:
     # IDA's 2021 share is measured in agency_spending; a `one` row would count it
     # twice.
@@ -227,6 +260,14 @@ def _unlink_an_allocation(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.with_columns(link_method=pl.when(~is_row).then(pl.col("link_method")))
 
 
+def _move_a_fill_to_another_recipient(frame: pl.DataFrame) -> pl.DataFrame:
+    # The bank-ledger fill on AFDB-1 has no CRS record; its facts are AFDB-1's.
+    is_fill = pl.col("disbursement_source") == "bank_ledger"
+    return frame.with_columns(
+        recipient_code=pl.when(is_fill).then(1).otherwise(pl.col("recipient_code"))
+    )
+
+
 def _repeat_an_allocated_row(frame: pl.DataFrame) -> pl.DataFrame:
     # DEU-1 holds allocations; as a repeat of DEU-2 its money drops out of totals.
     return frame.with_columns(
@@ -234,6 +275,51 @@ def _repeat_an_allocated_row(frame: pl.DataFrame) -> pl.DataFrame:
         .then(pl.lit("DEU-2"))
         .otherwise(pl.col("repeat_of"))
     )
+
+
+def _edit_untraced(
+    record: str, /, **changes: object
+) -> Callable[[pl.DataFrame], pl.DataFrame]:
+    """An edit setting `changes` on `untraced` row `record`."""
+
+    def edit(frame: pl.DataFrame) -> pl.DataFrame:
+        is_row = pl.col("record_id") == record
+        return frame.with_columns(
+            pl.when(is_row)
+            .then(pl.lit(value, frame.schema[name]))
+            .otherwise(pl.col(name))
+            .alias(name)
+            for name, value in changes.items()
+        )
+
+    return edit
+
+
+def _overstate_excess(frame: pl.DataFrame) -> pl.DataFrame:
+    # Japan's 2023 excess is JPN-SPLIT's 8m.
+    is_row = (pl.col("provider_code") == 701) & (pl.col("year") == 2023)
+    return frame.with_columns(
+        excess_usd=pl.when(is_row).then(9e6).otherwise(pl.col("excess_usd"))
+    )
+
+
+def _remainder(frame: pl.DataFrame, usd: float) -> pl.DataFrame:
+    # A 40000 row holds the part of a provider's total no leaf itemises.
+    first = frame.head(1).with_columns(
+        channel_code=pl.lit(40000, pl.Int32), contribution_usd=pl.lit(usd)
+    )
+    return pl.concat([frame, first])
+
+
+def test_a_top_channel_remainder_breaks_no_invariant() -> None:
+    tables = {name: _read(name) for name in INVARIANT_TABLES}
+    tables["core_contributions"] = _remainder(tables["core_contributions"], 5e6)
+
+    assert release_invariants(tables) == []
+
+
+def _zero_remainder(frame: pl.DataFrame) -> pl.DataFrame:
+    return _remainder(frame, 0.0)
 
 
 def _coefficient_edit(
@@ -264,6 +350,7 @@ def _coefficient_edit(
         ("disbursements", _null_allocation_bound, "DEU-1"),
         ("disbursements", _null_record_disbursement, "JPN-SPLIT"),
         ("disbursements", _unlink_an_allocation, "DEU-1"),
+        ("disbursements", _move_a_fill_to_another_recipient, "AFDB-1"),
         ("commitments", _repeat_an_allocated_row, "DEU-1"),
         ("commitments", _break_disbursed_sum, "DEU-1"),
         ("commitments", _break_face_cap, "DEU-1"),
@@ -275,7 +362,26 @@ def _coefficient_edit(
         ("disbursements", _break_record_disbursement, "JPN-SPLIT"),
         ("disbursements", _overdraw_record, "JPN-SPLIT"),
         ("disbursements", _negative_record_grant_equiv, "JPN-SPLIT"),
+        ("untraced", _edit_untraced("DEU-UNLINKED", rio_adaptation=0), "DEU-UNLINKED"),
+        ("untraced", _edit_untraced("DEU-UNLINKED", bi_multi=2), "DEU-UNLINKED"),
+        # An unlinked record whose allocations the release holds.
+        ("untraced", _edit_untraced("DEU-UNLINKED", record_id="DEU-1-R1"), "DEU-1-R1"),
+        (
+            "untraced",
+            _edit_untraced("FRA-UNLINKED", record_disbursement_usd=4e6),
+            "FRA-UNLINKED",
+        ),
+        (
+            "untraced",
+            _edit_untraced("JPN-SPLIT", record_disbursement_usd=31e6),
+            "JPN-SPLIT",
+        ),
+        ("unallocated", _overstate_excess, "701 2023"),
         ("agency_shares", _split_a_climate_only_share, "46002 2020 oecd"),
+        ("agency_spending", _mix_share_sources, "44002 2021"),
+        ("commitments", _publish_more_climate_than_face, "DEU-1"),
+        ("core_contributions", _keep_an_aggregate_channel, "44000"),
+        ("core_contributions", _zero_remainder, "40000"),
         ("agency_shares", _measure_ida_twice, "44002 2021"),
         ("agency_spending", _give_a_marker_row_components, "44002 2021 2 0"),
         ("agency_spending", _repeat_a_components_row, "46002 2022 None None"),
@@ -312,6 +418,77 @@ def test_release_invariants_name_the_row_that_breaks_one(
 
     assert problems
     assert all(row_id in problem for problem in problems)
+
+
+def test_release_invariants_refuse_an_untraced_adaptation_marker_before_2010() -> None:
+    # DEU-UNLINKED, Germany's only untraced record of 2022, moves to 2009 in both
+    # tables and keeps its adaptation marker. Its 2.5m leaves Germany's 2022
+    # `unallocated` row for a 2009 row of its own.
+    tables = {name: _read(name) for name in INVARIANT_TABLES}
+    untraced, unallocated = tables["untraced"], tables["unallocated"]
+    tables["untraced"] = untraced.with_columns(
+        year=pl.when(pl.col("record_id") == "DEU-UNLINKED")
+        .then(pl.lit(2009, pl.Int16))
+        .otherwise(pl.col("year"))
+    )
+    is_row = (pl.col("provider_code") == 5) & (pl.col("year") == 2022)
+    moved = unallocated.filter(is_row).with_columns(
+        year=pl.lit(2009, pl.Int16),
+        marked_usd=pl.col("unlinked_marked_usd"),
+        outside_release_usd=pl.lit(0.0),
+    )
+    kept = unallocated.with_columns(
+        pl.when(is_row)
+        .then(pl.col(name) - pl.col("unlinked_marked_usd"))
+        .otherwise(pl.col(name))
+        .alias(name)
+        for name in ("marked_usd", "unlinked_marked_usd")
+    )
+    tables["unallocated"] = pl.concat([kept, moved])
+
+    assert release_invariants(tables) == [
+        "untraced DEU-UNLINKED: an adaptation marker before ADAPTATION_FIRST_YEAR"
+    ]
+
+
+def test_release_invariants_refuse_a_dropped_allocation_row() -> None:
+    # NOR-1-R1, Norway's only Rio-marked record of 2022, loses its allocation row,
+    # and NOR-1's disbursed amounts drop with it, so every per-row and per-record
+    # bound still holds. Norway's 2022 Rio-marked disbursement then reaches no table.
+    tables = {name: _read(name) for name in INVARIANT_TABLES}
+    dropped = tables["disbursements"].filter(pl.col("record_id") == "NOR-1-R1")
+    tables["disbursements"] = tables["disbursements"].filter(
+        pl.col("record_id") != "NOR-1-R1"
+    )
+    tables["commitments"] = tables["commitments"].with_columns(
+        pl.when(pl.col("row_id") == "NOR-1")
+        .then(pl.col(total) - dropped[part].sum())
+        .otherwise(pl.col(total))
+        .alias(total)
+        for total, part in (
+            ("disbursed_usd", "allocated_usd"),
+            ("disbursed_low_usd", "allocated_low_usd"),
+            ("disbursed_high_usd", "allocated_high_usd"),
+        )
+    )
+
+    assert release_invariants(tables) == [
+        "unallocated 8 2022: marked_usd 5700000.0 differs from its parts' sum 0.0"
+    ]
+
+
+def test_release_invariants_allow_rounding_in_a_marked_total() -> None:
+    # Japan's 64m of 2023 off by 1e-5 USD, above INVARIANT_TOLERANCE_USD and within
+    # INVARIANT_RELATIVE_TOLERANCE of it, as rounding parts large totals.
+    tables = {name: _read(name) for name in INVARIANT_TABLES}
+    is_row = (pl.col("provider_code") == 701) & (pl.col("year") == 2023)
+    tables["unallocated"] = tables["unallocated"].with_columns(
+        marked_usd=pl.when(is_row)
+        .then(pl.col("marked_usd") + 1e-5)
+        .otherwise(pl.col("marked_usd"))
+    )
+
+    assert release_invariants(tables) == []
 
 
 @pytest.mark.parametrize(

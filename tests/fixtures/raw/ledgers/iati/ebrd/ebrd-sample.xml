@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<iati-activities version="2.03">
+<iati-activity default-currency="EUR" xml:lang="en">
+  <iati-identifier>XI-IATI-EBRD-90001</iati-identifier>
+  <reporting-org ref="XI-IATI-EBRD" type="40">
+    <narrative>Invented Bank</narrative>
+  </reporting-org>
+  <title>
+    <narrative>Invented regional lending programme</narrative>
+  </title>
+  <transaction>
+    <transaction-type code="2" />
+    <transaction-date iso-date="2020-04-24" />
+    <value currency="EUR" value-date="2020-04-24">20000000</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2022-06-30" />
+    <value currency="EUR" value-date="2022-06-30">500000</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2023-09-21" />
+    <value currency="EUR" value-date="2023-09-21">2000000</value>
+  </transaction>
+  <transaction>
+    <transaction-type code="3" />
+    <transaction-date iso-date="2023-11-27" />
+    <value currency="EUR" value-date="2023-11-27">5000000</value>
+  </transaction>
+</iati-activity>
+</iati-activities>

@@ -12,11 +12,19 @@ gap_fill = false
 # Ledger check, review queue and pending status (the review stage). Off passes links
 # and commitments through unchanged.
 review = false
+# Jev objective labels on linked records, and the level map behind relevance="jev".
+jev_labels = false
+# Jev on the classifier's band ([jev] band), Jev labels on each Splink model's
+# calibration sample, and Splink links. Off leaves the link stage's tables unchanged.
+jev_links = true
+# Embedding neighbours as a further blocking rule. Needs the `embed` extra unless the
+# embedding cache holds every vector the build asks for.
+embed = false
 
 [years]
 # Every year the recipient-perspective CRDF holds, or an inclusive [first, last].
-# The CRS years follow: the first CRDF year to the CRS file's last, unless `crs`
-# sets an inclusive [first, last].
+# The CRS years follow: the first CRDF year, or the year before where the CRDF holds
+# it, to the CRS file's last, unless `crs` sets an inclusive [first, last].
 crdf = "all"
 # The last CRS year every provider has reported; later years hold early reports.
 crs_last_complete = 2024
@@ -29,8 +37,17 @@ crs_file = { path = "data/raw/oecd/CRS_v20261006.parquet", sha256 = "d24840a5fad
 iati_archive = "data/raw/external/iati"
 iati_publishers = ["caf", "eib", "gcf", "gef", "idbinvest", "ifcwbg"]
 btr_archive = "data/raw/unfccc_btr1"
-ledger_archive = "data/raw/ledgers"
 review_decisions = "data/review_decisions.parquet"
+# Weikmans et al.'s human-coded adaptation levels; they fit the Jev level map and are
+# never published.
+adaptation_labels = { path = "data/raw/classifiers/toetzke/wk.csv", sha256 = "6eafebb197764603754cbaddeef4534b62fefcadfc439e1f67c7f2dbad61e218" }
+
+# Bank ledgers for the review stage's ledger check. Without this section, fetch and
+# normalise skip them. `archive` is a local copy laid out as raw/ledgers/.
+# [sources.ledgers]
+# years = [2021, 2024]
+# publishers = ["ibrd", "ida", "asdb", "afdb", "iadb", "isdb", "ebrd", "bcie", "gcf", "gef"]
+# archive = "data/raw/ledgers"
 
 # CRDF file name -> ETag of the pinned copy.
 [sources.crdf_etags]
@@ -44,4 +61,5 @@ cache_dir = "data/jev-cache"
 
 [embedding]
 model = "intfloat/multilingual-e5-small"
-revision = "614241f"
+revision = "614241f622f53c4eeff9890bdc4f31cfecc418b3"
+cache_dir = "data/embedding-cache"

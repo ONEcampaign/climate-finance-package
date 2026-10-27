@@ -4,17 +4,18 @@ Needs the [build] extra. The stage writer sorts every table by its schema's sort
 then by its remaining flat columns, so two builds from the same inputs give the same
 sha256 per table. It writes a stage to a temporary directory and moves it into place
 once every table is written, so a stage that fails leaves the last good one intact. A
-build that died while moving a stage into place left `<stage>.old`, and the next
-build restores or removes it before any stage runs. Each stage directory holds a
-`stage.json` recording what the stage was built from, and a stage that reads a
-stale one refuses it (see `provenance`).
+build that died while writing left that temporary directory, and one that died while
+moving a stage into place left `<stage>.old`; the next build restores or removes both
+before any stage runs. Each stage directory holds a `stage.json` recording what the
+stage was built from, and a stage that reads a stale one refuses it (see
+`provenance`).
 """
 
 import shutil
 import tempfile
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
-from functools import partial
+from functools import cache, partial
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -43,6 +44,7 @@ from climate_finance.build.stages import (  # noqa: E402
     StageContext,
     StageDef,
     StageOutput,
+    make_jev_client,
     stage_dir,
 )
 from climate_finance.schema import (  # noqa: E402
@@ -121,7 +123,9 @@ def write_stage(
     for name, frame in frames.items():
         validate(stage.tables[name], frame)
     release_dir.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=f".{stage.name}-", dir=release_dir))
+    staging = Path(
+        tempfile.mkdtemp(prefix=_staging_prefix(stage.name), dir=release_dir)
+    )
     try:
         sha256 = {
             name: write_table(frame, stage.tables[name], staging / f"{name}.parquet")
@@ -148,6 +152,11 @@ def write_stage(
     return sha256
 
 
+def _staging_prefix(stage: str) -> str:
+    """The name start of the temporary directory `write_stage` fills for `stage`."""
+    return f".{stage}-"
+
+
 def _replace_dir(source: Path, target: Path) -> None:
     """Move `source` to `target`, removing what `target` held."""
     if target.exists():
@@ -165,12 +174,15 @@ def _old_dir(target: Path) -> Path:
 
 
 def recover_stage_dirs(registry: Sequence[StageDef], release_dir: Path) -> None:
-    """Undo a stage swap a build died in the middle of.
+    """Undo a stage write or swap a build died in the middle of.
 
     A `<stage>.old` beside a missing stage directory is the last good stage, and moves
-    back. Beside a stage directory it is the stage that was replaced, and goes.
+    back. Beside a stage directory it is the stage that was replaced, and goes. The
+    temporary directory `write_stage` fills goes too.
     """
     for stage in registry:
+        for leftover in release_dir.glob(f"{_staging_prefix(stage.name)}*"):
+            shutil.rmtree(leftover)
         target = stage_dir(release_dir, stage.name)
         old = _old_dir(target)
         if not old.exists():
@@ -193,7 +205,8 @@ def run_stages(
     """Run the selected stages of `registry` in registry order.
 
     `offline=True` sets the config's `offline`, which stages and `release.json`
-    read.
+    read. The stages share one Jev client, made when a stage first asks Jev, so
+    the cost cap holds across the build.
 
     Raises:
         BuildError: when `stages` names a stage the registry lacks.
@@ -207,6 +220,7 @@ def run_stages(
     if offline:
         config = config.model_copy(update={"offline": True})
     recover_stage_dirs(registry, release_dir)
+    jev_client = cache(partial(make_jev_client, config, offline=config.offline))
     tables = {}
     for stage in registry:
         if stage.name not in selected:
@@ -223,6 +237,7 @@ def run_stages(
             config=config,
             offline=config.offline,
             provenance=provenance,
+            jev_client=jev_client,
         )
         tables[stage.name] = write_stage(
             stage,

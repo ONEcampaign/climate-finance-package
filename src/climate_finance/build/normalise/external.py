@@ -26,10 +26,8 @@ def normalise_external(
 ) -> pl.DataFrame:
     """Fill `amount_usd` and `recipient_code` on the readers' `external` rows.
 
-    A non-USD amount is converted at the DAC annual rate (local currency per US
-    dollar) of the country that issues its currency: the euro's for EUR, else the
-    country whose ISO 3166 code begins the ISO 4217 code. Amounts with no rate for
-    their currency and year keep a null `amount_usd`, and are counted in the log.
+    Amounts are converted to US dollars by `to_usd`. Those with no rate for their
+    currency and year keep a null `amount_usd`, and are counted in the log.
 
     `recipient_iso` is mapped code by code: an ISO 3166 alpha-2 or alpha-3 code to
     its DAC recipient code, and a number (an IATI region in the DAC vocabulary) as
@@ -40,18 +38,6 @@ def normalise_external(
         external: Rows in the `external` schema, as the IATI and GCF readers give.
         exchange: DAC exchange rates with `iso_code`, `year` and `exchange_rate`.
     """
-    rates = exchange.select(
-        issuer=pl.col("iso_code").cast(pl.String),
-        year=pl.col("year").cast(pl.Int16),
-        exchange_rate=pl.col("exchange_rate").cast(pl.Float64),
-    )
-    issuers = pl.DataFrame(
-        {"currency": external["currency"].unique().sort()}
-    ).with_columns(
-        issuer=pl.col("currency").map_elements(
-            _issuer, return_dtype=pl.String, skip_nulls=True
-        )
-    )
     recipients = pl.DataFrame(
         {"recipient_iso": external["recipient_iso"].drop_nulls().unique().sort()}
     ).with_columns(
@@ -60,15 +46,9 @@ def normalise_external(
         )
     )
     converted = (
-        external.drop("recipient_code")
-        .join(issuers, on="currency", how="left", maintain_order="left")
-        .join(rates, on=["issuer", "year"], how="left", maintain_order="left")
+        to_usd(external, exchange=exchange)
+        .drop("recipient_code")
         .join(recipients, on="recipient_iso", how="left", maintain_order="left")
-        .with_columns(
-            amount_usd=pl.coalesce(
-                "amount_usd", pl.col("amount") / pl.col("exchange_rate")
-            )
-        )
     )
     unconverted = converted.filter(pl.col("amount_usd").is_null())
     if unconverted.height:
@@ -80,6 +60,38 @@ def normalise_external(
     if unmapped := sorted(code for code in codes if _dac_code(code) is None):
         logger.warning("External recipient codes with no DAC code: %s", unmapped)
     return converted.select(external.columns)
+
+
+def to_usd(frame: pl.DataFrame, *, exchange: pl.DataFrame) -> pl.DataFrame:
+    """Fill a null `amount_usd` from `amount`, `currency` and `year`.
+
+    A non-USD amount is converted at the DAC annual rate (local currency per US
+    dollar) of the country that issues its currency: the euro's for EUR, else the
+    country whose ISO 3166 code begins the ISO 4217 code. An amount with no rate for
+    its currency and year keeps a null `amount_usd`.
+    """
+    rates = exchange.select(
+        issuer=pl.col("iso_code").cast(pl.String),
+        year=pl.col("year").cast(pl.Int16),
+        exchange_rate=pl.col("exchange_rate").cast(pl.Float64),
+    )
+    issuers = pl.DataFrame(
+        {"currency": frame["currency"].unique().sort()}, schema={"currency": pl.String}
+    ).with_columns(
+        issuer=pl.col("currency").map_elements(
+            _issuer, return_dtype=pl.String, skip_nulls=True
+        )
+    )
+    return (
+        frame.join(issuers, on="currency", how="left", maintain_order="left")
+        .join(rates, on=["issuer", "year"], how="left", maintain_order="left")
+        .with_columns(
+            amount_usd=pl.coalesce(
+                "amount_usd", pl.col("amount") / pl.col("exchange_rate")
+            )
+        )
+        .select(frame.columns)
+    )
 
 
 def _issuer(currency: str) -> str | None:

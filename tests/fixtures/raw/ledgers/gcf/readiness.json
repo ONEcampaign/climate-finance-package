@@ -1,0 +1,38 @@
+[
+ {
+  "RequestID": "9901-90001",
+  "AgreementReference": "ZZA-RS-001",
+  "ProjectTitle": "Invented country programming",
+  "Status": "Closed",
+  "ApprovedDate": "2015-05-01T00:00:00.000Z",
+  "AmountApprovedInUSD": 40000,
+  "AmountDisbursedInUSD": 40000
+ },
+ {
+  "RequestID": "9901-90002",
+  "AgreementReference": "ZZB-RS-007",
+  "ProjectTitle": "Invented technology roadmap",
+  "Status": "Closed",
+  "ApprovedDate": "2021-11-10T00:00:00.000Z",
+  "AmountApprovedInUSD": 220000.5,
+  "AmountDisbursedInUSD": 200000.25
+ },
+ {
+  "RequestID": "9901-90003",
+  "AgreementReference": null,
+  "ProjectTitle": "Invented strategic framework",
+  "Status": "In Legal Processing",
+  "ApprovedDate": "2016-03-16T00:00:00.000Z",
+  "AmountApprovedInUSD": 600000,
+  "AmountDisbursedInUSD": null
+ },
+ {
+  "RequestID": "9901-90004",
+  "AgreementReference": "ZZC-RS-001",
+  "ProjectTitle": "Invented strengthening",
+  "Status": "Cancelled",
+  "ApprovedDate": "2015-09-01T00:00:00.000Z",
+  "AmountApprovedInUSD": 10000,
+  "AmountDisbursedInUSD": null
+ }
+]

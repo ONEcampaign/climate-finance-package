@@ -1,0 +1,38 @@
+[
+ {
+  "loan_number": "IBRD90001",
+  "disbursed_amount": 900000,
+  "project_name_": "Invented project 90001",
+  "end_of_period": "31-Dec-2022",
+  "project_id": "P990001",
+  "country_code": "ZZ",
+  "loan_status": "Disbursing&Repaying"
+ },
+ {
+  "loan_number": "IBRD90002",
+  "disbursed_amount": 1800000,
+  "project_name_": "Invented project 90002",
+  "end_of_period": "31-Dec-2022",
+  "project_id": "P990002",
+  "country_code": "ZZ",
+  "loan_status": "Disbursing&Repaying"
+ },
+ {
+  "loan_number": "IBRD90003",
+  "disbursed_amount": 0,
+  "project_name_": "Invented project 90003",
+  "end_of_period": "31-Dec-2022",
+  "project_id": "P990003",
+  "country_code": "ZZ",
+  "loan_status": "Disbursing&Repaying"
+ },
+ {
+  "loan_number": "IBRD90004",
+  "disbursed_amount": 430000,
+  "project_name_": "Invented project 90004",
+  "end_of_period": "31-Dec-2022",
+  "project_id": "P990004",
+  "country_code": "ZZ",
+  "loan_status": "Disbursing&Repaying"
+ }
+]

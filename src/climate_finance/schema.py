@@ -24,27 +24,31 @@ STATUSES = (
     "pending_review",
 )
 KEY_TIERS = (
+    "wb_loan",
     "crs_id_purpose",
     "crs_id",
     "crs_id_parent",
+    "pn_recipient_date",
     "pn_recipient_purpose",
     "pn_recipient",
 )
-# The key tiers that tie a disbursement to its commitment by construction: the same
-# crs id, or the EU decision or lettered crs id it continues. A project-number tier
-# is estimated, since shared framework numbers mislead.
-CERTAIN_METHODS = ("crs_id_purpose", "crs_id", "crs_id_parent")
+# The key tiers whose donor id names the commitment: a link of one of them whose
+# records do not disagree (`LINKS.records_disagree`) is certain. So is the pair of a
+# record with its own commitment, where one record commits and disburses, whatever
+# link joined them. Every other pair is estimated.
+CERTAIN_METHODS = ("wb_loan", "crs_id_purpose", "crs_id", "crs_id_parent")
 # The `crdf_crs` routes that tie a CRDF row to its CRS commitment by construction:
 # the same crs id in the same year, a contract matched within 0.01% in euros, and
 # the CRS record the row was cut from. Every other route, `eib_list`,
-# `crosswalk_amount` and `title_recipient` among them, is estimated.
+# `crosswalk_amount` and `title_recipient` among them, is estimated, so a certain
+# trace link reached through it counts nothing in the low bound.
 CERTAIN_ROUTES = ("within_year", "crosswalk", "aggregate_partition")
 KEY_REPAIR_METHODS = (
     "repair_new_crs_id",
     "repair_pn_variant",
-    "repair_wb_parent",
     "repair_afdb_scientific",
     "repair_title_recipient",
+    "repair_stray_country",
 )
 LINK_METHODS = (
     *KEY_TIERS,
@@ -72,10 +76,17 @@ REVIEW_REASONS = (
     "rule_disagreement",
     "over_face",
     "ledger_contradicted",
+    "calibration",
+)
+LEDGER_TRANSACTION_TYPES = (
+    "commitment",
+    "disbursement",
+    "expenditure",
+    "disbursed_to_date",
 )
 LEDGER_CHECKS = ("confirmed", "contradicted", "none", "confirmed_undisbursed")
-DISBURSEMENT_SOURCES = ("crs", "bank_ledger", "none")
-ALLOCATION_RULES = ("fifo", "dated", "window", "excess", "bank_ledger")
+DISBURSEMENT_SOURCES = ("crs", "bank_ledger", "iati", "none")
+ALLOCATION_RULES = ("fifo", "dated", "window", "excess", "bank_ledger", "iati")
 OBJECTIVES = ("adaptation", "mitigation", "cross_cutting")
 # An agency share's objective: one of OBJECTIVES, or `climate` for a total climate
 # share with no split by objective, as the OECD gives before 2021.
@@ -83,7 +94,15 @@ SHARE_OBJECTIVES = (*OBJECTIVES, "climate")
 LABEL_SOURCES = ("crdf", "marker", "jev")
 # How a disbursement's own Rio markers relate to the ones it inherits.
 MARKER_SOURCES = ("components", "commitment", "record_differs")
-PAIR_LABEL_SOURCES = ("key", "rule", "jev", "human", "ledger")
+# Why a Rio-marked CRS record's disbursement reaches no commitment: it exceeds
+# what its linked commitments take, or the record is linked to none.
+UNTRACED_REASONS = ("excess", "unlinked")
+PAIR_LABEL_SOURCES = ("key", "rule", "jev", "human", "agent", "ledger")
+# Who decides a review pair: a person, or an agent reading a labelling packet.
+DECIDERS = ("human", "agent")
+# An agent's labelling rounds: the first label, a second label for a pair whose
+# first label is unsure, and an adjudication with ids visible.
+LABEL_ROUNDS = ("label", "second", "adjudicate")
 ID_PRACTICE_CLASSES = (
     "id_persistent",
     "parent_id_persistent",
@@ -94,14 +113,37 @@ ID_PRACTICE_CLASSES = (
 )
 SCORING_GROUPS = ("truth", "weak", "splink", "pooled_splink")
 SHARE_SOURCES = ("oecd", "one")
+# Where an agency share comes from: measured on the share years' commitments
+# (`computed`), held from the last year measured on enough commitments (`held`), or
+# the OECD's imputed share (`oecd`). `agency_spending` holds the first two, and every
+# `agency_shares` row is the third.
+SPENDING_ORIGINS = ("computed", "held")
+SHARE_ORIGINS = (*SPENDING_ORIGINS, "oecd")
 FETCH_METHODS = ("http", "registered", "manual")
 PERSPECTIVES = ("provider", "recipient")
 ORG_ROLES = ("provider", "agency", "channel")
 FLOWS = ("commitments", "disbursements", "grant_equivalent")
 DECISIONS = ("accept", "reject")
+# The first year the CRDF and the CRS measure adaptation: the DAC introduced the
+# adaptation marker for flows from 2010. Before it the recipient CRDF holds the rows
+# its mitigation marker selects and prints "Not targeted/Not screened" as their
+# adaptation marker. The few adaptation marks before 2010 predate the marker's start
+# and count as not measured: 1 row in 2007, 2 in 2008 and 10 of 2,962 in 2009 marked
+# principal or significant, and 49 climate-component rows in 2009, against 3,922 of
+# 6,371 rows marked in 2010. Four of the 2009 rows (Kuwait, USD 142m) are marked for
+# adaptation alone, so their climate value, the mitigation value, is 0.
+ADAPTATION_FIRST_YEAR = 2010
 # Code 6 holds private-sector and philanthropic outflows, kept as published. The query
 # views list the codes they count and leave it out.
 BI_MULTI_CODES = (1, 2, 3, 4, 6, 7, 8)
+# Bilateral flows, multilateral outflows and core contributions. Code 2 is a donor's
+# core contribution to a multilateral agency, whose own outflows (code 4) carry that
+# money to recipients, so the trace leaves code 2 out. The recipient view counts
+# bilateral flows and multilateral outflows.
+BILATERAL = (1, 3, 7, 8)
+MULTILATERAL_OUTFLOW = 4
+CORE_CONTRIBUTION = 2
+RECIPIENT_VIEW = (*BILATERAL, MULTILATERAL_OUTFLOW)
 RIO_MARKERS = (0, 1, 2)
 
 type DType = pl.DataType | type[pl.DataType]
@@ -162,8 +204,8 @@ def _year(*, nullable: bool = False) -> Column:
     return Column(pl.Int16(), nullable=nullable)
 
 
-def _bool() -> Column:
-    return Column(pl.Boolean())
+def _bool(*, nullable: bool = False) -> Column:
+    return Column(pl.Boolean(), nullable=nullable)
 
 
 def _rio() -> Column:
@@ -215,7 +257,9 @@ CRDF = _table(
     channel_code=_code(nullable=True),
     bi_multi=_bi_multi(),
     purpose_code=_code(nullable=True),
-    flow_code=_code(nullable=True),
+    # The CRS flow category the CRDF publishes: 10 ODA, 21 other official flows,
+    # 22, 30 private grants and 60 private market flows.
+    flow_category=_code(nullable=True),
     # Provider-perspective imputed multilateral contribution rows carry a climate
     # total only, so their objective is `climate`.
     objective=_str(values=SHARE_OBJECTIVES),
@@ -232,6 +276,9 @@ CRDF = _table(
     repeat_of=_str(nullable=True),
     parent_row_id=_str(nullable=True),
 )
+# Recipient rows of the year before the first `crdf` year, which give the first
+# agency share year its two-year span.
+CRDF_SPAN = _table("crdf_span", CRDF.sort_key, **CRDF.columns)
 
 CRS = _table(
     "crs",
@@ -242,12 +289,17 @@ CRS = _table(
     agency_code=_code(nullable=True),
     crs_id=_str(nullable=True),
     project_number=_str(nullable=True),
+    # The bulk CRS's project_title, short_description and long_description.
     title=_str(nullable=True),
+    short_description=_str(nullable=True),
+    long_description=_str(nullable=True),
     recipient_code=_code(),
     purpose_code=_code(nullable=True),
     channel_code=_code(nullable=True),
     bi_multi=_bi_multi(),
     flow_code=_code(),
+    # The type of finance, such as 110 for a standard grant.
+    finance_t=_code(nullable=True),
     commitment_usd=_usd(nullable=True),
     disbursement_usd=_usd(nullable=True),
     grant_equiv_usd=_usd(nullable=True),
@@ -261,6 +313,16 @@ CRS = _table(
 )
 
 # One row per provider, agency, year and flow. The build writes every flow in FLOWS.
+# MULTI publishes aggregate channels beside their members, such as 40000 for all
+# multilaterals and 44000 for the World Bank Group. Normalise keeps them. The release
+# keeps leaf channels, so each dollar counts once, plus a 40000 row for the part of
+# a provider's 40000 total that no leaf itemises (`release.core_contributions`).
+# The key within which a provider's leaf channels sum to its `TOP_CHANNEL` row.
+CONTRIBUTION_KEY = ("provider_code", "year", "flow")
+# MULTI's total of a provider's core contributions, which sums every leaf channel
+# it reports, 30010 included. The intermediate aggregates (41000, 47000 and the
+# like) do not follow the code prefixes: MULTI files some 41xxx channels under 47000.
+TOP_CHANNEL = 40000
 CORE_CONTRIBUTIONS = _table(
     "core_contributions",
     ("provider_code", "channel_code", "year", "flow"),
@@ -311,6 +373,33 @@ EXTERNAL = _table(
     recipient_code=_code(nullable=True),
     cumulative_declared=_bool(),
     title=_str(nullable=True),
+)
+
+# Bank and bilateral ledgers, as the ledger readers return them: one row per
+# transaction, or per World Bank loan and year. `key` is the id the CRS project number
+# carries, so a ledger row and a CRS row join on it; `activity_id` is the id as
+# published. Amounts are as published, in `currency`; the readers fill `amount_usd` for
+# USD rows, and normalise converts the rest at DAC annual rates where the DAC publishes
+# one for the currency. A World Bank row is the December-to-December flow of a loan,
+# dated 31 December. A GEF disbursement is the rise of its running peak, since GEF
+# declares its figures cumulative. `disbursed_to_date` is a GCF readiness grant's
+# disbursed amount, which the list does not date: its `date` and `year` are null and no
+# calendar-year check can use it. `other_ids` lists the activity's other identifiers,
+# which the bilateral id matching reads.
+LEDGER = _table(
+    "ledger",
+    ("publisher", "key", "transaction_type", "date", "currency", "amount"),
+    publisher=_str(),
+    key=_str(),
+    activity_id=_str(),
+    transaction_type=_str(values=LEDGER_TRANSACTION_TYPES),
+    date=Column(pl.Date(), nullable=True),
+    year=_year(nullable=True),
+    currency=_str(),
+    amount=_f64(),
+    amount_usd=_usd(nullable=True),
+    title=_str(nullable=True),
+    other_ids=Column(pl.List(pl.String())),
 )
 
 BTR = _table(
@@ -377,6 +466,9 @@ LINKS = _table(
     left_id=_str(),
     right_id=_str(),
     group_id=_str(nullable=True),
+    # On a part of a trace group that review decisions split (`decisions.drop_pairs`),
+    # its rank at each split, outermost first; null on a group that is not split.
+    split_path=Column(pl.List(pl.Int16()), nullable=True),
     # 1.0 on a certain rule link (`CERTAIN_METHODS`, `CERTAIN_ROUTES`, or a unit
     # linked to itself), the model's score on a scored link, null on any other.
     probability=_f64(nullable=True),
@@ -390,6 +482,9 @@ LINKS = _table(
     jev_model=_str(nullable=True),
     label_set=_str(nullable=True),
     ledger_check=_str(nullable=True, values=LEDGER_CHECKS),
+    # On a trace link, whether its records disagree on recipient or project number
+    # (`flag_disagreement`); null on other tasks.
+    records_disagree=Column(pl.Boolean(), nullable=True),
     review=_bool(),
     review_reason=_str(nullable=True, values=REVIEW_REASONS),
 )
@@ -401,6 +496,7 @@ LINKS = _table(
 # commitment is placed at `placed_year`, its commitment-date year when that precedes
 # the record year. A disbursement whose commitment date precedes its record year
 # carries that year as `floor_year`, and fills only commitments placed from then on.
+# `commitment_date` is the unit's largest record's.
 UNITS = _table(
     "units",
     ("unit_id",),
@@ -413,6 +509,7 @@ UNITS = _table(
     purpose_code=_code(nullable=True),
     year=_year(),
     commitment_year=_year(nullable=True),
+    commitment_date=Column(pl.Date(), nullable=True),
     placed_year=_year(),
     floor_year=_year(nullable=True),
     commitment_usd=_usd(),
@@ -434,25 +531,84 @@ ID_PRACTICE = _table(
     keyed_disbursement_share=_f64(nullable=True),
 )
 
+# One rule per (donor, agency, project-number shape): strip `segments` trailing
+# segments to reach the programme's number. `pairs` counts the pairs of distinct
+# project numbers the rule merges, and `consistent_pairs` those whose titles agree.
 PROGRAMME_STEMS = _table(
     "programme_stems",
     ("donor_code", "agency_code", "pattern"),
     donor_code=_code(),
     agency_code=_code(),
     pattern=_str(),
-    programme_level=Column(pl.Int8()),
+    segments=Column(pl.Int8(), values=(1, 2)),
+    pairs=_count(),
+    consistent_pairs=_count(),
 )
 
+# Unit pairs for the scoring stage: a disbursement unit (left) and a commitment unit a
+# CRDF row reaches (right), of one donor, the disbursement of a later record year,
+# under a blocking rule. `eligible` pairs are open to scoring: no key linked either
+# unit and neither agency's ids persist. The other rows pair commitments of
+# `id_persistent` agencies. `same_crs_id` says whether a pair's units share a raw
+# crs id; the classifier trains on `score.id_truth`. `programme_level` is 2 for
+# the same project number, 1 for siblings under one programme stem, else 0.
+CANDIDATES = _table(
+    "candidates",
+    ("left_id", "right_id"),
+    left_id=_str(),
+    right_id=_str(),
+    donor_code=_code(),
+    year_gap=Column(pl.Int16()),
+    programme_level=Column(pl.Int8(), values=(0, 1, 2)),
+    same_crs_id=_bool(),
+    id_persistent=_bool(),
+    eligible=_bool(),
+)
+
+# Model scores for eligible candidate pairs. `model` names the model and its
+# version, `match_weight` is its final weight and `p_raw` a Splink model's EM
+# probability, which is evidence only. `probability` is calibrated, and null for a
+# model that has no calibration labels yet. `label_set` counts the labels that
+# calibrated it by source. `review_reason` is `calibration` on the pairs people
+# should label to calibrate the model.
+PAIR_SCORES = _table(
+    "pair_scores",
+    ("left_id", "right_id"),
+    left_id=_str(),
+    right_id=_str(),
+    donor_code=_code(),
+    model=_str(),
+    match_weight=_f64(),
+    p_raw=_f64(nullable=True),
+    probability=_f64(nullable=True),
+    levels=Column(COMPARISON_LEVELS),
+    label_set=_str(nullable=True),
+    review_reason=_str(nullable=True, values=REVIEW_REASONS),
+)
+
+# One row per provider: the climate value of its counted CRDF commitments and, for a
+# provider with a crosswalk (`link.crosswalks`), the part whose commitment a crosswalk
+# link reaches, null for the others and for every provider when recoveries are off.
+# The scoring columns (`link.score`) are null for a provider with no candidate pairs:
+# `scoring_group` from the counts beside it, `true_pairs` counting true training
+# pairs, `commitments` and `pairs` the commitments and pairs open to scoring, and for
+# the truth group the isotonic map its pairs took (`calibration`), the classifier's
+# link `threshold` (`link.score.LINK_THRESHOLD`), and the grid threshold of highest
+# training F1 (`best_threshold`).
 PROVIDER_PROFILE = _table(
     "provider_profile",
     ("provider_code",),
     provider_code=_code(),
-    scoring_group=_str(values=SCORING_GROUPS),
-    true_pairs=_count(),
-    commitments=_count(),
-    pairs=_count(),
-    calibration_labels=_count(),
-    key_link_share=_f64(nullable=True),
+    climate_usd=_usd(),
+    crosswalk_usd=_usd(nullable=True),
+    crosswalk_share=_f64(nullable=True),
+    scoring_group=_str(nullable=True, values=SCORING_GROUPS),
+    true_pairs=Column(pl.Int32(), nullable=True),
+    commitments=Column(pl.Int32(), nullable=True),
+    pairs=Column(pl.Int32(), nullable=True),
+    calibration=_str(nullable=True, values=("own", "pooled")),
+    threshold=_f64(nullable=True),
+    best_threshold=_f64(nullable=True),
 )
 
 # A CRS record's disbursement at face value, split over CRDF commitments (`row_id`).
@@ -470,6 +626,12 @@ ALLOCATIONS = _table(
     allocated_high_usd=_usd(),
     rule=_str(values=ALLOCATION_RULES),
     disbursement_source=_str(values=DISBURSEMENT_SOURCES),
+    # The trace link that carried the allocation, from the record's unit to
+    # `commitment_unit_id` under `link_method`. Where several carried parts of it,
+    # the one of allocation's first pass that carried the most. Null under rule
+    # `excess` and on fills.
+    link_method=_str(nullable=True, values=LINK_METHODS),
+    commitment_unit_id=_str(nullable=True),
 )
 
 # Status uses the linked CRS commitment's face. disbursed_usd is in the dollars
@@ -521,6 +683,7 @@ BANK_YEAR_OVERLAP = _table(
     ledger_usd=_usd(),
     crs_usd=_usd(),
     share_keys_within_10pct=_f64(),
+    unkeyed_share=_f64(),
     passed=_bool(),
 )
 
@@ -551,15 +714,28 @@ PAIR_LABELS = _table(
     pair_label_source=_str(values=PAIR_LABEL_SOURCES),
 )
 
+# Decisions on queued pairs and blind-sample pairs, appended over time. A decision
+# carries either the queue's `review_reason` or the blind sample's `sample_id`:
+# queue decisions become pair labels and link overrides, and blind-sample decisions
+# only measure precision. `label_source` says whether a person or an agent decided;
+# an agent's decision names its `model`, its `confidence` that the pair matches, and
+# its labelling `round`. `reviewer` names the person or the agent run, and `note`
+# holds the stated reason.
 REVIEW_DECISIONS = _table(
     "review_decisions",
-    ("task", "left_id", "right_id"),
+    ("task", "left_id", "right_id", "decided_at"),
     task=_str(values=LINK_TASKS),
     left_id=_str(),
     right_id=_str(nullable=True),
     decision=_str(values=DECISIONS),
+    label_source=_str(values=DECIDERS),
     reviewer=_str(),
+    model=_str(nullable=True),
+    confidence=_f64(nullable=True),
+    round=_str(nullable=True, values=LABEL_ROUNDS),
     note=_str(nullable=True),
+    review_reason=_str(nullable=True, values=REVIEW_REASONS),
+    sample_id=_str(nullable=True),
     decided_at=Column(pl.Datetime("us", "UTC")),
 )
 
@@ -573,24 +749,14 @@ OBJECTIVE_LABELS = _table(
     probability=_f64(nullable=True),
 )
 
-JEV_LEVEL_MAP = _table(
-    "jev_level_map",
-    ("objective", "jev_model", "expected_coefficient"),
-    objective=_str(values=OBJECTIVES),
-    jev_model=_str(),
-    expected_coefficient=_f64(),
-    level=_f64(),
-)
-
 # Shares of the agency's spending by objective that hold under every method's
-# coefficients: the OECD's imputed shares (`oecd`), which the build writes, and under
-# `one` a share the query reads for a channel and year that `agency_spending` does
-# not measure. The
-# adaptation and mitigation shares each include the cross_cutting share, as
-# `adaptation_usd`, `mitigation_usd` and `overlap_usd` do, so the climate share is
-# adaptation + mitigation - cross_cutting. A channel, year and source holds either
-# those split rows or one `climate` row, the total climate share with no split by
-# objective.
+# coefficients: the OECD's imputed shares (`oecd`), and under `one` the OECD's
+# imputed share for a channel and year that `agency_spending` does not measure, with
+# `share_source` `oecd`. The adaptation and mitigation shares each include the
+# cross_cutting share, as `adaptation_usd`, `mitigation_usd` and `overlap_usd` do,
+# so the climate share is adaptation + mitigation - cross_cutting. A channel, year
+# and source holds either those split rows or one `climate` row, the total climate
+# share with no split by objective.
 AGENCY_SHARES = _table(
     "agency_shares",
     ("channel_code", "year", "objective", "source"),
@@ -601,28 +767,35 @@ AGENCY_SHARES = _table(
     source=_str(values=SHARE_SOURCES),
 )
 
-# Each agency's CRDF commitments over a share year's span by Rio markers, as fractions
-# of its CRS commitments over the span, from which the query weighs the agency's
-# climate share under any method's coefficients. A row with markers holds the face
-# value at those markers, with null component shares. The row with null markers holds
-# the face value and climate components of the commitments that report components,
-# adaptation and mitigation each including the overlap. A channel and share year
-# whose span has positive CRS commitments and no CRDF commitment holds one row at
-# markers 0 and 0 with no face value, so its share is 0. A row is not
-# `adaptation_measured` where its span reaches a year the CRDF does not measure
-# adaptation in, and the agency's adaptation and cross-cutting shares are then null.
+# Each agency's CRDF commitments over a share year's span, as fractions of its CRS
+# commitments over the span, from which the query weighs the agency's climate share
+# under any method's coefficients. A row with markers holds the face value of the
+# commitments at those markers and at one `published` share, the climate share of
+# face value the provider published, which caps each marker weight as IFAD's
+# significant rows at 0.4 do; its component shares are null. The row with null
+# markers and a null `published` holds the face value and climate components of the
+# commitments that report components, adaptation and mitigation each including the
+# overlap. A measured share year whose span holds no CRDF commitment holds one row at
+# markers 0 and 0 with no face value and a null `published`, so its share is 0.
+# `share_source` is `computed` on a share year measured on enough CRS commitments and
+# `held` on a later year that rests on too few, which repeats the rows of the last
+# computed year (`measure.agency_spending`). A row is not `adaptation_measured` where
+# its span reaches a year the CRDF does not measure adaptation in, and the agency's
+# adaptation and cross-cutting shares are then null.
 AGENCY_SPENDING = _table(
     "agency_spending",
-    ("channel_code", "year", "rio_adaptation", "rio_mitigation"),
+    ("channel_code", "year", "rio_adaptation", "rio_mitigation", "published"),
     channel_code=_code(),
     year=_year(),
     rio_adaptation=_rio(),
     rio_mitigation=_rio(),
+    published=_f64(nullable=True),
     face_share=_f64(),
     adaptation_share=_f64(nullable=True),
     mitigation_share=_f64(nullable=True),
     overlap_share=_f64(nullable=True),
     adaptation_measured=_bool(),
+    share_source=_str(values=SPENDING_ORIGINS),
 )
 
 MODELLED = _table(
@@ -651,7 +824,11 @@ COMMITMENTS = _table(
     channel_code=_code(nullable=True),
     bi_multi=_bi_multi(),
     purpose_code=_code(nullable=True),
-    flow_code=_code(nullable=True),
+    # The CRS flow category the CRDF publishes: 10 ODA, 21 other official flows,
+    # 22, 30 private grants and 60 private market flows. A disbursement carries its
+    # CRS record's flow code (11 ODA grants, 13 ODA loans, 19 equity) instead, and a
+    # fill, which has no CRS record, a null one.
+    flow_category=_code(nullable=True),
     crs_id=_str(nullable=True),
     project_number=_str(nullable=True),
     rio_adaptation=_rio(),
@@ -675,6 +852,12 @@ COMMITMENTS = _table(
     disbursed_low_usd=_usd(),
     disbursed_high_usd=_usd(),
     project_disbursing=_bool(),
+    # True or null: true where the bank's ledger
+    # (`ledger.UNDISBURSED_PUBLISHERS`) confirms no disbursement; null where no
+    # ledger covers the row or it shows money moving. It stands whatever `status`
+    # says, so a row the allocation calls disbursed and the ledger does not points
+    # at a link to check.
+    ledger_undisbursed=_bool(nullable=True),
     repeat_of=_str(nullable=True),
     # The published CRDF aggregate row this child was rebuilt from. The release
     # leaves such parents out, so the id names a CRDF row and no release row.
@@ -698,6 +881,10 @@ DISBURSEMENTS = _table(
     title=_str(nullable=True),
     # Face value of the record's disbursement allocated to `row_id`, with the
     # allocation's bounds: 0 <= allocated_low <= allocated <= allocated_high.
+    # allocated_low holds what certain links carried (`CERTAIN_METHODS`). A
+    # bank-ledger or IATI fill counts in full in both bounds, since it matches the
+    # commitment on its publisher's own id: the bank's ledger key or the fund's
+    # project id.
     allocated_usd=_usd(),
     allocated_low_usd=_usd(),
     allocated_high_usd=_usd(),
@@ -735,6 +922,9 @@ DISBURSEMENT_PROFILE = _table(
 # those that trace to at least one CRS record (`linked_usd`), the linked ones whose
 # CRDF rows reach their CRS commitment through `CERTAIN_ROUTES` alone
 # (`certain_route_usd`), and those labelled by a model or by a report.
+# `disbursed_climate_usd` and `certain_disbursed_climate_usd` are the climate value
+# of their disbursements in the high and low bounds (`allocated_high_usd`,
+# `allocated_low_usd`), at each commitment's climate share of face.
 # `grant_equiv_coverage` is the part of the linked commitments' allocated value
 # (`allocated_usd`) whose record has a grant equivalent, null without allocations.
 # `repeat_climate_usd` is the climate value of rows that repeat an earlier vintage,
@@ -748,33 +938,72 @@ QUALITY = _table(
     climate_usd=_usd(),
     linked_usd=_usd(),
     certain_route_usd=_usd(),
+    disbursed_climate_usd=_usd(),
+    certain_disbursed_climate_usd=_usd(),
     model_labelled_usd=_usd(),
     report_labelled_usd=_usd(),
     repeat_climate_usd=_usd(),
     grant_equiv_coverage=_f64(nullable=True),
 )
 
-# Rio-marked CRS disbursements that reach no commitment in the release, by provider
-# and disbursement year, at face value: a linked record's disbursement beyond what
-# its commitments take (`excess_usd`), disbursements to commitments with no CRDF row
-# in the release (`outside_release_usd`), and records linked to no commitment
-# (`unlinked_marked_usd`). With the `disbursements` rows of CRS records they sum to
-# every Rio-marked CRS disbursement.
+# Rio-marked CRS disbursement that reaches no commitment in the release, one row
+# per CRS record, at face value. `untraced_usd` is a linked record's disbursement
+# beyond what its commitments take (`reason` `excess`), or the whole disbursement of a
+# record linked to no commitment (`unlinked`). The other columns are the record's
+# own, as on `disbursements`, so the query weighs the row by the record's own Rio
+# markers. The adaptation marker is null before `ADAPTATION_FIRST_YEAR`, as the
+# CRDF's is.
+UNTRACED = _table(
+    "untraced",
+    ("record_id",),
+    record_id=_str(),
+    year=_year(),
+    provider_code=_code(),
+    agency_code=_code(nullable=True),
+    recipient_code=_code(),
+    channel_code=_code(nullable=True),
+    bi_multi=_bi_multi(),
+    purpose_code=_code(nullable=True),
+    flow_code=_code(nullable=True),
+    project_number=_str(nullable=True),
+    title=_str(nullable=True),
+    rio_adaptation=_rio(),
+    rio_mitigation=_rio(),
+    untraced_usd=_usd(),
+    reason=_str(values=UNTRACED_REASONS),
+    record_disbursement_usd=_usd(),
+    record_grant_equiv_usd=_usd(nullable=True, minimum=0.0),
+)
+
+# Rio-marked CRS disbursement by provider and disbursement year, at face value: all
+# of it (`marked_usd`), and its parts outside `disbursements`: a linked record's
+# disbursement beyond what its commitments take (`excess_usd`), disbursements to
+# commitments with no CRDF row in the release (`outside_release_usd`), records
+# linked to no commitment (`unlinked_marked_usd`), and the unlinked records of the
+# GCF and the GEF whose money the funds' IATI route counts (`fund_unlinked_usd`, 0
+# with `gap_fill` off). Excess and unlinked count in the totals through `untraced`,
+# and the release leaves the other two out. The four parts and the `disbursements`
+# rows of Rio-marked CRS records sum to `marked_usd` (`release_invariants`).
 UNALLOCATED = _table(
     "unallocated",
     ("provider_code", "year"),
     provider_code=_code(),
     year=_year(),
+    marked_usd=_usd(),
     excess_usd=_usd(),
     outside_release_usd=_usd(),
     unlinked_marked_usd=_usd(),
+    fund_unlinked_usd=_usd(),
 )
 
 # Every CRS flow, climate or not, summed. This is the denominator of `share_of_total`.
+# `agency_code` lets a query take out the EIB's flows where the EIB counts as a
+# channel.
 TOTAL_FLOWS = _table(
     "total_flows",
-    ("provider_code", "recipient_code", "year", "bi_multi", "flow"),
+    ("provider_code", "agency_code", "recipient_code", "year", "bi_multi", "flow"),
     provider_code=_code(),
+    agency_code=_code(nullable=True),
     recipient_code=_code(),
     year=_year(),
     bi_multi=_bi_multi(),
@@ -821,6 +1050,7 @@ RELEASE_TABLES = _by_name(
     BTR,
     DISBURSEMENT_PROFILE,
     QUALITY,
+    UNTRACED,
     UNALLOCATED,
     TOTAL_FLOWS,
     PROVIDER_COEFFICIENTS,
@@ -829,29 +1059,42 @@ RELEASE_TABLES = _by_name(
 STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
     "fetch": _by_name(RAW_MANIFEST),
     "normalise": _by_name(
-        CRDF, CRS, CORE_CONTRIBUTIONS, IMPUTED_SHARES, EXTERNAL, BTR, ORGS
+        CRDF,
+        CRDF_SPAN,
+        CRS,
+        CORE_CONTRIBUTIONS,
+        IMPUTED_SHARES,
+        EXTERNAL,
+        BTR,
+        ORGS,
+        LEDGER,
     ),
-    "link": _by_name(LINKS, UNITS, ID_PRACTICE, PROGRAMME_STEMS, PROVIDER_PROFILE),
+    "link": _by_name(
+        LINKS,
+        UNITS,
+        ID_PRACTICE,
+        PROGRAMME_STEMS,
+        CANDIDATES,
+        PAIR_SCORES,
+        PROVIDER_PROFILE,
+    ),
     "allocate": _by_name(
         ALLOCATIONS, COMMITMENT_STATUS, CANCELLATIONS, YEARS_SINCE_COMMITMENT
     ),
     "fill": _by_name(ALLOCATIONS, COMMITMENT_STATUS, BANK_YEAR_OVERLAP),
     "review": _by_name(LINKS, REVIEW_QUEUE, PAIR_LABELS, COMMITMENT_STATUS),
-    "label": _by_name(OBJECTIVE_LABELS, JEV_LEVEL_MAP),
+    "label": _by_name(OBJECTIVE_LABELS),
     "measure": _by_name(AGENCY_SHARES, AGENCY_SPENDING, MODELLED),
     "assemble": RELEASE_TABLES,
 }
 # Tables a stage may leave out. A stage that reads one that was not written raises
-# StageInputMissingError. `orgs` is written when recoveries are on, `btr` when the
-# build config names an ingested BTR table. `programme_stems` and `provider_profile`
-# are written by the link stage's candidate and scoring steps. The key tiers and the
-# within-year join write the other link tables without them. `bank_year_overlap` is
-# written by the bank-ledger gap fill, and `review_queue` and `pair_labels` by the
-# review queue. With their switches off the two stages pass the tables they carry
-# forward through unchanged.
+# StageInputMissingError. `orgs` is written when recoveries are on, `btr` when the build
+# config names an ingested BTR table, `ledger` when it names ledger sources.
+# `bank_year_overlap` is written by the bank-ledger gap fill, `review_queue` by the
+# review queue and `pair_labels` by the ledger check. With their switches off the two
+# stages pass the tables they carry forward through unchanged.
 OPTIONAL_STAGE_TABLES: Mapping[str, frozenset[str]] = {
-    "normalise": frozenset({"btr", "orgs"}),
-    "link": frozenset({"programme_stems", "provider_profile"}),
+    "normalise": frozenset({"btr", "orgs", "ledger"}),
     "fill": frozenset({"bank_year_overlap"}),
     "review": frozenset({"review_queue", "pair_labels"}),
 }
@@ -908,6 +1151,11 @@ def validate(table: TableSchema, frame: pl.DataFrame) -> None:
 
 # Absolute tolerance, in USD, for the amount checks in `release_invariants`.
 INVARIANT_TOLERANCE_USD = 1e-6
+# Relative tolerance for a provider-year total of `unallocated.marked_usd`, where
+# INVARIANT_TOLERANCE_USD is smaller. Its parts are sums of the allocations a
+# record's disbursement splits into, so rounding parts them from the total by up to
+# 1.1e-15 of it, 5e-6 USD on EU Institutions' 4.8bn of 2024 in an archive build.
+INVARIANT_RELATIVE_TOLERANCE = 1e-12
 # "Developing countries, unspecified": 998 in the CRDF and the DAC recipient list,
 # 9998 in the bulk CRS. Release tables carry 998 only.
 UNSPECIFIED_RECIPIENT = 998
@@ -942,7 +1190,20 @@ _DISBURSED_SUMS = {
 _COMPARED_AMOUNTS = {
     "commitments": ("face_usd", *_DISBURSED_SUMS),
     "disbursements": (*_DISBURSED_SUMS.values(), "record_disbursement_usd"),
+    "untraced": ("untraced_usd", "record_disbursement_usd"),
 }
+
+
+def measured_adaptation(marker: pl.Expr) -> pl.Expr:
+    """`marker`, an adaptation marker of a row with a `year`, null before
+    `ADAPTATION_FIRST_YEAR`, as no CRDF or CRS row measures adaptation earlier."""
+    return pl.when(pl.col("year") >= ADAPTATION_FIRST_YEAR).then(marker)
+
+
+def aggregate_channel(code: pl.Expr) -> pl.Expr:
+    """Whether a DAC channel code aggregates others: X0000 holds every code X????,
+    and XY000 every code XY???, as 44000 holds the World Bank Group's 44001."""
+    return code % 1_000 == 0
 
 
 def _exceeds(smaller: str, larger: str) -> pl.Expr:
@@ -954,13 +1215,27 @@ def _exceeds(smaller: str, larger: str) -> pl.Expr:
     return amount(smaller) - amount(larger) > INVARIANT_TOLERANCE_USD
 
 
+# The commitment facts a fill copies, since it has no CRS record of its own.
+_FILL_FACTS = (
+    "provider_code",
+    "agency_code",
+    "recipient_code",
+    "channel_code",
+    "bi_multi",
+    "purpose_code",
+    "project_number",
+)
+
+
 def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
-    """Problems with a release's `commitments`, `disbursements`, `agency_shares`,
-    `agency_spending` and `provider_coefficients`.
+    """Problems with a release's `commitments`, `disbursements`, `untraced`,
+    `unallocated`, `agency_shares`, `agency_spending`, `core_contributions` and
+    `provider_coefficients`.
 
     Every amount is finite or null; the other checks skip a non-finite amount, and
-    the sum and record checks skip the commitment and the record whose row holds
-    one, so it is reported once, as non-finite. Every disbursements row holds
+    the sum, record and untraced checks skip the commitment and the record whose
+    row holds one, and the `unallocated` total its provider and year, so it is
+    reported once, as non-finite. Every disbursements row holds
     0 <= allocated_low <= allocated <= allocated_high and 0 <= record_grant_equiv,
     and names a commitment. Per commitment, its rows' allocated, allocated_low and
     allocated_high sum to disbursed, disbursed_low and disbursed_high, and
@@ -969,22 +1244,30 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     rows share one `record_disbursement_usd` and one `record_grant_equiv_usd` (all
     null or all set), and its allocated amounts sum to at most
     `record_disbursement_usd`. Amounts compare within `INVARIANT_TOLERANCE_USD`, and
-    none of them is null. Every disbursements row but a bank-ledger fill names the
-    link that carried it. No disbursements row names a commitment that repeats an
-    earlier vintage, as allocate moves a repeat's allocations to its first row. No
-    commitment is another's `parent_row_id`, and no table in `tables` holds the
-    bulk CRS's `CRS_UNSPECIFIED_RECIPIENT`. A channel, year and source of
-    `agency_shares` holds either split rows or one `climate` row. Each
+    none of them is null. Every disbursements row from the CRS names the link that
+    carried it, and every fill (a bank-ledger or IATI row) carries its commitment's
+    provider, agency, recipient, channel, Bi_Multi, purpose and project number. No
+    disbursements row names a commitment that repeats an earlier vintage, as
+    allocate moves a repeat's allocations to its first row. No commitment is
+    another's `parent_row_id`, and no table in `tables` holds the bulk CRS's
+    `CRS_UNSPECIFIED_RECIPIENT`. A channel, year and source of `agency_shares`
+    holds either split rows or one `climate` row. Each
     `agency_spending` row holds both markers and no component shares, or neither
-    marker and all three component shares, and a channel, year and pair of markers
-    holds one row. A channel and year of `agency_spending` holds no `one` row of
-    `agency_shares`. The `provider_coefficients` checks are those of
-    `_coefficient_problems`. An empty list means every check passed.
+    marker and all three component shares, a channel, year, pair of markers and
+    published share holds one row, and a channel and year holds one `share_source`.
+    A channel and year of `agency_spending` holds no `one` row of `agency_shares`.
+    Each commitment's value under the OECD method equals its published
+    `climate_usd`, and no channel of `core_contributions` aggregates another of its
+    channels. The `untraced` checks are those of `_untraced_problems`, the
+    `unallocated` total that of `_marked_problems`, and the `provider_coefficients`
+    checks those of `_coefficient_problems`. An empty list means every check passed.
     """
     commitments, problems, _ = _finite(tables["commitments"], name="commitments")
     disbursements, non_finite, flagged = _finite(
         tables["disbursements"], name="disbursements"
     )
+    problems.extend(non_finite)
+    untraced, non_finite, _ = _finite(tables["untraced"], name="untraced")
     problems.extend(non_finite)
     # A non-finite amount is not null in `tables`, so it is reported once, above.
     problems.extend(
@@ -1005,17 +1288,28 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     for smaller, larger in _ALLOCATION_ORDER:
         failing = disbursements.filter(_exceeds(smaller, larger))
         problems.extend(
-            f"disbursements {row['row_id']} {row['record_id']} {row['year']}: "
-            f"{smaller} > {larger}"
+            f"disbursements {_row_label(row)}: {smaller} > {larger}"
             for row in failing.iter_rows(named=True)
         )
     unlinked = disbursements.filter(
-        pl.col("link_method").is_null(), pl.col("rule") != "bank_ledger"
+        pl.col("link_method").is_null(), pl.col("disbursement_source") == "crs"
     )
     problems.extend(
         f"disbursements {_row_label(row)}: no link carried it"
         for row in unlinked.iter_rows(named=True)
     )
+    fills = disbursements.filter(pl.col("disbursement_source") != "crs").join(
+        commitments.select("row_id", *_FILL_FACTS), on="row_id", suffix="_commitment"
+    )
+    for column in _FILL_FACTS:
+        differs = fills.filter(
+            ~pl.col(column).eq_missing(pl.col(f"{column}_commitment"))
+        )
+        problems.extend(
+            f"disbursements {_row_label(row)}: a fill whose {column} is not its "
+            "commitment's"
+            for row in differs.iter_rows(named=True)
+        )
     on_repeats = disbursements.join(
         commitments.filter(pl.col("repeat_of").is_not_null()), on="row_id", how="semi"
     )
@@ -1066,14 +1360,49 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
         f"commitments {row_id}: disbursed_high_usd > max(face_usd, 0)"
         for row_id in failing["row_id"]
     )
+    finite = disbursements.filter(
+        ~pl.col("record_id").is_in(flagged["record_id"].implode())
+    )
+    problems.extend(_record_problems(finite))
     problems.extend(
-        _record_problems(
-            disbursements.filter(
-                ~pl.col("record_id").is_in(flagged["record_id"].implode())
-            )
+        _untraced_problems(
+            untraced, disbursements=finite, unallocated=tables["unallocated"]
+        )
+    )
+    held = flagged.select("provider_code", "year").unique()
+    problems.extend(
+        _marked_problems(
+            disbursements.join(held, on=["provider_code", "year"], how="anti"),
+            unallocated=tables["unallocated"].join(
+                held, on=["provider_code", "year"], how="anti"
+            ),
         )
     )
     problems.extend(_share_problems(tables["agency_shares"]))
+    problems.extend(_oecd_problems(commitments))
+    core = tables["core_contributions"]
+    channel = pl.col("channel_code")
+    problems.extend(
+        f"core_contributions {provider} {year} {flow} {code}: an aggregate channel "
+        f"other than the {TOP_CHANNEL} remainder"
+        for provider, year, flow, code in core.filter(
+            aggregate_channel(channel), channel != TOP_CHANNEL
+        )
+        .select(*CONTRIBUTION_KEY, "channel_code")
+        .sort(pl.all())
+        .iter_rows()
+    )
+    problems.extend(
+        f"core_contributions {provider} {year} {flow}: a {TOP_CHANNEL} remainder "
+        "of zero or less"
+        for provider, year, flow in core.filter(
+            channel == TOP_CHANNEL,
+            pl.col("contribution_usd") <= INVARIANT_TOLERANCE_USD,
+        )
+        .select(CONTRIBUTION_KEY)
+        .sort(pl.all())
+        .iter_rows()
+    )
     problems.extend(
         _spending_problems(tables["agency_spending"], shares=tables["agency_shares"])
     )
@@ -1145,6 +1474,29 @@ def _row_label(row: Mapping[str, object]) -> str:
     return str(row["row_id"])
 
 
+def _oecd_problems(commitments: pl.DataFrame) -> list[str]:
+    """Commitments whose value under the OECD method differs from `climate_usd`."""
+    # `methods` reads its objectives from this module, so it is imported here.
+    from climate_finance.methods import OECD, face_shares, weights
+
+    oecd = weights(OECD, published=pl.col("share_climate"))["climate"]
+    # Lazy, so only the columns the check reads are copied.
+    failing = (
+        commitments.lazy()
+        .with_columns(**face_shares())
+        .filter(
+            (pl.col("face_usd") * oecd - pl.col("climate_usd")).abs()
+            > INVARIANT_TOLERANCE_USD
+        )
+        .select("row_id")
+        .collect()
+    )
+    return [
+        f"commitments {row_id}: the OECD method's value differs from climate_usd"
+        for row_id in failing["row_id"].sort()
+    ]
+
+
 def _share_problems(agency_shares: pl.DataFrame) -> list[str]:
     """Agency share keys that hold both a `climate` row and split rows."""
     climate = pl.col("objective") == "climate"
@@ -1165,7 +1517,8 @@ def _spending_problems(
     agency_spending: pl.DataFrame, *, shares: pl.DataFrame
 ) -> list[str]:
     """`agency_spending` rows that mix markers and component shares, keys held
-    twice, and channels and years that `shares` also holds under `one`."""
+    twice, channels and years of several share sources, and channels and years that
+    `shares` also holds under `one`."""
     key = AGENCY_SPENDING.sort_key
     markers = pl.col("rio_adaptation", "rio_mitigation")
     components = pl.col("adaptation_share", "mitigation_share", "overlap_share")
@@ -1177,6 +1530,9 @@ def _spending_problems(
     )
     mixed = agency_spending.filter(~(marker_row | component_row))
     repeated = agency_spending.filter(pl.struct(key).is_duplicated()).unique(key)
+    sources = agency_spending.group_by("channel_code", "year").agg(
+        pl.col("share_source").n_unique().alias("_sources")
+    )
     both = (
         agency_spending.select("channel_code", "year")
         .unique()
@@ -1195,6 +1551,13 @@ def _spending_problems(
         *(
             f"agency_spending {label(row)}: held by more than one row"
             for row in repeated.sort(key, nulls_last=True).iter_rows(named=True)
+        ),
+        *(
+            f"agency_spending {row['channel_code']} {row['year']}: rows of several "
+            "share sources"
+            for row in sources.filter(pl.col("_sources") > 1)
+            .sort("channel_code", "year")
+            .iter_rows(named=True)
         ),
         *(
             f"agency_spending {row['channel_code']} {row['year']}: also an "
@@ -1270,6 +1633,155 @@ def _record_problems(disbursements: pl.DataFrame) -> list[str]:
     return problems
 
 
+def _untraced_problems(
+    untraced: pl.DataFrame, *, disbursements: pl.DataFrame, unallocated: pl.DataFrame
+) -> list[str]:
+    """`untraced` rows that a query would count wrongly or twice.
+
+    Each row holds a positive `untraced_usd` of at most `record_disbursement_usd`,
+    a Rio marker above 0, no adaptation marker before `ADAPTATION_FIRST_YEAR`, and a
+    Bi_Multi code of the recipient view. An `unlinked`
+    row's record has no `disbursements` row and counts its whole disbursement. A
+    record in both tables gives the same `record_disbursement_usd` and
+    `record_grant_equiv_usd` in each, and its allocations and untraced amount sum to
+    at most its disbursement. `unallocated`'s excess and unlinked amounts equal the
+    `untraced` sums of each provider, year and reason.
+    """
+    amount, record = pl.col("untraced_usd"), pl.col("record_disbursement_usd")
+    marked = (pl.col("rio_adaptation") > 0) | (pl.col("rio_mitigation") > 0)
+    unlinked = pl.col("reason") == "unlinked"
+    checks = {
+        "an adaptation marker before ADAPTATION_FIRST_YEAR": pl.col(
+            "rio_adaptation"
+        ).is_not_null()
+        & measured_adaptation(pl.lit(value=True)).is_null(),
+        "untraced_usd is not positive": amount <= 0,
+        "untraced_usd above record_disbursement_usd": amount - record
+        > INVARIANT_TOLERANCE_USD,
+        "no Rio marker above 0": ~marked.fill_null(value=False),
+        "a Bi_Multi code the recipient view leaves out": ~pl.col("bi_multi").is_in(
+            RECIPIENT_VIEW
+        ),
+        "unlinked but short of record_disbursement_usd": unlinked
+        & ((amount - record).abs() > INVARIANT_TOLERANCE_USD),
+    }
+    problems = [
+        f"untraced {record_id}: {problem}"
+        for problem, failing in checks.items()
+        for record_id in untraced.filter(failing)["record_id"].sort()
+    ]
+    allocated = disbursements.group_by("record_id").agg(
+        pl.col("allocated_usd").sum().alias("_allocated"),
+        *(pl.col(column).first().alias(f"_{column}") for column in _RECORD_COLUMNS),
+    )
+    both = untraced.join(allocated, on="record_id")
+    problems.extend(
+        f"untraced {record_id}: unlinked, but disbursements holds the record"
+        for record_id in both.filter(unlinked)["record_id"].sort()
+    )
+    problems.extend(
+        f"untraced {record_id}: allocated and untraced sum above "
+        "record_disbursement_usd"
+        for record_id in both.filter(
+            pl.col("_allocated") + amount - record > INVARIANT_TOLERANCE_USD
+        )["record_id"].sort()
+    )
+    for column in _RECORD_COLUMNS:
+        differs = (pl.col(column) - pl.col(f"_{column}")).abs() > (
+            INVARIANT_TOLERANCE_USD
+        )
+        failing = both.filter(
+            differs.fill_null(value=False)
+            | (pl.col(column).is_null() != pl.col(f"_{column}").is_null())
+        )
+        problems.extend(
+            f"untraced {record_id}: {column} differs from disbursements"
+            for record_id in failing["record_id"].sort()
+        )
+    key = ["provider_code", "year"]
+    sums = untraced.group_by(key).agg(
+        _excess=amount.filter(~unlinked).sum(), _unlinked=amount.filter(unlinked).sum()
+    )
+    ledger = (
+        unallocated.select(*key, "excess_usd", "unlinked_marked_usd")
+        .join(sums, on=key, how="full", coalesce=True)
+        .with_columns(pl.exclude(key).fill_null(0.0))
+        .sort(key)
+    )
+    for column, part in (
+        ("excess_usd", "_excess"),
+        ("unlinked_marked_usd", "_unlinked"),
+    ):
+        failing = ledger.filter(
+            (pl.col(column) - pl.col(part)).abs() > INVARIANT_TOLERANCE_USD
+        )
+        problems.extend(
+            f"unallocated {provider} {year}: {column} {total!r} differs from the "
+            f"untraced sum {summed!r}"
+            for provider, year, total, summed in failing.select(
+                *key, column, part
+            ).iter_rows()
+        )
+    return problems
+
+
+def _marked_problems(
+    disbursements: pl.DataFrame, *, unallocated: pl.DataFrame
+) -> list[str]:
+    """Providers and years whose `unallocated.marked_usd` differs from the sum of
+    its parts: the allocated amounts of the `disbursements` rows of Rio-marked CRS
+    records, and `unallocated`'s excess, outside-release, unlinked and fund-unlinked
+    amounts. A Rio-marked record is in the recipient view's Bi_Multi codes and
+    carries a measured adaptation marker (`measured_adaptation`) or a mitigation
+    marker above 0, as `allocate.marked_records` selects them; a record that
+    disburses nothing has no allocation to sum. A provider and year missing from
+    one side counts 0 there. The two sides compare within `INVARIANT_TOLERANCE_USD`
+    or `INVARIANT_RELATIVE_TOLERANCE` of `marked_usd`, whichever is larger."""
+    key = ["provider_code", "year"]
+    marked = (measured_adaptation(pl.col("record_rio_adaptation")) > 0) | (
+        pl.col("record_rio_mitigation") > 0
+    )
+    released = (
+        disbursements.filter(
+            pl.col("disbursement_source") == "crs",
+            pl.col("bi_multi").is_in(RECIPIENT_VIEW),
+            marked.fill_null(value=False),
+        )
+        .group_by(key)
+        .agg(_released=pl.col("allocated_usd").sum())
+    )
+    ledger = (
+        unallocated.select(
+            *key,
+            "marked_usd",
+            _parts=pl.sum_horizontal(
+                "excess_usd",
+                "outside_release_usd",
+                "unlinked_marked_usd",
+                "fund_unlinked_usd",
+            ),
+        )
+        .join(released, on=key, how="full", coalesce=True)
+        .with_columns(pl.exclude(key).fill_null(0.0))
+        .with_columns(_summed=pl.col("_released") + pl.col("_parts"))
+        .filter(
+            (pl.col("marked_usd") - pl.col("_summed")).abs()
+            > pl.max_horizontal(
+                pl.lit(INVARIANT_TOLERANCE_USD),
+                INVARIANT_RELATIVE_TOLERANCE * pl.col("marked_usd").abs(),
+            )
+        )
+        .sort(key)
+    )
+    return [
+        f"unallocated {provider} {year}: marked_usd {marked_usd!r} differs from "
+        f"its parts' sum {summed!r}"
+        for provider, year, marked_usd, summed in ledger.select(
+            *key, "marked_usd", "_summed"
+        ).iter_rows()
+    ]
+
+
 # release.json --------------------------------------------------------------------
 
 
@@ -1309,3 +1821,17 @@ def sha256_file(path: Path) -> str:
     """Hex sha256 of a file's bytes."""
     with path.open("rb") as handle:
         return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+def scan_table(path: Path) -> pl.LazyFrame:
+    """Scan the stage or release table at `path`.
+
+    An empty table is read into memory instead. Polars 2.0.0 panics ("min > max")
+    estimating the rows of a `unique` or `group_by` over a scan of a parquet file
+    with no rows once the result meets a join, and not over the same empty frame
+    held in memory.
+    """
+    scan = pl.scan_parquet(path)
+    if scan.select(pl.len()).collect().item() == 0:
+        return pl.read_parquet(path).lazy()
+    return scan
