@@ -202,16 +202,9 @@ def adjudicate_band(
         CostCapExceededError: when the uncached requests' estimate exceeds the cap.
         JevCacheMissError: when the build is offline and a request is not cached.
     """
-    low, high = band
     pairs = scores.pairs
-    in_band = pl.col("p_model").is_between(low, high, closed="left") & (
-        pl.col("programme_level") != _SIBLING
-    )
-    labelled = pairs.filter(
-        pl.col("split") == TRAIN,
-        pl.col("donor_code").is_in(single_id_donors(pairs).implode()),
-    ).select(*_PAIR, "p_model", "programme_level", "placed_year", "true_pair")
-    fit_on = labelled.filter(in_band).select(*_PAIR, "p_model", y="true_pair")
+    labelled = labelled_pairs(pairs)
+    fit_on = band_fit_pairs(labelled, band=band)
     scale_on = spread_sample(
         labelled, band=probability_band(pl.col("p_model")), n=SCALE_SAMPLE
     ).select(*_PAIR, "p_model", y="true_pair")
@@ -222,7 +215,7 @@ def adjudicate_band(
                 f"{frame.height} {name} of single-id donors, {outcomes} true: the "
                 f"fit needs {MIN_FIT_OUTCOMES} of each outcome."
             )
-    eligible = pairs.filter(in_band, pl.col("split") == ELIGIBLE).select(
+    eligible = pairs.filter(in_band(band), pl.col("split") == ELIGIBLE).select(
         *_PAIR, "p_model"
     )
     asked = (
@@ -254,6 +247,32 @@ def adjudicate_band(
         ),
         model=client.model,
     )
+
+
+def in_band(band: tuple[float, float]) -> pl.Expr:
+    """Whether a pair goes to Jev: its `p_model` lies in `band`, `[low, high)`,
+    and it is not a sibling."""
+    low, high = band
+    return pl.col("p_model").is_between(low, high, closed="left") & (
+        pl.col("programme_level") != _SIBLING
+    )
+
+
+def labelled_pairs(pairs: pl.DataFrame) -> pl.DataFrame:
+    """The training pairs of single-id donors (`single_id_donors`) among
+    `TruthScores.pairs`, the pairs Jev's fits and threshold read."""
+    return pairs.filter(
+        pl.col("split") == TRAIN,
+        pl.col("donor_code").is_in(single_id_donors(pairs).implode()),
+    ).select(*_PAIR, "p_model", "programme_level", "placed_year", "true_pair")
+
+
+def band_fit_pairs(
+    labelled: pl.DataFrame, *, band: tuple[float, float]
+) -> pl.DataFrame:
+    """The pairs of `labelled` (`labelled_pairs`) in `band` (`in_band`), with their
+    label `y`. These are the pairs the combined logistic fits."""
+    return labelled.filter(in_band(band)).select(*_PAIR, "p_model", y="true_pair")
 
 
 def best_link_threshold(pairs: pl.DataFrame, *, threshold: float) -> float:

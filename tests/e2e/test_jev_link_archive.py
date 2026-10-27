@@ -1,11 +1,15 @@
 """Jev's combined classifier on the held-out half of the archive's labelled pairs.
 
 The link stage scores as in `test_score_archive`, with key repair and recoveries on.
-The combined logistic fits on the training pairs the build fits it on
-(`jev.band_fit_pairs`), so no held-out label reaches it. Each held-out disbursement
-unit ranks its labelled pairs of both halves (`heldout_links`), every pair in the
-band (`jev.in_band`) taking its combined probability, as `classifier_links` does
-with `coalesce(p_combined, p_model)`, and links at `LINK_THRESHOLD`. Link precision
+Each held-out disbursement unit ranks its labelled pairs of both halves
+(`heldout_links`), every pair in the band (`jev.in_band`) taking its combined
+probability, as `classifier_links` does with `coalesce(p_combined, p_model)`, and
+links at `LINK_THRESHOLD`. Every combined probability ranked is out-of-sample, as
+`p_model` is. A held-out pair takes the logistic the build deploys, fitted on its
+training pairs (`jev.band_fit_pairs`). A training pair takes the logistic fitted on
+those of them in the other folds of `training_folds`, the folds whose classifier
+scored it. Single-id donors are chosen once over every training pair, as the build
+chooses them. Link precision
 is the share of these links that are true, and monetary precision the share of
 their disbursement units' `disbursement_usd`. Both are read overall and per
 provider, for the combined classifier and the classifier alone on the same units.
@@ -27,6 +31,7 @@ from archive_build import archive_config
 from climate_finance.build.config import Jev
 from climate_finance.build.jev_client import JevClient
 from climate_finance.build.link.jev import (
+    Logistic,
     ask_jev,
     band_fit_pairs,
     fit_logistic,
@@ -40,6 +45,7 @@ from climate_finance.build.link.score import (
     TRAIN,
     Scored,
     heldout_links,
+    training_folds,
 )
 from climate_finance.build.stages import table_path
 
@@ -62,23 +68,23 @@ _PAIR = ["left_id", "right_id"]
 MIN_PROVIDER_LINKS = 100
 # Each classifier's held-out links, link precision and monetary precision. Jev's
 # adjudication neither helps nor hurts out of sample overall: precision is 0.9139
-# for the classifier alone and 0.9162 with Jev, monetary precision 0.9473 and
-# 0.9454.
+# for the classifier alone and 0.9164 with Jev, monetary precision 0.9473 and
+# 0.9460.
 OVERALL = {
     "base": (25809, 0.9139, 0.9473),
-    "jev": (25864, 0.9162, 0.9454),
+    "jev": (25860, 0.9164, 0.946),
 }
 # The same figures for each provider with `MIN_PROVIDER_LINKS`, by donor code. Jev
 # changes precision most for Italy (6), from 0.8769 to 0.9157, and Slovenia (61),
 # from 0.4812 to 0.9412 on 68 links in place of 133. Denmark (3) and Canada (301)
 # stay below 0.8 under both.
 PROVIDERS = {
-    1: {"base": (796, 0.8832, 0.9603), "jev": (799, 0.8874, 0.9638)},
+    1: {"base": (796, 0.8832, 0.9603), "jev": (802, 0.889, 0.9711)},
     2: {"base": (312, 0.9423, 0.8816), "jev": (325, 0.9169, 0.883)},
-    3: {"base": (1037, 0.6307, 0.6405), "jev": (1081, 0.6374, 0.6535)},
-    4: {"base": (1432, 0.963, 0.9834), "jev": (1422, 0.9698, 0.9874)},
-    5: {"base": (614, 0.8339, 0.8364), "jev": (643, 0.8258, 0.8246)},
-    6: {"base": (1731, 0.8769, 0.8488), "jev": (1649, 0.9157, 0.8936)},
+    3: {"base": (1037, 0.6307, 0.6405), "jev": (1079, 0.6376, 0.6525)},
+    4: {"base": (1432, 0.963, 0.9834), "jev": (1421, 0.9704, 0.9877)},
+    5: {"base": (614, 0.8339, 0.8364), "jev": (643, 0.8258, 0.8219)},
+    6: {"base": (1731, 0.8769, 0.8488), "jev": (1648, 0.9157, 0.894)},
     7: {"base": (1265, 0.9945, 0.9977), "jev": (1264, 0.9953, 0.9978)},
     8: {"base": (2506, 0.9988, 0.9995), "jev": (2505, 0.9992, 0.9996)},
     10: {"base": (1359, 0.9691, 0.9865), "jev": (1360, 0.9684, 0.9865)},
@@ -87,8 +93,8 @@ PROVIDERS = {
     18: {"base": (1538, 0.946, 0.9267), "jev": (1538, 0.946, 0.9267)},
     50: {"base": (870, 1.0, 1.0), "jev": (870, 1.0, 1.0)},
     61: {"base": (133, 0.4812, 0.7233), "jev": (68, 0.9412, 0.9954)},
-    301: {"base": (2526, 0.768, 0.656), "jev": (2614, 0.7487, 0.6563)},
-    701: {"base": (1773, 0.8359, 0.9613), "jev": (1831, 0.8241, 0.9569)},
+    301: {"base": (2526, 0.768, 0.656), "jev": (2613, 0.7486, 0.6568)},
+    701: {"base": (1773, 0.8359, 0.9613), "jev": (1830, 0.8246, 0.9589)},
     742: {"base": (832, 0.9627, 0.9801), "jev": (828, 0.9662, 0.9809)},
     820: {"base": (396, 0.9141, 0.9724), "jev": (394, 0.9188, 0.9749)},
     918: {"base": (133, 0.9549, 0.977), "jev": (130, 0.9692, 0.9887)},
@@ -157,16 +163,35 @@ def weighed(
     if not LIVE:
         assert client.live_calls == 0
 
+    fitted = fit_on.join(answered, on=_PAIR)
+    answers = ranked.join(answered, on=_PAIR)
     # As `adjudicate_band` fits it.
-    fitted = fit_on.join(answered, on=_PAIR).sort(_PAIR)
-    combined = fit_logistic(fitted, inputs=["p_model", "p_jev"], y="y")
+    deployed = _combined(fitted)
+    scored_pairs = [
+        answers.filter(split=HELDOUT).select(
+            *_PAIR, p_combined=deployed(pl.col("p_model"), pl.col("p_jev"))
+        )
+    ]
+    # The folds of `score_truth_group`, on its training pairs in the same order.
+    train = pairs.filter(split=TRAIN).sort(_PAIR)
+    folds = training_folds(train)
+    assert folds is not None
+    for fit_rows, score_rows in folds:
+        fold = _combined(
+            fitted.join(train[fit_rows].select(_PAIR), on=_PAIR, how="semi")
+        )
+        scored_pairs.append(
+            answers.join(train[score_rows].select(_PAIR), on=_PAIR, how="semi").select(
+                *_PAIR, p_combined=fold(pl.col("p_model"), pl.col("p_jev"))
+            )
+        )
+    combined = pl.concat(scored_pairs)
+    assert combined.height == answers.height
     return (
-        ranked.join(answered, on=_PAIR, how="left")
+        ranked.join(combined, on=_PAIR, how="left")
         .select(
-            pl.exclude("p_jev"),
-            probability=pl.coalesce(
-                combined(pl.col("p_model"), pl.col("p_jev")), "p_model"
-            ),
+            pl.exclude("p_combined"),
+            probability=pl.coalesce("p_combined", "p_model"),
         )
         .join(
             units.select(left_id="unit_id", disbursement_usd="disbursement_usd"),
@@ -174,6 +199,11 @@ def weighed(
             how="left",
         )
     )
+
+
+def _combined(fitted: pl.DataFrame) -> Logistic:
+    """The combined logistic fitted on `fitted`, sorted by pair."""
+    return fit_logistic(fitted.sort(_PAIR), inputs=["p_model", "p_jev"], y="y")
 
 
 def _links(weighed: pl.DataFrame, *, probability: str) -> pl.DataFrame:
