@@ -1,6 +1,12 @@
 """CRS records into units, and the exact key tiers that link them, first match wins.
 
-A unit sums the CRS records that share every key field (`UNIT_KEY`). Each disbursement
+A unit sums the CRS records of one line: those that share every key field
+(`UNIT_KEY`) but the purpose, which separates units only where the records carry no
+crs id (`with_line_key`). A donor can file one line under a crs id as a record per
+purpose, as Canada and the Adaptation Fund do, and the line is one unit, whose
+`purpose_codes` list its purposes. A tier keyed on the purpose keys on the unit's
+purpose group (`purpose_group`), so a line matches a unit that shares any of its
+purposes, and each unit stays in one group of the tier. Each disbursement
 unit takes the first tier in `TIERS` whose key reaches an eligible commitment unit,
 meaning one placed at or before the disbursement's record year and at or after its floor
 year. A disbursement under the commitment's own crs id passes its floor when no
@@ -30,7 +36,7 @@ books one loan number under a new crs id each year, and Canada files one line of
 recipient under several crs ids split by purpose. They hold for every agency, since one
 whose ids mostly persist, such as Korea's EDCF or KfW, still files some projects under
 a new crs id each year. They compare awards (`AWARD_KEY`): the project number without
-`-` and `_` (`pn_key`), joined to the purpose code where the award commits its
+`-` and `_` (`pn_key`), joined to the purpose group where the award commits its
 components under separate crs ids and purposes and one of its units disburses
 without committing (`split_components`).
 
@@ -74,6 +80,10 @@ UNIT_KEY = (
     "year",
     "commitment_year",
 )
+# The fields a unit's records share (`with_line_key`), and those its id digests
+# (`id_purpose`).
+LINE_KEY = tuple("purpose_key" if name == "purpose_code" else name for name in UNIT_KEY)
+ID_KEY = tuple("_purpose" if name == "purpose_code" else name for name in UNIT_KEY)
 # IBRD and IDA, whose project numbers carry the loan or credit number.
 WORLD_BANK_DONORS = (901, 905)
 # The project-number tiers' key: one award of one agency in one recipient.
@@ -108,7 +118,7 @@ TIERS = (
     Tier("wb_loan", ("donor_code", "loan")),
     Tier(
         "crs_id_purpose",
-        ("donor_code", "crs_id", "purpose_code", "recipient_code"),
+        ("donor_code", "crs_id", "crs_purpose", "recipient_code"),
         same_crs_id=True,
     ),
     Tier("crs_id", ("donor_code", "crs_key"), same_crs_id=True),
@@ -119,14 +129,11 @@ TIERS = (
         floor="parent_floor_year",
     ),
     Tier("pn_recipient_date", (*AWARD_KEY, "line_date"), unique_by="unit_id"),
-    Tier("pn_recipient_purpose", (*AWARD_KEY, "purpose_code"), unique_by="crs_id"),
+    Tier("pn_recipient_purpose", (*AWARD_KEY, "award_purpose"), unique_by="crs_id"),
     Tier("pn_recipient", AWARD_KEY, unique_by="crs_id"),
 )
 if tuple(tier.name for tier in TIERS) != schema.KEY_TIERS:
     raise RuntimeError("TIERS must follow schema.KEY_TIERS")
-# A purpose-split line: the commitment units under one crs id that share every
-# `UNIT_KEY` field but the purpose code (`purpose_units`).
-SPLIT_LINE_KEY = tuple(name for name in UNIT_KEY if name != "purpose_code")
 
 
 def separator_free_pn(project_number: pl.Expr) -> pl.Expr:
@@ -148,34 +155,73 @@ def loan_number(donor_code: pl.Expr, project_number: pl.Expr) -> pl.Expr:
 def build_units(crs: pl.LazyFrame) -> pl.LazyFrame:
     """Sum `crs` records into units, in the `units` schema.
 
-    A unit's commitment date is its largest record's, by commitment plus
-    disbursement, ties to the smaller record id. Units whose commitments and
-    disbursements both sum to zero are left out.
+    A unit sums the records of one line (`with_line_key`), whatever their purposes.
+    Its purpose code and commitment date are its largest record's, by commitment
+    plus disbursement, ties to the smaller record id, and `purpose_codes` lists every
+    purpose its records carry. Units whose commitments and disbursements both sum to
+    zero are left out.
     """
     dated = pl.col("commitment_year") < pl.col("year")
     return (
-        crs.with_columns(
-            project_number=normalise_pn(pl.col("project_number")),
-            commitment_year=pl.col("commitment_date").dt.year().cast(pl.Int16),
+        with_line_key(
+            crs.with_columns(
+                project_number=normalise_pn(pl.col("project_number")),
+                commitment_year=pl.col("commitment_date").dt.year().cast(pl.Int16),
+            )
         )
-        .group_by(UNIT_KEY)
+        .group_by(LINE_KEY)
         # Amounts are summed as lists in record order. A partitioned group sum
         # adds in whatever order threads finish, which changes the last bit.
         .agg(
             pl.col("commitment_usd", "disbursement_usd").sort_by("record_id"),
-            largest_record("commitment_date"),
+            largest_record("commitment_date", "purpose_code"),
+            *purpose_columns(),
             record_ids=pl.col("record_id").sort(),
         )
         .with_columns(pl.col("commitment_usd", "disbursement_usd").list.sum())
         .filter((pl.col("commitment_usd") != 0) | (pl.col("disbursement_usd") != 0))
+        .with_columns(id_purpose())
         .with_columns(
-            unit_id=content_id(UNIT_KEY, order_by=UNIT_KEY),
+            unit_id=content_id(ID_KEY, order_by=ID_KEY),
             placed_year=pl.when(dated)
             .then(pl.col("commitment_year"))
             .otherwise(pl.col("year")),
             floor_year=pl.when(dated).then(pl.col("commitment_year")),
         )
         .select(list(schema.UNITS.columns))
+    )
+
+
+def with_line_key(records: pl.LazyFrame) -> pl.LazyFrame:
+    """`records` with `purpose_key`, which with the rest of `LINE_KEY` names the
+    unit a record falls in: null under a crs id, else the record's purpose code.
+
+    A donor can file one line under a crs id as one record per purpose, as Canada
+    and the Adaptation Fund do, each committing part of the line, and a later
+    record of the line continues the line. Without a crs id the purpose is all that
+    tells two activities of one project number, recipient and year apart.
+    """
+    return records.with_columns(
+        purpose_key=pl.when(pl.col("crs_id").is_null()).then(pl.col("purpose_code"))
+    )
+
+
+def purpose_columns() -> list[pl.Expr]:
+    """Aggregations of a unit's records: every purpose code they carry, as
+    `purpose_codes`, and how many, a missing code counting as one, as `_purposes`
+    (`id_purpose`)."""
+    return [
+        pl.col("purpose_code").drop_nulls().unique().sort().alias("purpose_codes"),
+        pl.col("purpose_code").n_unique().alias("_purposes"),
+    ]
+
+
+def id_purpose() -> pl.Expr:
+    """The purpose code a unit's id reads (`ID_KEY`): its records' one code, or null
+    where they carry several. A unit of one purpose keeps the id it had when every
+    unit was one purpose's."""
+    return (
+        pl.when(pl.col("_purposes") == 1).then(pl.col("purpose_code")).alias("_purpose")
     )
 
 
@@ -219,8 +265,10 @@ def key_columns(units: pl.DataFrame) -> pl.DataFrame:
         crs_key=crs_key(),
         parent_key=_parent_key(pl.col("crs_id")),
         pn_key=_pn_key(units),
+        crs_purpose=purpose_group(units, by=("donor_code", "crs_id", "recipient_code")),
     )
-    return units.with_columns(award=split_components(units, number="pn_key"))
+    units = units.with_columns(award=split_components(units, number="pn_key"))
+    return units.with_columns(award_purpose=purpose_group(units, by=AWARD_KEY))
 
 
 def link_by_tiers(
@@ -264,94 +312,6 @@ def link_by_tiers(
             tier_links.select(unit_id="left_id"), on="unit_id", how="anti"
         )
     return pl.concat(pairs)
-
-
-def purpose_units(
-    pairs: pl.DataFrame, *, units: pl.DataFrame, reached: pl.Series
-) -> pl.DataFrame:
-    """`pairs` with each commitment on a purpose-split line (`SPLIT_LINE_KEY`)
-    replaced by the line's unit the disbursement continues, the pairs of a
-    disbursement that continues an unreached unit dropped, and the duplicate rows
-    this makes dropped, the first kept.
-
-    A donor can file one line of a project and recipient as several units, one per
-    purpose, as Canada and the Adaptation Fund do. A disbursement continues the
-    unit of its own purpose, and the line's other units compare alike with it on
-    every field but the purpose. A pair per unit then adds false pairs a model
-    cannot tell from the true one, so a disbursement pairs with the line once.
-
-    The line's unit is the one of the disbursement's purpose code, as the
-    `crs_id_purpose` tier links. Where that unit is not among `reached`, it carries
-    no climate finance, and the disbursement keeps no pair on the line. Where the
-    line has no unit of that code, the unit is the reached one of the
-    disbursement's three-digit purpose category, else the largest reached
-    commitment, ties to the smaller unit id. The unit depends only on the
-    disbursement, the line and `reached`, whichever of the line's units `pairs`
-    reach.
-
-    Args:
-        pairs: rows of a disbursement (`left_id`) and a commitment (`right_id`)
-            unit, in any order, which the output keeps.
-        units: the link stage's units, which hold both sides of `pairs`.
-        reached: the unit ids of the commitments a `crdf_crs` link reaches.
-    """
-    key = list(SPLIT_LINE_KEY)
-    lines = (
-        units.filter(pl.col("commitment_usd") > 0)
-        .drop_nulls("crs_id")
-        .filter(pl.len().over(key) > 1)
-        .select(
-            "unit_id",
-            "purpose_code",
-            "commitment_usd",
-            line=pl.col("unit_id").min().over(key),
-            reached=pl.col("unit_id").is_in(reached.implode()),
-        )
-    )
-    on_line = (
-        pairs.select("left_id", "right_id")
-        .join(lines.select("line", right_id="unit_id"), on="right_id")
-        .select("left_id", "line")
-        .unique()
-        .join(
-            units.select(left_id="unit_id", left_purpose="purpose_code"),
-            on="left_id",
-            how="left",
-        )
-        .join(lines, on="line")
-    )
-    own = pl.col("purpose_code") == pl.col("left_purpose")
-    category = pl.col("purpose_code") // 100 == pl.col("left_purpose") // 100
-    has_own = own.fill_null(value=False).any().over("left_id", "line")
-    picks = (
-        on_line.filter(
-            pl.when(has_own).then(own.fill_null(value=False)).otherwise("reached")
-        )
-        .sort(
-            "left_id",
-            "line",
-            category.fill_null(value=False),
-            "commitment_usd",
-            "unit_id",
-            descending=[False, False, True, True, False],
-        )
-        .unique(["left_id", "line"], keep="first", maintain_order=True)
-        .select("left_id", "line", pick=pl.when("reached").then("unit_id"))
-    )
-    on = ["left_id", "line"]
-    return (
-        pairs.join(
-            lines.select("line", right_id="unit_id"),
-            on="right_id",
-            how="left",
-            maintain_order="left",
-        )
-        .join(picks, on=on, how="left", maintain_order="left")
-        .filter(pl.col("line").is_null() | pl.col("pick").is_not_null())
-        .with_columns(right_id=pl.coalesce("pick", "right_id"))
-        .drop("line", "pick")
-        .unique(["left_id", "right_id"], keep="first", maintain_order=True)
-    )
 
 
 def floor_loaded(*, first_year: int) -> pl.Expr:
@@ -463,6 +423,58 @@ def _pn_key(units: pl.DataFrame) -> pl.Series:
     )
 
 
+def purpose_group(units: pl.DataFrame, *, by: tuple[str, ...]) -> pl.Series:
+    """Each unit's purpose group within its `by` key: the smallest of the purpose
+    codes that the key's units join, through lines that carry several of them, to
+    any of its own. Null for a unit with no purpose code or a null `by` field.
+
+    A key tier on the group links a disbursement to the lines that share a purpose
+    with it, and to any line those share one with, so that each unit falls in one
+    group of the tier, and the groups of one tier share no commitment. Groups form
+    over commitments and disbursements only, so a unit that does neither (a reflow
+    unit) changes none of them. Its group is the smallest of its codes' groups, or
+    of the codes themselves where no unit that commits or disburses carries them.
+    """
+    rows = units.select(*by, "purpose_codes", "commitment_usd", "disbursement_usd")
+    rows = rows.with_row_index("_row")
+    codes = (
+        rows.filter((pl.col("commitment_usd") > 0) | (pl.col("disbursement_usd") > 0))
+        .drop_nulls(by)
+        .select("_row", *by, code="purpose_codes")
+        .explode("code")
+        .drop_nulls("code")
+    )
+    code_key = [*by, "code"]
+    groups = codes.select(*code_key).unique().with_columns(group=pl.col("code"))
+    while True:
+        # A row takes the smallest group of its codes, and a code the smallest
+        # group of the rows that carry it, until no group moves.
+        row_groups = (
+            codes.join(groups, on=code_key).group_by("_row").agg(pl.col("group").min())
+        )
+        moved = (
+            codes.join(row_groups, on="_row")
+            .group_by(code_key)
+            .agg(pl.col("group").min())
+            .join(groups, on=code_key, suffix="_was")
+        )
+        if moved.filter(pl.col("group") != pl.col("group_was")).is_empty():
+            break
+        groups = moved.drop("group_was")
+    return (
+        rows.drop_nulls(by)
+        .select("_row", *by, code="purpose_codes")
+        .explode("code")
+        .join(groups, on=code_key, how="left")
+        .group_by("_row")
+        .agg(pl.coalesce("group", "code").min())
+        .join(rows.select("_row"), on="_row", how="right")
+        .sort("_row")
+        .get_column("group")
+        .alias("purpose_group")
+    )
+
+
 def _parent_key(crs_id: pl.Expr) -> pl.Expr:
     """`crs_id` as the parent-id tier matches it: for a `LETTER_SUFFIX_DONORS` unit
     with its recipient and project number, a missing number matching a missing
@@ -481,10 +493,10 @@ def _parent_key(crs_id: pl.Expr) -> pl.Expr:
 
 
 def split_components(units: pl.DataFrame, *, number: str) -> pl.Series:
-    """Each unit's `number`, joined to its purpose code under a component award: a
-    (donor, agency, `number`) whose commitment units of one placed year carry more
-    than one crs id and more than one purpose, and one of whose units disburses
-    without committing.
+    """Each unit's `number`, joined to its purpose group (`purpose_group`) under a
+    component award: a (donor, agency, `number`) whose commitment units of one
+    placed year carry more than one crs id and more than one purpose group, and one
+    of whose units disburses without committing.
 
     The US commits each component of an award under its own crs id and purpose, as
     award `76_48621` commits its biosphere (41020), legislative (15152) and trade
@@ -497,6 +509,7 @@ def split_components(units: pl.DataFrame, *, number: str) -> pl.Series:
     may go to its sibling lines.
     """
     award = ["donor_code", "agency_code", number]
+    units = units.with_columns(purpose=purpose_group(units, by=tuple(award)))
     committed = pl.col("commitment_usd") > 0
     uncommitted = (
         units.filter(pl.col("disbursement_usd") > 0, ~committed.fill_null(False))
@@ -508,9 +521,7 @@ def split_components(units: pl.DataFrame, *, number: str) -> pl.Series:
         units.filter(committed)
         .drop_nulls(award)
         .group_by(*award, "placed_year")
-        .agg(
-            ids=pl.col("crs_id").n_unique(), purposes=pl.col("purpose_code").n_unique()
-        )
+        .agg(ids=pl.col("crs_id").n_unique(), purposes=pl.col("purpose").n_unique())
         .filter(pl.col("ids") > 1, pl.col("purposes") > 1)
         .select(award)
         .unique()
@@ -518,11 +529,11 @@ def split_components(units: pl.DataFrame, *, number: str) -> pl.Series:
         .with_columns(component=pl.lit(True))
     )
     return (
-        units.select(*award, "purpose_code")
+        units.select(*award, "purpose")
         .join(components, on=award, how="left", maintain_order="left")
         .select(
             pl.when(pl.col("component"))
-            .then(pl.concat_str(number, "purpose_code", separator="|"))
+            .then(pl.concat_str(number, "purpose", separator="|"))
             .otherwise(pl.col(number))
             .alias(number)
         )

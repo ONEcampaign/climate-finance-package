@@ -598,13 +598,15 @@ LINKS = _table(
 )
 
 # The CRS records the trace links, summed over records that share every key field:
-# donor, agency, crs id, normalised project number, recipient, purpose, record year
-# and commitment-date year. A unit with a positive commitment is a commitment; one
+# donor, agency, crs id, normalised project number, recipient, record year and
+# commitment-date year, and the purpose where the records carry no crs id. A unit
+# under a crs id is one line, whatever purposes its records carry, which
+# `purpose_codes` lists. A unit with a positive commitment is a commitment; one
 # with a positive disbursement is a disbursement record; one unit can be both. A
 # commitment is placed at `placed_year`, its commitment-date year when that precedes
 # the record year. A disbursement whose commitment date precedes its record year
 # carries that year as `floor_year`, and fills only commitments placed from then on.
-# `commitment_date` is the unit's largest record's.
+# `purpose_code` and `commitment_date` are the unit's largest record's.
 UNITS = _table(
     "units",
     ("unit_id",),
@@ -615,6 +617,7 @@ UNITS = _table(
     project_number=_str(nullable=True),
     recipient_code=_code(),
     purpose_code=_code(nullable=True),
+    purpose_codes=Column(pl.List(pl.Int32())),
     year=_year(),
     commitment_year=_year(nullable=True),
     commitment_date=Column(pl.Date(), nullable=True),
@@ -637,6 +640,7 @@ REFLOW_UNITS = _table(
     project_number=_str(nullable=True),
     recipient_code=_code(),
     purpose_code=_code(nullable=True),
+    purpose_codes=Column(pl.List(pl.Int32())),
     year=_year(),
     commitment_year=_year(nullable=True),
     commitment_date=Column(pl.Date(), nullable=True),

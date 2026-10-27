@@ -90,6 +90,7 @@ from climate_finance.build.link.keys import (
     floor_seen,
     group_id,
     placed_in_window,
+    purpose_group,
     regional_codes,
     separator_free_pn,
     split_components,
@@ -252,7 +253,8 @@ def _unit_facts(units: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
     A rounded number is no unit key (`normalise_pn`), so `rounded` comes from the
     first record, by record id, whose published project number is one. `award`
     and `core` are the project number and its core as awards
-    (`split_components`)."""
+    (`split_components`), and `award_purpose` and `core_purpose` each unit's
+    purpose group under that number and its recipient (`keys.purpose_group`)."""
     records = (
         units.lazy()
         .select("unit_id", record_id="record_ids")
@@ -285,9 +287,13 @@ def _unit_facts(units: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
             line_id=canonical_crs_id(pl.col("crs_id")),
         )
     )
-    return facts.with_columns(
+    facts = facts.with_columns(
         award=split_components(facts, number="project_number"),
         core=split_components(facts, number="core"),
+    )
+    return facts.with_columns(
+        purpose_group(facts, by=(*key, "recipient_code")).alias(f"{key[-1]}_purpose")
+        for key in (_PN, _CORE)
     )
 
 
@@ -352,13 +358,13 @@ def _same_number(
     programmes: pl.DataFrame,
 ) -> pl.DataFrame:
     """Pairs equal on the number `key`, grouped by it, and for a programme number
-    also on the recipient and purpose, grouped by those too.
+    also on the recipient and purpose group, grouped by those too.
 
     A unit falls in one group here, and `_settle` keeps or drops a group whole, so
     a unit whose group holds more than `MAX_COMMITMENTS` eligible commitments
     links to none. Such units are left out before the join (`_within_cap`), since
     a programme or account number pairs thousands of units with each other."""
-    within = (*key, "recipient_code", "purpose_code")
+    within = (*key, "recipient_code", f"{key[-1]}_purpose")
     found = []
     for number, on in (
         (commitments.join(programmes, on=key, how="anti"), key),

@@ -21,7 +21,7 @@ from climate_finance.build.link.candidates import (
 from climate_finance.build.link.crdf_crs import link_within_year
 from climate_finance.build.link.id_practice import classify_id_practice, period_of
 from climate_finance.build.link.key_repair import repair_keys
-from climate_finance.build.link.keys import build_units, link_by_keys, purpose_units
+from climate_finance.build.link.keys import build_units, link_by_keys
 from climate_finance.build.normalise.crdf import normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs, trace_population
 
@@ -154,9 +154,8 @@ def truth(
     id_practice: pl.DataFrame,
     candidates: pl.DataFrame,
 ) -> pl.DataFrame:
-    """Every id-truth pair, one per disbursement and purpose-split line as the
-    candidates hold it (`purpose_units`), with whether blocking produced it and the
-    commitment's provider category."""
+    """Every id-truth pair, with whether blocking produced it and the commitment's
+    provider category."""
     categories = (
         pl.scan_parquet(data / "raw" / "oecd" / "crdf_recipient.parquet")
         .select(
@@ -200,13 +199,7 @@ def truth(
         )
     )
     return (
-        purpose_units(
-            pairs,
-            units=units,
-            reached=links.filter(task="crdf_crs")["right_id"],
-        )
-        .join(commitments.select(right_id="unit_id"), on="right_id", how="semi")
-        .join(
+        pairs.join(
             candidates.select("left_id", "right_id", "same_crs_id"),
             on=["left_id", "right_id"],
             how="left",

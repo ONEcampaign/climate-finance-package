@@ -274,16 +274,40 @@ def test_floored_records_fill_before_undated_records_of_their_year() -> None:
 def test_methods_run_in_link_method_order_within_a_year() -> None:
     # Both records reach c20: d_purpose by crs_id_purpose, d_id only by crs_id,
     # since no commitment shares its purpose. The crs_id_purpose record goes first.
+    # d_id's project number keeps it off d_purpose's line.
     pairs = run(
         [
             record("c20", 2020, commit=100.0, purpose=230),
             record("c21", 2021, commit=100.0, purpose=140),
             record("d_purpose", 2022, disburse=100.0, purpose=230),
-            record("d_id", 2022, disburse=100.0, purpose=999),
+            record("d_id", 2022, disburse=100.0, purpose=999, project_number="P2"),
         ]
     )
     assert pair(pairs, "c20", "d_purpose") == pytest.approx(100.0)
     assert pair(pairs, "c21", "d_id") == pytest.approx(100.0)
+
+
+@pytest.mark.parametrize(
+    ("purpose", "filled"),
+    [
+        # The record fills the line's commitment of its own purpose, and what that
+        # leaves pools over the line.
+        (230, {"c_water": 100.0, "c_health": 50.0}),
+        # A purpose the line does not carry pools over the whole line.
+        (999, {"c_water": 75.0, "c_health": 75.0}),
+    ],
+)
+def test_a_record_fills_its_purpose_on_a_line_split_by_purpose_first(
+    purpose: int, filled: dict[str, float]
+) -> None:
+    pairs = run(
+        [
+            record("c_water", 2020, commit=100.0, purpose=230),
+            record("c_health", 2020, commit=100.0, purpose=140),
+            record("d", 2022, disburse=150.0, purpose=purpose),
+        ]
+    )
+    assert by_commitment(pairs) == pytest.approx(filled)
 
 
 # A record dated its own year belongs to that year's commitment, not the older one.

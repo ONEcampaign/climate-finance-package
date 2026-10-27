@@ -157,11 +157,14 @@ def test_commitments_the_exact_tiers_reach_are_left_to_them() -> None:
 
 def test_a_unit_stays_out_of_a_group_holding_its_own_crs_id() -> None:
     # d links to c by crs id and purpose; c2 shares d's crs id under another
-    # purpose and c3 its project number, so the project-number group holds both.
+    # purpose in another year, so it is a line of its own, and c3 shares its
+    # project number, so the project-number group holds both.
     repaired = _repaired(
         {
             "c": _commitment(crs_id="A", project_number="G-1"),
-            "c2": _commitment(crs_id="A", project_number="G-1", purpose_code=41010),
+            "c2": _commitment(
+                crs_id="A", project_number="G-1", purpose_code=41010, year=2020
+            ),
             "c3": _commitment(crs_id="C", project_number="G-1", year=2018),
             "d": _disbursement(crs_id="A", project_number="G-1"),
         }

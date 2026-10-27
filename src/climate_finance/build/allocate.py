@@ -566,15 +566,19 @@ def _own_commitments(
 ) -> pl.DataFrame:
     """Each disbursement record's own commitment record in a group, as (group_id,
     record_id, c_idx). That is the record itself where it also commits, else the one
-    commitment record of the group whose real commitment date (`line_date`) it
-    carries and whose title shares at least `OWN_TITLE_SHARE` of its words
-    (`word_share`), else for IBRD and IDA the one commitment record of the group
-    under the record's own project number (`_own_lines`). A record that two
+    commitment record of the group on a line of several purposes that shares its
+    purpose and recipient (`_same_purpose`), else the one whose real commitment date
+    (`line_date`) it carries and whose title shares at least `OWN_TITLE_SHARE` of
+    its words (`word_share`), else for IBRD and IDA the one commitment record of the
+    group under the record's own project number (`_own_lines`). A record that two
     commitments of a group pass by one rule takes neither by that rule."""
     reached = (
         pairs.select("group_id", "record_id", "c_idx")
         .unique()
-        .join(commitments.select("c_idx", c_record="record_id"), on="c_idx")
+        .join(
+            commitments.select("c_idx", c_record="record_id", c_unit="unit_id"),
+            on="c_idx",
+        )
     )
     same = reached.filter(pl.col("record_id") == pl.col("c_record"))
     rest = reached.join(same, on=["group_id", "record_id"], how="anti")
@@ -585,15 +589,47 @@ def _own_commitments(
             "record_id",
             "donor_code",
             "project_number",
+            "recipient_code",
+            "purpose_code",
             date=line_date(pl.col("commitment_date")),
         )
         .collect()
     )
     columns = ["group_id", "record_id", "c_idx"]
+    purposes = _same_purpose(rest, facts=facts).select(columns)
+    rest = rest.join(purposes, on=["group_id", "record_id"], how="anti")
     matched = _same_date_and_title(rest, facts=facts, crs=crs).select(columns)
     unmatched = rest.join(matched, on=["group_id", "record_id"], how="anti")
     lines = _own_lines(unmatched, facts=facts).select(columns)
-    return pl.concat([same.select(columns), matched, lines])
+    return pl.concat([same.select(columns), purposes, matched, lines])
+
+
+def _same_purpose(reached: pl.DataFrame, *, facts: pl.DataFrame) -> pl.DataFrame:
+    """The pairs of `reached` whose records share a purpose and recipient, the
+    commitment record on a unit that commits under several purposes, where a record
+    has one such commitment in its group.
+
+    A donor can file one line as a record per purpose, as Canada does, each
+    committing part of the line, and the line's later records continue the
+    commitment of their own purpose. What a record disbursed beyond it pools over
+    the line."""
+    place = facts.select("record_id", "recipient_code", "purpose_code").drop_nulls()
+    lines = (
+        reached.select("c_unit", "c_record")
+        .unique()
+        .join(place.rename({"record_id": "c_record"}), on="c_record")
+        .filter(pl.col("purpose_code").n_unique().over("c_unit") > 1)
+        .select("c_record")
+    )
+    return (
+        reached.join(lines, on="c_record")
+        .join(place, on="record_id")
+        .join(
+            place.rename({"record_id": "c_record"}),
+            on=["c_record", "recipient_code", "purpose_code"],
+        )
+        .filter(pl.len().over("group_id", "record_id") == 1)
+    )
 
 
 def _same_date_and_title(

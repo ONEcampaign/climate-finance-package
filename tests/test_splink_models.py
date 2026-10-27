@@ -129,6 +129,7 @@ def _world(*donors: tuple[int, int, int, int]) -> dict[str, pl.DataFrame]:
     ]
     frame = pl.DataFrame(rows).with_columns(
         record_ids=pl.concat_list(pl.col("unit_id")),
+        purpose_codes=pl.concat_list(pl.col("purpose_code")),
         placed_year=pl.col("year"),
         crs_id=pl.lit(None, dtype=pl.String),
     )

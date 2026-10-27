@@ -705,21 +705,19 @@ def test_id_truth_follows_one_line_under_its_forms_of_id(
 
 
 @pytest.mark.parametrize(
-    ("donor", "purpose", "expected"),
+    ("donor", "purpose"),
     [
-        # The crs id reaches every unit of the line. The unit of the
-        # disbursement's purpose stands for it.
-        (5, 14030, {("d", "water", False)}),
-        # Else the largest commitment does.
-        (5, 15110, {("d", "sanitation", False)}),
-        # Canada's disbursements continue the unit of their own purpose
+        (5, 14030),
+        (5, 15110),
+        # Canada's disbursements continue the line of their own purpose
         # (`purpose_lines`).
-        (301, 14030, {("d", "water", False)}),
+        (301, 14030),
     ],
 )
 def test_id_truth_holds_one_pair_per_purpose_split_line(
-    donor: int, purpose: int, expected: set[tuple[str, str, bool]]
+    donor: int, purpose: int
 ) -> None:
+    # The line's records are one unit, named by its first record.
     records = [
         _record("water", "2020000001", donor=donor, year=2020, committed=True),
         _record("sanitation", "2020000001", donor=donor, year=2020, committed=True)
@@ -727,7 +725,7 @@ def test_id_truth_holds_one_pair_per_purpose_split_line(
         _record("d", "2020000001", donor=donor, year=2022, committed=False)
         | {"purpose_code": purpose},
     ]
-    assert _truth_of(records) == expected
+    assert _truth_of(records) == {("d", "sanitation", False)}
 
 
 def _line(

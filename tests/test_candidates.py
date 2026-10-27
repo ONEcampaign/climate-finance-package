@@ -82,7 +82,7 @@ def _candidates(
 ) -> dict[tuple[str, str], dict[str, object]]:
     """Candidate rows by (disbursement, commitment) record name.
 
-    Every test record is its own unit. `commitments` names the units a CRDF row
+    A unit is named by its first record. `commitments` names the units a CRDF row
     reaches, and `trace` the (disbursement, commitment) pairs a key linked.
     """
     crs = _crs(records)
@@ -349,29 +349,10 @@ def test_only_commitments_a_crdf_row_reaches_pair() -> None:
     assert _candidates(records, commitments=()) == {}
 
 
-_LINE_UNITS = ("energy_policy", "solar", "water")
-
-
-@pytest.mark.parametrize(
-    ("purpose", "reached", "units"),
-    [
-        # The unit of the disbursement's purpose code, though it commits least.
-        (23110, _LINE_UNITS, {"energy_policy"}),
-        # Else the unit of its three-digit purpose category.
-        (23230, _LINE_UNITS, {"solar"}),
-        # Else the largest commitment.
-        (41010, _LINE_UNITS, {"water"}),
-        # A unit of its own purpose that no CRDF row reaches carries no climate
-        # finance, so the disbursement keeps no pair on the line.
-        (23110, ("solar", "water"), set()),
-        # Else the largest commitment a CRDF row reaches.
-        (41010, ("energy_policy", "solar"), {"solar"}),
-    ],
-)
-def test_a_disbursement_pairs_with_a_purpose_split_line_once(
-    purpose: int, reached: tuple[str, ...], units: set[str]
-) -> None:
-    # One line of a project and recipient, filed as one unit per purpose.
+@pytest.mark.parametrize("purpose", [23110, 41010])
+def test_a_disbursement_pairs_once_with_a_line_split_by_purpose(purpose: int) -> None:
+    # One line of a project and recipient, filed as one record per purpose, is one
+    # unit, named by its first record.
     line = {"crs_id": "2020000001", "project_number": "P-123"}
     records = {
         "energy_policy": _commitment(purpose_code=23110, commitment_usd=5.0, **line),
@@ -379,8 +360,8 @@ def test_a_disbursement_pairs_with_a_purpose_split_line_once(
         "water": _commitment(purpose_code=31120, commitment_usd=20.0, **line),
         "d": _disbursement(project_number="P-123", purpose_code=purpose),
     }
-    candidates = _candidates(records, commitments=reached)
-    assert set(candidates) == {("d", unit) for unit in units}
+    candidates = _candidates(records, commitments=("energy_policy",))
+    assert set(candidates) == {("d", "energy_policy")}
 
 
 @pytest.mark.parametrize(

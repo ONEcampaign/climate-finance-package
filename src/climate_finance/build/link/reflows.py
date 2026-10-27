@@ -1,8 +1,8 @@
 """Reflow records into units, linked to their loan's commitment units by the exact key
 tiers.
 
-A reflow unit sums the `reflows` records that share every key field (`UNIT_KEY`), as
-a trace unit sums the CRS records. It takes the first tier in `TIERS` whose key
+A reflow unit sums the `reflows` records of one line (`keys.with_line_key`), as a
+trace unit sums the CRS records. It takes the first tier in `TIERS` whose key
 reaches an eligible commitment unit, under the floors, `floor_seen` and `_unique_pn`
 the trace's disbursement units pass. So the World Bank's repayments reach their loan
 through `wb_loan` whatever crs id they carry, the AsDB's through a project-number
@@ -26,7 +26,15 @@ import polars as pl
 
 from climate_finance import schema
 from climate_finance.build.link.disagreement import flag_disagreement
-from climate_finance.build.link.keys import UNIT_KEY, key_columns, link_by_tiers
+from climate_finance.build.link.keys import (
+    ID_KEY,
+    LINE_KEY,
+    id_purpose,
+    key_columns,
+    link_by_tiers,
+    purpose_columns,
+    with_line_key,
+)
 from climate_finance.build.normalise.ids import content_id
 from climate_finance.build.normalise.project_numbers import normalise_pn
 
@@ -50,19 +58,21 @@ def build_reflow_units(reflows: pl.LazyFrame) -> pl.LazyFrame:
             project_number=normalise_pn(pl.col("project_number")),
             commitment_year=pl.col("commitment_date").dt.year().cast(pl.Int16),
         )
-        .group_by(UNIT_KEY)
+        .pipe(with_line_key)
+        .group_by(LINE_KEY)
         # Summed as lists in record order, as `build_units` sums.
         .agg(
             pl.col("received_usd", "interest_usd").fill_null(0).sort_by("record_id"),
-            pl.col("commitment_date")
+            pl.col("commitment_date", "purpose_code")
             .sort_by(size, "record_id", descending=[True, False])
             .first(),
+            *purpose_columns(),
             record_ids=pl.col("record_id").sort(),
         )
         .with_columns(pl.col("received_usd", "interest_usd").list.sum())
-        .with_columns(_salt=pl.lit(_SALT))
+        .with_columns(id_purpose(), _salt=pl.lit(_SALT))
         .with_columns(
-            unit_id=content_id((*UNIT_KEY, "_salt"), order_by=UNIT_KEY),
+            unit_id=content_id((*ID_KEY, "_salt"), order_by=ID_KEY),
             placed_year=pl.when(dated)
             .then(pl.col("commitment_year"))
             .otherwise(pl.col("year")),

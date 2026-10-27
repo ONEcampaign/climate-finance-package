@@ -30,7 +30,14 @@ from climate_finance.build.link.id_practice import (
     untraceable,
 )
 from climate_finance.build.link.jev import JevFitError
-from climate_finance.build.link.keys import as_exact_links, build_units, link_by_keys
+from climate_finance.build.link.keys import (
+    UNIT_KEY,
+    as_exact_links,
+    build_units,
+    link_by_keys,
+    purpose_group,
+)
+from climate_finance.build.normalise.ids import content_id
 from climate_finance.build.normalise.project_numbers import normalise_pn
 from climate_finance.build.stages import StageContext, table_path
 
@@ -54,7 +61,7 @@ def _trace(
     """Each linked disbursement record's tier and the commitment records it reaches,
     with the (disbursement, commitment) record pairs of `rejected` rejected.
 
-    Every test record is its own unit, so a unit is named by its one record.
+    A unit is named by its first record.
     """
     units = _units(records)
     names = dict(zip(units["unit_id"], units["record_ids"].list.first(), strict=True))
@@ -156,6 +163,54 @@ def test_units_sum_records_that_share_every_key() -> None:
     assert again["unit_id"].item() == dated["unit_id"]
 
 
+def test_a_line_split_by_purpose_is_one_unit() -> None:
+    units = _units(
+        {
+            "water": {"crs_id": "A", "commitment_usd": 3.0},
+            "health": {"crs_id": "A", "purpose_code": 41010, "commitment_usd": 5.0},
+            # Without a crs id the purpose tells two activities apart.
+            "no_id_water": {"project_number": "P1", "commitment_usd": 1.0},
+            "no_id_health": {
+                "project_number": "P1",
+                "purpose_code": 41010,
+                "commitment_usd": 1.0,
+            },
+        }
+    )
+    schema.validate(schema.UNITS, units)
+    by_records = {tuple(row["record_ids"]): row for row in units.iter_rows(named=True)}
+    assert set(by_records) == {("health", "water"), ("no_id_water",), ("no_id_health",)}
+    line = by_records[("health", "water")]
+    assert line["purpose_codes"] == [23210, 41010]
+    # The purpose code is the largest record's.
+    assert line["purpose_code"] == 41010
+    assert line["commitment_usd"] == 8.0
+    # A unit of one purpose keeps the id it took when every unit was one purpose's,
+    # so review decisions on it still name it.
+    one_purpose = units.filter(pl.col("purpose_codes").list.len() == 1)
+    assert (
+        one_purpose["unit_id"].to_list()
+        == one_purpose.select(content_id(UNIT_KEY, order_by=UNIT_KEY))
+        .to_series()
+        .to_list()
+    )
+
+
+def test_purpose_groups_join_the_purposes_of_a_line() -> None:
+    units = pl.DataFrame(
+        {
+            "key": ["A", "A", "A", "A", "B"],
+            "purpose_codes": [[2, 1], [2], [3], [3, 4], [2]],
+            "commitment_usd": [1.0, 1.0, 1.0, 0.0, 1.0],
+            # The last unit of A neither commits nor disburses, as a reflow unit,
+            # so it joins no groups.
+            "disbursement_usd": [0.0] * 5,
+        },
+        schema_overrides={"purpose_codes": pl.List(pl.Int32)},
+    )
+    assert purpose_group(units, by=("key",)).to_list() == [1, 1, 3, 3, 2]
+
+
 def _commitment(**fields: object) -> dict[str, object]:
     return {"year": 2019, "commitment_usd": 10.0, **fields}
 
@@ -223,6 +278,20 @@ def test_each_tier_links_what_the_tiers_before_it_miss(
     assert _trace(records) == {"d": (tier, ["c"])}
     links = link_by_keys(_units(records), first_year=FIRST_YEAR)
     assert links["probability"].to_list() == [probability]
+
+
+def test_the_purpose_tier_reaches_the_lines_that_share_a_purpose() -> None:
+    # The 2019 line commits water and health, so d's water reaches the 2020 health
+    # line through it.
+    traced = _trace(
+        {
+            "c19_water": _commitment(crs_id="A"),
+            "c19_health": _commitment(crs_id="A", purpose_code=41010),
+            "c20": _commitment(crs_id="A", year=2020, purpose_code=41010),
+            "d": _disbursement(crs_id="A"),
+        }
+    )
+    assert traced == {"d": ("crs_id_purpose", ["c19_health", "c20"])}
 
 
 def test_a_rejected_link_leaves_its_unit_to_the_later_tiers() -> None:
@@ -466,11 +535,12 @@ def _line(crs_id: str, day: date, **fields: object) -> dict[str, object]:
         ),
         # Two lines share the date, so the date names neither.
         (_line("B", date(2014, 6, 27)), date(2014, 6, 27), {}),
-        # One line split by purpose under the date: the purpose tier decides.
+        # One line split by purpose under one crs id is one unit, which the date
+        # names.
         (
             _line("A", date(2014, 6, 27), purpose_code=41010),
             date(2014, 6, 27),
-            {"d": ("pn_recipient_purpose", ["c1"])},
+            {"d": ("pn_recipient_date", ["c1"])},
         ),
         # A year-end date is a placeholder and names no line.
         (_line("B", date(2016, 3, 1)), date(2014, 12, 31), {}),
@@ -994,6 +1064,23 @@ def test_within_year_join() -> None:
     }
     assert set(links["group_id"]) == {"within_year|5|A|2020|23210"}
     assert set(links["task"]) == {"crdf_crs"}
+
+
+def test_the_rows_of_a_line_split_by_purpose_share_its_group() -> None:
+    units = _units(
+        {
+            "water": {"crs_id": "A", "commitment_usd": 3.0},
+            "health": {"crs_id": "A", "purpose_code": 41010, "commitment_usd": 5.0},
+        }
+    )
+    links = link_within_year(
+        _crdf_rows(water={}, health={"purpose_code": 41010}), units=units.lazy()
+    ).collect()
+    assert links.select("left_id", "right_id").sort("left_id").rows() == [
+        ("health", units["unit_id"].item()),
+        ("water", units["unit_id"].item()),
+    ]
+    assert links["group_id"].n_unique() == 1
 
 
 class _NoJev(StageContext):

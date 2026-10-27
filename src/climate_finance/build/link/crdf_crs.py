@@ -1,7 +1,8 @@
 """CRDF rows to CRS commitments, within a year and then by the recovery routes.
 
 Within a year, a CRDF row joins the commitment units that share its provider, crs
-id, purpose and year. The recovery routes link rows that join reaches no unit for.
+id and year and carry its purpose. The recovery routes link rows that join reaches
+no unit for.
 
 Aggregate children (`normalise.aggregates`) take the crs id of the bulk record they
 stand for, so most join within the year. A child of a record without a crs id links
@@ -50,7 +51,7 @@ import polars as pl
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from climate_finance.build.errors import LinkInputError
-from climate_finance.build.link.keys import as_exact_links, group_id
+from climate_finance.build.link.keys import as_exact_links, group_id, purpose_group
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.normalise.pairing import pair_one_to_one
 from climate_finance.build.normalise.project_numbers import normalise_pn
@@ -63,6 +64,7 @@ from climate_finance.schema import EIB_AGENCY, EU_INSTITUTIONS, EURO_ISSUER
 
 # CRDF rows and CRS commitments that agree on these, the CRDF provider standing for
 # the CRS donor, are one commitment. 99.5% of such keys pair one to one.
+# A unit carries the purpose where any of its records does.
 WITHIN_YEAR_KEY = ("donor_code", "crs_id", "year", "purpose_code")
 
 # The EIB's IATI activity id carries its project serial, then one finance contract
@@ -94,22 +96,30 @@ type _Route = Callable[[pl.DataFrame], pl.DataFrame]
 
 def link_within_year(crdf: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.LazyFrame:
     """Link each CRDF row to every commitment unit of the same year sharing its
-    (donor, crs id, purpose), as `links` rows.
+    (donor, crs id, purpose), as `links` rows, a unit sharing the purpose where any
+    of its records carries it (`purpose_codes`).
 
-    `group_id` names the key, so a commitment's face value is the sum of its group's
-    commitment units.
+    `group_id` names the key, its purpose as the purpose group of the key's units
+    (`purpose_group`), so the rows of the purposes of one line share a group, and a
+    commitment's face value is the sum of its group's commitment units.
     """
-    commitments = units.filter(pl.col("commitment_usd") > 0).select(
-        "unit_id", *WITHIN_YEAR_KEY
+    line = WITHIN_YEAR_KEY[:-1]
+    commitments = (
+        units.filter(pl.col("commitment_usd") > 0)
+        .select("unit_id", *line, "purpose_codes", "commitment_usd", "disbursement_usd")
+        .collect()
     )
+    commitments = commitments.with_columns(
+        purpose_group=purpose_group(commitments, by=line)
+    ).select("unit_id", *line, "purpose_group", purpose_code="purpose_codes")
     return as_exact_links(
         crdf.select("row_id", *WITHIN_YEAR_KEY[1:], donor_code="provider_code")
         .drop_nulls(WITHIN_YEAR_KEY)
-        .join(commitments, on=WITHIN_YEAR_KEY)
+        .join(commitments.lazy().explode("purpose_code"), on=WITHIN_YEAR_KEY)
         .select(
             left_id="row_id",
             right_id="unit_id",
-            group_id=group_id(pl.lit("within_year"), *WITHIN_YEAR_KEY),
+            group_id=group_id(pl.lit("within_year"), *line, "purpose_group"),
             link_method=pl.lit("within_year"),
         ),
         task="crdf_crs",

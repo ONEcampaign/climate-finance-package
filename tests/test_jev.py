@@ -137,6 +137,7 @@ def _world(rows: list[dict[str, object]]) -> tuple[pl.DataFrame, pl.LazyFrame]:
         placed_year="year",
         floor_year=None,
         record_ids=pl.concat_list("unit_id"),
+        purpose_codes=pl.concat_list("purpose_code"),
     )
     crs = frame.select(
         record_id="unit_id",
