@@ -5,57 +5,109 @@
 <title>Label the blind sample</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  :root { color-scheme: light dark; --diff: #fff3bf; --line: #8886; --accent: #1c6ed5; }
-  @media (prefers-color-scheme: dark) { :root { --diff: #5c4b00; } }
+  :root {
+    color-scheme: light dark;
+    --line: #8885; --soft: #8881; --muted: #777; --accent: #1c6ed5;
+    --diff: #fff1b8; --bad: #c62828; --yes: #1b7f3b; --no: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) { :root { --diff: #5a4a00; --bad: #ff8a80; --muted: #999; } }
   * { box-sizing: border-box; }
-  body { font: 15px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 1180px; padding: 0 16px 120px; }
-  header { position: sticky; top: 0; background: Canvas; padding: 10px 0 8px; border-bottom: 1px solid var(--line); z-index: 2; }
-  .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  [hidden] { display: none !important; }
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 0 auto; max-width: 1320px; padding: 8px 16px 140px; }
+  h1 { font-size: 24px; margin: 4px 0 6px; }
+  .guide { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; font-size: 13px; margin-bottom: 6px; }
+  .guide h2 { font-size: 13px; margin: 0 0 2px; }
+  .guide ul { margin: 0; padding-left: 18px; }
+  .guide .yes h2 { color: var(--yes); }
+  .guide .no h2 { color: var(--no); }
+  .progress { display: flex; justify-content: space-between; gap: 16px; font-size: 13px; padding-top: 6px; border-top: 1px solid var(--line); }
+  .bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; margin: 4px 0 2px; }
   .bar > div { height: 100%; background: var(--accent); width: 0; }
-  .meta { display: flex; justify-content: space-between; gap: 16px; font-size: 13px; margin-bottom: 6px; flex-wrap: wrap; }
-  details { margin: 12px 0; }
-  summary { cursor: pointer; font-weight: 600; }
-  table { border-collapse: collapse; width: 100%; table-layout: fixed; }
-  th, td { border: 1px solid var(--line); padding: 6px 10px; vertical-align: top; text-align: left; overflow-wrap: anywhere; white-space: pre-wrap; }
-  th { font-weight: 600; }
-  td.field { width: 150px; font-weight: 600; white-space: normal; }
-  tr.diff td:not(.field) { background: var(--diff); }
-  td.long { max-height: 14em; }
-  .rows td, .rows th { font-size: 13px; }
-  .answer { position: fixed; left: 0; right: 0; bottom: 0; background: Canvas; border-top: 1px solid var(--line); padding: 10px 16px; z-index: 2; }
-  .answer > div { max-width: 1180px; margin: 0 auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  button { font: inherit; padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: ButtonFace; color: ButtonText; cursor: pointer; }
-  button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
-  input[type=text] { flex: 1; min-width: 200px; font: inherit; padding: 6px 8px; }
-  kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
-  #status { font-size: 13px; min-width: 14em; }
-  #error { color: #c00; }
+  details.small { font-size: 12px; color: var(--muted); display: inline-block; margin-right: 18px; vertical-align: top; }
+  details.small ul { columns: 3; margin: 4px 0; padding-left: 18px; }
+  summary { cursor: pointer; }
+  .context { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 8px 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--soft); }
+  .context .bad { color: var(--bad); font-weight: 600; }
+  .context b { font-weight: 600; margin-right: 4px; }
+  .context .answered { margin-left: auto; font-weight: 600; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px 10px; min-width: 0; }
+  .card h2 { font-size: 15px; margin: 0 0 6px; }
+  .card.a h2 { color: #1c6ed5; }
+  .card.b h2 { color: #b45f06; }
+  dl { display: grid; grid-template-columns: 7.5em 1fr; gap: 3px 10px; margin: 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  dd.diff { background: var(--diff); border-radius: 3px; padding: 0 4px; }
+  dd.title { font-weight: 600; font-size: 15px; }
+  .clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+  .clamp.open { display: block; cursor: default; }
+  .more { color: var(--accent); font-size: 12px; cursor: pointer; }
+  .same, .checks { margin-top: 8px; font-size: 13px; }
+  .same table, .checks table { border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 4px; }
+  .same td, .checks td, .checks th { border: 1px solid var(--line); padding: 2px 6px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+  .checks .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .ref { color: var(--muted); font-size: 11px; margin-top: 10px; }
+  .answer { position: fixed; left: 0; right: 0; bottom: 0; background: Canvas; border-top: 1px solid var(--line); padding: 8px 16px 10px; z-index: 3; }
+  .answer > div { max-width: 1320px; margin: 0 auto; }
+  .buttons { display: grid; grid-template-columns: 1fr 1fr 0.6fr; gap: 10px; }
+  .buttons button { font: inherit; font-size: 17px; font-weight: 600; padding: 12px 8px; border: 2px solid var(--line); border-radius: 8px; background: ButtonFace; color: ButtonText; cursor: pointer; }
+  #yes { border-color: var(--yes); } #yes.on, #yes:hover { background: var(--yes); color: #fff; }
+  #no { border-color: var(--no); } #no.on, #no:hover { background: var(--no); color: #fff; }
+  #tell:hover { background: var(--line); }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 5px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .hint input { flex: 1; min-width: 260px; font: inherit; padding: 4px 8px; }
+  kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+  #toast { position: fixed; left: 50%; bottom: 118px; transform: translateX(-50%); background: #222; color: #fff; padding: 6px 14px; border-radius: 16px; font-size: 13px; z-index: 4; }
+  #toast a { color: #8ab4f8; cursor: pointer; margin-left: 8px; text-decoration: underline; }
+  #error { color: var(--bad); font-weight: 600; }
+  .done { text-align: center; margin: 60px 0; font-size: 18px; }
 </style>
 </head>
 <body>
-<header>
-  <div class="meta"><span id="where"></span><span id="progress"></span></div>
-  <div class="bar"><div id="fill"></div></div>
-  <div class="meta" id="providers" style="margin-top:6px"></div>
-</header>
-<details><summary>Matching rule</summary><p id="rule"></p></details>
+<h1>Is A money spent under commitment B?</h1>
+<div class="guide">
+  <div class="yes"><h2>Yes, same commitment</h2><ul>
+    <li>Same project and recipient, and B was committed before or with A.</li>
+    <li>B may be split over several lines, renumbered, or drawn down later.</li>
+    <li>A regional commitment covers a country inside that region.</li>
+  </ul></div>
+  <div class="no"><h2>No</h2><ul>
+    <li>A different recipient country.</li>
+    <li>A sibling project, or a later phase with its own new commitment, even under a reused number.</li>
+    <li>A separate yearly grant spent in its own year, or an unrelated activity.</li>
+  </ul></div>
+</div>
+<div class="progress"><span id="where"></span><span id="left"></span></div>
+<div class="bar"><div id="fill"></div></div>
+<details class="small"><summary>By provider</summary><ul id="providers"></ul></details>
+<details class="small"><summary>The full matching rule</summary><p id="rule"></p></details>
 <main id="pair"></main>
+<div id="toast" hidden></div>
 <div class="answer"><div>
-  <button id="match" data-label="match"><kbd>y</kbd> Match</button>
-  <button id="no_match" data-label="no_match"><kbd>n</kbd> No match</button>
-  <button data-strength="u"><kbd>u</kbd> Unsure</button>
-  <button data-strength="1"><kbd>1</kbd> Low</button>
-  <button data-strength="2"><kbd>2</kbd> Medium</button>
-  <button data-strength="3"><kbd>3</kbd> High</button>
-  <input type="text" id="reason" placeholder="Reason (optional; r to focus)">
-  <button id="back"><kbd>&larr;</kbd> Back</button>
-  <button id="save"><kbd>Enter</kbd> Save</button>
-  <span id="status"></span><span id="error"></span>
+  <div class="buttons">
+    <button id="yes">Yes, same commitment (Y)</button>
+    <button id="no">No (N)</button>
+    <button id="tell">Can't tell (U)</button>
+  </div>
+  <div class="hint">
+    <span><kbd>Shift</kbd>+<kbd>Y</kbd> or <kbd>N</kbd>: low confidence</span>
+    <span><kbd>R</kbd>: add a reason</span>
+    <span><kbd>&larr;</kbd>: back</span>
+    <span>Can't tell sets the pair aside; it comes back after the others.</span>
+    <input type="text" id="reason" placeholder="Reason; press Enter, then Y or N" hidden>
+    <span id="error"></span>
+  </div>
 </div></div>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-let state = null, index = 0, data = null, label = null, strength = null, busy = false;
+const LONG = new Set(["Short description", "Long description"]);
+// Rows whose difference tells the reader nothing: A is the later record by definition.
+const EXPECTED = new Set(["Record year", "Commitment", "Disbursement"]);
+// Rows shown only when the two records differ.
+const OPTIONAL = ["crs id", "Project number", "Flow", "Purpose", "Channel", "CRS rows summed", "Short description", "Long description"];
+let state = null, index = 0, data = null, busy = false, toastTimer = null;
 
 async function api(path, body) {
   const response = await fetch(path, body === undefined ? {} : {
@@ -73,22 +125,118 @@ function el(tag, text, cls) {
   return node;
 }
 
+function timeLeft(seconds) {
+  if (seconds == null) return "";
+  if (seconds < 90) return "under a minute left";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `about ${minutes} minutes left at your pace`;
+  return `about ${Math.round(seconds / 360) / 10} hours left at your pace`;
+}
+
 function showState(next) {
   state = next;
   $("rule").textContent = state.definition;
-  $("progress").textContent = `${state.done} of ${state.total} pairs decided`;
   $("fill").style.width = `${state.total ? (100 * state.done) / state.total : 100}%`;
   $("providers").replaceChildren(...state.providers.map(
-    (p) => el("span", `Provider ${p.provider}: ${p.done}/${p.total}`)));
+    (p) => el("li", `${p.name ?? p.provider}: ${p.done} of ${p.total}`)));
+  $("left").textContent = [
+    `${state.done.toLocaleString()} of ${state.total.toLocaleString()} decided`,
+    state.skipped ? `${state.skipped} set aside` : "",
+    timeLeft(state.seconds_left),
+  ].filter(Boolean).join(" · ");
+}
+
+function showWhere() {
+  const mine = data && state.providers.find((p) => p.provider === data.provider);
+  $("where").textContent = data
+    ? `Pair ${(index + 1).toLocaleString()} of ${state.total.toLocaleString()}` +
+      (mine ? ` · ${mine.name ?? mine.provider}: ${mine.done} of ${mine.total} decided` : "")
+    : "";
+}
+
+function fieldMap(pair) {
+  const map = new Map();
+  for (const [name, a, b] of pair.view.fields) map.set(name, [a, b]);
+  map.set("Similar commitments", pair.view.similar.map(String));
+  return map;
+}
+
+function contextLine(fields, answer) {
+  const line = el("div", undefined, "context");
+  for (const name of ["Donor", "Agency", "Recipient"]) {
+    const [a, b] = fields.get(name);
+    const item = el("span", undefined, a === b ? "" : "bad");
+    item.append(el("b", a === b ? name : `${name} differs`), a === b ? a : `A: ${a} · B: ${b}`);
+    line.append(item);
+  }
+  if (answer) {
+    const word = answer.label === "match" ? "Yes" : "No";
+    const low = answer.strength === "u" || answer.strength === "1" ? " (low confidence)" : "";
+    line.append(el("span", `You answered: ${word}${low}`, "answered"));
+  }
+  return line;
+}
+
+function amounts(fields, col) {
+  const parts = ["Commitment", "Disbursement"]
+    .map((name) => [name, fields.get(name)[col]])
+    .filter(([, value]) => value !== "-");
+  return parts.length ? parts.map(([name, value]) => `${name} ${value}`).join(" · ") : "-";
+}
+
+function addRow(list, label, value, differs, cls) {
+  list.append(el("dt", label));
+  const dd = el("dd", undefined, [cls, differs ? "diff" : ""].filter(Boolean).join(" "));
+  if (LONG.has(label) && value !== "-") {
+    const text = el("div", value, "clamp");
+    const more = el("span", "more", "more");
+    more.onclick = text.onclick = () => {
+      text.classList.toggle("open");
+      more.textContent = text.classList.contains("open") ? "less" : "more";
+    };
+    dd.append(text, more);
+    queueMicrotask(() => { more.hidden = text.scrollHeight <= text.clientHeight + 1; });
+  } else {
+    dd.textContent = value;
+  }
+  list.append(dd);
+}
+
+function card(side, fields, shown) {
+  const col = side === "A" ? 0 : 1;
+  const box = el("section", undefined, `card ${side.toLowerCase()}`);
+  box.append(el("h2", side === "A" ? "A: later spending record" : "B: earlier commitment record"));
+  const list = el("dl");
+  const differs = (name) => !EXPECTED.has(name) && fields.get(name)[0] !== fields.get(name)[1];
+  addRow(list, "Year", fields.get("Record year")[col], false);
+  addRow(list, "Committed on", fields.get("Commitment date")[col], differs("Commitment date"));
+  addRow(list, "Amounts", amounts(fields, col), false);
+  addRow(list, "Title", fields.get("Title")[col], differs("Title"), "title");
+  for (const name of shown) addRow(list, name, fields.get(name)[col], true);
+  box.append(list);
+  return box;
+}
+
+function sameLine(names, fields) {
+  const box = el("details", undefined, "same");
+  box.append(el("summary", `Same on both: ${names.map((n) => n.toLowerCase()).join(", ")}`));
+  const table = el("table");
+  for (const name of names) {
+    const tr = el("tr");
+    tr.append(el("td", name), el("td", fields.get(name)[0]));
+    table.append(tr);
+  }
+  box.append(table);
+  return box;
 }
 
 function crsTable(side, rows) {
-  const wrap = el("details");
+  const wrap = el("div");
   const more = rows.total > rows.shown.length ? `, first ${rows.shown.length}` : "";
-  wrap.append(el("summary", `${side}'s CRS rows (${rows.total}${more})`));
-  const table = el("table", undefined, "rows");
+  wrap.append(el("b", `${side}'s CRS rows (${rows.total}${more})`));
+  const table = el("table");
   const head = el("tr");
-  for (const h of ["Year", "Commitment date", "Commitment", "Disbursement", "Title"]) head.append(el("th", h));
+  for (const h of ["Year", "Committed on", "Commitment", "Disbursement", "Title"]) head.append(el("th", h));
   table.append(head);
   for (const row of rows.shown) {
     const tr = el("tr");
@@ -99,37 +247,43 @@ function crsTable(side, rows) {
   return wrap;
 }
 
+function checks(pair, fields) {
+  const [a, b] = fields.get("Similar commitments");
+  const box = el("details", undefined, "checks");
+  box.append(el("summary",
+    `Other commitments to the same recipient with similar titles: A ${a}, B ${b}. Check B is the right one.`));
+  const sides = el("div", undefined, "sides");
+  sides.append(crsTable("A", pair.view.rows[0]), crsTable("B", pair.view.rows[1]));
+  box.append(sides);
+  return box;
+}
+
 function render(pair) {
   data = pair;
   index = pair.i;
-  $("where").textContent = `Pair ${index + 1} of ${state.total} (provider ${pair.provider}, batch ${pair.batch}, pair ${pair.view.pair})`;
-  const table = el("table");
-  const head = el("tr");
-  head.append(el("th", "Field"), el("th", "A: later disbursement"), el("th", "B: earlier commitment"));
-  table.append(head);
-  const rows = [...pair.view.fields, ["Similar commitments", String(pair.view.similar[0]), String(pair.view.similar[1])]];
-  for (const [name, a, b] of rows) {
-    const tr = el("tr", undefined, a !== b ? "diff" : "");
-    tr.append(el("td", name, "field"), el("td", a), el("td", b));
-    table.append(tr);
-  }
-  $("pair").replaceChildren(table, crsTable("A", pair.view.rows[0]), crsTable("B", pair.view.rows[1]));
+  const fields = fieldMap(pair);
+  const present = OPTIONAL.filter((name) => fields.has(name) && fields.get(name).some((v) => v !== "-"));
+  const differing = present.filter((name) => fields.get(name)[0] !== fields.get(name)[1]);
+  const same = present.filter((name) => !differing.includes(name));
+  const cards = el("div", undefined, "cards");
+  cards.append(card("A", fields, differing), card("B", fields, differing));
+  $("pair").replaceChildren(
+    contextLine(fields, pair.answer),
+    cards,
+    ...(same.length ? [sameLine(same, fields)] : []),
+    checks(pair, fields),
+    el("div", `Provider ${pair.provider}, batch ${pair.batch}, pair ${pair.view.pair}`, "ref"),
+  );
   const saved = pair.answer;
-  label = saved ? saved.label : null;
-  strength = saved ? saved.strength : null;
+  $("yes").classList.toggle("on", !!saved && saved.label === "match");
+  $("no").classList.toggle("on", !!saved && saved.label === "no_match");
   $("reason").value = saved ? saved.reason : "";
-  $("status").textContent = saved ? "Saved; Enter re-saves, right arrow skips." : "";
+  $("reason").hidden = !(saved && saved.reason);
   $("error").textContent = "";
-  paint();
+  showWhere();
   window.scrollTo(0, 0);
   // Warm the server's next chunk of pairs while the person reads this one.
   if (index + 1 < state.total) fetch(`/api/pair?i=${index + 1}`).catch(() => {});
-}
-
-function paint() {
-  $("match").classList.toggle("on", label === "match");
-  $("no_match").classList.toggle("on", label === "no_match");
-  for (const b of document.querySelectorAll("[data-strength]")) b.classList.toggle("on", b.dataset.strength === strength);
 }
 
 async function load(i) {
@@ -140,19 +294,33 @@ async function load(i) {
   }
 }
 
-async function save() {
-  if (busy) return;
-  if (!label) { $("error").textContent = "Press y or n first."; return; }
+function toast(text, undoIndex) {
+  const box = $("toast");
+  const undo = el("a", "Undo");
+  undo.onclick = () => { box.hidden = true; load(undoIndex); };
+  box.replaceChildren(text, undo);
+  box.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { box.hidden = true; }, 7000);
+}
+
+function finish() {
+  index = state.total;
+  data = null;
+  $("pair").replaceChildren(el("div", "Your share is done. Press the left arrow to review your answers.", "done"));
+  $("where").textContent = "";
+}
+
+async function send(path, body, said) {
+  if (busy || !data) return;
   busy = true;
-  $("error").textContent = "";
+  const from = index;
   try {
-    const result = await api("/api/answer", {i: index, label, strength, reason: $("reason").value});
+    const result = await api(path, {i: index, ...body});
     showState(result.state);
-    if (result.next === null) {
-      finish();
-    } else {
-      await load(result.next);
-    }
+    toast(said, from);
+    if (result.next === null) finish();
+    else await load(result.next);
   } catch (e) {
     $("error").textContent = e.message;
   } finally {
@@ -160,37 +328,31 @@ async function save() {
   }
 }
 
-function finish() {
-  index = state.total;
-  data = null;
-  $("pair").replaceChildren(el("h2", "Your share is done. Press the left arrow to review your answers."));
-  $("status").textContent = "";
+function answer(label, low) {
+  const word = label === "match" ? "Yes" : "No";
+  return send("/api/answer", {label, strength: low ? "1" : null, reason: $("reason").value},
+    `Saved: ${word}${low ? " (low confidence)" : ""}.`);
 }
 
-function go(i) { if (i >= 0 && i < state.total) load(i); }
-function choose(next) { label = next; paint(); }
-function lean(next) { strength = strength === next ? null : next; paint(); }
+const tell = () => send("/api/skip", {}, "Set aside; it comes back after the others.");
+const go = (i) => { if (i >= 0 && i < state.total) load(i); };
 
-$("match").onclick = () => choose("match");
-$("no_match").onclick = () => choose("no_match");
-for (const b of document.querySelectorAll("[data-strength]")) b.onclick = () => lean(b.dataset.strength);
-$("save").onclick = save;
-$("back").onclick = () => go(index - 1);
+$("yes").onclick = () => answer("match", false);
+$("no").onclick = () => answer("no_match", false);
+$("tell").onclick = tell;
 
 document.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.target === $("reason")) {
-    if (e.key === "Enter") { e.preventDefault(); save(); }
-    else if (e.key === "Escape") $("reason").blur();
+    if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); $("reason").blur(); }
     return;
   }
   const actions = {
-    y: () => choose("match"), n: () => choose("no_match"),
-    u: () => lean("u"), 1: () => lean("1"), 2: () => lean("2"), 3: () => lean("3"),
-    r: () => $("reason").focus(), Enter: save,
-    Backspace: () => go(index - 1), ArrowLeft: () => go(index - 1), ArrowRight: () => go(index + 1),
+    y: () => answer("match", e.shiftKey), n: () => answer("no_match", e.shiftKey), u: tell,
+    r: () => { $("reason").hidden = false; $("reason").focus(); },
+    backspace: () => go(index - 1), arrowleft: () => go(index - 1), arrowright: () => go(index + 1),
   };
-  const action = actions[e.key];
+  const action = actions[e.key.toLowerCase()];
   if (action) { e.preventDefault(); action(); }
 });
 

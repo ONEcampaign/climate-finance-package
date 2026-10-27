@@ -8,14 +8,16 @@ saves every answer at once: it records the answer with `decisions.import_labels`
 which replaces the person's earlier answer on the pair and leaves their other
 answers as they are, then rewrites the person's labels CSV beside the pair's packet,
 atomically. `make_server` serves a session on 127.0.0.1, one request at a time
-through the session. Two `cf-build label` runs, or one beside `cf-build
-import-labels`, on one decisions file can lose each other's updates.
+through the session. A pair the person cannot tell is set aside, recorded nowhere,
+and comes back once the others are decided. Two `cf-build label` runs, or one beside
+`cf-build import-labels`, on one decisions file can lose each other's updates.
 """
 
 import hashlib
 import json
 import tempfile
 import threading
+import time
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, replace
@@ -28,7 +30,7 @@ from urllib.parse import parse_qs, urlparse
 
 import polars as pl
 
-from climate_finance import schema
+from climate_finance import catalogue, schema
 from climate_finance.build.errors import BuildError, ReviewDecisionsError
 from climate_finance.build.evaluate import design_path
 from climate_finance.build.link.decisions import (
@@ -49,6 +51,12 @@ PAGE = Path(__file__).with_name("label_page.html")
 STRENGTHS = {"u": 0.0, "1": 0.1, "2": 0.3, "3": 0.45}
 # Pairs whose views are built in one read of the units and CRS rows.
 CHUNK = 50
+# The pace the time left reads: the last `PACE_WINDOW` gaps between a person's
+# actions, each capped at `PACE_PAUSE` seconds so a break does not slow the estimate,
+# once there are `PACE_MIN` of them.
+PACE_WINDOW = 20
+PACE_PAUSE = 120.0
+PACE_MIN = 5
 KEY = ["sample_id", "task", "left_id", "right_id"]
 type PairKey = tuple[str, str, str, str]
 
@@ -201,12 +209,19 @@ class Session:
         decisions: Path,
         reviewer: str,
         share: float,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         from climate_finance.build.fetch import CRS_FILE
         from climate_finance.build.stages import raw_dir, table_path
 
         self.decisions = decisions
         self.reviewer = reviewer
+        self.clock = clock
+        self.acted_at: list[float] = []
+        self.skipped: set[PairKey] = set()
+        self.provider_names = dict(
+            catalogue.providers.list().select("code", "name").iter_rows()
+        )
         self.units = schema.scan_table(table_path(release_dir, "link", "units"))
         self.crs = schema.scan_table(table_path(release_dir, "normalise", "crs"))
         raw_crs = raw_dir(release_dir) / CRS_FILE
@@ -228,9 +243,20 @@ class Session:
             grouped.setdefault(pair.packet, []).append(pair)
         return grouped
 
+    def provider_name(self, provider: int) -> str:
+        """`Austria (1)`, or the bare code of a provider the catalogue lacks."""
+        name = self.provider_names.get(provider)
+        return f"{name} ({provider})" if name else str(provider)
+
     def state(self, *, after: int = -1) -> dict[str, object]:
-        """The queue's progress, and `next`, the first undecided index past `after`,
-        wrapping to the start of the queue (None when every pair is decided)."""
+        """The queue's progress, `next`, the index to show after `after`, and
+        `seconds_left` at the person's pace.
+
+        `next` is the first pair past `after`, wrapping to the start of the queue,
+        that is neither decided nor skipped. When only skipped pairs remain they
+        come back (the skips are cleared), and `next` is None only when every pair
+        is decided.
+        """
         done = [pair.key in self.answers for pair in self.queue]
         progress = Counter(
             (pair.provider, flag) for pair, flag in zip(self.queue, done, strict=True)
@@ -238,19 +264,42 @@ class Session:
         providers = [
             {
                 "provider": provider,
+                "name": self.provider_name(provider),
                 "done": progress[provider, True],
                 "total": progress[provider, True] + progress[provider, False],
             }
             for provider in sorted({pair.provider for pair in self.queue})
         ]
-        order = chain(range(after + 1, len(done)), range(after + 1))
+        order = list(chain(range(after + 1, len(done)), range(after + 1)))
+        if all(done[i] or self.queue[i].key in self.skipped for i in order):
+            self.skipped.clear()
         return {
             "definition": MATCH_DEFINITION,
             "done": sum(done),
+            "skipped": len(self.skipped),
             "total": len(done),
             "providers": providers,
-            "next": next((i for i in order if not done[i]), None),
+            "seconds_left": self._seconds_left(remaining=len(done) - sum(done)),
+            "next": next(
+                (
+                    i
+                    for i in order
+                    if not done[i] and self.queue[i].key not in self.skipped
+                ),
+                None,
+            ),
         }
+
+    def _seconds_left(self, *, remaining: int) -> int | None:
+        """The seconds `remaining` pairs take at the pace of the person's recent
+        actions, None until there are enough to tell."""
+        gaps = [
+            min(later - earlier, PACE_PAUSE)
+            for earlier, later in zip(self.acted_at, self.acted_at[1:], strict=False)
+        ][-PACE_WINDOW:]
+        if len(gaps) < PACE_MIN:
+            return None
+        return round(remaining * sum(gaps) / len(gaps))
 
     def _view(self, index: int) -> PairView:
         """The view of queue entry `index`. Views come `CHUNK` at a time, since
@@ -288,6 +337,7 @@ class Session:
         return {
             "i": index,
             "provider": entry.provider,
+            "provider_name": self.provider_name(entry.provider),
             "batch": entry.batch,
             "view": asdict(view),
             "answer": None
@@ -315,7 +365,19 @@ class Session:
         self._import(entry, answer)
         self.mine[entry.key] = answer
         self.answers[entry.key] = answer
+        self.skipped.discard(entry.key)
+        self.acted_at.append(self.clock())
         self._write_labels(entry.packet)
+        state = self.state(after=index)
+        return {"state": state, "next": state["next"]}
+
+    def skip(self, index: int) -> dict[str, object]:
+        """Set queue entry `index` aside as one the person cannot tell, and return
+        the state with the next pair. Nothing is recorded: no label is true to a
+        pair nobody can tell, and the pair comes back after the others."""
+        entry = self._entry(index)
+        self.skipped.add(entry.key)
+        self.acted_at.append(self.clock())
         state = self.state(after=index)
         return {"state": state, "next": state["next"]}
 
@@ -436,20 +498,23 @@ def make_server(session: Session, *, port: int = 0) -> ThreadingHTTPServer:
             ):
                 self._json({"error": "refused"}, 403)
                 return
-            if self.path != "/api/answer":
-                self._json({"error": "not found"}, 404)
-                return
             body = json.loads(
                 self.rfile.read(int(self.headers.get("Content-Length", 0)))
             )
-            self._reply(
-                lambda: session.save(
-                    int(body["i"]),
-                    label=body["label"],
-                    strength=body.get("strength"),
-                    reason=body.get("reason", ""),
-                )
-            )
+            match self.path:
+                case "/api/answer":
+                    self._reply(
+                        lambda: session.save(
+                            int(body["i"]),
+                            label=body["label"],
+                            strength=body.get("strength"),
+                            reason=body.get("reason", ""),
+                        )
+                    )
+                case "/api/skip":
+                    self._reply(lambda: session.skip(int(body["i"])))
+                case _:
+                    self._json({"error": "not found"}, 404)
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     hosts.update({f"127.0.0.1:{server.server_port}", f"localhost:{server.server_port}"})

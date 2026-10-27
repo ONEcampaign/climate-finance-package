@@ -4,7 +4,7 @@
 
 ## Your share
 
-The `human_audit` gate requires a person to decide at least a tenth of the sample's draws. `cf-build label` queues that tenth for each provider. It orders a provider's pairs by a hash of their sample ids, which gives the same order on every run, and takes pairs until the draws they back reach `human_audit.min_share` of the provider's draws. A pair can back several draws, so the queue can hold fewer pairs than a tenth of the draws. A pair that anyone has decided is skipped, so stopping and starting again resumes where you left off.
+The sample holds no link that joins a unit to itself, since such a link cannot be wrong and the precision gate counts it right. The `human_audit` gate requires a person to decide at least a tenth of the sample's draws. `cf-build label` queues that tenth for each provider. It orders a provider's pairs by a hash of their sample ids, which gives the same order on every run, and takes pairs until the draws they back reach `human_audit.min_share` of the provider's draws. A pair can back several draws, so the queue can hold fewer pairs than a tenth of the draws. A pair that anyone has decided is skipped, so stopping and starting again resumes where you left off.
 
 ## Steps
 
@@ -16,22 +16,25 @@ The `human_audit` gate requires a person to decide at least a tenth of the sampl
 
    The command serves the page on `127.0.0.1` only, at a free port unless you pass `--port`, and opens it in your browser. `--no-browser` prints the address and leaves the browser alone.
 
-2. Read the pair. Record A is the later disbursement and record B the earlier commitment. Fields that differ between the two carry a yellow background. The matching rule sits under "Matching rule", and the CRS rows each record sums sit under the table. The page shows the fields the packet shows, so the score and link method stay hidden.
+2. Read the page. The question at the top is "Is A money spent under commitment B?", and the two columns under it say what counts as a yes and what counts as a no. The line below shows your place, the provider by name, and the time left at your recent pace. "By provider" lists every provider's progress.
 
-3. Answer with the keyboard.
+    The bar above the two cards names the donor, agency and recipient once. A recipient, donor or agency that differs between the records shows in red with both values, because a different recipient is the commonest reason for a no. Card A is the later spending record and card B the earlier commitment record. Fields that differ carry a yellow background, and fields that agree collapse into the line "Same on both", which lists them and opens to show the values. The last section opens to show the CRS rows each record sums and the count of other commitments to the same recipient with similar titles, which helps to check that B is the right commitment. A long description shows three lines and expands with "more".
 
-   | Key                       | Action                                                                |
-   | ------------------------- | --------------------------------------------------------------------- |
-   | `y`                       | A matches B                                                           |
-   | `n`                       | A does not match B                                                    |
-   | `u`                       | Unsure (confidence 0.5)                                               |
-   | `1`, `2`, `3`             | Low, medium or high confidence (0.6, 0.8 or 0.95 on the label's side) |
-   | `r`                       | Type a reason. `Escape` leaves the box                                |
-   | `Enter`                   | Save and show the next undecided pair                                 |
-   | `Backspace` or left arrow | Go back to an earlier pair                                            |
-   | Right arrow               | Go forward without saving                                             |
+3. Answer. A key press saves and shows the next pair at once.
 
-   Confidence is optional. A pair you reopen shows your saved answer, and saving again replaces it.
+    | Key | Action |
+    | --- | --- |
+    | `y` | Yes, A is money spent under B |
+    | `n` | No |
+    | `Shift`+`y`, `Shift`+`n` | Yes or No at low confidence (0.6 or 0.4) |
+    | `u` | Can't tell: set the pair aside |
+    | `r` | Open the reason box. Type, press `Enter` to leave the box, then press `y` or `n` to save with the reason |
+    | Left arrow or `Backspace` | Go back to an earlier pair |
+    | Right arrow | Go forward without saving |
+
+    The same three actions are buttons at the bottom of the page. After a save, a note at the bottom says what was saved, and its Undo link reopens that pair with your answer in place, so you can change it. A pair you reopen shows "You answered", and a new answer replaces the old one. Confidence is optional; an answer without Shift saves with none.
+
+    A pair you can't tell records nothing, since no label is true of it, and it comes back after the other pairs. A pair left undecided at the end counts against the `human_audit` share unless an agent or another person decides it.
 
 4. Stop with `Ctrl-C` in the terminal. Nothing is pending.
 

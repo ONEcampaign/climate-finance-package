@@ -5,7 +5,8 @@ import http.client
 import json
 import socket
 import threading
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import polars as pl
@@ -102,7 +103,12 @@ def _sample(tmp_path: Path) -> tuple[Path, Path]:
     return release, sample
 
 
-def _session(tmp_path: Path, reviewer: str = "analyst", share: float = 0.10) -> Session:
+def _session(
+    tmp_path: Path,
+    reviewer: str = "analyst",
+    share: float = 0.10,
+    clock: Callable[[], float] = time.monotonic,
+) -> Session:
     release, sample = _sample(tmp_path)
     return Session(
         release_dir=release,
@@ -110,6 +116,7 @@ def _session(tmp_path: Path, reviewer: str = "analyst", share: float = 0.10) -> 
         decisions=tmp_path / "decisions.parquet",
         reviewer=reviewer,
         share=share,
+        clock=clock,
     )
 
 
@@ -206,6 +213,13 @@ def test_a_pair_shows_what_the_packet_shows_and_nothing_more(
         "Donor",
     ]
     assert session.state()["next"] == 0
+    # Providers come by name, from the catalogue.
+    assert pair["provider_name"] == "Austria (1)"
+    assert session.state()["seconds_left"] is None
+    assert [p["name"] for p in session.state()["providers"]] == [
+        "Austria (1)",
+        "Belgium (2)",
+    ]
 
 
 def test_an_answer_is_saved_at_once_and_a_changed_answer_replaces_it(
@@ -324,3 +338,45 @@ def test_a_save_leaves_the_time_of_the_other_answers_in_its_packet(
     assert after[left] == before[left]
     labels = pl.read_csv(packets[first].with_suffix(".analyst.labels.csv"))
     assert labels.height == 2
+
+
+def test_a_pair_set_aside_is_not_recorded_and_comes_back_after_the_others(
+    tmp_path: Path,
+) -> None:
+    session = _session(tmp_path, share=1.0)
+    last = len(session.queue) - 1
+
+    skipped = session.skip(0)
+    assert skipped["next"] == 1
+    assert skipped["state"]["skipped"] == 1
+    assert not (tmp_path / "decisions.parquet").exists()
+    for index in range(1, last + 1):
+        saved = session.save(index, label="match", strength=None, reason="")
+    # Only the pair set aside is left, so it comes back.
+    assert saved["next"] == 0
+    assert saved["state"]["skipped"] == 0
+    assert saved["state"]["done"] == last
+    assert session.save(0, label="no_match", strength=None, reason="")["next"] is None
+
+
+def test_the_time_left_follows_the_pace_of_recent_actions(tmp_path: Path) -> None:
+    now = [0.0]
+    session = _session(tmp_path, share=1.0, clock=lambda: now[0])
+
+    def act(seconds: float) -> dict[str, object]:
+        now[0] += seconds
+        return session.save(
+            len(session.answers), label="match", strength=None, reason=""
+        )["state"]
+
+    states = [act(10.0) for _ in range(5)]
+    # Five actions make four gaps: too few to tell.
+    assert states[-1]["seconds_left"] is None
+    state = act(10.0)
+    assert state["seconds_left"] == 10 * (state["total"] - state["done"])
+    # A long break counts as two minutes, not as the pace.
+    state = act(3600.0)
+    gaps = [10.0] * 5 + [120.0]
+    assert state["seconds_left"] == round(
+        (state["total"] - state["done"]) * sum(gaps) / len(gaps)
+    )
