@@ -29,7 +29,8 @@ over-allocation:
 - `oecd_reconciliation`: release climate commitments by provider and year, rows
   that repeat an earlier vintage included, match the published CRDF.
 - `drift`: provider-year climate commitments and disbursements move by at most
-  `max_move` from the previous release, unless a recorded cause covers the move.
+  `max_move` from the previous release, unless a cause in `build.toml`'s
+  `drift_causes` covers the move.
 - `withheld_rows`: no release row comes from a source the release withholds, such
   as the Green Climate Fund's ledger, whose terms allow only private study, research
   and teaching (`schema.withheld_record`).
@@ -53,7 +54,7 @@ other gates' rows carry no `code`.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from pathlib import Path
 
 import polars as pl
@@ -62,6 +63,7 @@ from pydantic import BaseModel, ConfigDict
 
 import climate_finance as cf
 from climate_finance.build import evaluate, listings
+from climate_finance.build.config import DriftCause
 from climate_finance.build.errors import GateFailedError
 from climate_finance.build.normalise.crs import allocated_population
 from climate_finance.build.sums import ordered_sum
@@ -149,18 +151,8 @@ class Reconciliation(_Section):
     tolerance: float
 
 
-class DriftCause(_Section):
-    """Why a provider-year total moved in `release`."""
-
-    release: str
-    provider_code: int
-    year: int
-    cause: str
-
-
 class Drift(_Section):
     max_move: float
-    causes: tuple[DriftCause, ...] = ()
 
 
 class GateConfig(_Section):
@@ -180,6 +172,13 @@ def load_gates(path: Path = GATES_YAML) -> GateConfig:
     return GateConfig.model_validate(yaml.safe_load(path.read_text()))
 
 
+def release_path(path: Path) -> Path:
+    """The release directory at `path`: its `assemble/` when `path` is a build's
+    directory, else `path` itself, a directory `cf.load(path=...)` opens."""
+    assembled = path / "assemble"
+    return assembled if (assembled / "release.json").exists() else path
+
+
 def run_gates(
     release_dir: Path,
     *,
@@ -187,6 +186,7 @@ def run_gates(
     sample: Path | None = None,
     previous: Path | None = None,
     first_release: bool = False,
+    drift_causes: Collection[DriftCause] = (),
     report_only: bool = False,
     waive_precision: bool = False,
     gates: GateConfig | None = None,
@@ -196,10 +196,14 @@ def run_gates(
     Args:
         release_dir: a build's directory, `<out_dir>/<release>`.
         decisions: the review-decisions parquet holding the blind-sample labels.
-        sample: the blind sample's design file (`evaluate.design_path`); without
-            one, every provider fails precision and the human audit fails.
-        previous: the previous release, a directory `cf.load(path=...)` opens.
+        sample: the blind sample's directory, where `evaluate.draw_blind_sample`
+            wrote its design; without one, every provider fails precision and the
+            human audit fails.
+        previous: the previous release, a build's directory or a directory
+            `cf.load(path=...)` opens (`release_path`).
         first_release: pass the drift gate when there is no previous release.
+        drift_causes: the recorded causes of provider-year moves, from
+            `build.toml`.
         report_only: return the results without raising on a failure.
         waive_precision: let failed precision and human_audit rows pass, marked
             `waived`.
@@ -235,7 +239,9 @@ def run_gates(
     labels = (
         None
         if sample is None
-        else evaluate.read_sample_labels(sample, decisions=decisions)
+        else evaluate.read_sample_labels(
+            evaluate.design_path(sample), decisions=decisions
+        )
     )
     results = pl.concat(
         [
@@ -280,8 +286,9 @@ def run_gates(
             drift_gate(
                 quality=released("quality"),
                 release=manifest.release,
-                previous=previous,
+                previous=None if previous is None else release_path(previous),
                 first_release=first_release,
+                causes=drift_causes,
                 config=gates.drift,
             ),
             withheld_gate({name: released(name) for name in RELEASE_TABLES}),
@@ -854,10 +861,11 @@ def drift_gate(
     release: str,
     previous: Path | None,
     first_release: bool,
+    causes: Collection[DriftCause],
     config: Drift,
 ) -> pl.DataFrame:
     """The largest relative move of a provider-year total (`DRIFT_MEASURES`) from
-    the previous release that no cause in `config` explains for `release`.
+    the previous release that no cause in `causes` explains for `release`.
 
     A provider-year both releases hold moves by its change over its previous
     total, or by 1 when that total was 0. One the previous release held and this
@@ -902,7 +910,7 @@ def drift_gate(
         for table, side in ((quality, "now"), (before, "before"))
     ]
     explained = pl.LazyFrame(
-        [(c.provider_code, c.year) for c in config.causes if c.release == release],
+        [(c.provider_code, c.year) for c in causes if c.release == release],
         schema={"provider_code": pl.Int32(), "year": pl.Int16()},
         orient="row",
     ).with_columns(explained=pl.lit(value=True))

@@ -1,32 +1,39 @@
-"""Packing, gating and uploading a release, and `load` downloading it into a cache.
+"""Packing, gating and publishing a release, and `load` downloading it into a cache.
 
-The round trip runs in the fast suite: it packs the fixture release of a few hundred
-kB and serves it from a server on loopback, which the socket guard allows, so it
-reaches no outside network and takes well under a second.
+Publishing runs against `FakeGitHub`, an in-memory stand-in for `gh`, so no test
+reaches GitHub. The round trip runs in the fast suite: it packs the fixture release
+of a few hundred kB and serves it from a server on loopback, which the socket guard
+allows, so it reaches no outside network and takes well under a second.
 """
 
 import json
 import shutil
+import subprocess
 import tarfile
 import threading
 import tomllib
-from collections.abc import Collection, Iterator
+from collections.abc import Callable, Collection, Iterator, Sequence
 from datetime import UTC, datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 import pyarrow as pa
 import pytest
 from make_fixture import FIXTURE_DIR
 from pydantic import ValidationError
+from typer.testing import CliRunner
 
 import climate_finance as cf
 from climate_finance import release as release_module
-from climate_finance.build import gate, release
+from climate_finance.build import gate, publish, release
+from climate_finance.build.cli import TRACEBACK_VAR, app
+from climate_finance.build.config import PUBLISHED_SETTINGS, BuildConfig, load_config
 from climate_finance.build.errors import BuildError, GateFailedError
 from climate_finance.build.fetch import BTR_SOURCE
 from climate_finance.build.measure import PROVIDERS_TOML
+from climate_finance.build.provenance import setting_value
 from climate_finance.errors import (
     ReleaseIntegrityError,
     SourceUnavailableError,
@@ -44,7 +51,7 @@ from climate_finance.schema import (
 # The fixture packs under a release name of its own, since `fixture` is reserved.
 RELEASE = "2026a"
 PACK = f"climate-finance-{RELEASE}.tar.zst"
-BUILD_TOML = Path(__file__).parents[1] / "build.toml"
+BUILD_TOML = Path(__file__).parent / "fixtures" / "build.toml"
 
 
 def built_release(release_dir: Path, *, sources: tuple[str, ...] = ("crs",)) -> Path:
@@ -81,10 +88,15 @@ def gated(
     rows: dict[str, list[dict[str, object]]] | None = None,
     omit: Collection[str] = (),
     waiver: str | None = None,
+    previous: str | None = None,
+    previous_sha256: str | None = "0" * 64,
+    settings: dict[str, object] | None = None,
 ) -> Path:
     """`release_dir` with a passed row for every gate in its `release.json`,
-    replaced gate by gate by `rows`, without the gates in `omit`, and `waiver`
-    recorded."""
+    replaced gate by gate by `rows`, without the gates in `omit`, `waiver` and the
+    `previous` release with its pack's `previous_sha256` recorded (the sha256
+    `indexed` lists), and a published release's settings, replaced setting by
+    setting by `settings`."""
     path = release_dir / "assemble" / "release.json"
     manifest = ReleaseManifest.model_validate_json(path.read_text())
     gates = {name: [PASSED] for name in gate.GATES if name not in omit}
@@ -95,10 +107,107 @@ def gated(
                 "gates": gates | (rows or {}),
                 "precision_gate_waived": waiver is not None,
                 "precision_waiver": waiver,
+                "previous_release": previous,
+                "previous_pack_sha256": None if previous is None else previous_sha256,
+                "settings": manifest.settings | PUBLISHED_SETTINGS | (settings or {}),
             }
         ).model_dump_json()
     )
     return release_dir
+
+
+class FakeGitHub:
+    """`gh` against one repository held in memory: the assets of its `data`
+    release, or None while it has none, beside a code release. Records each call,
+    and runs `after_write` after each call that changes the repository."""
+
+    def __init__(
+        self,
+        assets: dict[str, bytes] | None = None,
+        *,
+        draft: bool = False,
+        after_write: Callable[["FakeGitHub"], None] | None = None,
+    ) -> None:
+        self.assets = assets
+        self.ids = {name: number for number, name in enumerate(assets or {})}
+        self.draft = draft
+        self.after_write = after_write
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, args: Sequence[str]) -> str:
+        call = tuple(args)
+        self.calls.append(call)
+        assert call[-2:] == ("--repo", publish.PUBLISH_REPO) or call[0] == "api"
+        if call[:2] == ("release", "list"):
+            data = [] if self.assets is None else [publish.DATA_TAG]
+            return json.dumps(
+                [{"tagName": "v1.2.3", "isDraft": False}]
+                + [{"tagName": tag, "isDraft": self.draft} for tag in data]
+            )
+        if call[:2] == ("release", "create"):
+            assert self.assets is None
+            self.assets = {}
+        assert self.assets is not None
+        match call[:2]:
+            case ("release", "view"):
+                api = f"https://api.github.com/repos/{publish.PUBLISH_REPO}"
+                return json.dumps(
+                    {
+                        "assets": [
+                            {"name": name, "apiUrl": f"{api}/releases/assets/{number}"}
+                            for name, number in self.ids.items()
+                            if name in self.assets
+                        ]
+                    }
+                )
+            case ("release", "download"):
+                return self.assets[call[4]].decode()
+            case ("release", "upload"):
+                name = Path(call[3]).name
+                self.assets[name] = Path(call[3]).read_bytes()
+                self.ids[name] = len(self.ids)
+            case ("release", "delete-asset"):
+                del self.assets[call[3]]
+            case ("api", "--method"):
+                number = int(call[3].rsplit("/", 1)[1])
+                old = next(name for name, i in self.ids.items() if i == number)
+                new = call[5].removeprefix("name=")
+                assert new not in self.assets
+                self.assets[new] = self.assets.pop(old)
+                self.ids[new] = number
+        if call in self.writes and self.after_write is not None:
+            self.after_write(self)
+        return ""
+
+    @property
+    def writes(self) -> list[tuple[str, ...]]:
+        """The calls that change the repository."""
+        return [
+            call
+            for call in self.calls
+            if call[0] == "api" or call[1] in {"create", "upload", "delete-asset"}
+        ]
+
+    def index(self) -> dict[str, Any]:
+        assert self.assets is not None
+        return json.loads(self.assets[publish.INDEX_ASSET])
+
+
+def indexed(*releases: str, latest: str | None = None) -> dict[str, bytes]:
+    """The assets of a `data` release whose index lists `releases`, the newest of
+    them latest unless `latest` is given."""
+    index = {
+        "latest": latest or (max(releases) if releases else None),
+        "releases": {
+            name: {
+                "url": publish.asset_url(f"climate-finance-{name}.tar.zst"),
+                "sha256": "0" * 64,
+                "data_format": DATA_FORMAT,
+            }
+            for name in releases
+        },
+    }
+    return {publish.INDEX_ASSET: json.dumps(index).encode()}
 
 
 def members(pack: Path) -> dict[str, bytes]:
@@ -111,19 +220,13 @@ def members(pack: Path) -> dict[str, bytes]:
 
 @pytest.fixture
 def server(tmp_path: Path) -> Iterator[tuple[str, Path]]:
-    """A loopback HTTP server that serves and accepts files by PUT in a directory."""
+    """A loopback HTTP server that serves the files in a directory."""
     root = tmp_path / "served"
     root.mkdir()
 
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs) -> None:
             super().__init__(*args, directory=str(root), **kwargs)
-
-        def do_PUT(self) -> None:
-            length = int(self.headers["Content-Length"])
-            (root / Path(self.path).name).write_bytes(self.rfile.read(length))
-            self.send_response(201)
-            self.end_headers()
 
         def log_message(self, *args: object) -> None:
             pass
@@ -311,7 +414,7 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
     calls = []
     config = Path(shutil.copy(BUILD_TOML, tmp_path / "build.toml"))
 
-    def fake_build(name: str, *, config: Path, out_dir: Path) -> None:
+    def fake_build(name: str, *, config: BuildConfig, out_dir: Path) -> None:
         built_release(out_dir / name)
 
     def fake_gates(
@@ -321,6 +424,7 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
         sample: Path | None,
         previous: Path | None,
         first_release: bool,
+        drift_causes: object,
         waive_precision: bool,
     ) -> pl.DataFrame:
         calls.append((release_dir, decisions, sample, previous, waive_precision))
@@ -328,13 +432,14 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
 
     monkeypatch.setattr(release.build_package, "build", fake_build)
     monkeypatch.setattr(gate, "run_gates", fake_gates)
+    previous = built_release(tmp_path / "previous")
 
     pack = release.cut_release(
         RELEASE,
         config=config,
         out_dir=tmp_path,
-        sample=tmp_path / "sample.parquet",
-        previous=FIXTURE_DIR,
+        sample=tmp_path / "sample",
+        previous=previous,
         waive_precision=waiver,
     )
 
@@ -343,8 +448,8 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
         (
             tmp_path / RELEASE,
             tmp_path / "data" / "review_decisions.parquet",
-            tmp_path / "sample.parquet",
-            FIXTURE_DIR,
+            tmp_path / "sample",
+            previous,
             waive,
         )
     ]
@@ -357,7 +462,47 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
         "precision": [{"passed": waive}],
         "drift": [{"passed": True}],
     }
-    assert manifest.previous_release == cf.load(path=FIXTURE_DIR).manifest.release
+    # A build's directory names the release its `assemble/` holds.
+    assert manifest.previous_release == RELEASE
+
+
+@pytest.mark.parametrize(
+    ("configured", "fetched", "offline", "expected"),
+    [
+        (False, False, None, False),
+        (False, True, None, True),
+        (True, False, None, True),
+        (False, True, False, False),
+        (True, False, False, False),
+    ],
+)
+def test_cut_release_reuses_the_sources_an_earlier_build_fetched(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    configured: bool,
+    fetched: bool,
+    offline: bool | None,
+    expected: bool,
+) -> None:
+    config = tmp_path / "build.toml"
+    config.write_text(
+        BUILD_TOML.read_text().replace(
+            "offline = false", f"offline = {str(configured).lower()}"
+        )
+    )
+    if fetched:
+        (tmp_path / RELEASE / "fetch").mkdir(parents=True)
+    builds = []
+
+    def fake_build(name: str, *, config: BuildConfig, out_dir: Path) -> None:
+        builds.append(config.offline)
+        raise BuildError("built")
+
+    monkeypatch.setattr(release.build_package, "build", fake_build)
+
+    with pytest.raises(BuildError, match="built"):
+        release.cut_release(RELEASE, config=config, out_dir=tmp_path, offline=offline)
+    assert builds == [expected]
 
 
 def test_a_failed_gate_stops_cut_release_before_the_pack(
@@ -402,7 +547,7 @@ def test_a_failed_gate_stops_cut_release_before_the_pack(
         ),
     ],
 )
-def test_upload_and_index_take_only_a_release_whose_gates_passed_or_were_waived(
+def test_publish_takes_only_a_release_whose_gates_passed_or_were_waived(
     tmp_path: Path,
     rows: dict[str, list[dict[str, object]]],
     waiver: str | None,
@@ -410,24 +555,15 @@ def test_upload_and_index_take_only_a_release_whose_gates_passed_or_were_waived(
 ) -> None:
     release_dir = gated(built_release(tmp_path / RELEASE), rows=rows, waiver=waiver)
     pack = release.pack_release(release_dir, out_path=tmp_path / PACK)
-    uploads = tmp_path / "uploads"
-
-    def upload() -> str:
-        return release.upload_release(pack, target=str(uploads))
-
-    def index() -> ReleaseIndex:
-        return release.add_to_index(
-            ReleaseIndex(), release=RELEASE, pack=pack, url="file:///p"
-        )
+    github = FakeGitHub()
 
     if refused is None:
-        upload()
-        assert index().latest == RELEASE
+        publish.publish_release(pack, gh=github)
+        assert github.index()["latest"] == RELEASE
     else:
-        for publish in (upload, index):
-            with pytest.raises(GateFailedError, match=refused):
-                publish()
-        assert not uploads.exists()
+        with pytest.raises(GateFailedError, match=refused):
+            publish.publish_release(pack, gh=github)
+        assert github.calls == []
 
 
 @pytest.mark.parametrize(
@@ -451,91 +587,444 @@ def test_a_pack_is_unpublishable_for_every_gate_with_no_result(
         omit=omit,
     )
     pack = release.pack_release(release_dir, out_path=tmp_path / PACK)
-    uploads = tmp_path / "uploads"
+    github = FakeGitHub()
 
     def reported(problems: list[str]) -> set[str]:
         return {problem.split(":")[0] for problem in problems}
 
     assert reported(release.unpublishable(release.packed_manifest(pack))) == missing
-    for publish in (
-        lambda: release.upload_release(pack, target=str(uploads)),
-        lambda: release.add_to_index(
-            ReleaseIndex(), release=RELEASE, pack=pack, url="file:///p"
-        ),
-    ):
-        with pytest.raises(GateFailedError) as refused:
-            publish()
-        assert reported(refused.value.failures) == missing
-    assert not uploads.exists()
+    with pytest.raises(GateFailedError) as refused:
+        publish.publish_release(pack, gh=github)
+    assert reported(refused.value.failures) == missing
+    assert github.calls == []
 
 
-def test_the_index_refuses_a_pack_under_another_release_name(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"key_repair": False},
+        {"skip_eib_routes": ["bulk"]},
+        {"review": False},
+        {"years.crdf": [2021, 2022]},
+        {"embed": True},
+        {"gap_fill": True},
+        {"jev_labels": True},
+    ],
+)
+def test_a_pack_built_with_other_settings_than_a_release_is_not_published(
+    tmp_path: Path, settings: dict[str, object]
+) -> None:
     pack = release.pack_release(
-        gated(built_release(tmp_path / RELEASE)), out_path=tmp_path / PACK
+        gated(built_release(tmp_path / RELEASE), settings=settings),
+        out_path=tmp_path / PACK,
     )
-    with pytest.raises(BuildError, match="holds release '2026a', not 'other'"):
-        release.add_to_index(
-            ReleaseIndex(), release="other", pack=pack, url="file:///p"
-        )
+    github = FakeGitHub()
+
+    with pytest.raises(BuildError, match=next(iter(settings))):
+        publish.publish_release(pack, gh=github)
+    assert github.calls == []
 
 
-def test_the_reserved_fixture_name_is_never_cut_uploaded_or_indexed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_the_shipped_build_toml_holds_the_settings_of_a_release() -> None:
+    config = load_config(Path(__file__).parents[1] / "build.toml")
+
+    assert {
+        name: setting_value(config, name) for name in PUBLISHED_SETTINGS
+    } == PUBLISHED_SETTINGS
+    assert config.sources.ledgers is not None
+
+
+@pytest.mark.parametrize("name", ["fixture", "2026a-rc", "2026A", "2026a_test"])
+def test_only_a_published_name_is_cut_or_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
     release_dir = gated(built_release(tmp_path / RELEASE))
     path = release_dir / "assemble" / "release.json"
     manifest = ReleaseManifest.model_validate_json(path.read_text())
-    path.write_text(
-        manifest.model_copy(update={"release": "fixture"}).model_dump_json()
+    path.write_text(manifest.model_copy(update={"release": name}).model_dump_json())
+    pack = release.pack_release(
+        release_dir, out_path=tmp_path / f"climate-finance-{name}.tar.zst"
     )
-    pack = release.pack_release(release_dir, out_path=tmp_path / "fixture.tar.zst")
     monkeypatch.setattr(release.build_package, "build", pytest.fail)
+    github = FakeGitHub()
 
-    refusals = (
-        lambda: release.upload_release(pack, target=str(tmp_path / "uploads")),
-        lambda: release.add_to_index(
-            ReleaseIndex(), release="fixture", pack=pack, url="file:///p"
-        ),
-        lambda: release.cut_release("fixture", config=BUILD_TOML, out_dir=tmp_path),
-    )
-    for refused in refusals:
-        with pytest.raises(BuildError, match="'fixture' is reserved"):
-            refused()
-    assert not (tmp_path / "uploads").exists()
+    refused = "'fixture' is reserved" if name == "fixture" else "not a published name"
+    with pytest.raises(BuildError, match=refused):
+        publish.publish_release(pack, gh=github)
+    if name == "fixture":
+        with pytest.raises(BuildError, match=refused):
+            release.cut_release(name, config=BUILD_TOML, out_dir=tmp_path)
+    assert github.calls == []
 
 
-def test_upload_copies_into_a_directory_or_puts_to_a_server(
-    tmp_path: Path, server: tuple[str, Path]
+def test_publish_creates_the_data_release_then_uploads_the_pack_and_the_index(
+    tmp_path: Path,
 ) -> None:
-    url, served = server
     pack = release.pack_release(
         gated(built_release(tmp_path / RELEASE)), out_path=tmp_path / PACK
     )
+    github = FakeGitHub()
 
-    local = release.upload_release(pack, target=str(tmp_path / "uploads"))
-    remote = release.upload_release(pack, target=f"{url}/assets/")
+    published = publish.publish_release(pack, gh=github)
 
-    assert local == (tmp_path / "uploads" / PACK).as_uri()
-    assert sha256_file(tmp_path / "uploads" / PACK) == sha256_file(pack)
-    assert remote == f"{url}/assets/{PACK}"
-    assert sha256_file(served / PACK) == sha256_file(pack)
+    create, pack_upload, index_upload, rename = github.writes
+    assert create[:3] == ("release", "create", publish.DATA_TAG)
+    # Published, so anyone can download its assets, and it is not GitHub's latest.
+    assert "--latest=false" in create
+    assert "--draft" not in create
+    assert pack_upload[3] == str(pack.resolve())
+    assert Path(index_upload[3]).name == publish.STAGED_INDEX_ASSET
+    assert rename[:3] == ("api", "--method", "PATCH")
+    assert github.assets is not None
+    assert set(github.assets) == {PACK, publish.INDEX_ASSET}
+    assert github.assets[PACK] == pack.read_bytes()
+    entry = {
+        "url": publish.asset_url(PACK),
+        "sha256": sha256_file(pack),
+        "data_format": DATA_FORMAT,
+    }
+    assert github.index() == {"latest": RELEASE, "releases": {RELEASE: entry}}
+    assert published.index == tmp_path / publish.INDEX_ASSET
+    assert json.loads(published.index.read_text()) == github.index()
+    assert (published.url, published.latest) == (entry["url"], RELEASE)
+
+
+def test_publish_adds_to_the_published_index_keeping_fields_it_does_not_know(
+    tmp_path: Path,
+) -> None:
+    pack = release.pack_release(
+        gated(built_release(tmp_path / RELEASE), previous="2025a"),
+        out_path=tmp_path / PACK,
+    )
+    before = json.loads(indexed("2025a")[publish.INDEX_ASSET])
+    before["generated"] = "2026-01-01"
+    before["releases"]["2025a"]["requires"] = ">=2.0"
+    github = FakeGitHub({publish.INDEX_ASSET: json.dumps(before).encode()})
+
+    publish.publish_release(pack, gh=github)
+
+    after = github.index()
+    # The new index replaces the old by a staged upload, a delete and a rename.
+    assert [call[1] for call in github.writes] == [
+        "upload",
+        "upload",
+        "delete-asset",
+        "--method",
+    ]
+    assert after["generated"] == "2026-01-01"
+    assert after["latest"] == RELEASE
+    assert after["releases"] == before["releases"] | {
+        RELEASE: {
+            "url": publish.asset_url(PACK),
+            "sha256": sha256_file(pack),
+            "data_format": DATA_FORMAT,
+        }
+    }
+
+
+def test_an_older_release_joins_the_index_and_leaves_latest_alone(
+    tmp_path: Path,
+) -> None:
+    pack = release.pack_release(
+        gated(built_release(tmp_path / RELEASE), previous="2025a"),
+        out_path=tmp_path / PACK,
+    )
+    github = FakeGitHub(indexed("2025a", "2026a.10"))
+
+    publish.publish_release(pack, gh=github)
+
+    assert github.index()["latest"] == "2026a.10"
+    assert set(github.index()["releases"]) == {"2025a", RELEASE, "2026a.10"}
+    assert publish.release_order("2026a.10") > publish.release_order("2026a.9")
+    assert publish.release_order("2026b") > publish.release_order("2026a.10")
+
+
+@pytest.mark.parametrize(
+    ("assets", "previous", "previous_sha256", "refused"),
+    [
+        (indexed(RELEASE), None, None, r"already published.* such as 2026a\.1"),
+        (
+            indexed("2025a"),
+            None,
+            None,
+            "compared '2026a' with nothing; .* naming '2025a'",
+        ),
+        (indexed("2025a"), "2026a-rc", None, "with '2026a-rc'; .* naming '2025a'"),
+        (indexed("2024a", "2025a"), "2024a", "0" * 64, "naming '2025a'"),
+        (None, "2025a", "0" * 64, "with --first-release"),
+        (
+            indexed("2025a", "2027a"),
+            "2024a",
+            "0" * 64,
+            "which the index does not list",
+        ),
+        # A published candidate cannot be latest, so it is no drift baseline.
+        (
+            indexed("2025a", "2026b-rc", latest="2026b-rc"),
+            "2026b-rc",
+            "0" * 64,
+            "'2026b-rc' is not a published name",
+        ),
+        # A local copy named like the published release, from another pack.
+        (indexed("2025a"), "2025a", "f" * 64, "from the pack with sha256 f{64}"),
+        (indexed("2025a"), "2025a", None, "a copy that records no pack"),
+    ],
+    ids=[
+        "re-cut",
+        "first-release",
+        "own-rc",
+        "older",
+        "none-published",
+        "unlisted",
+        "rc-latest",
+        "other-pack",
+        "no-pack",
+    ],
+)
+def test_publish_refuses_a_name_already_published_or_drift_against_another_release(
+    tmp_path: Path,
+    assets: dict[str, bytes] | None,
+    previous: str | None,
+    previous_sha256: str | None,
+    refused: str,
+) -> None:
+    pack = release.pack_release(
+        gated(
+            built_release(tmp_path / RELEASE),
+            previous=previous,
+            previous_sha256=previous_sha256,
+        ),
+        out_path=tmp_path / PACK,
+    )
+    github = FakeGitHub(assets)
+
+    with pytest.raises(BuildError, match=refused):
+        publish.publish_release(pack, gh=github)
+    assert github.writes == []
+    assert github.assets == assets
+
+
+def test_packs_without_an_index_are_refused_with_the_local_index_to_restore(
+    tmp_path: Path,
+) -> None:
+    pack = release.pack_release(
+        gated(built_release(tmp_path / RELEASE), previous="2025a"),
+        out_path=tmp_path / PACK,
+    )
+    # As after a publish that stopped between deleting the index and renaming the
+    # staged one.
+    github = FakeGitHub(
+        {
+            "climate-finance-2025a.tar.zst": b"pack",
+            publish.STAGED_INDEX_ASSET: indexed("2025a")[publish.INDEX_ASSET],
+        }
+    )
+
+    with pytest.raises(
+        BuildError, match=r"holds packs but no releases\.json"
+    ) as raised:
+        publish.publish_release(pack, gh=github)
+    assert str(tmp_path / publish.INDEX_ASSET) in str(raised.value)
+    assert "--first-release" not in str(raised.value)
+    assert github.writes == []
+
+
+def test_an_index_another_publish_replaced_meanwhile_is_reported(
+    tmp_path: Path,
+) -> None:
+    pack = release.pack_release(
+        gated(built_release(tmp_path / RELEASE), previous="2025a"),
+        out_path=tmp_path / PACK,
+    )
+
+    def concurrent(github: FakeGitHub) -> None:
+        # Another publish replaces the index right after this one's rename.
+        if github.calls[-1][0] == "api":
+            assert github.assets is not None
+            github.assets[publish.INDEX_ASSET] = indexed("2025a", "2025b")[
+                publish.INDEX_ASSET
+            ]
+
+    github = FakeGitHub(indexed("2025a"), after_write=concurrent)
+
+    with pytest.raises(BuildError, match="another publish replaced it meanwhile"):
+        publish.publish_release(pack, gh=github)
+    assert not (tmp_path / publish.INDEX_ASSET).exists()
+
+
+def test_a_pack_renamed_for_another_release_is_refused(tmp_path: Path) -> None:
+    # Uploaded under its file name, it would replace the 2025a pack.
+    pack = release.pack_release(
+        gated(built_release(tmp_path / RELEASE)),
+        out_path=tmp_path / "climate-finance-2025a.tar.zst",
+    )
+    github = FakeGitHub()
+
+    with pytest.raises(BuildError, match=f"publish it as {PACK}"):
+        publish.publish_release(pack, gh=github)
+    assert github.calls == []
+
+
+def test_a_repository_that_is_not_owner_and_name_is_refused(tmp_path: Path) -> None:
+    pack = release.pack_release(
+        gated(built_release(tmp_path / RELEASE)), out_path=tmp_path / PACK
+    )
+    github = FakeGitHub()
+
+    with pytest.raises(BuildError, match="not a GitHub repository"):
+        publish.publish_release(pack, repo="--help", gh=github)
+    assert github.calls == []
+
+
+def test_a_dry_run_changes_nothing_on_github_or_beside_the_pack(
+    tmp_path: Path,
+) -> None:
+    pack = release.pack_release(
+        gated(built_release(tmp_path / RELEASE), previous="2025a"),
+        out_path=tmp_path / PACK,
+    )
+    github = FakeGitHub(indexed("2025a"))
+
+    published = publish.publish_release(pack, gh=github, dry_run=True)
+
+    assert github.writes == []
+    assert github.assets == indexed("2025a")
+    assert [command[1] for command in published.commands] == [
+        "upload",
+        "upload",
+        "delete-asset",
+        "--method",
+    ]
+    # The releases.json beside the pack is the one to ship, so a dry run leaves it.
+    assert not (tmp_path / publish.INDEX_ASSET).exists()
+    assert published.index.parent != tmp_path
+    assert json.loads(published.index.read_text())["latest"] == RELEASE
+
+
+def test_a_draft_data_release_is_refused(tmp_path: Path) -> None:
+    pack = release.pack_release(
+        gated(built_release(tmp_path / RELEASE)), out_path=tmp_path / PACK
+    )
+    github = FakeGitHub({}, draft=True)
+
+    with pytest.raises(BuildError, match="draft"):
+        publish.publish_release(pack, gh=github)
+    assert github.writes == []
+
+
+def test_the_publish_command_prints_each_gh_step_and_refuses_in_one_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pack = release.pack_release(
+        gated(built_release(tmp_path / RELEASE)), out_path=tmp_path / PACK
+    )
+    github = FakeGitHub(indexed(RELEASE))
+    monkeypatch.setattr(publish, "run_gh", github)
+    runner = CliRunner()
+
+    refused = runner.invoke(app, ["publish", str(pack)])
+    github.assets = None
+    dry = runner.invoke(app, ["publish", str(pack), "--dry-run"])
+
+    assert refused.exit_code == 1
+    assert "BuildError: release '2026a' is already published" in refused.output
+    assert "Traceback" not in refused.output
+    assert dry.exit_code == 0, dry.output
+    assert "gh release list" in dry.output
+    assert "would run: gh release create data" in dry.output
+    assert f"would run: gh release upload data {pack.resolve()}" in dry.output
+    assert "new index previewed in" in dry.output
+    assert github.writes == []
+
+
+def test_a_refusal_prints_its_causes_and_the_traceback_on_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pack = release.pack_release(
+        gated(built_release(tmp_path / RELEASE)), out_path=tmp_path / PACK
+    )
+    github = FakeGitHub({publish.INDEX_ASSET: b"<html>Not Found</html>"})
+    monkeypatch.setattr(publish, "run_gh", github)
+    runner = CliRunner()
+
+    short = runner.invoke(app, ["publish", str(pack)])
+    monkeypatch.setenv(TRACEBACK_VAR, "1")
+    full = runner.invoke(app, ["publish", str(pack)])
+
+    assert short.exit_code == 1
+    assert "BuildError: the published releases.json is not JSON" in short.output
+    assert "caused by JSONDecodeError: Expecting value: line 1 column 1" in (
+        short.output
+    )
+    assert isinstance(full.exception, BuildError)
+    assert isinstance(full.exception.__cause__, json.JSONDecodeError)
+
+
+def test_gh_missing_is_a_build_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PATH", "")
+
+    with pytest.raises(BuildError, match="gh auth login"):
+        publish.run_gh(["--version"])
+
+
+def test_gh_runs_from_an_argument_list_with_no_shell_and_a_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runs = []
+
+    def hung(command: list[str], **options: object) -> None:
+        runs.append((command, options))
+        raise subprocess.TimeoutExpired(command, publish.GH_TIMEOUT)
+
+    monkeypatch.setattr(publish.subprocess, "run", hung)
+
+    with pytest.raises(BuildError, match="was stopped"):
+        publish.run_gh(["release", "list"])
+    [(command, options)] = runs
+    assert command == ["gh", "release", "list"]
+    assert options["timeout"] == publish.GH_TIMEOUT
+    assert not options.get("shell")
+
+
+def test_the_index_url_is_the_data_release_asset() -> None:
+    assert publish.asset_url(publish.INDEX_ASSET) == release_module.INDEX_URL
+
+
+@pytest.mark.parametrize("copy", ["downloaded", "build-beside-its-pack", "bare"])
+def test_the_previous_release_records_the_pack_it_came_from(
+    tmp_path: Path, copy: str
+) -> None:
+    previous = built_release(tmp_path / "old" / RELEASE)
+    pack = release.pack_release(previous, out_path=tmp_path / "old" / PACK)
+    if copy == "downloaded":
+        (previous / "assemble" / release_module.PACK_SHA256).write_text("a" * 64)
+        given, expected = previous / "assemble", "a" * 64
+    elif copy == "build-beside-its-pack":
+        given, expected = previous, sha256_file(pack)
+    else:
+        pack.unlink()
+        given, expected = previous, None
+
+    assert release.previous_pack_sha256(given) == expected
 
 
 @pytest.fixture
 def published(
     tmp_path: Path, server: tuple[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> tuple[ReleaseIndex, Path]:
-    """The fixture release packed, uploaded to `server` and listed in a shipped index
-    and in the index online. Returns that index and the served directory."""
+    """The fixture release packed where `server` serves it, and listed in a shipped
+    index and in the index online. Returns that index and the served directory."""
     url, served = server
     pack = release.pack_release(
-        gated(built_release(tmp_path / RELEASE)), out_path=tmp_path / PACK
+        gated(built_release(tmp_path / RELEASE)), out_path=served / PACK
     )
-    index = release.add_to_index(
-        ReleaseIndex(),
-        release=RELEASE,
-        pack=pack,
-        url=release.upload_release(pack, target=url),
+    index = ReleaseIndex(
+        latest=RELEASE,
+        releases={
+            RELEASE: IndexEntry(
+                url=f"{url}/{PACK}", sha256=sha256_file(pack), data_format=DATA_FORMAT
+            )
+        },
     )
     shipped = tmp_path / "releases.json"
     shipped.write_text(index.model_dump_json())

@@ -49,14 +49,11 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import shutil
 import tarfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import quote
 
-import httpx
 import polars as pl
 import pyarrow as pa
 import yaml
@@ -70,7 +67,11 @@ from climate_finance.build.allocate import (
     untraced_records,
     years_since_commitment,
 )
-from climate_finance.build.config import RELEASE_SETTINGS, load_config
+from climate_finance.build.config import (
+    PUBLISHED_SETTINGS,
+    RELEASE_SETTINGS,
+    load_config,
+)
 from climate_finance.build.errors import (
     BuildError,
     GateFailedError,
@@ -96,9 +97,8 @@ from climate_finance.build.reflows import (
 )
 from climate_finance.build.sums import ordered_sum
 from climate_finance.release import (
+    PACK_SHA256,
     SYNTHETIC_RELEASE,
-    IndexEntry,
-    ReleaseIndex,
     load,
     release_dirname,
 )
@@ -144,9 +144,6 @@ if TYPE_CHECKING:
 
     from climate_finance.build.stages import StageContext
 
-# httpx bounds each socket operation, not the whole upload, so a 150 to 400 MB pack
-# passes at any steady rate. Read waits for the server to store the body and answer.
-UPLOAD_TIMEOUT = httpx.Timeout(60.0, read=300.0)
 # `disbursement_profile` groups and the Bi_Multi codes each pools. `all` holds the
 # codes the recipient view counts.
 PROFILE_GROUPS = {
@@ -1206,18 +1203,23 @@ def cut_release(
     previous: Path | None = None,
     first_release: bool = False,
     waive_precision: str | None = None,
+    offline: bool | None = None,
 ) -> Path:
     """Build `release`, run the gates, record their results and pack it.
 
     The gates read the blind-sample labels from the config's review decisions, the
-    sample's design from `sample` and the previous release from `previous` (see
-    `gate.run_gates`). Their rows, keyed by gate name, the previous release's name
-    and any waiver go into `release.json`. The pack is
+    sample from the directory `sample` and the previous release from `previous`
+    (see `gate.run_gates`). Their rows, keyed by gate name, the previous release's
+    name and any waiver go into `release.json`. The pack is
     `<out_dir>/climate-finance-<release>.tar.zst`.
 
     Args:
         waive_precision: the reason to let the precision and human-audit gates
             fail, recorded as `precision_waiver` with `precision_gate_waived` true.
+        offline: refuse network access, or fetch afresh. Unset, the build runs
+            offline when the config sets `offline` or an earlier build of `release`
+            fetched its sources, so the sample drawn and labelled on that build
+            describes the sources the release is cut from.
 
     Raises:
         GateFailedError: when a gate fails and is not waived.
@@ -1228,14 +1230,22 @@ def cut_release(
         raise BuildError(_SYNTHETIC_NAME)
     if waive_precision is not None and not waive_precision.strip():
         raise BuildError("--waive-precision needs a reason, recorded in release.json")
-    build_package.build(release, config=config, out_dir=out_dir)
     release_dir = out_dir / release
+    build_config = load_config(config)
+    if offline is None:
+        offline = build_config.offline or (release_dir / "fetch").exists()
+    build_package.build(
+        release,
+        config=build_config.model_copy(update={"offline": offline}),
+        out_dir=out_dir,
+    )
     results = gate.run_gates(
         release_dir,
-        decisions=load_config(config).sources.review_decisions,
+        decisions=build_config.sources.review_decisions,
         sample=sample,
         previous=previous,
         first_release=first_release,
+        drift_causes=build_config.drift_causes,
         waive_precision=waive_precision is not None,
     )
     manifest_path = release_dir / "assemble" / "release.json"
@@ -1247,13 +1257,34 @@ def cut_release(
             "precision_waiver": waive_precision,
             "previous_release": None
             if previous is None
-            else load(path=previous).manifest.release,
+            else load(path=gate.release_path(previous)).manifest.release,
+            "previous_pack_sha256": None
+            if previous is None
+            else previous_pack_sha256(previous),
         }
     )
     manifest_path.write_text(gated.model_dump_json(indent=2) + "\n")
     return pack_release(
         release_dir, out_path=out_dir / f"{release_dirname(release)}.tar.zst"
     )
+
+
+def previous_pack_sha256(previous: Path) -> str | None:
+    """The sha256 of the pack the release at `previous` came from, or None when
+    nothing records it.
+
+    A release `cf.load()` downloaded records it in `release.PACK_SHA256`. For a
+    build's directory, `<out_dir>/<release>`, it is the sha256 of the pack
+    `cut_release` wrote beside it, `<out_dir>/climate-finance-<release>.tar.zst`.
+    """
+    directory = gate.release_path(previous)
+    if (stamp := directory / PACK_SHA256).exists():
+        return stamp.read_text().strip()
+    if directory == previous:
+        return None
+    name = load(path=directory).manifest.release
+    pack = previous.parent / f"{release_dirname(name)}.tar.zst"
+    return sha256_file(pack) if pack.exists() else None
 
 
 def packed_manifest(pack: Path) -> ReleaseManifest:
@@ -1306,70 +1337,27 @@ def unpublishable(manifest: ReleaseManifest) -> list[str]:
 
 def publishable(pack: Path) -> ReleaseManifest:
     """The `release.json` inside the packed release at `pack`, once its gates
-    allow publishing it.
+    and settings allow publishing it.
 
     Raises:
         GateFailedError: when the pack's `release.json` records a gate row
             neither passed nor waived, a waiver without its reason, or no result
             for a gate of `gate.GATES` (`unpublishable`).
-        BuildError: when the pack holds a release named `SYNTHETIC_RELEASE`.
+        BuildError: when the pack holds a release named `SYNTHETIC_RELEASE`, or
+            records a setting of `config.PUBLISHED_SETTINGS` at another value.
     """
     manifest = packed_manifest(pack)
     if manifest.release == SYNTHETIC_RELEASE:
         raise BuildError(_SYNTHETIC_NAME)
     if problems := unpublishable(manifest):
         raise GateFailedError(problems)
+    if changed := [
+        f"{name} = {manifest.settings.get(name)!r}, where a release sets {value!r}"
+        for name, value in PUBLISHED_SETTINGS.items()
+        if manifest.settings.get(name) != value
+    ]:
+        raise BuildError(
+            f"{pack} was built with settings a published release does not use: "
+            f"{'; '.join(changed)}"
+        )
     return manifest
-
-
-def upload_release(pack: Path, *, target: str) -> str:
-    """Upload a packed release to `target`; return its URL.
-
-    `target` is a directory, or an http(s) URL that takes the pack by PUT at
-    `<target>/<pack name>`. A pack its gates keep from publishing is never
-    uploaded.
-
-    Raises:
-        GateFailedError: when the pack's gates keep it from publishing
-            (`publishable`).
-        BuildError: when the pack holds a release named `SYNTHETIC_RELEASE`.
-        httpx.HTTPStatusError: when the server refuses the upload.
-    """
-    publishable(pack)
-    if not target.startswith(("http://", "https://")):
-        directory = Path(target)
-        directory.mkdir(parents=True, exist_ok=True)
-        copy = directory / pack.name
-        shutil.copy2(pack, copy)
-        return copy.resolve().as_uri()
-    url = f"{target.rstrip('/')}/{quote(pack.name)}"
-    with pack.open("rb") as body:
-        httpx.put(url, content=body, timeout=UPLOAD_TIMEOUT).raise_for_status()
-    return url
-
-
-def add_to_index(
-    index: ReleaseIndex, *, release: str, pack: Path, url: str
-) -> ReleaseIndex:
-    """`index` with `release` published at `url` as its newest release.
-
-    Raises:
-        GateFailedError: when the pack's gates keep it from publishing
-            (`publishable`).
-        BuildError: when `release` is not the release the pack holds, or the
-            pack holds a release named `SYNTHETIC_RELEASE`.
-    """
-    manifest = publishable(pack)
-    if manifest.release != release:
-        raise BuildError(f"{pack} holds release {manifest.release!r}, not {release!r}")
-    return index.model_copy(
-        update={
-            "latest": release,
-            "releases": {
-                **index.releases,
-                release: IndexEntry(
-                    url=url, sha256=sha256_file(pack), data_format=manifest.data_format
-                ),
-            },
-        }
-    )
