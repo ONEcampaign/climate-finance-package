@@ -36,33 +36,46 @@
       "rows": 6
     },
     "btr": {
-      "sha256": "3af8deb9ea17dbbcbb0afdbcf98a4ebd949eba678022fd470465ce49fe075f1e",
+      "sha256": "1957b751bce9f84db2b6662b4131511da02707a41bc3fa8adb44589766804250",
       "rows": 4
+    },
+    "btr_links": {
+      "sha256": "e80d2b224f700738579f55eccf84be7d674511d402939ed1295e4f684c03d7be",
+      "rows": 3
+    },
+    "btr_crs_unlinked": {
+      "sha256": "cfbc1b7c0ee20f1f98aca96e9b7f6509bd41b3cad35c3569496a72666516b661",
+      "rows": 8
     },
     "disbursement_profile": {
       "sha256": "8ad93644528bf7178ab05f25dd121c1a5939bdfb670e14c4ce4dffb9dbc4fd73",
       "rows": 9
     },
     "commitments": {
-      "sha256": "3818135815f7daddcfb8c8fddb7b33f5c7b13584ed672eb5976e6d5aaad611f1",
+      "sha256": "9c6976e78b96d85666b7ff57e81933bbb49e5c6c31e69cc2776c5fe9c119daa6",
       "rows": 14
     },
     "quality": {
       "sha256": "0777e0afd612e4ebbd269a846dc45ec1229e396157905b7ba7287bfb5528f8c4",
       "rows": 12
     },
+    "btr_totals": {
+      "sha256": "43ca3ac9583f29514d192fac891a0c6be2633ef9cd18fc314eb15473dfb99208",
+      "rows": 4
+    },
     "unallocated": {
       "sha256": "a477c4925b20d979206b1bd661330a1bea6dc708fd2aa578af2cbb168e55fc6e",
       "rows": 14
     },
     "total_flows": {
-      "sha256": "e5b7679a718479ee2abe290ce40fba9db1fb8408b15b4971b5115ef87e0dab8a",
+      "sha256": "2d58a5dac34f5fe7fb8a11e7f1a37ad2925f20e2c8bb14eca14c2f0db6fb1d7b",
       "rows": 99
     }
   },
   "source_versions": {
     "crs": "fixture",
-    "crdf": "fixture"
+    "crdf": "fixture",
+    "unfccc_btr1": "fixture"
   },
   "years": {},
   "model_versions": {
@@ -90,5 +103,7 @@
     "years.crs_last_complete": 2023
   },
   "precision_gate_waived": false,
-  "previous_release": null
+  "precision_waiver": null,
+  "previous_release": null,
+  "withheld_tables": {}
 }

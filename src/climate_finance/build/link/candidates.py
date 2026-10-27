@@ -68,10 +68,14 @@ from climate_finance.build.link.id_practice import (
     line_id,
     period_of,
 )
-from climate_finance.build.link.keys import (
-    floor_loaded,
+from climate_finance.build.link.keys import floor_loaded
+from climate_finance.build.link.text import (
+    NO_TITLE,
+    clean_text,
     largest_record,
     representative,
+    text_words,
+    word_share,
 )
 from climate_finance.build.normalise.project_numbers import normalise_pn
 
@@ -91,35 +95,6 @@ MIN_PAIRS = 20
 MAX_ERROR = 0.10
 MAX_FANOUT = 50
 MIN_SIMILARITY = 0.5
-# Words that say nothing about which project a title names.
-STOPWORDS = (
-    "the",
-    "and",
-    "for",
-    "des",
-    "les",
-    "del",
-    "von",
-    "und",
-    "with",
-    "from",
-    "that",
-    "this",
-    "dans",
-    "pour",
-    "por",
-    "para",
-    "zur",
-    "der",
-    "die",
-    "das",
-    "project",
-    "programme",
-    "program",
-    "projet",
-    "proyecto",
-    "support",
-)
 # Blocking rules: a key the two units share, and the most later disbursement units
 # of the donor the key may hold for a commitment to pair through it.
 BLOCKING_RULES: tuple[tuple[tuple[str, ...], int | None], ...] = (
@@ -128,9 +103,8 @@ BLOCKING_RULES: tuple[tuple[tuple[str, ...], int | None], ...] = (
     (("title_block",), MAX_TITLE_UNITS),
     (("recipient_code", "title_head"), None),
 )
-# Project numbers and titles that name no project once lower-cased and stripped.
+# Project numbers that name no project once lower-cased and stripped.
 _NO_PN = ("notapplicable", "na", "none", "nan", "null", "0", "")
-NO_TITLE = ("not applicable", "na", "none", "n a", "nan", "null")
 _SEPARATORS = ".-/_&: "
 _LAST_SEGMENT = r"[.\-/_&: ]+[A-Z0-9]+$"
 _AGENCY = ("donor_code", "agency_code")
@@ -151,19 +125,6 @@ def strip_segments(pn: pl.Expr, segments: int) -> pl.Expr:
     return pl.when(stem.str.contains("[A-Z0-9]")).then(stem)
 
 
-def title_words(title: pl.Expr, *, first: int | None = None) -> pl.Expr:
-    """The distinct words of `title`, or of its first `first` words, that can tell
-    projects apart (three letters or more, not in `STOPWORDS`), in order."""
-    words = clean_text(title).str.split(" ")
-    if first is not None:
-        words = words.list.head(first)
-    return words.list.eval(
-        pl.element().filter(
-            (pl.element().str.len_chars() >= 3) & ~pl.element().is_in(STOPWORDS)
-        )
-    ).list.unique(maintain_order=True)
-
-
 def learn_programme_stems(crs: pl.LazyFrame) -> pl.LazyFrame:
     """Programme stem rules per (donor, agency) from `crs`, in the `programme_stems`
     schema.
@@ -178,7 +139,7 @@ def learn_programme_stems(crs: pl.LazyFrame) -> pl.LazyFrame:
         .drop_nulls(["agency_code", "project_number"])
         .group_by(*_AGENCY, "project_number", "recipient_code")
         .agg(largest_record("title"))
-        .with_columns(words=title_words(pl.col("title")))
+        .with_columns(words=text_words(pl.col("title")))
         .drop("title")
         .collect()
         .lazy()
@@ -307,7 +268,7 @@ def generate_candidates(
             only the disbursements left in. The key tiers link one where a later
             record carries its commitment's date (`floor_seen`).
         embedder: vectors of unit texts, which add embedding neighbours to the
-            blocking rules; none adds no neighbours.
+            blocking rules. Without one, the other rules alone block.
     """
     indexed = units.with_row_index("unit").select(
         "unit",
@@ -505,7 +466,7 @@ def _sides(
         .get_column("right_id")
     )
     title = clean_text(pl.col("title"))
-    words = title_words(pl.col("title"))
+    words = text_words(pl.col("title"))
     return (
         with_programme(
             units.lazy().select(
@@ -644,16 +605,3 @@ def _renumbered_line() -> pl.Expr:
     return pl.when(donor.is_in(RENUMBERED_DONORS)).then(
         line_id(donor, pl.col("crs_id"))
     )
-
-
-def clean_text(text: pl.Expr) -> pl.Expr:
-    """`text` lower-cased, every run of characters other than a to z and digits a
-    space, trimmed."""
-    return text.str.to_lowercase().str.replace_all("[^a-z0-9]+", " ").str.strip_chars()
-
-
-def word_share(left: pl.Expr, right: pl.Expr) -> pl.Expr:
-    """Shared words over all words of two word lists, or null when either is null or
-    both are empty."""
-    union = left.list.set_union(right).list.len()
-    return pl.when(union > 0).then(left.list.set_intersection(right).list.len() / union)

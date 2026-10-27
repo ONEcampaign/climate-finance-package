@@ -39,7 +39,18 @@ class UnknownRecipientError(UnknownNameError):
 
 
 class ReleaseIntegrityError(ClimateFinanceError):
-    """A release table is missing or its sha256 differs from release.json."""
+    """A release table is missing, its sha256 differs from release.json, or it
+    breaks a rule the query relies on, such as one coefficient per year."""
+
+
+class WithheldTableError(ClimateFinanceError, LookupError):
+    """A release table the published release leaves out. `note` says how to build
+    it locally."""
+
+    def __init__(self, table: str, *, note: str) -> None:
+        self.table = table
+        self.note = note
+        super().__init__(f"The release leaves out {table!r}. {note}")
 
 
 class MissingLabelsError(ClimateFinanceError):

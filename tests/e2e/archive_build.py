@@ -53,20 +53,22 @@ JOINED = {
 
 def archive_config(archive: Path, *, key_repair: bool, recoveries: bool) -> BuildConfig:
     """`build.toml` with the CRS and IATI files of `archive` (CF_E2E_DATA/raw) as its
-    sources, and `key_repair` and `recoveries` set."""
+    sources, no BTR archive, and `key_repair` and `recoveries` set."""
     base = load_config(REPO / "build.toml")
     return BuildConfig.model_validate(
         base.model_dump()
         | {
             "key_repair": key_repair,
             "recoveries": recoveries,
-            # The archive builds run offline with no Jev cache; the Jev step has its
+            # The archive builds run offline with no Jev cache. The Jev step has its
             # own measurement.
             "jev_links": False,
             "sources": base.sources.model_dump()
             | {
                 "crs_file": LocalFile(path=archive / CRS_ARCHIVE, sha256=CRS_SHA256),
                 "iati_archive": archive / "external/iati",
+                # The BTR link runs in its own e2e file, on the BTR archive.
+                "btr_archive": None,
             },
         }
     )

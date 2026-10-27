@@ -6,11 +6,12 @@ from pathlib import Path
 import polars as pl
 import pytest
 from normalised import named_records
-from stage_runs import registered, stage_context, write_normalised
+from stage_runs import BUILD_TOML, registered, stage_context, write_normalised
 
 from climate_finance import schema
 from climate_finance.build import write_stage
 from climate_finance.build.allocate import allocate
+from climate_finance.build.config import load_config
 from climate_finance.build.link import run_link
 from climate_finance.build.link.decisions import PAIR, drop_pairs
 from climate_finance.build.link.key_repair import (
@@ -819,8 +820,9 @@ def test_title_words() -> None:
 
 def test_run_link_adds_key_repair_links_when_on(tmp_path: Path) -> None:
     write_normalised(tmp_path)
-    # The fixture has no truth group to set Jev's scale.
-    switches = {"jev_links": False, "recoveries": False}
+    # The fixture has no truth group to set Jev's scale, and no BTR rows.
+    sources = load_config(BUILD_TOML).sources.model_copy(update={"btr_archive": None})
+    switches = {"jev_links": False, "recoveries": False, "sources": sources}
 
     off = run_link(stage_context(tmp_path, key_repair=False, **switches))
     on = run_link(stage_context(tmp_path, key_repair=True, **switches))

@@ -160,7 +160,7 @@ REGISTRY: tuple[StageDef, ...] = (
     _entry(
         Stage.NORMALISE,
         run_normalise,
-        settings=("recoveries", "sources.ledgers"),
+        settings=("recoveries", "sources.btr_archive", "sources.ledgers"),
     ),
     _entry(
         Stage.LINK,
@@ -175,6 +175,7 @@ REGISTRY: tuple[StageDef, ...] = (
             "key_repair",
             "recoveries",
             "skip_eib_routes",
+            "sources.btr_archive",
             "sources.iati_publishers",
             "sources.review_decisions",
         ),

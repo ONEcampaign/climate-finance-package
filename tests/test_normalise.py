@@ -1,5 +1,7 @@
 """The normalise stage on hand-built OECD raw files."""
 
+import json
+import shutil
 from datetime import date
 from pathlib import Path
 
@@ -10,7 +12,7 @@ from stage_runs import BUILD_TOML, OECD, run_stage, stage_context, write_inputs
 
 from climate_finance import schema
 from climate_finance.build.config import Ledgers, load_config
-from climate_finance.build.fetch import CRDF_FILES, CRS_FILE
+from climate_finance.build.fetch import BTR_DIR, CRDF_FILES, CRS_FILE
 from climate_finance.build.normalise.crdf import CRDFNormaliseError, normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs, trace_population
 from climate_finance.build.normalise.external import MULTI_COUNTRY
@@ -440,13 +442,34 @@ def test_run_normalise_writes_every_table_from_raw(
     named = Ledgers(
         years=(2021, 2022), publishers=("ibrd", "ida", "ebrd", "afdb", "gcf")
     )
-    sources = config.sources.model_copy(update={"ledgers": named if ledgers else None})
+    # The optional sources, the ledgers and the BTR archive, are named together.
+    sources = config.sources.model_copy(
+        update={
+            "ledgers": named if ledgers else None,
+            "btr_archive": tmp_path / "archive" if ledgers else None,
+        }
+    )
     raw = raw_dir(tmp_path)
     manifest = write_raw(
         raw,
         crdf_years=crdf_years,
         recipient_first=2014,
         ledgers=named if ledgers else None,
+    )
+    btr_dir = raw / BTR_DIR
+    btr_dir.mkdir(parents=True)
+    shutil.copy(OECD.parent / "btr" / "NLD-table-1.xlsx", btr_dir / "NLD.xlsx")
+    (btr_dir / "manifest.json").write_text(
+        json.dumps(
+            [
+                {
+                    "party": "Netherlands",
+                    "name": "NLD.xlsx",
+                    "ok": True,
+                    "bytes": (btr_dir / "NLD.xlsx").stat().st_size,
+                }
+            ]
+        )
     )
     # 2014 rows in the recipient file, as the full CRDF holds them: orchards under
     # their 2015 crs id, and school gardens under another, which the 2015 row
@@ -491,14 +514,27 @@ def test_run_normalise_writes_every_table_from_raw(
 
     hashes = run_stage("normalise", context)
 
-    # `btr` waits for an ingested BTR table; `orgs` is written with recoveries and
-    # `ledger` when the config names ledgers.
-    expected = set(schema.STAGE_TABLES["normalise"]) - {"btr", "orgs", "ledger"}
+    # `orgs` is written with recoveries, and `ledger`, `btr` and `btr_workbooks`
+    # when the config names ledgers and a BTR archive.
+    btr_tables = {"btr", "btr_workbooks"}
+    expected = set(schema.STAGE_TABLES["normalise"]) - {"orgs", "ledger", *btr_tables}
     assert set(hashes) == (
         expected
         | ({"orgs"} if recoveries else set())
-        | ({"ledger"} if ledgers else set())
+        | ({"ledger", *btr_tables} if ledgers else set())
     )
+    if ledgers:
+        btr = pl.read_parquet(table_path(tmp_path, "normalise", "btr"))
+        assert set(btr["party"]) == {"NLD"}
+        assert set(btr["provider_code"]) == {7}
+        # The Netherlands converts at 1/1.183 euros a dollar; the fixture's DAC
+        # rate for the euro is 0.8.
+        assert btr["dac_rate"].to_list() == [0.8]
+        assert btr["face_usd_at_dac"].to_list() == pytest.approx([1.183e6 / 0.8])
+        assert btr["face_usd"].to_list() == pytest.approx([1.183e6 * 1.183])
+        assert btr["grant_equiv_usd_at_dac"].to_list() == pytest.approx([1.183e6 / 0.8])
+        workbooks = pl.read_parquet(table_path(tmp_path, "normalise", "btr_workbooks"))
+        assert workbooks.select("file", "rows_kept").rows() == [("NLD.xlsx", 1)]
     if ledgers:
         ledger = pl.read_parquet(table_path(tmp_path, "normalise", "ledger"))
         assert set(ledger["publisher"]) == {"ibrd", "ida", "ebrd", "afdb", "gcf"}

@@ -64,10 +64,16 @@ import polars as pl
 
 from climate_finance import catalogue
 from climate_finance.convert import convert, provenance
-from climate_finance.errors import MissingLabelsError
+from climate_finance.errors import (
+    MissingLabelsError,
+    ReleaseIntegrityError,
+    SchemaError,
+)
 from climate_finance.methods import (
     ONE,
+    PROVIDER,
     Method,
+    MethodRange,
     face_shares,
     label,
     uses_imputed_shares,
@@ -78,6 +84,7 @@ from climate_finance.result import (
     ROW_KEYS,
     Meta,
     Quality,
+    Reconciliation,
     Result,
     Table,
 )
@@ -88,8 +95,10 @@ from climate_finance.schema import (
     EIB_AGENCY,
     EU_INSTITUTIONS,
     FLOWS,
+    FUNDING_CLASSES,
     RECIPIENT_VIEW,
     SHARE_ORIGINS,
+    coefficient_overlaps,
 )
 from climate_finance.spec import (
     ODA_FLOW_CATEGORY,
@@ -268,7 +277,7 @@ def quality(
     years: Iterable[int] | None = None,
     method: Method = ONE,
 ) -> Quality:
-    """Coverage and status statistics.
+    """Coverage, status and precision statistics.
 
     The status split covers the commitments the trace follows: bilateral rows and
     multilateral outflows, without core contributions. `eu_left_out` holds the EU
@@ -295,6 +304,7 @@ def quality(
         attribution=Table(
             _attribution(snapshot, providers=providers, years=years, method=method)
         ),
+        precision=Table(_precision(snapshot, providers=providers)),
         untraced=Table(
             _untraced(snapshot, conditions=conditions, method=method).sort(
                 "provider_code", "year"
@@ -335,6 +345,386 @@ def _untraced(
         .with_columns(
             pl.col("excess_climate_usd", "unlinked_climate_usd").fill_null(0.0)
         )
+    )
+
+
+# A gate row in `release.json`, as `cf-build gate` writes it.
+_GATE_ROW = pl.Schema(
+    {
+        "subject": pl.String(),
+        "value": pl.Float64(),
+        "lower": pl.Float64(),
+        "upper": pl.Float64(),
+        "threshold": pl.Float64(),
+        "passed": pl.Boolean(),
+        "waived": pl.Boolean(),
+        "detail": pl.String(),
+    }
+)
+
+
+def _precision(
+    snapshot: Snapshot, *, providers: Sequence[str | int] | None
+) -> pl.LazyFrame:
+    """The precision gate's rows in `release.json`, one per provider; none when the
+    release was not gated.
+
+    Raises:
+        SchemaError: when `release.json` holds precision rows that are not a list.
+    """
+    rows = snapshot.manifest.gates.get("precision", [])
+    if not isinstance(rows, list):
+        raise SchemaError("release.json", {"gates.precision": "not a list of rows"})
+    frame = pl.LazyFrame(rows, schema=_GATE_ROW).select(
+        provider_code=pl.col("subject").cast(pl.Int32),
+        estimate="value",
+        lower="lower",
+        upper="upper",
+        passed="passed",
+        waived="waived",
+        detail="detail",
+    )
+    conditions = _conditions(providers=providers, recipients=None, years=None)
+    return frame.filter(*conditions) if conditions else frame
+
+
+# The OECD figures a party's BTR face value is set against, in `reconcile`'s order.
+COMPARATORS = (
+    "crdf_at_party_weight",
+    "crdf_at_100",
+    "traced_climate_value",
+    "crs_disbursed_at_party_weight",
+)
+# Per BTR status, the comparators of its flow, the one it reads against first, and
+# the CRS flow `oecd_only_usd` sums.
+_STATUS_FLOWS = {
+    "committed": (COMPARATORS[:3], "commitments"),
+    "disbursed": (COMPARATORS[3:], "disbursements"),
+}
+# The comparator a party's BTR grant equivalent is set against.
+GRANT_EQUIVALENT_COMPARATOR = "crs_grant_equivalent_at_party_weight"
+# A comparator below this many USD is too small for its ratio to say much.
+THIN_COMPARATOR_USD = 10e6
+# The marker rule the CRDF comparators weight by, with the party's coefficient or 1.0
+# for Significant.
+_PARTY_RULE = Method(significant=1.0, principal=1.0, highest_marker=True)
+_PARTY_YEAR = ("party", "year")
+
+
+def _party_coefficients(snapshot: Snapshot) -> pl.LazyFrame:
+    """Each provider's `provider_coefficients` row for every agency without a row of
+    its own, by year of the release's BTR totals, as `reconcile` shows it."""
+    return (
+        _coefficients_by_year(snapshot, years=snapshot.table("btr_totals"))
+        .filter(pl.col("agency_code").is_null())
+        .select(
+            "provider_code",
+            "year",
+            party_weight="significant",
+            party_principal="principal",
+            weight_source="citation",
+            coefficient_basis=_coefficient_basis(),
+        )
+    )
+
+
+def reconcile(
+    snapshot: Snapshot,
+    *,
+    parties: Sequence[str] | None,
+    years: Iterable[int],
+    method: Method | MethodRange,
+) -> Reconciliation:
+    """Each party's BTR Table III.1 total against OECD figures for its bilateral
+    finance, one row per party, year, status and method.
+
+    The BTR side comes from `btr_totals`, so a release without the row-level `btr`
+    and `btr_links` reconciles alike. Each status has its own row, and rows without a
+    status one more: Japan reports loans as committed and grants as disbursed, and
+    Denmark each activity under both. `btr_face` and `btr_grant_equivalent` sum the
+    status's rows in USD at the DAC rate of the year, the rate the CRS amounts use:
+    each row's domestic amount over `dac_rate`, or the party's own USD where either
+    is missing. `btr_face_reported` sums the party's own USD face value, and
+    `party_rate` is the rate it implies in domestic currency per USD
+    (`dac_rate` times `btr_face` over `btr_face_reported`), with rows the party gave
+    in USD only counting at the DAC rate. `unfccc_only_usd` is the face value of the
+    rows no CRS record links to, split by funding source into `unfccc_only_oda_usd`,
+    `unfccc_only_oof_usd` and `unfccc_only_other_usd` (a source naming both flows
+    or neither). An unlinked row may be an activity no CRS
+    record carries or a link the build missed, so read it beside `oecd_only_usd`:
+    the face amounts of the status's CRS flow (commitments or disbursements) on the
+    party-year's bilateral climate-marked records that no BTR row links to, null for
+    rows without a status. Each BTR sum is null when every row lacks the amount, and
+    zero when the rows report zero or the known face value is all linked.
+
+    The comparators sum the party's bilateral rows (`BILATERAL`) of the year, and of
+    the CRDF its Rio-marked rows only. A party weight applies to markers, and a
+    party's BTR leaves out the climate components its development bank publishes,
+    as the EU's leaves out the EIB's. The party's coefficients are its provider's
+    `provider_coefficients` row of the year for every agency without a row of its
+    own: `party_weight` the significant one, `party_principal` the principal one,
+    `weight_source` their source, and `coefficient_basis` the row's basis as
+    `spending` gives it. The weighted comparators weigh each activity or record as
+    `PROVIDER` does, by its agency's row, else its provider's. Where that row
+    assesses each activity case by case and gives no coefficient, at the agency
+    level as for France's AFD or the provider level as for the UK, the activity
+    takes `PROVIDER`'s coefficients, so a `coefficient_basis` of `case_by_case`
+    marks a party whose comparators rest on `PROVIDER`'s coefficients in place of
+    its own. `crdf_at_party_weight` is its CRDF commitments so weighted;
+    `crdf_at_100` the same commitments with Significant at 100%;
+    `traced_climate_value` the climate value `method` gives what those commitments
+    disbursed; `crs_disbursed_at_party_weight` the year's CRS disbursements on
+    Rio-marked records so weighted, by each record's higher marker; and
+    `crs_grant_equivalent_at_party_weight` their grant equivalent, weighted alike.
+    A party whose provider has no `provider_coefficients` row for every agency has
+    null weighted comparators and a null `coefficient_basis`, and one without a DAC
+    provider code null comparators.
+
+    Each `btr_over_<comparator>` divides `btr_face` by it, null where the
+    comparator is zero or null, and is null for a
+    comparator of the other flow: committed rows read against the first three,
+    disbursed rows against `crs_disbursed_at_party_weight`, and rows without a
+    status against all four. `comparator` names the one a status reads against
+    first, `crdf_at_party_weight` or `crs_disbursed_at_party_weight`, with its ratio
+    as `btr_over_comparator`, and `thin_comparator` is true where it is below
+    `THIN_COMPARATOR_USD`. `btr_grant_equivalent_over_crs_grant_equivalent` divides
+    `btr_grant_equivalent` by its comparator on every row, null where that is zero.
+    """
+    years = tuple(years)
+    totals = snapshot.table("btr_totals").filter(pl.col("year").is_in(years))
+    if parties is not None:
+        totals = totals.filter(pl.col("party").is_in(list(parties)))
+    face = pl.col("face_usd_at_dac")
+    unlinked = ~pl.col("linked")
+
+    def unfccc_only(condition: pl.Expr) -> pl.Expr:
+        return pl.when(face.is_not_null().any()).then(
+            ordered_sum(face.filter(condition))
+        )
+
+    flow = pl.col("status").replace_strict(
+        {status: flow for status, (_, flow) in _STATUS_FLOWS.items()},
+        default=None,
+        return_dtype=pl.String,
+    )
+    reported = (
+        totals.group_by(*_PARTY_YEAR, "provider_code", "status")
+        .agg(
+            btr_face_reported=_sum("face_usd"),
+            btr_face=_sum("face_usd_at_dac"),
+            btr_grant_equivalent=_sum("grant_equiv_usd_at_dac"),
+            dac_rate=pl.col("dac_rate").max(),
+            unfccc_only_usd=unfccc_only(unlinked),
+            **{
+                f"unfccc_only_{funding}_usd": unfccc_only(
+                    unlinked & (pl.col("funding") == funding)
+                )
+                for funding in FUNDING_CLASSES
+            },
+        )
+        .with_columns(
+            party_rate=pl.when(pl.col("btr_face_reported") > 0).then(
+                pl.col("dac_rate") * pl.col("btr_face") / pl.col("btr_face_reported")
+            ),
+            flow=flow,
+        )
+        .join(
+            snapshot.table("btr_crs_unlinked").select(
+                "provider_code", "year", "flow", oecd_only_usd="amount_usd"
+            ),
+            on=["provider_code", "year", "flow"],
+            how="left",
+        )
+        .join(
+            _party_coefficients(snapshot),
+            on=["provider_code", "year"],
+            how="left",
+            validate="m:1",
+        )
+    )
+    party_years = reported.select("provider_code", "year").unique()
+    bilateral = (pl.col("bi_multi").is_in(BILATERAL), pl.col("year").is_in(years))
+    commitments = (
+        _counted_commitments(snapshot)
+        .filter(*bilateral, pl.col("climate_share").is_null())
+        # Jev labels CRS records only, so a Jev method reads markers here.
+        .with_columns(**face_shares(), jev_level=pl.lit(None, pl.Int8))
+        .join(party_years, on=["provider_code", "year"], how="semi")
+    )
+
+    def crdf_at(**coefficients: pl.Expr) -> pl.Expr:
+        fractions = weights(
+            _PARTY_RULE, **coefficients, published=pl.col("share_climate")
+        )
+        return ordered_sum(pl.col("face_usd") * fractions["climate"])
+
+    crdf = (
+        _coefficients(snapshot, commitments, method=PROVIDER)
+        .group_by("provider_code", "year")
+        .agg(
+            crdf_at_party_weight=crdf_at(**_COEFFICIENT_INPUTS),
+            crdf_at_100=crdf_at(significant=pl.lit(1.0)),
+        )
+    )
+    marker = pl.col("rio_marker")
+
+    def crs_at_party_weight(flow: str) -> pl.LazyFrame:
+        """The year's CRS `flow` on Rio-marked records at `PROVIDER`'s coefficients
+        of each record's agency, by its higher marker."""
+        flows = (
+            snapshot.table("total_flows")
+            .filter(pl.col("flow") == flow, *bilateral)
+            .join(party_years, on=["provider_code", "year"], how="semi")
+        )
+        return (
+            _coefficients(snapshot, flows, method=PROVIDER)
+            .group_by("provider_code", "year")
+            .agg(
+                ordered_sum(
+                    pl.col("amount_usd")
+                    * pl.when(marker == 2)
+                    .then(pl.col("principal"))
+                    .when(marker == 1)
+                    .then(pl.col("significant"))
+                    .otherwise(0.0)
+                ).alias("amount_usd")
+            )
+        )
+
+    crs = crs_at_party_weight("disbursements").rename(
+        {"amount_usd": "crs_disbursed_at_party_weight"}
+    )
+    grant_equivalent = crs_at_party_weight("grant_equivalent").rename(
+        {"amount_usd": GRANT_EQUIVALENT_COMPARATOR}
+    )
+    frames = []
+    for each in method.methods if isinstance(method, MethodRange) else (method,):
+        weighted = _coefficients(snapshot, commitments, method=each)
+        fractions = weights(
+            each, **_COEFFICIENT_INPUTS, published=pl.col("share_climate")
+        )
+        traced = weighted.group_by("provider_code", "year").agg(
+            traced_climate_value=ordered_sum(
+                pl.col("disbursed_usd") * fractions["climate"]
+            )
+        )
+        frames.append(
+            reported.join(crdf, on=["provider_code", "year"], how="left")
+            .join(traced, on=["provider_code", "year"], how="left")
+            .join(crs, on=["provider_code", "year"], how="left")
+            .join(grant_equivalent, on=["provider_code", "year"], how="left")
+            .with_columns(method=pl.lit(label(each)))
+        )
+    weighted_comparators = (
+        "crdf_at_party_weight",
+        "crs_disbursed_at_party_weight",
+        GRANT_EQUIVALENT_COMPARATOR,
+    )
+    status = pl.col("status")
+
+    def reads(name: str) -> pl.Expr:
+        """Whether a row reads against comparator `name`."""
+        flows = [s for s, (names, _) in _STATUS_FLOWS.items() if name in names]
+        return status.is_null() | status.is_in(flows)
+
+    first = {s: names[0] for s, (names, _) in _STATUS_FLOWS.items()}
+    comparator_usd = pl.coalesce(
+        pl.when(status == s).then(pl.col(name)) for s, name in first.items()
+    )
+    ratios = [f"btr_over_{name}" for name in COMPARATORS]
+    table = (
+        pl.concat(frames)
+        .with_columns(
+            pl.when(pl.col("coefficient_basis").is_not_null())
+            .then(pl.col(name))
+            .alias(name)
+            for name in weighted_comparators
+        )
+        .with_columns(
+            *(
+                pl.when(reads(name))
+                .then(_ratio(pl.col("btr_face"), pl.col(name)))
+                .alias(f"btr_over_{name}")
+                for name in COMPARATORS
+            ),
+            comparator=status.replace_strict(
+                first, default=None, return_dtype=pl.String
+            ),
+            btr_over_comparator=_ratio(pl.col("btr_face"), comparator_usd),
+            thin_comparator=comparator_usd < THIN_COMPARATOR_USD,
+            btr_grant_equivalent_over_crs_grant_equivalent=_ratio(
+                pl.col("btr_grant_equivalent"), pl.col(GRANT_EQUIVALENT_COMPARATOR)
+            ),
+        )
+        .select(
+            "party",
+            "provider_code",
+            "year",
+            "status",
+            "method",
+            "party_weight",
+            "party_principal",
+            "weight_source",
+            "coefficient_basis",
+            "btr_face",
+            "btr_face_reported",
+            "party_rate",
+            "dac_rate",
+            "btr_grant_equivalent",
+            "unfccc_only_usd",
+            *(f"unfccc_only_{funding}_usd" for funding in FUNDING_CLASSES),
+            "oecd_only_usd",
+            *COMPARATORS,
+            GRANT_EQUIVALENT_COMPARATOR,
+            "comparator",
+            "btr_over_comparator",
+            "thin_comparator",
+            *ratios,
+            "btr_grant_equivalent_over_crs_grant_equivalent",
+        )
+        .sort("party", "year", "status", "method", nulls_last=True)
+    )
+    return Reconciliation(
+        table=Table(table),
+        rows=lambda: _reconciliation_rows(snapshot, parties=parties, years=years),
+    )
+
+
+def _reconciliation_rows(
+    snapshot: Snapshot, *, parties: Sequence[str] | None, years: tuple[int, ...]
+) -> pl.LazyFrame:
+    """Each BTR row of `parties` and `years` with each CRS record linked to it.
+
+    Raises:
+        WithheldTableError: when the release leaves out `btr` or `btr_links`.
+    """
+    btr = snapshot.table("btr").filter(pl.col("year").is_in(years))
+    if parties is not None:
+        btr = btr.filter(pl.col("party").is_in(list(parties)))
+    return (
+        btr.join(snapshot.table("btr_links"), on="row_id", how="left", suffix="_crs")
+        .select(
+            "party",
+            "year",
+            "row_id",
+            "status",
+            "recipient",
+            "title",
+            "face_usd",
+            "face_usd_at_dac",
+            "grant_equiv_usd",
+            "record_id",
+            "link_method",
+            "probability",
+            crs_recipient_code="recipient_code_crs",
+            crs_project_number="project_number",
+            crs_title="title_crs",
+            crs_commitment_usd="commitment_usd",
+            crs_disbursement_usd="disbursement_usd",
+            crs_rio_marker="rio_marker",
+            unfccc_only=pl.col("record_id").is_null(),
+        )
+        .sort("party", "year", "row_id", "record_id", nulls_last=True)
     )
 
 
@@ -743,8 +1133,9 @@ def _fixed_shares(snapshot: Snapshot, *, source: str) -> pl.LazyFrame:
     """The `agency_shares` of `source` by channel and year, each the OECD's imputed
     share."""
 
+    # `agency_shares` holds one row per channel, year, objective and source, so each
+    # sum adds at most one share.
     def share(objective: str) -> pl.Expr:
-        # Picks the one share a channel and year hold per objective.
         return pl.col("share").filter(pl.col("objective") == objective).sum()
 
     return (
@@ -844,12 +1235,8 @@ def _coefficients(
         _significant="significant",
         _principal="principal",
         _both="both_significant",
-        _basis=pl.when(~pl.col("case_by_case"))
-        .then(pl.lit("provider"))
-        .when(pl.col("significant").is_not_null() | pl.col("principal").is_not_null())
-        .then(pl.lit("default"))
-        .otherwise(pl.lit("case_by_case")),
-        _source=pl.format("{}, {}", "source", "locator"),
+        _basis=_coefficient_basis(),
+        _source="citation",
     )
     columns = ("_significant", "_principal", "_both", "_basis", "_source")
     by_agency = held.filter(pl.col("agency_code").is_not_null())
@@ -859,7 +1246,12 @@ def _coefficients(
     def pick(name: str) -> pl.Expr:
         return pl.when(own_agency).then(pl.col(name)).otherwise(pl.col(f"{name}_all"))
 
-    marker = pl.col("climate_share").is_null()
+    # A frame without shares, such as `total_flows`, weighs every row by its markers.
+    marker = (
+        pl.col("climate_share").is_null()
+        if "climate_share" in frame.collect_schema().names()
+        else pl.lit(value=True)
+    )
     return (
         frame.join(
             by_agency,
@@ -886,15 +1278,39 @@ def _coefficients(
     )
 
 
+def _coefficient_basis() -> pl.Expr:
+    """A `provider_coefficients` row's basis: `provider` for flat coefficients,
+    `default` for the default share of a provider that assesses case by case, and
+    `case_by_case` where such a provider gives no default."""
+    return (
+        pl.when(~pl.col("case_by_case"))
+        .then(pl.lit("provider"))
+        .when(pl.col("significant").is_not_null() | pl.col("principal").is_not_null())
+        .then(pl.lit("default"))
+        .otherwise(pl.lit("case_by_case"))
+    )
+
+
 def _coefficients_by_year(snapshot: Snapshot, *, years: pl.LazyFrame) -> pl.LazyFrame:
     """Each `provider_coefficients` row once for every year of `years` its span
-    covers, matched on `year` after the span is expanded into its years.
+    covers, with `citation` its source and locator, matched on `year` after the
+    span is expanded into its years.
+
+    Raises:
+        ReleaseIntegrityError: when two rows of one provider and agency cover a
+            year in common, as a release edited after its build may hold.
     """
+    coefficients = snapshot.table("provider_coefficients").collect()
+    if overlaps := coefficient_overlaps(coefficients):
+        raise ReleaseIntegrityError(
+            f"release {snapshot.manifest.release!r} applies more than one "
+            "coefficient to a year: " + "; ".join(overlaps)
+        )
     first, last = pl.col("first_year"), pl.col("last_year")
     held = years.select("year").unique()
     bounds = held.select(_low=pl.col("year").min(), _high=pl.col("year").max())
     return (
-        snapshot.table("provider_coefficients")
+        coefficients.lazy()
         .join(bounds, how="cross")
         .with_columns(
             year=pl.int_ranges(
@@ -906,6 +1322,7 @@ def _coefficients_by_year(snapshot: Snapshot, *, years: pl.LazyFrame) -> pl.Lazy
         .explode("year")
         .drop("_low", "_high")
         .join(held, on="year", how="semi")
+        .with_columns(citation=pl.format("{}, {}", "source", "locator"))
     )
 
 
@@ -933,6 +1350,11 @@ def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
         .then(amount * climate)
         .otherwise(0.0),
     ).drop(*_WEIGHT_INPUTS)
+
+
+def _ratio(numerator: pl.Expr, denominator: pl.Expr) -> pl.Expr:
+    """`numerator` over `denominator`, null where the denominator is zero or null."""
+    return pl.when(denominator != 0).then(numerator / denominator)
 
 
 def _sum(name: str) -> pl.Expr:

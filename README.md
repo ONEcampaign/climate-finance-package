@@ -1,11 +1,13 @@
 [![pypi](https://img.shields.io/pypi/v/climate_finance.svg)](https://pypi.org/project/climate_finance/)
 [![python](https://img.shields.io/pypi/pyversions/climate_finance.svg)](https://pypi.org/project/climate_finance/)
 
-# The climate finance package
+# climate-finance
 
-**climate-finance** is a Python package for international public climate finance. It returns figures such as the adaptation finance France disbursed to Kenya in 2021 in a few lines of code, under a stated methodology, and traces each figure to the OECD records behind it.
+> International public climate finance from OECD and UNFCCC data, with each figure traced to the project records behind it.
 
-Climate finance data is messy and scattered across several websites. It took us months to learn which data to use and longer to clean it for the Climate Finance Files. The package ships that work as versioned releases built from the OECD's Creditor Reporting System (CRS) and Climate-related Development Finance database (CRDF), so researchers and campaigners can start from clean data and hold governments to their pledges.
+The OECD publishes what donors commit to climate action, while the disbursements that reach each project sit in a separate database under ids that donors change from year to year. This package links commitments to disbursements, records the certainty of each link, and returns every figure with a low and a high bound.
+
+A release is a set of versioned tables built from the OECD's Creditor Reporting System (CRS) and Climate-related Development Finance data (CRDF), checked against Biennial Transparency Reports (BTRs) from the UNFCCC. You load a release and query it. The build runs only when someone cuts a new release.
 
 ## Install
 
@@ -13,44 +15,47 @@ Climate finance data is messy and scattered across several websites. It took us 
 pip install climate-finance
 ```
 
-## Query a release
+Requires Python 3.12 or later. To build a release, install the `build` extra with `pip install "climate-finance[build]"`.
+
+## Quickstart
+
+`cf.load()` opens the latest release in `data/releases.json`, the release index shipped with the package. That index ships empty until the first 2.0 release is published, and until then `cf.load()` raises `UnknownNameError`. Pass the directory to open a release you built (`cf.load(path="releases/2026a/assemble")`). The examples in this repository use a small synthetic test release with invented amounts.
 
 ```python
 import climate_finance as cf
 
 snap = cf.load()
 result = snap.spending(
-    providers="France",
-    recipients="Kenya",
-    years=range(2018, 2023),
+    providers="Japan",
+    recipients="Bangladesh",
+    years=range(2021, 2024),
     method=cf.methods.ONE,
 )
-result.table.to_polars()
+for row in result.table.to_polars().iter_rows(named=True):
+    print(row["year"], round(row["low"] / 1e6, 1), round(row["value"] / 1e6, 1))
 ```
 
-`load()` opens the latest release, or the one in `path=` for a release on disk. The result table has one row per year, provider, recipient, Bi_Multi code and method, with adaptation, mitigation, cross-cutting, `unsplit` and total climate `value` columns, and `low` and `high` bounds. `unsplit` holds attributed finance through agencies whose climate share has no split by objective, as the OECD gives before 2021. Convert it with `to_polars()`, `to_pandas()` or `to_arrow()`.
+```output
+2021 0.0 13.3
+2022 0.0 18.3
+2023 12.0 48.3
+```
 
-Each query takes these arguments:
+`result.table` has one row per year, provider, recipient, and Bi_Multi code, with adaptation, mitigation, cross-cutting, and total climate `value` in USD. `value` counts every disbursement the build allocated to a climate commitment in the release, from the first CRDF year to the last complete CRS year, and the untraced disbursement: Rio-marked CRS disbursement that reaches no commitment, weighted by the record's own markers. `low` counts only the money on links the build treats as certain by rule, from the CRDF row to its CRS commitment and from the commitment to the disbursement. Most rest on the donor's own ids. The parts of rebuilt aggregate rows, which match their CRS records by amount, count too. In the provider view `low` also counts attributed core contributions, because the bounds measure link certainty and a method's coefficients and agency shares weigh every bound alike. `result.rows()` returns the project rows behind the table, and `result.explain()` states the method, flow, and filters in words.
 
-- `method`: how Rio markers become climate value. `cf.methods.ONE` counts significant markers at 40% and principal markers at 100%, with each activity under its higher marker. `cf.methods.OECD` counts both at 100%. `cf.methods.PROVIDER` is ONE with the coefficients each provider applies when it reports to the UNFCCC, by year and agency, where the release records them; `explain()` names each provider's source. `cf.methods.RANGE` reports all three, and `low` and `high` become the lowest and highest value across them.
-- `flow`: `"commitments"`, `"disbursements"` (the default) or `"grant_equivalent"`.
-- `view`: `"recipient"` (the default) or `"provider"`, which adds core contributions to multilateral agencies in proportion to each agency's climate share.
-- `currency` and `prices`: `"USD"`, `"EUR"`, `"GBP"` or `"CAD"`, at current prices or at a base year, converted with OECD DAC exchange rates and deflators. A converted result's `meta.conversion` holds the pydeflate version and a SHA-256 of the factors used, because pydeflate refreshes its DAC data every 30 days.
-- `oda_only`: keep official development assistance flows only.
-- `measure`: `"amount"` (the default) or `"share_of_total"`, which divides every amount by all CRS flows for the same key.
+## What you can ask
 
-Providers and recipients take names or DAC codes. `cf.providers`, `cf.recipients`, `cf.flows` and `cf.methods` list what is available, with `.list()`, `.info(name)` and `.search(text)`. A misspelt name raises an error that suggests close matches.
+- Commitments, disbursements, and grant equivalents of climate finance by provider, recipient, and year, in USD, EUR, GBP, or CAD, at current or constant prices.
+- Climate value under `ONE` or `OECD` marker weights, under `PROVIDER`, which takes the coefficients each provider applies when it reports to the UNFCCC, or under all three at once with `RANGE`. A release built with Jev's labels also answers `relevance="jev"` queries.
+- Core contributions to multilateral agencies attributed to the providers that pay them, so each dollar counts once.
+- Link rates, commitment status, and the measured precision of the links with `snap.quality()`, and a party's BTR report against the OECD data with `snap.reconcile()`.
 
-## Trace and compare
+## When to use something else
 
-`result.rows()` returns the project rows behind the table, and `result.explain()` describes the method, flow, filters and units in plain language. `result.meta` records the release, package version and source versions. `result.share_of_total()` returns the same result under `measure="share_of_total"`, so its spec reruns to the same shares. `snap.quality()` reports how much climate value traces to CRS records, and `cf.compare(a, b)` sets several results side by side.
+The package reports public climate finance as donors file it, taking their Rio markers as given and excluding private-sector providers (Bi_Multi 6). Where a provider files unusable project ids, its rows rest on estimated links, and the gap between `low` and `high` shows how many.
 
-`result.spec` holds every argument as a frozen `Spec`, and `snap.spending(spec=result.spec)` reruns the query to an identical table.
+## Documentation
 
-## Migrating from 1.x
+Start with [Trace Japan's climate finance to Bangladesh](docs/tutorial.md). The [documentation index](docs/index.md) lists the how-to guides, the reference, and the explanations. Users of 1.x should read [Migrating from 1.x](docs/migrating-from-1x.md) and the [2.0.0 release notes](docs/release-notes/2.0.0.md), which explain why totals differ.
 
-`ClimateData`, `set_climate_finance_data_path` and `get_unfccc_data` still import, with a `DeprecationWarning`, until 3.0. Each call without a 2.0 equivalent raises an error that names its replacement. The legacy source names select the traced dataset, which includes disbursements from development banks' own ledgers, so `"OECD_CRS"` can return more than the CRS alone. The `_ALLOCABLE` names return the same rows as their plain names, without their former filter.
-
-## Contact
-
-We want this package to help others analyse climate finance data. If you want to collaborate, or have questions, please reach out.
+MIT. See [LICENSE](LICENSE).

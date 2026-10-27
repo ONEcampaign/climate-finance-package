@@ -43,7 +43,7 @@ no line, since donors write it as a placeholder for the year and 38% of CRS reco
 carry 31 December against the 0.3% a real date would.
 """
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import cache
 from typing import overload
@@ -57,6 +57,7 @@ from climate_finance.build.link.id_practice import (
     canonical_crs_id,
     parent_id,
 )
+from climate_finance.build.link.text import largest_record
 from climate_finance.build.normalise.ids import content_id
 from climate_finance.build.normalise.project_numbers import normalise_pn
 
@@ -299,6 +300,14 @@ def regional_codes() -> tuple[int, ...]:
     return tuple(catalogue.recipients.list().filter(regions)["code"])
 
 
+@cache
+def country_codes() -> frozenset[int]:
+    """The DAC recipient codes of single countries: those in the recipient list that
+    are not regional or unspecified (`regional_codes`)."""
+    codes = catalogue.recipients.list()["code"]
+    return frozenset(codes) - frozenset(regional_codes())
+
+
 def _pn_key(units: pl.DataFrame) -> pl.Series:
     """Each unit's `separator_free_pn`, or its project number as written where the
     separator-free key holds commitments under more than one crs id. Dropping
@@ -469,34 +478,6 @@ def placed_in_window(placed_year: pl.Expr, *, floor: pl.Expr | None = None) -> p
 def group_id(method: pl.Expr, *key: str | pl.Expr) -> pl.Expr:
     """A link group's id: its method and the values of its `key`, joined by `|`."""
     return pl.concat_str([method, *key], separator="|")
-
-
-def largest_record(*columns: str) -> pl.Expr:
-    """`columns` of the group's largest record by commitment plus disbursement,
-    ties to the smaller record id."""
-    size = pl.col("commitment_usd").abs().fill_null(0) + pl.col(
-        "disbursement_usd"
-    ).abs().fill_null(0)
-    return pl.col(*columns).sort_by(size, "record_id", descending=[True, False]).first()
-
-
-def representative(
-    units: pl.DataFrame, *, crs: pl.LazyFrame, fields: Iterable[pl.Expr]
-) -> pl.LazyFrame:
-    """`fields`, expressions over CRS record columns, of each unit's largest record
-    (`largest_record`), under `unit_id`."""
-    fields = list(fields)
-    return (
-        units.lazy()
-        .select("unit_id", record_id="record_ids")
-        .explode("record_id")
-        .join(
-            crs.select("record_id", "commitment_usd", "disbursement_usd", *fields),
-            on="record_id",
-        )
-        .group_by("unit_id")
-        .agg(largest_record(*(field.meta.output_name() for field in fields)))
-    )
 
 
 @overload

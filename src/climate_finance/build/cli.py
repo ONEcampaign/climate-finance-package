@@ -7,7 +7,7 @@ import typer
 from rich.console import Console
 
 from climate_finance.build import build as run_build
-from climate_finance.build import evaluate, gate, release
+from climate_finance.build import evaluate, gate, load_config, release
 from climate_finance.build.link import decisions as decisions_module
 from climate_finance.build.link import review
 from climate_finance.build.readers import btr
@@ -41,21 +41,60 @@ def build_command(
 @app.command()
 def sample(
     release_dir: Path,
-    out: Annotated[Path, typer.Option(help="Where to write the sample CSV.")],
+    out: Annotated[
+        Path, typer.Option(help="Directory for the sample's packets and design.")
+    ],
+    config: ConfigOption = Path("build.toml"),
 ) -> None:
-    """Draw the stratified blind sample for labelling."""
-    console.print(evaluate.draw_blind_sample(release_dir=release_dir, out_path=out))
+    """Draw the stratified blind sample: a labelling packet per provider and batch,
+    and the design beside them. The review decisions come from the config."""
+    console.print(
+        evaluate.draw_blind_sample(
+            release_dir=release_dir,
+            out_dir=out,
+            decisions=load_config(config).sources.review_decisions,
+            rule=gate.load_gates().precision,
+        )
+    )
+
+
+SampleOption = Annotated[
+    Path | None,
+    typer.Option(help="The blind sample's design.parquet, written by `sample`."),
+]
+PreviousOption = Annotated[
+    Path | None, typer.Option(help="The previous release's directory, for drift.")
+]
+FirstReleaseOption = Annotated[
+    bool, typer.Option(help="Pass the drift gate with no previous release.")
+]
 
 
 @app.command("gate")
 def gate_command(
     release_dir: Path,
+    config: ConfigOption = Path("build.toml"),
+    sample: SampleOption = None,
+    previous: PreviousOption = None,
+    first_release: FirstReleaseOption = False,
     report: Annotated[bool, typer.Option(help="Report failures without failing.")] = (
         False
     ),
 ) -> None:
-    """Evaluate the release gates."""
-    console.print(gate.run_gates(release_dir, report_only=report))
+    """Evaluate the release gates, one line per gate row. The blind sample's labels
+    come from the config's review decisions."""
+    results = gate.run_gates(
+        release_dir,
+        decisions=load_config(config).sources.review_decisions,
+        sample=sample,
+        previous=previous,
+        first_release=first_release,
+        report_only=report,
+    )
+    for row in results.iter_rows(named=True):
+        outcome = "pass" if row["passed"] else "waived" if row["waived"] else "FAIL"
+        name = " ".join(filter(None, (row["gate"], row["subject"])))
+        console.print(f"{name}: {outcome}; {row['detail']}", markup=False)
 
 
 @app.command()
@@ -115,9 +154,17 @@ def release_command(
     release_name: Annotated[str, typer.Argument(metavar="RELEASE")],
     config: ConfigOption = Path("build.toml"),
     out_dir: OutDirOption = Path("releases"),
+    sample: SampleOption = None,
+    previous: PreviousOption = None,
+    first_release: FirstReleaseOption = False,
     waive_precision: Annotated[
-        bool, typer.Option(help="Pack despite a failed precision gate; recorded.")
-    ] = False,
+        str | None,
+        typer.Option(
+            metavar="REASON",
+            help="Pack despite failed precision and human-audit gates, recording "
+            "REASON in release.json.",
+        ),
+    ] = None,
 ) -> None:
     """Build, gate and pack a release."""
     console.print(
@@ -125,6 +172,9 @@ def release_command(
             release_name,
             config=config,
             out_dir=out_dir,
+            sample=sample,
+            previous=previous,
+            first_release=first_release,
             waive_precision=waive_precision,
         )
     )

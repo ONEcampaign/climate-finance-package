@@ -83,7 +83,6 @@ from rapidfuzz import fuzz
 from rapidfuzz.process import cpdist
 
 from climate_finance import schema
-from climate_finance.build.link.candidates import clean_text
 from climate_finance.build.link.id_practice import canonical_crs_id
 from climate_finance.build.link.keys import (
     Decide,
@@ -95,6 +94,7 @@ from climate_finance.build.link.keys import (
     separator_free_pn,
     split_components,
 )
+from climate_finance.build.link.text import clean_text
 from climate_finance.build.normalise.project_numbers import (
     LONG_NUMBER,
     rounded_digits,

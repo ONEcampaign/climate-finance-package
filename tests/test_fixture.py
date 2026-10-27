@@ -70,6 +70,9 @@ INVARIANT_TABLES = (
     "agency_shares",
     "agency_spending",
     "core_contributions",
+    "btr",
+    "btr_links",
+    "btr_totals",
     "provider_coefficients",
 )
 
@@ -268,6 +271,24 @@ def _move_a_fill_to_another_recipient(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def _ship_a_gcf_fill(frame: pl.DataFrame) -> pl.DataFrame:
+    # The bank-ledger fill on AFDB-1 becomes a GCF record, which releases leave out.
+    return frame.with_columns(
+        record_id=pl.when(pl.col("disbursement_source") == "bank_ledger")
+        .then(pl.lit("ledger:gcf:FP001:2021"))
+        .otherwise(pl.col("record_id"))
+    )
+
+
+def _withhold_a_shipped_fill(frame: pl.DataFrame) -> pl.DataFrame:
+    # AFDB-1 states its shipped bank-ledger fill as withheld too, so counts it twice.
+    return frame.with_columns(
+        withheld_usd=pl.when(pl.col("row_id") == "AFDB-1")
+        .then(pl.col("disbursed_usd"))
+        .otherwise(pl.col("withheld_usd"))
+    )
+
+
 def _repeat_an_allocated_row(frame: pl.DataFrame) -> pl.DataFrame:
     # DEU-1 holds allocations; as a repeat of DEU-2 its money drops out of totals.
     return frame.with_columns(
@@ -322,6 +343,22 @@ def _zero_remainder(frame: pl.DataFrame) -> pl.DataFrame:
     return _remainder(frame, 0.0)
 
 
+def _restate_a_btr_total(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(
+        face_usd=pl.when(pl.col("party") == "NOR")
+        .then(pl.col("face_usd") * 1.01)
+        .otherwise("face_usd")
+    )
+
+
+def _unlink_a_btr_total(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(linked=pl.col("linked") & (pl.col("party") != "DEU"))
+
+
+def _drop_a_btr_row(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.filter(pl.col("party") != "DEU")
+
+
 def _coefficient_edit(
     provider: int, first_year: int | None, **changes: object
 ) -> Callable[[pl.DataFrame], pl.DataFrame]:
@@ -358,6 +395,13 @@ def _coefficient_edit(
         ("disbursements", _orphan_allocation, "NONE-1"),
         ("commitments", _keep_a_parent_beside_its_child, "DEU-1"),
         ("disbursements", _code_unspecified_as_the_bulk_crs_does, "disbursements"),
+        ("disbursements", _ship_a_gcf_fill, "disbursements"),
+        (
+            "untraced",
+            _edit_untraced("DEU-UNLINKED", record_id="ledger:gcf:FP001:2022"),
+            "untraced",
+        ),
+        ("commitments", _withhold_a_shipped_fill, "AFDB-1"),
         ("disbursements", _break_record_grant_equiv, "JPN-SPLIT"),
         ("disbursements", _break_record_disbursement, "JPN-SPLIT"),
         ("disbursements", _overdraw_record, "JPN-SPLIT"),
@@ -382,6 +426,9 @@ def _coefficient_edit(
         ("commitments", _publish_more_climate_than_face, "DEU-1"),
         ("core_contributions", _keep_an_aggregate_channel, "44000"),
         ("core_contributions", _zero_remainder, "40000"),
+        ("btr_totals", _restate_a_btr_total, "NOR"),
+        ("btr_totals", _unlink_a_btr_total, "DEU 2021"),
+        ("btr", _drop_a_btr_row, "DEU"),
         ("agency_shares", _measure_ida_twice, "44002 2021"),
         ("agency_spending", _give_a_marker_row_components, "44002 2021 2 0"),
         ("agency_spending", _repeat_a_components_row, "46002 2022 None None"),

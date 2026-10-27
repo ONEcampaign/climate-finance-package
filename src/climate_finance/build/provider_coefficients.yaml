@@ -1,0 +1,129 @@
+# The coefficients each provider applies to Rio-marked activities when it reports
+# climate finance to the UNFCCC, keyed by ISO 3 code (EUU for EU Institutions). Each
+# entry is one row of the release's `provider_coefficients` table, with the same
+# columns; a missing `agency_code`, `first_year`, `last_year` or `both_significant`
+# is null, and a missing `case_by_case` is false.
+#
+# The survey is the OECD's "Results of the survey on the coefficients applied to
+# Climate Change Rio marker data when reporting to the UNFCCC",
+# DCD/DAC/STAT(2024)28/REV1, which covers the 2021-22 data members reported in their
+# first BTRs; its rows apply to every year. Korea and Monaco are not in it, so they
+# have no row.
+AUS:
+  # Case by case, with 30% where an activity's share cannot be estimated.
+  - {significant: 0.3, principal: 1.0, case_by_case: true,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8, and p. 5"}
+AUT:
+  - {significant: 0.5, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8"}
+BEL:
+  - {case_by_case: true,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8, and p. 5"}
+CAN:
+  - {significant: 0.3, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8"}
+  # FinDev Canada and Export Development Canada follow IFC principles.
+  - {agency_code: 22, case_by_case: true,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "notes b to d, p. 9"}
+  - {agency_code: 31, case_by_case: true,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "notes b to d, p. 9"}
+CHE:
+  - {significant: 0.5, principal: 0.85,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8, and note m, p. 9"}
+CZE:
+  - {significant: 1.0, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8"}
+DEU:
+  # An activity significant for both objectives counts in full.
+  - {significant: 0.5, principal: 1.0, both_significant: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8, and note g, p. 9"}
+DNK:
+  - {significant: 0.5, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8"}
+ESP:
+  - {significant: 0.5, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8, and note l, p. 9"}
+EST:
+  # Does not start from Rio markers.
+  - {case_by_case: true,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8, and p. 6"}
+EUU:
+  - {significant: 0.4, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8, and note e, p. 9"}
+FIN:
+  - {case_by_case: true,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8, and p. 5"}
+FRA:
+  - {significant: 0.4, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8, and note f, p. 9"}
+  # The Agence française de développement assesses each activity's share.
+  - {agency_code: 3, case_by_case: true,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "note f, p. 9, and p. 5"}
+GBR:
+  - {case_by_case: true,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8, and pp. 5-6"}
+GRC:
+  - {significant: 0.4, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8"}
+HUN:
+  # Does not use Rio markers.
+  - {case_by_case: true,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8, and p. 6"}
+IRL:
+  - {last_year: 2020, significant: 0.5, principal: 1.0,
+     source: "Department of Foreign Affairs, Ireland's Climate and Environmental Finance Report 2024",
+     locator: "executive summary, footnote 4"}
+  - {first_year: 2021, significant: 0.4, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8"}
+ISL:
+  - {significant: 1.0, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8"}
+ITA:
+  - {significant: 0.4, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8, and notes h and i, p. 9"}
+JPN:
+  - {significant: 0.5, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8"}
+LTU:
+  # Does not use Rio markers.
+  - {case_by_case: true,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8, and p. 6"}
+LUX:
+  # Not in the survey. Assesses each activity rather than classifying it by Rio
+  # marker, and counts Significant activities only in exceptional cases, so it
+  # states no flat coefficient. Its linked BTR-to-CRS pairs sit at 40% of the CRS
+  # amount.
+  - {case_by_case: true,
+     source: "First Biennial Transparency Report of Luxembourg (2025)",
+     locator: "section V.A.1, paragraphs 43 to 46"}
+NLD:
+  - {significant: 0.4, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8, and note j, p. 9"}
+NOR:
+  - {significant: 0.4, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8"}
+NZL:
+  # 50% for significant adaptation on disaster risk reduction, which the release
+  # cannot single out.
+  - {significant: 0.3, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8, and note k, p. 9"}
+POL:
+  - {significant: 1.0, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8"}
+PRT:
+  - {significant: 0.4, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8"}
+SVK:
+  # Each activity counts at 100% or not at all.
+  - {case_by_case: true,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8, and p. 5"}
+SVN:
+  - {significant: 1.0, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8"}
+SWE:
+  - {significant: 0.4, principal: 1.0,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8"}
+USA:
+  # Reports climate-specific amounts without Rio markers.
+  - {case_by_case: true,
+     source: OECD DCD/DAC/STAT(2024)28/REV1, locator: "Table 1, p. 8, and p. 6"}

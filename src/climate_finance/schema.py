@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 import polars as pl
+import polars.selectors as cs
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from climate_finance.errors import SchemaError
@@ -87,6 +88,14 @@ LEDGER_TRANSACTION_TYPES = (
 LEDGER_CHECKS = ("confirmed", "contradicted", "none", "confirmed_undisbursed")
 DISBURSEMENT_SOURCES = ("crs", "bank_ledger", "iati", "none")
 ALLOCATION_RULES = ("fifo", "dated", "window", "excess", "bank_ledger", "iati")
+# Fill records the release leaves out, by the start of their `record_id`
+# (`ledger:<publisher>:<key>:<year>`): the Green Climate Fund's projects API and
+# readiness list. The Fund's website terms allow only private study, research and
+# teaching, and no commercial derivative works without written consent, and its
+# projects API states no terms of its own (`build.release` cites them). Its IATI
+# files are CC0 on the IATI Registry, so `iati:gcf:` fills ship.
+# A commitment's `withheld_usd` holds what the withheld records disbursed to it.
+WITHHELD_RECORD_PREFIXES = ("ledger:gcf:", "ledger:gcf_readiness:")
 OBJECTIVES = ("adaptation", "mitigation", "cross_cutting")
 # An agency share's objective: one of OBJECTIVES, or `climate` for a total climate
 # share with no split by objective, as the OECD gives before 2021.
@@ -123,6 +132,7 @@ FETCH_METHODS = ("http", "registered", "manual")
 PERSPECTIVES = ("provider", "recipient")
 ORG_ROLES = ("provider", "agency", "channel")
 FLOWS = ("commitments", "disbursements", "grant_equivalent")
+FUNDING_CLASSES = ("oda", "oof", "other")
 DECISIONS = ("accept", "reject")
 # The first year the CRDF and the CRS measure adaptation: the DAC introduced the
 # adaptation marker for flows from 2010. Before it the recipient CRDF holds the rows
@@ -312,7 +322,7 @@ CRS = _table(
     text_hash=_str(nullable=True),
 )
 
-# One row per provider, agency, year and flow. The build writes every flow in FLOWS.
+# One row per provider, channel, year and flow. The build writes every flow in FLOWS.
 # MULTI publishes aggregate channels beside their members, such as 40000 for all
 # multilaterals and 44000 for the World Bank Group. Normalise keeps them. The release
 # keeps leaf channels, so each dollar counts once, plus a 40000 row for the part of
@@ -321,7 +331,7 @@ CRS = _table(
 CONTRIBUTION_KEY = ("provider_code", "year", "flow")
 # MULTI's total of a provider's core contributions, which sums every leaf channel
 # it reports, 30010 included. The intermediate aggregates (41000, 47000 and the
-# like) do not follow the code prefixes: MULTI files some 41xxx channels under 47000.
+# like) follow no code prefix, as MULTI files some 41xxx channels under 47000.
 TOP_CHANNEL = 40000
 CORE_CONTRIBUTIONS = _table(
     "core_contributions",
@@ -378,13 +388,13 @@ EXTERNAL = _table(
 # Bank and bilateral ledgers, as the ledger readers return them: one row per
 # transaction, or per World Bank loan and year. `key` is the id the CRS project number
 # carries, so a ledger row and a CRS row join on it; `activity_id` is the id as
-# published. Amounts are as published, in `currency`; the readers fill `amount_usd` for
+# published. Amounts are as published, in `currency`. The readers fill `amount_usd` for
 # USD rows, and normalise converts the rest at DAC annual rates where the DAC publishes
 # one for the currency. A World Bank row is the December-to-December flow of a loan,
 # dated 31 December. A GEF disbursement is the rise of its running peak, since GEF
 # declares its figures cumulative. `disbursed_to_date` is a GCF readiness grant's
-# disbursed amount, which the list does not date: its `date` and `year` are null and no
-# calendar-year check can use it. `other_ids` lists the activity's other identifiers,
+# disbursed amount, which the list does not date, so its `date` and `year` are null and
+# no calendar-year check can use it. `other_ids` lists the activity's other identifiers,
 # which the bilateral id matching reads.
 LEDGER = _table(
     "ledger",
@@ -402,19 +412,31 @@ LEDGER = _table(
     other_ids=Column(pl.List(pl.String())),
 )
 
+# `party` is the ISO 3 code; `provider_code` its DAC provider code, null for a party
+# that reports no CRS. `amount_domestic` and `grant_equiv_domestic` are the face value
+# and grant equivalent in `currency`, and `face_usd` and `grant_equiv_usd` the party's
+# own conversion. `dac_rate` is the DAC annual rate of `currency` in the row's year,
+# in `currency` per USD, the rate the CRS amounts use; null without one.
+# `face_usd_at_dac` and `grant_equiv_usd_at_dac` restate the domestic amounts at it,
+# and keep the party's USD where the domestic amount or the rate is missing.
 BTR = _table(
     "btr",
     ("row_id",),
     row_id=_str(),
     party=_str(),
+    provider_code=_code(nullable=True),
     year=_year(),
     recipient=_str(nullable=True),
     recipient_code=_code(nullable=True),
     title=_str(nullable=True),
     amount_domestic=_f64(nullable=True),
+    grant_equiv_domestic=_f64(nullable=True),
     currency=_str(nullable=True),
     face_usd=_usd(nullable=True),
     grant_equiv_usd=_usd(nullable=True),
+    dac_rate=_f64(nullable=True),
+    face_usd_at_dac=_usd(nullable=True),
+    grant_equiv_usd_at_dac=_usd(nullable=True),
     status=_str(nullable=True, values=("committed", "disbursed")),
     channel=_str(nullable=True),
     funding_source=_str(nullable=True),
@@ -424,6 +446,22 @@ BTR = _table(
     additional_information=_str(nullable=True),
     is_aggregate=_bool(),
     source_file=_str(),
+)
+
+# One row per BTR workbook the archive lists: the Table III.1 sheets read, the rows
+# kept, the sheet rows dropped by reason, and the reporting tool's draft state in the
+# file name.
+BTR_WORKBOOKS = _table(
+    "btr_workbooks",
+    ("file",),
+    file=_str(),
+    party=_str(),
+    sheets=Column(pl.List(pl.String())),
+    rows_kept=_count(),
+    dropped_blank=_count(),
+    dropped_notation=_count(),
+    dropped_total=_count(),
+    draft_marker=_str(nullable=True, values=("started", "awaiting_submission")),
 )
 
 # One row per resolved organisation name and role. An agency name resolves within
@@ -550,7 +588,7 @@ PROGRAMME_STEMS = _table(
 # under a blocking rule. `eligible` pairs are open to scoring: no key linked either
 # unit and neither agency's ids persist. The other rows pair commitments of
 # `id_persistent` agencies. `same_crs_id` says whether a pair's units share a raw
-# crs id; the classifier trains on `score.id_truth`. `programme_level` is 2 for
+# crs id. The classifier trains on `score.id_truth`. `programme_level` is 2 for
 # the same project number, 1 for siblings under one programme stem, else 0.
 CANDIDATES = _table(
     "candidates",
@@ -715,10 +753,10 @@ PAIR_LABELS = _table(
 )
 
 # Decisions on queued pairs and blind-sample pairs, appended over time. A decision
-# carries either the queue's `review_reason` or the blind sample's `sample_id`:
-# queue decisions become pair labels and link overrides, and blind-sample decisions
-# only measure precision. `label_source` says whether a person or an agent decided;
-# an agent's decision names its `model`, its `confidence` that the pair matches, and
+# carries either the queue's `review_reason` or the blind sample's `sample_id`.
+# Queue decisions become pair labels and link overrides, and blind-sample decisions
+# only measure precision. `label_source` says whether a person or an agent decided.
+# An agent's decision names its `model`, its `confidence` that the pair matches, and
 # its labelling `round`. `reviewer` names the person or the agent run, and `note`
 # holds the stated reason.
 REVIEW_DECISIONS = _table(
@@ -851,12 +889,15 @@ COMMITMENTS = _table(
     disbursed_usd=_usd(),
     disbursed_low_usd=_usd(),
     disbursed_high_usd=_usd(),
+    # The part of each disbursed amount from fill records the release leaves out
+    # (`WITHHELD_RECORD_PREFIXES`), which no `disbursements` row carries. A fill
+    # counts in full in both bounds, so it is the same part of all three.
+    withheld_usd=_usd(),
     project_disbursing=_bool(),
-    # True or null: true where the bank's ledger
-    # (`ledger.UNDISBURSED_PUBLISHERS`) confirms no disbursement; null where no
-    # ledger covers the row or it shows money moving. It stands whatever `status`
-    # says, so a row the allocation calls disbursed and the ledger does not points
-    # at a link to check.
+    # True where the bank's ledger (`ledger.UNDISBURSED_PUBLISHERS`) confirms no
+    # disbursement, null where no ledger covers the row or it shows money moving.
+    # It stands whatever `status` says, so a row the allocation calls disbursed and
+    # the ledger does not points at a link to check.
     ledger_undisbursed=_bool(nullable=True),
     repeat_of=_str(nullable=True),
     # The published CRDF aggregate row this child was rebuilt from. The release
@@ -881,10 +922,11 @@ DISBURSEMENTS = _table(
     title=_str(nullable=True),
     # Face value of the record's disbursement allocated to `row_id`, with the
     # allocation's bounds: 0 <= allocated_low <= allocated <= allocated_high.
-    # allocated_low holds what certain links carried (`CERTAIN_METHODS`). A
-    # bank-ledger or IATI fill counts in full in both bounds, since it matches the
-    # commitment on its publisher's own id: the bank's ledger key or the fund's
-    # project id.
+    # allocated_low holds what certain trace links carried (`CERTAIN_METHODS`, or
+    # one record that commits and disburses) to rows reached through certain
+    # CRDF-to-CRS routes (`CERTAIN_ROUTES`). A bank-ledger or IATI fill counts in
+    # full in both bounds, since it matches the commitment on its publisher's own
+    # id: the bank's ledger key or the fund's project id.
     allocated_usd=_usd(),
     allocated_low_usd=_usd(),
     allocated_high_usd=_usd(),
@@ -998,17 +1040,86 @@ UNALLOCATED = _table(
 
 # Every CRS flow, climate or not, summed. This is the denominator of `share_of_total`.
 # `agency_code` lets a query take out the EIB's flows where the EIB counts as a
-# channel.
+# channel. `rio_marker` is the higher of a record's two Rio markers, 0 for none, so
+# the BTR reconciliation can weight same-year climate disbursements.
 TOTAL_FLOWS = _table(
     "total_flows",
-    ("provider_code", "agency_code", "recipient_code", "year", "bi_multi", "flow"),
+    (
+        "provider_code",
+        "agency_code",
+        "recipient_code",
+        "year",
+        "bi_multi",
+        "flow",
+        "rio_marker",
+    ),
     provider_code=_code(),
     agency_code=_code(nullable=True),
     recipient_code=_code(),
     year=_year(),
     bi_multi=_bi_multi(),
     flow=_str(values=FLOWS),
+    rio_marker=Column(pl.Int8(), values=RIO_MARKERS),
     amount_usd=_usd(),
+)
+
+# Each BTR row's links to same-year CRS records of its party (`links` task
+# `btr_crs`), with the CRS record's facts, since the release holds no CRS records.
+# `rio_marker` is the higher of the record's two Rio markers.
+BTR_LINKS = _table(
+    "btr_links",
+    ("row_id", "record_id"),
+    row_id=_str(),
+    record_id=_str(),
+    link_method=_str(values=("btr_id", "btr_splink")),
+    probability=_f64(),
+    provider_code=_code(),
+    year=_year(),
+    recipient_code=_code(),
+    project_number=_str(nullable=True),
+    title=_str(nullable=True),
+    commitment_usd=_usd(nullable=True),
+    disbursement_usd=_usd(nullable=True),
+    rio_marker=Column(pl.Int8(), values=RIO_MARKERS),
+)
+
+# Each party's BTR rows summed by year, status, funding class, currency and whether a
+# CRS record links them (`btr_links`): the reconciliation's BTR side in a release
+# that leaves out `btr` and `btr_links`. `funding` is `oda` or `oof` where the row's
+# funding source names only that flow, and `other` otherwise. `rows` counts the rows;
+# an amount is null where every row of the group lacks it. `dac_rate` is the rows'
+# DAC rate, one per party and year.
+BTR_TOTALS = _table(
+    "btr_totals",
+    ("party", "year", "status", "funding", "currency", "linked"),
+    party=_str(),
+    provider_code=_code(nullable=True),
+    year=_year(),
+    status=_str(nullable=True, values=("committed", "disbursed")),
+    funding=_str(values=FUNDING_CLASSES),
+    currency=_str(nullable=True),
+    linked=_bool(),
+    rows=_count(),
+    face_usd=_usd(nullable=True),
+    grant_equiv_usd=_usd(nullable=True),
+    amount_domestic=_f64(nullable=True),
+    face_usd_at_dac=_usd(nullable=True),
+    grant_equiv_usd_at_dac=_usd(nullable=True),
+    dac_rate=_f64(nullable=True),
+)
+
+# For each BTR party's DAC provider and each year its BTR rows cover, the bilateral
+# CRS amount of each flow on climate-marked records (higher Rio marker 1 or 2) that
+# no `btr_crs` link reaches: the reconciliation's OECD-only side, as the release
+# holds no CRS records. Zero where every such record is linked, and null where the
+# build's CRS holds no record of the provider and year, as for a year past its last.
+BTR_CRS_UNLINKED = _table(
+    "btr_crs_unlinked",
+    ("provider_code", "year", "flow"),
+    provider_code=_code(),
+    year=_year(),
+    flow=_str(values=("commitments", "disbursements")),
+    amount_usd=_usd(nullable=True),
 )
 
 # The coefficients each provider applies to Rio-marked activities when it reports to
@@ -1048,6 +1159,9 @@ RELEASE_TABLES = _by_name(
     MODELLED,
     CORE_CONTRIBUTIONS,
     BTR,
+    BTR_LINKS,
+    BTR_TOTALS,
+    BTR_CRS_UNLINKED,
     DISBURSEMENT_PROFILE,
     QUALITY,
     UNTRACED,
@@ -1066,6 +1180,7 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
         IMPUTED_SHARES,
         EXTERNAL,
         BTR,
+        BTR_WORKBOOKS,
         ORGS,
         LEDGER,
     ),
@@ -1088,13 +1203,14 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
     "assemble": RELEASE_TABLES,
 }
 # Tables a stage may leave out. A stage that reads one that was not written raises
-# StageInputMissingError. `orgs` is written when recoveries are on, `btr` when the build
-# config names an ingested BTR table, `ledger` when it names ledger sources.
+# StageInputMissingError. `orgs` is written when recoveries are on, `btr` and
+# `btr_workbooks` when the build config names a BTR archive, `ledger` when it
+# names ledger sources.
 # `bank_year_overlap` is written by the bank-ledger gap fill, `review_queue` by the
 # review queue and `pair_labels` by the ledger check. With their switches off the two
 # stages pass the tables they carry forward through unchanged.
 OPTIONAL_STAGE_TABLES: Mapping[str, frozenset[str]] = {
-    "normalise": frozenset({"btr", "orgs", "ledger"}),
+    "normalise": frozenset({"btr", "btr_workbooks", "orgs", "ledger"}),
     "fill": frozenset({"bank_year_overlap"}),
     "review": frozenset({"review_queue", "pair_labels"}),
 }
@@ -1151,6 +1267,9 @@ def validate(table: TableSchema, frame: pl.DataFrame) -> None:
 
 # Absolute tolerance, in USD, for the amount checks in `release_invariants`.
 INVARIANT_TOLERANCE_USD = 1e-6
+# The relative difference `btr_totals` may show from the `btr` rows it sums, as the
+# two add the same amounts in different orders.
+BTR_TOTALS_TOLERANCE = 1e-9
 # Relative tolerance for a provider-year total of `unallocated.marked_usd`, where
 # INVARIANT_TOLERANCE_USD is smaller. Its parts are sums of the allocations a
 # record's disbursement splits into, so rounding parts them from the total by up to
@@ -1188,10 +1307,18 @@ _DISBURSED_SUMS = {
 # The amounts the checks compare, by table. A null among them fails no comparison,
 # so each null is a problem of its own.
 _COMPARED_AMOUNTS = {
-    "commitments": ("face_usd", *_DISBURSED_SUMS),
+    "commitments": ("face_usd", *_DISBURSED_SUMS, "withheld_usd"),
     "disbursements": (*_DISBURSED_SUMS.values(), "record_disbursement_usd"),
     "untraced": ("untraced_usd", "record_disbursement_usd"),
 }
+
+
+def withheld_record(record_id: pl.Expr) -> pl.Expr:
+    """True where `record_id` names a fill record the release leaves out
+    (`WITHHELD_RECORD_PREFIXES`)."""
+    return pl.any_horizontal(
+        record_id.str.starts_with(prefix) for prefix in WITHHELD_RECORD_PREFIXES
+    ).fill_null(False)
 
 
 def measured_adaptation(marker: pl.Expr) -> pl.Expr:
@@ -1229,8 +1356,8 @@ _FILL_FACTS = (
 
 def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     """Problems with a release's `commitments`, `disbursements`, `untraced`,
-    `unallocated`, `agency_shares`, `agency_spending`, `core_contributions` and
-    `provider_coefficients`.
+    `unallocated`, `agency_shares`, `agency_spending`, `core_contributions`,
+    `provider_coefficients` and BTR tables.
 
     Every amount is finite or null; the other checks skip a non-finite amount, and
     the sum, record and untraced checks skip the commitment and the record whose
@@ -1238,29 +1365,33 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     reported once, as non-finite. Every disbursements row holds
     0 <= allocated_low <= allocated <= allocated_high and 0 <= record_grant_equiv,
     and names a commitment. Per commitment, its rows' allocated, allocated_low and
-    allocated_high sum to disbursed, disbursed_low and disbursed_high, and
-    0 <= disbursed_low <= disbursed <= disbursed_high <= face, where a face of zero
-    or below (a published downward revision) allows nothing disbursed. A record's
-    rows share one `record_disbursement_usd` and one `record_grant_equiv_usd` (all
-    null or all set), and its allocated amounts sum to at most
-    `record_disbursement_usd`. Amounts compare within `INVARIANT_TOLERANCE_USD`, and
-    none of them is null. Every disbursements row from the CRS names the link that
-    carried it, and every fill (a bank-ledger or IATI row) carries its commitment's
-    provider, agency, recipient, channel, Bi_Multi, purpose and project number. No
-    disbursements row names a commitment that repeats an earlier vintage, as
-    allocate moves a repeat's allocations to its first row. No commitment is
-    another's `parent_row_id`, and no table in `tables` holds the bulk CRS's
-    `CRS_UNSPECIFIED_RECIPIENT`. A channel, year and source of `agency_shares`
-    holds either split rows or one `climate` row. Each
-    `agency_spending` row holds both markers and no component shares, or neither
-    marker and all three component shares, a channel, year, pair of markers and
-    published share holds one row, and a channel and year holds one `share_source`.
-    A channel and year of `agency_spending` holds no `one` row of `agency_shares`.
-    Each commitment's value under the OECD method equals its published
-    `climate_usd`, and no channel of `core_contributions` aggregates another of its
-    channels. The `untraced` checks are those of `_untraced_problems`, the
-    `unallocated` total that of `_marked_problems`, and the `provider_coefficients`
-    checks those of `_coefficient_problems`. An empty list means every check passed.
+    allocated_high, each plus `withheld_usd`, sum to disbursed, disbursed_low and
+    disbursed_high, and 0 <= disbursed_low <= disbursed <= disbursed_high <= face,
+    where a face of zero or below (a published downward revision) allows nothing
+    disbursed. A record's rows share one `record_disbursement_usd` and one
+    `record_grant_equiv_usd` (all null or all set), and its allocated amounts sum
+    to at most `record_disbursement_usd`. Amounts compare within
+    `INVARIANT_TOLERANCE_USD`, and none of them is null. Every disbursements row
+    from the CRS names the link that carried it, and every fill (a bank-ledger or
+    IATI row) carries its commitment's provider, agency, recipient, channel,
+    Bi_Multi, purpose and project number. No disbursements row names a commitment
+    that repeats an earlier vintage, as allocate moves a repeat's allocations to
+    its first row. No commitment is another's `parent_row_id`. No table in
+    `tables` holds a row of a fill record the release leaves out
+    (`withheld_record`) or a row with the bulk CRS's `CRS_UNSPECIFIED_RECIPIENT`.
+    A channel, year and source of `agency_shares` holds either split rows or one
+    `climate` row. Each `agency_spending` row holds both markers and no component
+    shares, or neither marker and all three component shares, a channel, year,
+    pair of markers and published share holds one row, and a channel and year
+    holds one `share_source`. A channel and year of `agency_spending` holds no
+    `one` row of `agency_shares`. Each commitment's value under the OECD method
+    equals its published `climate_usd`, and no channel of `core_contributions`
+    aggregates another of its channels. Per party, year and status, `btr_totals`
+    holds as many rows and linked rows as `btr` and `btr_links` do, and the same
+    face and grant-equivalent sums within `BTR_TOTALS_TOLERANCE` of their size. The
+    `untraced` checks are those of `_untraced_problems`, the `unallocated` total
+    that of `_marked_problems`, and the `provider_coefficients` checks those of
+    `_coefficient_problems`. An empty list means every check passed.
     """
     commitments, problems, _ = _finite(tables["commitments"], name="commitments")
     disbursements, non_finite, flagged = _finite(
@@ -1331,10 +1462,13 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     )
     totals = (
         commitments.filter(summed)
-        .select("row_id", *_DISBURSED_SUMS)
+        .select("row_id", "withheld_usd", *_DISBURSED_SUMS)
         .join(sums, on="row_id", how="left")
         .with_columns(
-            pl.col(f"_{part}").fill_null(0.0) for part in _DISBURSED_SUMS.values()
+            (pl.col(f"_{part}").fill_null(0.0) + pl.col("withheld_usd")).alias(
+                f"_{part}"
+            )
+            for part in _DISBURSED_SUMS.values()
         )
     )
     for total, part in _DISBURSED_SUMS.items():
@@ -1343,7 +1477,7 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
         )
         problems.extend(
             f"commitments {row['row_id']}: {total} {row[total]!r} differs from the "
-            f"sum of {part} {row[f'_{part}']!r}"
+            f"sum of {part} plus withheld_usd {row[f'_{part}']!r}"
             for row in failing.iter_rows(named=True)
         )
     for smaller, larger in _DISBURSED_ORDER:
@@ -1364,6 +1498,11 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
         ~pl.col("record_id").is_in(flagged["record_id"].implode())
     )
     problems.extend(_record_problems(finite))
+    problems.extend(
+        _btr_problems(
+            tables["btr"], links=tables["btr_links"], totals=tables["btr_totals"]
+        )
+    )
     problems.extend(
         _untraced_problems(
             untraced, disbursements=finite, unallocated=tables["unallocated"]
@@ -1407,6 +1546,12 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
         _spending_problems(tables["agency_spending"], shares=tables["agency_shares"])
     )
     problems.extend(
+        f"{name}: {count} rows of a fill record the release leaves out"
+        for name, frame in tables.items()
+        if "record_id" in frame.columns
+        and (count := frame.filter(withheld_record(pl.col("record_id"))).height)
+    )
+    problems.extend(
         f"{name}: {count} rows with recipient_code {CRS_UNSPECIFIED_RECIPIENT}, "
         f"which releases write as {UNSPECIFIED_RECIPIENT}"
         for name, frame in tables.items()
@@ -1431,11 +1576,6 @@ def _coefficient_problems(coefficients: pl.DataFrame) -> list[str]:
     significant and a principal coefficient. A row's `first_year` is at most its
     `last_year`, and no two rows of a provider and agency cover the same year.
     """
-    key = ("provider_code", "agency_code")
-    rows = coefficients.sort(*key, "first_year", nulls_last=False).with_columns(
-        _previous_last=pl.col("last_year").shift().over(key),
-        _later=pl.int_range(pl.len()).over(key) > 0,
-    )
 
     def name(row: dict[str, object]) -> str:
         return (
@@ -1444,7 +1584,7 @@ def _coefficient_problems(coefficients: pl.DataFrame) -> list[str]:
         )
 
     problems = []
-    for row in rows.iter_rows(named=True):
+    for row in coefficients.iter_rows(named=True):
         problems.extend(
             f"{name(row)}: {column} {row[column]!r} outside 0 to 1"
             for column in _COEFFICIENTS
@@ -1456,14 +1596,89 @@ def _coefficient_problems(coefficients: pl.DataFrame) -> list[str]:
             row["first_year"] > row["last_year"]
         ):
             problems.append(f"{name(row)}: first_year after last_year")
-        # Sorted with nulls first, a later row overlaps the one before it unless
-        # that row ends before this one starts.
-        if row["_later"] and (
-            row["first_year"] is None
-            or row["_previous_last"] is None
-            or row["_previous_last"] >= row["first_year"]
-        ):
-            problems.append(f"{name(row)}: covers a year of an earlier row")
+    return [*problems, *coefficient_overlaps(coefficients)]
+
+
+def coefficient_overlaps(coefficients: pl.DataFrame) -> list[str]:
+    """Each row of `provider_coefficients` that covers a year an earlier-starting
+    row of its provider and agency covers, named by provider, agency and first year
+    as `release_invariants` names rows, with the years the two share."""
+    key = ["provider_code", "agency_code"]
+    rows = (
+        coefficients.select(*key, "first_year", "last_year")
+        .sort(*key, "first_year", nulls_last=False)
+        .with_row_index()
+    )
+    pairs = rows.join(rows, on=key, nulls_equal=True, suffix="_later").filter(
+        pl.col("index") < pl.col("index_later")
+    )
+    # A null first or last year has no bound, so the two rows share every year past
+    # the later start, or before the earlier end.
+    shared = pairs.with_columns(
+        start=pl.max_horizontal("first_year", "first_year_later"),
+        end=pl.min_horizontal("last_year", "last_year_later"),
+    ).filter(
+        pl.col("start").is_null()
+        | pl.col("end").is_null()
+        | (pl.col("start") <= pl.col("end"))
+    )
+    return [
+        f"provider_coefficients {row['provider_code']} {row['agency_code']} "
+        f"{row['first_year_later']}: covers {row['start'] or 'every year'} to "
+        f"{row['end'] or 'every later year'}, as does the row from "
+        f"{row['first_year'] or 'no first year'}"
+        for row in shared.iter_rows(named=True)
+    ]
+
+
+def _btr_problems(
+    btr: pl.DataFrame, *, links: pl.DataFrame, totals: pl.DataFrame
+) -> list[str]:
+    """Where `totals` (`btr_totals`) differs from the `btr` rows it sums."""
+    keys = ("party", "year", "status")
+    amounts = (
+        "face_usd",
+        "grant_equiv_usd",
+        "face_usd_at_dac",
+        "grant_equiv_usd_at_dac",
+    )
+    sums = [pl.col(name).sum() for name in amounts]
+    from_rows = (
+        btr.with_columns(linked=pl.col("row_id").is_in(links["row_id"].implode()))
+        .group_by(keys)
+        .agg(*sums, rows=pl.len(), linked=pl.col("linked").sum())
+    )
+    from_totals = totals.group_by(keys).agg(
+        *sums, rows=pl.col("rows").sum(), linked=pl.col("rows").filter("linked").sum()
+    )
+    compared = (
+        from_rows.join(
+            from_totals,
+            on=keys,
+            how="full",
+            nulls_equal=True,
+            coalesce=True,
+            suffix="_totals",
+        )
+        .with_columns(cs.numeric().fill_null(0))
+        .sort(keys, nulls_last=True)
+    )
+    problems = []
+    for row in compared.iter_rows(named=True):
+        label = " ".join(str(row[key]) for key in keys)
+        problems.extend(
+            f"btr_totals {label}: {row[f'{count}_totals']} {count}, btr has "
+            f"{row[count]}"
+            for count in ("rows", "linked")
+            if row[count] != row[f"{count}_totals"]
+        )
+        problems.extend(
+            f"btr_totals {label}: {name} {row[f'{name}_totals']!r}, btr sums to "
+            f"{row[name]!r}"
+            for name in amounts
+            if abs(row[name] - row[f"{name}_totals"])
+            > BTR_TOTALS_TOLERANCE * max(abs(row[name]), 1.0)
+        )
     return problems
 
 
@@ -1798,7 +2013,9 @@ class ReleaseManifest(BaseModel):
     """The contents of `release.json`.
 
     `years` holds the first and last year the build read from each source it reads
-    a range of years from, by source name.
+    a range of years from, by source name. `withheld_tables` maps each release
+    table a published pack leaves out to the note saying how to build it. `tables`
+    lists every other release table.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -1814,7 +2031,11 @@ class ReleaseManifest(BaseModel):
     # Every build switch and year range the release was built with, by name.
     settings: dict[str, JsonValue]
     precision_gate_waived: bool = False
+    # Why `cf-build release --waive-precision` let the precision and human-audit
+    # gates fail, null without a waiver.
+    precision_waiver: str | None = None
     previous_release: str | None = None
+    withheld_tables: dict[str, str] = {}
 
 
 def sha256_file(path: Path) -> str:

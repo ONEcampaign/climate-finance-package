@@ -1061,15 +1061,21 @@ EU_FLOW_USD = 100e6
 def _with_eu_total_flows(frame: pl.DataFrame) -> pl.DataFrame:
     rows = pl.DataFrame(
         [
-            (EU_INSTITUTIONS, agency, 666, year, 1 if flow == "commitments" else 3,
-             flow, agency * EU_FLOW_USD)
+            {
+                "provider_code": EU_INSTITUTIONS,
+                "agency_code": agency,
+                "recipient_code": 666,
+                "year": year,
+                "bi_multi": 1 if flow == "commitments" else 3,
+                "flow": flow,
+                "rio_marker": 0,
+                "amount_usd": agency * EU_FLOW_USD,
+            }
             for agency in EU_AGENCIES.values()
             for year in (2021, 2022, 2023)
             for flow in FLOWS
-        ],
-        schema=frame.columns,
-        orient="row",
-    )  # fmt: skip
+        ]
+    ).select(frame.columns)
     return pl.concat([frame, rows.cast(frame.schema)])
 
 

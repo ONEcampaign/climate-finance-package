@@ -77,10 +77,9 @@ import polars as pl
 
 from climate_finance.build.errors import AllocationInputError
 from climate_finance.build.fetch import last_complete_year
-from climate_finance.build.link.candidates import word_share
 from climate_finance.build.link.id_practice import period_of, untraceable
 from climate_finance.build.link.keys import WORLD_BANK_DONORS, line_date
-from climate_finance.build.link.levels import title_words
+from climate_finance.build.link.text import title_words, word_share
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
 from climate_finance.schema import (

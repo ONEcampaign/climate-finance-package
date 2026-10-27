@@ -7,7 +7,7 @@ name comes back ambiguous; the one candidate with the wanted id prefix is taken 
 it matches the name exactly. A hand-built pack adds development finance institutions
 the org pack misses. A CRS channel string without a code takes the code its coded
 rows carry, else the channel whose codelist name it equals. Fuzzy and full-text
-matches are not taken, because on channel names they were 15% correct.
+matches are left out, since on channel names they were 15% correct.
 """
 
 import re
@@ -17,36 +17,16 @@ from functools import cache
 
 import polars as pl
 import resolvekit as rk
-from resolvekit.core.engine.router import RoutingMode
 
 from climate_finance import schema
+from climate_finance.build.geo import EXACT_TIERS, resolver
 
 _PROVIDER = "org/oecd:provider:"
 _AGENCY = "org/oecd:agency:"
-_EXACT_TIERS = ("exact_code", "exact_name")
 # CRS channel codes that name no channel.
 _NO_CHANNEL = (0, 99999)
 # A channel string takes a code when this share of its coded CRS rows carry it.
 _PROPAGATION_SHARE = 0.9
-# The resolvekit modules shipped inside the package, in resolvekit's own registry
-# order. The remote admin and city packs hold places that share country names. With
-# them, "Russia" comes back ambiguous between the country and two places, and with
-# these modules alone it resolves to provider 87. The order matters. With
-# `org.companies` or `org.lenders` ahead of `org.providers`, the org pack makes
-# no fuzzy candidates, and "H&M Foundation" finds nothing.
-RESOLVER_MODULES = (
-    "geo.countries",
-    "geo.regions",
-    "geo.continental_unions",
-    "geo.continents",
-    "org.providers",
-    "org.lenders",
-    "org.political_parties",
-    "org.companies",
-    "org.governments",
-    "org.data_sources",
-)
-
 # Development finance institutions and agencies the org pack misses or finds only
 # by full-text search: (donor code, agency code, name, aliases). Each code is one
 # the CRS reports from 2010 on.
@@ -250,11 +230,9 @@ def resolve_orgs(names: pl.LazyFrame, *, channels: pl.LazyFrame) -> pl.DataFrame
 
 
 def _provider(name: str) -> dict[str, object] | None:
-    result = _resolver().resolve(
-        name, as_result=True, include_entity=True, domain="geo"
-    )
+    result = resolver().resolve(name, as_result=True, include_entity=True, domain="geo")
     tier = result.match_tier.value if result.match_tier else None
-    if result.status.value == "resolved" and tier in _EXACT_TIERS and result.entity:
+    if result.status.value == "resolved" and tier in EXACT_TIERS and result.entity:
         codes = {code.system: code.value for code in result.entity.codes}
         if "oecd:provider" in codes:
             return {"donor_code": int(codes["oecd:provider"]), "method": tier}
@@ -293,13 +271,13 @@ def _unique_exact(
     matches full-text, so a candidate whose canonical name equals `name`, case, accents
     and punctuation set aside, counts as an exact name.
     """
-    result = _resolver().resolve(name, as_result=True, domain="org", context=context)
+    result = resolver().resolve(name, as_result=True, domain="org", context=context)
     exact: dict[str, str] = {}
     for candidate in result.candidates:
         if not candidate.entity_id.startswith(prefix):
             continue
         tier = candidate.match_tier.value if candidate.match_tier else None
-        if tier in _EXACT_TIERS:
+        if tier in EXACT_TIERS:
             exact[candidate.entity_id] = tier
         elif _normal(candidate.canonical_name or "") == _normal(name):
             exact[candidate.entity_id] = "exact_name"
@@ -369,22 +347,10 @@ def _normal(text: str) -> str:
 
 
 @cache
-def _resolver() -> rk.Resolver:
-    """resolvekit's bundled packs, routed by the domain each call names.
-
-    The module list is fixed so the result does not depend on which remote packs
-    (the admin tiers and cities) the machine has cached.
-    """
-    return rk.Resolver.from_modules(
-        module_ids=list(RESOLVER_MODULES), routing_mode=RoutingMode.EXPLICIT
-    )
-
-
-@cache
 def _scope_key(donor_code: int) -> str:
     """The org pack's key for a donor's agencies, ISO3 for a country else the
     provider code."""
-    iso3 = _resolver().resolve(str(donor_code), from_system="oecd:provider", to="iso3")
+    iso3 = resolver().resolve(str(donor_code), from_system="oecd:provider", to="iso3")
     return iso3 if isinstance(iso3, str) else str(donor_code)
 
 

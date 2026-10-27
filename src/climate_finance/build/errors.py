@@ -80,6 +80,11 @@ class ReviewDecisionsError(BuildError):
     match the packet it answers."""
 
 
+class SampleDesignError(BuildError):
+    """A blind sample's design that no precision estimate can read, such as one
+    with a NaN weight."""
+
+
 class LabelPacketError(BuildError):
     """A labelling packet that cannot be rendered as asked."""
 
@@ -91,3 +96,11 @@ class ReleaseInvariantError(BuildError):
         self.problems = problems
         shown = "; ".join(problems[:10])
         super().__init__(f"{len(problems)} release invariant problems: {shown}")
+
+
+class GateFailedError(BuildError):
+    """A release fails one or more of its gates (`build.gate.run_gates`)."""
+
+    def __init__(self, failures: list[str]) -> None:
+        self.failures = failures
+        super().__init__(f"{len(failures)} gate rows failed: {'; '.join(failures)}")

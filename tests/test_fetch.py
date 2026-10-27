@@ -167,6 +167,7 @@ def _config(
     update = {
         "iati_archive": FIXTURES / "iati",
         "iati_publishers": ("caf", "gef"),
+        "btr_archive": None,
         **sources,
     }
     return config.model_copy(
@@ -598,6 +599,32 @@ def test_online_fetch_copies_the_ledger_archive_with_a_source_per_ledger(
     assert set(manifest["method"]) == {"manual"}
     # The GCF ledger reads the one projects file every fetch downloads.
     assert sources.names().count("gcf") == 1
+
+
+def test_online_fetch_copies_the_btr_archive_it_lists(
+    sources: FakeSources, crs_file: LocalFile, tmp_path: Path
+) -> None:
+    archive = tmp_path / "btr"
+    archive.mkdir()
+    name = "Norway__NLD-table-1.xlsx"
+    (archive / name).write_bytes((FIXTURES / "btr" / "NLD-table-1.xlsx").read_bytes())
+    (archive / "unlisted.xlsx").write_bytes(b"draft")
+    entry = {"party": "Netherlands", "name": name, "ok": True}
+    (archive / "manifest.json").write_text(
+        json.dumps([entry | {"bytes": (archive / name).stat().st_size}])
+    )
+    config = _config(crs_file=crs_file, btr_archive=archive)
+
+    release = _fetch(config, tmp_path / "out")
+    manifest = pl.read_parquet(release / MANIFEST).filter(source="unfccc_btr1")
+
+    assert sorted(manifest["path"]) == [
+        "unfccc/btr1/Norway__NLD-table-1.xlsx",
+        "unfccc/btr1/manifest.json",
+    ]
+    assert set(manifest["method"]) == {"manual"}
+    # Offline, the copied archive matches its manifest rows.
+    _fetch(config, tmp_path / "out", offline=True)
 
 
 def test_online_fetch_downloads_ledgers_without_an_archive(

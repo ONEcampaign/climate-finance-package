@@ -130,8 +130,9 @@ def test_every_stage_reads_the_settings_it_declares_and_no_others(
     switches: bool,
 ) -> None:
     # An earlier fetch laid the raw fixtures out, so the build runs offline from
-    # fetch on. Measure reads no agency and models no provider, since the fixtures
-    # hold too few, and the fixtures hold no truth group to set Jev's scale.
+    # fetch on, with no BTR archive, which the raw fixtures leave out. Measure reads
+    # no agency and models no provider, since the fixtures hold too few, and the
+    # fixtures hold no truth group to set Jev's scale.
     config = config.model_copy(
         update={
             "offline": True,
@@ -139,7 +140,11 @@ def test_every_stage_reads_the_settings_it_declares_and_no_others(
             "recoveries": switches,
             "jev_links": False,
             "sources": config.sources.model_copy(
-                update={"crs_file": None, "iati_publishers": IATI_PUBLISHERS}
+                update={
+                    "crs_file": None,
+                    "iati_publishers": IATI_PUBLISHERS,
+                    "btr_archive": None,
+                }
             ),
         }
     )

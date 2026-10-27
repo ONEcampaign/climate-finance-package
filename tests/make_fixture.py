@@ -27,6 +27,8 @@ import polars as pl
 
 from climate_finance import __version__
 from climate_finance.build import write_table
+from climate_finance.build.fetch import BTR_SOURCE
+from climate_finance.build.release import btr_totals
 from climate_finance.schema import (
     CERTAIN_METHODS,
     CERTAIN_ROUTES,
@@ -179,6 +181,22 @@ CORE_CONTRIBUTIONS = (
     (NOR, IDA_CH, 15e6, (2021, 2022)),
 )
 CORE_FLOW_FACTOR = {"commitments": 1.2, "disbursements": 1.0, "grant_equivalent": 1.0}
+BTR_LINK_COLUMNS = (
+    "row_id", "record_id", "link_method", "probability", "provider_code", "year",
+    "project_number", "commitment_usd", "disbursement_usd",
+)  # fmt: skip
+# BTR rows' links to CRS records: Germany's 2021 programme reaches two components,
+# Norway's 2021 row links by the model, and the 2022 rows stay UNFCCC only.
+BTR_LINKS = (
+    ("BTR-DEU-2021", "DEU-B-R1", "btr_id", 1.0, DEU, 2021, "300123-101", 15e6, 5e6),
+    ("BTR-DEU-2021", "DEU-B-R2", "btr_id", 1.0, DEU, 2021, "300123-105", 7e6, 2e6),
+    ("BTR-NOR-2021", "NOR-B-R1", "btr_splink", 0.93, NOR, 2021, None, None, 15e6),
+)
+# The OECD-only side of each BTR provider-year: bilateral climate-marked CRS amounts
+# on records no BTR row links, in USD millions by provider, year and flow.
+BTR_CRS_UNLINKED = (
+    (DEU, 2021, 12, 4), (DEU, 2022, 9, 3), (NOR, 2021, 0, 0), (NOR, 2022, 6, 2),
+)  # fmt: skip
 # (provider, agency, first_year, last_year, significant, principal, both_significant,
 #  case_by_case, source, locator). Germany counts an activity significant for both
 # objectives at 1.0. Japan's coefficients change in 2022. France's agency 1 assesses
@@ -606,15 +624,20 @@ def build_tables() -> dict[str, pl.DataFrame]:
             {
                 "row_id": f"BTR-{party}-{year}",
                 "party": party,
+                "provider_code": provider,
                 "year": year,
                 "recipient": "Kenya",
                 "recipient_code": KEN,
                 "title": f"Adaptation programme {party} {year}",
                 "amount_domestic": amount,
+                "grant_equiv_domestic": amount,
                 "currency": currency,
                 "face_usd": amount * rate,
                 "grant_equiv_usd": amount * rate,
-                "status": "disbursed",
+                "dac_rate": 1 / rate,
+                "face_usd_at_dac": amount * rate,
+                "grant_equiv_usd_at_dac": amount * rate,
+                "status": status,
                 "channel": "bilateral",
                 "funding_source": "ODA",
                 "instrument": "grant",
@@ -624,11 +647,33 @@ def build_tables() -> dict[str, pl.DataFrame]:
                 "is_aggregate": False,
                 "source_file": f"{party}-BTR1.xlsx",
             }
-            for party, currency, rate, amount in (
-                ("DEU", "EUR", 1.1, 20e6),
-                ("NOR", "NOK", 0.1, 150e6),
+            for party, provider, currency, rate, amount, status in (
+                ("DEU", DEU, "EUR", 1.1, 20e6, "committed"),
+                ("NOR", NOR, "NOK", 0.1, 150e6, "disbursed"),
             )
             for year in (2021, 2022)
+        ],
+        "btr_links": [
+            dict(zip(BTR_LINK_COLUMNS, link, strict=True))
+            | {
+                "recipient_code": KEN,
+                "title": f"Adaptation programme {link[1]}",
+                "rio_marker": 2,
+            }
+            for link in BTR_LINKS
+        ],
+        "btr_crs_unlinked": [
+            {
+                "provider_code": provider,
+                "year": year,
+                "flow": flow,
+                "amount_usd": amount * 1e6,
+            }
+            for provider, year, committed, disbursed in BTR_CRS_UNLINKED
+            for flow, amount in (
+                ("commitments", committed),
+                ("disbursements", disbursed),
+            )
         ],
         "disbursement_profile": [
             {
@@ -650,13 +695,26 @@ def build_tables() -> dict[str, pl.DataFrame]:
         list(commitments.values()), frames["disbursements"]
     )
     frames["quality"] = _quality(frames["commitments"], frames["disbursements"])
+    frames["btr_totals"] = btr_totals(
+        frames["btr"].lazy(), links=frames["btr_links"].lazy()
+    ).collect()
     frames["unallocated"] = _unallocated(frames["untraced"], frames["disbursements"])
     frames["total_flows"] = _total_flows(
         frames["commitments"],
         pl.concat(
             [
-                frames["disbursements"].select(*TOTAL_KEYS, "allocated_usd"),
-                frames["untraced"].select(*TOTAL_KEYS, allocated_usd="untraced_usd"),
+                frames["disbursements"].select(
+                    *TOTAL_KEYS,
+                    "allocated_usd",
+                    rio_marker=_rio_marker(
+                        "inherited_rio_adaptation", "inherited_rio_mitigation"
+                    ),
+                ),
+                frames["untraced"].select(
+                    *TOTAL_KEYS,
+                    allocated_usd="untraced_usd",
+                    rio_marker=_rio_marker("rio_adaptation", "rio_mitigation"),
+                ),
             ]
         ),
         frames["core_contributions"],
@@ -676,7 +734,7 @@ def _commitments(
     return (
         pl.from_dicts(rows, infer_schema_length=None)
         .join(disbursed, on="row_id", how="left")
-        .with_columns(pl.col("^disbursed_.*$").fill_null(0.0))
+        .with_columns(pl.col("^disbursed_.*$").fill_null(0.0), withheld_usd=0.0)
         .select(
             pl.col(name).cast(dtype)
             for name, dtype in _polars_schema("commitments").items()
@@ -700,9 +758,13 @@ def _total_flows(
     """All CRS flows: four times the climate rows' amounts (0.9 of that for grant
     equivalent), plus 1.5 times each flow's core contributions to unspecified
     recipients, so every climate figure has a larger total. `disbursements` holds
-    the traced and untraced disbursements' keys and amounts."""
-    keys = list(TOTAL_KEYS)
-    committed = commitments.select(*keys, amount_usd=pl.col("face_usd") * 4)
+    the traced and untraced disbursements' keys, higher Rio markers and amounts."""
+    keys = [*TOTAL_KEYS, "rio_marker"]
+    committed = commitments.select(
+        *TOTAL_KEYS,
+        rio_marker=_rio_marker("rio_adaptation", "rio_mitigation"),
+        amount_usd=pl.col("face_usd") * 4,
+    )
     disbursed = disbursements.select(*keys, amount_usd=pl.col("allocated_usd") * 4)
     climate = {
         "commitments": committed,
@@ -715,6 +777,7 @@ def _total_flows(
         recipient_code=pl.lit(UNS, pl.Int32),
         year="year",
         bi_multi=pl.lit(2, pl.Int8),
+        rio_marker=pl.lit(0, pl.Int8),
         flow="flow",
         amount_usd=pl.col("contribution_usd") * 1.5,
     )
@@ -725,6 +788,10 @@ def _total_flows(
         .with_columns(flow=pl.lit(flow))
         for flow, frame in climate.items()
     ).select(list(RELEASE_TABLES["total_flows"].columns))
+
+
+def _rio_marker(adaptation: str, mitigation: str) -> pl.Expr:
+    return pl.max_horizontal(adaptation, mitigation).fill_null(0).cast(pl.Int8)
 
 
 # Statuses of commitments that trace to at least one CRS record.
@@ -839,7 +906,11 @@ def write_fixture(out_dir: Path) -> ReleaseManifest:
             created_at=datetime(2026, 10, 21, tzinfo=UTC),
             package_version=__version__,
             tables={},
-            source_versions={"crs": "fixture", "crdf": "fixture"},
+            source_versions={
+                "crs": "fixture",
+                "crdf": "fixture",
+                BTR_SOURCE: "fixture",
+            },
             model_versions={"jev": "jev-1.14.0"},
             gates={},
             settings=SETTINGS,

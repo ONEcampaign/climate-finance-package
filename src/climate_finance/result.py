@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from html import escape
 from typing import TYPE_CHECKING
@@ -251,19 +251,24 @@ class Quality:
     Add it back to compare with totals that count EU Institutions as a provider.
     `attribution` holds, by provider, year and flow, the value attributed through
     core contributions, split by the agency share's source into `computed_usd`,
-    `held_usd` and `oecd_usd`. `untraced` holds, by provider and disbursement year,
-    the Rio-marked CRS disbursement outside `disbursements` at face value: the
-    excess and the unlinked records that disbursement totals count as untraced, with
-    their climate value under the method (`excess_climate_usd`,
-    `unlinked_climate_usd`), and the two amounts no total counts, allocations to
-    commitments with no CRDF row (`outside_release_usd`) and the route funds'
-    unlinked records (`fund_unlinked_usd`).
+    `held_usd` and `oecd_usd`. `precision` holds, by provider, the share of
+    allocated value whose link a blind human sample found right (`estimate`), its
+    interval (`lower`, `upper`), whether it passed the release's precision gate,
+    whether a failure was waived, and the gate's reading. It is empty for a release
+    that was not gated. `untraced` holds, by provider and disbursement year, the
+    Rio-marked CRS disbursement outside `disbursements` at face value: the excess
+    and the unlinked records that disbursement totals count as untraced, with their
+    climate value under the method (`excess_climate_usd`, `unlinked_climate_usd`),
+    and the two amounts no total counts, allocations to commitments with no CRDF row
+    (`outside_release_usd`) and the route funds' unlinked records
+    (`fund_unlinked_usd`).
     """
 
     table: Table
     status: Table
     eu_left_out: Table
     attribution: Table
+    precision: Table
     untraced: Table
 
     def summary(self) -> pl.DataFrame:
@@ -287,7 +292,7 @@ class Quality:
             # A count, and an integer sum is exact in any order.
             pl.col("commitments").sum(),
             climate_usd=climate,
-            repeat_climate_usd=pl.col("repeat_climate_usd").sum(),
+            repeat_climate_usd=ordered_sum(pl.col("repeat_climate_usd")),
             link_rate=linked / climate,
             certain_route_share=ordered_sum(pl.col("certain_route_usd")) / climate,
             model_labelled_share=ordered_sum(pl.col("model_labelled_usd")) / climate,
@@ -583,9 +588,12 @@ _FLOWS = {
     "commitments": "Flow: commitments at face value; low and high equal value.",
     "disbursements": "Flow: disbursements allocated to climate commitments, weighted "
     "by the commitment's markers; low counts the disbursements linked by the "
-    "donor's CRS id or World Bank loan number where the linked records agree, and "
-    "bank-ledger and IATI fills in full, since they match on the publisher's own "
-    "id; high counts every linked disbursement and the untraced disbursement. "
+    "donor's CRS id or World Bank loan number where the linked records agree, or "
+    "by one record that commits and disburses, to commitments whose CRDF row ties "
+    "to its CRS record by construction (same crs id and year, a matched contract, "
+    "or the record the row was cut from), and bank-ledger and IATI fills in full, "
+    "since they match on the publisher's own id; high counts every linked "
+    "disbursement and the untraced disbursement. "
     "Attributed finance counts core contributions disbursed. The modelled table "
     "holds a disbursement range for commitments whose disbursements no source "
     "reports.",
@@ -607,15 +615,30 @@ _UNTRACED = {
 
 
 class Reconciliation:
-    """A party-by-year comparison of BTR reports with OECD data."""
+    """A party-by-year comparison of BTR reports with OECD data.
 
-    def __init__(self, *, table: Table, rows: pl.LazyFrame) -> None:
+    `table` holds one row per party, year, status and method (see
+    `query.reconcile`).
+    """
+
+    def __init__(self, *, table: Table, rows: Callable[[], pl.LazyFrame]) -> None:
         self.table = table
         self._rows = rows
 
     def rows(self, party: str, year: int) -> pl.DataFrame:
-        """The project-level link behind one party and year."""
-        raise NotImplementedError("BTR reconciliation is not implemented")
+        """The project-level link behind one party and year: each BTR row of every
+        status with each CRS record linked to it, the record's facts prefixed
+        `crs_`, and `unfccc_only` true for a row no record links to.
+
+        Raises:
+            WithheldTableError: when the release leaves out the row-level BTR
+                tables, as the published release does.
+        """
+        return (
+            self._rows()
+            .filter(pl.col("party") == party, pl.col("year") == year)
+            .collect()
+        )
 
 
 @dataclass(frozen=True, kw_only=True)

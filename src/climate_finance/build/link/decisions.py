@@ -52,40 +52,21 @@ def read_decision_labels(path: Path) -> pl.DataFrame:
     """People's and agents' queue decisions at `path` as `pair_labels` rows with
     source `human` or `agent`, one per pair, and none when nothing has been decided yet.
 
-    A person's decision on a pair stands over any agent's, whenever either was
-    imported, and the latest decision stands among people. Of an agent's decisions,
-    the latest round stands (`LABEL_ROUNDS` order), then the latest imported.
-    `decided_at` is the import time, so ordering people and agents by it would let
-    a re-imported agent round erase a person's verdict.
-    A blind-sample decision (one with a `sample_id`) measures precision, so it is not
-    used as a label. `stratified` marks the decisions on calibration pairs, which
+    A pair's standing decision is the one `standing_decisions` keeps. A
+    blind-sample decision (one with a `sample_id`) measures precision, so it is left
+    out of the labels. `stratified` marks the decisions on calibration pairs, which
     `stratified_sample` drew, so only they take inverse-probability weights.
     """
     columns = schema.PAIR_LABELS.dtypes | {"stratified": pl.Boolean()}
     if not path.exists():
         return pl.DataFrame(schema=columns)
-    rounds = {name: rank for rank, name in enumerate(schema.LABEL_ROUNDS)}
     decided = (
         pl.read_parquet(path)
         .filter(pl.col("sample_id").is_null())
         .drop_nulls("right_id")
-        .with_columns(
-            rank=pl.col("round").replace_strict(rounds, default=0, return_dtype=pl.Int8)
-        )
-    )
-    agent = (
-        decided.filter(label_source="agent")
-        .sort("rank", "decided_at", maintain_order=True)
-        .unique(PAIR, keep="last", maintain_order=True)
-    )
-    human = (
-        decided.filter(label_source="human")
-        .sort("decided_at", maintain_order=True)
-        .unique(PAIR, keep="last", maintain_order=True)
     )
     return (
-        pl.concat([agent, human])
-        .unique(PAIR, keep="last", maintain_order=True)
+        standing_decisions(decided, key=PAIR)
         .sort(PAIR)
         .select(
             *PAIR,
@@ -95,6 +76,33 @@ def read_decision_labels(path: Path) -> pl.DataFrame:
         )
         .cast(columns)  # ty: ignore[invalid-argument-type]
     )
+
+
+def standing_decisions(decided: pl.DataFrame, *, key: str | list[str]) -> pl.DataFrame:
+    """The standing decision of each `key` among the review-decision rows `decided`.
+
+    A person's decision stands over any agent's, whenever either was imported, and
+    the latest decision stands among people. Of an agent's decisions, the latest
+    round stands (`schema.LABEL_ROUNDS` order), then the latest imported.
+    `decided_at` is the import time, so ordering people and agents by it would let
+    a re-imported agent round erase a person's verdict.
+    """
+    rounds = {name: rank for rank, name in enumerate(schema.LABEL_ROUNDS)}
+    agent = (
+        decided.filter(label_source="agent")
+        .with_columns(
+            rank=pl.col("round").replace_strict(rounds, default=0, return_dtype=pl.Int8)
+        )
+        .sort("rank", "decided_at", maintain_order=True)
+        .unique(key, keep="last", maintain_order=True)
+        .drop("rank")
+    )
+    human = (
+        decided.filter(label_source="human")
+        .sort("decided_at", maintain_order=True)
+        .unique(key, keep="last", maintain_order=True)
+    )
+    return pl.concat([agent, human]).unique(key, keep="last", maintain_order=True)
 
 
 def override_links(links: pl.DataFrame, *, labels: pl.DataFrame) -> pl.DataFrame:
@@ -229,9 +237,8 @@ def import_labels(
 
     The CSV holds `LABEL_COLUMNS`: the packet's pair number, `match` or `no_match`,
     the decider's confidence that the pair matches, from 0 to 1 and on the label's
-    side of 0.5, and the reason. It
-    must answer exactly the pairs of `packet`, and the packet must be the one its
-    pairs file was written with.
+    side of 0.5, and the reason. It must answer exactly the pairs of `packet`, and
+    the packet must be the one its pairs file was written with.
 
     Args:
         packet: the packet the CSV answers (`packet.write_packet`).

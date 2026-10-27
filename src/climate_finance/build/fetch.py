@@ -35,6 +35,8 @@ from climate_finance.build.errors import (
     StaleStageError,
 )
 from climate_finance.build.provenance import read_record, setting_value
+from climate_finance.build.readers.btr import MANIFEST as BTR_MANIFEST
+from climate_finance.build.readers.btr import archive_files
 from climate_finance.build.readers.ledgers import LEDGER_DIR
 from climate_finance.build.readers.ledgers.finances_one import (
     PUBLISHERS as FINANCES_ONE_PUBLISHERS,
@@ -80,6 +82,7 @@ if TYPE_CHECKING:
 SETTINGS = (
     "jev_labels",
     "sources.adaptation_labels",
+    "sources.btr_archive",
     "sources.crdf_etags",
     "sources.crs_file",
     "sources.crs_version",
@@ -116,6 +119,8 @@ MULTISYSTEM_FIRST_YEAR = 2011
 IMPUTED_SHARES_NAME = "Imputed_multilateral_shares.xlsx"
 IMPUTED_SHARES_FILE = Path("oecd") / IMPUTED_SHARES_NAME
 IATI_DIR = Path("external/iati")
+BTR_DIR = Path("unfccc/btr1")
+BTR_SOURCE = "unfccc_btr1"
 DAC_EXCHANGE_FILE = Path("dac_exchange.parquet")
 ADAPTATION_LABELS_FILE = Path("labels/adaptation_labels.csv")
 
@@ -252,6 +257,11 @@ def fetch_sources(
         *_copy_iati(
             raw, archive=sources.iati_archive, publishers=sources.iati_publishers
         ),
+        *(
+            _copy_btr(raw, archive=sources.btr_archive)
+            if sources.btr_archive is not None
+            else []
+        ),
     ]
     if labels := _pinned_files(config).get("adaptation_labels"):
         files.append(
@@ -285,6 +295,7 @@ def expected_sources(config: BuildConfig) -> list[str]:
         "gcf_projects",
         "dac_exchange",
         *(f"iati_{publisher}" for publisher in config.sources.iati_publishers),
+        *([BTR_SOURCE] if config.sources.btr_archive is not None else []),
         *(["adaptation_labels"] if config.jev_labels else []),
         *(
             _ledger_sources(config.sources.ledgers)
@@ -848,6 +859,21 @@ def _copy_iati(
             source=f"iati_{publisher}",
         )
     return files
+
+
+def _copy_btr(raw: Path, *, archive: Path) -> list[RawFile]:
+    """Put the BTR archive's manifest and every workbook it lists under
+    `unfccc/btr1/`.
+
+    Raises:
+        SourceUnavailableError: when the manifest or a workbook it lists is missing.
+    """
+    origins = [archive / BTR_MANIFEST, *(path for path, _ in archive_files(archive))]
+    return import_archive(
+        {BTR_DIR / origin.name: origin for origin in origins},
+        raw_dir=raw,
+        source=BTR_SOURCE,
+    )
 
 
 def _fetch_ledgers(

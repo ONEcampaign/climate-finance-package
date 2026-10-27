@@ -12,6 +12,7 @@ from climate_finance.build.config import BuildConfig, Ledgers, load_config
 from climate_finance.build.fetch import YEAR_SOURCES, _ledger_files
 from climate_finance.build.normalise.crdf import normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs
+from climate_finance.build.provenance import Provenance
 from climate_finance.build.stages import REGISTRY, StageContext, StageDef, table_path
 from climate_finance.schema import RAW_MANIFEST
 
@@ -55,6 +56,25 @@ def write_inputs(
         path = table_path(release_dir, stage, name)
         path.parent.mkdir(parents=True, exist_ok=True)
         frame.write_parquet(path)
+
+
+def write_recorded(
+    release_dir: Path,
+    stage: str,
+    frames: Mapping[str, pl.DataFrame],
+    *,
+    config: BuildConfig,
+    reads: tuple[str, ...] = (),
+) -> None:
+    """Write `frames` as `stage`'s output with its `stage.json`, recording that it
+    read `reads`, so a later stage run through the runner accepts it."""
+    entry = registered(stage)
+    provenance = Provenance(
+        stage=stage, release_dir=release_dir, config=config, settings=entry.settings
+    )
+    for read in reads:
+        provenance.read_stage(read)
+    write_stage(entry, dict(frames), release_dir, provenance=provenance)
 
 
 def year_rows(

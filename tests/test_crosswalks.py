@@ -347,7 +347,9 @@ def test_run_link_writes_the_provider_profile_with_recoveries(
         {"iso_code": ["EUI"] * 16, "year": range(2010, 2026), "exchange_rate": 0.8}
     ).write_parquet(raw / DAC_EXCHANGE_FILE)
     config = load_config(BUILD_TOML)
-    sources = config.sources.model_copy(update={"iati_publishers": publishers})
+    sources = config.sources.model_copy(
+        update={"iati_publishers": publishers, "btr_archive": None}
+    )
     # The fixture has no truth group to set Jev's scale.
     context = stage_context(
         tmp_path,
