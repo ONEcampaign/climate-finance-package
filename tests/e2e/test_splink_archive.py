@@ -54,6 +54,8 @@ PAIRS_MOVED = {
     # providers' disbursements also pair with earlier commitments: 804,454 pairs
     # have a commitment from before 2015, 795,740 of them the US's.
     "commitments from 2000": 804_639,
+    # A disbursement pairs with a purpose-split line once (`purpose_units`).
+    "one pair per purpose-split line": -3_584,
 }
 _LABELS = {
     name: column.dtype for name, column in schema.PAIR_LABELS.columns.items()
@@ -241,16 +243,18 @@ def test_calibrated_splink_against_id_truth(tables: LinkTables) -> None:
         )
         for row in measured.filter(pl.col("p_0.5_links") > 0).iter_rows(named=True)
     }
-    # The pooled model's providers (68, 1624, 76) link nothing at 0.5. The
-    # `short_description` fallback adds 172 New Zealand pairs (21 true) and 15
-    # Danish ones to the pool, and `template_lines` takes 2,908 French and 548
-    # Danish ones out. Commitments from 2000 give the pool 132,177 more pairs, all
-    # Austrian, Danish, French and pooled; New Zealand has none before 2015.
-    # `SIMULATION_CACHE` holds Jev's answers for every pair the calibration samples
-    # draw.
+    # Of the pooled model's providers (68, 1624, 76), only the Hewlett Foundation (1624)
+    # links at 0.5. A disbursement pairs with a purpose-split line once
+    # (`purpose_units`), which moves New Zealand (820) most. Over commitments from 2015,
+    # the `short_description` fallback adds 165 New Zealand pairs (21 true) and 15
+    # Danish ones to the pool, and `template_lines` takes 2,908 French and 548 Danish
+    # ones out. Commitments from 2000 give the pool 132,177 more pairs, all Austrian,
+    # Danish, French and pooled; New Zealand has none before 2015. `SIMULATION_CACHE`
+    # holds Jev's answers for every pair the calibration samples draw.
     assert at_half == {
         1: (2251, 0.681, 0.833),
         3: (1736, 0.641, 0.472),
-        4: (2655, 0.901, 0.758),
-        820: (1641, 0.645, 0.801),
+        4: (2655, 0.901, 0.760),
+        820: (1302, 0.637, 0.839),
+        1624: (7, 1.0, 0.104),
     }
