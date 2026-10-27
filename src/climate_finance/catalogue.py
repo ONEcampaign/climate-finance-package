@@ -5,16 +5,20 @@ Recipient names come from `data/recipients.csv`: DAC recipient codes and their E
 names as the OECD CRS bulk download spells them, carried over from climate-finance
 1.2.3 (`oecd/cleaning_tools/recipient_names.feather`, built from the 2021 CRS).
 `cf-build listings` adds every other code the OECD files carry to both, and fills
-`data/agencies.csv`, with the names those files give them.
+`data/agencies.csv`, with the names those files give them. It also sets each
+provider's `mdb`, true for the providers the CRDF types "Multilateral development
+bank", and each recipient's `type`, `country`, `regional` or `unspecified`, from the
+OECD's income group and region (`build/listings.py`).
 
 Provider and recipient names resolve through `resolve`, which reads `data/names.csv`:
 every common form of a provider, agency or recipient name (listing names, French
 provider names, ISO codes, resolvekit aliases and agency names), baked by
-`cf-build names`. A name matches ignoring case, accents and surrounding spaces. A name
-of several entries, or of none, raises with candidates or close names as suggestions
-that the call does not apply. Flow and method names match their listing exactly,
-ignoring case and accents. A DAC code or agency the listings lack raises as an unknown
-name.
+`cf-build names`. A name matches ignoring case, accents and surrounding spaces. A
+group, such as "World Bank" for IBRD and IDA, names each of its providers. Any other
+name of several entries, or a name of none, raises with candidates or close names as
+suggestions that the call does not apply. Flow and method names match their listing
+exactly, ignoring case and accents. A DAC code or agency the listings lack raises as an
+unknown name.
 """
 
 import unicodedata
@@ -80,7 +84,8 @@ def resolve(
     without duplicates, or None for None.
 
     A string is a name from `data/names.csv`, matched ignoring case, accents and
-    surrounding spaces, or a string of digits, read as a DAC code. An integer is a DAC
+    surrounding spaces, or a string of digits, read as a DAC code. A group name, such
+    as "World Bank", names every provider of the group. An integer is a DAC
     code and an `Agency` an agency, both kept when the listings hold them. An agency
     is listed in `data/agencies.csv`, or is agency 0 or 1 of a listed provider, which
     the OECD files use for the provider itself. An agency whose provider is also
@@ -97,7 +102,11 @@ def resolve(
     """
     if values is None:
         return None
-    targets = {target_of(value, kind=kind) for value in each_value(values, kind=kind)}
+    targets = {
+        target
+        for value in each_value(values, kind=kind)
+        for target in targets_of(value, kind=kind)
+    }
     covered = {target for target in targets if isinstance(target, int)}
     return tuple(
         sorted(
@@ -303,8 +312,17 @@ def _unknown(
     return UnknownNameError(name, kind=kind[:-1], suggestions=suggestions, note=note)
 
 
+def targets_of(value: object, *, kind: Coded) -> tuple[Target, ...]:
+    """The codes one group name names, or the one code or agency of any other
+    value."""
+    if isinstance(value, str) and (members := _groups(kind).get(_fold(value).strip())):
+        return members
+    return (target_of(value, kind=kind),)
+
+
 def target_of(value: object, *, kind: Coded) -> Target:
-    """The code or agency one value names."""
+    """The code or agency one value names. A group name raises, listing its
+    members."""
     if kind == "recipients" and isinstance(value, Agency):
         raise InvalidInputError(f"recipients takes names or DAC codes, not {value!r}")
     if isinstance(value, bool) or not isinstance(value, str | Integral | Agency):
@@ -450,6 +468,11 @@ def _label(entry: Entry) -> str:
 
 def _several(name: str, *, entries: Sequence[Entry], kind: Coded) -> str:
     """The opening of the error for a name of several entries."""
+    if _fold(name).strip() in _groups(kind):
+        return (
+            f"{name!r} names a group of {len(entries)} {kind}, which {kind}= takes "
+            "together."
+        )
     owners = {code for code, _, _ in entries}
     if all(agency is not None for _, agency, _ in entries):
         if len(owners) > 1:
@@ -487,6 +510,17 @@ def _aliases(kind: Coded) -> dict[str, tuple[Entry, ...]]:
     ).iter_rows():
         found.setdefault(key, []).append((code, agency, name))
     return {key: tuple(entries) for key, entries in found.items()}
+
+
+@cache
+def _groups(kind: Coded) -> dict[str, tuple[int, ...]]:
+    """The groups in `data/names.csv` for `kind`, as each key's sorted codes."""
+    found: dict[str, list[int]] = {}
+    for key, code in (
+        _names().filter(kind=kind[:-1], source="group").select("key", "code")
+    ).iter_rows():
+        found.setdefault(key, []).append(code)
+    return {key: tuple(sorted(codes)) for key, codes in found.items()}
 
 
 @cache
@@ -535,7 +569,7 @@ def _table(kind: Kind) -> pl.DataFrame:
     if kind == "providers":
         return pl.read_csv(
             data.joinpath("oecd_classification.csv").read_bytes(),
-            columns=["code", "name", "type"],
+            columns=["code", "name", "type", "mdb"],
             schema_overrides={"code": pl.Int32},
         )
     if kind == "recipients":

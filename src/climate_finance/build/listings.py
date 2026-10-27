@@ -3,15 +3,31 @@
 Three CSVs in `data/` ship in the wheel and are committed, so the package and CI read
 them without raw data:
 
-- `oecd_classification.csv`: providers, as `code`, `name`, `name_fr` and `type`.
+- `oecd_classification.csv`: providers, as `code`, `name`, `name_fr`, `type` and
+  `mdb`.
 - `agencies.csv`: agencies, as the provider's `code`, the `agency` code and `name`.
-- `recipients.csv`: recipients, as `code` and `name`.
+- `recipients.csv`: recipients, as `code`, `name` and `type`.
 
 `cf-build listings RAW` refreshes them from the OECD files in `RAW/oecd/`, the raw
 layout of the fetch stage or an archive of it. It keeps every listed row as it stands
 and adds each code the files carry that its listing lacks, with the name the files give
 it in the latest year they carry it, the name on most rows within that year, then
-the first in sort order. An added provider has no French name and no type. The files:
+the first in sort order. An added provider has no French name and no type. Two columns
+are set for every row from the files' own classifications:
+
+- A provider's `mdb` is true when the CRDF's `provider_type` is "Multilateral
+  development bank" on every row of the latest year that holds the provider. EU
+  Institutions (918) carries the type on the EIB's rows alone, so it is false.
+- A recipient's `type` is `country`, `regional` or `unspecified`. The CRDF and the
+  CRS put every recipient code that is not one country in the income group "Part I
+  unallocated by income". Of those, the codes in the region "Developing countries
+  unspecified" (CRDF) or "Regional and Unspecified" (CRS) are `unspecified`, and the
+  rest, each in a geographic region, are `regional`. Each code takes the type of the
+  latest year that gives it an income group, on most rows within that year. A
+  recipient the files do not type keeps its listed type, and one typed nowhere
+  stops the refresh before it writes.
+
+The files:
 
 - `CRS*.parquet`: donors, agencies and recipients.
 - `crdf_recipient*.parquet`: providers, agencies and recipients.
@@ -56,6 +72,8 @@ _CRS = {
     "agency_name": "agency_name",
     "recipient": "recipient_code",
     "recipient_name": "recipient_name",
+    "income_group": "incomegroup_name",
+    "region": "region_name",
 }
 _CRDF = {
     "code": "provider_code",
@@ -64,8 +82,18 @@ _CRDF = {
     "agency_name": "agency_name",
     "recipient": "recipient_code",
     "recipient_name": "recipient_name",
+    "income_group": "recipient_income_group",
+    "region": "recipient_region",
+    "provider_type": "provider_type",
 }
 _MULTI = {"code": "donor_code", "name": "donor_name"}
+# The columns `_scan` reads as integer codes. The rest are text.
+_CODES = ("code", "agency", "recipient")
+_MDB = "Multilateral development bank"
+# The OECD's income group of every recipient code that is not one country.
+_UNALLOCATED = "Part I unallocated by income"
+# The region names the CRDF and the CRS give to recipient codes in no geographic region.
+_UNSPECIFIED_REGIONS = ("Developing countries unspecified", "Regional and Unspecified")
 
 
 class ListingsError(BuildError):
@@ -81,7 +109,8 @@ def read_listing(listing: Listing) -> pl.DataFrame:
 
 
 def observed_codes(raw: Path) -> dict[Listing, pl.DataFrame]:
-    """Every code the OECD files in `raw/oecd/` carry, with its latest name.
+    """Every code the OECD files in `raw/oecd/` carry, with its latest name, and for
+    recipients its `type`, null where no row gives the recipient an income group.
 
     Raises:
         ListingsError: when a file kind is missing, or naming each code that no
@@ -121,26 +150,85 @@ def observed_codes(raw: Path) -> dict[Listing, pl.DataFrame]:
         if name is None
     ]:
         raise ListingsError("No OECD file names these codes:\n" + "\n".join(unnamed))
+    types = _latest_names(
+        pl.concat(
+            frame.select("year", code="recipient", name=_recipient_type())
+            for frame in (crs, recipient_crdf)
+        ),
+        key=["code"],
+    ).rename({"name": "type"})
+    observed["recipients"] = observed["recipients"].join(
+        types, on="code", how="left", maintain_order="left"
+    )
     return observed
+
+
+def mdb_codes(raw: Path) -> list[int]:
+    """The provider codes the CRDF in `raw/oecd/` types "Multilateral development
+    bank" on every row of the latest year that holds them, sorted."""
+    rows = pl.concat(
+        _scan(raw, pattern, _CRDF).select("code", "year", "provider_type")
+        for pattern in ("crdf_recipient*.parquet", "crdf_provider*.parquet")
+    )
+    return (
+        rows.drop_nulls("code")
+        .group_by("code", "year")
+        # A blank type is no bank, which `all()` alone would skip.
+        .agg(mdb=(pl.col("provider_type") == _MDB).fill_null(False).all())
+        .group_by("code")
+        .agg(pl.col("mdb").sort_by("year").last())
+        .filter("mdb")
+        .sort("code")
+        .collect()["code"]
+        .to_list()
+    )
 
 
 def refresh_listings(
     raw: Path, *, data_dir: Path = DATA_DIR
 ) -> dict[Listing, pl.DataFrame]:
     """Add every code the OECD files in `raw/oecd/` carry to the listing in
-    `data_dir` that lacks it.
+    `data_dir` that lacks it, and set each provider's `mdb` and each recipient's
+    `type` from the files, keeping the listed type where the files give none.
 
     Returns:
         The rows added to each listing.
+
+    Raises:
+        ListingsError: from `observed_codes`, or naming each recipient that neither
+            the files nor `recipients.csv` type, before any listing is written.
     """
+    mdb = mdb_codes(raw)
     added: dict[Listing, pl.DataFrame] = {}
+    refreshed: dict[Listing, pl.DataFrame] = {}
     for listing, seen in observed_codes(raw).items():
-        path = data_dir / LISTING_FILES[listing]
         key = list(LISTING_KEYS[listing])
-        listed = pl.read_csv(path, schema_overrides=dict.fromkeys(key, pl.Int64))
+        listed = pl.read_csv(
+            data_dir / LISTING_FILES[listing],
+            schema_overrides=dict.fromkeys(key, pl.Int64),
+        )
         added[listing] = seen.join(listed, on=key, how="anti")
-        refreshed = pl.concat([listed, added[listing]], how="diagonal").sort(key)
-        path.write_text(refreshed.write_csv(), encoding="utf-8")
+        frame = pl.concat([listed, added[listing]], how="diagonal").sort(key)
+        if listing == "providers":
+            frame = frame.with_columns(mdb=pl.col("code").is_in(mdb))
+        if listing == "recipients":
+            # `update` skips the files' nulls, so a listed type stands where they
+            # give none.
+            frame = frame.update(seen.select("code", "type"), on="code")
+        refreshed[listing] = frame
+    untyped = refreshed["recipients"].filter(pl.col("type").is_null())["code"]
+    if untyped.len():
+        raise ListingsError(
+            f"No OECD file gives these recipients an income group, and "
+            f"{LISTING_FILES['recipients']} gives them no type: "
+            f"{', '.join(map(str, untyped))}. Add each to "
+            f"{LISTING_FILES['recipients']} with its type (country, regional or "
+            "unspecified) and rerun."
+        )
+    for listing, frame in refreshed.items():
+        (data_dir / LISTING_FILES[listing]).write_text(
+            frame.write_csv(), encoding="utf-8"
+        )
     return added
 
 
@@ -204,13 +292,28 @@ def _scan(raw: Path, pattern: str, columns: dict[str, str]) -> pl.LazyFrame:
                 pl.col("year").cast(pl.Int64),
                 *(
                     pl.col(source)
-                    .cast(pl.String if "name" in name else pl.Int64)
+                    .cast(pl.Int64 if name in _CODES else pl.String)
                     .alias(name)
                     for name, source in columns.items()
                 ),
             )
             for path in paths
         ]
+    )
+
+
+def _recipient_type() -> pl.Expr:
+    """Each row's recipient type from its income group and region, null where the row
+    has no income group."""
+    income, region = pl.col("income_group"), pl.col("region")
+    return (
+        pl.when(income.is_null())
+        .then(pl.lit(None, pl.String))
+        .when(income != _UNALLOCATED)
+        .then(pl.lit("country"))
+        .when(region.is_in(_UNSPECIFIED_REGIONS))
+        .then(pl.lit("unspecified"))
+        .otherwise(pl.lit("regional"))
     )
 
 

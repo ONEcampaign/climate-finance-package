@@ -375,6 +375,25 @@ except cf.UnknownProviderError as error:
 Unknown provider 'Japn'. Did you mean: Japan?
 ```
 
+A group name names several providers at once. `"World Bank"` names the International Bank for Reconstruction and Development (901) and the International Development Association (905), as the World Bank uses the term. The World Bank Group adds the IFC and MIGA, which a group name leaves out. `providers="World Bank"` takes both, and `cf.providers.search("world bank")` lists both. `cf.providers.code("World Bank")` and `.info("World Bank")` raise `UnknownProviderError` with the two members in `.suggestions`, since each returns one entry.
+
+`cf.providers.list()` has the columns `code`, `name`, `type`, and `mdb`. `type` is the OECD's provider type: `DAC member`, `Non-DAC member`, `Multilateral donor`, `Private donor`, or `Country`, and null for a provider added from the OECD files, which carry no type. `mdb` is true for the 17 providers the OECD's climate-related development finance (CRDF) dataset types "Multilateral development bank": IBRD, IDA, the IFC, the AfDB and AfDF, the AsDB, the IDB and IDB Invest, the CDB, CABEI, the IsDB, the BSTDB, the EBRD, the CEB, CAF, the AIIB, and the NDB. The CRDF gives that type to the European Investment Bank's rows but not to the rest of the EU Institutions (918), so `mdb` is false for 918 and the EIB enters a selection as `"EIB"`. `cf.recipients.list()` has `code`, `name`, and `type`: `country` for one country, `regional` for a region's code such as `Africa, regional`, and `unspecified` for `Developing countries, unspecified` (998) and `Bilateral, unspecified` (9998). The OECD sets the split. It puts every code that is not one country in the income group "Part I unallocated by income", and gives the unspecified codes no geographic region. `States Ex-Yugoslavia unspecified` (88) sits in Europe, so it is `regional`. Filter a listing with polars and pass its `code` column to a query.
+
+```python
+mdbs = cf.providers.list().filter("mdb")
+countries = cf.recipients.list().filter(type="country")
+banks = release.spending(
+    providers=[*mdbs["code"], "EIB"], recipients=countries["code"], years=2022
+)
+print(mdbs.height, countries.height)
+print(banks.spec.providers[:3])
+```
+
+```output
+17 158
+(901, 903, 905)
+```
+
 ## Errors
 
 All errors inherit from `ClimateFinanceError`, and `climate_finance.errors` holds every class. `UnknownNameError`, `UnknownProviderError`, and `UnknownRecipientError` also import from `climate_finance`.

@@ -332,7 +332,7 @@ def partner_recipient(*, commitment: pl.Expr, disbursement: pl.Expr) -> pl.Expr:
 @cache
 def regional_codes() -> tuple[int, ...]:
     """The DAC recipient codes of regions and of unspecified recipients."""
-    regions = pl.col("name").str.contains("regional|unspecified")
+    regions = pl.col("type") != "country"
     return tuple(catalogue.recipients.list().filter(regions)["code"])
 
 

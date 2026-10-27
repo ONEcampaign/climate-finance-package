@@ -1,6 +1,7 @@
-# Hand-set names for providers and agencies, read by `cf-build names`. Keys match
-# ignoring case and accents. A curated name outranks the ISO codes, resolvekit's
-# aliases and agency names, and loses to a listing name in English or French.
+# Hand-set names for providers, agencies and groups, read by `cf-build names`. Keys
+# match ignoring case and accents. A curated name or group outranks the ISO codes,
+# resolvekit's aliases and agency names, and loses to a listing name in English or
+# French.
 
 # Provider names, each to a DAC provider code in the listing.
 [providers]
@@ -30,3 +31,10 @@ EC = [918, 1]  # European Commission
 # resolvekit's "SIDA" also names Sweden's agency 1, which carries no other name. The
 # build's own agency pack (`normalise/orgs.py:DFI_PACK`) puts Sida at agency 6.
 Sida = [10, 6]  # Swedish International Development Cooperation Agency
+
+# Group names, each to the DAC provider codes it names together. `providers=` takes
+# every member, and `cf.providers.code()` refuses a group and lists its members.
+[groups]
+# The World Bank's own usage is IBRD and IDA. The World Bank Group adds the IFC (903)
+# and MIGA (902).
+"World Bank" = [901, 905]

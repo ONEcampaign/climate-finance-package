@@ -1,185 +1,185 @@
-code,name
-45,Malta
-55,Türkiye
-57,Kosovo
-61,Slovenia
-62,Croatia
-63,Serbia
-64,Bosnia and Herzegovina
-65,Montenegro
-66,North Macedonia
-71,Albania
-85,Ukraine
-86,Belarus
-88,States Ex-Yugoslavia unspecified
-89,"Europe, regional"
-93,Moldova
-130,Algeria
-133,Libya
-136,Morocco
-139,Tunisia
-142,Egypt
-189,"North of Sahara, regional"
-218,South Africa
-225,Angola
-227,Botswana
-228,Burundi
-229,Cameroon
-230,Cabo Verde
-231,Central African Republic
-232,Chad
-233,Comoros
-234,Congo
-235,Democratic Republic of the Congo
-236,Benin
-238,Ethiopia
-239,Gabon
-240,Gambia
-241,Ghana
-243,Guinea
-244,Guinea-Bissau
-245,Equatorial Guinea
-247,Côte d'Ivoire
-248,Kenya
-249,Lesotho
-251,Liberia
-252,Madagascar
-253,Malawi
-255,Mali
-256,Mauritania
-257,Mauritius
-258,Mayotte
-259,Mozambique
-260,Niger
-261,Nigeria
-265,Zimbabwe
-266,Rwanda
-268,Sao Tome and Principe
-269,Senegal
-270,Seychelles
-271,Eritrea
-272,Sierra Leone
-273,Somalia
-274,Djibouti
-275,Namibia
-276,Saint Helena
-278,Sudan
-279,South Sudan
-280,Eswatini
-282,Tanzania
-283,Togo
-285,Uganda
-287,Burkina Faso
-288,Zambia
-289,"South of Sahara, regional"
-298,"Africa, regional"
-329,Barbados
-336,Costa Rica
-338,Cuba
-340,Dominican Republic
-342,El Salvador
-347,Guatemala
-349,Haiti
-351,Honduras
-352,Belize
-354,Jamaica
-358,Mexico
-364,Nicaragua
-366,Panama
-375,Trinidad and Tobago
-376,Anguilla
-377,Antigua and Barbuda
-378,Dominica
-381,Grenada
-382,Saint Kitts and Nevis
-383,Saint Lucia
-384,Saint Vincent and the Grenadines
-385,Montserrat
-387,Turks and Caicos Islands
-389,"Caribbean & Central America, regional"
-425,Argentina
-428,Bolivia
-431,Brazil
-434,Chile
-437,Colombia
-440,Ecuador
-446,Guyana
-451,Paraguay
-454,Peru
-457,Suriname
-460,Uruguay
-463,Venezuela
-489,"South America, regional"
-498,"America, regional"
-530,Bahrain
-540,Iran
-543,Iraq
-549,Jordan
-550,West Bank and Gaza Strip
-555,Lebanon
-558,Oman
-566,Saudi Arabia
-573,Syrian Arab Republic
-580,Yemen
-589,"Middle East, regional"
-610,Armenia
-611,Azerbaijan
-612,Georgia
-613,Kazakhstan
-614,Kyrgyzstan
-615,Tajikistan
-616,Turkmenistan
-617,Uzbekistan
-619,"Central Asia, regional"
-625,Afghanistan
-630,Bhutan
-635,Myanmar
-640,Sri Lanka
-645,India
-655,Maldives
-660,Nepal
-665,Pakistan
-666,Bangladesh
-679,"South Asia, regional"
-689,"South & Central Asia, regional"
-728,Cambodia
-730,China (People's Republic of)
-738,Indonesia
-740,Democratic People's Republic of Korea
-745,Lao People's Democratic Republic
-751,Malaysia
-753,Mongolia
-755,Philippines
-764,Thailand
-765,Timor-Leste
-769,Viet Nam
-789,"Far East Asia, regional"
-798,"Asia, regional"
-831,Cook Islands
-832,Fiji
-836,Kiribati
-845,Nauru
-854,Vanuatu
-856,Niue
-859,Marshall Islands
-860,Micronesia
-861,Palau
-862,Papua New Guinea
-866,Solomon Islands
-868,Tokelau
-870,Tonga
-872,Tuvalu
-876,Wallis and Futuna
-880,Samoa
-889,"Oceania, regional"
-998,"Developing countries, unspecified"
-1027,"Eastern Africa, regional"
-1028,"Middle Africa, regional"
-1029,"Southern Africa, regional"
-1030,"Western Africa, regional"
-1031,"Caribbean, regional"
-1032,"Central America, regional"
-1033,"Melanesia, regional"
-1034,"Micronesia, regional"
-1035,"Polynesia, regional"
-9998,"Bilateral, unspecified"
+code,name,type
+45,Malta,country
+55,Türkiye,country
+57,Kosovo,country
+61,Slovenia,country
+62,Croatia,country
+63,Serbia,country
+64,Bosnia and Herzegovina,country
+65,Montenegro,country
+66,North Macedonia,country
+71,Albania,country
+85,Ukraine,country
+86,Belarus,country
+88,States Ex-Yugoslavia unspecified,regional
+89,"Europe, regional",regional
+93,Moldova,country
+130,Algeria,country
+133,Libya,country
+136,Morocco,country
+139,Tunisia,country
+142,Egypt,country
+189,"North of Sahara, regional",regional
+218,South Africa,country
+225,Angola,country
+227,Botswana,country
+228,Burundi,country
+229,Cameroon,country
+230,Cabo Verde,country
+231,Central African Republic,country
+232,Chad,country
+233,Comoros,country
+234,Congo,country
+235,Democratic Republic of the Congo,country
+236,Benin,country
+238,Ethiopia,country
+239,Gabon,country
+240,Gambia,country
+241,Ghana,country
+243,Guinea,country
+244,Guinea-Bissau,country
+245,Equatorial Guinea,country
+247,Côte d'Ivoire,country
+248,Kenya,country
+249,Lesotho,country
+251,Liberia,country
+252,Madagascar,country
+253,Malawi,country
+255,Mali,country
+256,Mauritania,country
+257,Mauritius,country
+258,Mayotte,country
+259,Mozambique,country
+260,Niger,country
+261,Nigeria,country
+265,Zimbabwe,country
+266,Rwanda,country
+268,Sao Tome and Principe,country
+269,Senegal,country
+270,Seychelles,country
+271,Eritrea,country
+272,Sierra Leone,country
+273,Somalia,country
+274,Djibouti,country
+275,Namibia,country
+276,Saint Helena,country
+278,Sudan,country
+279,South Sudan,country
+280,Eswatini,country
+282,Tanzania,country
+283,Togo,country
+285,Uganda,country
+287,Burkina Faso,country
+288,Zambia,country
+289,"South of Sahara, regional",regional
+298,"Africa, regional",regional
+329,Barbados,country
+336,Costa Rica,country
+338,Cuba,country
+340,Dominican Republic,country
+342,El Salvador,country
+347,Guatemala,country
+349,Haiti,country
+351,Honduras,country
+352,Belize,country
+354,Jamaica,country
+358,Mexico,country
+364,Nicaragua,country
+366,Panama,country
+375,Trinidad and Tobago,country
+376,Anguilla,country
+377,Antigua and Barbuda,country
+378,Dominica,country
+381,Grenada,country
+382,Saint Kitts and Nevis,country
+383,Saint Lucia,country
+384,Saint Vincent and the Grenadines,country
+385,Montserrat,country
+387,Turks and Caicos Islands,country
+389,"Caribbean & Central America, regional",regional
+425,Argentina,country
+428,Bolivia,country
+431,Brazil,country
+434,Chile,country
+437,Colombia,country
+440,Ecuador,country
+446,Guyana,country
+451,Paraguay,country
+454,Peru,country
+457,Suriname,country
+460,Uruguay,country
+463,Venezuela,country
+489,"South America, regional",regional
+498,"America, regional",regional
+530,Bahrain,country
+540,Iran,country
+543,Iraq,country
+549,Jordan,country
+550,West Bank and Gaza Strip,country
+555,Lebanon,country
+558,Oman,country
+566,Saudi Arabia,country
+573,Syrian Arab Republic,country
+580,Yemen,country
+589,"Middle East, regional",regional
+610,Armenia,country
+611,Azerbaijan,country
+612,Georgia,country
+613,Kazakhstan,country
+614,Kyrgyzstan,country
+615,Tajikistan,country
+616,Turkmenistan,country
+617,Uzbekistan,country
+619,"Central Asia, regional",regional
+625,Afghanistan,country
+630,Bhutan,country
+635,Myanmar,country
+640,Sri Lanka,country
+645,India,country
+655,Maldives,country
+660,Nepal,country
+665,Pakistan,country
+666,Bangladesh,country
+679,"South Asia, regional",regional
+689,"South & Central Asia, regional",regional
+728,Cambodia,country
+730,China (People's Republic of),country
+738,Indonesia,country
+740,Democratic People's Republic of Korea,country
+745,Lao People's Democratic Republic,country
+751,Malaysia,country
+753,Mongolia,country
+755,Philippines,country
+764,Thailand,country
+765,Timor-Leste,country
+769,Viet Nam,country
+789,"Far East Asia, regional",regional
+798,"Asia, regional",regional
+831,Cook Islands,country
+832,Fiji,country
+836,Kiribati,country
+845,Nauru,country
+854,Vanuatu,country
+856,Niue,country
+859,Marshall Islands,country
+860,Micronesia,country
+861,Palau,country
+862,Papua New Guinea,country
+866,Solomon Islands,country
+868,Tokelau,country
+870,Tonga,country
+872,Tuvalu,country
+876,Wallis and Futuna,country
+880,Samoa,country
+889,"Oceania, regional",regional
+998,"Developing countries, unspecified",unspecified
+1027,"Eastern Africa, regional",regional
+1028,"Middle Africa, regional",regional
+1029,"Southern Africa, regional",regional
+1030,"Western Africa, regional",regional
+1031,"Caribbean, regional",regional
+1032,"Central America, regional",regional
+1033,"Melanesia, regional",regional
+1034,"Micronesia, regional",regional
+1035,"Polynesia, regional",regional
+9998,"Bilateral, unspecified",unspecified
