@@ -198,8 +198,17 @@ def test_a_release_name_must_be_one_safe_path_segment(name: str) -> None:
 
 @pytest.mark.parametrize("name", ["fixture", "2026a", "1.2.3-rc_1", "_x"])
 def test_an_ordinary_release_name_is_accepted(name: str) -> None:
+    entry = IndexEntry(
+        url="https://example.org/pack", sha256="0", data_format=DATA_FORMAT
+    )
+
     assert check_release_name(name) == name
-    assert ReleaseIndex(latest=name).latest == name
+    assert ReleaseIndex(latest=name, releases={name: entry}).latest == name
+
+
+def test_an_index_whose_latest_it_does_not_list_is_refused() -> None:
+    with pytest.raises(ValueError, match="latest"):
+        ReleaseIndex(latest="2026a")
 
 
 def test_load_leaves_a_directory_outside_the_cache_alone(
@@ -345,8 +354,12 @@ def test_an_empty_index_names_path_and_where_releases_come_from(
     with pytest.raises(cf.UnknownNameError) as raised:
         cf.load(cache_dir=tmp_path, refresh=refresh)
 
-    assert "cf.load(path=...)" in str(raised.value)
-    assert release_module.RELEASES_PAGE in str(raised.value)
+    # The shipped index predates any release published since, so only an empty
+    # index online says none is published.
+    message = str(raised.value)
+    assert "cf.load(path=...)" in message
+    assert ("No release is published" in message) is refresh
+    assert ("refresh=True" in message) is not refresh
 
 
 def test_disbursement_profile_reads_the_release_table_by_group_and_year() -> None:

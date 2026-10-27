@@ -36,8 +36,17 @@ from climate_finance.build import fetch, gate, publish, release
 from climate_finance.build.cli import TRACEBACK_VAR, app
 from climate_finance.build.config import PUBLISHED_SETTINGS, BuildConfig, load_config
 from climate_finance.build.errors import (
+    AlreadyPublishedError,
     BuildError,
+    DraftReleaseError,
+    DriftBaselineError,
     GateFailedError,
+    GhError,
+    IndexReplacedError,
+    MissingIndexError,
+    PublishedIndexError,
+    ReleaseNameError,
+    RepositoryNameError,
     SyntheticReleaseError,
     UnpublishedSettingsError,
 )
@@ -783,7 +792,8 @@ def test_only_a_published_name_is_cut_or_published(
     monkeypatch.setattr(release.build_package, "build", pytest.fail)
     github = FakeGitHub()
 
-    refused = SyntheticReleaseError if name == "fixture" else BuildError
+    # `fixture` is a published name's shape, refused as the synthetic release's.
+    refused = SyntheticReleaseError if name == "fixture" else ReleaseNameError
     with pytest.raises(refused):
         publish.publish_release(pack, gh=github)
     if name == "fixture":
@@ -880,32 +890,24 @@ def test_an_older_release_joins_the_index_and_leaves_latest_alone(
 @pytest.mark.parametrize(
     ("assets", "previous", "previous_sha256", "refused"),
     [
-        (indexed(RELEASE), None, None, r"already published.* such as 2026a\.1"),
-        (
-            indexed("2025a"),
-            None,
-            None,
-            "compared '2026a' with nothing; .* naming '2025a'",
-        ),
-        (indexed("2025a"), "2026a-rc", None, "with '2026a-rc'; .* naming '2025a'"),
-        (indexed("2024a", "2025a"), "2024a", "0" * 64, "naming '2025a'"),
-        (None, "2025a", "0" * 64, "with --first-release"),
-        (
-            indexed("2025a", "2027a"),
-            "2024a",
-            "0" * 64,
-            "which the index does not list",
-        ),
+        (indexed(RELEASE), None, None, AlreadyPublishedError),
+        (indexed("2025a"), None, None, DriftBaselineError),
+        (indexed("2025a"), "2026a-rc", None, DriftBaselineError),
+        (indexed("2024a", "2025a"), "2024a", "0" * 64, DriftBaselineError),
+        (None, "2025a", "0" * 64, DriftBaselineError),
+        (indexed("2025a", "2027a"), "2024a", "0" * 64, DriftBaselineError),
         # A published candidate cannot be latest, so it is no drift baseline.
         (
             indexed("2025a", "2026b-rc", latest="2026b-rc"),
             "2026b-rc",
             "0" * 64,
-            "'2026b-rc' is not a published name",
+            PublishedIndexError,
         ),
+        # An index whose latest it does not list.
+        (indexed("2025a", latest="2025b"), "2025b", "0" * 64, PublishedIndexError),
         # A local copy named like the published release, from another pack.
-        (indexed("2025a"), "2025a", "f" * 64, "from the pack with sha256 f{64}"),
-        (indexed("2025a"), "2025a", None, "a copy that records no pack"),
+        (indexed("2025a"), "2025a", "f" * 64, DriftBaselineError),
+        (indexed("2025a"), "2025a", None, DriftBaselineError),
     ],
     ids=[
         "re-cut",
@@ -915,6 +917,7 @@ def test_an_older_release_joins_the_index_and_leaves_latest_alone(
         "none-published",
         "unlisted",
         "rc-latest",
+        "latest-unlisted",
         "other-pack",
         "no-pack",
     ],
@@ -924,7 +927,7 @@ def test_publish_refuses_a_name_already_published_or_drift_against_another_relea
     assets: dict[str, bytes] | None,
     previous: str | None,
     previous_sha256: str | None,
-    refused: str,
+    refused: type[BuildError],
 ) -> None:
     pack = release.pack_release(
         gated(
@@ -936,8 +939,10 @@ def test_publish_refuses_a_name_already_published_or_drift_against_another_relea
     )
     github = FakeGitHub(assets)
 
-    with pytest.raises(BuildError, match=refused):
+    with pytest.raises(refused) as raised:
         publish.publish_release(pack, gh=github)
+    # The command prints the refusal as one line.
+    assert "\n" not in str(raised.value)
     assert github.writes == []
     assert github.assets == assets
 
@@ -963,9 +968,7 @@ def test_packs_without_an_index_are_refused_naming_the_index_to_restore(
         recovery.unlink()
     github.after_write = None
 
-    with pytest.raises(
-        BuildError, match=r"holds packs but no releases\.json"
-    ) as raised:
+    with pytest.raises(MissingIndexError) as raised:
         publish.publish_release(pack, gh=github)
 
     message = str(raised.value)
@@ -1029,7 +1032,7 @@ def test_an_index_another_publish_replaced_meanwhile_is_reported(
 
     github = FakeGitHub(indexed("2025a"), after_write=concurrent)
 
-    with pytest.raises(BuildError, match="another publish replaced it meanwhile"):
+    with pytest.raises(IndexReplacedError):
         publish.publish_release(pack, gh=github)
     assert not (tmp_path / publish.INDEX_ASSET).exists()
 
@@ -1042,7 +1045,7 @@ def test_a_pack_renamed_for_another_release_is_refused(tmp_path: Path) -> None:
     )
     github = FakeGitHub()
 
-    with pytest.raises(BuildError, match=f"publish it as {PACK}"):
+    with pytest.raises(ReleaseNameError):
         publish.publish_release(pack, gh=github)
     assert github.calls == []
 
@@ -1053,7 +1056,7 @@ def test_a_repository_that_is_not_owner_and_name_is_refused(tmp_path: Path) -> N
     )
     github = FakeGitHub()
 
-    with pytest.raises(BuildError, match="not a GitHub repository"):
+    with pytest.raises(RepositoryNameError):
         publish.publish_release(pack, repo="--help", gh=github)
     assert github.calls == []
 
@@ -1089,7 +1092,7 @@ def test_a_draft_data_release_is_refused(tmp_path: Path) -> None:
     )
     github = FakeGitHub({}, draft=True)
 
-    with pytest.raises(BuildError, match="draft"):
+    with pytest.raises(DraftReleaseError):
         publish.publish_release(pack, gh=github)
     assert github.writes == []
 
@@ -1109,7 +1112,8 @@ def test_the_publish_command_prints_each_gh_step_and_refuses_in_one_line(
     dry = runner.invoke(app, ["publish", str(pack), "--dry-run"])
 
     assert refused.exit_code == 1
-    assert "BuildError: release '2026a' is already published" in refused.output
+    assert "AlreadyPublishedError: " in refused.output
+    assert f"[{AlreadyPublishedError.code}]" in refused.output
     assert "Traceback" not in refused.output
     assert dry.exit_code == 0, dry.output
     assert "gh release list" in dry.output
@@ -1156,18 +1160,18 @@ def test_a_refusal_prints_its_causes_and_the_traceback_on_request(
     full = runner.invoke(app, ["publish", str(pack)])
 
     assert short.exit_code == 1
-    assert "BuildError: the published releases.json is not JSON" in short.output
+    assert "PublishedIndexError: " in short.output
     assert "caused by JSONDecodeError: Expecting value: line 1 column 1" in (
         short.output
     )
-    assert isinstance(full.exception, BuildError)
+    assert isinstance(full.exception, PublishedIndexError)
     assert isinstance(full.exception.__cause__, json.JSONDecodeError)
 
 
 def test_gh_missing_is_a_build_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PATH", "")
 
-    with pytest.raises(BuildError, match="gh auth login"):
+    with pytest.raises(GhError):
         publish.run_gh(["--version"])
 
 
@@ -1182,7 +1186,7 @@ def test_gh_runs_from_an_argument_list_with_no_shell_and_a_timeout(
 
     monkeypatch.setattr(publish.subprocess, "run", hung)
 
-    with pytest.raises(BuildError, match="was stopped"):
+    with pytest.raises(GhError):
         publish.run_gh(["release", "list"])
     [(command, options)] = runs
     assert command == ["gh", "release", "list"]
@@ -1584,7 +1588,14 @@ def test_refresh_reads_an_index_with_fields_this_package_does_not_know(
     assert loaded.manifest.release == RELEASE
 
 
-@pytest.mark.parametrize("body", [b"<html>Not Found</html>", b'{"releases": []}'])
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"<html>Not Found</html>",
+        b'{"releases": []}',
+        b'{"latest": "2027a", "releases": {}}',
+    ],
+)
 def test_a_malformed_index_online_is_a_source_error(
     tmp_path: Path, published: tuple[ReleaseIndex, Path], body: bytes
 ) -> None:

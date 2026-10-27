@@ -117,3 +117,49 @@ class GateFailedError(BuildError):
     def __init__(self, failures: list[str]) -> None:
         self.failures = failures
         super().__init__(f"{len(failures)} gate rows failed: {'; '.join(failures)}")
+
+
+class GhError(BuildError):
+    """The GitHub CLI, `gh`, is not installed, exits with an error or runs out of
+    time."""
+
+
+class RepositoryNameError(BuildError):
+    """A repository to publish to that is not `owner/name`."""
+
+
+class ReleaseNameError(BuildError):
+    """A release name that is not a published name, such as `2026a` or `2026a.1`, or
+    a pack whose file is named for another release."""
+
+
+class AlreadyPublishedError(BuildError):
+    """A release the published index already lists. A name names one pack."""
+
+
+class DriftBaselineError(BuildError):
+    """A release whose drift gate compared it with a release other than the one
+    publishing needs, or with a copy from another pack."""
+
+
+class PublishedIndexError(BuildError):
+    """The published `releases.json` is not JSON, not an index this package reads,
+    or names a latest release that is not a published name."""
+
+
+class MissingIndexError(BuildError):
+    """The `data` release holds packs but no `releases.json`, as after a publish
+    that stopped before its index was in place."""
+
+
+class IndexReplacedError(BuildError):
+    """The `releases.json` read back after a publish differs from the one it wrote,
+    so another publish replaced it meanwhile."""
+
+
+class DraftReleaseError(BuildError):
+    """The `data` release is a draft, whose assets only maintainers can download."""
+
+
+class MissingAssetError(BuildError):
+    """The `data` release lacks an asset a publish has just uploaded."""

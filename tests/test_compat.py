@@ -183,8 +183,14 @@ def test_constructing_climate_data_warns_with_the_replacement() -> None:
             "flows='net_disbursements'",
             "spending(flow='net_disbursements')",
         ),
+        # 1.x's default source, whose meaning 2.0 changed.
         (
             lambda: _climate_data().load_spending_data(),
+            "load_spending_data() without source=, which 1.x read as source='OECD_CRS'",
+            "source='OECD_CRDF_CRS'",
+        ),
+        (
+            lambda: _climate_data().load_spending_data(source="OECD_CRS"),
             "source='OECD_CRS'",
             "source='OECD_CRDF_CRS'",
         ),
