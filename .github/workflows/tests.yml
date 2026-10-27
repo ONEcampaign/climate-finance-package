@@ -2,7 +2,7 @@ name: tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, pre-release]
   pull_request:
   workflow_dispatch:
   # The release workflow runs these jobs before it publishes.
