@@ -62,6 +62,8 @@
   #toast a { color: #8ab4f8; cursor: pointer; margin-left: 8px; text-decoration: underline; }
   #error { color: var(--bad); font-weight: 600; }
   .done { text-align: center; margin: 60px 0; font-size: 18px; }
+  #loading { text-align: center; margin: 60px 0; font-size: 18px; color: var(--muted); }
+  #loading.failed { color: var(--bad); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -82,6 +84,7 @@
 <div class="bar"><div id="fill"></div></div>
 <details class="small"><summary>By provider</summary><ul id="providers"></ul></details>
 <details class="small"><summary>The full matching rule</summary><p id="rule"></p></details>
+<div id="loading">Loading the first pair&hellip;</div>
 <main id="pair"></main>
 <div id="toast" hidden></div>
 <div class="answer"><div>
@@ -107,7 +110,7 @@ const LONG = new Set(["Short description", "Long description"]);
 const EXPECTED = new Set(["Record year", "Commitment", "Disbursement"]);
 // Rows shown only when the two records differ.
 const OPTIONAL = ["crs id", "Project number", "Flow", "Purpose", "Channel", "CRS rows summed", "Short description", "Long description"];
-let state = null, index = 0, data = null, busy = false, toastTimer = null;
+let state = null, index = 0, data = null, busy = false, toastTimer = null, loaded = false;
 
 async function api(path, body) {
   const response = await fetch(path, body === undefined ? {} : {
@@ -286,11 +289,23 @@ function render(pair) {
   if (index + 1 < state.total) fetch(`/api/pair?i=${index + 1}`).catch(() => {});
 }
 
+function status(text, failed) {
+  $("loading").textContent = text;
+  $("loading").className = failed ? "failed" : "";
+  $("loading").hidden = !text;
+}
+
 async function load(i) {
+  // The first pair reads the CRS rows and can take seconds; later ones are cached.
+  const wait = setTimeout(() => status(loaded ? "Loading\u2026" : "Loading the first pair\u2026"), loaded ? 300 : 0);
   try {
     render(await api(`/api/pair?i=${i}`));
+    loaded = true;
+    status("");
   } catch (e) {
-    $("error").textContent = e.message;
+    status(`Could not load the pair: ${e.message}`, true);
+  } finally {
+    clearTimeout(wait);
   }
 }
 
@@ -359,10 +374,10 @@ document.addEventListener("keydown", (e) => {
 (async () => {
   try {
     showState(await api("/api/state"));
-    if (state.next === null) finish();
+    if (state.next === null) { status(""); finish(); }
     else await load(state.next);
   } catch (e) {
-    $("error").textContent = e.message;
+    status(`Could not load the page: ${e.message}`, true);
   }
 })();
 </script>
