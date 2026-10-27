@@ -15,6 +15,15 @@ also pairs with a commitment that is its embedding neighbour (`embed`). A unit's
 title is its largest record's title, or that record's short description where it
 has none.
 
+A disbursement pairs once with a purpose-split line, which a donor files as one unit
+per purpose, as Canada and the Adaptation Fund do (`keys.purpose_units`). The pair
+takes the unit of the disbursement's purpose code. Where no CRDF row reaches that
+unit, the disbursement continues no climate commitment on the line and keeps no pair
+there. Where the line has no unit of that code, the pair takes the reached unit of
+its purpose category, else the line's largest reached commitment. A pair whose unit
+is outside the commitments it was blocked among, as a unit a key reaches from a
+later record year, is left out.
+
 A pair is eligible for scoring when the keys left both units unlinked: no exact tier
 or key-repair rule took the disbursement, no disbursement of a later record year
 reaches the commitment by key, the disbursement's floor year is at or before the
@@ -68,7 +77,7 @@ from climate_finance.build.link.id_practice import (
     line_id,
     period_of,
 )
-from climate_finance.build.link.keys import floor_loaded
+from climate_finance.build.link.keys import floor_loaded, purpose_units
 from climate_finance.build.link.text import (
     NO_TITLE,
     clean_text,
@@ -325,19 +334,32 @@ def generate_candidates(
     commitments = lines.join(commitments.select("unit"), on="unit", how="semi")
     disbursements = lines.join(disbursements.select("unit"), on="unit", how="semi")
     renumbered = _renumbered_lines(units)
-    truth = _block(
-        commitments.filter("id_persistent"),
-        disbursements,
-        later_units=later_units,
-        renumbered=renumbered,
-        vectors=vectors,
-    )
-    open_pairs = _block(
+    ids = sides.select("unit", "unit_id")
+
+    def by_line(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataFrame:
+        """The blocked pairs of `commitments` and `disbursements`, one per
+        purpose-split line (`purpose_units`), as unit ids. A pair whose line unit
+        is not among `commitments` is dropped."""
+        blocked = _block(
+            commitments,
+            disbursements,
+            later_units=later_units,
+            renumbered=renumbered,
+            vectors=vectors,
+        )
+        named = blocked.join(ids, left_on="left", right_on="unit").join(
+            ids, left_on="right", right_on="unit", suffix="_right"
+        )
+        return purpose_units(
+            named.select(left_id="unit_id", right_id="unit_id_right"),
+            units=units,
+            reached=reached["unit_id"],
+        ).join(commitments.select(right_id="unit_id"), on="right_id", how="semi")
+
+    truth = by_line(commitments.filter("id_persistent"), disbursements)
+    open_pairs = by_line(
         commitments.filter(~pl.col("keyed_later"), ~pl.col("ids_persist")),
         disbursements.filter(~pl.col("taken"), ~pl.col("ids_persist")),
-        later_units=later_units,
-        renumbered=renumbered,
-        vectors=vectors,
     )
     pairs = pl.concat(
         [truth.with_columns(eligible=False), open_pairs.with_columns(eligible=True)]
@@ -358,7 +380,6 @@ def generate_candidates(
         pl.col("placed_year_right") >= pl.col("floor_year")
     )
     side = sides.select(
-        "unit",
         "unit_id",
         "donor_code",
         "year",
@@ -370,12 +391,12 @@ def generate_candidates(
         "id_persistent",
     )
     return (
-        pairs.join(side, left_on="left", right_on="unit")
-        .join(side, left_on="right", right_on="unit", suffix="_right")
+        pairs.join(side, left_on="left_id", right_on="unit_id")
+        .join(side, left_on="right_id", right_on="unit_id", suffix="_right")
         .filter(~pl.col("eligible") | floor_held)
         .select(
-            left_id="unit_id",
-            right_id="unit_id_right",
+            "left_id",
+            "right_id",
             donor_code="donor_code",
             year_gap=(pl.col("year") - pl.col("year_right")).cast(pl.Int16),
             programme_level=programme_level,

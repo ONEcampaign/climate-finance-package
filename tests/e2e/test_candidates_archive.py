@@ -21,7 +21,7 @@ from climate_finance.build.link.candidates import (
 from climate_finance.build.link.crdf_crs import link_within_year
 from climate_finance.build.link.id_practice import classify_id_practice, period_of
 from climate_finance.build.link.key_repair import repair_keys
-from climate_finance.build.link.keys import build_units, link_by_keys
+from climate_finance.build.link.keys import build_units, link_by_keys, purpose_units
 from climate_finance.build.normalise.crdf import normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs, trace_population
 
@@ -35,16 +35,17 @@ PROTOTYPE_YEARS = (2021, 2022)
 CRDF_YEARS = (2015, 2024)
 RECALL_TARGET = 0.985
 # Eligible and training pairs under the key tiers and repair rules before the rules
-# in `KEY_RULES_ELIGIBLE`.
-ELIGIBLE_PAIRS = 1_348_593
-TRAINING_PAIRS = 1_371_429
+# in `KEY_RULES_ELIGIBLE`. A disbursement pairs with a purpose-split line once
+# (`purpose_units`).
+ELIGIBLE_PAIRS = 1_313_864
+TRAINING_PAIRS = 1_292_754
 # Eligible pairs each key rule adds by leaving disbursements unlinked, or takes by
 # linking them, each measured with the rules above it in place. No rule moves a
 # training pair.
 KEY_RULES_ELIGIBLE = {
     # A lettered record reaches its parent only in its recipient under its project
     # number (`_parent_key`).
-    "lettered parent": 2_995,
+    "lettered parent": 2_983,
     # Only an EU contract passes its floor in the parent tier (`parent_floor_year`).
     "EU parent floor": 0,
     # A missing project number counts as one more project in `crs_key`.
@@ -55,11 +56,11 @@ KEY_RULES_ELIGIBLE = {
     # A component award keys each component by purpose (`split_components`), so
     # the project-number tiers link within one component, and the disbursements
     # they linked across components, mostly US, go to scoring.
-    "component awards": 23_821,
+    "component awards": 23_813,
     # Key repair compares awards too: it links 2,831 disbursements within one
     # component, 1,480 of them US and 900 Canadian, and no longer links 2,310 across
     # components. The units it now links held more pairs than those it frees.
-    "component awards in key repair": -21_094,
+    "component awards in key repair": -16_770,
 }
 _CATEGORY = {
     "DAC member": "bilateral",
@@ -153,8 +154,9 @@ def truth(
     id_practice: pl.DataFrame,
     candidates: pl.DataFrame,
 ) -> pl.DataFrame:
-    """Every id-truth pair, with whether blocking produced it and the commitment's
-    provider category."""
+    """Every id-truth pair, one per disbursement and purpose-split line as the
+    candidates hold it (`purpose_units`), with whether blocking produced it and the
+    commitment's provider category."""
     categories = (
         pl.scan_parquet(data / "raw" / "oecd" / "crdf_recipient.parquet")
         .select(
@@ -181,7 +183,7 @@ def truth(
         pl.col("disbursement_usd") > 0,
         pl.col("floor_year").is_null() | (pl.col("floor_year") >= FIRST_YEAR),
     )
-    return (
+    pairs = (
         commitments.select("unit_id", "donor_code", "agency_code", "crs_id", "year")
         .join(
             disbursements.select("unit_id", "donor_code", "crs_id", "year"),
@@ -196,6 +198,14 @@ def truth(
             provider_code="donor_code",
             agency_code="agency_code",
         )
+    )
+    return (
+        purpose_units(
+            pairs,
+            units=units,
+            reached=links.filter(task="crdf_crs")["right_id"],
+        )
+        .join(commitments.select(right_id="unit_id"), on="right_id", how="semi")
         .join(
             candidates.select("left_id", "right_id", "same_crs_id"),
             on=["left_id", "right_id"],
@@ -253,16 +263,18 @@ def test_blocking_recall_on_id_truth(truth: pl.DataFrame) -> None:
 
     # Every blocked truth pair carries its label.
     assert truth.filter("blocked")["same_crs_id"].all()
-    assert prototype_years.height == 14_605
+    # Truth holds one pair per disbursement and purpose-split line
+    # (`purpose_units`).
+    assert prototype_years.height == 9_828
     assert prototype_years["blocked"].mean() >= RECALL_TARGET
-    # Over the build's CRDF years recall just meets the target. Five crs ids, four
-    # of them Canada's, hold 360 of the 867 missed pairs. The `short_description`
-    # fallback blocks 21 more, New Zealand pairs with an untitled side.
-    assert crdf_years.height == 57_870
-    assert crdf_years["blocked"].mean() == pytest.approx(0.98502, abs=1e-5)
+    # Over the build's CRDF years five crs ids, three of them Canada's, hold 100 of
+    # the 500 missed pairs. The `short_description` fallback blocks 21 more, New
+    # Zealand pairs with an untitled side.
+    assert crdf_years.height == 38_537
+    assert crdf_years["blocked"].mean() == pytest.approx(0.98703, abs=1e-5)
     assert by_category == pytest.approx(
         {
-            "bilateral": 0.98443,
+            "bilateral": 0.98642,
             "other_multilateral": 1.0,
             "private": 1.0,
             "banks": 1.0,
