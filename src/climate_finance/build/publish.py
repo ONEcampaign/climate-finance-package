@@ -26,7 +26,18 @@ from urllib.parse import quote
 
 from pydantic import ValidationError
 
-from climate_finance.build.errors import BuildError
+from climate_finance.build.errors import (
+    AlreadyPublishedError,
+    DraftReleaseError,
+    DriftBaselineError,
+    GhError,
+    IndexReplacedError,
+    MissingAssetError,
+    MissingIndexError,
+    PublishedIndexError,
+    ReleaseNameError,
+    RepositoryNameError,
+)
 from climate_finance.build.release import publishable
 from climate_finance.release import IndexEntry, ReleaseIndex, release_dirname
 from climate_finance.schema import ReleaseManifest, sha256_file
@@ -72,8 +83,8 @@ def run_gh(args: Sequence[str]) -> str:
     """The standard output of `gh` run with `args`, within `GH_TIMEOUT` seconds.
 
     Raises:
-        BuildError: when `gh` is not installed, exits with an error or runs out
-            of time.
+        GhError: when `gh` is not installed, exits with an error or runs out of
+            time.
     """
     command = shell_join(args)
     try:
@@ -86,15 +97,15 @@ def run_gh(args: Sequence[str]) -> str:
             timeout=GH_TIMEOUT,
         )
     except FileNotFoundError as error:
-        raise BuildError(
+        raise GhError(
             "publishing needs the GitHub CLI, gh, logged in with `gh auth login`"
         ) from error
     except subprocess.TimeoutExpired as error:
-        raise BuildError(
+        raise GhError(
             f"`gh {command}` ran for over {GH_TIMEOUT} seconds and was stopped"
         ) from error
     except subprocess.CalledProcessError as error:
-        raise BuildError(f"`gh {command}` failed: {error.stderr.strip()}") from error
+        raise GhError(f"`gh {command}` failed: {error.stderr.strip()}") from error
     return done.stdout
 
 
@@ -149,14 +160,23 @@ def publish_release(
         GateFailedError: when the pack's gates keep it from publishing
             (`release.publishable`).
         BuildError: when the pack's settings keep it from publishing
-            (`release.publishable`), its release name is not a published name
-            (`PUBLISHED_NAME`), its file is named for another release, `repo` is
-            not `owner/name`, the release holds packs but no index, the index
-            refuses it (`add_to_index`), the index read back differs from the one
-            written, the `DATA_TAG` release is a draft, or `gh` fails.
+            (`release.publishable`).
+        RepositoryNameError: when `repo` is not `owner/name`.
+        ReleaseNameError: when the pack's release name is not a published name
+            (`PUBLISHED_NAME`), or its file is named for another release.
+        DraftReleaseError: when the `DATA_TAG` release is a draft.
+        MissingIndexError: when the release holds packs but no index.
+        PublishedIndexError, AlreadyPublishedError, DriftBaselineError: when the
+            index cannot be read or refuses the pack (`add_to_index`).
+        MissingAssetError: when the staged index is missing once uploaded.
+        IndexReplacedError: when the index read back differs from the one
+            written.
+        GhError: when `gh` fails.
     """
     if not _REPO.fullmatch(repo):
-        raise BuildError(f"--repo {repo!r} is not a GitHub repository, owner/name")
+        raise RepositoryNameError(
+            f"--repo {repo!r} is not a GitHub repository, owner/name"
+        )
     recovery = recovery_index(pack)
     with tempfile.TemporaryDirectory(prefix="publish-") as scratch:
         # Every check, the sha256 and the upload read one private copy, so a pack
@@ -168,7 +188,7 @@ def publish_release(
         # The asset takes the file's name, so a renamed pack could replace another
         # release's.
         if pack.name != (expected := f"{release_dirname(manifest.release)}.tar.zst"):
-            raise BuildError(
+            raise ReleaseNameError(
                 f"{pack} holds release {manifest.release!r}; publish it as {expected}"
             )
         where = ("--repo", repo)
@@ -178,7 +198,7 @@ def publish_release(
             if INDEX_ASSET in assets:
                 index = _read_index(gh, repo=repo)
             elif any(name.endswith(".tar.zst") for name in assets):
-                raise BuildError(_missing_index(repo, recovery=recovery))
+                raise MissingIndexError(_missing_index(repo, recovery=recovery))
         sha256 = sha256_file(snapshot)
         url = asset_url(pack.name, repo=repo)
         updated = add_to_index(index, manifest=manifest, sha256=sha256, url=url)
@@ -228,7 +248,7 @@ def publish_release(
     for command in (*swap, rename):
         gh(command)
     if _read_index(gh, repo=repo) != updated:
-        raise BuildError(
+        raise IndexReplacedError(
             f"the {INDEX_ASSET} read back from {repo} differs from the one this "
             f"publish wrote, so another publish replaced it meanwhile; publish "
             f"{manifest.release} again, which adds it to the index that is there now"
@@ -283,8 +303,8 @@ def _data_assets(gh: Gh, *, repo: str) -> set[str] | None:
     """The asset names of `repo`'s `DATA_TAG` release, or None while it has none.
 
     Raises:
-        BuildError: when the release is a draft, whose assets only maintainers can
-            download.
+        DraftReleaseError: when the release is a draft, whose assets only
+            maintainers can download.
     """
     where = ("--repo", repo)
     listed = json.loads(
@@ -294,7 +314,7 @@ def _data_assets(gh: Gh, *, repo: str) -> set[str] | None:
     if data is None:
         return None
     if data["isDraft"]:
-        raise BuildError(
+        raise DraftReleaseError(
             f"the {DATA_TAG!r} release of {repo} is a draft, whose assets only "
             "maintainers can download; publish it on GitHub, then publish again"
         )
@@ -306,7 +326,7 @@ def _asset_api_path(gh: Gh, *, repo: str, name: str) -> str:
     """The API path of the asset `name` on `repo`'s `DATA_TAG` release.
 
     Raises:
-        BuildError: when the release has no such asset, or GitHub gives its API
+        MissingAssetError: when the release has no such asset, or GitHub gives its API
             URL in an unexpected form.
     """
     viewed = json.loads(
@@ -314,7 +334,9 @@ def _asset_api_path(gh: Gh, *, repo: str, name: str) -> str:
     )
     urls = [asset["apiUrl"] for asset in viewed["assets"] if asset["name"] == name]
     if len(urls) != 1 or not (matched := _ASSET_API.fullmatch(urls[0])):
-        raise BuildError(f"the {DATA_TAG!r} release of {repo} has no asset {name}")
+        raise MissingAssetError(
+            f"the {DATA_TAG!r} release of {repo} has no asset {name}"
+        )
     return matched[1]
 
 
@@ -322,7 +344,7 @@ def _read_index(gh: Gh, *, repo: str) -> dict[str, Any]:
     """The `releases.json` on `repo`'s `DATA_TAG` release.
 
     Raises:
-        BuildError: when it is not JSON.
+        PublishedIndexError: when it is not JSON.
     """
     downloaded = gh(
         [
@@ -340,7 +362,7 @@ def _read_index(gh: Gh, *, repo: str) -> dict[str, Any]:
     try:
         return json.loads(downloaded)
     except json.JSONDecodeError as error:
-        raise BuildError(f"the published {INDEX_ASSET} is not JSON") from error
+        raise PublishedIndexError(f"the published {INDEX_ASSET} is not JSON") from error
 
 
 def add_to_index(
@@ -354,21 +376,34 @@ def add_to_index(
     Fields of `index` this package does not know are kept.
 
     Raises:
-        BuildError: when `index` is not a release index or its latest is not a
-            published name, the index already lists the release, or the drift
-            gate compared the release with a release other than the one it must:
-            the current latest for a new latest, or any listed release for an
-            older one, in each case the pack the index lists under that name.
+        PublishedIndexError: when `index` is not a release index, such as one
+            whose latest it does not list, or its latest is not a published name.
+        AlreadyPublishedError: when the index already lists the release.
+        DriftBaselineError: when the drift gate compared the release with a
+            release other than the one it must: the current latest for a new
+            latest, or any listed release for an older one, in each case the pack
+            the index lists under that name.
     """
     try:
         known = ReleaseIndex.model_validate(index)
     except ValidationError as error:
-        raise BuildError(
-            f"the published {INDEX_ASSET} is not an index this package reads: {error}"
+        # One line, as the command prints the refusal.
+        problems = "; ".join(
+            f"{'.'.join(map(str, problem['loc'])) or 'index'}: {problem['msg']}"
+            for problem in error.errors()
+        )
+        raise PublishedIndexError(
+            f"the published {INDEX_ASSET} is not an index this package reads: "
+            f"{problems}"
         ) from error
+    if known.latest is not None and not PUBLISHED_NAME.fullmatch(known.latest):
+        raise PublishedIndexError(
+            f"the published {INDEX_ASSET} names {known.latest!r} latest, which is "
+            "not a published name"
+        )
     release, previous = manifest.release, manifest.previous_release
     if (listed := known.releases.get(release)) is not None:
-        raise BuildError(
+        raise AlreadyPublishedError(
             f"release {release!r} is already published, as the pack with sha256 "
             f"{listed.sha256}; a name names one pack, so cut the release again "
             f"under a new name, such as {_next_revision(release)}"
@@ -382,13 +417,13 @@ def add_to_index(
             if known.latest is None
             else f"--previous naming {known.latest!r}, the latest published release"
         )
-        raise BuildError(
+        raise DriftBaselineError(
             f"the drift gate compared {release!r} with "
             f"{'nothing' if previous is None else repr(previous)}; cut it again "
             f"with {expected}"
         )
     if not newest and previous not in known.releases:
-        raise BuildError(
+        raise DriftBaselineError(
             f"the drift gate compared {release!r} with {previous!r}, which the "
             "index does not list; cut it again with --previous naming a published "
             "release"
@@ -401,7 +436,7 @@ def add_to_index(
                 if manifest.previous_pack_sha256 is None
                 else f"a copy from the pack with sha256 {manifest.previous_pack_sha256}"
             )
-            raise BuildError(
+            raise DriftBaselineError(
                 f"the drift gate compared {release!r} with {copy} of {previous!r}, "
                 f"and the index lists {previous!r} as the pack with sha256 "
                 f"{published}; cut it again with --previous naming the published "
@@ -421,10 +456,10 @@ def release_order(release: str) -> tuple[int, str, int]:
     2026a.
 
     Raises:
-        BuildError: when `release` is not a published name.
+        ReleaseNameError: when `release` is not a published name.
     """
     if not (matched := PUBLISHED_NAME.fullmatch(release)):
-        raise BuildError(
+        raise ReleaseNameError(
             f"release name {release!r} is not a published name: a year, a "
             "lowercase letter, and a revision after a re-cut, such as 2026a or "
             "2026a.1"

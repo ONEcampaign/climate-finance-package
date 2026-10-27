@@ -18,11 +18,17 @@ import warnings
 from collections.abc import Callable, Iterable, Mapping
 from importlib.resources import files
 from pathlib import Path
-from typing import Annotated, Literal, Unpack
+from typing import Annotated, Literal, Self, Unpack
 
 import polars as pl
 import pyarrow as pa
-from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    StringConstraints,
+    ValidationError,
+    model_validator,
+)
 
 from climate_finance import query
 from climate_finance.catalogue import unknown_name
@@ -111,13 +117,19 @@ class IndexEntry(BaseModel):
 
 
 class ReleaseIndex(BaseModel):
-    """The contents of `releases.json`: every published release and the newest.
-    Fields a later package adds are ignored."""
+    """The contents of `releases.json`: every published release and the newest,
+    which `releases` must list. Fields a later package adds are ignored."""
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     latest: ReleaseName | None = None
     releases: dict[ReleaseName, IndexEntry] = {}
+
+    @model_validator(mode="after")
+    def _latest_is_listed(self) -> Self:
+        if self.latest is not None and self.latest not in self.releases:
+            raise ValueError(f"latest is {self.latest!r}, which releases does not list")
+        return self
 
 
 def check_release_name(release: str) -> str:
@@ -629,16 +641,21 @@ def _resolve(index: ReleaseIndex, release: str, *, refreshed: bool) -> str:
     """
     name = index.latest if release == "latest" else release
     if not index.releases:
-        raise unknown_name(
-            release,
-            kind="release",
-            choices=(),
-            note=(
+        if refreshed:
+            note = (
                 "No release is published yet. Open a release directory with "
                 "cf.load(path=...). Releases are built with `cf-build release` and "
                 f"published at {RELEASES_PAGE}."
-            ),
-        )
+            )
+        else:
+            # The index shipped in the wheel predates any release published since.
+            named = "" if release == "latest" else f"{release!r}, "
+            note = (
+                f"This package's index lists no release. cf.load({named}"
+                "refresh=True) reads the newest index online, and "
+                "cf.load(path=...) opens a release directory."
+            )
+        raise unknown_name(release, kind="release", choices=(), note=note)
     if name is None or name not in index.releases:
         note = None
         if not refreshed and index.latest is not None:
