@@ -128,8 +128,8 @@ SampleOption = Annotated[
 PreviousOption = Annotated[
     Path | None,
     typer.Option(
-        help="The previous published release, for drift: its build directory or a "
-        "release directory."
+        help="The previous published release, for drift: its pack, the copy "
+        "cf.load() downloaded, or its build directory with its pack beside it."
     ),
 ]
 FirstReleaseOption = Annotated[

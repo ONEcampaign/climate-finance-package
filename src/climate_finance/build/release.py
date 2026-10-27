@@ -49,7 +49,10 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import shutil
 import tarfile
+import tempfile
+from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -140,7 +143,7 @@ from climate_finance.schema import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Mapping, Sequence
+    from collections.abc import Collection, Generator, Mapping, Sequence
 
     from climate_finance.build.stages import StageContext
 
@@ -1208,9 +1211,10 @@ def cut_release(
     """Build `release`, run the gates, record their results and pack it.
 
     The gates read the blind-sample labels from the config's review decisions, the
-    sample from the directory `sample` and the previous release from `previous`
-    (see `gate.run_gates`). Their rows, keyed by gate name, the previous release's
-    name and any waiver go into `release.json`. The pack is
+    sample from the directory `sample` and the previous release from `previous`, a
+    pack or a directory (`previous_baseline`; see `gate.run_gates`). Their rows,
+    keyed by gate name, the previous release's name and pack sha256 and any waiver
+    go into `release.json`. The pack is
     `<out_dir>/climate-finance-<release>.tar.zst`.
 
     Args:
@@ -1234,20 +1238,30 @@ def cut_release(
     build_config = load_config(config)
     if offline is None:
         offline = build_config.offline or (release_dir / "fetch").exists()
-    build_package.build(
-        release,
-        config=build_config.model_copy(update={"offline": offline}),
-        out_dir=out_dir,
-    )
-    results = gate.run_gates(
-        release_dir,
-        decisions=build_config.sources.review_decisions,
-        sample=sample,
-        previous=previous,
-        first_release=first_release,
-        drift_causes=build_config.drift_causes,
-        waive_precision=waive_precision is not None,
-    )
+    with ExitStack() as stack:
+        # Fixed before the build, so a pack that changes while it runs is not read.
+        baseline, previous_sha256 = (
+            (None, None)
+            if previous is None
+            else stack.enter_context(previous_baseline(previous))
+        )
+        build_package.build(
+            release,
+            config=build_config.model_copy(update={"offline": offline}),
+            out_dir=out_dir,
+        )
+        results = gate.run_gates(
+            release_dir,
+            decisions=build_config.sources.review_decisions,
+            sample=sample,
+            previous=baseline,
+            first_release=first_release,
+            drift_causes=build_config.drift_causes,
+            waive_precision=waive_precision is not None,
+        )
+        previous_name = (
+            None if baseline is None else load(path=baseline).manifest.release
+        )
     manifest_path = release_dir / "assemble" / "release.json"
     manifest = ReleaseManifest.model_validate_json(manifest_path.read_text())
     gated = manifest.model_copy(
@@ -1255,12 +1269,8 @@ def cut_release(
             "gates": gate.gate_results_json(results),
             "precision_gate_waived": waive_precision is not None,
             "precision_waiver": waive_precision,
-            "previous_release": None
-            if previous is None
-            else load(path=gate.release_path(previous)).manifest.release,
-            "previous_pack_sha256": None
-            if previous is None
-            else previous_pack_sha256(previous),
+            "previous_release": previous_name,
+            "previous_pack_sha256": previous_sha256,
         }
     )
     manifest_path.write_text(gated.model_dump_json(indent=2) + "\n")
@@ -1269,22 +1279,45 @@ def cut_release(
     )
 
 
-def previous_pack_sha256(previous: Path) -> str | None:
-    """The sha256 of the pack the release at `previous` came from, or None when
-    nothing records it.
+@contextmanager
+def previous_baseline(previous: Path) -> Generator[tuple[Path, str | None]]:
+    """The release directory the drift gate compares with, for `previous`, and
+    the sha256 of the pack whose bytes it holds, or None when no pack records it.
 
-    A release `cf.load()` downloaded records it in `release.PACK_SHA256`. For a
-    build's directory, `<out_dir>/<release>`, it is the sha256 of the pack
-    `cut_release` wrote beside it, `<out_dir>/climate-finance-<release>.tar.zst`.
+    A pack, given itself or lying beside a build's directory as
+    `<out_dir>/climate-finance-<release>.tar.zst`, is copied to a private
+    temporary directory, hashed and unpacked there, so the gate reads the bytes
+    whose sha256 is recorded, whatever happens to the pack or the build
+    afterwards. A release `cf.load()` downloaded is read in place with the sha256
+    it recorded in `release.PACK_SHA256`. Any other directory is read in place and
+    records no pack, which `cf-build publish` refuses once a release is published.
+
+    Raises:
+        BuildError: when the pack holds no release directory.
     """
-    directory = gate.release_path(previous)
-    if (stamp := directory / PACK_SHA256).exists():
-        return stamp.read_text().strip()
-    if directory == previous:
-        return None
-    name = load(path=directory).manifest.release
-    pack = previous.parent / f"{release_dirname(name)}.tar.zst"
-    return sha256_file(pack) if pack.exists() else None
+    pack = previous
+    if previous.is_dir():
+        directory = gate.release_path(previous)
+        if (stamp := directory / PACK_SHA256).exists():
+            yield directory, stamp.read_text().strip()
+            return
+        name = load(path=directory).manifest.release
+        pack = previous.parent / f"{release_dirname(name)}.tar.zst"
+        if directory == previous or not pack.is_file():
+            yield directory, None
+            return
+    with tempfile.TemporaryDirectory(prefix="previous-") as scratch:
+        copy = Path(scratch) / pack.name
+        shutil.copyfile(pack, copy)
+        with (
+            pa.input_stream(str(copy), compression="zstd") as stream,
+            tarfile.open(fileobj=stream, mode="r|") as tar,
+        ):
+            tar.extractall(Path(scratch) / "unpacked", filter="data")
+        unpacked = list((Path(scratch) / "unpacked").iterdir())
+        if len(unpacked) != 1 or not (unpacked[0] / "release.json").is_file():
+            raise BuildError(f"{pack} holds no release directory")
+        yield unpacked[0], sha256_file(copy)
 
 
 def packed_manifest(pack: Path) -> ReleaseManifest:

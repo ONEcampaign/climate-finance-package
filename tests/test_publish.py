@@ -6,6 +6,7 @@ of a few hundred kB and serves it from a server on loopback, which the socket gu
 allows, so it reaches no outside network and takes well under a second.
 """
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -449,7 +450,7 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
             tmp_path / RELEASE,
             tmp_path / "data" / "review_decisions.parquet",
             tmp_path / "sample",
-            previous,
+            previous / "assemble",
             waive,
         )
     ]
@@ -462,8 +463,10 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
         "precision": [{"passed": waive}],
         "drift": [{"passed": True}],
     }
-    # A build's directory names the release its `assemble/` holds.
+    # A build's directory names the release its `assemble/` holds, and with no pack
+    # beside it records none.
     assert manifest.previous_release == RELEASE
+    assert manifest.previous_pack_sha256 is None
 
 
 @pytest.mark.parametrize(
@@ -672,11 +675,14 @@ def test_publish_creates_the_data_release_then_uploads_the_pack_and_the_index(
     # Published, so anyone can download its assets, and it is not GitHub's latest.
     assert "--latest=false" in create
     assert "--draft" not in create
-    assert pack_upload[3] == str(pack.resolve())
+    # The upload reads a private copy of the pack, not the path given.
+    assert Path(pack_upload[3]).name == PACK
+    assert Path(pack_upload[3]).parent != tmp_path
     assert Path(index_upload[3]).name == publish.STAGED_INDEX_ASSET
     assert rename[:3] == ("api", "--method", "PATCH")
     assert github.assets is not None
     assert set(github.assets) == {PACK, publish.INDEX_ASSET}
+    assert not publish.recovery_index(pack).parent.exists()
     assert github.assets[PACK] == pack.read_bytes()
     entry = {
         "url": publish.asset_url(PACK),
@@ -804,29 +810,73 @@ def test_publish_refuses_a_name_already_published_or_drift_against_another_relea
     assert github.assets == assets
 
 
-def test_packs_without_an_index_are_refused_with_the_local_index_to_restore(
-    tmp_path: Path,
+@pytest.mark.parametrize("left", ["recovery-index", "nothing"])
+def test_packs_without_an_index_are_refused_naming_the_index_to_restore(
+    tmp_path: Path, left: str
 ) -> None:
     pack = release.pack_release(
-        gated(built_release(tmp_path / RELEASE), previous="2025a"),
-        out_path=tmp_path / PACK,
+        gated(built_release(tmp_path / RELEASE)), out_path=tmp_path / PACK
     )
-    # As after a publish that stopped between deleting the index and renaming the
-    # staged one.
-    github = FakeGitHub(
-        {
-            "climate-finance-2025a.tar.zst": b"pack",
-            publish.STAGED_INDEX_ASSET: indexed("2025a")[publish.INDEX_ASSET],
-        }
-    )
+
+    def interrupted(github: FakeGitHub) -> None:
+        # The first publish stops once its pack is up, before any index is.
+        if github.calls[-1][3].endswith(PACK):
+            raise BuildError("the connection dropped")
+
+    github = FakeGitHub(after_write=interrupted)
+    with pytest.raises(BuildError, match="connection dropped"):
+        publish.publish_release(pack, gh=github)
+    recovery = publish.recovery_index(pack)
+    if left == "nothing":
+        recovery.unlink()
+    github.after_write = None
 
     with pytest.raises(
         BuildError, match=r"holds packs but no releases\.json"
     ) as raised:
         publish.publish_release(pack, gh=github)
-    assert str(tmp_path / publish.INDEX_ASSET) in str(raised.value)
-    assert "--first-release" not in str(raised.value)
-    assert github.writes == []
+
+    message = str(raised.value)
+    assert str(recovery) in message
+    assert "--first-release" not in message
+    assert not (tmp_path / publish.INDEX_ASSET).exists()
+    assert [call[1] for call in github.writes] == ["create", "upload"]
+    if left == "recovery-index":
+        assert "No publish" not in message
+        # Following the message restores the index the stopped publish was writing.
+        upload = ("release", "upload", "data", str(recovery), "--clobber")
+        github([*upload, "--repo", publish.PUBLISH_REPO])
+        assert github.index()["releases"][RELEASE]["sha256"] == sha256_file(pack)
+    else:
+        assert "No publish of a pack in this directory" in message
+
+
+def test_a_pack_replaced_while_it_publishes_is_not_the_one_uploaded(
+    tmp_path: Path,
+) -> None:
+    pack = release.pack_release(
+        gated(built_release(tmp_path / RELEASE)), out_path=tmp_path / PACK
+    )
+    original = pack.read_bytes()
+    other = release.pack_release(
+        gated(built_release(tmp_path / "other" / RELEASE), settings={"gap_fill": True}),
+        out_path=tmp_path / "other" / PACK,
+    )
+    github = FakeGitHub()
+
+    def replacing(args: Sequence[str]) -> str:
+        # A concurrent build writes another pack to the path once checks begin.
+        if tuple(args[:2]) == ("release", "list"):
+            shutil.copyfile(other, pack)
+        return github(args)
+
+    published = publish.publish_release(pack, gh=replacing)
+
+    assert pack.read_bytes() != original
+    assert github.assets is not None
+    assert github.assets[PACK] == original
+    assert published.sha256 == hashlib.sha256(original).hexdigest()
+    assert github.index()["releases"][RELEASE]["sha256"] == published.sha256
 
 
 def test_an_index_another_publish_replaced_meanwhile_is_reported(
@@ -932,7 +982,8 @@ def test_the_publish_command_prints_each_gh_step_and_refuses_in_one_line(
     assert dry.exit_code == 0, dry.output
     assert "gh release list" in dry.output
     assert "would run: gh release create data" in dry.output
-    assert f"would run: gh release upload data {pack.resolve()}" in dry.output
+    assert "would run: gh release upload data " in dry.output
+    assert f"{PACK} --clobber" in dry.output
     assert "new index previewed in" in dry.output
     assert github.writes == []
 
@@ -990,22 +1041,56 @@ def test_the_index_url_is_the_data_release_asset() -> None:
     assert publish.asset_url(publish.INDEX_ASSET) == release_module.INDEX_URL
 
 
-@pytest.mark.parametrize("copy", ["downloaded", "build-beside-its-pack", "bare"])
-def test_the_previous_release_records_the_pack_it_came_from(
+def _double_climate(release_dir: Path) -> None:
+    """Rebuild `release_dir`'s `quality` with its climate totals doubled, with a
+    `release.json` that matches, as a build rerun after its pack was cut."""
+    assemble = release_dir / "assemble"
+    path = assemble / "quality.parquet"
+    pl.read_parquet(path).with_columns(pl.col("climate_usd") * 2).write_parquet(path)
+    manifest = ReleaseManifest.model_validate_json(
+        (assemble / "release.json").read_text()
+    )
+    entry = manifest.tables["quality"].model_copy(update={"sha256": sha256_file(path)})
+    (assemble / "release.json").write_text(
+        manifest.model_copy(
+            update={"tables": manifest.tables | {"quality": entry}}
+        ).model_dump_json()
+    )
+
+
+def _climate(directory: Path) -> float:
+    quality = cf.load(path=directory).table("quality")
+    return quality.select(pl.col("climate_usd").sum()).collect().item()
+
+
+@pytest.mark.parametrize(
+    "copy", ["pack", "build-beside-its-pack", "downloaded", "bare"]
+)
+def test_the_drift_baseline_holds_the_bytes_of_the_pack_it_records(
     tmp_path: Path, copy: str
 ) -> None:
     previous = built_release(tmp_path / "old" / RELEASE)
     pack = release.pack_release(previous, out_path=tmp_path / "old" / PACK)
-    if copy == "downloaded":
-        (previous / "assemble" / release_module.PACK_SHA256).write_text("a" * 64)
-        given, expected = previous / "assemble", "a" * 64
+    packed = (sha256_file(pack), _climate(previous / "assemble"))
+    _double_climate(previous)
+    rebuilt = _climate(previous / "assemble")
+    assert rebuilt == pytest.approx(2 * packed[1]) != packed[1]
+    if copy == "pack":
+        given, expected = pack, packed
     elif copy == "build-beside-its-pack":
-        given, expected = previous, sha256_file(pack)
+        given, expected = previous, packed
+    elif copy == "downloaded":
+        (previous / "assemble" / release_module.PACK_SHA256).write_text("a" * 64)
+        given, expected = previous / "assemble", ("a" * 64, rebuilt)
     else:
         pack.unlink()
-        given, expected = previous, None
+        given, expected = previous, (None, rebuilt)
 
-    assert release.previous_pack_sha256(given) == expected
+    with release.previous_baseline(given) as (baseline, sha256):
+        if pack.exists():
+            # The baseline was fixed on entry, so the pack may change now.
+            pack.write_bytes(b"replaced")
+        assert (sha256, _climate(baseline)) == pytest.approx(expected)
 
 
 @pytest.fixture

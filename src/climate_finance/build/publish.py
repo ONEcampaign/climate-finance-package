@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable, Sequence
@@ -35,6 +36,9 @@ DATA_TAG = "data"
 INDEX_ASSET = "releases.json"
 # The new index goes up under this name, then takes `INDEX_ASSET`'s place.
 STAGED_INDEX_ASSET = "releases.next.json"
+# The directory beside a pack that holds the index a publish is writing until
+# GitHub holds it (`recovery_index`).
+RECOVERY_DIR = "publish-recovery"
 # A published release name: a year, a letter, and a revision after a re-cut, such
 # as 2026a or 2026a.1. Candidates and test builds (2026a-rc) never match.
 PUBLISHED_NAME = re.compile(r"(\d{4})([a-z])(?:\.(\d+))?")
@@ -117,16 +121,19 @@ def publish_release(
     """Upload `pack` to `repo`'s `DATA_TAG` release and replace the index with one
     that lists it.
 
-    The current index is read from the release, or starts empty while the release
-    does not exist. The release is then created, published and not marked latest.
-    The pack goes up first. The new index goes up as `STAGED_INDEX_ASSET`
-    and then takes the old one's place by a delete and a rename, so `releases.json`
-    is missing only between those two API calls. The index is then read back and
-    must equal the one written. The new index keeps every field of the old one,
-    those this package does not know included. Once read back, it is written beside
-    `pack` as `releases.json`, the file to ship in the wheel's `data/` at the next
-    package release. Under `dry_run` nothing on GitHub or beside the pack changes,
-    and the new index goes to a temporary file.
+    Every check, the sha256 and the upload read one copy of `pack` in a private
+    temporary directory. The current index is read from the release, or starts
+    empty while the release does not exist. Before GitHub changes, the new index is
+    written to `recovery_index(pack)`. The release is then created, published and
+    not marked latest. The pack goes up first. The new index goes up as
+    `STAGED_INDEX_ASSET` and then takes the old one's place by a delete and a
+    rename, so `releases.json` is missing only between those two API calls. The
+    index is then read back and must equal the one written. The new index keeps
+    every field of the old one, those this package does not know included. Once
+    read back, it moves from the recovery directory to `releases.json` beside
+    `pack`, the file to ship in the wheel's `data/` at the next package release.
+    Under `dry_run` nothing on GitHub or beside the pack changes, and the new index
+    goes to a temporary file.
 
     Raises:
         GateFailedError: when the pack's gates keep it from publishing
@@ -138,58 +145,56 @@ def publish_release(
             refuses it (`add_to_index`), the index read back differs from the one
             written, the `DATA_TAG` release is a draft, or `gh` fails.
     """
-    manifest = publishable(pack)
-    release_order(manifest.release)
-    # The asset takes the file's name, so a renamed pack could replace another
-    # release's.
-    if pack.name != (expected := f"{release_dirname(manifest.release)}.tar.zst"):
-        raise BuildError(
-            f"{pack} holds release {manifest.release!r}; publish it as {expected}"
-        )
     if not _REPO.fullmatch(repo):
         raise BuildError(f"--repo {repo!r} is not a GitHub repository, owner/name")
-    where = ("--repo", repo)
-    assets = _data_assets(gh, repo=repo)
-    index: dict[str, Any] = {}
-    if assets is not None:
-        if INDEX_ASSET in assets:
-            index = _read_index(gh, repo=repo)
-        elif any(name.endswith(".tar.zst") for name in assets):
+    recovery = recovery_index(pack)
+    with tempfile.TemporaryDirectory(prefix="publish-") as scratch:
+        # Every check, the sha256 and the upload read one private copy, so a pack
+        # replaced at `pack` meanwhile is never published unchecked.
+        snapshot = Path(scratch) / pack.name
+        shutil.copyfile(pack, snapshot)
+        manifest = publishable(snapshot)
+        release_order(manifest.release)
+        # The asset takes the file's name, so a renamed pack could replace another
+        # release's.
+        if pack.name != (expected := f"{release_dirname(manifest.release)}.tar.zst"):
             raise BuildError(
-                f"the {DATA_TAG!r} release of {repo} holds packs but no "
-                f"{INDEX_ASSET}, as after a publish that stopped while replacing "
-                f"it. Upload the {INDEX_ASSET} the last publish wrote beside its "
-                f"pack, {pack.with_name(INDEX_ASSET)} when every pack is cut in one "
-                f"directory, with `gh release upload {DATA_TAG} <path> --repo "
-                f"{repo}`, then publish again"
+                f"{pack} holds release {manifest.release!r}; publish it as {expected}"
             )
-    sha256 = sha256_file(pack)
-    url = asset_url(pack.name, repo=repo)
-    updated = add_to_index(index, manifest=manifest, sha256=sha256, url=url)
-    rendered = json.dumps(updated, indent=2) + "\n"
-    create = (
-        "release",
-        "create",
-        DATA_TAG,
-        "--title",
-        _DATA_TITLE,
-        "--notes",
-        _DATA_NOTES,
-        "--latest=false",
-        *where,
-    )
-    delete = ("release", "delete-asset", DATA_TAG, INDEX_ASSET, "--yes", *where)
-    swap = (delete,) if INDEX_ASSET in (assets or ()) else ()
-    with tempfile.TemporaryDirectory() as scratch:
+        where = ("--repo", repo)
+        assets = _data_assets(gh, repo=repo)
+        index: dict[str, Any] = {}
+        if assets is not None:
+            if INDEX_ASSET in assets:
+                index = _read_index(gh, repo=repo)
+            elif any(name.endswith(".tar.zst") for name in assets):
+                raise BuildError(_missing_index(repo, recovery=recovery))
+        sha256 = sha256_file(snapshot)
+        url = asset_url(pack.name, repo=repo)
+        updated = add_to_index(index, manifest=manifest, sha256=sha256, url=url)
+        rendered = json.dumps(updated, indent=2) + "\n"
         staged = Path(scratch) / STAGED_INDEX_ASSET
         staged.write_text(rendered)
+        create = (
+            "release",
+            "create",
+            DATA_TAG,
+            "--title",
+            _DATA_TITLE,
+            "--notes",
+            _DATA_NOTES,
+            "--latest=false",
+            *where,
+        )
         # A pack asset the index does not name is left from a publish that stopped
         # before replacing the index, so it is replaced.
         uploads = (
             *([create] if assets is None else []),
-            ("release", "upload", DATA_TAG, str(pack.resolve()), "--clobber", *where),
+            ("release", "upload", DATA_TAG, str(snapshot), "--clobber", *where),
             ("release", "upload", DATA_TAG, str(staged), "--clobber", *where),
         )
+        delete = ("release", "delete-asset", DATA_TAG, INDEX_ASSET, "--yes", *where)
+        swap = (delete,) if INDEX_ASSET in (assets or ()) else ()
         if dry_run:
             preview = Path(tempfile.mkdtemp()) / INDEX_ASSET
             preview.write_text(rendered)
@@ -203,6 +208,10 @@ def publish_release(
                 commands=(*uploads, *swap, _rename(placeholder)),
                 dry_run=True,
             )
+        # Written before GitHub changes, so a publish that stops leaves the index
+        # that completes it where `_missing_index` names it.
+        recovery.parent.mkdir(exist_ok=True)
+        recovery.write_text(rendered)
         for command in uploads:
             gh(command)
     rename = _rename(_asset_api_path(gh, repo=repo, name=STAGED_INDEX_ASSET))
@@ -215,7 +224,8 @@ def publish_release(
             f"{manifest.release} again, which adds it to the index that is there now"
         )
     index_path = pack.with_name(INDEX_ASSET)
-    index_path.write_text(rendered)
+    recovery.replace(index_path)
+    recovery.parent.rmdir()
     return Publication(
         release=manifest.release,
         url=url,
@@ -224,6 +234,34 @@ def publish_release(
         index=index_path,
         commands=(*uploads, *swap, rename),
         dry_run=False,
+    )
+
+
+def recovery_index(pack: Path) -> Path:
+    """Where publishing `pack` keeps the index it is writing until GitHub holds it:
+    `publish-recovery/releases.json` beside the pack, named so that
+    `gh release upload` attaches it as the index."""
+    return pack.with_name(RECOVERY_DIR) / INDEX_ASSET
+
+
+def _missing_index(repo: str, *, recovery: Path) -> str:
+    """Why a `DATA_TAG` release with packs and no index is refused, and the index
+    that restores it."""
+    stopped = (
+        f"the {DATA_TAG!r} release of {repo} holds packs but no {INDEX_ASSET}, as "
+        "after a publish that stopped before its index was in place"
+    )
+    if recovery.is_file():
+        return (
+            f"{stopped}. The index that publish was writing is {recovery}; upload "
+            f"it with `gh release upload {DATA_TAG} {recovery} --repo {repo}`, "
+            "then publish again"
+        )
+    return (
+        f"{stopped}. No publish of a pack in this directory left an index at "
+        f"{recovery}; upload the publish-recovery/{INDEX_ASSET} of the publish "
+        f"that stopped, from beside its pack, with `gh release upload {DATA_TAG} "
+        f"<path> --repo {repo}`, then publish again"
     )
 
 
