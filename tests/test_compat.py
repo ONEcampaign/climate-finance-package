@@ -1,9 +1,12 @@
 """`ClimateData`, the deprecated 1.x wrapper, against `spending()` on the fixture."""
 
+import shutil
 import subprocess
 import sys
 import warnings
 from collections.abc import Callable
+from importlib import import_module
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -12,9 +15,18 @@ import pytest
 from make_fixture import FIXTURE_DIR
 
 import climate_finance as cf
+from climate_finance import compat
+from climate_finance import release as release_module
+from climate_finance._removed import REMOVED_MODULES
 from climate_finance.compat import ClimateData, set_climate_finance_data_path
-from climate_finance.errors import CoverageWarning
+from climate_finance.errors import (
+    ClimateFinanceDeprecationWarning,
+    CoverageWarning,
+    RemovedError,
+    RemovedModuleError,
+)
 from climate_finance.methods import Method
+from climate_finance.release import IndexEntry, ReleaseIndex, release_dirname
 from climate_finance.spec import Flow, SpecInputs
 
 RELEASE = cf.load(path=FIXTURE_DIR)
@@ -24,7 +36,7 @@ UNCOVERED_COMMITMENTS = "years 2023 to 2024 return no rows"
 
 
 def _climate_data(**kwargs: Any) -> ClimateData:
-    with pytest.warns(DeprecationWarning, match=r"spending\(\.\.\.\)"):
+    with pytest.warns(ClimateFinanceDeprecationWarning, match=r"spending\(\.\.\.\)"):
         return ClimateData(years=YEARS, release=RELEASE, **kwargs)
 
 
@@ -37,24 +49,29 @@ def _expected(*parts: tuple[str, str, cf.Result]) -> pd.DataFrame:
     return frame.to_pandas()
 
 
-def test_get_data_equals_spending_for_each_flow() -> None:
+def test_get_data_equals_traced_spending_for_each_flow() -> None:
     climate_data = _climate_data(providers=[5, "France"], recipients="Kenya")
     with pytest.warns(CoverageWarning, match=UNCOVERED_COMMITMENTS):
         data = climate_data.load_spending_data(
-            flows=["gross_disbursements", "commitments", "net_disbursements"]
+            flows=["gross_disbursements", "commitments", "grant_equivalent"],
+            source="OECD_CRDF_CRS",
         ).get_data()
 
     def spending(flow: Flow) -> cf.Result:
         return RELEASE.spending(
-            providers=[5, "France"], recipients="Kenya", years=YEARS, flow=flow
+            providers=[5, "France"],
+            recipients="Kenya",
+            years=YEARS,
+            flow=flow,
+            untraced=False,
         )
 
     with pytest.warns(CoverageWarning, match=UNCOVERED_COMMITMENTS):
         commitments = spending("commitments")
     expected = _expected(
-        ("OECD_CRS", "gross_disbursements", spending("disbursements")),
-        ("OECD_CRS", "commitments", commitments),
-        ("OECD_CRS", "net_disbursements", spending("net_disbursements")),
+        ("OECD_CRDF_CRS", "gross_disbursements", spending("disbursements")),
+        ("OECD_CRDF_CRS", "commitments", commitments),
+        ("OECD_CRDF_CRS", "grant_equivalent", spending("grant_equivalent")),
     )
     assert len(data)
     pd.testing.assert_frame_equal(data, expected)
@@ -63,19 +80,25 @@ def test_get_data_equals_spending_for_each_flow() -> None:
 @pytest.mark.parametrize(
     ("configure", "load", "spending"),
     [
-        (lambda data: data, {"methodology": "OECD"}, {"method": cf.methods.OECD}),
+        (
+            lambda data: data,
+            {"methodology": "OECD", "source": "OECD_CRDF", "flows": "commitments"},
+            {"method": cf.methods.OECD, "flow": "commitments"},
+        ),
         (
             lambda data: data.set_custom_spending_methodology((0.5, 0.8), False),
-            {"methodology": "custom"},
+            {"methodology": "custom", "source": "OECD_CRDF_CRS"},
             {"method": Method(significant=0.5, principal=0.8, highest_marker=False)},
         ),
         (
             lambda data: data.set_only_oda(),
-            {"source": "OECD_CRDF_DONOR"},
-            {"oda_only": True, "view": "provider"},
+            {"source": "OECD_CRDF_DONOR", "flows": "commitments"},
+            {"oda_only": True, "view": "provider", "flow": "commitments"},
         ),
     ],
 )
+# The fixture's commitments end before YEARS do, which the commitment rows warn of.
+@pytest.mark.filterwarnings("ignore::climate_finance.errors.CoverageWarning")
 def test_1x_settings_map_onto_spending_arguments(
     configure: Callable[[ClimateData], ClimateData],
     load: dict[str, str],
@@ -84,19 +107,54 @@ def test_1x_settings_map_onto_spending_arguments(
     climate_data = configure(_climate_data())
     data = climate_data.load_spending_data(**load).get_data()
 
-    source = load.get("source", "OECD_CRS")
-    inputs: SpecInputs = {**spending, "years": YEARS}
-    expected = _expected((source, "gross_disbursements", RELEASE.spending(**inputs)))
+    inputs: SpecInputs = {**spending, "years": YEARS, "untraced": False}
+    flow = load.get("flows", "gross_disbursements")
+    expected = _expected((load["source"], flow, RELEASE.spending(**inputs)))
     pd.testing.assert_frame_equal(data, expected)
 
 
 def test_the_methodology_argument_overrides_the_set_methods_as_in_1x() -> None:
-    data = _climate_data().set_oecd_spending_methodology().load_spending_data()
+    data = (
+        _climate_data()
+        .set_oecd_spending_methodology()
+        .load_spending_data(source="OECD_CRDF_CRS")
+    )
 
     expected = _expected(
-        ("OECD_CRS", "gross_disbursements", RELEASE.spending(years=YEARS))
+        (
+            "OECD_CRDF_CRS",
+            "gross_disbursements",
+            RELEASE.spending(years=YEARS, untraced=False),
+        )
     )
     pd.testing.assert_frame_equal(data.get_data(), expected)
+
+
+def test_the_data_path_is_where_climate_data_downloads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shutil.copytree(FIXTURE_DIR, tmp_path / release_dirname("fixture"))
+    index = ReleaseIndex(
+        latest="fixture",
+        releases={"fixture": IndexEntry(url="https://example.org/pack", sha256="0")},
+    )
+    monkeypatch.setattr(release_module, "_shipped_index", lambda: index)
+    monkeypatch.setattr(compat, "_cache_dir", None)
+
+    with pytest.warns(ClimateFinanceDeprecationWarning, match="cache_dir="):
+        set_climate_finance_data_path(tmp_path)
+    with pytest.warns(ClimateFinanceDeprecationWarning):
+        climate_data = ClimateData(years=YEARS)
+    data = climate_data.load_spending_data(source="OECD_CRDF_CRS").get_data()
+
+    expected = _expected(
+        (
+            "OECD_CRDF_CRS",
+            "gross_disbursements",
+            RELEASE.spending(years=YEARS, untraced=False),
+        )
+    )
+    pd.testing.assert_frame_equal(data, expected)
 
 
 def test_importing_the_package_warns_only_when_a_1x_name_is_used() -> None:
@@ -114,34 +172,91 @@ def test_importing_the_package_warns_only_when_a_1x_name_is_used() -> None:
     )
     assert quiet.returncode == 0, quiet.stderr
 
-    with pytest.warns(DeprecationWarning, match="climate_finance.ClimateData"):
+    with pytest.warns(DeprecationWarning, match=r"use climate_finance.load\(\)"):
         from climate_finance import ClimateData as Imported
 
     assert Imported is ClimateData
 
 
 def test_constructing_climate_data_warns_with_the_replacement() -> None:
-    with pytest.warns(DeprecationWarning, match="goes in climate-finance 3.0"):
+    with pytest.warns(DeprecationWarning, match="goes in 3.0"):
         ClimateData(years=YEARS, release=RELEASE)
 
 
 @pytest.mark.parametrize(
-    ("call", "replacement"),
+    ("call", "removed", "replacement"),
     [
-        (lambda: _climate_data().load_spending_data(source="UNFCCC"), "reconcile"),
-        (lambda: _climate_data().as_share_of_total(), "share_of_total"),
-        (lambda: ClimateData.available_flows(), "flows.list"),
         (
-            lambda: set_climate_finance_data_path("data"),
-            "CLIMATE_FINANCE_CACHE",
+            lambda: _climate_data().load_spending_data(flows="net_disbursements"),
+            "flows='net_disbursements'",
+            "spending(flow='net_disbursements')",
         ),
+        (
+            lambda: _climate_data().load_spending_data(),
+            "source='OECD_CRS'",
+            "source='OECD_CRDF_CRS'",
+        ),
+        (
+            lambda: _climate_data().load_spending_data(source="OECD_CRS_ALLOCABLE"),
+            "source='OECD_CRS_ALLOCABLE'",
+            "source='OECD_CRDF_CRS'",
+        ),
+        (
+            lambda: _climate_data().load_spending_data(
+                source="OECD_CRDF_CRS_ALLOCABLE"
+            ),
+            "source='OECD_CRDF_CRS_ALLOCABLE'",
+            "spending(untraced=False)",
+        ),
+        (
+            lambda: _climate_data().load_spending_data(source="OECD_CRDF"),
+            "source='OECD_CRDF' with flows='gross_disbursements'",
+            "source='OECD_CRDF_CRS'",
+        ),
+        (
+            lambda: _climate_data().load_spending_data(
+                source="OECD_CRDF_DONOR",
+                flows=["commitments", "grant_equivalent"],
+            ),
+            "source='OECD_CRDF_DONOR' with flows='grant_equivalent'",
+            "view='provider'",
+        ),
+        (
+            lambda: _climate_data().load_spending_data(source="UNFCCC"),
+            "source='UNFCCC'",
+            "reconcile()",
+        ),
+        (lambda: compat.get_unfccc_data(), "get_unfccc_data", "reconcile()"),
+        (
+            lambda: _climate_data().as_share_of_total(),
+            "as_share_of_total",
+            "share_of_total()",
+        ),
+        (lambda: ClimateData.available_flows(), "available_flows", "flows.list()"),
     ],
 )
-def test_1x_calls_without_an_equivalent_name_the_replacement(
-    call: Callable[[], object], replacement: str
+def test_1x_choices_of_changed_meaning_or_none_name_the_2_0_call(
+    call: Callable[[], object], removed: str, replacement: str
 ) -> None:
-    with pytest.raises(NotImplementedError, match=replacement):
+    with pytest.raises(RemovedError) as refused:
         call()
+
+    assert refused.value.removed == removed
+    assert replacement in refused.value.replacement
+
+
+@pytest.mark.parametrize("module", sorted(REMOVED_MODULES))
+def test_a_removed_1x_module_names_its_replacement(module: str) -> None:
+    with pytest.raises(RemovedModuleError) as refused:
+        import_module(f"climate_finance.{module}.anything")
+
+    assert refused.value.removed == f"climate_finance.{module}"
+    assert isinstance(refused.value, ImportError)
+
+
+def test_importing_a_removed_module_from_the_package_raises_the_same_error() -> None:
+    with pytest.raises(RemovedModuleError):
+        from climate_finance import unfccc  # noqa: F401
 
 
 @pytest.mark.parametrize(
@@ -156,13 +271,23 @@ def test_choices_1x_refused_are_still_refused(
     kwargs: dict[str, Any], message: str
 ) -> None:
     with pytest.raises(ValueError, match=message), warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
+        warnings.simplefilter("ignore", ClimateFinanceDeprecationWarning)
         ClimateData(years=YEARS, release=RELEASE, **kwargs)
 
 
 def test_custom_methodology_needs_its_coefficients_first() -> None:
     with pytest.raises(ValueError, match="set_custom_spending_methodology"):
         _climate_data().load_spending_data(methodology="custom")
+
+
+def test_get_data_without_pandas_names_the_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    climate_data = _climate_data().load_spending_data(source="OECD_CRDF_CRS")
+    monkeypatch.setitem(sys.modules, "pandas", None)
+
+    with pytest.raises(ImportError, match=r"climate-finance\[pandas\]"):
+        climate_data.get_data()
 
 
 def test_get_data_before_loading_raises_as_in_1x() -> None:

@@ -1,24 +1,65 @@
-"""Errors raised by the analysis layer and shared with the build."""
+"""Errors and warnings raised by the analysis layer and shared with the build."""
 
+import re
 from collections.abc import Mapping, Sequence
+from typing import ClassVar, Self, override
 
 # The suggestions a message shows before it trails off.
 _SHOWN = 5
+# The boundaries between the words of a class name, as in `UnknownName` and `CRDFRow`.
+_WORD_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 
 
 class ClimateFinanceError(Exception):
-    """Base class for every climate_finance error."""
+    """Base class for every climate_finance error.
+
+    `code` is the class's stable, machine-readable name, which handlers and tests
+    match. It is the class name in snake case without its `Error` suffix, such as
+    `unknown_provider` for `UnknownProviderError`. The message ends with it in
+    brackets, as `[unknown_provider]`, and may change between versions where the code
+    does not. Every subclass pickles with its attributes, so an error raised in a
+    worker process reaches the parent intact.
+    """
+
+    code: ClassVar[str] = "climate_finance"
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if "code" not in cls.__dict__:
+            cls.code = _WORD_BOUNDARY.sub(
+                "_", cls.__name__.removesuffix("Error")
+            ).lower()
+
+    @override
+    def __str__(self) -> str:
+        message = super().__str__()
+        return f"{message} [{self.code}]" if message else f"[{self.code}]"
+
+    @override
+    def __reduce__(
+        self,
+    ) -> tuple[object, tuple[type[Self], tuple[object, ...]], dict[str, object]]:
+        # Unpickling calls the class with `args` by default, which fails for a class
+        # whose constructor takes keywords. Rebuild without the constructor and
+        # restore the attributes, `__notes__` included.
+        return _rebuild, (type(self), self.args), self.__dict__
+
+
+def _rebuild[E: ClimateFinanceError](cls: type[E], args: tuple[object, ...]) -> E:
+    """An instance of `cls` holding `args`, before its attributes are restored."""
+    return cls.__new__(cls, *args)
 
 
 class SourceUnavailableError(ClimateFinanceError):
     """A source file or service could not be read."""
 
 
-class InvalidInputError(ClimateFinanceError, TypeError):
+class InvalidInputError(ClimateFinanceError, ValueError, TypeError):
     """An argument in a form or of a value the call does not take, such as
     `years="2022"`, an unknown keyword, or an agency where a call reads providers.
-    The message names the form the call takes. It is a `TypeError`, as Python's
-    refusal of an unexpected keyword is, so pydantic validators pass it through."""
+    The message names the form the call takes. It is a `ValueError`, as Python's
+    refusal of a bad value is, and a `TypeError`, as its refusal of an unexpected
+    keyword is."""
 
 
 class UnknownNameError(ClimateFinanceError, LookupError):
@@ -90,7 +131,8 @@ class ReleaseFormatError(ClimateFinanceError):
         super().__init__(
             f"Release {release!r} has data format {data_format}, and this version "
             f"of climate-finance reads data formats up to {supported}. Upgrade "
-            f"climate-finance to a version that reads data format {data_format}."
+            f"climate-finance to a version that reads data format {data_format}: "
+            "pip install -U climate-finance"
         )
 
 
@@ -122,6 +164,47 @@ class SchemaError(ClimateFinanceError):
         super().__init__(f"Table {table!r} fails its schema: {detail}")
 
 
-class CoverageWarning(UserWarning):
-    """A query asks for years its release tables hold no rows for. Silence it with
+class RemovedError(ClimateFinanceError):
+    """A 1.x call, choice or module that 2.0 removed, or whose meaning 2.0 changed.
+    `removed` names it, and `replacement` says what to use in 2.0 or that nothing
+    replaces it."""
+
+    def __init__(self, removed: str, *, replacement: str) -> None:
+        self.removed = removed
+        self.replacement = replacement
+        super().__init__(f"{removed} is gone in climate-finance 2.0; {replacement}")
+
+
+class RemovedModuleError(RemovedError, ModuleNotFoundError):
+    """A 1.x module that 2.0 removed, such as `climate_finance.unfccc`. It is a
+    `ModuleNotFoundError`, so an `except ImportError` guard still catches it. Its
+    `name` is None, because a module name there would let
+    `from climate_finance import unfccc` swallow the error and raise a bare
+    `ImportError`."""
+
+
+class ClimateFinanceWarning(UserWarning):
+    """Base class for every climate_finance warning. Turn them all into errors with
+    `warnings.filterwarnings("error", category=cf.errors.ClimateFinanceWarning)`."""
+
+
+class CoverageWarning(ClimateFinanceWarning):
+    """A query asks for years its release tables hold no rows for, or names a
+    provider that has no rows the query counts. Silence it with
     `warnings.filterwarnings("ignore", category=cf.errors.CoverageWarning)`."""
+
+
+class DoubleCountWarning(ClimateFinanceWarning):
+    """A result whose figures count some money twice when added to the results of
+    separate queries, as EU Institutions' provider-view figures do. Silence it
+    with `warnings.filterwarnings("ignore", category=cf.errors.DoubleCountWarning)`.
+    """
+
+
+class ClimateFinanceDeprecationWarning(ClimateFinanceWarning, DeprecationWarning):
+    """A call deprecated in version `since` that goes in `expected_removal`. Python
+    shows it for calls in `__main__`, such as a script or a notebook cell, and
+    hides it elsewhere, as it does any `DeprecationWarning`."""
+
+    since: ClassVar[str] = "2.0"
+    expected_removal: ClassVar[str] = "3.0"
