@@ -1,12 +1,21 @@
-"""Conversion joins one DAC factor per provider and year, with the DAC total as
-the series for providers that have none. Provenance identifies the factors used."""
+"""Conversion joins one factor per provider and year from the release's
+`conversion_factors`, with the DAC total as the series for providers that have
+none. Provenance identifies the factors used."""
+
+from typing import Literal
 
 import polars as pl
 import pytest
 
-from climate_finance import convert as convert_module
-from climate_finance.convert import DAC_TOTAL, convert, factors_hash, provenance
-from climate_finance.errors import SourceUnavailableError
+from climate_finance.build.fetch import dac_factors
+from climate_finance.convert import (
+    DAC_TOTAL,
+    convert,
+    factors_hash,
+    provenance,
+    target_factors,
+)
+from climate_finance.errors import InvalidInputError, SourceUnavailableError
 
 GERMANY, IDA = 5, 905
 FACTORS = pl.DataFrame(
@@ -18,10 +27,11 @@ FACTORS = pl.DataFrame(
     schema={"entity_code": pl.Int32, "year": pl.Int16, "factor": pl.Float64},
 )
 
-
-@pytest.fixture
-def factors(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(convert_module, "dac_factors", lambda **_: FACTORS)
+# A release's table: FACTORS as EUR at current prices and in 2022 and 2024 prices.
+TABLE = pl.concat(
+    FACTORS.with_columns(currency=pl.lit("EUR"), base_year=pl.lit(base, pl.Int16))
+    for base in (None, 2022, 2024)
+).lazy()
 
 
 def _amounts(*rows: tuple[int, int, float]) -> pl.LazyFrame:
@@ -32,11 +42,10 @@ def _amounts(*rows: tuple[int, int, float]) -> pl.LazyFrame:
     )
 
 
-@pytest.mark.usefixtures("factors")
 def test_each_provider_takes_its_own_factor_or_the_dac_total() -> None:
     frame = _amounts((GERMANY, 2021, 100.0), (GERMANY, 2022, 100.0), (IDA, 2022, 10.0))
 
-    result = convert(frame, columns=["value"], currency="EUR", prices=2024).collect()
+    result = convert(frame, columns=["value"], factors=FACTORS, release="r").collect()
 
     assert result.columns == ["provider_code", "year", "value"]
     assert result.sort("provider_code", "year")["value"].to_list() == pytest.approx(
@@ -44,20 +53,45 @@ def test_each_provider_takes_its_own_factor_or_the_dac_total() -> None:
     )
 
 
-@pytest.mark.usefixtures("factors")
 def test_a_year_without_any_factor_raises_on_collection() -> None:
     frame = _amounts((GERMANY, 2023, 100.0))
 
-    converted = convert(frame, columns=["value"], currency="GBP", prices="current")
+    converted = convert(frame, columns=["value"], factors=FACTORS, release="r")
 
-    with pytest.raises(SourceUnavailableError, match=r"\(5, 2023\)"):
+    with pytest.raises(SourceUnavailableError, match=r"release r .*\(5, 2023\)"):
         converted.collect()
 
 
-def test_usd_at_current_prices_returns_the_plan_unchanged() -> None:
+def test_usd_at_current_prices_reads_no_factors_and_returns_the_plan() -> None:
     frame = _amounts((IDA, 2030, 1.0))
 
-    assert convert(frame, columns=["value"], currency="USD", prices="current") is frame
+    assert target_factors(TABLE, release="r", currency="USD", prices="current") is None
+    assert convert(frame, columns=["value"], factors=None, release="r") is frame
+
+
+@pytest.mark.parametrize("prices", ["current", 2022])
+def test_a_target_reads_its_rows_of_the_release_table(prices: int | str) -> None:
+    factors = target_factors(TABLE, release="r", currency="EUR", prices=prices)
+
+    assert factors is not None
+    assert factors.sort("entity_code", "year").equals(
+        FACTORS.sort("entity_code", "year")
+    )
+
+
+@pytest.mark.parametrize(
+    ("currency", "prices", "shipped"),
+    [
+        ("EUR", 2021, "2022 to 2024"),
+        ("EUR", 2025, "2022 to 2024"),
+        ("GBP", 2022, "none"),
+    ],
+)
+def test_a_base_year_the_release_does_not_ship_is_refused(
+    currency: str, prices: int, shipped: str
+) -> None:
+    with pytest.raises(InvalidInputError, match=f"base years {shipped}"):
+        target_factors(TABLE, release="r", currency=currency, prices=prices)
 
 
 def _factors(germany: float) -> pl.DataFrame:
@@ -73,38 +107,34 @@ def test_factor_hash_follows_the_factors_and_ignores_row_order() -> None:
     assert factors_hash(FACTORS) == factors_hash(FACTORS.reverse())
 
 
-def test_provenance_changes_when_the_dac_factors_change(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    hashes = []
-    for germany in (0.8, 0.8, 0.9):
-        monkeypatch.setattr(
-            convert_module,
-            "dac_factors",
-            lambda *, germany=germany, **_: _factors(germany),
-        )
-        conversion = provenance(currency="EUR", prices=2024)
-        assert conversion is not None
-        hashes.append(conversion.factors_sha256)
+def test_provenance_carries_the_table_digest_and_follows_the_factors() -> None:
+    conversions = [
+        provenance(_factors(germany), table_sha256="t") for germany in (0.8, 0.8, 0.9)
+    ]
 
+    assert all(conversion is not None for conversion in conversions)
+    hashes = [conversion.factors_sha256 for conversion in conversions if conversion]
     assert hashes[0] == hashes[1] != hashes[2]
-    assert conversion.pydeflate_version
+    assert {conversion.table_sha256 for conversion in conversions if conversion} == {
+        "t"
+    }
 
 
 def test_usd_at_current_prices_has_no_provenance() -> None:
-    assert provenance(currency="USD", prices="current") is None
+    assert provenance(None, table_sha256="t") is None
 
 
 @pytest.mark.integration
 @pytest.mark.parametrize(("currency", "prices"), [("GBP", 2024), ("CAD", "current")])
-def test_factors_match_pydeflate_on_its_own_frame(
-    currency: str, prices: int | str
+def test_fetched_factors_match_pydeflate_on_its_own_frame(
+    currency: str, prices: int | Literal["current"]
 ) -> None:
     import pydeflate
 
     rows = [(GERMANY, 2022, 100.0), (IDA, 2022, 100.0)]
+    factors = dac_factors(currency=currency, prices=prices)
     ours = convert(
-        _amounts(*rows), columns=["value"], currency=currency, prices=prices
+        _amounts(*rows), columns=["value"], factors=factors, release="r"
     ).collect()
     frame = pl.DataFrame(
         rows, schema=["provider_code", "year", "value"], orient="row"
@@ -129,7 +159,8 @@ def test_factors_match_pydeflate_on_its_own_frame(
 @pytest.mark.integration
 def test_euro_conversion_uses_the_dac_euro_rate() -> None:
     frame = _amounts((GERMANY, 2022, 100.0))
+    factors = dac_factors(currency="EUR", prices="current")
 
-    result = convert(frame, columns=["value"], currency="EUR", prices="current")
+    result = convert(frame, columns=["value"], factors=factors, release="r")
 
     assert result.collect()["value"].to_list() == pytest.approx([95.09], rel=1e-3)

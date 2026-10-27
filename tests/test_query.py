@@ -23,7 +23,6 @@ from polars.testing import assert_frame_equal
 from releases import Edit, copy_release
 
 import climate_finance as cf
-from climate_finance import convert as convert_module
 from climate_finance.catalogue import Agency, agency_name
 from climate_finance.errors import (
     CoverageWarning,
@@ -1268,22 +1267,75 @@ def test_explain_names_the_method_view_and_units() -> None:
     [({}, False), ({"currency": "EUR"}, True), ({"prices": 2024}, True)],
 )
 def test_converted_results_carry_conversion_provenance(
-    monkeypatch: pytest.MonkeyPatch, spec: SpecInputs, converted: bool
+    spec: SpecInputs, converted: bool
 ) -> None:
-    factors = pl.DataFrame(
-        {"entity_code": [5, 20001], "year": [2022, 2022], "factor": [0.8, 0.5]},
-        schema={"entity_code": pl.Int32, "year": pl.Int16, "factor": pl.Float64},
-    )
-    monkeypatch.setattr(convert_module, "dac_factors", lambda **_: factors)
-
     inputs: SpecInputs = {**spec, "years": 2022}
     result = SNAP.spending(**inputs)
 
     assert (result.meta.conversion is not None) is converted
     if converted:
+        table = SNAP.manifest.tables["conversion_factors"].sha256
+        assert result.meta.conversion.table_sha256 == table
         assert result.meta.conversion.factors_sha256 in result.explain()
     else:
         assert "Conversion factors" not in result.explain()
+
+
+def test_a_query_converts_with_the_factors_its_release_ships(tmp_path: Path) -> None:
+    def double_germany(factors: pl.DataFrame) -> pl.DataFrame:
+        return factors.with_columns(
+            factor=pl.when(pl.col("entity_code") == DEU)
+            .then(pl.col("factor") * 2)
+            .otherwise(pl.col("factor"))
+        )
+
+    other = cf.load(
+        path=copy_release(
+            tmp_path / "release", edits={"conversion_factors": double_germany}
+        )
+    )
+    spec: SpecInputs = {"providers": [DEU, FRA], "years": 2022, "currency": "EUR"}
+    usd = SNAP.spending(**{**spec, "currency": "USD"}).table
+    ours, theirs = SNAP.spending(**spec), other.spending(**spec)
+
+    factors = pl.read_parquet(FIXTURE_DIR / "conversion_factors.parquet").filter(
+        currency="EUR", year=2022
+    )
+    expected = usd.join(
+        factors.filter(pl.col("base_year").is_null()).select(
+            provider_code="entity_code", factor="factor"
+        ),
+        on="provider_code",
+    ).select("provider_code", value=pl.col("value") * pl.col("factor"))
+    by_provider = ours.table.group_by("provider_code").agg(pl.sum("value"))
+    assert_frame_equal(
+        by_provider.sort("provider_code"),
+        expected.group_by("provider_code").agg(pl.sum("value")).sort("provider_code"),
+    )
+    doubled = theirs.table.filter(provider_code=DEU)["value"].sum()
+    assert doubled == pytest.approx(
+        2 * ours.table.filter(provider_code=DEU)["value"].sum()
+    )
+    assert ours.meta.conversion is not None and theirs.meta.conversion is not None
+    assert ours.meta.conversion.factors_sha256 != theirs.meta.conversion.factors_sha256
+    assert ours.meta.conversion.table_sha256 != theirs.meta.conversion.table_sha256
+
+
+def test_a_base_year_the_release_does_not_ship_is_refused() -> None:
+    with pytest.raises(InvalidInputError, match="base years 2022 to 2024"):
+        SNAP.spending(prices=2019)
+
+
+def test_a_result_carries_the_build_identity_of_its_release() -> None:
+    result = SNAP.spending(view="provider", providers=5, years=2021)
+    build = SNAP.manifest.build
+
+    assert result.meta.build == build
+    explained = next(
+        line for line in result.explain().splitlines() if "Built by" in line
+    )
+    assert build.package_source_sha256 in explained
+    assert build.environment_sha256 in explained
 
 
 def test_share_of_total_divides_each_key_by_its_total_flows() -> None:

@@ -5,7 +5,9 @@ from __future__ import annotations
 import functools
 import hashlib
 import inspect
+import json
 import os
+import re
 import shutil
 import tarfile
 import tempfile
@@ -14,17 +16,19 @@ import warnings
 from collections.abc import Callable, Iterable, Mapping
 from importlib.resources import files
 from pathlib import Path
-from typing import Literal, Unpack
+from typing import Annotated, Literal, Unpack
 
 import polars as pl
 import pyarrow as pa
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from climate_finance import query
 from climate_finance.catalogue import unknown_name
 from climate_finance.errors import (
     CoverageWarning,
+    FormatTableError,
     InvalidInputError,
+    ReleaseFormatError,
     ReleaseIntegrityError,
     SourceUnavailableError,
     WithheldTableError,
@@ -33,6 +37,8 @@ from climate_finance.frozen import unknown_keyword
 from climate_finance.methods import ONE, Method, MethodRange
 from climate_finance.result import Quality, Reconciliation, Result, year_runs
 from climate_finance.schema import (
+    DATA_FORMAT,
+    FORMAT_TABLES,
     NET_FLOWS,
     RELEASE_TABLES,
     ReleaseManifest,
@@ -63,6 +69,9 @@ _CHUNK = 1 << 20
 SYNTHETIC_RELEASE = "fixture"
 # Where releases are published, for the error `load` gives before the first one.
 RELEASES_PAGE = "https://github.com/ONEcampaign/climate-finance-package/releases"
+# A release name is one path segment of letters, digits, dots, underscores and
+# hyphens that does not start with a dot, so it cannot climb out of a directory.
+_RELEASE_NAME = r"[A-Za-z0-9_][A-Za-z0-9._-]*"
 # A warning names the first caller outside the package.
 _PACKAGE_DIR = str(Path(__file__).parent)
 # What each flow reads, as a coverage warning names it.
@@ -73,6 +82,9 @@ _FLOW_TEXT = {
     "net_disbursements": "net disbursements",
     "net_transfers": "net transfers",
 }
+
+
+type ReleaseName = Annotated[str, StringConstraints(pattern=f"^{_RELEASE_NAME}$")]
 
 
 class IndexEntry(BaseModel):
@@ -89,8 +101,23 @@ class ReleaseIndex(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    latest: str | None = None
-    releases: dict[str, IndexEntry] = {}
+    latest: ReleaseName | None = None
+    releases: dict[ReleaseName, IndexEntry] = {}
+
+
+def check_release_name(release: str) -> str:
+    """`release`, once it is one safe path segment.
+
+    Raises:
+        InvalidInputError: when `release` holds anything but letters, digits, dots,
+            underscores and hyphens, or starts with a dot.
+    """
+    if not re.fullmatch(_RELEASE_NAME, release):
+        raise InvalidInputError(
+            f"release name {release!r} must be letters, digits, dots, underscores "
+            "and hyphens, and not start with a dot"
+        )
+    return release
 
 
 def release_dirname(release: str) -> str:
@@ -147,14 +174,21 @@ class Release:
             UnknownNameError: when `name` is not a release table, with close names
                 as suggestions.
             WithheldTableError: when the release leaves `name` out.
+            FormatTableError: when the release's data format predates `name`.
         """
         if name not in RELEASE_TABLES:
             raise unknown_name(
                 name, kind="release table", choices=sorted(RELEASE_TABLES)
             )
+        self._check_held(name)
+        return scan_table(self.path / f"{name}.parquet")
+
+    def _check_held(self, name: str) -> None:
+        """Raise unless the release holds the release table `name`."""
+        if name not in FORMAT_TABLES[self.manifest.data_format]:
+            raise FormatTableError(name, data_format=self.manifest.data_format)
         if note := self.manifest.withheld_tables.get(name):
             raise WithheldTableError(name, note=note)
-        return scan_table(self.path / f"{name}.parquet")
 
     def spending(self, **inputs: Unpack[SpecInputs]) -> Result:
         """Climate finance for the query `inputs` describe, as keywords only.
@@ -188,8 +222,9 @@ class Release:
             UnknownNameError: for a method name outside `cf.methods.list()`.
             InvalidInputError: for an unknown keyword, such as `spec=`, which
                 `run` takes, years, a method or prices in a form `Spec` does not
-                take, or a value outside a field's choices, such as
-                `flow="commitment"`.
+                take, a value outside a field's choices, such as
+                `flow="commitment"`, or a base year outside those the release's
+                `conversion_factors` hold for the currency.
 
         Warns:
             CoverageWarning: for years the flow's tables hold no rows for.
@@ -206,6 +241,8 @@ class Release:
                 or a mapping `Spec` refuses.
             UnknownNameError: for a name in the mapping outside its listing, as
                 `spending` raises.
+            FormatTableError: when the release's data format predates a table the
+                query reads, such as `reflows` for a net flow.
 
         Warns:
             CoverageWarning: for years the flow's tables hold no rows for.
@@ -226,6 +263,8 @@ class Release:
             tables.append("reflows")
         if spec.view == "provider":
             tables.append("core_contributions")
+        for table in tables:
+            self._check_held(table)
         self._warn_uncovered(spec.years, tables=tables, holds=_FLOW_TEXT[spec.flow])
         return query.spending(self, spec=spec)
 
@@ -407,10 +446,14 @@ def load(
     release reads the files it verified after a later change of directory.
 
     Raises:
+        InvalidInputError: when the release's directory would lie outside the
+            cache.
         ReleaseIntegrityError: when `release.json` is missing or malformed, a
-            release table it does not withhold is missing, a table's sha256
-            differs from `release.json`, or a pack's sha256 differs from the
-            index.
+            table of its data format that it does not withhold is missing, a
+            table's sha256 differs from `release.json`, or a pack's sha256 differs
+            from the index.
+        ReleaseFormatError: when `release.json` records a data format newer than
+            `schema.DATA_FORMAT`, which a later version of the package reads.
         UnknownNameError: when the index lists no release named `release`, or no
             release at all, which names `path=` and where releases come from.
         SourceUnavailableError: when the index or a pack cannot be downloaded.
@@ -421,6 +464,10 @@ def load(
     name = _resolve(index, release)
     cache = _cache_dir(cache_dir)
     target = cache / release_dirname(name)
+    if not target.resolve().is_relative_to(cache.resolve()):
+        raise InvalidInputError(
+            f"release {name!r} would unpack to {target}, outside the cache {cache}"
+        )
     if target.is_dir():
         try:
             return _open(target, release=name)
@@ -431,17 +478,37 @@ def load(
 
 
 def _open(path: Path, *, release: str | None = None) -> Release:
-    """Open the release in `path` once every table matches `release.json`."""
+    """Open the release in `path` once every table of its data format matches
+    `release.json`.
+
+    The data format is read before the rest of `release.json`, so a release of a
+    newer format, which may carry fields this package does not know, raises
+    `ReleaseFormatError` before manifest validation can reject those fields.
+    """
     manifest_path = path / "release.json"
     if not manifest_path.is_file():
         raise ReleaseIntegrityError(f"{path} has no release.json")
     try:
-        manifest = ReleaseManifest.model_validate_json(manifest_path.read_text())
+        text = manifest_path.read_text()
+        raw = json.loads(text)
+        data_format = raw.get("data_format") if isinstance(raw, dict) else None
+        if type(data_format) is int and data_format > DATA_FORMAT:
+            raise ReleaseFormatError(
+                release or path.name,
+                data_format=data_format,
+                supported=DATA_FORMAT,
+            )
+        manifest = ReleaseManifest.model_validate_json(text)
     except ValueError as error:  # bad JSON, bad fields or undecodable bytes
         raise ReleaseIntegrityError(f"{manifest_path} is malformed: {error}") from error
+    if manifest.data_format not in FORMAT_TABLES:
+        raise ReleaseIntegrityError(
+            f"{manifest_path} is malformed: data format {manifest.data_format} "
+            f"is none of {sorted(FORMAT_TABLES)}"
+        )
     problems = [
         f"{name}: not in release.json"
-        for name in RELEASE_TABLES
+        for name in sorted(FORMAT_TABLES[manifest.data_format])
         if name not in manifest.tables and name not in manifest.withheld_tables
     ]
     if release is not None and manifest.release != release:

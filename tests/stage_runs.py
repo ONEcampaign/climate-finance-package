@@ -1,6 +1,7 @@
 """One stage run by hand on inputs a test writes: the build.toml config, a context
 that records no provenance, and the registry entry that writes the stage."""
 
+import shutil
 from collections.abc import Collection, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,15 +10,26 @@ import polars as pl
 
 from climate_finance.build import write_stage
 from climate_finance.build.config import BuildConfig, Ledgers, load_config
-from climate_finance.build.fetch import YEAR_SOURCES, _ledger_files
+from climate_finance.build.fetch import (
+    CONVERSION_FACTORS_FILE,
+    YEAR_SOURCES,
+    _ledger_files,
+)
 from climate_finance.build.normalise.crdf import normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs, normalise_reflows
 from climate_finance.build.provenance import Provenance
-from climate_finance.build.stages import REGISTRY, StageContext, StageDef, table_path
+from climate_finance.build.stages import (
+    REGISTRY,
+    StageContext,
+    StageDef,
+    raw_dir,
+    table_path,
+)
 from climate_finance.schema import RAW_MANIFEST
 
 BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 OECD = Path(__file__).parent / "fixtures" / "raw" / "oecd"
+SNAPSHOT = Path(__file__).parent / "fixtures" / "snapshot"
 # The Jev model build.toml pins, which the price table must know.
 JEV_MODEL = load_config(BUILD_TOML).jev.model
 
@@ -75,6 +87,17 @@ def write_recorded(
     for read in reads:
         provenance.read_stage(read)
     write_stage(entry, dict(frames), release_dir, provenance=provenance)
+
+
+def write_fetch(
+    release_dir: Path, raw_manifest: pl.DataFrame, *, config: BuildConfig
+) -> None:
+    """Write `raw_manifest` as the fetch stage's output with its `stage.json`, and
+    the snapshot's conversion factors in `raw/`, which assemble ships."""
+    write_recorded(release_dir, "fetch", {"raw_manifest": raw_manifest}, config=config)
+    factors = raw_dir(release_dir) / CONVERSION_FACTORS_FILE
+    factors.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(SNAPSHOT / "conversion_factors.parquet", factors)
 
 
 def year_rows(

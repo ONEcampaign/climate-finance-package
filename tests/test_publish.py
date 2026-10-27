@@ -10,7 +10,7 @@ import shutil
 import tarfile
 import threading
 import tomllib
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from datetime import UTC, datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -73,17 +73,16 @@ def gated(
     release_dir: Path,
     *,
     rows: dict[str, list[dict[str, object]]] | None = None,
+    omit: Collection[str] = (),
     waiver: str | None = None,
 ) -> Path:
-    """`release_dir` with passed precision, human-audit and drift rows in its
-    `release.json`, replaced gate by gate by `rows`, and `waiver` recorded."""
+    """`release_dir` with a passed row for every gate in its `release.json`,
+    replaced gate by gate by `rows`, without the gates in `omit`, and `waiver`
+    recorded."""
     path = release_dir / "assemble" / "release.json"
     manifest = ReleaseManifest.model_validate_json(path.read_text())
-    gates = {
-        "precision": [PASSED | {"subject": "4"}],
-        "human_audit": [PASSED],
-        "drift": [PASSED],
-    }
+    gates = {name: [PASSED] for name in gate.GATES if name not in omit}
+    gates["precision"] = [PASSED | {"subject": "4"}]
     path.write_text(
         manifest.model_copy(
             update={
@@ -423,6 +422,45 @@ def test_upload_and_index_take_only_a_release_whose_gates_passed_or_were_waived(
             with pytest.raises(GateFailedError, match=refused):
                 publish()
         assert not uploads.exists()
+
+
+@pytest.mark.parametrize(
+    ("omit", "emptied"),
+    [
+        (set(gate.GATES) - {"precision", "human_audit"}, set()),
+        ({"conservation"}, set()),
+        ({"drift", "withheld_rows"}, set()),
+        (set(), {"listed_codes"}),
+        ({"over_allocation"}, {"oecd_reconciliation"}),
+    ],
+    ids=["only-waivable-gates", "one-omitted", "two-omitted", "empty", "mixed"],
+)
+def test_a_pack_is_unpublishable_for_every_gate_with_no_result(
+    tmp_path: Path, omit: set[str], emptied: set[str]
+) -> None:
+    missing = omit | emptied
+    release_dir = gated(
+        built_release(tmp_path / RELEASE),
+        rows={name: [] for name in emptied},
+        omit=omit,
+    )
+    pack = release.pack_release(release_dir, out_path=tmp_path / PACK)
+    uploads = tmp_path / "uploads"
+
+    def reported(problems: list[str]) -> set[str]:
+        return {problem.split(":")[0] for problem in problems}
+
+    assert reported(release.unpublishable(release.packed_manifest(pack))) == missing
+    for publish in (
+        lambda: release.upload_release(pack, target=str(uploads)),
+        lambda: release.add_to_index(
+            ReleaseIndex(), release=RELEASE, pack=pack, url="file:///p"
+        ),
+    ):
+        with pytest.raises(GateFailedError) as refused:
+            publish()
+        assert reported(refused.value.failures) == missing
+    assert not uploads.exists()
 
 
 def test_the_index_refuses_a_pack_under_another_release_name(tmp_path: Path) -> None:

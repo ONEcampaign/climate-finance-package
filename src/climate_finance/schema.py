@@ -13,7 +13,7 @@ from pathlib import Path
 
 import polars as pl
 import polars.selectors as cs
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue, StrictInt
 
 from climate_finance.errors import SchemaError
 
@@ -159,6 +159,8 @@ FLOWS = ("commitments", "disbursements", "grant_equivalent")
 NET_FLOWS = ("net_disbursements", "net_transfers")
 QUERY_FLOWS = (*FLOWS, *NET_FLOWS)
 FUNDING_CLASSES = ("oda", "oof", "other")
+# The currencies a query converts to, as `spec.Currency` spells them.
+CURRENCIES = ("USD", "EUR", "GBP", "CAD")
 DECISIONS = ("accept", "reject")
 # The first year the CRDF and the CRS measure adaptation: the DAC introduced the
 # adaptation marker for flows from 2010. Before it the recipient CRDF holds the rows
@@ -1356,6 +1358,24 @@ PROVIDER_COEFFICIENTS = _table(
 )
 
 
+# The multipliers from US dollars at current prices to each currency a query takes,
+# by DAC provider and year, as pydeflate gives them from the OECD DAC's exchange
+# rates and deflators when fetch runs. A row with a null `base_year` holds the
+# exchange rate for current prices. A row with a base year holds the inverse of the
+# DAC deflator for constant prices of that year. `entity_code` 20001 holds the DAC
+# countries' total, which a provider without its own series takes. USD at current
+# prices has no rows, as it needs no factor.
+CONVERSION_FACTORS = _table(
+    "conversion_factors",
+    ("currency", "base_year", "entity_code", "year"),
+    currency=_str(values=CURRENCIES),
+    base_year=_year(nullable=True),
+    entity_code=_code(),
+    year=_year(),
+    factor=_f64(),
+)
+
+
 def _by_name(*tables: TableSchema) -> Mapping[str, TableSchema]:
     return {table.name: table for table in tables}
 
@@ -1380,7 +1400,41 @@ RELEASE_TABLES = _by_name(
     TOTAL_FLOWS,
     PROVIDER_COEFFICIENTS,
     JEV_FLAGS,
+    CONVERSION_FACTORS,
 )
+
+# The data format of the releases this package writes, and the newest it reads.
+# It goes up by one when a release table or a `release.json` field is added,
+# removed or changes meaning, independent of the package version.
+DATA_FORMAT = 1
+# The release tables each data format holds, by format number. Each format is a
+# literal list, so adding a table to `RELEASE_TABLES` leaves older formats readable.
+FORMAT_TABLES: Mapping[int, frozenset[str]] = {
+    1: frozenset(
+        {
+            "commitments",
+            "disbursements",
+            "objectives",
+            "agency_shares",
+            "agency_spending",
+            "modelled",
+            "core_contributions",
+            "btr",
+            "btr_links",
+            "btr_totals",
+            "btr_crs_unlinked",
+            "disbursement_profile",
+            "quality",
+            "untraced",
+            "unallocated",
+            "reflows",
+            "total_flows",
+            "provider_coefficients",
+            "jev_flags",
+            "conversion_factors",
+        }
+    )
+}
 
 STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
     "fetch": _by_name(RAW_MANIFEST),
@@ -2397,6 +2451,26 @@ class TableEntry(BaseModel):
     rows: int
 
 
+class BuildIdentity(BaseModel):
+    """The code and environment that built a release.
+
+    `package_source_sha256` is the sha256 over the files of the installed package,
+    `python` its interpreter's exact version, and `environment_sha256` the sha256
+    over the sorted `name==version` lines of every installed distribution.
+    `dependencies` holds the exact versions of the installed libraries the build's
+    results depend on. `stage_identities` holds the sha256 of each build stage's
+    `stage.json` before the release was sealed, by stage name.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    package_source_sha256: str
+    python: str
+    environment_sha256: str
+    dependencies: dict[str, str]
+    stage_identities: dict[str, str]
+
+
 class ReleaseManifest(BaseModel):
     """The contents of `release.json`.
 
@@ -2409,8 +2483,12 @@ class ReleaseManifest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     release: str
+    # The release's data format, a key of `FORMAT_TABLES`.
+    data_format: StrictInt
     created_at: datetime
     package_version: str
+    # The package files and environment that built the release.
+    build: BuildIdentity
     tables: dict[str, TableEntry]
     source_versions: dict[str, str]
     years: dict[str, tuple[int, int]] = {}

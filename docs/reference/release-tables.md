@@ -6,10 +6,14 @@ As of 2.0. A build writes the parquet tables below, each sorted by its key so th
 
 A release is a folder, `climate-finance-<name>/`, packed as one `.tar.zst`. It holds the tables below except `btr` and `btr_links`, `release.json`, and `sources.json`, and none of the build's stage records:
 
-- `release.json` has each table's sha256 and row count, the source and model versions, every build switch and year range under `settings`, the years each source holds under `years`, the gate results, the `precision_gate_waived` flag and the waiver's reason as `precision_waiver`, and under `withheld_tables` each table the pack leaves out, with a note on how to build it. `cf.load()` checks every other table against it and raises `ReleaseIntegrityError` on a mismatch. A pack that fails its sha256 in the release index is refused before it unpacks.
+- `release.json` has the release's data format as `data_format`, each table's sha256 and row count, the source and model versions, the code and environment that built it under `build`, every build switch and year range under `settings`, the years each source holds under `years`, the gate results, the `precision_gate_waived` flag and the waiver's reason as `precision_waiver`, and under `withheld_tables` each table the pack leaves out, with a note on how to build it. `cf.load()` checks every other table of the release's data format against it and raises `ReleaseIntegrityError` on a mismatch. A pack that fails its sha256 in the release index is refused before it unpacks.
 - `sources.json` lists each source with its version, URLs, licence, and any note on rows the release leaves out, and, under `provider_reports`, the annual reports behind the modelled line's disbursement ratios, cited by title, year, and page. The BTR archive's entry, `unfccc_btr1`, carries the note from `withheld_tables` and a `workbooks` list, one entry per BTR workbook read, with its file, party, the sheets read, the rows kept, the rows dropped as blank, as a notation key, or as a total, and any draft marker in the file name (`started` or `awaiting_submission`).
 
 The release holds only processed tables and metadata. The Green Climate Fund's ledger rows are withheld. [How linking works](../explanation/how-linking-works.md) explains why, and `commitments.withheld_usd` states their amount.
+
+`build` holds `package_source_sha256`, the sha256 over the files of the climate-finance package that built the release; `python`, the exact Python version; `environment_sha256`, the sha256 over the sorted `name==version` lines of every installed distribution; `dependencies`, the exact versions of polars, pyarrow, duckdb, splink, scikit-learn, numpy, scipy, pandas, pydantic, rapidfuzz, oda-reader, openpyxl, pydeflate, resolvekit, sentence-transformers, torch, transformers, and tokenizers where installed; and `stage_identities`, the sha256 of each build stage's `stage.json` before assemble. Every query result carries it in `meta.build`, and `explain()` prints the package source and environment digests.
+
+The data format is a whole number, independent of the package version, and this package writes format 1. The format goes up by one when a release table or a `release.json` field is added, removed, or changes meaning. A package reads every format up to its own: `cf.load()` raises `ReleaseFormatError` for a newer format, naming the format a later climate-finance reads, and opens an older one. On a release whose format predates a table, `release.table()` and any query that reads the table raise `FormatTableError`.
 
 The published release also leaves out the row-level BTR tables `btr` and `btr_links` until the UNFCCC confirms its terms cover them, and `release.table("btr")` on it raises `WithheldTableError`. A build from BTR workbooks downloaded from the UNFCCC writes both. `btr_totals` and `btr_crs_unlinked` hold the reconciliation totals in either.
 
@@ -231,11 +235,20 @@ Key `record_id`. Jev's answers about each CRS record from `jev_flags_first_year`
 - `no_aim`, `surprising`: true where `no_aim_p` reaches 0.7 and `surprising_p` reaches 0.8.
 - `model`: the Jev model version that answered.
 
+## `conversion_factors`
+
+Key `currency`, `base_year`, `entity_code`, `year`. The multipliers from US dollars at current prices to each currency a query takes, by DAC provider and year, as pydeflate gives them from the OECD DAC's exchange rates and deflators when the build fetches. `sources.json` and `release.json` record the pydeflate version under `conversion_factors`. Every query with a `currency` or `prices` other than USD at current prices reads them, so a converted figure changes only with a new release:
+
+- `currency`: `USD`, `EUR`, `GBP`, or `CAD`.
+- `base_year`: null for current prices, where `factor` is the DAC exchange rate; a base year for constant prices of that year, where `factor` is the inverse of the DAC deflator. Each currency has a row set for every year its DAC exchange rates cover, and a query for another base year raises `InvalidInputError` naming the range. USD has no rows at current prices.
+- `entity_code`: the DAC provider code, or 20001 for the DAC countries' total, which a provider without its own series takes.
+- `year`, `factor`.
+
 ## Terms by source
 
 `sources.json` is the authority for each release, and lists these terms:
 
-- OECD datasets (CRS, CRDF, Multisystem, imputed shares, DAC exchange rates): the OECD Terms and Conditions and the dataset terms in each dataset's metadata. A release is an adaptation of OECD data and carries no endorsement by the OECD, and a figure published from it should say so.
+- OECD datasets (CRS, CRDF, Multisystem, imputed shares, DAC exchange rates and deflators): the OECD Terms and Conditions and the dataset terms in each dataset's metadata. A release is an adaptation of OECD data and carries no endorsement by the OECD, and a figure published from it should say so.
 - World Bank Finances One: the World Bank Data Catalog licence, CC BY 4.0 by default and set per dataset.
 - IMF: derivative works with attribution. Commercial use and automated bulk download need permission.
 - IATI files of banks and funds: the publisher's licence in the IATI Registry.

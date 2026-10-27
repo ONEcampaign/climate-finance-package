@@ -13,9 +13,19 @@ from releases import copy_release
 
 import climate_finance as cf
 from climate_finance import release as release_module
-from climate_finance.errors import ReleaseIntegrityError
-from climate_finance.release import IndexEntry, ReleaseIndex, release_dirname
-from climate_finance.schema import RELEASE_TABLES, ReleaseManifest
+from climate_finance.errors import (
+    FormatTableError,
+    InvalidInputError,
+    ReleaseFormatError,
+    ReleaseIntegrityError,
+)
+from climate_finance.release import (
+    IndexEntry,
+    ReleaseIndex,
+    check_release_name,
+    release_dirname,
+)
+from climate_finance.schema import DATA_FORMAT, RELEASE_TABLES, ReleaseManifest
 
 
 @pytest.mark.parametrize("as_path", [Path, str])
@@ -49,11 +59,11 @@ def test_a_release_prints_its_name_flow_years_and_tables(tmp_path: Path) -> None
     # The fixture's name marks its figures as invented.
     assert repr(cf.load(path=FIXTURE_DIR)) == (
         "Release('fixture', synthetic figures): commitments 2021 to 2022, "
-        "disbursements 2021 to 2024; 19 tables"
+        "disbursements 2021 to 2024; 20 tables"
     )
     assert repr(cf.load(path=published)) == (
         "Release('2026a'): commitments 2021 to 2022, disbursements 2021 to 2024; "
-        "17 tables, withholding btr, btr_links"
+        "18 tables, withholding btr, btr_links"
     )
 
 
@@ -92,10 +102,39 @@ def test_a_damaged_release_fails_its_check(
         cf.load(path=release)
 
 
+def _fixture_manifest(**changes: object) -> bytes:
+    """The fixture's `release.json` with `changes`, a None value dropping its key."""
+    manifest = json.loads((FIXTURE_DIR / "release.json").read_text())
+    for key, value in changes.items():
+        if value is None:
+            del manifest[key]
+        else:
+            manifest[key] = value
+    return json.dumps(manifest).encode()
+
+
 @pytest.mark.parametrize(
     "damaged",
-    [b'{"release": "fixt', b"\xff\xfe", b'{"release": "fixture"}'],
-    ids=["truncated-json", "undecodable-bytes", "missing-fields"],
+    [
+        b'{"release": "fixt',
+        b"\xff\xfe",
+        b'{"release": "fixture"}',
+        _fixture_manifest(data_format=None),
+        _fixture_manifest(data_format=str(DATA_FORMAT)),
+        _fixture_manifest(data_format=True),
+        _fixture_manifest(data_format=0),
+        _fixture_manifest(build=None),
+    ],
+    ids=[
+        "truncated-json",
+        "undecodable-bytes",
+        "missing-fields",
+        "no-data-format",
+        "string-data-format",
+        "boolean-data-format",
+        "unknown-data-format",
+        "no-build",
+    ],
 )
 def test_a_malformed_manifest_is_an_integrity_error(
     tmp_path: Path, damaged: bytes
@@ -131,6 +170,113 @@ def test_a_cached_release_with_a_malformed_manifest_downloads_again(
 
     assert downloads == ["https://example.org/pack"]
     assert release.manifest.release == "fixture"
+
+
+UNSAFE_NAMES = ["x/../../victim", "..", ".hidden", "a b", "", "x\\y", "x\n"]
+
+
+@pytest.mark.parametrize("name", UNSAFE_NAMES)
+def test_a_release_name_must_be_one_safe_path_segment(name: str) -> None:
+    entry = IndexEntry(url="https://example.org/pack", sha256="0")
+
+    with pytest.raises(InvalidInputError):
+        check_release_name(name)
+    with pytest.raises(ValueError, match="releases"):
+        ReleaseIndex(releases={name: entry})
+    with pytest.raises(ValueError, match="latest"):
+        ReleaseIndex(latest=name)
+
+
+@pytest.mark.parametrize("name", ["fixture", "2026a", "1.2.3-rc_1", "_x"])
+def test_an_ordinary_release_name_is_accepted(name: str) -> None:
+    assert check_release_name(name) == name
+    assert ReleaseIndex(latest=name).latest == name
+
+
+def test_load_leaves_a_directory_outside_the_cache_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache = tmp_path / "cache"
+    (cache / release_dirname("x")).mkdir(parents=True)
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    (victim / "sentinel").write_text("keep")
+    name = "x/../../victim"
+    # model_construct skips the name check `load` relies on, to test its own.
+    index = ReleaseIndex.model_construct(
+        latest=name,
+        releases={name: IndexEntry(url="https://example.org/pack", sha256="0")},
+    )
+    downloads = []
+    monkeypatch.setattr(release_module, "_shipped_index", lambda: index)
+    monkeypatch.setattr(
+        release_module, "_download", lambda entry, *, target: downloads.append(target)
+    )
+
+    with pytest.raises(InvalidInputError, match="outside the cache"):
+        cf.load(cache_dir=cache)
+
+    assert (victim / "sentinel").read_text() == "keep"
+    assert downloads == []
+
+
+@pytest.mark.parametrize("extra", [{}, {"build": {"python": "3.14"}}])
+def test_a_newer_data_format_asks_for_an_upgrade_and_stays_cached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extra: dict[str, object]
+) -> None:
+    cache = tmp_path / "cache"
+    release = shutil.copytree(FIXTURE_DIR, cache / release_dirname("fixture"))
+    (release / "release.json").write_bytes(
+        _fixture_manifest(data_format=DATA_FORMAT + 1, **extra)
+    )
+    index = ReleaseIndex(
+        latest="fixture",
+        releases={"fixture": IndexEntry(url="https://example.org/pack", sha256="0")},
+    )
+    downloads = []
+    monkeypatch.setattr(release_module, "_shipped_index", lambda: index)
+    monkeypatch.setattr(
+        release_module, "_download", lambda entry, *, target: downloads.append(target)
+    )
+
+    for load in (lambda: cf.load(path=release), lambda: cf.load(cache_dir=cache)):
+        with pytest.raises(ReleaseFormatError) as raised:
+            load()
+        assert raised.value.data_format == DATA_FORMAT + 1
+        assert raised.value.supported == DATA_FORMAT
+    assert downloads == []
+    assert (release / "commitments.parquet").is_file()
+
+
+def test_a_release_of_an_older_format_serves_what_it_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Format 0 is test-local: format 1 less `reflows`.
+    monkeypatch.setattr(
+        release_module,
+        "FORMAT_TABLES",
+        {0: frozenset(RELEASE_TABLES) - {"reflows"}, 1: frozenset(RELEASE_TABLES)},
+    )
+    path = copy_release(tmp_path / "release") / "release.json"
+    manifest = ReleaseManifest.model_validate_json(path.read_text())
+    tables = {name: e for name, e in manifest.tables.items() if name != "reflows"}
+    path.write_text(
+        manifest.model_copy(
+            update={"data_format": 0, "tables": tables}
+        ).model_dump_json()
+    )
+    (path.parent / "reflows.parquet").unlink()
+
+    release = cf.load(path=path.parent)
+
+    assert release.spending(flow="commitments").table.height > 0
+    assert release.spending(untraced=False).table.height > 0
+    with pytest.raises(FormatTableError) as by_table:
+        release.table("reflows")
+    with pytest.raises(FormatTableError) as by_query:
+        release.spending(flow="net_disbursements", years=2022)
+    for raised in (by_table, by_query):
+        assert (raised.value.table, raised.value.data_format) == ("reflows", 0)
 
 
 def test_table_refuses_names_outside_the_release_contract() -> None:

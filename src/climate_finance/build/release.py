@@ -77,11 +77,16 @@ from climate_finance.build.errors import (
     ReleaseInvariantError,
     StageInputMissingError,
 )
-from climate_finance.build.fetch import BTR_SOURCE, fetched_years, last_complete_year
+from climate_finance.build.fetch import (
+    BTR_SOURCE,
+    CONVERSION_FACTORS_FILE,
+    fetched_years,
+    last_complete_year,
+)
 from climate_finance.build.label import inherit_markers
 from climate_finance.build.link.gap_fill import routed_records
 from climate_finance.build.measure import load_provider_facts
-from climate_finance.build.provenance import setting_value
+from climate_finance.build.provenance import build_identity, setting_value
 from climate_finance.build.readers.btr import party_provider
 from climate_finance.build.reflows import (
     attribute_reflows,
@@ -108,6 +113,7 @@ from climate_finance.schema import (
     COMMITMENTS,
     CONTRIBUTION_KEY,
     CORE_CONTRIBUTIONS,
+    DATA_FORMAT,
     DISBURSEMENT_PROFILE,
     DISBURSEMENTS,
     INVARIANT_TOLERANCE_USD,
@@ -118,6 +124,7 @@ from climate_finance.schema import (
     QUALITY,
     RECIPIENT_VIEW,
     RELEASE_TABLES,
+    STAGE_TABLES,
     TOP_CHANNEL,
     TOTAL_FLOWS,
     UNALLOCATED,
@@ -179,6 +186,7 @@ SOURCE_LICENCES = {
     "multisystem": _OECD,
     "imputed_shares": _OECD,
     "dac_exchange": _OECD,
+    "conversion_factors": _OECD,
     "gcf_projects": _GCF,
     "ledger_gcf": _GCF,
     "iati": _IATI,
@@ -248,7 +256,8 @@ def seal_release(
     out_dir: Path,
 ) -> None:
     """Check the written release tables and write `release.json` beside them,
-    with the `RELEASE_SETTINGS` of the build config.
+    with the `RELEASE_SETTINGS` of the build config and the `build_identity` of the
+    stages before assemble.
 
     Its `years` holds the years the build read from each source, and the years
     `core_contributions`, `agency_shares` and `agency_spending` hold, which bound
@@ -261,8 +270,13 @@ def seal_release(
         raise ReleaseInvariantError(problems)
     manifest = ReleaseManifest(
         release=context.release,
+        data_format=DATA_FORMAT,
         created_at=datetime.now(UTC),
         package_version=__version__,
+        build=build_identity(
+            context.release_dir,
+            stages=[stage for stage in STAGE_TABLES if stage != "assemble"],
+        ),
         tables={
             name: TableEntry(sha256=sha256[name], rows=tables[name].height)
             for name in RELEASE_TABLES
@@ -374,6 +388,9 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
             yaml.safe_load(PROVIDER_COEFFICIENTS_FILE.read_text(encoding="utf-8"))
         ),
         "jev_flags": flags,
+        "conversion_factors": pl.read_parquet(
+            context.raw_dir / CONVERSION_FACTORS_FILE
+        ),
     }
     # The tables above read every record, so quality and `withheld_usd` count the
     # withheld ones; the release leaves out their rows.
@@ -1258,13 +1275,13 @@ def packed_manifest(pack: Path) -> ReleaseManifest:
 
 
 def unpublishable(manifest: ReleaseManifest) -> list[str]:
-    """Why `manifest`'s release may not be published: a gate of `gate.WAIVABLE`
+    """Why `manifest`'s release may not be published: a gate of `gate.GATES`
     with no recorded row, and any recorded gate row neither passed nor waived. A
     row counts as waived only on a gate of `gate.WAIVABLE`, with the waiver's
     reason recorded as `precision_waiver`."""
     problems = [
         f"{name}: release.json records no result"
-        for name in gate.WAIVABLE
+        for name in gate.GATES
         if not manifest.gates.get(name)
     ]
     for name, rows in manifest.gates.items():
@@ -1294,7 +1311,7 @@ def publishable(pack: Path) -> ReleaseManifest:
     Raises:
         GateFailedError: when the pack's `release.json` records a gate row
             neither passed nor waived, a waiver without its reason, or no result
-            for the precision and human-audit gates (`unpublishable`).
+            for a gate of `gate.GATES` (`unpublishable`).
         BuildError: when the pack holds a release named `SYNTHETIC_RELEASE`.
     """
     manifest = packed_manifest(pack)

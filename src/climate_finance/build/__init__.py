@@ -47,6 +47,7 @@ from climate_finance.build.stages import (  # noqa: E402
     make_jev_client,
     stage_dir,
 )
+from climate_finance.release import check_release_name  # noqa: E402
 from climate_finance.schema import (  # noqa: E402
     OPTIONAL_STAGE_TABLES,
     TableSchema,
@@ -261,7 +262,12 @@ def build(
 
     `stages` runs a subset, reading earlier stages' tables from disk. `offline=True`
     (or `offline = true` in the config) refuses network access.
+
+    Raises:
+        InvalidInputError: when `release` is not one safe path segment
+            (`release.check_release_name`).
     """
+    check_release_name(release)
     build_config = config if isinstance(config, BuildConfig) else load_config(config)
     return run_stages(
         REGISTRY,
