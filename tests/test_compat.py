@@ -1,6 +1,5 @@
 """`ClimateData`, the deprecated 1.x wrapper, against `spending()` on the fixture."""
 
-import shutil
 import subprocess
 import sys
 import warnings
@@ -16,7 +15,6 @@ from make_fixture import FIXTURE_DIR
 
 import climate_finance as cf
 from climate_finance import compat
-from climate_finance import release as release_module
 from climate_finance._removed import REMOVED_MODULES
 from climate_finance.compat import ClimateData, set_climate_finance_data_path
 from climate_finance.errors import (
@@ -26,7 +24,6 @@ from climate_finance.errors import (
     RemovedModuleError,
 )
 from climate_finance.methods import Method
-from climate_finance.release import IndexEntry, ReleaseIndex, release_dirname
 from climate_finance.spec import Flow, SpecInputs
 
 RELEASE = cf.load(path=FIXTURE_DIR)
@@ -133,28 +130,23 @@ def test_the_methodology_argument_overrides_the_set_methods_as_in_1x() -> None:
 def test_the_data_path_is_where_climate_data_downloads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    shutil.copytree(FIXTURE_DIR, tmp_path / release_dirname("fixture"))
-    index = ReleaseIndex(
-        latest="fixture",
-        releases={"fixture": IndexEntry(url="https://example.org/pack", sha256="0")},
-    )
-    monkeypatch.setattr(release_module, "_shipped_index", lambda: index)
+    # `load` stands in for the download, so the test holds whatever an index entry
+    # or a cached release must carry.
+    loads: list[dict[str, object]] = []
+
+    def load(**kwargs: object) -> cf.Release:
+        loads.append(kwargs)
+        return RELEASE
+
+    monkeypatch.setattr(compat, "load", load)
     monkeypatch.setattr(compat, "_cache_dir", None)
 
     with pytest.warns(ClimateFinanceDeprecationWarning, match="cache_dir="):
         set_climate_finance_data_path(tmp_path)
     with pytest.warns(ClimateFinanceDeprecationWarning):
-        climate_data = ClimateData(years=YEARS)
-    data = climate_data.load_spending_data(source="OECD_CRDF_CRS").get_data()
+        ClimateData(years=YEARS).load_spending_data(source="OECD_CRDF_CRS")
 
-    expected = _expected(
-        (
-            "OECD_CRDF_CRS",
-            "gross_disbursements",
-            RELEASE.spending(years=YEARS, untraced=False),
-        )
-    )
-    pd.testing.assert_frame_equal(data, expected)
+    assert loads == [{"cache_dir": tmp_path.resolve(), "refresh": False}]
 
 
 def test_importing_the_package_warns_only_when_a_1x_name_is_used() -> None:
