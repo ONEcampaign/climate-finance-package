@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Label the blind sample</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; --diff: #fff3bf; --line: #8886; --accent: #1c6ed5; }
+  @media (prefers-color-scheme: dark) { :root { --diff: #5c4b00; } }
+  * { box-sizing: border-box; }
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 1180px; padding: 0 16px 120px; }
+  header { position: sticky; top: 0; background: Canvas; padding: 10px 0 8px; border-bottom: 1px solid var(--line); z-index: 2; }
+  .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--accent); width: 0; }
+  .meta { display: flex; justify-content: space-between; gap: 16px; font-size: 13px; margin-bottom: 6px; flex-wrap: wrap; }
+  details { margin: 12px 0; }
+  summary { cursor: pointer; font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+  th, td { border: 1px solid var(--line); padding: 6px 10px; vertical-align: top; text-align: left; overflow-wrap: anywhere; white-space: pre-wrap; }
+  th { font-weight: 600; }
+  td.field { width: 150px; font-weight: 600; white-space: normal; }
+  tr.diff td:not(.field) { background: var(--diff); }
+  td.long { max-height: 14em; }
+  .rows td, .rows th { font-size: 13px; }
+  .answer { position: fixed; left: 0; right: 0; bottom: 0; background: Canvas; border-top: 1px solid var(--line); padding: 10px 16px; z-index: 2; }
+  .answer > div { max-width: 1180px; margin: 0 auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button { font: inherit; padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: ButtonFace; color: ButtonText; cursor: pointer; }
+  button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  input[type=text] { flex: 1; min-width: 200px; font: inherit; padding: 6px 8px; }
+  kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+  #status { font-size: 13px; min-width: 14em; }
+  #error { color: #c00; }
+</style>
+</head>
+<body>
+<header>
+  <div class="meta"><span id="where"></span><span id="progress"></span></div>
+  <div class="bar"><div id="fill"></div></div>
+  <div class="meta" id="providers" style="margin-top:6px"></div>
+</header>
+<details><summary>Matching rule</summary><p id="rule"></p></details>
+<main id="pair"></main>
+<div class="answer"><div>
+  <button id="match" data-label="match"><kbd>y</kbd> Match</button>
+  <button id="no_match" data-label="no_match"><kbd>n</kbd> No match</button>
+  <button data-strength="u"><kbd>u</kbd> Unsure</button>
+  <button data-strength="1"><kbd>1</kbd> Low</button>
+  <button data-strength="2"><kbd>2</kbd> Medium</button>
+  <button data-strength="3"><kbd>3</kbd> High</button>
+  <input type="text" id="reason" placeholder="Reason (optional; r to focus)">
+  <button id="back"><kbd>&larr;</kbd> Back</button>
+  <button id="save"><kbd>Enter</kbd> Save</button>
+  <span id="status"></span><span id="error"></span>
+</div></div>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let state = null, index = 0, data = null, label = null, strength = null, busy = false;
+
+async function api(path, body) {
+  const response = await fetch(path, body === undefined ? {} : {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || response.statusText);
+  return payload;
+}
+
+function el(tag, text, cls) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;
+  if (cls) node.className = cls;
+  return node;
+}
+
+function showState(next) {
+  state = next;
+  $("rule").textContent = state.definition;
+  $("progress").textContent = `${state.done} of ${state.total} pairs decided`;
+  $("fill").style.width = `${state.total ? (100 * state.done) / state.total : 100}%`;
+  $("providers").replaceChildren(...state.providers.map(
+    (p) => el("span", `Provider ${p.provider}: ${p.done}/${p.total}`)));
+}
+
+function crsTable(side, rows) {
+  const wrap = el("details");
+  const more = rows.total > rows.shown.length ? `, first ${rows.shown.length}` : "";
+  wrap.append(el("summary", `${side}'s CRS rows (${rows.total}${more})`));
+  const table = el("table", undefined, "rows");
+  const head = el("tr");
+  for (const h of ["Year", "Commitment date", "Commitment", "Disbursement", "Title"]) head.append(el("th", h));
+  table.append(head);
+  for (const row of rows.shown) {
+    const tr = el("tr");
+    for (const cell of row) tr.append(el("td", cell));
+    table.append(tr);
+  }
+  wrap.append(table);
+  return wrap;
+}
+
+function render(pair) {
+  data = pair;
+  index = pair.i;
+  $("where").textContent = `Pair ${index + 1} of ${state.total} (provider ${pair.provider}, batch ${pair.batch}, pair ${pair.view.pair})`;
+  const table = el("table");
+  const head = el("tr");
+  head.append(el("th", "Field"), el("th", "A: later disbursement"), el("th", "B: earlier commitment"));
+  table.append(head);
+  const rows = [...pair.view.fields, ["Similar commitments", String(pair.view.similar[0]), String(pair.view.similar[1])]];
+  for (const [name, a, b] of rows) {
+    const tr = el("tr", undefined, a !== b ? "diff" : "");
+    tr.append(el("td", name, "field"), el("td", a), el("td", b));
+    table.append(tr);
+  }
+  $("pair").replaceChildren(table, crsTable("A", pair.view.rows[0]), crsTable("B", pair.view.rows[1]));
+  const saved = pair.answer;
+  label = saved ? saved.label : null;
+  strength = saved ? saved.strength : null;
+  $("reason").value = saved ? saved.reason : "";
+  $("status").textContent = saved ? "Saved; Enter re-saves, right arrow skips." : "";
+  $("error").textContent = "";
+  paint();
+  window.scrollTo(0, 0);
+  // Warm the server's next chunk of pairs while the person reads this one.
+  if (index + 1 < state.total) fetch(`/api/pair?i=${index + 1}`).catch(() => {});
+}
+
+function paint() {
+  $("match").classList.toggle("on", label === "match");
+  $("no_match").classList.toggle("on", label === "no_match");
+  for (const b of document.querySelectorAll("[data-strength]")) b.classList.toggle("on", b.dataset.strength === strength);
+}
+
+async function load(i) {
+  try {
+    render(await api(`/api/pair?i=${i}`));
+  } catch (e) {
+    $("error").textContent = e.message;
+  }
+}
+
+async function save() {
+  if (busy) return;
+  if (!label) { $("error").textContent = "Press y or n first."; return; }
+  busy = true;
+  $("error").textContent = "";
+  try {
+    const result = await api("/api/answer", {i: index, label, strength, reason: $("reason").value});
+    showState(result.state);
+    if (result.next === null) {
+      finish();
+    } else {
+      await load(result.next);
+    }
+  } catch (e) {
+    $("error").textContent = e.message;
+  } finally {
+    busy = false;
+  }
+}
+
+function finish() {
+  index = state.total;
+  data = null;
+  $("pair").replaceChildren(el("h2", "Your share is done. Press the left arrow to review your answers."));
+  $("status").textContent = "";
+}
+
+function go(i) { if (i >= 0 && i < state.total) load(i); }
+function choose(next) { label = next; paint(); }
+function lean(next) { strength = strength === next ? null : next; paint(); }
+
+$("match").onclick = () => choose("match");
+$("no_match").onclick = () => choose("no_match");
+for (const b of document.querySelectorAll("[data-strength]")) b.onclick = () => lean(b.dataset.strength);
+$("save").onclick = save;
+$("back").onclick = () => go(index - 1);
+
+document.addEventListener("keydown", (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.target === $("reason")) {
+    if (e.key === "Enter") { e.preventDefault(); save(); }
+    else if (e.key === "Escape") $("reason").blur();
+    return;
+  }
+  const actions = {
+    y: () => choose("match"), n: () => choose("no_match"),
+    u: () => lean("u"), 1: () => lean("1"), 2: () => lean("2"), 3: () => lean("3"),
+    r: () => $("reason").focus(), Enter: save,
+    Backspace: () => go(index - 1), ArrowLeft: () => go(index - 1), ArrowRight: () => go(index + 1),
+  };
+  const action = actions[e.key];
+  if (action) { e.preventDefault(); action(); }
+});
+
+(async () => {
+  try {
+    showState(await api("/api/state"));
+    if (state.next === null) finish();
+    else await load(state.next);
+  } catch (e) {
+    $("error").textContent = e.message;
+  }
+})();
+</script>
+</body>
+</html>

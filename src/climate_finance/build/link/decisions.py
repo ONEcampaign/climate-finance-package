@@ -2,7 +2,7 @@
 link overrides.
 
 People and agents decide the pairs of a packet (`packet.write_packet`) and return a CSV
-that `import_labels` appends to the review-decisions table.
+that `import_labels` records in the review-decisions table.
 `read_decision_labels` reads the queue decisions back as `human` and
 `agent` pair labels, leaving out blind-sample decisions, which only measure the links'
 precision. Decisions hold pair by pair: an accepted link stays at probability 1, and
@@ -23,6 +23,8 @@ from climate_finance.build.errors import ReviewDecisionsError
 from climate_finance.build.link.packet import packet_digest, packet_pairs_path
 
 PAIR = ["task", "left_id", "right_id"]
+# A person's decision replaces the same person's decision on the same pair and draw.
+PERSON_KEY = [*PAIR, "sample_id", "reviewer", "label_source"]
 # A labels CSV's columns, and what its `label` says of a pair.
 LABEL_COLUMNS = ("pair", "label", "confidence", "reason")
 LABELS = {"match": "accept", "no_match": "reject"}
@@ -232,13 +234,19 @@ def import_labels(
     reviewer: str,
     model: str | None = None,
     label_round: str | None = None,
+    partial: bool = False,
 ) -> Path:
-    """Append the decisions of a labels CSV to the review-decisions table.
+    """Record the decisions of a labels CSV in the review-decisions table.
 
     The CSV holds `LABEL_COLUMNS`: the packet's pair number, `match` or `no_match`,
     the decider's confidence that the pair matches, from 0 to 1 and on the label's
-    side of 0.5, and the reason. It must answer exactly the pairs of `packet`, and
-    the packet must be the one its pairs file was written with.
+    side of 0.5, and the reason. It must answer exactly the pairs of `packet`, or
+    some of them once each when `partial`, and the packet must be the one its pairs
+    file was written with.
+
+    A person's decision replaces that person's earlier decision on the same pair
+    (and `sample_id`), so importing a changed or repeated answer leaves one row. An
+    agent's decisions append, since each round stands as a decision of its own.
 
     Args:
         packet: the packet the CSV answers (`packet.write_packet`).
@@ -249,13 +257,15 @@ def import_labels(
         model: the agent's model. An agent's decisions need it, a person's take none.
         label_round: the agent's labelling round (`schema.LABEL_ROUNDS`), `label`
             when not given. A person's decisions take none.
+        partial: whether the CSV may answer only some of the packet's pairs.
 
     Returns:
         `decisions_path`.
 
     Raises:
         ReviewDecisionsError: when the packet changed since its pairs were written,
-            the CSV's pairs differ from the packet's, a label or confidence is out of
+            the CSV's pairs differ from the packet's (when `partial`, the CSV repeats
+            a pair or names one the packet lacks), a label or confidence is out of
             range or the two disagree, or the provenance arguments do not fit
             `label_source`.
     """
@@ -282,16 +292,19 @@ def import_labels(
         pl.col("confidence").cast(pl.Float64, strict=False),
     )
     expected, answered = set(pairs["pair"]), given["pair"].to_list()
+    stray = set(answered) - expected - {None}
     if (
         None in answered
         or len(answered) != len(set(answered))
-        or set(answered) != expected
+        or stray
+        or (not partial and set(answered) != expected)
     ):
         raise ReviewDecisionsError(
-            f"{labels_csv} must answer each of the {len(expected)} pairs of {packet} "
-            f"once; it answers {len(set(answered) - {None})}, with "
-            f"{len(answered) - len(set(answered))} repeats and "
-            f"{len(set(answered) - expected - {None})} pairs the packet lacks"
+            f"{labels_csv} must answer {'some of' if partial else 'each of'} the "
+            f"{len(expected)} pairs of {packet} once; it answers "
+            f"{len(set(answered) - {None})}, with "
+            f"{len(answered) - len(set(answered))} repeats and {len(stray)} pairs "
+            "the packet lacks"
         )
     confidence = pl.col("confidence")
     label = pl.col("label")
@@ -339,7 +352,19 @@ def import_labels(
         )
     schema.validate(schema.REVIEW_DECISIONS, new)
     if decisions_path.exists():
-        new = pl.concat([pl.read_parquet(decisions_path), new])
+        earlier = pl.read_parquet(decisions_path)
+        if not agent:
+            earlier = earlier.join(
+                new.select(PERSON_KEY),
+                on=PERSON_KEY,
+                how="anti",
+                nulls_equal=True,
+                maintain_order="left",
+            )
+        new = pl.concat([earlier, new])
     decisions_path.parent.mkdir(parents=True, exist_ok=True)
-    new.write_parquet(decisions_path)
+    # A page saves after every answer, so a crash must leave the old table whole.
+    staging = decisions_path.with_name(f".{decisions_path.name}.tmp")
+    new.write_parquet(staging)
+    staging.replace(decisions_path)
     return decisions_path

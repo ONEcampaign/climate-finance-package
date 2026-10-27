@@ -45,18 +45,34 @@ Writes the review queue as a labelling packet, with its pairs file beside it. `-
 ## `cf-build import-labels`
 
 ```bash
-cf-build import-labels PACKET LABELS --source human --reviewer NAME [--decisions data/review_decisions.parquet]
+cf-build import-labels PACKET LABELS --source human --reviewer NAME [--decisions data/review_decisions.parquet] [--partial]
 ```
 
-Records a labels CSV that answers a packet. The CSV has the columns `pair`, `label` (`match` or `no_match`), `confidence` (0 to 1, on the label's side of 0.5), and `reason`, and answers each pair of the packet once. A person's decision on a pair overrides any agent's, whatever the import order.
+Records a labels CSV that answers a packet. The CSV has the columns `pair`, `label` (`match` or `no_match`), `confidence` (0 to 1, on the label's side of 0.5), and `reason`, and answers each pair of the packet once. A person's decision on a pair overrides any agent's, whatever the import order. A person's import replaces that person's earlier decision on the same pair, and an agent's import appends.
 
 - `--source` records who decided (`human` or `agent`).
 - `--reviewer` names the person or the agent run.
 - `--model` sets the agent's model. It is required for an agent and refused for a person.
 - `--round` sets an agent's round (`label`, `second`, or `adjudicate`), defaulting to `label` for an agent.
-- `--decisions` (default `data/review_decisions.parquet`) sets the table the decisions append to.
+- `--decisions` (default `data/review_decisions.parquet`) sets the table the decisions go to.
+- `--partial` accepts a CSV that answers only some of the packet's pairs, each once.
 
 The command raises `ReviewDecisionsError` when the packet differs from its pairs file, or when the CSV's pairs differ from the packet's.
+
+## `cf-build label`
+
+```bash
+cf-build label RELEASE_DIR SAMPLE_DIR --reviewer NAME [--config build.toml] [--port N] [--browser | --no-browser]
+```
+
+Serves a page on `127.0.0.1` for labelling one person's share of the blind sample in `SAMPLE_DIR`, and opens it in a browser. The share is the first pairs, in a stable hash order of their sample ids, whose draws reach `human_audit.min_share` of each provider's draws. A pair already decided by a person is skipped. `RELEASE_DIR` supplies the records the page shows.
+
+- `--reviewer` names the person in the decisions.
+- `--config` (default `build.toml`) names the file whose `sources.review_decisions` receives the decisions.
+- `--port` sets the port. The default of 0 picks a free one.
+- `--no-browser` prints the address without opening it.
+
+Each answer is written at once to `batch-<NN>.<reviewer>.labels.csv` beside its packet and recorded with `import-labels --source human`. [How to label the blind sample](../how-to/label-the-blind-sample.md) walks through the page.
 
 ## `cf-build gate`
 

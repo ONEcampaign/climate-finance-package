@@ -18,8 +18,11 @@ from climate_finance.build.link.keys import as_exact_links, build_units
 from climate_finance.build.link.packet import (
     MATCH_DEFINITION,
     packet_pairs_path,
+    render_packet,
     write_packet,
 )
+
+GOLDEN = Path(__file__).parent / "golden"
 
 CRS = {
     "record_id": pl.String,
@@ -136,6 +139,22 @@ def test_a_packet_shows_ids_only_when_asked(tmp_path: Path, show_ids: bool) -> N
     assert "| Similar commitments | 1 | 1 |" in text
 
 
+@pytest.mark.parametrize("show_ids", [True, False])
+def test_a_packet_renders_to_its_golden_text(tmp_path: Path, show_ids: bool) -> None:
+    case = Case(tmp_path)
+    numbered = case.pairs().with_row_index("pair", offset=1)
+    text = render_packet(
+        numbered.with_columns(pl.col("pair").cast(pl.Int32)),
+        units=case.units.lazy(),
+        crs=case.crs.lazy(),
+        title="Pairs",
+        show_ids=show_ids,
+    )
+
+    golden = GOLDEN / f"packet_{'ids' if show_ids else 'blind'}.md"
+    assert text == golden.read_text(encoding="utf-8")
+
+
 def test_a_packet_that_would_name_a_hidden_id_is_refused(tmp_path: Path) -> None:
     case = Case(tmp_path)
     # Redaction blanks crs ids and project numbers; a unit id in a CRS row's title
@@ -224,6 +243,43 @@ def test_a_csv_that_does_not_answer_its_packet_is_refused(
             model="m",
         )
     assert not decisions.exists()
+
+
+def test_a_person_may_answer_some_pairs_and_change_an_answer(tmp_path: Path) -> None:
+    case = Case(tmp_path)
+    packet = case.packet(show_ids=False)
+    decisions = tmp_path / "review_decisions.parquet"
+
+    def person(rows: list[tuple[int, str, float]], reviewer: str = "analyst") -> None:
+        import_labels(
+            packet=packet,
+            labels_csv=case.labels(rows),
+            decisions_path=decisions,
+            label_source="human",
+            reviewer=reviewer,
+            partial=True,
+        )
+
+    person([(1, "match", 0.9)])
+    person([(1, "no_match", 0.2), (2, "match", 0.9)])
+    person([(1, "match", 0.7)], reviewer="colleague")
+
+    recorded = pl.read_parquet(decisions).sort("reviewer", "left_id")
+    assert recorded.height == 3
+    assert recorded.filter(reviewer="analyst")["decision"].to_list() in (
+        ["reject", "accept"],
+        ["accept", "reject"],
+    )
+    with pytest.raises(ReviewDecisionsError):
+        import_labels(
+            packet=packet,
+            labels_csv=case.labels([(1, "match", 0.9), (1, "match", 0.9)]),
+            decisions_path=decisions,
+            label_source="human",
+            reviewer="analyst",
+            partial=True,
+        )
+    assert pl.read_parquet(decisions).height == 3
 
 
 def test_a_packet_changed_after_its_pairs_were_written_is_refused(

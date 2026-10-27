@@ -16,6 +16,7 @@ def test_cf_build_declares_every_command() -> None:
         "gate",
         "queue",
         "import-labels",
+        "label",
         "ingest-unfccc",
         "release",
         "names",
