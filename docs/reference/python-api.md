@@ -10,18 +10,18 @@ Parameters:
 
 - `release` (`str`, default `"latest"`). A release name from the release index, or `"latest"`. The index shipped in the wheel is empty until the first 2.0 release is published, so until then a call without `path` raises `UnknownNameError`, whose message names `cf.load(path=...)` and the package's GitHub releases page, where releases built with `cf-build release` are published.
 - `path` (`str | Path | None`). A release directory on disk. When given, the function ignores the other arguments and downloads nothing.
-- `cache_dir` (`str | Path | None`). Where releases unpack. Defaults to `CLIMATE_FINANCE_CACHE`, then `~/.cache/climate-finance`.
-- `refresh` (`bool`, default `False`). When `True`, reads the newest release index online. When `False`, reads the index shipped in the wheel.
+- `cache_dir` (`str | Path | None`). Where releases unpack. Defaults to the `CLIMATE_FINANCE_CACHE_DIR` environment variable, then `~/.cache/climate-finance`.
+- `refresh` (`bool`, default `False`). When `True`, reads the newest release index online, `releases.json` on the package's GitHub release tagged `data`. When `False`, reads the index shipped in the wheel, which lists the releases published before that version of the package. A release published later opens only with `refresh=True`.
 
-A cached release opens offline. For an uncached release, `cf.load()` downloads the pack, checks its sha256 against the index, and unpacks it into the cache. A cached copy that fails its check downloads again.
+Each index entry gives the pack's URL, its sha256 and the release's data format. `cf.load()` refuses a release of a newer data format before downloading it. For an uncached release, it downloads the pack, checks its sha256 against the index, and unpacks it into the cache with that sha256 in `pack.sha256`. A cached release opens offline when `pack.sha256` matches the index entry and its tables match `release.json`. Otherwise it downloads again. When two processes download the same release at once, both open the copy that lands first.
 
 Raises:
 
 - `InvalidInputError` when the release's directory would lie outside the cache.
 - `ReleaseIntegrityError` when `release.json` or a table is missing, a table's sha256 differs from `release.json`, or a pack's sha256 differs from the index.
-- `ReleaseFormatError` when `release.json` records a data format newer than the package reads. A later climate-finance reads it.
-- `UnknownNameError` when the index lists no release of that name, with close names as suggestions.
-- `SourceUnavailableError` when the index or a pack fails to download.
+- `ReleaseFormatError` when the index entry or `release.json` records a data format newer than the package reads. A later climate-finance reads it.
+- `UnknownNameError` when the index lists no release of that name, with close names as suggestions. Without `refresh`, the message names the newest release the shipped index lists and suggests `refresh=True`.
+- `SourceUnavailableError` when the index or a pack fails to download, or the index online is malformed.
 
 ```python
 import climate_finance as cf

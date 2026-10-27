@@ -1359,14 +1359,17 @@ def add_to_index(
         BuildError: when `release` is not the release the pack holds, or the
             pack holds a release named `SYNTHETIC_RELEASE`.
     """
-    if (packed := publishable(pack).release) != release:
-        raise BuildError(f"{pack} holds release {packed!r}, not {release!r}")
+    manifest = publishable(pack)
+    if manifest.release != release:
+        raise BuildError(f"{pack} holds release {manifest.release!r}, not {release!r}")
     return index.model_copy(
         update={
             "latest": release,
             "releases": {
                 **index.releases,
-                release: IndexEntry(url=url, sha256=sha256_file(pack)),
+                release: IndexEntry(
+                    url=url, sha256=sha256_file(pack), data_format=manifest.data_format
+                ),
             },
         }
     )

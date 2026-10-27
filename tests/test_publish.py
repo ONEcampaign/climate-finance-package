@@ -19,6 +19,7 @@ import polars as pl
 import pyarrow as pa
 import pytest
 from make_fixture import FIXTURE_DIR
+from pydantic import ValidationError
 
 import climate_finance as cf
 from climate_finance import release as release_module
@@ -33,7 +34,12 @@ from climate_finance.errors import (
     WithheldTableError,
 )
 from climate_finance.release import IndexEntry, ReleaseIndex
-from climate_finance.schema import BTR_WORKBOOKS, ReleaseManifest, sha256_file
+from climate_finance.schema import (
+    BTR_WORKBOOKS,
+    DATA_FORMAT,
+    ReleaseManifest,
+    sha256_file,
+)
 
 # The fixture packs under a release name of its own, since `fixture` is reserved.
 RELEASE = "2026a"
@@ -600,19 +606,157 @@ def test_a_cached_release_that_fails_its_check_downloads_again(
     assert sha256_file(table) == loaded.manifest.tables["provider_coefficients"].sha256
 
 
+def test_a_cached_release_from_another_pack_downloads_again(
+    tmp_path: Path,
+    published: tuple[ReleaseIndex, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    index, _ = published
+    cache = tmp_path / "cache"
+    stamp = cf.load(cache_dir=cache).path / release_module.PACK_SHA256
+    # The cache holds a pack the index no longer names, as after a re-cut.
+    stamp.write_text("0" * 64)
+    downloads = []
+    fetch = release_module._fetch
+
+    def counted(url: str, *, out_path: Path) -> str:
+        downloads.append(url)
+        return fetch(url, out_path=out_path)
+
+    monkeypatch.setattr(release_module, "_fetch", counted)
+
+    cf.load(cache_dir=cache)
+
+    assert downloads == [index.releases[RELEASE].url]
+    assert stamp.read_text() == index.releases[RELEASE].sha256
+
+
+@pytest.mark.parametrize("winner", ["same-pack", "other-pack"])
+def test_two_loads_racing_on_one_release_both_open_it(
+    tmp_path: Path,
+    published: tuple[ReleaseIndex, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    winner: str,
+) -> None:
+    index, _ = published
+    cache = tmp_path / "cache"
+    fetch = release_module._fetch
+    raced: list[cf.Release] = []
+
+    def racing(url: str, *, out_path: Path) -> str:
+        # Another process finishes its own load between this download and rename.
+        monkeypatch.setattr(release_module, "_fetch", fetch)
+        raced.append(cf.load(cache_dir=cache))
+        if winner == "other-pack":  # as from an index listing a re-cut
+            (raced[0].path / release_module.PACK_SHA256).write_text("f" * 64)
+        return fetch(url, out_path=out_path)
+
+    monkeypatch.setattr(release_module, "_fetch", racing)
+
+    loaded = cf.load(cache_dir=cache)
+
+    assert loaded.path == raced[0].path
+    assert [path.name for path in cache.iterdir()] == [f"climate-finance-{RELEASE}"]
+    stamp = loaded.path / release_module.PACK_SHA256
+    assert stamp.read_text() == index.releases[RELEASE].sha256
+
+
+@pytest.mark.parametrize("other", ["moved-it-away", "replaced-it"])
+def test_a_stale_copy_another_load_handles_first_is_left_to_it(
+    tmp_path: Path,
+    published: tuple[ReleaseIndex, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    other: str,
+) -> None:
+    cache = tmp_path / "cache"
+    target = cf.load(cache_dir=cache).path
+    (target / release_module.PACK_SHA256).write_text("0" * 64)
+    packed = release_module._packed_sha256
+    fetch = release_module._fetch
+    downloads = []
+
+    def counted(url: str, *, out_path: Path) -> str:
+        downloads.append(url)
+        return fetch(url, out_path=out_path)
+
+    def checked(path: Path) -> str | None:
+        # Another load acts on the stale copy between this check and the discard.
+        monkeypatch.setattr(release_module, "_packed_sha256", packed)
+        stale = packed(path)
+        if other == "moved-it-away":
+            shutil.rmtree(path)
+        else:
+            cf.load(cache_dir=cache)
+        downloads.clear()
+        return stale
+
+    monkeypatch.setattr(release_module, "_fetch", counted)
+    monkeypatch.setattr(release_module, "_packed_sha256", checked)
+
+    loaded = cf.load(cache_dir=cache)
+
+    # A fresh copy another load placed is kept, not downloaded again.
+    assert len(downloads) == (1 if other == "moved-it-away" else 0)
+    assert loaded.spending().table.height > 0
+    assert [path.name for path in cache.iterdir()] == [f"climate-finance-{RELEASE}"]
+
+
+def test_refresh_reads_an_index_with_fields_this_package_does_not_know(
+    tmp_path: Path, published: tuple[ReleaseIndex, Path]
+) -> None:
+    index, served = published
+    newer = json.loads(index.model_dump_json())
+    newer["generated"] = "2027-01-01"
+    newer["releases"][RELEASE]["requires"] = ">=2.1"
+    (served / "releases.json").write_text(json.dumps(newer))
+
+    loaded = cf.load(cache_dir=tmp_path / "cache", refresh=True)
+
+    assert loaded.manifest.release == RELEASE
+
+
+@pytest.mark.parametrize("body", [b"<html>Not Found</html>", b'{"releases": []}'])
+def test_a_malformed_index_online_is_a_source_error(
+    tmp_path: Path, published: tuple[ReleaseIndex, Path], body: bytes
+) -> None:
+    _, served = published
+    (served / "releases.json").write_bytes(body)
+
+    with pytest.raises(SourceUnavailableError) as raised:
+        cf.load(cache_dir=tmp_path / "cache", refresh=True)
+    assert isinstance(raised.value.__cause__, ValidationError)
+
+
+def test_the_index_url_is_on_the_fixed_data_tag() -> None:
+    # GitHub's "latest" release follows code releases, which carry no index.
+    assert "/releases/download/data/" in release_module.INDEX_URL
+
+
 def test_load_names_an_unlisted_release_and_an_unreachable_pack(
     tmp_path: Path,
     published: tuple[ReleaseIndex, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     index, _ = published
-    with pytest.raises(UnknownNameError, match=f"Did you mean: {RELEASE}"):
+    # A release newer than the shipped index is online only, so refresh is named.
+    # Suggestions from the shipped index would name only older releases.
+    with pytest.raises(UnknownNameError) as shipped:
         cf.load("2026", cache_dir=tmp_path / "cache")
+    with pytest.raises(UnknownNameError) as online:
+        cf.load("2026", cache_dir=tmp_path / "cache", refresh=True)
+    assert shipped.value.suggestions == ()
+    assert "refresh=True" in str(shipped.value)
+    assert online.value.suggestions == (RELEASE,)
+    assert "refresh=True" not in str(online.value)
 
     gone = index.model_copy(
         update={
             "releases": {
-                RELEASE: IndexEntry(url="http://127.0.0.1:9/gone", sha256="0" * 64)
+                RELEASE: IndexEntry(
+                    url="http://127.0.0.1:9/gone",
+                    sha256="0" * 64,
+                    data_format=DATA_FORMAT,
+                )
             }
         }
     )

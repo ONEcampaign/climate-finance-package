@@ -20,6 +20,7 @@ from climate_finance.errors import (
     ReleaseIntegrityError,
 )
 from climate_finance.release import (
+    PACK_SHA256,
     IndexEntry,
     ReleaseIndex,
     check_release_name,
@@ -152,10 +153,15 @@ def test_a_cached_release_with_a_malformed_manifest_downloads_again(
     cache = tmp_path / "cache"
     name = release_dirname("fixture")
     shutil.copytree(FIXTURE_DIR, cache / name)
+    (cache / name / PACK_SHA256).write_text("0")
     (cache / name / "release.json").write_text('{"release": "fixt')
     index = ReleaseIndex(
         latest="fixture",
-        releases={"fixture": IndexEntry(url="https://example.org/pack", sha256="0")},
+        releases={
+            "fixture": IndexEntry(
+                url="https://example.org/pack", sha256="0", data_format=DATA_FORMAT
+            )
+        },
     )
     downloads = []
 
@@ -177,7 +183,9 @@ UNSAFE_NAMES = ["x/../../victim", "..", ".hidden", "a b", "", "x\\y", "x\n"]
 
 @pytest.mark.parametrize("name", UNSAFE_NAMES)
 def test_a_release_name_must_be_one_safe_path_segment(name: str) -> None:
-    entry = IndexEntry(url="https://example.org/pack", sha256="0")
+    entry = IndexEntry(
+        url="https://example.org/pack", sha256="0", data_format=DATA_FORMAT
+    )
 
     with pytest.raises(InvalidInputError):
         check_release_name(name)
@@ -205,7 +213,11 @@ def test_load_leaves_a_directory_outside_the_cache_alone(
     # model_construct skips the name check `load` relies on, to test its own.
     index = ReleaseIndex.model_construct(
         latest=name,
-        releases={name: IndexEntry(url="https://example.org/pack", sha256="0")},
+        releases={
+            name: IndexEntry(
+                url="https://example.org/pack", sha256="0", data_format=DATA_FORMAT
+            )
+        },
     )
     downloads = []
     monkeypatch.setattr(release_module, "_shipped_index", lambda: index)
@@ -226,12 +238,17 @@ def test_a_newer_data_format_asks_for_an_upgrade_and_stays_cached(
 ) -> None:
     cache = tmp_path / "cache"
     release = shutil.copytree(FIXTURE_DIR, cache / release_dirname("fixture"))
+    (release / PACK_SHA256).write_text("0")
     (release / "release.json").write_bytes(
         _fixture_manifest(data_format=DATA_FORMAT + 1, **extra)
     )
     index = ReleaseIndex(
         latest="fixture",
-        releases={"fixture": IndexEntry(url="https://example.org/pack", sha256="0")},
+        releases={
+            "fixture": IndexEntry(
+                url="https://example.org/pack", sha256="0", data_format=DATA_FORMAT
+            )
+        },
     )
     downloads = []
     monkeypatch.setattr(release_module, "_shipped_index", lambda: index)
@@ -246,6 +263,34 @@ def test_a_newer_data_format_asks_for_an_upgrade_and_stays_cached(
         assert raised.value.supported == DATA_FORMAT
     assert downloads == []
     assert (release / "commitments.parquet").is_file()
+
+
+def test_an_index_entry_of_a_newer_data_format_is_refused_before_downloading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    index = ReleaseIndex(
+        latest="2026b",
+        releases={
+            "2026b": IndexEntry(
+                url="https://example.org/pack", sha256="0", data_format=DATA_FORMAT + 1
+            )
+        },
+    )
+    downloads = []
+    monkeypatch.setattr(release_module, "_shipped_index", lambda: index)
+    monkeypatch.setattr(
+        release_module, "_download", lambda entry, *, target: downloads.append(target)
+    )
+
+    with pytest.raises(ReleaseFormatError) as raised:
+        cf.load(cache_dir=tmp_path / "cache")
+
+    assert (raised.value.release, raised.value.data_format) == (
+        "2026b",
+        DATA_FORMAT + 1,
+    )
+    assert downloads == []
+    assert not (tmp_path / "cache").exists()
 
 
 def test_a_release_of_an_older_format_serves_what_it_holds(
