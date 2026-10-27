@@ -323,6 +323,22 @@ def test_crdf_repairs_excel_damage(crs: pl.DataFrame) -> None:
     assert _row(crdf, crs_id="2015009999")["project_number"] is None
 
 
+def test_crdf_carries_the_long_description(crs: pl.DataFrame) -> None:
+    raw = pl.read_parquet(OECD / "crdf_recipient.parquet").with_columns(
+        description=pl.col("crs_id").replace_strict(
+            {"2022000101": "Boreholes for rural towns", "2022000301": "#VALUE!"},
+            default=None,
+        )
+    )
+    crdf = _crdf(crs, raw=raw)
+
+    assert _row(crdf, crs_id="2022000101")["description"] == (
+        "Boreholes for rural towns"
+    )
+    # Excel error text is nulled, as in the title.
+    assert _row(crdf, crs_id="2022000301")["description"] is None
+
+
 def test_crdf_trims_ids(crs: pl.DataFrame) -> None:
     raw = pl.read_parquet(OECD / "crdf_recipient.parquet")
     padded = raw.with_columns(

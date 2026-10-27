@@ -1,5 +1,7 @@
 """The recovery routes from CRDF rows to CRS commitments."""
 
+from datetime import date
+
 import polars as pl
 import pytest
 from normalised import crdf_rows, crs_records
@@ -15,6 +17,7 @@ from climate_finance.build.errors import LinkInputError
 from climate_finance.build.link.crdf_crs import link_within_year, recover
 from climate_finance.build.link.id_practice import classify_id_practice
 from climate_finance.build.link.keys import build_units, link_by_keys
+from climate_finance.build.normalise.vintages import mark_repeats
 
 EIB = {"provider_code": 918, "agency_code": 3}
 BULK = {"donor_code": 918, "agency_code": 3, "purpose_code": 23210}
@@ -143,7 +146,12 @@ def test_the_crosswalk_takes_a_contract_of_the_rows_serial_within_ten_percent(
 
 @pytest.mark.parametrize(
     ("skip", "linked"),
-    [((), True), (("crosswalk",), False), (("title_recipient",), True)],
+    [
+        ((), True),
+        (("crosswalk",), False),
+        (("title_recipient",), True),
+        (("eib_text_amount", "eib_amount"), True),
+    ],
 )
 def test_a_skipped_route_links_nothing(skip: tuple[str, ...], linked: bool) -> None:
     links, units = _recover(
@@ -394,3 +402,206 @@ def test_an_aggregate_child_needs_its_records_recipient() -> None:
 
     assert _linked(links, units) == set()
     assert links.filter(task="trace").is_empty()
+
+
+# A 2023 EIB row as the CRDF prints it: a sentence for a title, a placeholder crs id
+# and no project number. The CRS commits it in 2024 under a project name.
+ROW_TEXT = {
+    "title": "Purchase of trolley buses for the public transport of Sarajevo",
+    "description": "Renewal of the trolley bus fleet of the Sarajevo canton",
+}
+UNIT_TEXT = {
+    "title": "SARAJEVO TROLLEY BUS FLEET RENEWAL",
+    "long_description": ROW_TEXT["title"],
+}
+OTHER_TEXT = {
+    "title": "DAKAR WASTEWATER PLANT",
+    "long_description": "Sewage treatment works serving the Dakar peninsula",
+}
+GENERIC_TEXT = {"title": "PSI", "long_description": "PSI Investment Loan"}
+
+
+def _committed(record_id: str, commit: float, **fields: object) -> dict:
+    """A bulk EIB commitment recorded and dated in 2024."""
+    return _bulk(record_id, 2024, commit, commitment_date=date(2024, 5, 1), **fields)
+
+
+# Ten more EIB commitments elsewhere under `GENERIC_TEXT`, so that eleven units carry
+# it and it names no project.
+GENERIC_CROWD = [
+    _committed(f"psi{n}", 7.0, recipient_code=289, **GENERIC_TEXT) for n in range(10)
+]
+
+
+@pytest.mark.parametrize(
+    ("commit", "text", "recipient", "method"),
+    [
+        # Text much like the row's, and 5% from its face value, beyond the project
+        # list's 3%.
+        (105.0, UNIT_TEXT, 248, "eib_text_amount"),
+        (115.0, UNIT_TEXT, 248, None),
+        (105.0, OTHER_TEXT, 248, None),
+        (105.0, UNIT_TEXT, 249, None),
+        # Within 0.02%, text need not agree, so long as it does not contradict.
+        (100.01, GENERIC_TEXT, 248, "eib_amount"),
+        (100.01, OTHER_TEXT, 248, None),
+        (100.03, GENERIC_TEXT, 248, None),
+    ],
+)
+def test_the_eib_text_and_amount_routes(
+    commit: float, text: dict, recipient: int, method: str | None
+) -> None:
+    links, units = _recover(
+        [_row("row", 2023, 100.0, crs_id="2023900001", **ROW_TEXT)],
+        [_committed("b", commit, recipient_code=recipient, **text), *GENERIC_CROWD],
+    )
+
+    assert _linked(links, units) == ({("row", "b", method)} if method else set())
+    assert set(links["group_id"]) == ({f"{method}|row"} if method else set())
+
+
+@pytest.mark.parametrize(
+    ("other_project", "linked"),
+    [
+        # Two tranches of one project, so the row takes one of them.
+        ("91001", True),
+        ("91002", False),
+    ],
+)
+def test_an_eib_row_links_only_when_its_matches_are_one_project(
+    other_project: str, linked: bool
+) -> None:
+    links, _ = _recover(
+        [_row("row", 2023, 100.0, crs_id="2023900001", **ROW_TEXT)],
+        [
+            _committed("b", 100.0, project_number="91001", **GENERIC_TEXT),
+            _committed("c", 100.0, project_number=other_project, **GENERIC_TEXT),
+            *GENERIC_CROWD,
+        ],
+    )
+
+    recovered = links.filter(task="crdf_crs")
+    assert recovered.select("left_id", "link_method").rows() == (
+        [("row", "eib_amount")] if linked else []
+    )
+
+
+def test_a_unit_two_eib_rows_match_goes_to_the_closer_text() -> None:
+    links, units = _recover(
+        [
+            _row("a", 2023, 100.0, crs_id="2023900001", **ROW_TEXT),
+            _row(
+                "b", 2023, 100.0, crs_id="2023900002", title="Investment loan to SMEs"
+            ),
+        ],
+        [_committed("u", 100.0, **GENERIC_TEXT), *GENERIC_CROWD],
+    )
+
+    assert _linked(links, units) == {("b", "u", "eib_amount")}
+
+
+@pytest.mark.parametrize(
+    ("row_text", "unit_text", "method"),
+    [
+        (ROW_TEXT, UNIT_TEXT, "eib_text_amount"),
+        # Rows with no text are no operation, so their sum matches nothing.
+        ({}, GENERIC_TEXT, None),
+    ],
+)
+def test_rows_matched_through_their_description_groups_sum_share_a_group(
+    row_text: dict, unit_text: dict, method: str | None
+) -> None:
+    # One fund split by purpose. The two rows sum to the unit, and neither alone
+    # comes within 10% of it.
+    rows = [
+        _row("a", 2023, 60.0, crs_id="2023900001", **row_text),
+        _row("b", 2023, 40.0, crs_id="2023900002", purpose_code=24030, **row_text),
+    ]
+    links, units = _recover(rows, [_committed("u", 100.0, **unit_text), *GENERIC_CROWD])
+
+    expected = {("a", "u", method), ("b", "u", method)} if method else set()
+    assert _linked(links, units) == expected
+    assert set(links["group_id"]) == ({f"{method}|a"} if method else set())
+
+
+def test_a_description_group_takes_over_a_repeat_of_any_of_its_rows() -> None:
+    # The 2024 row repeats the fund's second 2023 row and holds its commitment
+    # within its year. The fund's two rows sum to that commitment.
+    rows = [
+        _row("a", 2023, 60.0, crs_id="2023900001", **ROW_TEXT),
+        _row("b", 2023, 40.0, crs_id="2023900002", purpose_code=24030, **ROW_TEXT),
+        _row("later", 2024, 100.0, crs_id="2024u", repeat_of="b", **ROW_TEXT),
+    ]
+    links, units = _recover(rows, [_committed("u", 100.0, **UNIT_TEXT)])
+
+    assert _linked(links, units) == {
+        ("a", "u", "eib_text_amount"),
+        ("b", "u", "eib_text_amount"),
+    }
+    assert set(links["group_id"]) == {"eib_text_amount|a"}
+
+
+def test_a_repeated_fund_whose_rows_carry_two_titles_recovers_as_one_group() -> None:
+    # Two 2023 rows of one fund share a description under two titles; the 2024 row
+    # restates the fund and holds its commitment within its year.
+    description = "Equity in a fund investing in renewable energy in southern Africa"
+    rows = crdf_rows(
+        _row(
+            "a", 2023, 60.0, title="Fund equity, first close", description=description
+        ),
+        _row(
+            "c", 2023, 40.0, title="Fund equity, second close", description=description
+        ),
+        _row("later", 2024, 100.0, crs_id="2024u", description=description),
+    )
+    records = [
+        _committed("u", 100.0, title="PEMBANI FUND II", long_description=description)
+    ]
+    crs = crs_records(*records).lazy()
+    crdf = mark_repeats(rows.lazy(), crs=crs, exchange=_exchange(RATES)).collect()
+    assert dict(crdf.select("row_id", "repeat_of").iter_rows())["later"] == "a"
+
+    links, units = _recover(crdf.to_dicts(), records)
+
+    linked = _linked(links, units)
+    assert {(row, record) for row, record, _ in linked} == {("a", "u"), ("c", "u")}
+    assert links.filter(task="crdf_crs")["group_id"].n_unique() == 1
+
+
+def test_a_units_amount_converts_at_the_rate_of_the_year_it_was_reported() -> None:
+    # EUR 100 signed in 2023 and reported in 2024 as USD 125 at 0.8 a dollar: at
+    # 2023's 0.9 it would read EUR 112.50.
+    links, units = _recover(
+        [_row("row", 2023, 100.0 / 0.9, crs_id="2023900001", **ROW_TEXT)],
+        [
+            _bulk("b", 2024, 125.0, commitment_date=date(2023, 6, 1), **GENERIC_TEXT),
+            *GENERIC_CROWD,
+        ],
+        rates=RATES | {2023: 0.9, 2024: 0.8},
+    )
+
+    assert _linked(links, units) == {("row", "b", "eib_amount")}
+
+
+@pytest.mark.parametrize(
+    ("text", "crowd", "linked"),
+    [
+        # Text eleven EIB commitments carry names no project, so it cannot
+        # contradict the row's.
+        (GENERIC_TEXT, GENERIC_CROWD, True),
+        ({}, [], True),
+        # A title alone that names another project contradicts it, however short.
+        ({"title": "WASTEWATER TREATMENT WORKS"}, [], False),
+        # So does generic text only one commitment carries.
+        (GENERIC_TEXT, [], False),
+    ],
+)
+def test_only_text_many_eib_commitments_share_passes_for_no_text(
+    text: dict, crowd: list[dict], linked: bool
+) -> None:
+    links, units = _recover(
+        [_row("row", 2023, 100.0, crs_id="2023900001", **ROW_TEXT)],
+        [_committed("b", 100.0, **text), *crowd],
+    )
+
+    assert _linked(links, units) == ({("row", "b", "eib_amount")} if linked else set())

@@ -131,6 +131,23 @@ OTHER_OFFICIAL = {"AFDB-2"}
 # A record's grant equivalent as a share of its disbursement, by flow code.
 GRANT_EQUIV_RATIO = {11: 1.0, 13: 0.6}
 
+# The records a certain link carries, which count in the low bound. Every other
+# record's link is estimated. Each takes the next certain method, and the rest take
+# the estimated methods in turn, so a new method changes no low bound. It needs a
+# slot of its own, or the fixture refuses to build.
+CERTAIN_RECORDS = frozenset(
+    {
+        "DEU-1-R0",
+        "DEU-1-R1",
+        "DEU-1-R2",
+        "DEU-2-R0",
+        "IDA-2-R0",
+        "IDA-2-R1",
+        "IDA-2-R2",
+        "AFDB-1-R0",
+    }
+)
+
 # One CRS record split across JPN-1 and JPN-3. The rest of its disbursement is
 # excess, which reaches no commitment and so is untraced.
 SPLIT_RECORD = "JPN-SPLIT"
@@ -375,7 +392,10 @@ def _objectives(
 
 def build_tables() -> dict[str, pl.DataFrame]:
     """Every release table of the synthetic snapshot."""
-    methods = itertools.cycle(LINK_METHODS)
+    certain_methods = itertools.cycle(CERTAIN_METHODS)
+    estimated_methods = itertools.cycle(
+        [method for method in LINK_METHODS if method not in CERTAIN_METHODS]
+    )
     commitments: dict[str, dict[str, object]] = {}
     disbursement_rows: list[dict[str, object]] = []
     objective_rows: list[dict[str, object]] = []
@@ -447,7 +467,11 @@ def build_tables() -> dict[str, pl.DataFrame]:
                 reserved=allocated * (2 - index),
                 record_disbursement=allocated,
                 record_grant_equiv=grant_equiv if index else None,
-                link_method=next(methods),
+                link_method=next(
+                    certain_methods
+                    if record_id in CERTAIN_RECORDS
+                    else estimated_methods
+                ),
                 link_probability=1.0 if index == 0 else 0.85,
                 rule="dated" if index == 0 else "fifo",
             )

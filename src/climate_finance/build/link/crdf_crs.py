@@ -10,9 +10,10 @@ themselves as a trace, so the record's own disbursement fills its own commitment
 
 The EIB reports to the CRDF and the CRS as agency 3 of EU Institutions (918), but
 its CRDF ids rarely reach the CRS: 2021 rows carry a contract number, 2022 rows a
-project serial the CRS never prints, and the CRS lags by one to three years. Three
-routes link the EIB rows, each to the commitment units of the bulk records it
-matches:
+project serial the CRS never prints, and 2023 rows a placeholder sequence and no
+project number. The CRS dates the commitments late: of the 2013-2018 EIB value
+that links, 37% has a CRS commitment dated in the row's year or the next, and a
+third four or more years later. Five routes link the EIB rows, in this order:
 
 - `eib_list`: the EIB's project list, by project number and recipient, or recipient,
   euro amount within 3% and a specific title (`vintages.match_eib`).
@@ -20,24 +21,44 @@ matches:
   contract numbers, which the CRS uses as project numbers.
 - `title_recipient`: a bulk project with the same recipient and nearly the same
   title.
+- `eib_text_amount`: a commitment unit with the same recipient, text much like the
+  row's, and a commitment within about 10% of the row's face value.
+- `eib_amount`: a commitment unit with the same recipient, a commitment within
+  0.02% of the row's face value, and text that does not contradict the row's.
 
-The last two take a project whose commitments from the row's year on come within
-10% of the row's face value, in euros, pairing rows and projects closest amount
-first. A crosswalk pair within 0.01% keeps the method `crosswalk`, a certain route
-(`schema.CERTAIN_ROUTES`); a wider one takes `crosswalk_amount`, since the amount
-then only suggests the contract.
+The first three link a row to the commitment units of the bulk records it
+matches. `crosswalk` and `title_recipient` take a project whose commitments from
+the row's year on come within 10% of the row's face value, in euros, pairing rows
+and projects closest amount first. A crosswalk pair within 0.01% keeps the method
+`crosswalk`, a certain route (`schema.CERTAIN_ROUTES`). A wider one takes
+`crosswalk_amount`, since the amount then only suggests the contract.
+
+The last two compare texts by TF-IDF cosine and link one commitment unit dated in
+the row's year or later, its amount in euros at the rate of the year the CRS
+reports it. A unit's amount can match the row's face value or the sum of its
+description group, the rows of its year that share its recipient and description
+(`vintages.EIB_DESCRIPTION_GROUP`, the groups the repeat rule pairs). Those rows
+then share the unit and one group. A row links only when the units its rule
+accepts belong to one project, and then to the accepted unit with the highest
+cosine.
 """
 
 from collections.abc import Callable, Collection
 
+import numpy as np
 import polars as pl
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 from climate_finance.build.errors import LinkInputError
 from climate_finance.build.link.keys import as_exact_links, group_id
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.normalise.pairing import pair_one_to_one
 from climate_finance.build.normalise.project_numbers import normalise_pn
-from climate_finance.build.normalise.vintages import match_eib
+from climate_finance.build.normalise.vintages import (
+    EIB_DESCRIPTION_GROUP,
+    eib_description_key,
+    match_eib,
+)
 from climate_finance.schema import EIB_AGENCY, EU_INSTITUTIONS, EURO_ISSUER
 
 # CRDF rows and CRS commitments that agree on these, the CRDF provider standing for
@@ -55,6 +76,18 @@ _EXACT_TOLERANCE = 1e-4
 # this many EIB commitments carry.
 _TITLE_OVERLAP = 0.8
 _GENERIC_TITLE = 10
+# `eib_text_amount` needs a TF-IDF cosine of at least this between the row's and the
+# unit's texts, and an absolute log ratio of the unit's commitment to the row's (or
+# its description group's) face value of at most this, about 10%.
+_TEXT_MATCH = 0.7
+_TEXT_AMOUNT_GAP = 0.10
+# `eib_amount` needs an absolute log ratio of at most this, about 0.02%, and a cosine
+# of at least this, unless the unit's text is generic: empty, or carried by more
+# than this many EIB commitment units, as "PSI Investment Loan" is (154 units on the
+# archive build, the next most shared text 5), and so names no project.
+_EXACT_AMOUNT_GAP = 2e-4
+_TEXT_CONSISTENT = 0.3
+_GENERIC_TEXT_UNITS = 10
 
 type _Route = Callable[[pl.DataFrame], pl.DataFrame]
 
@@ -97,9 +130,11 @@ def recover(
 
     The EIB routes run in order on the EIB rows that no earlier link reaches,
     leaving out rows that repeat an earlier row (`repeat_of`). A recovered EIB row's
-    links form its own group, `<link_method>|<row_id>`. A row whose units another
-    row's group already holds stays unlinked, unless every holder repeats it. The
-    earliest row counts, so it takes over its repeats' group.
+    links form its own group, `<link_method>|<row_id>`, except that rows matched
+    through their description group's sum share the group of the first of them. A
+    row whose units another row's group already holds stays unlinked, with the
+    rows that share its group, unless every holder repeats a row of that group.
+    The earliest rows count, so the group takes over its repeats' groups.
 
     Args:
         crdf: Recipient-perspective CRDF rows.
@@ -108,8 +143,9 @@ def recover(
         crs: Normalised CRS records.
         external: The `external` table, read for the EIB's IATI activity ids.
         exchange: DAC exchange rates with `iso_code`, `year` and `exchange_rate`.
-        skip: Names of EIB routes (`eib_list`, `crosswalk`, `title_recipient`) to
-            leave out, to measure what one route adds. A release builds with none.
+        skip: Names of EIB routes (`eib_list`, `crosswalk`, `title_recipient`,
+            `eib_text_amount`, `eib_amount`) to leave out, to measure what one
+            route adds. A release builds with none.
 
     Returns:
         `within_year`, with groups taken over re-pointed to the row that took them,
@@ -135,6 +171,7 @@ def recover(
     )
     records = _eib_commitments(crs, units=units, rates=rates)
     crosswalk = _eib_crosswalk(external)
+    scored = _scored_pairs(rows, _eib_units(crs, units=units, rates=rates))
     routes: tuple[tuple[str, _Route], ...] = (
         (
             "eib_list",
@@ -148,6 +185,24 @@ def recover(
             lambda left: _by_title(left, records).with_columns(
                 link_method=pl.lit("title_recipient")
             ),
+        ),
+        (
+            "eib_text_amount",
+            lambda left: _by_text_and_amount(
+                left,
+                scored,
+                gap=_TEXT_AMOUNT_GAP,
+                text=pl.col("cosine") >= _TEXT_MATCH,
+            ).with_columns(link_method=pl.lit("eib_text_amount")),
+        ),
+        (
+            "eib_amount",
+            lambda left: _by_text_and_amount(
+                left,
+                scored,
+                gap=_EXACT_AMOUNT_GAP,
+                text=(pl.col("cosine") >= _TEXT_CONSISTENT) | pl.col("generic"),
+            ).with_columns(link_method=pl.lit("eib_amount")),
         ),
     )
     if unknown := sorted(set(skip) - {name for name, _ in routes}):
@@ -321,6 +376,175 @@ def _by_title(rows: pl.DataFrame, records: pl.DataFrame) -> pl.DataFrame:
     return _pair_projects(candidates, records).select("row_id", "unit_id")
 
 
+def _eib_units(
+    crs: pl.LazyFrame, *, units: pl.LazyFrame, rates: pl.DataFrame
+) -> pl.DataFrame:
+    """Bulk EIB commitment units with a commitment date, with their commitment in
+    euros at the rate of the year the CRS reports it, their project (normalised
+    project number, else the unit itself), their first record's title and long
+    description as `text`, and whether that text is generic."""
+    eib = (pl.col("donor_code") == EU_INSTITUTIONS) & (
+        pl.col("agency_code") == EIB_AGENCY
+    )
+    texts = crs.filter(eib).select("record_id", "title", "long_description")
+    dated = (
+        units.filter(
+            eib, pl.col("commitment_usd") > 0, pl.col("commitment_year").is_not_null()
+        )
+        .select(
+            "unit_id",
+            "recipient_code",
+            "commitment_usd",
+            "year",
+            "commitment_year",
+            project=pl.coalesce("project_number", "unit_id"),
+            record_id=pl.col("record_ids").list.first(),
+        )
+        .join(texts, on="record_id", how="left")
+        .with_columns(
+            text=pl.concat_str(
+                "title", "long_description", separator=". ", ignore_nulls=True
+            ).fill_null("")
+        )
+        .with_columns(
+            words=pl.col("text").str.to_lowercase().str.replace_all(r"\s+", " ")
+        )
+        .select(
+            "unit_id",
+            "recipient_code",
+            "commitment_usd",
+            "year",
+            "commitment_year",
+            "project",
+            "text",
+            generic=(pl.col("words").str.strip_chars() == "")
+            | (pl.len().over("words") > _GENERIC_TEXT_UNITS),
+        )
+        .collect()
+    )
+    # The CRS converts a commitment at the rate of the year it reports it in, so
+    # that rate gives back its euros; the commitment year only dates it.
+    return _in_euro(dated, rates, amount="commitment_usd")
+
+
+def _scored_pairs(rows: pl.DataFrame, units: pl.DataFrame) -> pl.DataFrame:
+    """Each row's units with its recipient, committed in the row's year or later, as
+    (row_id, unit_id, project, unit_euro, generic, cosine).
+
+    `cosine` compares the row's title, and its description where that differs,
+    with the unit's text, as TF-IDF vectors fitted on every row's and unit's text.
+    """
+    rows = rows.sort("row_id").with_columns(row=pl.int_range(pl.len()))
+    units = units.sort("unit_id").with_columns(unit=pl.int_range(pl.len()))
+    pairs = (
+        rows.select("row", "row_id", "year", "recipient_code")
+        .join(
+            units.select(
+                "unit",
+                "unit_id",
+                "recipient_code",
+                "project",
+                "generic",
+                unit_year="commitment_year",
+                unit_euro="euro",
+            ),
+            on="recipient_code",
+        )
+        .filter(pl.col("unit_year") >= pl.col("year"))
+        .sort("row", "unit")
+    )
+    columns = ["row_id", "unit_id", "project", "unit_euro", "generic"]
+    if pairs.is_empty():
+        return pairs.select(columns).with_columns(cosine=pl.lit(None, pl.Float64))
+    described = pl.col("description") != pl.col("title").fill_null("")
+    row_texts = rows.select(
+        pl.concat_str(
+            "title",
+            pl.when(described).then("description"),
+            separator=". ",
+            ignore_nulls=True,
+        ).fill_null("")
+    ).to_series()
+    vectoriser = TfidfVectorizer(
+        sublinear_tf=True, stop_words="english", ngram_range=(1, 2)
+    )
+    try:
+        vectoriser.fit([*row_texts, *units["text"]])
+    except ValueError:
+        # Every text is empty or stop words, so no text agrees.
+        cosine = np.zeros(pairs.height)
+    else:
+        row_vectors = vectoriser.transform(row_texts)[pairs["row"].to_numpy()]
+        unit_vectors = vectoriser.transform(units["text"])[pairs["unit"].to_numpy()]
+        # The vectors have unit length, so their dot product is the cosine.
+        cosine = np.asarray(row_vectors.multiply(unit_vectors).sum(axis=1)).ravel()
+    return pairs.select(columns).with_columns(
+        cosine=pl.Series(cosine, dtype=pl.Float64)
+    )
+
+
+def _by_text_and_amount(
+    rows: pl.DataFrame, scored: pl.DataFrame, *, gap: float, text: pl.Expr
+) -> pl.DataFrame:
+    """Each row's unit that passes `text` and whose commitment is within `gap` (an
+    absolute log ratio) of the row's face value or of its description group's, as
+    (row_id, unit_id, group_row).
+
+    A row links only when the units passing belong to one project, and then to the
+    one with the highest cosine, ties to the smaller unit id. Rows of a description
+    group matched through its sum share their unit, under `group_row`, the first of
+    them. A unit two matches take goes to the one with the higher cosine, ties to
+    the smaller `group_row`.
+
+    A description group (`vintages.EIB_DESCRIPTION_GROUP`) holds only `rows`, the
+    rows no earlier route linked, since a linked row's money is already accounted
+    for and summing it in would match a unit on it a second time. A row with no
+    description is a group of its own, as it says nothing about which operation it
+    belongs to.
+    """
+    key = pl.col("description_key")
+    faces = (
+        rows.with_columns(description_key=eib_description_key())
+        .with_columns(
+            group=pl.when(key.is_null())
+            .then(pl.col("row_id"))
+            .otherwise(pl.col("row_id").min().over("year", *EIB_DESCRIPTION_GROUP))
+        )
+        .select(
+            "row_id",
+            "group",
+            row_euro="euro",
+            group_euro=pl.col("euro").sum().over("group"),
+            group_rows=pl.len().over("group"),
+        )
+    )
+    passing = (
+        scored.join(faces, on="row_id")
+        .with_columns(
+            own=_log_gap("row_euro") <= gap,
+            pooled=(pl.col("group_rows") > 1) & (_log_gap("group_euro") <= gap),
+        )
+        .filter(pl.col("own") | pl.col("pooled"), text)
+    )
+    picked = (
+        passing.filter(pl.col("project").n_unique().over("row_id") == 1)
+        .sort(["row_id", "cosine", "unit_id"], descending=[False, True, False])
+        .group_by("row_id", maintain_order=True)
+        .first()
+        .with_columns(
+            group_row=pl.when("own")
+            .then(pl.col("row_id"))
+            .otherwise(pl.col("row_id").min().over("group", "unit_id", "own"))
+        )
+    )
+    return (
+        picked.sort(["cosine", "group_row"], descending=[True, False])
+        .filter(pl.col("group_row") == pl.col("group_row").first().over("unit_id"))
+        .select("row_id", "unit_id", "group_row")
+        .sort("row_id")
+    )
+
+
 def _pair_projects(candidates: pl.DataFrame, records: pl.DataFrame) -> pl.DataFrame:
     """Pair rows with candidate projects one to one, closest amount first, as
     (row_id, unit_id, gap).
@@ -356,32 +580,41 @@ def _pair_projects(candidates: pl.DataFrame, records: pl.DataFrame) -> pl.DataFr
 def _settle(
     pairs: pl.DataFrame, *, links: pl.DataFrame, repeats: pl.DataFrame
 ) -> pl.DataFrame:
-    """Add a route's (row_id, unit_id, link_method) pairs to `links`, each row's
-    pairs as a `<link_method>|<row_id>` group.
+    """Add a route's (row_id, unit_id, link_method) pairs to `links`, each as a
+    `<link_method>|<group_row>` group, where `group_row` defaults to the row.
 
     A row loses its pairs when another row's group holds one of its units, unless
-    that holder repeats it, in which case the row takes over the holder's group.
+    that holder repeats a row of the row's group, in which case the group takes
+    over the holder's group. Rows that share a group lose their pairs together.
     """
+    # Only the EIB text and amount routes emit `group_row`.
+    if "group_row" not in pairs.columns:
+        pairs = pairs.with_columns(group_row="row_id")
     holders = links.select(
         unit_id="right_id", group_id="group_id", holder="left_id"
     ).join(repeats, on="holder", how="left")
-    claimed = pairs.join(holders, on="unit_id", how="left")
-    other = pl.col("first_row").is_null() | (pl.col("first_row") != pl.col("row_id"))
-    blocked = claimed.filter(pl.col("holder").is_not_null() & other).select("row_id")
-    claimed = claimed.join(blocked, on="row_id", how="anti")
+    members = pairs.select("group_row", first_row="row_id").unique()
+    repeated = members.with_columns(repeats_group=pl.lit(True))
+    claimed = pairs.join(holders, on="unit_id", how="left").join(
+        repeated, on=["group_row", "first_row"], how="left"
+    )
+    blocked = claimed.filter(
+        pl.col("holder").is_not_null(), pl.col("repeats_group").is_null()
+    )
+    claimed = claimed.join(blocked.select("group_row"), on="group_row", how="anti")
     taken = (
         claimed.drop_nulls("holder")
-        .select("group_id", "row_id", method="link_method")
+        .select("group_id", "row_id", "group_row", method="link_method")
         .unique()
     )
-    group = group_id(pl.col("method"), "row_id")
+    group = group_id(pl.col("method"), "group_row")
     moved = links.join(taken, on="group_id").select(
         left_id="row_id", right_id="right_id", group_id=group, link_method="method"
     )
     new = claimed.select(
         left_id="row_id",
         right_id="unit_id",
-        group_id=group_id(pl.col("link_method"), "row_id"),
+        group_id=group_id(pl.col("link_method"), "group_row"),
         link_method="link_method",
     )
     moved_and_new = as_exact_links(pl.concat([moved, new]), task="crdf_crs")
@@ -402,6 +635,11 @@ def _in_euro(frame: pl.DataFrame, rates: pl.DataFrame, *, amount: str) -> pl.Dat
     return joined.with_columns(euro=pl.col(amount) * pl.col("euro_per_usd")).drop(
         "euro_per_usd"
     )
+
+
+def _log_gap(face: str) -> pl.Expr:
+    """The absolute log ratio of the unit's commitment to `face`, both in euros."""
+    return (pl.col("unit_euro") / pl.col(face)).log().abs()
 
 
 def _words(column: str) -> pl.Expr:

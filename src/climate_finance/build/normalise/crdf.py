@@ -40,7 +40,7 @@ _EXCEL_ERRORS = ("#NAME?", "#VALUE!", "#REF!", "#DIV/0!", "#N/A", "#NUM!", "#NUL
 # Excel read some `Donor project N°` cells (such as "1/2015" or "Aug-18") as dates,
 # and they reach the parquet as midnight timestamps.
 _DATE_DAMAGED = r"^\d{4}-\d{2}-\d{2} 00:00:00$"
-_TEXT_COLUMNS = ("crs_id", "project_number", "project_title")
+_TEXT_COLUMNS = ("crs_id", "project_number", "project_title", "description")
 
 # The EIB reports to the CRDF as agency 3 of EU Institutions (918). Its ids follow a
 # different scheme in each period, and no transform maps one onto another: none in
@@ -121,7 +121,10 @@ def normalise_crdf(
     """
     ids = pl.col("crs_id", "project_number").cast(pl.String).str.strip_chars()
     frame = (
-        _repair_excel_damage(raw.with_columns(ids).collect(), crs=crs)
+        _repair_excel_damage(
+            raw.with_columns(ids, pl.col("description").cast(pl.String)).collect(),
+            crs=crs,
+        )
         .with_columns(perspective=pl.lit(perspective))
         .with_columns(row_id=content_id(_IDENTITY, order_by=list(_AMOUNTS.values())))
     )
@@ -159,6 +162,7 @@ def normalise_crdf(
         "crs_id",
         "project_number",
         title=pl.col("project_title"),
+        description="description",
         recipient_code=pl.col("recipient_code").cast(pl.Int32),
         channel_code=pl.col("channel_code").cast(pl.Int32),
         bi_multi="bi_multi",

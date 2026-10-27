@@ -285,3 +285,94 @@ def test_eib_matching_refuses_a_year_without_a_euro_rate() -> None:
 
     with pytest.raises(CRDFNormaliseError, match="2024"):
         _repeats(crdf, crs, _exchange(rates))
+
+
+# The 2023 CRDF titles EIB rows with a sentence. The 2024 row repeats them under the
+# bulk CRS id and project name.
+DESCRIPTION = "Equity in a fund investing in renewable energy across southern Africa"
+
+
+def _described(
+    rows: list[tuple[str, int, float]],
+    *,
+    backed_2023: bool = False,
+    provider: int = 918,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """(crdf, crs) for rows of (row_id, year, euros), sharing recipient 645 and
+    `DESCRIPTION`, the 2024 rows committed in the CRS under their own key."""
+    crdf = crdf_rows(
+        *(
+            _eib(
+                row_id,
+                year,
+                f"{year}9{index:05}",
+                provider_code=provider,
+                title=f"Fund equity, tranche {index}"
+                if year < 2024
+                else "PEMBANI FUND",
+                description=f"  {DESCRIPTION.upper()} " if year < 2024 else DESCRIPTION,
+                face_usd=euros / RATES[year],
+                climate_usd=euros / RATES[year],
+                id_scheme=None if provider != 918 else "sequence",
+            )
+            for index, (row_id, year, euros) in enumerate(rows)
+        )
+    )
+    committed = crdf.filter(pl.col("year") == 2024)
+    if backed_2023:
+        committed = crdf
+    crs = crs_records(
+        *(
+            {
+                "record_id": f"r-{row['row_id']}",
+                "year": row["year"],
+                "donor_code": provider,
+                "agency_code": 3,
+                "crs_id": row["crs_id"],
+                "recipient_code": 645,
+                "purpose_code": 21020,
+                "commitment_usd": row["face_usd"],
+            }
+            for row in committed.iter_rows(named=True)
+        )
+    )
+    return crdf, crs
+
+
+@pytest.mark.parametrize(
+    ("rows", "fields", "repeat_of"),
+    [
+        # One row for one row, the same euro amount.
+        ([("a", 2023, 100e6), ("b", 2024, 100e6)], {}, {"a": None, "b": "a"}),
+        # A fund split over two rows one year and held in one row the next.
+        (
+            [("a", 2023, 60e6), ("c", 2023, 40e6), ("b", 2024, 100e6)],
+            {},
+            {"a": None, "c": None, "b": "a"},
+        ),
+        # One row for one row restates one euro contract, so 5% apart is another.
+        ([("a", 2023, 95e6), ("b", 2024, 100e6)], {}, {"a": None, "b": None}),
+        # Sums 15% apart are two commitments.
+        ([("a", 2023, 85e6), ("b", 2024, 100e6)], {}, {"a": None, "b": None}),
+        # The CRS commits under both rows' keys: two commitments.
+        (
+            [("a", 2023, 100e6), ("b", 2024, 100e6)],
+            {"backed_2023": True},
+            {"a": None, "b": None},
+        ),
+        # Other providers reuse descriptions, so the rule covers the EIB alone.
+        (
+            [("a", 2023, 100e6), ("b", 2024, 100e6)],
+            {"provider": 8},
+            {"a": None, "b": None},
+        ),
+    ],
+)
+def test_eib_description_groups_repeat_across_years(
+    rows: list[tuple[str, int, float]],
+    fields: dict[str, object],
+    repeat_of: dict[str, str | None],
+) -> None:
+    crdf, crs = _described(rows, **fields)
+
+    assert _repeats(crdf, crs) == repeat_of
