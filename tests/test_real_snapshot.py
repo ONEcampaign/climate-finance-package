@@ -10,6 +10,7 @@ from make_fixture import REAL_SNAPSHOT_DIR, SAMPLE_PROVIDERS
 
 import climate_finance as cf
 from climate_finance.schema import RELEASE_TABLES, STATUSES, release_invariants
+from climate_finance.spec import Flow
 
 pytestmark = pytest.mark.skipif(
     not (REAL_SNAPSHOT_DIR / "release.json").is_file(),
@@ -19,14 +20,14 @@ FLOWS = ("commitments", "disbursements", "grant_equivalent")
 
 
 @pytest.fixture(scope="module")
-def snap() -> cf.Snapshot:
+def release() -> cf.Release:
     return cf.load(path=REAL_SNAPSHOT_DIR)
 
 
 def test_the_sample_holds_the_invariants_and_the_cases_it_was_drawn_for(
-    snap: cf.Snapshot,
+    release: cf.Release,
 ) -> None:
-    tables = {name: snap.table(name).collect() for name in RELEASE_TABLES}
+    tables = {name: release.table(name).collect() for name in RELEASE_TABLES}
     commitments = tables["commitments"]
     allocated_rows = tables["disbursements"]["row_id"].implode()
 
@@ -38,12 +39,12 @@ def test_the_sample_holds_the_invariants_and_the_cases_it_was_drawn_for(
 
 
 @pytest.mark.parametrize("flow", FLOWS)
-def test_repeats_stay_out_of_every_flow(snap: cf.Snapshot, flow: str) -> None:
+def test_repeats_stay_out_of_every_flow(release: cf.Release, flow: Flow) -> None:
     repeats = (
-        snap.table("commitments").filter(pl.col("repeat_of").is_not_null()).collect()
+        release.table("commitments").filter(pl.col("repeat_of").is_not_null()).collect()
     )
 
-    rows = snap.spending(flow=flow).rows()
+    rows = release.spending(flow=flow).rows()
 
     assert rows.height
     assert not rows.filter(pl.col("row_id").is_in(repeats["row_id"].implode())).height
@@ -52,9 +53,9 @@ def test_repeats_stay_out_of_every_flow(snap: cf.Snapshot, flow: str) -> None:
 
 @pytest.mark.parametrize("flow", ["commitments", "disbursements"])
 def test_unspecified_recipients_answer_by_name_in_every_flow(
-    snap: cf.Snapshot, flow: str
+    release: cf.Release, flow: Flow
 ) -> None:
-    rows = snap.spending(
+    rows = release.spending(
         recipients="Developing countries, unspecified", flow=flow
     ).rows()
 
@@ -63,12 +64,12 @@ def test_unspecified_recipients_answer_by_name_in_every_flow(
 
 
 def test_commitment_shares_of_total_find_a_total_for_each_bilateral_key(
-    snap: cf.Snapshot,
+    release: cf.Release,
 ) -> None:
     shares = (
-        snap.spending(flow="commitments", providers=["Germany", "France", "Japan"])
+        release.spending(flow="commitments", providers=["Germany", "France", "Japan"])
         .share_of_total()
-        .table.to_polars()
+        .table
     )
 
     assert shares.height

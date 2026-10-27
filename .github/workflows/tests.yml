@@ -19,6 +19,9 @@ jobs:
       - run: uv run --no-sync ruff check
       - run: uv run --no-sync ruff format --check
       - run: uv run --no-sync ty check src
+      # The alias table is baked from the locked resolvekit, so only a locked job can
+      # tell a stale names.csv from a newer resolvekit.
+      - run: uv run --no-sync cf-build names --check
 
   test:
     name: test (${{ matrix.python-version }})

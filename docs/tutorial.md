@@ -11,27 +11,27 @@ A release is a folder of parquet tables. `load()` opens the latest release in th
 ```python
 import climate_finance as cf
 
-snap = cf.load()
-print(snap.manifest.release)
+release = cf.load()
+print(release)
 ```
 
 ```output
-fixture
+Release('fixture', synthetic figures): commitments 2021 to 2022, disbursements 2021 to 2024; 17 tables
 ```
 
-Every result from `snap` records this release name, so a figure always identifies its source data.
+The line names the release, marks its figures as synthetic, and gives the years each flow covers. Every result from `release` records the release name, so a figure always identifies its source data.
 
 ## Step 2. Ask for a figure
 
 `spending()` takes providers and recipients by name or DAC code. It returns disbursements under ONE's method by default.
 
 ```python
-result = snap.spending(
+result = release.spending(
     providers="Japan",
     recipients="Bangladesh",
     years=range(2021, 2024),
 )
-for row in result.table.to_polars().iter_rows(named=True):
+for row in result.table.iter_rows(named=True):
     print(row["year"], round(row["value"] / 1e6, 1), round(row["low"] / 1e6, 1))
 ```
 
@@ -75,7 +75,7 @@ print(result.explain().splitlines()[-2:])
 ```
 
 ```output
-['Filtered to providers Japan; recipients Bangladesh; years 2021, 2022, 2023.', 'Amounts in USD at current prices.']
+['Filtered to providers Japan; recipients Bangladesh; years 2021 to 2023.', 'Amounts in USD at current prices.']
 ```
 
 Print the full string to see how `value` is calculated. Significant Rio markers count at 40% of face value, principal markers count at 100%, and each activity counts once under its higher marker.
@@ -86,8 +86,8 @@ Print the full string to see how `value` is calculated. Significant Rio markers 
 
 ```python
 for flow in ("commitments", "disbursements"):
-    flows = snap.spending(providers="Japan", years=[2021, 2022], flow=flow)
-    print(flow, round(flows.table.to_polars()["value"].sum() / 1e6, 1))
+    flows = release.spending(providers="Japan", years=[2021, 2022], flow=flow)
+    print(flow, round(flows.table["value"].sum() / 1e6, 1))
 ```
 
 ```output
@@ -97,12 +97,41 @@ disbursements 38.0
 
 Japan's climate commitments for 2021 and 2022 total 130.0. The 38.0 is what Japan disbursed in those two years against climate commitments of any year the release holds, so the two figures measure different money. `oda_only=True`, `currency=`, and `prices=` filter or convert a query the same way. [Python API](reference/python-api.md) lists the parameters.
 
-## Step 6. Check how much traces
+## Step 6. Ask for one objective
+
+The table splits `value` into `adaptation`, `mitigation`, `cross_cutting`, and `unsplit` columns, so an adaptation question needs no filter. What the columns hold depends on the method's `highest_marker` rule. ONE and PROVIDER set it. Each activity counts once, under its higher Rio marker, so `adaptation` holds the activities whose adaptation marker is the higher, `cross_cutting` holds those with equal markers, and adaptation finance is the sum of the two. The recipe below applies to these two methods.
+
+```python
+import polars as pl
+
+germany = release.spending(providers="Germany", years=range(2021, 2024))
+adaptation = (
+    germany.table.group_by("year")
+    .agg(pl.sum("adaptation", "cross_cutting"))
+    .sort("year")
+)
+for row in adaptation.iter_rows(named=True):
+    print(
+        row["year"],
+        round(row["adaptation"] / 1e6, 1),
+        round(row["cross_cutting"] / 1e6, 1),
+    )
+```
+
+```output
+2021 12.7 0.0
+2022 15.2 1.7
+2023 12.7 1.7
+```
+
+Under ONE, Germany's adaptation finance for 2022 is 15.2 million USD, or 16.8 with the cross-cutting activities. OECD (`method=cf.methods.OECD`) counts each marker on its own, so its `adaptation` holds every activity marked for adaptation and its `cross_cutting` is the overlap with mitigation. Under OECD, adaptation finance is the `adaptation` column alone, and adding `cross_cutting` counts the overlap twice. `method.highest_marker` says which rule a method follows. `low` and `high` bound only `value`, the total over all objectives.
+
+## Step 7. Check how much traces
 
 `quality()` reports how much of a provider's climate value matches a CRS commitment, and how its commitments split by status.
 
 ```python
-summary = snap.quality(providers="Japan").summary().row(0, named=True)
+summary = release.quality(providers="Japan").summary().row(0, named=True)
 print(
     round(summary["link_rate"], 2),
     round(summary["disbursed_share"], 2),
@@ -116,7 +145,7 @@ print(
 
 Every Japanese commitment in this release matches a CRS commitment (`link_rate` 1.0), which says nothing yet about what disbursed. Commitments disbursed to 90% or more hold 31% of the climate value, and partly disbursed commitments hold 69%.
 
-This synthetic release skips the blind-sample gate, so `snap.quality().precision` is empty. In a published release, that table holds each provider's measured link precision and interval.
+This synthetic release skips the blind-sample gate, so `release.quality().precision` is empty. In a published release, that table holds each provider's measured link precision and interval.
 
 ## Next
 

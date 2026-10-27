@@ -26,8 +26,8 @@ from climate_finance.build.normalise import btr_at_dac_rates
 from climate_finance.build.normalise.crs import normalise_crs
 from climate_finance.build.readers.btr import estimate_party_weights, ingest_unfccc
 from climate_finance.build.stages import raw_dir
+from climate_finance.release import Release
 from climate_finance.result import Reconciliation
-from climate_finance.snapshot import Snapshot
 
 pytestmark = pytest.mark.slow
 
@@ -224,7 +224,7 @@ def _reconcile(out: Path) -> Reconciliation:
     manifest = schema.ReleaseManifest.model_validate_json(
         (out / "release.json").read_text()
     )
-    return Snapshot(path=out, manifest=manifest).reconcile(years=(2021, 2022))
+    return Release(path=out, manifest=manifest).reconcile(years=(2021, 2022))
 
 
 @pytest.mark.parametrize(
@@ -250,7 +250,7 @@ def test_party_totals_agree_at_the_prototype_weights(
     comparator: str,
     ratio: float,
 ) -> None:
-    rows = reconciliation.table.to_polars().filter(
+    rows = reconciliation.table.filter(
         party=party, year=year, method="ONE", comparator=comparator
     )
 
@@ -264,7 +264,7 @@ def test_germany_counts_both_significant_disbursements_in_full(
     # Germany's coefficients count a record significant on both objectives at 1.0
     # and one significant on one at 0.5. Its 1,341 both-significant records of 2021
     # disburse USD 1.82bn, which at 0.5 would give USD 4.54bn.
-    rows = reconciliation_at_own_coefficients.table.to_polars().filter(
+    rows = reconciliation_at_own_coefficients.table.filter(
         party="DEU", year=2021, method="ONE"
     )
 
@@ -283,7 +283,7 @@ METHOD_SHARES = (
 
 def _method_shares(reconciliation: Reconciliation, party: str) -> pl.Series:
     """`party`'s method shares of 2021 and 2022, every comparator's alike."""
-    rows = reconciliation.table.to_polars().filter(party=party, method="ONE")
+    rows = reconciliation.table.filter(party=party, method="ONE")
     shares = rows.select(pl.concat_list(METHOD_SHARES).explode()).to_series()
     assert shares.null_count() == 0
     return shares
@@ -305,4 +305,4 @@ def test_canada_rests_on_its_own_coefficients(
 ) -> None:
     shares = _method_shares(reconciliation_at_own_coefficients, "CAN")
 
-    assert shares.max() < 0.01
+    assert len(shares) and shares.lt(0.01).all()

@@ -28,28 +28,24 @@ BUILD_ONLY = ("typer", "httpx")
 
 def totals(result: cf.Result) -> dict[str, dict[str, float]]:
     """Per method: value, low and high summed over the result table."""
-    table = (
-        result.table.to_polars()
-        .group_by("method")
-        .agg(pl.col("value", "low", "high").sum())
-    )
+    table = result.table.group_by("method").agg(pl.col("value", "low", "high").sum())
     return {row.pop("method"): row for row in table.iter_rows(named=True)}
 
 
-snap = cf.load(path=sys.argv[1])
+release = cf.load(path=sys.argv[1])
 years = range(2015, 2025)
 results = {
-    cf.methods.label(method): snap.spending(
+    cf.methods.label(method): release.spending(
         providers="Germany", years=years, method=method
     )
     for method in (cf.methods.ONE, cf.methods.OECD, cf.methods.RANGE)
 }
 rows = results["ONE"].rows(year=2022)
-comparison = cf.compare(results["ONE"], results["OECD"]).table.to_polars()
-quality = snap.quality(providers="Germany").summary()
-profile = snap.disbursement_profile().filter(group="all")
+comparison = cf.compare(results["ONE"], results["OECD"]).table
+quality = release.quality(providers="Germany").summary()
+profile = release.disbursement_profile().filter(group="all")
 repeats = (
-    snap.table("commitments")
+    release.table("commitments")
     .filter(pl.col("repeat_of").is_not_null())
     .select("row_id")
     .collect()

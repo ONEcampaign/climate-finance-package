@@ -895,9 +895,12 @@ def party_provider(party: str) -> int | None:
 
 def _recipient_code(name: str) -> int | None:
     try:
-        return recipients.code(name)
+        code = recipients.code(name)
     except UnknownRecipientError:
         return None
+    # A recipient name resolves to a recipient code, an int.
+    assert isinstance(code, int)
+    return code
 
 
 def _cell(cells: Sequence[object], column: int) -> object:

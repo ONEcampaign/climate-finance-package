@@ -21,7 +21,7 @@ import pytest
 from make_fixture import FIXTURE_DIR
 
 import climate_finance as cf
-from climate_finance import snapshot
+from climate_finance import release as release_module
 from climate_finance.build import gate, release
 from climate_finance.build.errors import BuildError, GateFailedError
 from climate_finance.build.fetch import BTR_SOURCE
@@ -32,17 +32,23 @@ from climate_finance.errors import (
     UnknownNameError,
     WithheldTableError,
 )
+from climate_finance.release import IndexEntry, ReleaseIndex
 from climate_finance.schema import BTR_WORKBOOKS, ReleaseManifest, sha256_file
-from climate_finance.snapshot import IndexEntry, ReleaseIndex
 
-PACK = "climate-finance-fixture.tar.zst"
+# The fixture packs under a release name of its own, since `fixture` is reserved.
+RELEASE = "2026a"
+PACK = f"climate-finance-{RELEASE}.tar.zst"
 BUILD_TOML = Path(__file__).parents[1] / "build.toml"
 
 
 def built_release(release_dir: Path, *, sources: tuple[str, ...] = ("crs",)) -> Path:
-    """A build's release directory: the fixture as `assemble`, and a raw manifest
-    recording `sources` and the BTR archive behind the fixture's BTR rows."""
+    """A build's release directory: the fixture as `assemble`, named `RELEASE`, and
+    a raw manifest recording `sources` and the BTR archive behind the fixture's BTR
+    rows."""
     shutil.copytree(FIXTURE_DIR, release_dir / "assemble")
+    path = release_dir / "assemble" / "release.json"
+    manifest = ReleaseManifest.model_validate_json(path.read_text())
+    path.write_text(manifest.model_copy(update={"release": RELEASE}).model_dump_json())
     sources = (*sources, BTR_SOURCE)
     (release_dir / "fetch").mkdir()
     pl.DataFrame(
@@ -132,7 +138,7 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
     tmp_path: Path,
 ) -> None:
     release_dir = built_release(
-        tmp_path / "fixture", sources=("crs", "ledger_iati_44000", "crdf_recipient")
+        tmp_path / RELEASE, sources=("crs", "ledger_iati_44000", "crdf_recipient")
     )
     (release_dir / "assemble" / "stage.json").write_text("{}\n")
     first = release.pack_release(release_dir, out_path=tmp_path / "a" / PACK)
@@ -143,15 +149,15 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
     # The row-level BTR tables and the stage record stay out; the release tables
     # go in as built.
     assert set(packed) == {
-        f"climate-finance-fixture/{path.name}"
+        f"climate-finance-{RELEASE}/{path.name}"
         for path in [*FIXTURE_DIR.iterdir(), Path("sources.json")]
         if path.name not in {"btr.parquet", "btr_links.parquet"}
     }
     built = ReleaseManifest.model_validate_json(
-        (FIXTURE_DIR / "release.json").read_text()
+        (release_dir / "assemble" / "release.json").read_text()
     )
     manifest = ReleaseManifest.model_validate_json(
-        packed["climate-finance-fixture/release.json"]
+        packed[f"climate-finance-{RELEASE}/release.json"]
     )
     assert manifest.withheld_tables == {
         "btr": release.BTR_WITHHELD_NOTE,
@@ -165,7 +171,7 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
     assert manifest.model_dump(exclude={"tables", "withheld_tables"}) == (
         built.model_dump(exclude={"tables", "withheld_tables"})
     )
-    sources = json.loads(packed["climate-finance-fixture/sources.json"])
+    sources = json.loads(packed[f"climate-finance-{RELEASE}/sources.json"])
     # The fixture holds IFC's modelled range, so IFC's annual report is listed
     # beside the fetched sources, and the BTR archive once, with the BTR note.
     assert [(row["source"], row["licence"]) for row in sources] == [
@@ -194,7 +200,7 @@ def test_sources_json_cites_every_report_providers_toml_cites(tmp_path: Path) ->
     cited = {
         ratio["source"] for entry in facts for ratio in entry.get("report_ratios", [])
     }
-    release_dir = built_release(tmp_path / "fixture")
+    release_dir = built_release(tmp_path / RELEASE)
     modelled = release_dir / "assemble" / "modelled.parquet"
     pl.concat(
         [
@@ -207,7 +213,7 @@ def test_sources_json_cites_every_report_providers_toml_cites(tmp_path: Path) ->
 
     pack = release.pack_release(release_dir, out_path=tmp_path / PACK)
 
-    sources = json.loads(members(pack)["climate-finance-fixture/sources.json"])
+    sources = json.loads(members(pack)[f"climate-finance-{RELEASE}/sources.json"])
     reports = [row for row in sources if row["source"] == release.REPORTS_SOURCE]
     assert {"IFC", "NDB"} <= {citation.split()[0] for citation in cited}
     assert [sorted(row["citations"]) for row in reports] == [sorted(cited)]
@@ -216,7 +222,7 @@ def test_sources_json_cites_every_report_providers_toml_cites(tmp_path: Path) ->
 def test_sources_list_each_btr_workbook_with_its_rows_kept_and_dropped(
     tmp_path: Path,
 ) -> None:
-    release_dir = built_release(tmp_path / "fixture")
+    release_dir = built_release(tmp_path / RELEASE)
     workbooks = [
         {
             "file": "Bulgaria__BGR-CTF-FTC-2024-V1.1_started.xlsx",
@@ -247,7 +253,7 @@ def test_sources_list_each_btr_workbook_with_its_rows_kept_and_dropped(
 
     pack = release.pack_release(release_dir, out_path=tmp_path / PACK)
 
-    sources = json.loads(members(pack)["climate-finance-fixture/sources.json"])
+    sources = json.loads(members(pack)[f"climate-finance-{RELEASE}/sources.json"])
     btr = next(row for row in sources if row["source"] == BTR_SOURCE)
     assert btr["workbooks"] == workbooks
 
@@ -255,7 +261,7 @@ def test_sources_list_each_btr_workbook_with_its_rows_kept_and_dropped(
 def test_a_published_release_holds_the_btr_totals_and_a_build_the_rows_too(
     tmp_path: Path,
 ) -> None:
-    release_dir = built_release(tmp_path / "fixture")
+    release_dir = built_release(tmp_path / RELEASE)
     pack = release.pack_release(release_dir, out_path=tmp_path / PACK)
     with (
         pa.input_stream(str(pack), compression="zstd") as stream,
@@ -263,7 +269,7 @@ def test_a_published_release_holds_the_btr_totals_and_a_build_the_rows_too(
     ):
         tar.extractall(tmp_path / "unpacked", filter="data")
 
-    published = cf.load(path=tmp_path / "unpacked" / "climate-finance-fixture")
+    published = cf.load(path=tmp_path / "unpacked" / f"climate-finance-{RELEASE}")
     built = cf.load(path=release_dir / "assemble")
 
     for name in ("btr", "btr_links"):
@@ -276,7 +282,7 @@ def test_a_published_release_holds_the_btr_totals_and_a_build_the_rows_too(
 
 
 def test_a_source_without_a_licence_stops_the_pack(tmp_path: Path) -> None:
-    release_dir = built_release(tmp_path / "fixture", sources=("crs", "mystery"))
+    release_dir = built_release(tmp_path / RELEASE, sources=("crs", "mystery"))
 
     with pytest.raises(BuildError, match=r"\['mystery'\]"):
         release.pack_release(release_dir, out_path=tmp_path / PACK)
@@ -284,7 +290,7 @@ def test_a_source_without_a_licence_stops_the_pack(tmp_path: Path) -> None:
 
 
 def test_btr_rows_without_the_btr_archive_stop_the_pack(tmp_path: Path) -> None:
-    release_dir = built_release(tmp_path / "fixture")
+    release_dir = built_release(tmp_path / RELEASE)
     raw = release_dir / "fetch" / "raw_manifest.parquet"
     pl.read_parquet(raw).filter(pl.col("source") != BTR_SOURCE).write_parquet(raw)
 
@@ -319,7 +325,7 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
     monkeypatch.setattr(gate, "run_gates", fake_gates)
 
     pack = release.cut_release(
-        "fixture",
+        RELEASE,
         config=config,
         out_dir=tmp_path,
         sample=tmp_path / "sample.parquet",
@@ -330,7 +336,7 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
     assert pack == tmp_path / PACK
     assert calls == [
         (
-            tmp_path / "fixture",
+            tmp_path / RELEASE,
             tmp_path / "data" / "review_decisions.parquet",
             tmp_path / "sample.parquet",
             FIXTURE_DIR,
@@ -338,7 +344,7 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
         )
     ]
     manifest = ReleaseManifest.model_validate_json(
-        members(pack)["climate-finance-fixture/release.json"]
+        members(pack)[f"climate-finance-{RELEASE}/release.json"]
     )
     assert manifest.precision_gate_waived is waive
     assert manifest.precision_waiver == waiver
@@ -364,7 +370,7 @@ def test_a_failed_gate_stops_cut_release_before_the_pack(
 
     with pytest.raises(GateFailedError, match="precision"):
         release.cut_release(
-            "fixture",
+            RELEASE,
             config=Path(shutil.copy(BUILD_TOML, tmp_path / "build.toml")),
             out_dir=tmp_path,
         )
@@ -397,7 +403,7 @@ def test_upload_and_index_take_only_a_release_whose_gates_passed_or_were_waived(
     waiver: str | None,
     refused: str | None,
 ) -> None:
-    release_dir = gated(built_release(tmp_path / "fixture"), rows=rows, waiver=waiver)
+    release_dir = gated(built_release(tmp_path / RELEASE), rows=rows, waiver=waiver)
     pack = release.pack_release(release_dir, out_path=tmp_path / PACK)
     uploads = tmp_path / "uploads"
 
@@ -406,12 +412,12 @@ def test_upload_and_index_take_only_a_release_whose_gates_passed_or_were_waived(
 
     def index() -> ReleaseIndex:
         return release.add_to_index(
-            ReleaseIndex(), release="fixture", pack=pack, url="file:///p"
+            ReleaseIndex(), release=RELEASE, pack=pack, url="file:///p"
         )
 
     if refused is None:
         upload()
-        assert index().latest == "fixture"
+        assert index().latest == RELEASE
     else:
         for publish in (upload, index):
             with pytest.raises(GateFailedError, match=refused):
@@ -421,12 +427,37 @@ def test_upload_and_index_take_only_a_release_whose_gates_passed_or_were_waived(
 
 def test_the_index_refuses_a_pack_under_another_release_name(tmp_path: Path) -> None:
     pack = release.pack_release(
-        gated(built_release(tmp_path / "fixture")), out_path=tmp_path / PACK
+        gated(built_release(tmp_path / RELEASE)), out_path=tmp_path / PACK
     )
-    with pytest.raises(BuildError, match="holds release 'fixture', not 'other'"):
+    with pytest.raises(BuildError, match="holds release '2026a', not 'other'"):
         release.add_to_index(
             ReleaseIndex(), release="other", pack=pack, url="file:///p"
         )
+
+
+def test_the_reserved_fixture_name_is_never_cut_uploaded_or_indexed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release_dir = gated(built_release(tmp_path / RELEASE))
+    path = release_dir / "assemble" / "release.json"
+    manifest = ReleaseManifest.model_validate_json(path.read_text())
+    path.write_text(
+        manifest.model_copy(update={"release": "fixture"}).model_dump_json()
+    )
+    pack = release.pack_release(release_dir, out_path=tmp_path / "fixture.tar.zst")
+    monkeypatch.setattr(release.build_package, "build", pytest.fail)
+
+    refusals = (
+        lambda: release.upload_release(pack, target=str(tmp_path / "uploads")),
+        lambda: release.add_to_index(
+            ReleaseIndex(), release="fixture", pack=pack, url="file:///p"
+        ),
+        lambda: release.cut_release("fixture", config=BUILD_TOML, out_dir=tmp_path),
+    )
+    for refused in refusals:
+        with pytest.raises(BuildError, match="'fixture' is reserved"):
+            refused()
+    assert not (tmp_path / "uploads").exists()
 
 
 def test_upload_copies_into_a_directory_or_puts_to_a_server(
@@ -434,7 +465,7 @@ def test_upload_copies_into_a_directory_or_puts_to_a_server(
 ) -> None:
     url, served = server
     pack = release.pack_release(
-        gated(built_release(tmp_path / "fixture")), out_path=tmp_path / PACK
+        gated(built_release(tmp_path / RELEASE)), out_path=tmp_path / PACK
     )
 
     local = release.upload_release(pack, target=str(tmp_path / "uploads"))
@@ -454,19 +485,19 @@ def published(
     and in the index online. Returns that index and the served directory."""
     url, served = server
     pack = release.pack_release(
-        gated(built_release(tmp_path / "fixture")), out_path=tmp_path / PACK
+        gated(built_release(tmp_path / RELEASE)), out_path=tmp_path / PACK
     )
     index = release.add_to_index(
         ReleaseIndex(),
-        release="fixture",
+        release=RELEASE,
         pack=pack,
         url=release.upload_release(pack, target=url),
     )
     shipped = tmp_path / "releases.json"
     shipped.write_text(index.model_dump_json())
     (served / "releases.json").write_text(index.model_dump_json())
-    monkeypatch.setattr(snapshot, "RELEASE_INDEX", shipped)
-    monkeypatch.setattr(snapshot, "INDEX_URL", f"{url}/releases.json")
+    monkeypatch.setattr(release_module, "RELEASE_INDEX", shipped)
+    monkeypatch.setattr(release_module, "INDEX_URL", f"{url}/releases.json")
     return index, served
 
 
@@ -476,20 +507,22 @@ def test_load_downloads_verifies_and_then_runs_offline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cache = tmp_path / "cache"
-    expected = cf.load(path=FIXTURE_DIR).spending().table.to_polars()
+    expected = cf.load(path=FIXTURE_DIR).spending().table
 
-    snap = cf.load(cache_dir=cache)
+    loaded = cf.load(cache_dir=cache)
 
-    assert snap.path == cache / "climate-finance-fixture"
-    assert sorted(path.name for path in cache.iterdir()) == ["climate-finance-fixture"]
+    assert loaded.path == cache / f"climate-finance-{RELEASE}"
+    assert sorted(path.name for path in cache.iterdir()) == [
+        f"climate-finance-{RELEASE}"
+    ]
 
     def offline(*args: object, **kwargs: object) -> None:
         raise AssertionError("network after download")
 
-    monkeypatch.setattr(snapshot.urllib.request, "urlopen", offline)
-    assert snap.spending().table.to_polars().equals(expected)
-    again = cf.load("fixture", cache_dir=cache)
-    assert again.spending().table.to_polars().equals(expected)
+    monkeypatch.setattr(release_module.urllib.request, "urlopen", offline)
+    assert loaded.spending().table.equals(expected)
+    again = cf.load(RELEASE, cache_dir=cache)
+    assert again.spending().table.equals(expected)
 
 
 def test_refresh_reads_the_index_online(
@@ -497,11 +530,11 @@ def test_refresh_reads_the_index_online(
     published: tuple[ReleaseIndex, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(snapshot, "RELEASE_INDEX", tmp_path / "missing.json")
+    monkeypatch.setattr(release_module, "RELEASE_INDEX", tmp_path / "missing.json")
 
-    snap = cf.load(cache_dir=tmp_path / "cache", refresh=True)
+    loaded = cf.load(cache_dir=tmp_path / "cache", refresh=True)
 
-    assert snap.manifest.release == "fixture"
+    assert loaded.manifest.release == RELEASE
 
 
 def test_a_pack_whose_sha256_differs_from_the_index_is_refused(
@@ -512,7 +545,7 @@ def test_a_pack_whose_sha256_differs_from_the_index_is_refused(
     cache = tmp_path / "cache"
 
     with pytest.raises(ReleaseIntegrityError, match="the release index has"):
-        cf.load("fixture", cache_dir=cache)
+        cf.load(RELEASE, cache_dir=cache)
     assert list(cache.iterdir()) == []
 
 
@@ -521,12 +554,12 @@ def test_a_cached_release_that_fails_its_check_downloads_again(
 ) -> None:
     cache = tmp_path / "cache"
     cf.load(cache_dir=cache)
-    table = cache / "climate-finance-fixture" / "provider_coefficients.parquet"
+    table = cache / f"climate-finance-{RELEASE}" / "provider_coefficients.parquet"
     table.write_bytes(b"corrupt")
 
-    snap = cf.load(cache_dir=cache)
+    loaded = cf.load(cache_dir=cache)
 
-    assert sha256_file(table) == snap.manifest.tables["provider_coefficients"].sha256
+    assert sha256_file(table) == loaded.manifest.tables["provider_coefficients"].sha256
 
 
 def test_load_names_an_unlisted_release_and_an_unreachable_pack(
@@ -535,13 +568,13 @@ def test_load_names_an_unlisted_release_and_an_unreachable_pack(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     index, _ = published
-    with pytest.raises(UnknownNameError, match="Did you mean: fixture"):
-        cf.load("fixtur", cache_dir=tmp_path / "cache")
+    with pytest.raises(UnknownNameError, match=f"Did you mean: {RELEASE}"):
+        cf.load("2026", cache_dir=tmp_path / "cache")
 
     gone = index.model_copy(
         update={
             "releases": {
-                "fixture": IndexEntry(url="http://127.0.0.1:9/gone", sha256="0" * 64)
+                RELEASE: IndexEntry(url="http://127.0.0.1:9/gone", sha256="0" * 64)
             }
         }
     )
@@ -551,4 +584,4 @@ def test_load_names_an_unlisted_release_and_an_unreachable_pack(
 
 
 def test_the_shipped_index_parses() -> None:
-    assert isinstance(snapshot._shipped_index(), ReleaseIndex)
+    assert isinstance(release_module._shipped_index(), ReleaseIndex)

@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass
+from functools import cached_property
 from html import escape
-from typing import TYPE_CHECKING
+from numbers import Integral, Real
 
 import polars as pl
 from pydantic import BaseModel, ConfigDict
 
+from climate_finance.catalogue import (
+    Agency,
+    name_of,
+    resolve,
+    unknown_name,
+    with_names,
+)
 from climate_finance.convert import Conversion
+from climate_finance.errors import InvalidInputError
 from climate_finance.methods import (
     Method,
     MethodRange,
@@ -21,51 +29,52 @@ from climate_finance.methods import (
 from climate_finance.schema import (
     BILATERAL,
     CORE_CONTRIBUTION,
+    LABEL_SOURCES,
+    LINK_METHODS,
     MULTILATERAL_OUTFLOW,
+    SHARE_ORIGINS,
     STATUSES,
+    UNTRACED_REASONS,
 )
 from climate_finance.spec import (
     ODA_FLOW_CATEGORY,
     ODA_FLOW_CODES,
     Spec,
+    provider_rows,
+    read_one_method,
+    read_provider_codes,
+    read_years,
 )
 from climate_finance.sums import ordered_sum
-
-if TYPE_CHECKING:
-    import pandas as pd
-    import pyarrow as pa
 
 AMOUNTS = (
     "amount", "adaptation", "mitigation", "cross_cutting", "unsplit", "value", "low",
     "high", "untraced",
 )  # fmt: skip
+# Where each of `Result.rows()` comes from, as `query` describes.
+ORIGINS = ("commitment", "disbursement", "untraced", "attribution")
 # The keys of a result table's rows, before the method.
 ROW_KEYS = ("year", "provider_code", "recipient_code", "bi_multi")
+# The keys of a result whose spec names an agency. `agency_code` holds the agency of
+# a provider the spec names through its agencies, and is null for other providers.
+AGENCY_ROW_KEYS = ("year", "provider_code", "agency_code", "recipient_code", "bi_multi")
+_NAMES = {
+    "provider_code": "provider",
+    "agency_code": "agency",
+    "recipient_code": "recipient",
+}
 
 
-class Table:
-    """A result table that converts to polars, pandas or arrow."""
+def row_keys(columns: Collection[str]) -> tuple[str, ...]:
+    """The row keys of a table of `columns`: `AGENCY_ROW_KEYS` where it holds
+    `agency_code`, else `ROW_KEYS`."""
+    return AGENCY_ROW_KEYS if "agency_code" in columns else ROW_KEYS
 
-    def __init__(self, frame: pl.LazyFrame) -> None:
-        self._frame = frame
 
-    def to_polars(self) -> pl.DataFrame:
-        """The table as a polars DataFrame."""
-        return self._frame.collect()
-
-    def to_pandas(self) -> pd.DataFrame:
-        """The table as a pandas DataFrame."""
-        return self.to_polars().to_pandas()
-
-    def to_arrow(self) -> pa.Table:
-        """The table as a pyarrow Table."""
-        return self.to_polars().to_arrow()
-
-    def __repr__(self) -> str:
-        return repr(self.to_polars())
-
-    def _repr_html_(self) -> str:
-        return self.to_polars()._repr_html_()
+def named_keys(keys: Sequence[str]) -> tuple[str, ...]:
+    """The name columns of `keys` after the year, as "provider" for
+    "provider_code"; a table shows them before the codes."""
+    return (keys[0], *(_NAMES[key] for key in keys if key in _NAMES))
 
 
 class Meta(BaseModel):
@@ -89,31 +98,49 @@ class Meta(BaseModel):
 class Result:
     """The answer to one `Spec`: a table, the rows behind it, and its provenance.
 
-    `table` takes each method's amounts by key, with that method's own `low` and
-    `high`. Under `spec.measure="share_of_total"` the result divides each method's
-    amounts by its `totals`, so a result always holds the measure its spec names.
-    `low` and `high` then span every method of the key, the lowest `low` and the
-    highest `high`, in amounts or in shares.
+    `table` takes each method's amounts by key. Its `low` and `high` span every
+    method of the key, the lowest `low` and the highest `high` of any method, so
+    every method's row of a key carries the same bounds. Under
+    `spec.measure="share_of_total"` the result divides each method's amounts by its
+    `totals` before the bounds are taken, so a result always holds the measure its
+    spec names, and the bounds span the methods' shares.
+
+    `table` starts `year`, `provider`, `recipient`, `method` and ends `value`, `low`,
+    `high`, `untraced`, so polars' truncated print shows them; `provider` and
+    `recipient` name the codes beside them, as do `provider`, `agency` and
+    `recipient` in `rows()`, which start `origin`, `year`, `record_id`,
+    `link_method`. A spec that names an agency keys `table` by `AGENCY_ROW_KEYS`,
+    with `agency` after `provider`.
     """
 
     def __init__(
         self,
         *,
-        table: Table,
-        modelled: Table,
+        table: pl.LazyFrame,
+        modelled: pl.LazyFrame,
         rows: pl.LazyFrame,
         totals: pl.LazyFrame,
         spec: Spec,
         meta: Meta,
     ) -> None:
         measured = _shares(table, totals) if spec.measure == "share_of_total" else table
-        self.table = Table(_bounds(measured._frame))
+        self._measured = measured
         self._sums = table
-        self.modelled = modelled
+        self._modelled = modelled
         self.spec = spec
         self.meta = meta
         self._rows = rows
         self._totals = totals
+
+    @cached_property
+    def table(self) -> pl.DataFrame:
+        """The answer, one row per key and method, computed on first access."""
+        return _bounds(self._measured).collect()
+
+    @cached_property
+    def modelled(self) -> pl.DataFrame:
+        """The modelled disbursement line, computed on first access."""
+        return self._modelled.collect()
 
     def __repr__(self) -> str:
         return f"{_title(self.spec, release=self.meta.release)}\n{self.table!r}"
@@ -122,23 +149,45 @@ class Result:
         title = escape(_title(self.spec, release=self.meta.release))
         return f"<p>{title}</p>{self.table._repr_html_()}"
 
-    def rows(self, **filters: object) -> pl.DataFrame:
-        """The project rows behind the table, filtered by column equality.
+    def rows(
+        self,
+        *,
+        provider: str | int | Agency | Collection[str | int | Agency] | None = None,
+        recipient: str | int | Collection[str | int] | None = None,
+        **filters: object,
+    ) -> pl.DataFrame:
+        """The project rows behind the table, filtered by column equality, and by
+        `provider` and `recipient`: names, DAC codes or, for providers, agencies,
+        read as `spending` reads them.
 
-        A filter value that is a list, tuple, set or range matches any of its items.
+        A filter value that is a list, tuple, set or range matches any of its items,
+        and each item must be of its column's type. Agencies filter through
+        `provider`, as `provider="EIB"`. A column of a fixed vocabulary, such as
+        `origin` or `link_method` (`ROW_VALUES`), takes its values only, and
+        `method` takes the forms `spending` takes, such as `method="one"`, for a
+        method of the result.
 
         Raises:
-            KeyError: when a filter names a column the rows do not have.
+            UnknownNameError: when a filter names a column the rows do not have, a
+                value outside its column's vocabulary, or a method outside the
+                result's, with close names as suggestions.
+            InvalidInputError: for a filter value of another type than its column,
+                such as a name for `provider_code`, or an `agency` filter.
+            UnknownProviderError: for a `provider` name, code or agency the
+                listings lack, or a name of several entries.
+            UnknownRecipientError: for a `recipient` name or code the listings
+                lack, or a name of several entries.
         """
-        columns = self._rows.collect_schema().names()
-        if unknown := sorted(set(filters) - set(columns)):
-            raise KeyError(f"rows have no column {unknown}; columns are {columns}")
+        schema = self._rows.collect_schema()
+        methods = [label(method) for method in self.spec.methods]
         conditions = [
-            pl.col(name).is_in(list(value))
-            if isinstance(value, Collection) and not isinstance(value, str)
-            else pl.col(name) == value
+            _column_filter(name, value, schema=schema, methods=methods)
             for name, value in filters.items()
         ]
+        if (providers := resolve(provider, kind="providers")) is not None:
+            conditions.append(provider_rows(providers))
+        if (recipients := resolve(recipient, kind="recipients")) is not None:
+            conditions.append(pl.col("recipient_code").is_in(recipients))
         return self._rows.filter(*conditions).collect()
 
     def explain(self) -> str:
@@ -206,7 +255,7 @@ class Result:
             return self
         return Result(
             table=self._sums,
-            modelled=self.modelled,
+            modelled=self._modelled,
             rows=self._rows,
             totals=self._totals,
             spec=self.spec.replace(measure="share_of_total"),
@@ -214,21 +263,126 @@ class Result:
         )
 
 
+# The keyword that filters each code column by name, for the error a name gives.
+_NAMED_BY = {
+    "provider_code": "provider",
+    "agency_code": "provider",
+    "recipient_code": "recipient",
+}
+
+
+# The values each fixed-vocabulary column of `Result.rows()` holds, so a filter
+# value outside them raises where it would match no row.
+ROW_VALUES: dict[str, tuple[str, ...]] = {
+    "origin": ORIGINS,
+    "link_method": LINK_METHODS,
+    "share_source": SHARE_ORIGINS,
+    "status": STATUSES,
+    "label_source": LABEL_SOURCES,
+    "reason": UNTRACED_REASONS,
+}
+
+
+def _column_filter(
+    name: str, value: object, *, schema: pl.Schema, methods: Sequence[str]
+) -> pl.Expr:
+    """The condition `rows(name=value)` adds, once each item fits its column.
+    `methods` are the labels of the result's methods.
+
+    Raises:
+        UnknownNameError: for a column outside `schema`, a value outside the
+            column's `ROW_VALUES`, or a method outside `methods`.
+        InvalidInputError: for `agency`, which `provider` filters, a collection
+            with no item, or an item of another type than the column.
+    """
+    if name == "agency":
+        raise InvalidInputError(
+            f"rows() filters agencies through provider, as provider={value!r}"
+        )
+    if name not in schema:
+        raise unknown_name(name, kind="column", choices=schema.names())
+    items = (
+        list(value)
+        if isinstance(value, Collection) and not isinstance(value, str)
+        else [value]
+    )
+    if not items:
+        raise InvalidInputError(
+            f"{name} takes at least one value; leave it out to take every one"
+        )
+    if name == "method":
+        return pl.col(name).is_in([_method_label(item, held=methods) for item in items])
+    for item in items:
+        if not _fits(item, dtype=schema[name]):
+            raise _filter_error(name, item, dtype=schema[name])
+        if name in ROW_VALUES and item not in ROW_VALUES[name]:
+            raise unknown_name(item, kind=name, choices=ROW_VALUES[name])
+    return pl.col(name).is_in(items)
+
+
+def _method_label(item: object, *, held: Sequence[str]) -> str:
+    """The label in `held` that a `method` filter item names: the label itself, or
+    a `Method` or name `read_one_method` reads."""
+    if isinstance(item, str) and item in held:
+        return item
+    if not isinstance(item, str | Method):
+        raise _filter_error("method", item, dtype=pl.String())
+    named = label(read_one_method(item, reader="rows()"))
+    if named not in held:
+        raise unknown_name(
+            named,
+            kind="method",
+            choices=held,
+            note=f"The rows hold methods {', '.join(held)}, not {named}.",
+        )
+    return named
+
+
+def _fits(item: object, *, dtype: pl.DataType) -> bool:
+    """Whether a filter item is of the type of a column of `dtype`."""
+    if dtype.is_integer():
+        return isinstance(item, Integral) and not isinstance(item, bool)
+    if dtype.is_float():
+        return isinstance(item, Real) and not isinstance(item, bool)
+    if dtype == pl.Boolean:
+        return isinstance(item, bool)
+    if dtype == pl.String:
+        return isinstance(item, str)
+    return True
+
+
+def _filter_error(name: str, item: object, *, dtype: pl.DataType) -> InvalidInputError:
+    if name in _NAMED_BY:
+        holds = "agency codes" if name == "agency_code" else "DAC codes"
+    elif dtype.is_integer():
+        holds = "integers"
+    elif dtype.is_float():
+        holds = "numbers"
+    elif dtype == pl.Boolean:
+        holds = "True or False"
+    else:
+        holds = "text"
+    message = f"{name} holds {holds}, not {item!r}"
+    if name in _NAMED_BY and isinstance(item, str):
+        message += f"; filter names with {_NAMED_BY[name]}={item!r}"
+    return InvalidInputError(message)
+
+
 def _bounds(frame: pl.LazyFrame) -> pl.LazyFrame:
     """`frame` with `low` and `high` spanning every method of the same key."""
+    keys = row_keys(frame.collect_schema().names())
     return frame.with_columns(
-        low=pl.col("low").min().over(ROW_KEYS),
-        high=pl.col("high").max().over(ROW_KEYS),
+        low=pl.col("low").min().over(keys), high=pl.col("high").max().over(keys)
     )
 
 
-def _shares(table: Table, totals: pl.LazyFrame) -> Table:
+def _shares(table: pl.LazyFrame, totals: pl.LazyFrame) -> pl.LazyFrame:
     """`table` with every amount divided by the total of its key and method in
     `totals`."""
-    return Table(
-        table._frame.join(
+    return (
+        table.join(
             totals,
-            on=[*ROW_KEYS, "method"],
+            on=[*row_keys(table.collect_schema().names()), "method"],
             how="left",
             nulls_equal=True,
             validate="m:1",
@@ -239,7 +393,6 @@ def _shares(table: Table, totals: pl.LazyFrame) -> Table:
     )
 
 
-@dataclass(frozen=True, kw_only=True)
 class Quality:
     """Link, coverage and status statistics for part of a release.
 
@@ -264,12 +417,69 @@ class Quality:
     (`fund_unlinked_usd`).
     """
 
-    table: Table
-    status: Table
-    eu_left_out: Table
-    attribution: Table
-    precision: Table
-    untraced: Table
+    def __init__(
+        self,
+        *,
+        table: pl.LazyFrame,
+        status: pl.LazyFrame,
+        eu_left_out: pl.LazyFrame,
+        attribution: pl.LazyFrame,
+        precision: pl.LazyFrame,
+        untraced: pl.LazyFrame,
+    ) -> None:
+        self._table = table
+        self._status = status
+        self._eu_left_out = eu_left_out
+        self._attribution = attribution
+        self._precision = precision
+        self._untraced = untraced
+
+    @cached_property
+    def table(self) -> pl.DataFrame:
+        """The release's `quality` rows, computed on first access."""
+        return self._table.collect()
+
+    @cached_property
+    def status(self) -> pl.DataFrame:
+        """Climate value by provider and commitment status."""
+        return self._status.collect()
+
+    @cached_property
+    def eu_left_out(self) -> pl.DataFrame:
+        """The EU Institutions rows a provider view of every provider leaves out."""
+        return self._eu_left_out.collect()
+
+    @cached_property
+    def attribution(self) -> pl.DataFrame:
+        """The value attributed through core contributions."""
+        return self._attribution.collect()
+
+    @cached_property
+    def precision(self) -> pl.DataFrame:
+        """The blind-sample precision of the links, by provider."""
+        return self._precision.collect()
+
+    @cached_property
+    def untraced(self) -> pl.DataFrame:
+        """The Rio-marked CRS disbursement outside `disbursements`."""
+        return self._untraced.collect()
+
+    def __repr__(self) -> str:
+        summary = self.summary()
+        return f"{self._title(summary)}\n{summary!r}"
+
+    def _repr_html_(self) -> str:
+        summary = self.summary()
+        return f"<p>{escape(self._title(summary))}</p>{summary._repr_html_()}"
+
+    def _title(self, summary: pl.DataFrame) -> str:
+        count = summary.height
+        providers = "provider" if count == 1 else "providers"
+        years = _years_text(self.table["year"])
+        return (
+            f"Quality: {count} {providers}, {years}; also .table .status "
+            ".eu_left_out .attribution .precision .untraced"
+        )
 
     def summary(self) -> pl.DataFrame:
         """Per provider: link rate, certain-route share, label sources, status split.
@@ -288,7 +498,7 @@ class Quality:
         linked = ordered_sum(pl.col("linked_usd"))
         coverage = pl.col("grant_equiv_coverage")
         known = coverage.is_not_null()
-        rates = self.table._frame.group_by("provider_code").agg(
+        rates = self._table.group_by("provider_code").agg(
             # A count, and an integer sum is exact in any order.
             pl.col("commitments").sum(),
             climate_usd=climate,
@@ -302,18 +512,18 @@ class Quality:
                 / ordered_sum(pl.col("linked_usd").filter(known))
             ),
         )
-        split = self.status._frame.group_by("provider_code").agg(
+        split = self._status.group_by("provider_code").agg(
             (
                 ordered_sum(pl.col("climate_usd").filter(pl.col("status") == status))
                 / climate
             ).alias(f"{status}_share")
             for status in STATUSES
         )
-        return (
-            rates.join(split, on="provider_code", how="full", coalesce=True)
-            .sort("provider_code")
-            .collect()
-        )
+        return with_names(
+            rates.join(split, on="provider_code", how="full", coalesce=True).sort(
+                "provider_code"
+            )
+        ).collect()
 
 
 def explain(
@@ -360,7 +570,7 @@ def explain(
         lines.append("low and high are the lowest and highest bound across methods.")
     if unmeasured:
         lines.append(
-            f"Adaptation is not measured for rows in {_runs(unmeasured)}, as the "
+            f"Adaptation is not measured for rows in {year_runs(unmeasured)}, as the "
             "CRDF has no adaptation marker or climate components before 2010 and an "
             "agency share of 2010 spans 2009. Their adaptation and cross_cutting are "
             "null, and their climate value is mitigation only."
@@ -373,7 +583,7 @@ def explain(
         lines.append(_UNTRACED[spec.untraced])
     lines.append(
         "Commitments that repeat an earlier vintage are left out, and their "
-        "disbursements count on the row they repeat; snap.quality() reports their "
+        "disbursements count on the row they repeat; release.quality() reports their "
         "value."
     )
     filters = [
@@ -455,7 +665,7 @@ def _coverage(
                 f"Under {_listing(labels)}, attributed finance covers core "
                 f"contributions in {_span(years, 'core_contributions')} and {text} "
                 f"in {_span(years, table)}; the provider view attributes none in "
-                f"{_runs(outside)}."
+                f"{year_runs(outside)}."
             )
     return lines
 
@@ -492,7 +702,7 @@ def _span(years: Mapping[str, tuple[int, int]] | None, name: str) -> str:
     return f"{first} to {last}"
 
 
-def _runs(years: Sequence[int]) -> str:
+def year_runs(years: Sequence[int]) -> str:
     """Sorted `years` as running text, consecutive years as a span, such as
     "2000 to 2014 and 2025"."""
     runs: list[list[int]] = []
@@ -505,6 +715,12 @@ def _runs(years: Sequence[int]) -> str:
         str(run[0]) if len(run) == 1 else f"{run[0]} to {run[-1]}" for run in runs
     )
     return f"{', '.join(rest)} and {last}" if rest else last
+
+
+def _years_text(years: pl.Series) -> str:
+    """The distinct `years` as running text, or "no years"."""
+    held = years.unique().sort().to_list()
+    return year_runs(held) if held else "no years"
 
 
 def _listing(codes: Sequence[int | str]) -> str:
@@ -599,7 +815,7 @@ _FLOWS = {
     "reports.",
     "grant_equivalent": "Flow: grant equivalent of disbursements, shared across the "
     "commitments a record funds in proportion to the amount each receives; records "
-    "without one stay missing, and snap.quality() reports coverage.",
+    "without one stay missing, and release.quality() reports coverage.",
 }
 
 
@@ -607,7 +823,7 @@ _UNTRACED = {
     True: "Untraced: CRS disbursement with a Rio marker that reaches no commitment, "
     "the excess beyond a full commitment and records linked to none, weighted by "
     "the record's own markers. It counts in value and high, not in low, and the "
-    "untraced column holds it; snap.quality() reports it with the marked "
+    "untraced column holds it; release.quality() reports it with the marked "
     "disbursement no total counts.",
     False: "Untraced disbursement, Rio-marked CRS disbursement that reaches no "
     "commitment, is left out.",
@@ -621,32 +837,16 @@ class Reconciliation:
     `query.reconcile`).
     """
 
-    def __init__(self, *, table: Table, rows: Callable[[], pl.LazyFrame]) -> None:
-        self.table = table
+    def __init__(
+        self, *, table: pl.LazyFrame, rows: Callable[[], pl.LazyFrame]
+    ) -> None:
+        self._table = table
         self._rows = rows
 
-    def rows(self, party: str, year: int) -> pl.DataFrame:
-        """The project-level link behind one party and year: each BTR row of every
-        status with each CRS record linked to it, the record's facts prefixed
-        `crs_`, and `unfccc_only` true for a row no record links to.
-
-        Raises:
-            WithheldTableError: when the release leaves out the row-level BTR
-                tables, as the published release does.
-        """
-        return (
-            self._rows()
-            .filter(pl.col("party") == party, pl.col("year") == year)
-            .collect()
-        )
-
-
-@dataclass(frozen=True, kw_only=True)
-class Comparison:
-    """Several results side by side, as a long table with one column per result."""
-
-    table: Table
-    results: tuple[Result, ...]
+    @cached_property
+    def table(self) -> pl.DataFrame:
+        """The comparison, computed on first access."""
+        return self._table.collect()
 
     def __repr__(self) -> str:
         return f"{self._title()}\n{self.table!r}"
@@ -655,7 +855,71 @@ class Comparison:
         return f"<p>{escape(self._title())}</p>{self.table._repr_html_()}"
 
     def _title(self) -> str:
-        columns = self.table._frame.collect_schema().names()[len(ROW_KEYS) :]
+        table = self.table
+        if table.is_empty():
+            return "Reconciliation: no rows"
+        parties = table.select(pl.coalesce("provider", "party").unique().sort())
+        methods = table["method"].unique(maintain_order=True)
+        return (
+            f"Reconciliation: providers {', '.join(parties.to_series())}; "
+            f"years {_years_text(table['year'])}; {', '.join(methods)}"
+        )
+
+    def rows(self, *, provider: str | int, year: int) -> pl.DataFrame:
+        """The project-level link behind one party and year: each BTR row of every
+        status with each CRS record linked to it, the record's facts prefixed
+        `crs_`, and `unfccc_only` true for a row no record links to.
+
+        `provider` names the party as `reconcile`'s `providers` does, such as
+        "Germany", "DEU" or 5. The rows name the provider in `provider`;
+        `recipient` is the BTR's own recipient text.
+
+        Raises:
+            UnknownProviderError: for a provider name or code outside the listings.
+            InvalidInputError: for an agency, naming its provider, or a year that
+                is not an integer.
+            WithheldTableError: when the release leaves out the row-level BTR
+                tables, as the published release does.
+        """
+        keys = {
+            "provider_code": read_provider_codes(
+                provider, reader="Reconciliation.rows()", keyword="provider"
+            ),
+            "year": read_years(year),
+        }
+        return (
+            self._rows()
+            .filter(
+                pl.col(name).is_in(values)
+                for name, values in keys.items()
+                if values is not None
+            )
+            .collect()
+        )
+
+
+class Comparison:
+    """Several results side by side, as a long table with one column per result."""
+
+    def __init__(self, *, table: pl.LazyFrame, results: tuple[Result, ...]) -> None:
+        self._table = table
+        self.results = results
+
+    @cached_property
+    def table(self) -> pl.DataFrame:
+        """The comparison, computed on first access."""
+        return self._table.collect()
+
+    def __repr__(self) -> str:
+        return f"{self._title()}\n{self.table!r}"
+
+    def _repr_html_(self) -> str:
+        return f"<p>{escape(self._title())}</p>{self.table._repr_html_()}"
+
+    def _title(self) -> str:
+        names = self._table.collect_schema().names()
+        keys = row_keys(names)
+        columns = [name for name in names if name not in {*named_keys(keys), *keys}]
         count = len(self.results)
         results = "result" if count == 1 else "results"
         return f"Comparison of {count} {results}: {'; '.join(columns)}"
@@ -665,48 +929,82 @@ def compare(*results: Result) -> Comparison:
     """Set results side by side: one row per year, provider, recipient and Bi_Multi
     code, and one `value` column per result and method.
 
-    Columns are named by the spec fields that set the results apart, such as "ONE"
-    and "OECD", or "commitments" and "disbursements". A result under several methods
-    gives one column per method. A key a result has no row for is null in its column.
+    Columns are named by what sets the results apart: the release, then the spec
+    fields that differ, such as "2025a" and "2026a", "ONE" and "OECD", or
+    "commitments" and "disbursements". Fields the results share stay out of the
+    name. A result under several methods gives one column per method. A key a result
+    has no row for is null in its column.
+
+    When every result names an agency, the rows are keyed by agency as well. When
+    only some do, the rows of their agencies are summed to each provider's key, so
+    an agency's column sits beside its provider's on one row.
 
     Raises:
-        ValueError: when no result is given.
+        InvalidInputError: when no result is given, or any argument is not a
+            `Result`, such as a list of them.
     """
     if not results:
-        raise ValueError("compare() needs at least one result")
-    names = _result_names([result.spec for result in results])
+        raise InvalidInputError("compare() takes at least one result")
+    for given in results:
+        if not isinstance(given, Result):
+            raise InvalidInputError(
+                "compare() takes results as arguments, as cf.compare(a, b), or "
+                f"cf.compare(*results) for a list; got a {type(given).__name__}"
+            )
+    names = _result_names(results)
+    keyed = ["agency_code" in result.table.columns for result in results]
+    keys = AGENCY_ROW_KEYS if all(keyed) else ROW_KEYS
     frames = []
-    for name, result in zip(names, results, strict=True):
+    for name, result, agency in zip(names, results, keyed, strict=True):
         methods = [label(method) for method in result.spec.methods]
+        table = (
+            _provider_values(result)
+            if agency and keys == ROW_KEYS
+            else result.table.lazy()
+        )
         for method in methods:
             column = name if len(methods) == 1 else f"{name}: {method}"
             frames.append(
-                result.table._frame.filter(pl.col("method") == method).select(
-                    *ROW_KEYS, pl.col("value").alias(column)
+                table.filter(pl.col("method") == method).select(
+                    *keys, pl.col("value").alias(column)
                 )
             )
     table = frames[0]
     for frame in frames[1:]:
-        table = table.join(
-            frame, on=ROW_KEYS, how="full", nulls_equal=True, coalesce=True
-        )
-    return Comparison(
-        table=Table(table.sort(ROW_KEYS, nulls_last=True)), results=results
-    )
+        table = table.join(frame, on=keys, how="full", nulls_equal=True, coalesce=True)
+    table = with_names(table.sort(keys, nulls_last=True))
+    first = (*named_keys(keys), *keys[1:])
+    return Comparison(table=table.select(*first, pl.exclude(first)), results=results)
 
 
-def _result_names(specs: Sequence[Spec]) -> list[str]:
-    """Per spec, the values of the fields that differ across `specs`, or its method
-    when none differ. Specs that nothing sets apart are numbered as well.
+def _provider_values(result: Result) -> pl.LazyFrame:
+    """The `value` of an agency-keyed `result` by `ROW_KEYS` and method: its amounts
+    summed over each provider's agencies, and under `measure="share_of_total"`
+    divided by its totals summed the same way."""
+    keys = [*ROW_KEYS, "method"]
+    values = result._sums.group_by(keys).agg(ordered_sum(pl.col("value")))
+    if result.spec.measure != "share_of_total":
+        return values
+    totals = result._totals.group_by(keys).agg(ordered_sum(pl.col("total")))
+    return values.join(
+        totals, on=keys, how="left", nulls_equal=True, validate="1:1"
+    ).select(*keys, value=pl.col("value") / pl.col("total"))
+
+
+def _result_names(results: Sequence[Result]) -> list[str]:
+    """Per result, the values of the fields that differ across `results`, release
+    first, or its method when none differ. Results that nothing sets apart are
+    numbered as well.
     """
+    fields = [
+        {"release": result.meta.release, **dict(result.spec)} for result in results
+    ]
     differing = [
-        field
-        for field in Spec.model_fields
-        if len({getattr(spec, field) for spec in specs}) > 1
+        field for field in fields[0] if len({given[field] for given in fields}) > 1
     ] or ["method"]
     names = [
-        ", ".join(_field_text(field, getattr(spec, field)) for field in differing)
-        for spec in specs
+        ", ".join(_field_text(field, given[field]) for field in differing)
+        for given in fields
     ]
     if len(set(names)) == len(names):
         return names
@@ -730,8 +1028,12 @@ def _field_text(field: str, value: object) -> str:
             return f"{value} view"
         case (("providers" | "recipients" | "years"), None):
             return f"all {field}"
-        case (("providers" | "recipients" | "years"), tuple()):
-            return f"{field} {', '.join(map(str, value))}"
+        case "providers", tuple():
+            return f"{field} {', '.join(name_of(code, kind=field) for code in value)}"
+        case "recipients", tuple():
+            return f"{field} {', '.join(name_of(code, kind=field) for code in value)}"
+        case "years", tuple():
+            return f"{field} {year_runs(value)}"
     return str(value)
 
 

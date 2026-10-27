@@ -18,7 +18,7 @@ Each row of the release's `disbursements` table is one CRS record's allocation t
 A commitment's `disbursed_low_usd`, `disbursed_usd`, and `disbursed_high_usd` sum its allocations' bounds. The release holds them to `0 <= disbursed_low_usd <= disbursed_usd <= disbursed_high_usd <= face_usd`.
 
 !!! note
-With `flow="commitments"`, `low`, `value`, and `high` are equal.
+    With `flow="commitments"`, `low`, `value`, and `high` are equal.
 
 ## Under several methods
 
@@ -26,7 +26,7 @@ With `flow="commitments"`, `low`, `value`, and `high` are equal.
 
 ## How to read a wide gap
 
-A wide gap between `low` and `value` says that much of the money rests on estimated links. To judge accuracy, check `snap.quality().precision`, which states how often a provider's links were right in a blind sample, and `snap.quality().summary()`, which gives each provider's `link_rate`. [How to check link quality](../how-to/check-link-quality.md) shows both.
+A wide gap between `low` and `value` says that much of the money rests on estimated links. To judge accuracy, check `release.quality().precision`, which states how often a provider's links were right in a blind sample, and `release.quality().summary()`, which gives each provider's `link_rate`. [How to check link quality](../how-to/check-link-quality.md) shows both.
 
 A provider's precision covers all its allocated value, certain links and estimated links together. Certain links are rarely wrong, so a provider with mostly certain links can pass on them while its estimated links do worse. The per-stratum estimates that `release.json` records beside each provider's, under `gates.precision`, give the estimated links a figure of their own.
 

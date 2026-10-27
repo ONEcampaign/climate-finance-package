@@ -12,7 +12,7 @@ _CORE_MEASURE = 10
 _TOTAL_RECIPIENT = 10100
 _TOTAL_SECTOR = 1000
 # Donor codes from 20000 are groups (20001 DAC countries, 20006 non-DAC countries).
-_AGGREGATE_DONOR_FLOOR = 20000
+AGGREGATE_DONOR_FLOOR = 20000
 # "A" is current prices and "D" constant prices.
 _CURRENT_PRICES = "A"
 # MULTI publishes commitments and disbursements. It has no grant-equivalent flow.
@@ -39,7 +39,7 @@ def read_multisystem(path: Path) -> pl.DataFrame:
         pl.read_parquet(path)
         .filter(
             pl.col("aidtype_code") == _CORE_MEASURE,
-            pl.col("donor_code") < _AGGREGATE_DONOR_FLOOR,
+            pl.col("donor_code") < AGGREGATE_DONOR_FLOOR,
             pl.col("data_type_code") == _CURRENT_PRICES,
         )
         .select(

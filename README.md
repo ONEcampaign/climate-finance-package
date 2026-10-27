@@ -24,14 +24,14 @@ Requires Python 3.12 or later. To build a release, install the `build` extra wit
 ```python
 import climate_finance as cf
 
-snap = cf.load()
-result = snap.spending(
+release = cf.load()
+result = release.spending(
     providers="Japan",
     recipients="Bangladesh",
     years=range(2021, 2024),
     method=cf.methods.ONE,
 )
-for row in result.table.to_polars().iter_rows(named=True):
+for row in result.table.iter_rows(named=True):
     print(row["year"], round(row["low"] / 1e6, 1), round(row["value"] / 1e6, 1))
 ```
 
@@ -41,14 +41,14 @@ for row in result.table.to_polars().iter_rows(named=True):
 2023 12.0 48.3
 ```
 
-`result.table` has one row per year, provider, recipient, and Bi_Multi code, with adaptation, mitigation, cross-cutting, and total climate `value` in USD. `value` counts every disbursement the build allocated to a climate commitment in the release, from the first CRDF year to the last complete CRS year, and the untraced disbursement: Rio-marked CRS disbursement that reaches no commitment, weighted by the record's own markers. `low` counts only the money on links the build treats as certain by rule, from the CRDF row to its CRS commitment and from the commitment to the disbursement. Most rest on the donor's own ids. The parts of rebuilt aggregate rows, which match their CRS records by amount, count too. In the provider view `low` also counts attributed core contributions, because the bounds measure link certainty and a method's coefficients and agency shares weigh every bound alike. `result.rows()` returns the project rows behind the table, and `result.explain()` states the method, flow, and filters in words.
+`result.table` is a polars DataFrame with one row per year, provider, recipient, Bi_Multi code, and method, with adaptation, mitigation, cross-cutting, and total climate `value` in USD. `value` counts every disbursement the build allocated to a climate commitment in the release, from the first CRDF year to the last complete CRS year, and the untraced disbursement: Rio-marked CRS disbursement that reaches no commitment, weighted by the record's own markers. `low` counts only the money on links the build treats as certain by rule, from the CRDF row to its CRS commitment and from the commitment to the disbursement. Most rest on the donor's own ids. The parts of rebuilt aggregate rows, which match their CRS records by amount, count too. In the provider view `low` also counts attributed core contributions, because the bounds measure link certainty and a method's coefficients and agency shares weigh every bound alike. `result.rows()` returns the project rows behind the table, `result.explain()` states the method, flow, and filters in words, and `release.run(result.spec)` reruns the query.
 
 ## What you can ask
 
 - Commitments, disbursements, and grant equivalents of climate finance by provider, recipient, and year, in USD, EUR, GBP, or CAD, at current or constant prices.
 - Climate value under `ONE` or `OECD` marker weights, under `PROVIDER`, which takes the coefficients each provider applies when it reports to the UNFCCC, or under all three at once with `RANGE`. A release built with Jev's labels also answers `relevance="jev"` queries.
 - Core contributions to multilateral agencies attributed to the providers that pay them, so each dollar counts once.
-- Link rates, commitment status, and the measured precision of the links with `snap.quality()`, and a party's BTR report against the OECD data with `snap.reconcile()`.
+- Link rates, commitment status, and the measured precision of the links with `release.quality()`, and a party's BTR report against the OECD data with `release.reconcile()`.
 
 ## When to use something else
 

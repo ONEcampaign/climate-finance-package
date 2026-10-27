@@ -11,8 +11,8 @@ import polars as pl
 
 import climate_finance as cf
 
-snap = cf.load()
-quality = snap.quality(providers=["Germany", "Japan"])
+release = cf.load()
+quality = release.quality(providers=["Germany", "Japan"])
 ```
 
 ## Steps
@@ -51,7 +51,7 @@ quality = snap.quality(providers=["Germany", "Japan"])
 3. Find the certain share. `quality.table` carries, by provider and year, the climate value of disbursements in the high bound (`disbursed_climate_usd`) and in the low bound (`certain_disbursed_climate_usd`). Their ratio is the share of the provider's disbursements that rests on certain links, reached by certain routes.
 
     ```python
-    table = quality.table.to_polars()
+    table = quality.table
     certain = table.group_by("provider_code").agg(
         (
             pl.col("certain_disbursed_climate_usd").sum()
@@ -70,30 +70,30 @@ quality = snap.quality(providers=["Germany", "Japan"])
 4. Read the measured precision. `quality.precision` holds one row per provider that went through the release's blind sample. `estimate` is the share of allocated value whose link a sample found right, `lower` and `upper` give its interval, and `passed` shows whether the lower bound reached the release's threshold. `waived` is true where the release shipped despite a failure.
 
     ```python
-    print(quality.precision.to_polars().columns)
+    print(quality.precision.columns)
     ```
 
     ```output
-    ['provider_code', 'estimate', 'lower', 'upper', 'passed', 'waived', 'detail']
+    ['provider', 'provider_code', 'estimate', 'lower', 'upper', 'passed', 'waived', 'detail']
     ```
 
     Ungated releases, including the synthetic release, leave this table empty. For a published release, check that every provider you report has a row, that `passed` is true, and that `waived` is false. A wide interval means the provider has few labelled links, so its estimate is rough.
 
-    A provider's estimate covers all its allocated value, certain and estimated links together. Each stratum's estimate and interval sit beside it in `snap.manifest.gates["precision"]`, under `strata`. Where a provider's figure rests on estimated links, read the `model` stratum as well as the provider's row.
+    A provider's estimate covers all its allocated value, certain and estimated links together. Each stratum's estimate and interval sit beside it in `release.manifest.gates["precision"]`, under `strata`. Where a provider's figure rests on estimated links, read the `model` stratum as well as the provider's row.
 
 5. Check what a provider view omits. For provider-view totals, `quality.eu_left_out` holds the value of EU Institutions agencies' own rows omitted from the total because members' contributions stand in for them. `quality.attribution` holds the value attributed through core contributions by share source.
 
     ```python
-    print(quality.eu_left_out.to_polars().columns)
+    print(quality.eu_left_out.columns)
     ```
 
     ```output
-    ['agency_code', 'channel_code', 'year', 'flow', 'value']
+    ['agency', 'agency_code', 'channel_code', 'year', 'flow', 'value']
     ```
 
 ## Verify it worked
 
-Every provider you report appears in `summary()` and, for a gated release, in `quality.precision`. `snap.manifest.gates` holds the gate rows that `cf-build release` recorded, and `snap.manifest.precision_gate_waived` is true when the release was packed with `--waive-precision`.
+Every provider you report appears in `summary()` and, for a gated release, in `quality.precision`. `release.manifest.gates` holds the gate rows that `cf-build release` recorded, and `release.manifest.precision_gate_waived` is true when the release was packed with `--waive-precision`.
 
 ## Troubleshooting
 

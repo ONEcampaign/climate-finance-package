@@ -29,6 +29,7 @@ from climate_finance.build.gate import (
     Drift,
     DriftCause,
     gate_results_json,
+    listing_gate,
     load_gates,
     precision_gate,
     run_gates,
@@ -164,6 +165,7 @@ def test_a_sound_release_passes_every_gate_but_the_samples_without_one(
         ("oecd_reconciliation", None): True,
         ("drift", None): True,
         ("withheld_rows", None): True,
+        ("listed_codes", None): True,
     }
     assert results.filter(gate="precision")["detail"].to_list() == ["no blind sample"]
 
@@ -508,6 +510,10 @@ def _add_withheld_untraced(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def _send_to_unlisted_recipient(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(recipient_code=pl.lit(99999, pl.Int32))
+
+
 @pytest.mark.parametrize(
     ("stage", "table", "edit", "failing", "named"),
     [
@@ -540,6 +546,13 @@ def _add_withheld_untraced(frame: pl.DataFrame) -> pl.DataFrame:
             _add_withheld_untraced,
             ("withheld_rows", None),
             "untraced ledger:gcf:FP002",
+        ),
+        (
+            "assemble",
+            "disbursements",
+            _send_to_unlisted_recipient,
+            ("listed_codes", None),
+            "recipient 99999",
         ),
     ],
 )
@@ -649,6 +662,30 @@ def test_a_gate_with_nothing_to_measure_fails(
         ).rows()
     }
     assert {key: rows[key] for key in failing} == dict.fromkeys(failing, (False, None))
+
+
+@pytest.mark.parametrize(
+    ("pairs", "outcome"),
+    [
+        # Agency 0, 1 and null stand for the provider itself; 5/2 is KfW.
+        ([(NOR, 0), (NOR, 1), (NOR, None), (5, 2)], (True, 0.0)),
+        ([(NOR, 98)], (False, 1.0)),
+        ([(99999, None)], (False, 1.0)),
+        ([], (False, None)),
+    ],
+)
+def test_listed_codes_need_a_listing_row_for_each_agency_beyond_the_provider(
+    pairs: list[tuple[int, int | None]], outcome: tuple[bool, float | None]
+) -> None:
+    table = pl.LazyFrame(
+        pairs,
+        schema={"provider_code": pl.Int32, "agency_code": pl.Int32},
+        orient="row",
+    )
+
+    row = listing_gate({"disbursements": table}).row(0, named=True)
+
+    assert (row["passed"], row["value"]) == outcome
 
 
 def test_a_waiver_lets_an_empty_precision_gate_through(release_dir: Path) -> None:
@@ -803,7 +840,7 @@ def test_quality_shows_each_providers_precision_interval(
     gated = manifest.model_copy(update={"gates": gate_results_json(results)})
     (release / "release.json").write_text(gated.model_dump_json())
 
-    precision = cf.load(path=release).quality().precision.to_polars()
+    precision = cf.load(path=release).quality().precision
     recorded = json.loads((release / "release.json").read_text())["gates"]
 
     assert recorded["precision"][0]["strata"][0]["estimate"] == pytest.approx(0.4)

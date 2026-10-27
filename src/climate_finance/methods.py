@@ -4,22 +4,27 @@ marker rules that turn Rio markers or climate components into objective weights.
 from typing import Literal, Self
 
 import polars as pl
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import Field, StrictBool, field_validator
 
 from climate_finance.catalogue import Catalogue
+from climate_finance.frozen import Frozen
 from climate_finance.schema import OBJECTIVES
 
+__all__ = [
+    "OECD",
+    "ONE",
+    "PROVIDER",
+    "RANGE",
+    "Method",
+    "MethodRange",
+    "describe",
+    "info",
+    "label",
+    "list",
+    "search",
+]
+
 NOT_CLIMATE = "not_climate_relevant"
-
-
-class Frozen(BaseModel):
-    """A frozen model that rejects unknown fields and copies itself with changes."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    def replace(self, **changes: object) -> Self:
-        """Return a copy with `changes` applied, validated again."""
-        return self.model_validate({**self.model_dump(), **changes})
 
 
 class Method(Frozen):
@@ -41,7 +46,7 @@ class Method(Frozen):
 
     significant: float = Field(ge=0.0, le=1.0)
     principal: float = Field(ge=0.0, le=1.0)
-    highest_marker: bool
+    highest_marker: StrictBool
     coefficients: Literal["fixed", "provider"] = "fixed"
     relevance: Literal["markers", "jev"] = "markers"
     eu: Literal["channel", "provider"] = "channel"

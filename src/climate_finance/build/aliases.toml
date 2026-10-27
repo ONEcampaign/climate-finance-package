@@ -1,0 +1,32 @@
+# Hand-set names for providers and agencies, read by `cf-build names`. Keys match
+# ignoring case and accents. A curated name outranks the ISO codes, resolvekit's
+# aliases and agency names, and loses to a listing name in English or French.
+
+# Provider names, each to a DAC provider code in the listing.
+[providers]
+IDA = 905
+IBRD = 901
+GCF = 1016  # resolvekit's "GCF" names four agencies of providers 1016 and 915
+GEF = 811  # resolvekit's "GEF" names nine agencies
+AfDB = 913
+AsDB = 915  # resolvekit's "AsDB" names the Asian Development Bank's agency 1 alone
+EU = 918
+EUU = 918  # the BTR's party code for the EU
+"European Union" = 918
+# Timor-Leste's one agency in resolvekit carries the country's own name.
+"Timor Leste" = 765
+# The IMF Resilience and Sustainability Trust reports as its own agency 1, which
+# carries resolvekit's French name of the provider.
+"Fonds de résilience et de durabilité du FMI" = 1058
+
+# Agency names, each to a DAC provider code and that provider's agency code.
+[agencies]
+EIB = [918, 3]  # European Investment Bank
+USAID = [302, 1]  # resolvekit holds the full name only
+# "EC" is also Ecuador's ISO 2 code, which would outrank the agency. As a provider
+# an analyst means the European Commission; Ecuador is a recipient almost everywhere
+# in this data, and `recipients="EC"` still gives Ecuador.
+EC = [918, 1]  # European Commission
+# resolvekit's "SIDA" also names Sweden's agency 1, which carries no other name. The
+# build's own agency pack (`normalise/orgs.py:DFI_PACK`) puts Sida at agency 6.
+Sida = [10, 6]  # Swedish International Development Cooperation Agency

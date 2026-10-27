@@ -76,6 +76,13 @@ from climate_finance.build.measure import load_provider_facts
 from climate_finance.build.provenance import setting_value
 from climate_finance.build.readers.btr import party_provider
 from climate_finance.build.sums import ordered_sum
+from climate_finance.release import (
+    SYNTHETIC_RELEASE,
+    IndexEntry,
+    ReleaseIndex,
+    load,
+    release_dirname,
+)
 from climate_finance.schema import (
     BILATERAL,
     BTR,
@@ -109,7 +116,6 @@ from climate_finance.schema import (
     sha256_file,
     withheld_record,
 )
-from climate_finance.snapshot import IndexEntry, ReleaseIndex, load, release_dirname
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
@@ -1132,6 +1138,13 @@ def _member(name: str, size: int, mtime: int) -> tarfile.TarInfo:
     return member
 
 
+# Why a release named `SYNTHETIC_RELEASE` is refused.
+_SYNTHETIC_NAME = (
+    f"release name {SYNTHETIC_RELEASE!r} is reserved for the test fixture, whose "
+    "figures are invented; name the release another way"
+)
+
+
 def cut_release(
     release: str,
     *,
@@ -1156,8 +1169,11 @@ def cut_release(
 
     Raises:
         GateFailedError: when a gate fails and is not waived.
-        BuildError: when `waive_precision` gives a blank reason.
+        BuildError: when `release` is `SYNTHETIC_RELEASE`, the test fixture's name,
+            or `waive_precision` gives a blank reason.
     """
+    if release == SYNTHETIC_RELEASE:
+        raise BuildError(_SYNTHETIC_NAME)
     if waive_precision is not None and not waive_precision.strip():
         raise BuildError("--waive-precision needs a reason, recorded in release.json")
     build_package.build(release, config=config, out_dir=out_dir)
@@ -1244,8 +1260,11 @@ def publishable(pack: Path) -> ReleaseManifest:
         GateFailedError: when the pack's `release.json` records a gate row
             neither passed nor waived, a waiver without its reason, or no result
             for the precision and human-audit gates (`unpublishable`).
+        BuildError: when the pack holds a release named `SYNTHETIC_RELEASE`.
     """
     manifest = packed_manifest(pack)
+    if manifest.release == SYNTHETIC_RELEASE:
+        raise BuildError(_SYNTHETIC_NAME)
     if problems := unpublishable(manifest):
         raise GateFailedError(problems)
     return manifest
@@ -1261,6 +1280,7 @@ def upload_release(pack: Path, *, target: str) -> str:
     Raises:
         GateFailedError: when the pack's gates keep it from publishing
             (`publishable`).
+        BuildError: when the pack holds a release named `SYNTHETIC_RELEASE`.
         httpx.HTTPStatusError: when the server refuses the upload.
     """
     publishable(pack)
@@ -1284,7 +1304,8 @@ def add_to_index(
     Raises:
         GateFailedError: when the pack's gates keep it from publishing
             (`publishable`).
-        BuildError: when `release` is not the release the pack holds.
+        BuildError: when `release` is not the release the pack holds, or the
+            pack holds a release named `SYNTHETIC_RELEASE`.
     """
     if (packed := publishable(pack).release) != release:
         raise BuildError(f"{pack} holds release {packed!r}, not {release!r}")

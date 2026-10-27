@@ -4,29 +4,44 @@ Provider names come from `data/oecd_classification.csv`, the OECD's donor list.
 Recipient names come from `data/recipients.csv`: DAC recipient codes and their English
 names as the OECD CRS bulk download spells them, carried over from climate-finance
 1.2.3 (`oecd/cleaning_tools/recipient_names.feather`, built from the 2021 CRS).
+`cf-build listings` adds every other code the OECD files carry to both, and fills
+`data/agencies.csv`, with the names those files give them.
 
-Names resolve to codes by exact match, ignoring case and accents. Close names appear
-as suggestions in the error and are not applied.
+Provider and recipient names resolve through `resolve`, which reads `data/names.csv`:
+every common form of a provider, agency or recipient name (listing names, French
+provider names, ISO codes, resolvekit aliases and agency names), baked by
+`cf-build names`. A name matches ignoring case, accents and surrounding spaces. A name
+of several entries, or of none, raises with candidates or close names as suggestions
+that the call does not apply. Flow and method names match their listing exactly,
+ignoring case and accents. A DAC code or agency the listings lack raises as an unknown
+name.
 """
 
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from difflib import get_close_matches
 from functools import cache
 from importlib.resources import files
+from numbers import Integral
 from typing import Literal
 
 import polars as pl
 
 from climate_finance.errors import (
+    InvalidInputError,
     UnknownNameError,
     UnknownProviderError,
     UnknownRecipientError,
 )
+from climate_finance.frozen import Frozen
 
 type Kind = Literal["providers", "recipients", "flows", "methods"]
+type Coded = Literal["providers", "recipients"]
 
 _SUGGESTIONS = 5
+# Close keys to collect before folding them into at most `_SUGGESTIONS` names, since
+# many keys share one target.
+_CLOSE_KEYS = 50
 _FLOWS = {
     "commitments": "CRDF commitments at face value, leaving out repeats across "
     "vintages and aggregate rows rebuilt into their parts.",
@@ -36,6 +51,73 @@ _FLOWS = {
     "grant_equivalent": "The grant equivalent of those disbursements; records "
     "without one stay missing.",
 }
+
+
+class Agency(Frozen):
+    """One agency of a provider, by DAC provider and agency code, such as the European
+    Investment Bank, agency 3 of the EU Institutions (918)."""
+
+    provider: int
+    agency: int
+
+
+type Target = int | Agency
+type Value = str | int | Agency
+type Entry = tuple[int, int | None, str]
+
+
+def resolve(
+    values: Value | Iterable[Value] | None, *, kind: Coded
+) -> tuple[Target, ...] | None:
+    """The DAC codes and agencies `values` name, sorted by provider and agency and
+    without duplicates, or None for None.
+
+    A string is a name from `data/names.csv`, matched ignoring case, accents and
+    surrounding spaces, or a string of digits, read as a DAC code. An integer is a DAC
+    code and an `Agency` an agency, both kept when the listings hold them. An agency
+    is listed in `data/agencies.csv`, or is agency 0 or 1 of a listed provider, which
+    the OECD files use for the provider itself. An agency whose provider is also
+    named is dropped, since the provider covers it. Recipients have no agencies.
+
+    Raises:
+        UnknownProviderError: for a provider name of no entry, or of several, or a
+            code or agency the listings lack, with the closest codes as suggestions.
+        UnknownRecipientError: for a recipient name of no entry, or of several, or
+            a code the listings lack.
+        InvalidInputError: for a value of another type, a bool included, for an
+            `Agency` among recipients, or for an empty iterable, which would select
+            no rows.
+    """
+    if values is None:
+        return None
+    targets = {target_of(value, kind=kind) for value in each_value(values, kind=kind)}
+    covered = {target for target in targets if isinstance(target, int)}
+    return tuple(
+        sorted(
+            (
+                target
+                for target in targets
+                if not (isinstance(target, Agency) and target.provider in covered)
+            ),
+            key=_order,
+        )
+    )
+
+
+def each_value(values: object, *, kind: Coded) -> tuple[object, ...]:
+    """The values of `values`: its items, or itself for one string, integer, `Agency`
+    or other non-iterable. `target_of` checks each value's type.
+
+    Raises:
+        InvalidInputError: for an iterable that yields no value.
+    """
+    if isinstance(values, str | Integral | Agency) or not isinstance(values, Iterable):
+        return (values,)
+    if not (items := tuple(values)):
+        raise InvalidInputError(
+            f"{kind} takes at least one name or code; None takes every one"
+        )
+    return items
 
 
 class Catalogue:
@@ -54,42 +136,115 @@ class Catalogue:
         """Every entry as a table."""
         return _table(self.kind)
 
-    def info(self, name: str | int) -> str:
+    def info(self, name: str | int | Agency) -> str:
         """A description of one entry, by name or, for providers and recipients, by
-        DAC code.
+        DAC code. A provider name of an agency, or an `Agency`, describes the agency
+        and names its provider.
 
         Raises:
             UnknownNameError: when no entry has that name or code. The provider and
                 recipient listings raise its subclasses `UnknownProviderError` and
-                `UnknownRecipientError`.
+                `UnknownRecipientError`, also for a name of several entries.
         """
-        if isinstance(name, int):
-            rows = self.list().filter(pl.col("code") == name)
-            if rows.is_empty():
+        if self.kind not in ("providers", "recipients"):
+            if not isinstance(name, str):
                 raise self._unknown(str(name), suggestions=())
-            row = rows.row(0, named=True)
-        else:
-            row = self.list().row(self._index(name), named=True)
+            return self.list()["description"][self._index(name)]
+        target = self.code(name)
+        if isinstance(target, Agency):
+            provider = _code_names("providers")[target.provider]
+            agency = _agency_names().get((target.provider, target.agency))
+            if agency is None:
+                return (
+                    f"Agency {target.agency} of {provider} "
+                    f"(DAC code {target.provider})."
+                )
+            return (
+                f"{agency} (agency {target.agency} of {provider}, "
+                f"DAC code {target.provider})."
+            )
+        row = self._row(target)
         if self.kind == "providers":
             return f"{row['name']} (DAC code {row['code']}): {row['type']}."
-        if self.kind == "recipients":
-            return f"{row['name']} (DAC code {row['code']})."
-        return row["description"]
+        return f"{row['name']} (DAC code {row['code']})."
 
     def search(self, text: str) -> pl.DataFrame:
-        """Entries whose names contain `text`, ignoring case."""
-        return self.list().filter(
-            pl.col("name").str.to_lowercase().str.contains(text.lower(), literal=True)
+        """Entries whose names contain `text`, ignoring case.
+
+        Providers and recipients match any name `resolve` reads, as "kfw" or "DEU",
+        ignoring case, accents and surrounding spaces, one row per entry. Listing
+        rows come first, in listing order, then the agencies matched, by provider and
+        agency code, with `type` saying whose agency each is, as "Agency 2 of
+        Germany". `alias` is the shortest name that matched, folded as `resolve`
+        folds it, and null where the entry's own name contains `text`.
+        """
+        if self.kind not in ("providers", "recipients"):
+            return self.list().filter(
+                pl.col("name")
+                .str.to_lowercase()
+                .str.contains(text.lower(), literal=True)
+            )
+        key = _fold(text).strip()
+        matched = (
+            _names()
+            .filter(
+                pl.col("kind") == self.kind[:-1],
+                pl.col("key").str.contains(key, literal=True),
+            )
+            .sort(pl.col("key").str.len_chars(), "key")
+            .group_by("code", "agency", maintain_order=True)
+            .agg(pl.col("name", "key").first())
+        )
+        hits = matched.with_columns(
+            alias=pl.Series(
+                [
+                    None if key in _fold(name) else alias
+                    for name, alias in matched.select("name", "key").iter_rows()
+                ],
+                dtype=pl.String,
+            )
+        )
+        listed = self.list().join(
+            hits.filter(pl.col("agency").is_null()).select("code", "alias"),
+            on="code",
+            maintain_order="left",
+        )
+        agencies = [
+            {
+                "code": code,
+                "name": name,
+                "type": f"Agency {agency} of {_code_names('providers')[code]}",
+                "alias": alias,
+            }
+            for code, agency, name, alias in hits.filter(pl.col("agency").is_not_null())
+            .select("code", "agency", "name", "alias")
+            .sort("code", "agency")
+            .iter_rows()
+        ]
+        return pl.concat(
+            [listed, pl.DataFrame(agencies, schema=listed.schema)], how="vertical"
         )
 
-    def code(self, name: str) -> int:
-        """The DAC code of a provider or recipient name.
+    def code(self, name: str | int | Agency) -> Target:
+        """The DAC code of a provider or recipient name, or the `Agency` a provider
+        name names, as `resolve` reads it.
 
         Raises:
-            UnknownProviderError: for a provider name not in the listing.
-            UnknownRecipientError: for a recipient name not in the listing.
+            UnknownProviderError: for a provider name of no entry, or of several, or
+                a code or agency the listings lack.
+            UnknownRecipientError: for a recipient name of no entry, or of several,
+                or a code the listings lack.
+            InvalidInputError: on `cf.flows` and `cf.methods`, which have no codes.
         """
-        return self.list()["code"][self._index(name)]
+        if self.kind not in ("providers", "recipients"):
+            raise InvalidInputError(f"cf.{self.kind} has names, not codes")
+        return target_of(name, kind=self.kind)
+
+    def _row(self, code: int) -> dict[str, object]:
+        rows = self.list().filter(pl.col("code") == code)
+        if rows.is_empty():
+            raise self._unknown(str(code), suggestions=())
+        return rows.row(0, named=True)
 
     def _index(self, name: str) -> int:
         """The row of `name`, matched ignoring case and accents, or an error whose
@@ -110,11 +265,182 @@ class Catalogue:
         raise self._unknown(name, suggestions=suggestions)
 
     def _unknown(self, name: str, *, suggestions: Sequence[str]) -> UnknownNameError:
-        if self.kind == "providers":
-            return UnknownProviderError(name, suggestions=suggestions)
-        if self.kind == "recipients":
-            return UnknownRecipientError(name, suggestions=suggestions)
-        return UnknownNameError(name, kind=self.kind[:-1], suggestions=suggestions)
+        return _unknown(name, kind=self.kind, suggestions=suggestions)
+
+
+def unknown_name(
+    name: str, *, kind: str, choices: Iterable[str], note: str | None = None
+) -> UnknownNameError:
+    """The error for `name`, a `kind` outside `choices`, suggesting the closest."""
+    return UnknownNameError(
+        name,
+        kind=kind,
+        suggestions=get_close_matches(name, list(choices), n=_SUGGESTIONS),
+        note=note,
+    )
+
+
+def _unknown(
+    name: str, *, kind: Kind, suggestions: Sequence[str], note: str | None = None
+) -> UnknownNameError:
+    if kind == "providers":
+        return UnknownProviderError(name, suggestions=suggestions, note=note)
+    if kind == "recipients":
+        return UnknownRecipientError(name, suggestions=suggestions, note=note)
+    return UnknownNameError(name, kind=kind[:-1], suggestions=suggestions, note=note)
+
+
+def target_of(value: object, *, kind: Coded) -> Target:
+    """The code or agency one value names."""
+    if kind == "recipients" and isinstance(value, Agency):
+        raise InvalidInputError(f"recipients takes names or DAC codes, not {value!r}")
+    if isinstance(value, bool) or not isinstance(value, str | Integral | Agency):
+        raise InvalidInputError(
+            f"{kind} takes names, DAC codes or cf.Agency values, not "
+            f"{value!r} ({type(value).__name__})"
+        )
+    if isinstance(value, Agency):
+        return _listed_agency(value)
+    if isinstance(value, Integral):
+        return _listed(int(value), kind=kind)
+    key = _fold(value).strip()
+    if key.isdigit():
+        return _listed(int(key), kind=kind)
+    entries = _aliases(kind).get(key)
+    if entries is None:
+        raise _unknown(value, kind=kind, suggestions=_close_names(key, kind=kind))
+    if len(entries) > 1:
+        raise _unknown(
+            value,
+            kind=kind,
+            suggestions=[_label(entry) for entry in entries],
+            note=_several(value, entries=entries, kind=kind),
+        )
+    [(code, agency, _)] = entries
+    return code if agency is None else Agency(provider=code, agency=agency)
+
+
+def _listed(code: int, *, kind: Coded) -> int:
+    """`code` when its listing holds it; else an error with the closest listed codes
+    as suggestions."""
+    names = _code_names(kind)
+    if code in names:
+        return code
+    close = get_close_matches(str(code), [str(listed) for listed in names])
+    raise _unknown(
+        str(code),
+        kind=kind,
+        suggestions=[f"{listed} ({names[int(listed)]})" for listed in close],
+    )
+
+
+def _listed_agency(agency: Agency) -> Agency:
+    """`agency` when the listings hold it; else an error with its provider's agencies
+    as suggestions."""
+    _listed(agency.provider, kind="providers")
+    names = _agency_names()
+    if (agency.provider, agency.agency) in names or agency.agency in (0, 1):
+        return agency
+    raise _unknown(
+        repr(agency),
+        kind="providers",
+        suggestions=[
+            f"{name} (agency {code})"
+            for (provider, code), name in names.items()
+            if provider == agency.provider
+        ],
+    )
+
+
+def name_of(target: Target, *, kind: Coded) -> str:
+    """The listing name of a code or agency, an agency's followed by its provider's,
+    as in "European Investment Bank (EU Institutions)"."""
+    if isinstance(target, Agency):
+        provider = _code_names("providers")[target.provider]
+        return f"{agency_name(target)} ({provider})"
+    return _code_names(kind)[target]
+
+
+def agency_name(agency: Agency) -> str:
+    """An agency's own name in `data/agencies.csv`, as in "European Investment
+    Bank", or "Agency <code>" for an agency the file lacks."""
+    return _agency_names().get((agency.provider, agency.agency)) or (
+        f"Agency {agency.agency}"
+    )
+
+
+def with_names(frame: pl.LazyFrame) -> pl.LazyFrame:
+    """`frame` with each code column it holds preceded by the listing name: `provider`
+    before `provider_code`, `recipient` before `recipient_code`, and `agency` before
+    `agency_code` where `frame` also holds `provider_code`. A code the listings lack
+    has a null name."""
+    columns = frame.collect_schema().names()
+    names = {
+        "provider_code": "provider",
+        "recipient_code": "recipient",
+        "agency_code": "agency",
+    }
+    if "provider_code" in columns and "agency_code" in columns:
+        frame = frame.join(
+            _agency_table().lazy(),
+            on=["provider_code", "agency_code"],
+            how="left",
+            validate="m:1",
+            maintain_order="left",
+        )
+    else:
+        del names["agency_code"]
+    frame = frame.with_columns(
+        pl.col(code)
+        .replace_strict(_code_names(kind), default=None, return_dtype=pl.String)
+        .alias(names[code])
+        for code, kind in (
+            ("provider_code", "providers"),
+            ("recipient_code", "recipients"),
+        )
+        if code in columns
+    )
+    return frame.select(
+        name
+        for column in columns
+        for name in ((names[column], column) if column in names else (column,))
+    )
+
+
+def _order(target: Target) -> tuple[int, int]:
+    if isinstance(target, Agency):
+        return target.provider, target.agency
+    return target, -1
+
+
+def _label(entry: Entry) -> str:
+    """How an error names an entry: its name, and an agency's provider."""
+    code, agency, name = entry
+    if agency is None:
+        return name
+    return f"{name} ({providers._row(code)['name']})"
+
+
+def _several(name: str, *, entries: Sequence[Entry], kind: Coded) -> str:
+    """The opening of the error for a name of several entries."""
+    owners = {code for code, _, _ in entries}
+    if all(agency is not None for _, agency, _ in entries):
+        if len(owners) > 1:
+            return f"{name!r} names agencies of {len(owners)} providers."
+        return f"{name!r} names {len(entries)} agencies of one provider."
+    return f"{name!r} names {len(entries)} {kind}."
+
+
+def _close_names(key: str, *, kind: Coded) -> list[str]:
+    """Names of the entries whose keys contain `key`, shortest key first, then of
+    entries whose keys are close to it, closest first."""
+    aliases = _aliases(kind)
+    containing = sorted((alias for alias in aliases if key in alias), key=len)
+    close = get_close_matches(key, aliases, n=_CLOSE_KEYS)
+    labels = [
+        _label(entry) for alias in [*containing, *close] for entry in aliases[alias]
+    ]
+    return list(dict.fromkeys(labels))[:_SUGGESTIONS]
 
 
 def _fold(name: str) -> str:
@@ -123,6 +449,57 @@ def _fold(name: str) -> str:
     return "".join(
         char for char in decomposed if not unicodedata.combining(char)
     ).casefold()
+
+
+@cache
+def _aliases(kind: Coded) -> dict[str, tuple[Entry, ...]]:
+    """`data/names.csv` for `kind`: each key's code, agency and name."""
+    found: dict[str, list[Entry]] = {}
+    for key, code, agency, name in (
+        _names().filter(kind=kind[:-1]).select("key", "code", "agency", "name")
+    ).iter_rows():
+        found.setdefault(key, []).append((code, agency, name))
+    return {key: tuple(entries) for key, entries in found.items()}
+
+
+@cache
+def _code_names(kind: Coded) -> dict[int, str]:
+    """The listing of `kind`: each DAC code and its name."""
+    return dict(_table(kind).select("code", "name").iter_rows())
+
+
+@cache
+def _agency_names() -> dict[tuple[int, int], str]:
+    """`data/agencies.csv`: each provider and agency code and the agency's name."""
+    agencies = pl.read_csv(
+        (files("climate_finance") / "data" / "agencies.csv").read_bytes()
+    )
+    return {
+        (code, agency): name
+        for code, agency, name in agencies.select("code", "agency", "name").iter_rows()
+    }
+
+
+@cache
+def _agency_table() -> pl.DataFrame:
+    """`data/agencies.csv` keyed as release tables key agencies."""
+    return pl.DataFrame(
+        [(code, agency, name) for (code, agency), name in _agency_names().items()],
+        schema={
+            "provider_code": pl.Int32,
+            "agency_code": pl.Int32,
+            "agency": pl.String,
+        },
+        orient="row",
+    )
+
+
+@cache
+def _names() -> pl.DataFrame:
+    return pl.read_csv(
+        (files("climate_finance") / "data" / "names.csv").read_bytes(),
+        schema_overrides={"code": pl.Int32, "agency": pl.Int32},
+    )
 
 
 @cache

@@ -53,7 +53,7 @@ The queue also holds every commitment row allocated more than 1.1 times its face
 
 ## Verify it worked
 
-The rebuilt queue omits the decided pairs. `cf-build queue` writes a smaller packet, and `snap.quality().summary()` shows the change in `pending_review_share`.
+The rebuilt queue omits the decided pairs. `cf-build queue` writes a smaller packet, and `release.quality().summary()` shows the change in `pending_review_share`.
 
 ## Blind-sample decisions are separate
 

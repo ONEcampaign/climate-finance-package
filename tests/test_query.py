@@ -4,14 +4,19 @@ Golden tables live in tests/golden/; set CF_UPDATE_GOLDEN=1 to rewrite them afte
 deliberate change, then review the diff.
 """
 
-import inspect
 import itertools
+import json
 import math
 import os
 import tomllib
+import warnings
+from collections.abc import Callable
+from importlib.resources import files
 from pathlib import Path
 
+import numpy as np
 import polars as pl
+import pyarrow as pa
 import pytest
 from make_fixture import DEU, FIXTURE_DIR, FRA, GEF, JPN, LEDGER_RECORD
 from polars.testing import assert_frame_equal
@@ -19,7 +24,13 @@ from releases import copy_release
 
 import climate_finance as cf
 from climate_finance import convert as convert_module
-from climate_finance.errors import MissingLabelsError
+from climate_finance.catalogue import Agency, agency_name
+from climate_finance.errors import (
+    CoverageWarning,
+    InvalidInputError,
+    MissingLabelsError,
+    UnknownRecipientError,
+)
 from climate_finance.methods import OECD, ONE, RANGE, Method, MethodRange, label
 from climate_finance.query import (
     BILATERAL,
@@ -30,10 +41,10 @@ from climate_finance.query import (
     EU_INSTITUTIONS,
     _aggregate,
 )
-from climate_finance.result import AMOUNTS, ROW_KEYS
+from climate_finance.release import Release
+from climate_finance.result import AMOUNTS, ROW_KEYS, ROW_VALUES
 from climate_finance.schema import ReleaseManifest
-from climate_finance.snapshot import Snapshot
-from climate_finance.spec import Spec
+from climate_finance.spec import Flow, Measure, Spec, SpecInputs, View
 from climate_finance.sums import ordered_sum
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
@@ -62,19 +73,64 @@ CLIMATE_ONLY_SPEC = Spec(view="provider", method=RANGE, providers=(4,), years=(2
 
 @pytest.mark.parametrize(("name", "spec"), GOLDEN_SPECS.items())
 def test_method_outputs_match_their_golden_tables(name: str, spec: Spec) -> None:
-    _golden(name, SNAP.spending(spec=spec).table.to_polars())
+    _golden(name, SNAP.run(spec).table)
+
+
+def _tables() -> list[tuple[object, str]]:
+    quality = SNAP.quality()
+    return [
+        (SNAP.spending(), "table"),
+        (SNAP.spending(), "modelled"),
+        (quality, "table"),
+        (quality, "untraced"),
+        (SNAP.reconcile(), "table"),
+        (cf.compare(SNAP.spending(), SNAP.spending(flow="commitments")), "table"),
+    ]
+
+
+@pytest.mark.parametrize(("owner", "name"), _tables())
+def test_a_result_table_is_a_polars_frame_that_arrow_readers_accept(
+    owner: object, name: str
+) -> None:
+    table = getattr(owner, name)
+
+    assert isinstance(table, pl.DataFrame)
+    assert pl.DataFrame(table).equals(table)
+    assert pa.table(table).num_rows == len(table)
+    assert list(table.columns) == pa.table(table).column_names
+
+
+@pytest.mark.parametrize(("owner", "name"), _tables())
+def test_a_result_table_runs_its_query_once(
+    owner: object, name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    collect = pl.LazyFrame.collect
+    scans = []
+
+    def counting(self: pl.LazyFrame) -> pl.DataFrame:
+        scans.append(1)
+        return collect(self)
+
+    monkeypatch.setattr(pl.LazyFrame, "collect", counting)
+    first = getattr(owner, name)
+    scans_for_first = len(scans)
+    second = getattr(owner, name)
+
+    assert second is first
+    assert scans_for_first
+    assert len(scans) == scans_for_first
 
 
 @pytest.mark.parametrize("spec", [*GOLDEN_SPECS.values(), CLIMATE_ONLY_SPEC])
 def test_value_is_the_objectives_plus_unsplit(spec: Spec) -> None:
-    result = SNAP.spending(spec=spec)
+    result = SNAP.run(spec)
     # Under the highest-marker rule the objectives are disjoint; otherwise adaptation
     # and mitigation each include cross_cutting.
     sign = pl.col("method").replace_strict(
         {label(method): 1 if method.highest_marker else -1 for method in spec.methods}
     )
 
-    for frame in (result.rows(), result.table.to_polars()):
+    for frame in (result.rows(), result.table):
         parts = frame.select(
             pl.col("adaptation")
             + pl.col("mitigation")
@@ -114,11 +170,11 @@ GRID = [
 
 @pytest.mark.parametrize("flow", FLOWS)
 @pytest.mark.parametrize("view", VIEWS)
-def test_value_stays_within_face_and_between_its_bounds(flow: str, view: str) -> None:
+def test_value_stays_within_face_and_between_its_bounds(flow: Flow, view: View) -> None:
     grid = MethodRange(methods=tuple(GRID))
     result = SNAP.spending(method=grid, flow=flow, view=view)
 
-    for frame in (result.rows(), result.table.to_polars()):
+    for frame in (result.rows(), result.table):
         known = frame.drop_nulls("amount")
         assert known.height
         assert (known["value"] <= known["amount"] * (1 + 1e-12)).all()
@@ -128,7 +184,7 @@ def test_value_stays_within_face_and_between_its_bounds(flow: str, view: str) ->
 
 
 @pytest.fixture(scope="module")
-def without_code_2(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
+def without_code_2(tmp_path_factory: pytest.TempPathFactory) -> Release:
     """The fixture release without its Bi_Multi 2 commitments and their rows."""
     code_2 = SNAP.table("commitments").filter(pl.col("bi_multi") == 2).collect()
     assert code_2.height, "the fixture needs a Bi_Multi 2 commitment"
@@ -146,14 +202,12 @@ def without_code_2(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
 @pytest.mark.parametrize("flow", FLOWS)
 @pytest.mark.parametrize("view", VIEWS)
 def test_code_2_rows_leave_every_total_unchanged(
-    without_code_2: Snapshot, flow: str, view: str
+    without_code_2: Release, flow: Flow, view: View
 ) -> None:
     spec = Spec(method=cf.methods.RANGE, flow=flow, view=view)
-    with_code_2 = SNAP.spending(spec=spec).table.to_polars()
+    with_code_2 = SNAP.run(spec).table
 
-    assert_frame_equal(
-        with_code_2, without_code_2.spending(spec=spec).table.to_polars()
-    )
+    assert_frame_equal(with_code_2, without_code_2.run(spec).table)
     bilateral = with_code_2.filter(pl.col("bi_multi").is_in(BILATERAL))
     assert bilateral.height
 
@@ -164,7 +218,7 @@ def test_code_2_rows_leave_every_total_unchanged(
         Spec(),
         Spec(
             providers=(5, 905),
-            years=(2021, 2022, 2023),
+            years=(2021, 2022),
             method=cf.methods.RANGE,
             flow="commitments",
             view="provider",
@@ -173,17 +227,58 @@ def test_code_2_rows_leave_every_total_unchanged(
         Spec(method=cf.methods.ONE.replace(significant=0.25), flow="grant_equivalent"),
         Spec(method=cf.methods.ONE.replace(eu="provider"), view="provider"),
         Spec(view="provider", providers=(5,), measure="share_of_total"),
+        Spec(providers=(5, Agency(provider=918, agency=3)), recipients=(248,)),
     ],
 )
 def test_a_spec_round_trips_through_json_and_reruns_identically(spec: Spec) -> None:
-    first = SNAP.spending(spec=spec)
+    first = SNAP.run(spec)
 
     restored = Spec.model_validate_json(first.spec.model_dump_json())
-    rerun = SNAP.spending(spec=restored)
+    rerun = SNAP.run(restored)
 
     assert restored == spec
-    assert_frame_equal(first.table.to_polars(), rerun.table.to_polars())
+    assert_frame_equal(first.table, rerun.table)
     assert_frame_equal(first.rows(), rerun.rows())
+
+
+def test_a_spec_holds_sorted_codes_and_agencies_whatever_names_them() -> None:
+    eib = Agency(provider=918, agency=3)
+    spec = Spec(providers=["EIB", "Japan", eib, 701], recipients=["KEN", 248])
+
+    assert Spec(providers=["DEU", 5]) == Spec(providers=[5])
+    assert SNAP.spending(providers="Japan").spec == SNAP.spending(providers=701).spec
+    assert (spec.providers, spec.recipients) == ((701, eib), (248,))
+    assert json.loads(spec.model_dump_json())["providers"] == [
+        701,
+        {"provider": 918, "agency": 3},
+    ]
+    # A provider covers its agencies.
+    assert Spec(providers=["EU Institutions", "EIB"]).providers == (EU_INSTITUTIONS,)
+
+
+@pytest.mark.parametrize(
+    ("spec", "printed"),
+    [
+        (Spec(), "Spec()"),
+        (Spec(providers="Japan"), "Spec(providers=(701,))"),
+        (
+            Spec(providers="Japan", years=range(2021, 2023), method="OECD"),
+            "Spec(providers=(701,), years=(2021, 2022), method=cf.methods.OECD)",
+        ),
+        (
+            Spec(method=RANGE, untraced=False),
+            "Spec(method=cf.methods.RANGE, untraced=False)",
+        ),
+        (
+            Spec(method=ONE.replace(significant=0.5)),
+            f"Spec(method={ONE.replace(significant=0.5)!r})",
+        ),
+    ],
+)
+def test_a_spec_prints_the_fields_away_from_their_defaults(
+    spec: Spec, printed: str
+) -> None:
+    assert repr(spec) == printed
 
 
 def test_keyword_arguments_build_the_same_spec() -> None:
@@ -192,19 +287,218 @@ def test_keyword_arguments_build_the_same_spec() -> None:
     assert result.spec == Spec(providers=(5,), years=(2021, 2022), view="provider")
 
 
-def test_spending_defaults_match_the_spec_defaults() -> None:
-    parameters = inspect.signature(Snapshot.spending).parameters
-    fields = Spec.model_fields
+def test_spec_inputs_name_every_spec_field() -> None:
+    assert set(SpecInputs.__annotations__) == set(Spec.model_fields)
 
-    assert set(fields) <= set(parameters)
-    assert {name: parameters[name].default for name in fields} == {
-        name: field.default for name, field in fields.items()
-    }
+
+@pytest.mark.parametrize(
+    ("years", "expected"),
+    [
+        (2022, (2022,)),
+        (np.int64(2022), (2022,)),
+        (range(2021, 2023), (2021, 2022)),
+        ([2023, np.int32(2021), 2023], (2021, 2023)),
+    ],
+)
+def test_years_hold_sorted_distinct_ints(years: object, expected: tuple) -> None:
+    assert Spec.model_validate({"years": years}).years == expected
+
+
+@pytest.mark.parametrize("years", ["2022", ["2022"], True, 2022.0])
+def test_years_refuse_anything_but_ints(years: object) -> None:
+    with pytest.raises(TypeError, match="years takes an int or ints"):
+        Spec.model_validate({"years": years})
+
+
+@pytest.mark.parametrize(
+    ("method", "expected"),
+    [
+        ("oecd", OECD),
+        (" Range ", RANGE),
+        (["one", OECD], MethodRange(methods=(ONE, OECD))),
+    ],
+)
+def test_a_method_reads_from_its_name_ignoring_case(
+    method: object, expected: Method | MethodRange
+) -> None:
+    spec = Spec.model_validate({"method": method})
+
+    assert spec.method == expected
+    assert Spec.model_validate_json(spec.model_dump_json()) == spec
+
+
+def test_an_unknown_method_name_suggests_close_ones() -> None:
+    with pytest.raises(cf.UnknownNameError) as raised:
+        SNAP.spending(method="OECDD")
+
+    assert raised.value.suggestions == ("OECD",)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("method", 1), ("method", ["RANGE"]), ("prices", "constant"), ("prices", True)],
+)
+def test_a_method_or_prices_of_another_form_raises_one_type_error(
+    field: str, value: object
+) -> None:
+    with pytest.raises(TypeError, match=f"^{field} takes"):
+        Spec.model_validate({field: value})
+
+
+def test_spending_takes_keywords_only_and_run_reruns_a_spec() -> None:
+    spec = Spec(providers="Japan")
+
+    with pytest.raises(InvalidInputError, match=r"release\.run\(spec\)"):
+        SNAP.spending(spec=spec, providers="France")
+    with pytest.raises(TypeError):
+        SNAP.spending(spec)  # ty: ignore[too-many-positional-arguments]
+    assert_frame_equal(
+        SNAP.run(spec).table,
+        SNAP.spending(providers="Japan").table,
+    )
+
+
+@pytest.mark.parametrize(
+    ("inputs", "message"),
+    [
+        ({"provider": "Japan"}, "no keyword 'provider'; did you mean 'providers'?"),
+        ({"flow": "commitment"}, "flow takes 'commitments', 'disbursements' or"),
+        ({"years": []}, "years takes at least one year"),
+        ({"providers": []}, "providers takes at least one name or code"),
+        ({"recipients": ()}, "recipients takes at least one name or code"),
+        ({"oda_only": "maybe"}, "oda_only: input should be a valid boolean"),
+        ({"oda_only": "yes"}, "oda_only: input should be a valid boolean"),
+        ({"untraced": 1}, "untraced: input should be a valid boolean"),
+        ({"method": {"significant": 2}}, "method.significant: input should be"),
+    ],
+)
+def test_spec_restates_every_refusal_as_one_package_error(
+    inputs: dict, message: str
+) -> None:
+    with pytest.raises(InvalidInputError, match=message):
+        Spec.model_validate(inputs)
+    with pytest.raises(InvalidInputError, match=message):
+        SNAP.spending(**inputs)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: SNAP.quality(providers=[]),
+        lambda: SNAP.reconcile(providers=[]),
+        lambda: SNAP.spending().rows(provider=[]),
+        lambda: SNAP.spending().rows(recipient=[]),
+        # The refusal under test: a type checker flags an empty list.
+        lambda: SNAP.reconcile().rows(provider=[], year=2021),  # ty: ignore[invalid-argument-type]
+    ],
+    ids=["quality", "reconcile", "rows provider", "rows recipient", "btr rows"],
+)
+def test_an_empty_list_of_providers_or_recipients_raises(
+    call: Callable[[], object],
+) -> None:
+    with pytest.raises(InvalidInputError, match="takes at least one name or code"):
+        call()
+
+
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (
+            lambda: SNAP.reconcile(parties="DEU"),  # ty: ignore[unknown-argument]
+            r"reconcile\(\) takes no keyword 'parties'; did you mean 'providers'\?",
+        ),
+        (
+            lambda: SNAP.quality(yeras=2022),  # ty: ignore[unknown-argument]
+            r"quality\(\) takes no keyword 'yeras'; did you mean 'years'\?",
+        ),
+        (
+            lambda: SNAP.quality(flow="commitments"),  # ty: ignore[unknown-argument]
+            "quality\\(\\) takes no keyword 'flow'; it takes providers, years, method",
+        ),
+    ],
+)
+def test_quality_and_reconcile_restate_an_unknown_keyword(
+    call: Callable[[], object], message: str
+) -> None:
+    with pytest.raises(InvalidInputError, match=message):
+        call()
+
+
+def test_run_reads_a_saved_spec_from_a_mapping_and_refuses_anything_else() -> None:
+    spec = Spec(providers=["Japan", Agency(provider=5, agency=1)], method=RANGE)
+
+    rerun = SNAP.run(json.loads(spec.model_dump_json()))
+
+    assert rerun.spec == spec
+    assert_frame_equal(rerun.table, SNAP.run(spec).table)
+    for value in (None, spec.model_dump_json(), [spec]):
+        with pytest.raises(InvalidInputError, match="run\\(\\) takes a Spec"):
+            SNAP.run(value)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(InvalidInputError, match="flow takes"):
+        SNAP.run({"flow": "commitment"})
+
+
+@pytest.mark.parametrize("text", ['{"years": ', "not json", b"\xff"])
+def test_malformed_spec_json_raises_the_package_error(text: str | bytes) -> None:
+    with pytest.raises(InvalidInputError, match=r"^Spec reads JSON; "):
+        Spec.model_validate_json(text)
+
+
+COVERED = {
+    "spending": lambda: SNAP.spending(years=range(2015, 2023)),
+    "commitments": lambda: SNAP.spending(flow="commitments", years=[2022, 2023]),
+    "quality": lambda: SNAP.quality(years=[2019, 2022, 2023]),
+    "reconcile": lambda: SNAP.reconcile(years=2030),
+}
+
+
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (
+            COVERED["spending"],
+            "holds disbursements for 2021 to 2024; years 2015 to 2020 return no rows",
+        ),
+        (
+            COVERED["commitments"],
+            "holds commitments for 2021 to 2022; year 2023 returns no rows",
+        ),
+        (
+            COVERED["quality"],
+            "quality statistics for 2021 to 2022; years 2019 and 2023 return",
+        ),
+        (COVERED["reconcile"], "BTR totals for 2021 to 2022; year 2030 returns"),
+    ],
+    ids=list(COVERED),
+)
+def test_years_a_table_lacks_warn_once_at_the_caller(
+    call: Callable[[], object], message: str
+) -> None:
+    with pytest.warns(CoverageWarning, match=message) as record:
+        call()
+
+    assert [warning.filename for warning in record] == [__file__]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: SNAP.spending(years=range(2021, 2025)),
+        lambda: SNAP.spending(view="provider", years=[2021, 2024]),
+        lambda: SNAP.spending(),
+        lambda: SNAP.quality(years=2022),
+        lambda: SNAP.reconcile(years=[2021, 2022]),
+    ],
+)
+def test_covered_years_warn_nothing(call: Callable[[], object]) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", CoverageWarning)
+        call()
 
 
 @pytest.mark.parametrize("flow", FLOWS)
 def test_the_provider_view_attributes_core_contributions_of_its_flow(
-    flow: str,
+    flow: Flow,
 ) -> None:
     # OECD has a share for every agency and year with a core contribution.
     rows = SNAP.spending(view="provider", flow=flow, method=OECD).rows(
@@ -241,9 +535,9 @@ def test_a_channel_with_no_agency_share_attributes_nothing(
     )
 
     spec = Spec(view="provider", method=method)
-    result = cf.load(path=release).spending(spec=spec).table.to_polars()
+    result = cf.load(path=release).run(spec).table
 
-    assert_frame_equal(result, SNAP.spending(spec=spec).table.to_polars())
+    assert_frame_equal(result, SNAP.run(spec).table)
 
 
 # Fixture inputs: Germany gives IDA (channel 44002) 60m in 2021. IDA's commitments,
@@ -305,7 +599,7 @@ def test_attribution_reads_agency_shares_as_inclusive_of_cross_cutting(
 def test_a_climate_only_share_attributes_value_as_unsplit() -> None:
     # France gives AfDB (channel 46002) 25m in 2020. AfDB's 2020 OECD share is 0.35
     # in total, with no split by objective, and it has no ONE share that year.
-    result = SNAP.spending(spec=CLIMATE_ONLY_SPEC)
+    result = SNAP.run(CLIMATE_ONLY_SPEC)
     columns = (
         "adaptation", "mitigation", "cross_cutting", "unsplit", "value", "low", "high",
     )  # fmt: skip
@@ -316,10 +610,10 @@ def test_a_climate_only_share_attributes_value_as_unsplit() -> None:
     assert rows.select(columns).row(0) == expected
     # ONE and PROVIDER hold no AfDB share for 2020, so the range's low bound is 0.
     oecd = pl.col("method") == "OECD"
-    table = result.table.to_polars().filter(oecd)
+    table = result.table.filter(oecd)
     assert table.select(columns).row(0) == (*expected[:5], 0.0, expected[6])
     # France's 2020 code 2 flows total 1.5 times its contribution.
-    share = result.share_of_total().table.to_polars().filter(oecd)["value"].item()
+    share = result.share_of_total().table.filter(oecd)["value"].item()
     assert share == pytest.approx(0.35 / 1.5)
     assert "Channels 46002: the climate share has no split" in result.explain()
     assert "value sits in unsplit" in result.explain()
@@ -424,7 +718,7 @@ def test_a_range_bounds_every_key_under_every_method(tmp_path: Path) -> None:
         },
     )
     result = cf.load(path=release).spending(method=RANGE, view="provider")
-    table = result.table.to_polars()
+    table = result.table
 
     assert set(result.rows(origin="attribution", provider_code=4)["method"]) == {"OECD"}
     by_method = table.partition_by("method", as_dict=True, include_key=False)
@@ -474,12 +768,12 @@ def test_a_range_of_close_methods_counts_each_member_once() -> None:
     close = (ONE.replace(significant=0.5000001), ONE.replace(significant=0.5000002))
     spec = Spec(providers=(5,), recipients=(248,), years=(2022,))
 
-    together = SNAP.spending(spec=spec.replace(method=MethodRange(methods=close)))
+    together = SNAP.run(spec.replace(method=MethodRange(methods=close)))
 
-    values = together.table.to_polars().group_by("method").agg(pl.col("value").sum())
+    values = together.table.group_by("method").agg(pl.col("value").sum())
     assert values.height == 2
     for method in close:
-        alone = SNAP.spending(spec=spec.replace(method=method)).table.to_polars()
+        alone = SNAP.run(spec.replace(method=method)).table
         expected = alone["value"].sum()
         assert values.filter(pl.col("method") == label(method))["value"].item() == (
             pytest.approx(expected)
@@ -511,17 +805,17 @@ def _hold_afdb_2022(frame: pl.DataFrame) -> pl.DataFrame:
 
 
 def test_attributed_value_shows_and_sums_by_share_source(tmp_path: Path) -> None:
-    snap = cf.load(
+    release = cf.load(
         path=copy_release(
             tmp_path / "release", edits={"agency_spending": _hold_afdb_2022}
         )
     )
-    rows = snap.spending(view="provider").rows(origin="attribution")
+    rows = release.spending(view="provider").rows(origin="attribution")
     by_source = rows.group_by("provider_code", "year", "share_source").agg(
         pl.col("value").sum()
     )
 
-    attribution = snap.quality().attribution.to_polars().filter(flow="disbursements")
+    attribution = release.quality().attribution.filter(flow="disbursements")
     columns = attribution.unpivot(
         index=["provider_code", "year"],
         on=["computed_usd", "held_usd", "oecd_usd"],
@@ -532,7 +826,9 @@ def test_attributed_value_shows_and_sums_by_share_source(tmp_path: Path) -> None
     assert sorted(
         columns.with_columns(pl.col("share_source").str.strip_suffix("_usd")).rows()
     ) == pytest.approx(sorted(by_source.select(columns.columns).rows()))
-    oecd_rows = snap.spending(view="provider", method=OECD).rows(origin="attribution")
+    oecd_rows = release.spending(view="provider", method=OECD).rows(
+        origin="attribution"
+    )
     assert set(oecd_rows["share_source"]) == {"oecd"}
 
 
@@ -603,7 +899,7 @@ def test_oda_only_counts_disbursements_by_flow_code_and_fills_by_category() -> N
     # A bank-ledger fill has no CRS flow code, and counts by its commitment's.
     assert fills["record_id"].to_list() == [LEDGER_RECORD]
     assert fills["flow_category"].to_list() == [10]
-    assert result.modelled.to_polars().is_empty()
+    assert result.modelled.is_empty()
 
 
 def _publish_deu_2_at_40_percent(frame: pl.DataFrame) -> pl.DataFrame:
@@ -628,13 +924,194 @@ def test_a_marker_row_counts_at_most_its_published_climate_share(
     assert row["value"].item() == pytest.approx(0.4 * 25e6)
 
 
+# Each name column with the listing that names it, keyed as the tables key it.
+LISTINGS = {
+    "provider": cf.providers.list().select(provider_code="code", provider="name"),
+    "recipient": cf.recipients.list().select(recipient_code="code", recipient="name"),
+    "agency": pl.read_csv(
+        (files("climate_finance") / "data" / "agencies.csv").read_bytes(),
+        schema_overrides={"code": pl.Int32, "agency": pl.Int32},
+    ).select(provider_code="code", agency_code="agency", agency="name"),
+}
+
+
+def _named_tables() -> list[tuple[str, pl.DataFrame, tuple[str, ...]]]:
+    quality = SNAP.quality()
+    provider = SNAP.spending(view="provider")
+    return [
+        ("table", SNAP.spending().table, ("provider", "recipient")),
+        ("rows", provider.rows(), ("provider", "agency", "recipient")),
+        ("modelled", SNAP.spending().modelled, ("provider", "recipient")),
+        ("quality", quality.table, ("provider",)),
+        ("status", quality.status, ("provider",)),
+        ("attribution", quality.attribution, ("provider",)),
+        ("untraced", quality.untraced, ("provider",)),
+        ("summary", quality.summary(), ("provider",)),
+        ("reconcile", SNAP.reconcile().table, ("provider",)),
+        (
+            "compare",
+            cf.compare(provider, SNAP.spending()).table,
+            ("provider", "recipient"),
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("frame", "names"),
+    [(frame, names) for _, frame, names in _named_tables()],
+    ids=[name for name, _, _ in _named_tables()],
+)
+def test_names_sit_before_their_codes_and_match_the_listings(
+    frame: pl.DataFrame, names: tuple[str, ...]
+) -> None:
+    for name in names:
+        listing = LISTINGS[name]
+        keys = [column for column in listing.columns if column != name]
+        expected = frame.select(keys).join(
+            listing, on=keys, how="left", maintain_order="left"
+        )[name]
+
+        assert frame.columns.index(name) < frame.columns.index(keys[-1])
+        assert frame[name].drop_nulls().len() > 0
+        assert frame[name].equals(expected)
+
+
+def test_a_result_table_prints_names_first_and_bounds_last() -> None:
+    result = SNAP.spending()
+    rows = result.rows()
+
+    assert result.table.columns[:4] == ["year", "provider", "recipient", "method"]
+    assert result.table.columns[-4:] == ["value", "low", "high", "untraced"]
+    assert rows.columns[:4] == ["origin", "year", "record_id", "link_method"]
+    assert rows.columns[-4:] == ["value", "low", "high", "untraced"]
+    assert set(rows.columns) == set(result._rows.collect_schema().names())
+
+
+@pytest.mark.parametrize("kenya", ["kenya", "KEN", 248])
+def test_rows_take_a_recipient_in_any_form(kenya: str | int) -> None:
+    result = SNAP.spending()
+
+    assert result.rows(recipient=kenya).equals(result.rows(recipient_code=248))
+    assert result.rows(recipient=kenya).height > 0
+    assert set(result.rows(recipient=["kenya", "Bangladesh"])["recipient"]) == {
+        "Kenya",
+        "Bangladesh",
+    }
+
+
+def test_an_unknown_recipient_in_rows_raises_with_suggestions() -> None:
+    with pytest.raises(UnknownRecipientError) as error:
+        SNAP.spending().rows(recipient="kenyaa")
+
+    assert "Kenya" in error.value.suggestions
+
+
 def test_rows_filter_by_equality_and_membership() -> None:
     result = SNAP.spending()
 
     assert set(result.rows(year=2022)["year"]) == {2022}
     assert set(result.rows(provider_code=[5, 8])["provider_code"]) == {5, 8}
-    with pytest.raises(KeyError, match="no column"):
-        result.rows(donor="Germany")
+    assert set(result.rows(provider=["Germany", 8])["provider_code"]) == {5, 8}
+    with pytest.raises(cf.UnknownNameError) as raised:
+        result.rows(yeer=2022)
+    assert raised.value.suggestions[0] == "year"
+
+
+@pytest.mark.parametrize(
+    ("filters", "message"),
+    [
+        ({"provider_code": "Japan"}, "DAC codes, not 'Japan'; .* provider='Japan'"),
+        ({"recipient_code": ["Kenya"]}, "filter names with recipient='Kenya'"),
+        ({"agency_code": "KfW"}, "agency codes, not 'KfW'; .* provider='KfW'"),
+        ({"agency": "EIB"}, "through provider, as provider='EIB'"),
+        ({"year": [2022, "2023"]}, "year holds integers, not '2023'"),
+        ({"origin": 1}, "origin holds text, not 1"),
+        ({"origin": []}, "origin takes at least one value"),
+        ({"method": []}, "method takes at least one value"),
+        ({"provider_code": []}, "provider_code takes at least one value"),
+    ],
+)
+def test_rows_refuse_a_filter_its_column_cannot_hold(
+    filters: dict, message: str
+) -> None:
+    with pytest.raises(InvalidInputError, match=message):
+        SNAP.spending().rows(**filters)
+
+
+def test_rows_read_a_method_filter_as_spending_reads_a_method() -> None:
+    result = SNAP.spending(method=RANGE)
+
+    for name in ("one", " One ", ONE, ["ONE"]):
+        assert_frame_equal(
+            result.rows(method=name), result.rows().filter(pl.col("method") == "ONE")
+        )
+    assert result.rows(method="OECD").height > 0
+
+
+@pytest.mark.parametrize(
+    ("filters", "suggestion"),
+    [
+        ({"origin": "disbursment"}, "disbursement"),
+        ({"origin": ["commitment", "atribution"]}, "attribution"),
+        ({"link_method": "crs_ids"}, "crs_id"),
+        ({"share_source": "computd"}, "computed"),
+        ({"method": "OECD"}, None),
+        ({"method": "ONEE"}, "ONE"),
+    ],
+)
+def test_rows_refuse_a_value_outside_a_fixed_vocabulary(
+    filters: dict, suggestion: str | None
+) -> None:
+    with pytest.raises(cf.UnknownNameError) as raised:
+        SNAP.spending().rows(**filters)
+
+    if suggestion is None:
+        assert raised.value.note == "The rows hold methods ONE, not OECD."
+    else:
+        assert suggestion in raised.value.suggestions
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        Spec(method=RANGE),
+        Spec(method=RANGE, view="provider"),
+        Spec(flow="commitments", view="provider"),
+        Spec(flow="grant_equivalent"),
+    ],
+)
+def test_rows_hold_only_the_values_their_vocabularies_list(spec: Spec) -> None:
+    rows = SNAP.run(spec).rows()
+
+    for column, values in ROW_VALUES.items():
+        assert set(rows[column].drop_nulls()) <= set(values), column
+
+
+def test_a_spec_that_names_an_agency_keys_its_table_by_agency() -> None:
+    giz = cf.providers.code("GIZ")
+    assert isinstance(giz, Agency)
+    result = SNAP.spending(providers=[giz, "Japan"])
+    table = result.table
+
+    assert table.columns[:5] == ["year", "provider", "agency", "recipient", "method"]
+    assert table.columns[5:9] == [
+        "provider_code",
+        "agency_code",
+        "recipient_code",
+        "bi_multi",
+    ]
+    by_agency = dict(
+        table.group_by("provider_code", "agency_code")
+        .agg(pl.len())
+        .select("provider_code", "agency_code")
+        .iter_rows()
+    )
+    assert by_agency == {DEU: giz.agency, JPN: None}
+    assert set(table.filter(provider_code=DEU)["agency"]) == {agency_name(giz)}
+    assert table["value"].sum() == pytest.approx(result.rows()["value"].sum())
+    shares = result.share_of_total().table
+    assert shares["value"].is_not_null().all()
+    assert "agency" not in SNAP.spending(providers="Germany").table.columns
 
 
 def test_a_record_shows_its_jev_label_before_its_markers() -> None:
@@ -716,9 +1193,9 @@ def test_jev_relevance_refuses_a_release_without_jev_labels(tmp_path: Path) -> N
 def test_the_modelled_line_stays_out_of_traced_totals() -> None:
     result = SNAP.spending()
 
-    modelled = result.modelled.to_polars()
+    modelled = result.modelled
     assert set(modelled["provider_code"]) == {903}
-    assert 903 not in set(result.table.to_polars()["provider_code"])
+    assert 903 not in set(result.table["provider_code"])
 
 
 def test_explain_names_the_method_view_and_units() -> None:
@@ -735,7 +1212,7 @@ def test_explain_names_the_method_view_and_units() -> None:
     [({}, False), ({"currency": "EUR"}, True), ({"prices": 2024}, True)],
 )
 def test_converted_results_carry_conversion_provenance(
-    monkeypatch: pytest.MonkeyPatch, spec: dict[str, object], converted: bool
+    monkeypatch: pytest.MonkeyPatch, spec: SpecInputs, converted: bool
 ) -> None:
     factors = pl.DataFrame(
         {"entity_code": [5, 20001], "year": [2022, 2022], "factor": [0.8, 0.5]},
@@ -743,7 +1220,8 @@ def test_converted_results_carry_conversion_provenance(
     )
     monkeypatch.setattr(convert_module, "dac_factors", lambda **_: factors)
 
-    result = SNAP.spending(years=2022, **spec)
+    inputs: SpecInputs = {**spec, "years": 2022}
+    result = SNAP.spending(**inputs)
 
     assert (result.meta.conversion is not None) is converted
     if converted:
@@ -755,7 +1233,7 @@ def test_converted_results_carry_conversion_provenance(
 def test_share_of_total_divides_each_key_by_its_total_flows() -> None:
     result = SNAP.spending(view="provider", providers=5, years=2021)
 
-    shares = result.share_of_total().table.to_polars()
+    shares = result.share_of_total().table
 
     by_key = {
         (row["recipient_code"], row["bi_multi"]): row["value"]
@@ -769,19 +1247,15 @@ def test_share_of_total_divides_each_key_by_its_total_flows() -> None:
     assert by_key[(None, 2)] == pytest.approx(
         60e6 * 0.36 / (4 * 60e6 * 0.95 / 3 + 1.5 * 60e6)
     )
-    assert_frame_equal(shares.drop(AMOUNTS), result.table.to_polars().drop(AMOUNTS))
+    assert_frame_equal(shares.drop(AMOUNTS), result.table.drop(AMOUNTS))
 
 
 def test_a_share_result_reruns_from_its_own_spec() -> None:
     shares = SNAP.spending(view="provider", providers=5, years=2021).share_of_total()
 
     assert shares.spec.measure == "share_of_total"
-    assert_frame_equal(
-        SNAP.spending(spec=shares.spec).table.to_polars(), shares.table.to_polars()
-    )
-    assert_frame_equal(
-        shares.share_of_total().table.to_polars(), shares.table.to_polars()
-    )
+    assert_frame_equal(SNAP.run(shares.spec).table, shares.table)
+    assert_frame_equal(shares.share_of_total().table, shares.table)
 
 
 @pytest.mark.parametrize(
@@ -792,7 +1266,7 @@ def test_a_share_result_reruns_from_its_own_spec() -> None:
     ],
 )
 def test_explain_and_title_name_the_measure(
-    measure: str, expected: str, absent: str
+    measure: Measure, expected: str, absent: str
 ) -> None:
     result = SNAP.spending(providers=5, years=2021, measure=measure)
 
@@ -802,22 +1276,33 @@ def test_explain_and_title_name_the_measure(
     assert ("share of total" in title) == (measure == "share_of_total")
 
 
-@pytest.mark.parametrize(
-    ("field", "value"), [("measure", "share_of_total"), ("untraced", False)]
-)
+def test_the_title_names_providers_agencies_recipients_and_year_runs() -> None:
+    with pytest.warns(CoverageWarning, match="year 2015 returns no rows"):
+        result = SNAP.spending(
+            providers=["EIB", 701], recipients="KEN", years=[2015, 2021, 2022, 2023]
+        )
+
+    assert (
+        "providers Japan, European Investment Bank (EU Institutions); recipients Kenya;"
+        " years 2015 and 2021 to 2023"
+    ) in repr(result).splitlines()[0]
+
+
+@pytest.mark.parametrize("inputs", [{"measure": "share_of_total"}, {"untraced": False}])
 def test_a_spec_serialises_only_the_later_fields_it_changes(
-    field: str, value: object
+    inputs: SpecInputs,
 ) -> None:
+    [field] = inputs
     assert f'"{field}"' not in Spec(flow="commitments").model_dump_json()
-    assert f'"{field}"' in Spec(**{field: value}).model_dump_json()
+    assert f'"{field}"' in Spec(**inputs).model_dump_json()
 
 
 SURVEY = "Fixture survey, p. 8"
 
 
-def _ratio(snapshot: Snapshot, method: Method, row_id: str) -> tuple[float, str]:
+def _ratio(release: Release, method: Method, row_id: str) -> tuple[float, str]:
     """The share of `row_id`'s commitment that counts, and its coefficient basis."""
-    rows = snapshot.spending(method=method, flow="commitments").rows(row_id=row_id)
+    rows = release.spending(method=method, flow="commitments").rows(row_id=row_id)
     return rows["value"].sum() / rows["amount"].sum(), rows["coefficient_basis"][0]
 
 
@@ -864,13 +1349,13 @@ def test_both_significant_reads_the_jev_level(tmp_path: Path) -> None:
     # DEU-2 marks both objectives significant, which Germany counts at 1.0. Jev
     # finds DEU-2-R0 not adaptation, so under Jev relevance it is significant for
     # mitigation alone and counts at Germany's 0.5.
-    release = copy_release(
+    path = copy_release(
         tmp_path / "release", edits={"objectives": _jev_rules_out_adaptation}
     )
-    snapshot = cf.load(path=release)
+    release = cf.load(path=path)
 
     def ratio(method: Method) -> float:
-        row = snapshot.spending(method=method).rows(record_id="DEU-2-R0")
+        row = release.spending(method=method).rows(record_id="DEU-2-R0")
         return row["value"].item() / row["amount"].item()
 
     assert ratio(cf.methods.PROVIDER) == pytest.approx(1.0)
@@ -938,7 +1423,7 @@ def _repeat_jpn_2(frame: pl.DataFrame) -> pl.DataFrame:
 
 @pytest.mark.parametrize("flow", FLOWS)
 def test_a_repeat_and_the_disbursements_allocated_to_it_stay_out(
-    tmp_path: Path, flow: str
+    tmp_path: Path, flow: Flow
 ) -> None:
     release = copy_release(tmp_path / "release", edits={"commitments": _repeat_jpn_2})
 
@@ -970,11 +1455,11 @@ def test_a_bilateral_commitment_divides_by_every_bilateral_code(
     )
     spec = Spec(flow="commitments", providers=(8,), years=(2021,))
 
-    shares = cf.load(path=release).spending(spec=spec).share_of_total()
+    shares = cf.load(path=release).run(spec).share_of_total()
 
-    expected = SNAP.spending(spec=spec).share_of_total().table.to_polars()
+    expected = SNAP.run(spec).share_of_total().table
     assert expected.height
-    assert_frame_equal(shares.table.to_polars(), expected)
+    assert_frame_equal(shares.table, expected)
 
 
 ONE_EU_AS_PROVIDER = cf.methods.ONE.replace(eu="provider")
@@ -1081,7 +1566,7 @@ def _with_eu_total_flows(frame: pl.DataFrame) -> pl.DataFrame:
 
 
 @pytest.fixture(scope="module")
-def eu_snap(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
+def eu_release(tmp_path_factory: pytest.TempPathFactory) -> Release:
     release = copy_release(
         tmp_path_factory.mktemp("eu") / "release",
         edits={
@@ -1128,13 +1613,13 @@ def test_the_eu_constants_match_the_channels_the_build_maps_to_eu_institutions()
     ],
 )
 def test_an_all_provider_total_counts_eu_money_once(
-    eu_snap: Snapshot,
+    eu_release: Release,
     method: Method,
-    flow: str,
+    flow: Flow,
     eu_own_agencies: set[int],
     eu_attributed: float,
 ) -> None:
-    rows = eu_snap.spending(view="provider", method=method, flow=flow).rows()
+    rows = eu_release.spending(view="provider", method=method, flow=flow).rows()
 
     own = rows.filter(
         pl.col("provider_code") == EU_INSTITUTIONS,
@@ -1149,10 +1634,10 @@ def test_an_all_provider_total_counts_eu_money_once(
 @pytest.mark.parametrize("view", VIEWS)
 @pytest.mark.parametrize("flow", FLOWS)
 def test_eu_institutions_alone_return_their_own_spending(
-    eu_snap: Snapshot, flow: str, view: str
+    eu_release: Release, flow: Flow, view: View
 ) -> None:
     def eu_alone(method: Method) -> pl.DataFrame:
-        result = eu_snap.spending(
+        result = eu_release.spending(
             view=view, method=method, flow=flow, providers=EU_INSTITUTIONS
         )
         return result.rows().drop("method")
@@ -1166,6 +1651,33 @@ def test_eu_institutions_alone_return_their_own_spending(
     assert_frame_equal(as_channel, eu_alone(ONE_EU_AS_PROVIDER))
 
 
+@pytest.mark.parametrize("view", VIEWS)
+@pytest.mark.parametrize("flow", FLOWS)
+def test_an_agency_returns_its_own_rows_and_no_modelled_line(
+    eu_release: Release, flow: Flow, view: View
+) -> None:
+    eib = eu_release.spending(view=view, flow=flow, providers="EIB")
+    eu = eu_release.spending(view=view, flow=flow, providers=EU_INSTITUTIONS)
+
+    rows = eib.rows()
+    assert rows.height
+    assert set(rows.select("provider_code", "agency_code").rows()) == {
+        (EU_INSTITUTIONS, EIB_AGENCY)
+    }
+    assert_frame_equal(rows, eu.rows(provider="EIB"))
+    assert_frame_equal(rows, eu.rows(provider=Agency(provider=918, agency=3)))
+    assert eib.modelled.is_empty()
+
+
+def test_under_oecd_the_provider_view_holds_no_eib_rows(eu_release: Release) -> None:
+    """OECD counts EU Institutions as a provider, whose provider view leaves the
+    EIB's own rows out and attributes members' contributions to it."""
+    result = eu_release.spending(view="provider", method=OECD, providers="EIB")
+
+    assert result.rows().is_empty()
+    assert result.table.is_empty()
+
+
 @pytest.mark.parametrize(
     ("providers", "eu_own_rows"),
     [
@@ -1177,9 +1689,9 @@ def test_eu_institutions_alone_return_their_own_spending(
     ],
 )
 def test_eu_own_rows_leave_a_result_only_beside_eu_attribution(
-    eu_snap: Snapshot, providers: tuple[int, ...] | None, eu_own_rows: bool
+    eu_release: Release, providers: tuple[int, ...] | None, eu_own_rows: bool
 ) -> None:
-    rows = eu_snap.spending(
+    rows = eu_release.spending(
         view="provider", providers=providers, years=EU_ATTRIBUTION_YEARS
     ).rows(provider_code=EU_INSTITUTIONS)
 
@@ -1201,7 +1713,7 @@ def _with_two_eu_members(frame: pl.DataFrame) -> pl.DataFrame:
 
 
 @pytest.fixture(scope="module")
-def two_member_snap(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
+def two_member_release(tmp_path_factory: pytest.TempPathFactory) -> Release:
     release = copy_release(
         tmp_path_factory.mktemp("eu-members") / "release",
         edits={
@@ -1217,10 +1729,10 @@ def two_member_snap(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
 
 @pytest.mark.parametrize("flow", FLOWS)
 def test_eu_own_rows_count_less_the_contributions_of_queried_members(
-    two_member_snap: Snapshot, flow: str
+    two_member_release: Release, flow: Flow
 ) -> None:
     def value(providers: int | tuple[int, ...] | None, provider: int) -> float:
-        result = two_member_snap.spending(
+        result = two_member_release.spending(
             view="provider", flow=flow, providers=providers, years=EU_ATTRIBUTION_YEARS
         )
         return result.rows(provider_code=provider)["value"].sum()
@@ -1264,7 +1776,7 @@ def _with_eu_untraced(frame: pl.DataFrame) -> pl.DataFrame:
 
 
 @pytest.fixture(scope="module")
-def eu_untraced_snap(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
+def eu_untraced_release(tmp_path_factory: pytest.TempPathFactory) -> Release:
     release = copy_release(
         tmp_path_factory.mktemp("eu-untraced") / "release",
         edits={
@@ -1289,12 +1801,12 @@ def eu_untraced_snap(tmp_path_factory: pytest.TempPathFactory) -> Snapshot:
     ],
 )
 def test_eu_untraced_rows_count_once_as_the_eus_own_rows_do(
-    eu_untraced_snap: Snapshot,
+    eu_untraced_release: Release,
     method: Method,
     providers: tuple[int, ...] | None,
     kept: dict[int, float],
 ) -> None:
-    rows = eu_untraced_snap.spending(
+    rows = eu_untraced_release.spending(
         view="provider", method=method, providers=providers, years=(2022,)
     ).rows(origin="untraced", provider_code=EU_INSTITUTIONS)
 
@@ -1309,14 +1821,14 @@ def test_eu_untraced_rows_count_once_as_the_eus_own_rows_do(
 @pytest.mark.parametrize("flow", ["commitments", "disbursements"])
 @pytest.mark.parametrize("providers", [(EU_INSTITUTIONS,), (EU_INSTITUTIONS, 4)])
 def test_eu_shares_of_total_divide_by_the_rows_each_method_counts(
-    two_member_snap: Snapshot, flow: str, providers: tuple[int, ...]
+    two_member_release: Release, flow: Flow, providers: tuple[int, ...]
 ) -> None:
-    result = two_member_snap.spending(
+    result = two_member_release.spending(
         view="provider", method=RANGE, flow=flow, providers=providers
     )
     eu = pl.col("provider_code") == EU_INSTITUTIONS
-    amounts = result.table.to_polars().filter(eu)
-    shares = result.share_of_total().table.to_polars().filter(eu)
+    amounts = result.table.filter(eu)
+    shares = result.share_of_total().table.filter(eu)
 
     # ONE and PROVIDER count the EU as a channel: all three agencies' flows, scaled
     # as the EU's own rows are by the part France's contributions do not fund. OECD
@@ -1340,7 +1852,7 @@ def test_eu_shares_of_total_divide_by_the_rows_each_method_counts(
 
 
 def test_range_share_bounds_span_each_methods_own_share(
-    two_member_snap: Snapshot,
+    two_member_release: Release,
 ) -> None:
     spec = Spec(
         view="provider",
@@ -1349,15 +1861,9 @@ def test_range_share_bounds_span_each_methods_own_share(
         measure="share_of_total",
     )
     eu = pl.col("provider_code") == EU_INSTITUTIONS
-    shares = (
-        two_member_snap.spending(spec=spec.replace(method=RANGE))
-        .table.to_polars()
-        .filter(eu)
-    )
+    shares = two_member_release.run(spec.replace(method=RANGE)).table.filter(eu)
     alone = pl.concat(
-        two_member_snap.spending(spec=spec.replace(method=method))
-        .table.to_polars()
-        .filter(eu)
+        two_member_release.run(spec.replace(method=method)).table.filter(eu)
         for method in RANGE.methods
     )
     expected = alone.group_by(ROW_KEYS).agg(pl.col("low").min(), pl.col("high").max())
@@ -1369,10 +1875,10 @@ def test_range_share_bounds_span_each_methods_own_share(
 
 
 def test_a_member_counts_its_eu_share_only_with_the_eu_as_a_channel(
-    eu_snap: Snapshot,
+    eu_release: Release,
 ) -> None:
     def france(method: Method) -> float:
-        result = eu_snap.spending(
+        result = eu_release.spending(
             view="provider", method=method, providers=4, years=2021
         )
         return result.rows(origin="attribution")["value"].sum()
@@ -1382,11 +1888,11 @@ def test_a_member_counts_its_eu_share_only_with_the_eu_as_a_channel(
     )
 
 
-def test_eu_own_rows_stay_in_a_year_without_eu_attribution(eu_snap: Snapshot) -> None:
+def test_eu_own_rows_stay_in_a_year_without_eu_attribution(eu_release: Release) -> None:
     # The EU's commitments disburse in 2023, a year in which France attributes
     # nothing to the EU.
     def eu_rows(method: Method) -> pl.DataFrame:
-        rows = eu_snap.spending(view="provider", method=method).rows(
+        rows = eu_release.spending(view="provider", method=method).rows(
             provider_code=EU_INSTITUTIONS
         )
         return rows.drop("method")
@@ -1437,14 +1943,41 @@ def test_a_year_without_a_budget_share_keeps_the_budgets_own_rows(
     assert set(rows["year"]) == {2022, 2023}
 
 
+@pytest.mark.parametrize("method", ["RANGE", RANGE, ["ONE", "OECD"]])
+def test_quality_refuses_a_range_of_methods(method: object) -> None:
+    with pytest.raises(TypeError, match=r"quality\(\) reads one method; .* holds ONE"):
+        # A range is outside the type quality() takes; the test checks the run time.
+        SNAP.quality(method=method)  # ty: ignore[invalid-argument-type]
+
+
+def test_quality_prints_its_providers_years_and_summary() -> None:
+    quality = SNAP.quality()
+    title = (
+        "Quality: 6 providers, 2021 to 2022; also .table .status .eu_left_out "
+        ".attribution .precision .untraced"
+    )
+
+    assert repr(quality) == f"{title}\n{quality.summary()!r}"
+    assert quality._repr_html_().startswith(f"<p>{title}</p><div>")
+    assert repr(SNAP.quality(providers="Japan")).startswith(
+        "Quality: 1 provider, 2021 to 2022;"
+    )
+
+
+def test_quality_reads_a_method_by_name() -> None:
+    by_name = SNAP.quality(method="oecd").untraced
+
+    assert by_name.equals(SNAP.quality(method=OECD).untraced)
+
+
 @pytest.mark.parametrize("flow", FLOWS)
 def test_quality_reports_the_eu_rows_a_provider_total_leaves_out(
-    eu_snap: Snapshot, flow: str
+    eu_release: Release, flow: Flow
 ) -> None:
     # As a provider, the EU keeps its budget and EDF rows; the EIB's leave as a
     # channel's own rows under either method.
     own = (
-        eu_snap.spending(
+        eu_release.spending(
             view="provider",
             method=ONE_EU_AS_PROVIDER,
             flow=flow,
@@ -1456,9 +1989,14 @@ def test_quality_reports_the_eu_rows_a_provider_total_leaves_out(
         .agg(pl.col("value").sum())
     )
 
-    left_out = eu_snap.quality().eu_left_out.to_polars().filter(flow=flow)
+    left_out = eu_release.quality().eu_left_out.filter(flow=flow)
 
     assert own.height
+    listed = LISTINGS["agency"].filter(provider_code=EU_INSTITUTIONS)
+    names = dict(listed.select("agency_code", "agency").iter_rows())
+    assert {code: names[code] for code in left_out["agency_code"]} == dict(
+        left_out.select("agency_code", "agency").iter_rows()
+    )
     assert set(left_out.select("agency_code", "channel_code").rows()) == {
         (1, 42001),
         (2, 42003),
@@ -1470,8 +2008,8 @@ def test_quality_reports_the_eu_rows_a_provider_total_leaves_out(
         .agg(pl.col("value").sum())
     )
     assert dict(budget_and_edf.rows()) == pytest.approx(dict(own.rows()))
-    assert eu_snap.quality(method=ONE_EU_AS_PROVIDER).eu_left_out.to_polars().is_empty()
-    assert eu_snap.quality(providers=4).eu_left_out.to_polars().is_empty()
+    assert eu_release.quality(method=ONE_EU_AS_PROVIDER).eu_left_out.is_empty()
+    assert eu_release.quality(providers=4).eu_left_out.is_empty()
 
 
 def _unmeasured_deu_2_markers(frame: pl.DataFrame) -> pl.DataFrame:
@@ -1488,7 +2026,7 @@ def _unmeasured_2022_spending(frame: pl.DataFrame) -> pl.DataFrame:
 
 @pytest.mark.parametrize("flow", FLOWS)
 def test_unmeasured_adaptation_stays_null_and_value_counts_mitigation(
-    tmp_path: Path, flow: str
+    tmp_path: Path, flow: Flow
 ) -> None:
     release = copy_release(
         tmp_path / "release",
@@ -1499,8 +2037,8 @@ def test_unmeasured_adaptation_stays_null_and_value_counts_mitigation(
         },
     )
     spec = Spec(providers=(5,), view="provider", flow=flow, method=ONE)
-    result = cf.load(path=release).spending(spec=spec)
-    original = SNAP.spending(spec=spec)
+    result = cf.load(path=release).run(spec)
+    original = SNAP.run(spec)
 
     # DEU-2's own rows and 2022's attribution; disbursements in 2022 of DEU-1, a
     # 2021 commitment, keep their adaptation.
@@ -1513,7 +2051,7 @@ def test_unmeasured_adaptation_stays_null_and_value_counts_mitigation(
     assert rows["adaptation"].is_null().all()
     assert rows["cross_cutting"].is_null().all()
     assert rows["value"].to_list() == pytest.approx(rows["mitigation"].to_list())
-    table = result.table.to_polars()
+    table = result.table
     # The table rows these rows reach, by recipient and Bi_Multi code.
     reached = table.join(
         rows.select("recipient_code", "bi_multi").unique(),
@@ -1525,7 +2063,7 @@ def test_unmeasured_adaptation_stays_null_and_value_counts_mitigation(
         reached.height,
         reached.height,
     )
-    assert table.filter(year=2021).equals(original.table.to_polars().filter(year=2021))
+    assert table.filter(year=2021).equals(original.table.filter(year=2021))
     years = "2022" if flow == "commitments" else "2022 to 2024"
     assert f"not measured for rows in {years}," in result.explain()
     assert "not measured" not in original.explain()
@@ -1578,7 +2116,7 @@ _IMPUTED_COVERS = (
 )
 def test_explain_names_queried_years_without_attributed_finance(
     tmp_path: Path,
-    view: str,
+    view: View,
     method: Method | MethodRange,
     years: tuple[int, ...] | None,
     named: list[str],
@@ -1638,13 +2176,13 @@ def test_untraced_rows_weigh_by_the_records_own_markers_in_value_and_high(
 
 def test_traced_only_leaves_the_untraced_rows_out() -> None:
     spec = Spec(method=RANGE)
-    full = SNAP.spending(spec=spec)
-    traced = SNAP.spending(spec=spec.replace(untraced=False))
+    full = SNAP.run(spec)
+    traced = SNAP.run(spec.replace(untraced=False))
 
     assert set(traced.rows()["origin"]) == {"disbursement"}
-    assert traced.table.to_polars()["untraced"].sum() == 0.0
+    assert traced.table["untraced"].sum() == 0.0
     sums = [
-        result._sums.to_polars().select(pl.col("value", "low", "untraced").sum()).row(0)
+        result._sums.collect().select(pl.col("value", "low", "untraced").sum()).row(0)
         for result in (full, traced)
     ]
     # Untraced value moves out of value and leaves low where it was.
@@ -1735,7 +2273,7 @@ def _label_split_record(frame: pl.DataFrame) -> pl.DataFrame:
 def test_a_jev_label_reaches_only_the_rows_a_record_weighs_as_adaptation(
     tmp_path: Path,
 ) -> None:
-    release = copy_release(
+    path = copy_release(
         tmp_path / "release",
         edits={
             "disbursements": _unmark_split_commitments,
@@ -1743,10 +2281,10 @@ def test_a_jev_label_reaches_only_the_rows_a_record_weighs_as_adaptation(
             "objectives": _label_split_record,
         },
     )
-    snapshot = cf.load(path=release)
+    release = cf.load(path=path)
 
     def values(method: Method) -> dict[str | None, float]:
-        rows = snapshot.spending(method=method).rows(record_id="JPN-SPLIT")
+        rows = release.spending(method=method).rows(record_id="JPN-SPLIT")
         return dict(rows.select("row_id", "value").rows())
 
     # The traced rows weigh by their commitments' 0 and count nothing, label or not.
@@ -1758,7 +2296,7 @@ def test_a_jev_label_reaches_only_the_rows_a_record_weighs_as_adaptation(
 
 
 def test_quality_reports_the_untraced_and_left_out_marked_disbursement() -> None:
-    untraced = SNAP.quality(method=OECD).untraced.to_polars()
+    untraced = SNAP.quality(method=OECD).untraced
     parts = ("excess_usd", "unlinked_marked_usd", "outside_release_usd")
 
     # The provider-years with Rio-marked disbursement outside `disbursements`.
@@ -1775,7 +2313,7 @@ def test_quality_reports_the_untraced_and_left_out_marked_disbursement() -> None
         (JPN, 2023, 8e6, 0.0, 0.0, 0.0, 8e6, 0.0),
         (GEF, 2021, 0.0, 0.0, 0.0, 1.5e6, 0.0, 0.0),
     ]
-    one = SNAP.quality(providers=["France"]).untraced.to_polars()
+    one = SNAP.quality(providers=["France"]).untraced
     assert one.select("provider_code", "year", "unlinked_climate_usd").rows() == [
         (FRA, 2021, pytest.approx(1.2e6)),
         (FRA, 2023, 0.0),
