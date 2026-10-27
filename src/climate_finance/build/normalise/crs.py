@@ -201,6 +201,12 @@ def trace_population(crs: pl.LazyFrame) -> pl.LazyFrame:
     return crs.filter(pl.col("bi_multi") != CORE_CONTRIBUTION)
 
 
+def allocated_population(crs: pl.LazyFrame, *, last_year: int) -> pl.LazyFrame:
+    """The trace-population records allocation reads: those up to `last_year`,
+    `years.crs_last_complete`. Later years hold early reports only."""
+    return trace_population(crs).filter(pl.col("year") <= last_year)
+
+
 def commitment_keys(crs: pl.LazyFrame) -> pl.LazyFrame:
     """The `COMMITMENT_KEY` keys (provider, crs id, year, purpose) the CRS commits
     money under.

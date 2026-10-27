@@ -80,7 +80,7 @@ from climate_finance.build.fetch import last_complete_year
 from climate_finance.build.link.id_practice import period_of, untraceable
 from climate_finance.build.link.keys import WORLD_BANK_DONORS, line_date
 from climate_finance.build.link.text import title_words, word_share
-from climate_finance.build.normalise.crs import trace_population
+from climate_finance.build.normalise.crs import allocated_population
 from climate_finance.build.sums import ordered_sum
 from climate_finance.schema import (
     CERTAIN_METHODS,
@@ -150,9 +150,7 @@ def run_allocate(context: StageContext) -> StageOutput:
     and the release tables agree on the years they cover.
     """
     last_year = last_complete_year(context)
-    crs = trace_population(context.read("normalise", "crs")).filter(
-        pl.col("year") <= last_year
-    )
+    crs = allocated_population(context.read("normalise", "crs"), last_year=last_year)
     crdf = counted_rows(context.read("normalise", "crdf"))
     units = context.read("link", "units")
     links = context.read("link", "links")

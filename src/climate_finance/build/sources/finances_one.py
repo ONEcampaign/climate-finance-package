@@ -11,7 +11,7 @@ from climate_finance.build.readers.ledgers.finances_one import (
     DATASETS,
     FOLDER,
     Dataset,
-    repeated_keys,
+    repeated_rows,
     snapshot_file,
     snapshot_years,
 )
@@ -45,9 +45,11 @@ def download_finances_one(
     API calls of 1,000 rows, a pause apart, each skipping the rows already read.
     The API serves rows by loan number and takes no sort parameter. Each response
     reports the snapshot's row `count`; the download refuses unless it holds that
-    many rows, none of them a repeated loan, which together prove every loan arrived
-    exactly once. Rows are saved sorted by loan or credit number, so a snapshot
-    downloads to the same bytes whatever order the API served. Files land in
+    many rows, none of them repeated field for field, which together prove every row
+    arrived exactly once. A loan can still fill several distinct rows, as IBRD85600
+    does at the end of 2024; those are the source's own and are kept for the reader
+    to add up. Rows are saved sorted by loan or credit number and then by content, so
+    a snapshot downloads to the same bytes whatever order the API served. Files land in
     `<raw_dir>/ledgers/finances_one/`, one per dataset and year-end, each recorded
     under its own source name (`source_name`).
 
@@ -64,7 +66,7 @@ def download_finances_one(
     Raises:
         SourceUnavailableError: when the archive lacks a snapshot, or when the API
             returns none for a year-end, other than its own count of rows, or one
-            loan twice.
+            row twice.
     """
     wanted = [(dataset, year) for dataset in datasets for year in snapshot_years(years)]
     if archive is not None:
@@ -130,9 +132,13 @@ def _pull(
             f"{dataset} served {len(rows)} rows for 31 December {year} but counts "
             f"{count}; fetch it again."
         )
-    if repeated := repeated_keys(rows, dataset=dataset):
+    if repeated := repeated_rows(rows, dataset=dataset):
         raise SourceUnavailableError(
-            f"{dataset} served {len(repeated)} loans twice for 31 December {year}, "
-            f"such as {repeated[:3]}, so its pages overlapped; fetch it again."
+            f"{dataset} served a row twice whole for {len(repeated)} loans for "
+            f"31 December {year}, such as {repeated[:3]}, so its pages overlapped; "
+            "fetch it again."
         )
-    return sorted(rows, key=lambda row: str(row[DATASETS[dataset].key]))
+    key = DATASETS[dataset].key
+    return sorted(
+        rows, key=lambda row: (str(row[key]), json.dumps(row, sort_keys=True))
+    )

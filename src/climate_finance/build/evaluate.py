@@ -59,7 +59,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 # `release` imports the gates, which import this module, so it is read at call time.
 from climate_finance.build import release
-from climate_finance.build.errors import SampleDesignError
+from climate_finance.build.errors import ReviewDecisionsError, SampleDesignError
 from climate_finance.build.link.decisions import (
     PAIR,
     read_decision_labels,
@@ -449,13 +449,17 @@ def read_sample_labels(design: Path, *, decisions: Path) -> pl.DataFrame:
     keeps among those, as for the review queue's pairs.
 
     Raises:
-        FileNotFoundError: when `decisions` does not exist, since the sample's
+        ReviewDecisionsError: when `decisions` does not exist, since the sample's
             labels can live nowhere else.
         SampleDesignError: when a draw's `weight_usd` or `stratum_usd` is not a
             finite positive amount, since no estimate can read it.
     """
     if not decisions.exists():
-        raise FileNotFoundError(f"no review decisions at {decisions}")
+        raise ReviewDecisionsError(
+            f"No review decisions at {decisions}, so the blind sample has no labels; "
+            "record them with `cf-build import-labels`, or point "
+            "sources.review_decisions in build.toml at the file it wrote."
+        )
     drawn = pl.read_parquet(design)
     weights = pl.col("weight_usd", "stratum_usd")
     if bad := drawn.filter(

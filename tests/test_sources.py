@@ -171,6 +171,48 @@ def test_finances_one_refuses_pages_that_overlap(tmp_path: Path) -> None:
     assert not (tmp_path / "ledgers").exists()
 
 
+def test_finances_one_keeps_a_loan_the_source_lists_in_two_rows(
+    tmp_path: Path,
+) -> None:
+    # The source lists loan 0001 at the end of 2021 in two rows with their own
+    # amounts, which no refetch changes; they are saved and added up.
+    parts = [
+        {"loan_number": "L-0001", "disbursed_amount": 70.0, "part": "a"},
+        {"loan_number": "L-0001", "disbursed_amount": 30.0, "part": "b"},
+    ]
+
+    def api(order: int) -> Handler:
+        def handler(request: httpx.Request) -> httpx.Response:
+            period = request.url.params["filter"].split("'")[1]
+            rows = {
+                "31-Dec-2020": [{"loan_number": "L-0001", "disbursed_amount": 40.0}],
+                "31-Dec-2021": [{**p, "end_of_period": period} for p in parts[::order]],
+            }[period]
+            return httpx.Response(200, json={"count": len(rows), "data": rows})
+
+        return handler
+
+    saved = []
+    for order in (1, -1):
+        folder = tmp_path / str(order)
+        download_finances_one(
+            folder,
+            years=[2021],
+            datasets=["DS00975"],
+            client=_client(api(order)),
+            pause_seconds=0,
+        )
+        saved.append(
+            (folder / "ledgers/finances_one/DS00975_31-Dec-2021.json").read_bytes()
+        )
+
+    assert saved[0] == saved[1]
+    ibrd = read_finances_one(
+        tmp_path / "1" / "ledgers" / "finances_one", dataset="DS00975", years=[2021]
+    )
+    assert ibrd.filter(key="L-0001")["amount"].item() == 100.0 - 40.0
+
+
 def test_finances_one_refuses_a_snapshot_short_of_its_count(tmp_path: Path) -> None:
     api = _finances_one_api(
         {(d, f"31-Dec-{y}"): 3 for d in DATASETS for y in (2020, 2021)}, miscount=1

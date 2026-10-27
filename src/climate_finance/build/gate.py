@@ -12,8 +12,9 @@ over-allocation:
   (`evaluate.population_fingerprints`) or whose design records no population.
 - `human_audit`: at least `min_share` of the blind sample's draws carry a person's
   decision.
-- `conservation`: each linked CRS record's allocations, the unallocated excess
-  included, sum to its disbursement.
+- `conservation`: each linked CRS record up to `years.crs_last_complete`, the
+  records allocation reads, has allocations, the unallocated excess included, that
+  sum to its disbursement.
 - `reflow_conservation`: by provider and year, the bulk CRS's principal repaid
   (`usd_received`) and interest paid (`usd_interest`), the normalise `reflows`
   table's and the release `reflows` table's, summed over every basis, agree from the
@@ -59,7 +60,7 @@ from pydantic import BaseModel, ConfigDict
 import climate_finance as cf
 from climate_finance.build import evaluate, listings
 from climate_finance.build.errors import GateFailedError
-from climate_finance.build.normalise.crs import trace_population
+from climate_finance.build.normalise.crs import allocated_population
 from climate_finance.build.sums import ordered_sum
 from climate_finance.schema import (
     RELEASE_TABLES,
@@ -206,7 +207,8 @@ def run_gates(
 
     Raises:
         GateFailedError: when a row fails and is not waived, unless `report_only`.
-        FileNotFoundError: when `sample` is given and `decisions` does not exist.
+        ReviewDecisionsError: when `sample` is given and `decisions` does not
+            exist.
     """
     from climate_finance.build.fetch import CRS_FILE
     from climate_finance.build.stages import raw_dir, table_path
@@ -244,7 +246,8 @@ def run_gates(
                 allocations=scan("fill", "allocations"),
                 links=links,
                 units=units,
-                crs=trace_population(scan("normalise", "crs")),
+                crs=scan("normalise", "crs"),
+                last_year=last_year if isinstance(last_year, int) else None,
                 config=gates.conservation,
             ),
             reflow_conservation_gate(
@@ -485,11 +488,21 @@ def conservation_gate(
     links: pl.LazyFrame,
     units: pl.LazyFrame,
     crs: pl.LazyFrame,
+    last_year: int | None,
     config: Conservation,
 ) -> pl.DataFrame:
     """The largest gap between a linked CRS record's disbursement and its
-    allocations, the null-row and excess rows included. It fails when no linked
-    record has a disbursement."""
+    allocations, the null-row and excess rows included, over the records allocation
+    reads (`allocated_population`) up to `last_year`, `years.crs_last_complete`. It
+    fails when `last_year` is None or no linked record has a disbursement."""
+    if last_year is None:
+        return _row(
+            "conservation",
+            value=None,
+            threshold=config.tolerance_usd,
+            passed=False,
+            detail="release.json records no years.crs_last_complete",
+        )
     linked = (
         links.filter(task="trace")
         .select(unit_id="left_id")
@@ -505,7 +518,8 @@ def conservation_gate(
         .agg(given_usd=ordered_sum(pl.col("allocated_usd")))
     )
     disbursed = (
-        crs.join(linked, on="record_id")
+        allocated_population(crs, last_year=last_year)
+        .join(linked, on="record_id")
         .filter(pl.col("disbursement_usd") > 0)
         .join(given, on="record_id", how="left")
         .select(
