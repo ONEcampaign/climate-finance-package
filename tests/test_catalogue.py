@@ -140,6 +140,33 @@ def test_resolve_refuses_bools_other_types_and_recipient_agencies(
         resolve(values, kind=kind)  # ty: ignore[invalid-argument-type]
 
 
+@pytest.mark.parametrize(
+    ("listing", "name", "error", "other"),
+    [
+        (cf.recipients, "Iceland", cf.UnknownRecipientError, "provider Iceland"),
+        (cf.providers, "kenya", cf.UnknownProviderError, "recipient Kenya"),
+    ],
+)
+def test_a_name_of_the_other_listing_raises_naming_it_without_suggestions(
+    listing: Catalogue, name: str, error: type[cf.UnknownNameError], other: str
+) -> None:
+    with pytest.raises(error) as raised:
+        listing.code(name)
+
+    assert raised.value.suggestions == ()
+    assert raised.value.note == (
+        f"{name!r} names the {other}, which cf.{listing.kind} does not hold."
+    )
+
+
+def test_a_private_donors_info_says_no_view_counts_it() -> None:
+    assert cf.providers.info("Bill & Melinda Gates Foundation").endswith(
+        "Private donor. Neither view counts private flows, so spending() returns no "
+        "rows for it."
+    )
+    assert cf.providers.info("Japan") == "Japan (DAC code 701): DAC member."
+
+
 def test_an_agency_serialises_as_its_provider_and_agency_codes() -> None:
     assert EIB.model_dump() == {"provider": 918, "agency": 3}
 

@@ -221,9 +221,11 @@ class Release:
             method: a `Method`, a `MethodRange`, a name from `cf.methods.list()`
                 ignoring case, such as `"OECD"`, or a list of methods and names,
                 which becomes a range. Default `cf.methods.ONE`.
-            flow: `"disbursements"` (default), `"commitments"` or
-                `"grant_equivalent"`.
-            view: `"recipient"` (default) or `"provider"`.
+            flow: `"disbursements"` (default), `"commitments"`,
+                `"grant_equivalent"`, `"net_disbursements"` or `"net_transfers"`.
+            view: `"recipient"` (default), finance that reaches recipients, or
+                `"provider"`, a provider's total with its core contributions to
+                multilateral agencies.
             currency: `"USD"` (default), `"EUR"`, `"GBP"` or `"CAD"`.
             prices: `"current"` (default) or a base year, such as `2022`.
             oda_only: True or False (default).
@@ -242,7 +244,10 @@ class Release:
                 `conversion_factors` hold for the currency.
 
         Warns:
-            CoverageWarning: for years the flow's tables hold no rows for.
+            CoverageWarning: for years the flow's tables hold no rows for, and for
+                named providers with no rows the query counts, naming why.
+            DoubleCountWarning: for a provider view that names EU Institutions,
+                whose rows then depend on which members the query names.
         """
         return self.run(Spec(**inputs))
 
@@ -260,7 +265,10 @@ class Release:
                 query reads, such as `reflows` for a net flow.
 
         Warns:
-            CoverageWarning: for years the flow's tables hold no rows for.
+            CoverageWarning: for years the flow's tables hold no rows for, and for
+                named providers with no rows the query counts, naming why.
+            DoubleCountWarning: for a provider view that names EU Institutions,
+                whose rows then depend on which members the query names.
         """
         if isinstance(spec, Mapping):
             spec = Spec.model_validate(spec)

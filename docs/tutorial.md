@@ -82,7 +82,7 @@ Print the full string to see how `value` is calculated. Significant Rio markers 
 
 ## Step 5. Change what is counted
 
-`spending()` counts disbursements in the recipient view by default. `flow` switches to commitments or grant equivalents. `view="provider"` adds a provider's core contributions to multilateral agencies, multiplied by each agency's climate share.
+`spending()` counts disbursements in the recipient view by default, which answers how much reached recipients. `flow` switches to commitments, grant equivalents, or net flows. `view="provider"` adds a provider's core contributions to multilateral agencies, multiplied by each agency's climate share, and answers how much a provider gave. Use it for a provider's total.
 
 ```python
 for flow in ("commitments", "disbursements"):
@@ -124,7 +124,7 @@ for row in adaptation.iter_rows(named=True):
 2023 12.7 1.7
 ```
 
-Under ONE, Germany's adaptation finance for 2022 is 15.2 million USD, or 16.8 with the cross-cutting activities. OECD (`method=cf.methods.OECD`) counts each marker on its own, so its `adaptation` holds every activity marked for adaptation and its `cross_cutting` is the overlap with mitigation. Under OECD, adaptation finance is the `adaptation` column alone, and adding `cross_cutting` counts the overlap twice. `method.highest_marker` says which rule a method follows. `low` and `high` bound only `value`, the total over all objectives.
+Under ONE, Germany's adaptation finance for 2022 is 15.2 million USD, or 16.8 with the cross-cutting activities. A row without an adaptation marker, as every row that rests on a year before 2010 is, such as a disbursement to a 2008 commitment, counts 0 in `adaptation` and `cross_cutting`, and `no_adaptation_marker` holds its value. Sum it beside the two columns to see how much of a total has no adaptation split. OECD (`method=cf.methods.OECD`) counts each marker on its own, so its `adaptation` holds every activity marked for adaptation and its `cross_cutting` is the overlap with mitigation. Under OECD, adaptation finance is the `adaptation` column alone, and adding `cross_cutting` counts the overlap twice. `method.highest_marker` says which rule a method follows. `low` and `high` bound only `value`, the total over all objectives.
 
 ## Step 7. Check how much traces
 

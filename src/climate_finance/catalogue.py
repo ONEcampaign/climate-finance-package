@@ -39,6 +39,9 @@ type Kind = Literal["providers", "recipients", "flows", "methods"]
 type Coded = Literal["providers", "recipients"]
 
 _SUGGESTIONS = 5
+# The provider listing's `type` of a private donor, whose flows (Bi_Multi 6) neither
+# view counts.
+PRIVATE_DONOR = "Private donor"
 # Close keys to collect before folding them into at most `_SUGGESTIONS` names, since
 # many keys share one target.
 _CLOSE_KEYS = 50
@@ -168,9 +171,15 @@ class Catalogue:
                 f"DAC code {target.provider})."
             )
         row = self._row(target)
-        if self.kind == "providers":
-            return f"{row['name']} (DAC code {row['code']}): {row['type']}."
-        return f"{row['name']} (DAC code {row['code']})."
+        if self.kind == "recipients":
+            return f"{row['name']} (DAC code {row['code']})."
+        text = f"{row['name']} (DAC code {row['code']}): {row['type']}."
+        if row["type"] == PRIVATE_DONOR:
+            text += (
+                " Neither view counts private flows, so spending() returns no rows "
+                "for it."
+            )
+        return text
 
     def search(self, text: str) -> pl.DataFrame:
         """Entries whose names contain `text`, ignoring case.
@@ -312,6 +321,9 @@ def target_of(value: object, *, kind: Coded) -> Target:
         return _listed(int(key), kind=kind)
     entries = _aliases(kind).get(key)
     if entries is None:
+        # A name of the other listing is no misspelling, so close names would mislead.
+        if note := _other_kind(value, key=key, kind=kind):
+            raise _unknown(value, kind=kind, suggestions=(), note=note)
         raise _unknown(value, kind=kind, suggestions=_close_names(key, kind=kind))
     if len(entries) > 1:
         raise _unknown(
@@ -322,6 +334,17 @@ def target_of(value: object, *, kind: Coded) -> Target:
         )
     [(code, agency, _)] = entries
     return code if agency is None else Agency(provider=code, agency=agency)
+
+
+def _other_kind(value: str, *, key: str, kind: Coded) -> str | None:
+    """The opening of the error for a name the other listing holds, such as a
+    provider passed as a recipient, or None."""
+    other: Coded = "providers" if kind == "recipients" else "recipients"
+    entries = _aliases(other).get(key)
+    if entries is None:
+        return None
+    names = " or ".join(dict.fromkeys(_label(entry) for entry in entries))
+    return f"{value!r} names the {other[:-1]} {names}, which cf.{kind} does not hold."
 
 
 def _listed(code: int, *, kind: Coded) -> int:

@@ -123,5 +123,13 @@ class SchemaError(ClimateFinanceError):
 
 
 class CoverageWarning(UserWarning):
-    """A query asks for years its release tables hold no rows for. Silence it with
+    """A query asks for years its release tables hold no rows for, or names a
+    provider that has no rows the query counts. Silence it with
     `warnings.filterwarnings("ignore", category=cf.errors.CoverageWarning)`."""
+
+
+class DoubleCountWarning(UserWarning):
+    """A result whose figures count some money twice when added to the results of
+    separate queries, as EU Institutions' provider-view figures do. Silence it
+    with `warnings.filterwarnings("ignore", category=cf.errors.DoubleCountWarning)`.
+    """
