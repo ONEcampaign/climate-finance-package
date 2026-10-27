@@ -7,7 +7,6 @@ from typing import Annotated, Any, ClassVar, Literal, Self, TypedDict, Unpack
 
 import polars as pl
 from pydantic import (
-    BaseModel,
     BeforeValidator,
     Discriminator,
     SerializerFunctionWrapHandler,
@@ -356,9 +355,9 @@ class Spec(Frozen):
     def __init__(self, **inputs: Unpack[SpecInputs]) -> None:
         # `SpecInputs` types the keywords. Type checkers derive a pydantic model's
         # constructor from the stored field types, which refuse `providers="Japan"`.
-        # `BaseModel` is named because they read `super()` as `Frozen`'s fieldless
-        # constructor.
-        BaseModel.__init__(self, **inputs)
+        super().__init__(**inputs)
+
+    __init__.__pydantic_base_init__ = True  # ty: ignore[unresolved-attribute]  # as `Frozen.__init__`
 
     @model_serializer(mode="wrap")
     def _drop_later_defaults(

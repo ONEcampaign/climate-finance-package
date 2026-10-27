@@ -1,41 +1,53 @@
 """`ClimateData`: the 1.x interface as a thin, deprecated wrapper over `spending()`.
 
 The 1.2.3 constructor, its `set_*` methods, `load_spending_data` and `get_data` map
-onto one `Release.spending` call per source and flow:
+onto one `Release.spending` call per source and flow, for the choices whose meaning
+2.0 keeps:
 
 - `methodology` "ONE" and "OECD" map to `methods.ONE` and `methods.OECD`; "custom"
   takes the coefficients of `set_custom_spending_methodology`.
-- Flows "gross_disbursements", "commitments", "grant_equivalent" and
-  "net_disbursements" map to `flow="disbursements"`, `"commitments"`,
-  `"grant_equivalent"` and `"net_disbursements"`. 1.x net disbursements were the
-  climate rows' disbursements less their own `usd_received`. 2.0 subtracts the
-  principal repaid on the loans the disbursements count, at each loan's counted
-  share.
-- Every OECD source is answered from the release's traced commitments and
-  disbursements in the recipient view, except "OECD_CRDF_DONOR", the provider
-  perspective, which maps to `view="provider"`. The legacy names therefore select
-  the traced dataset, which includes disbursements from development banks' own
-  ledgers (`disbursement_source="bank_ledger"`), so "OECD_CRS" can return more than
-  the CRS alone. Disbursements also hold the Rio-marked CRS disbursement that
-  reaches no commitment, at the record's own markers. The "_ALLOCABLE" names return
-  the same rows as their plain names, without their former filter.
+- Flows "gross_disbursements", "commitments" and "grant_equivalent" map to
+  `flow="disbursements"`, `"commitments"` and `"grant_equivalent"`.
+- Source "OECD_CRDF_CRS", the CRDF's commitments and the CRS disbursements
+  matched to them, maps to the recipient view's traced rows (`untraced=False`).
+  The traced disbursements include those from development banks' own ledgers
+  (`disbursement_source="bank_ledger"`), which stand in for the CRS records of the
+  same commitments.
+- Sources "OECD_CRDF", the CRDF's recipient perspective, and "OECD_CRDF_DONOR", its
+  provider perspective, held commitments only in 1.x, so they map to
+  `flow="commitments"` in the recipient and the provider view. 1.x returned no rows
+  for their other flows, which 2.0 would fill, so those raise `RemovedError`.
 - `prices="constant"` with `base_year` maps to `prices=base_year`; currency "CAN"
   maps to "CAD".
 - `set_only_oda` maps to `oda_only=True` and `set_update_data` to `refresh=True`.
+- `set_climate_finance_data_path` sets the `cache_dir` a `ClimateData` without
+  `release` downloads into.
+
+A choice whose meaning 2.0 changed raises `RemovedError` naming the 2.0 call to use:
+flow "net_disbursements", which 2.0 nets by loan, source "OECD_CRS", every
+Rio-marked CRS record, which 2.0 counts only beside the CRDF's commitments, and the
+"_ALLOCABLE" sources, whose filter 2.0 does not hold. So do calls without a 2.0
+equivalent, such as source "UNFCCC" and `get_unfccc_data`.
 
 `get_data` returns the result tables as one pandas frame with `source` and `flow`
-columns. Calls without a 2.0 equivalent raise NotImplementedError naming the
-replacement, or saying none exists. The module goes in 3.0.
+columns. The module goes in 3.0.
 """
 
 from __future__ import annotations
 
 import warnings
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NoReturn, Self
 
 import polars as pl
 
+from climate_finance._removed import REMOVED_MODULES
+from climate_finance.errors import (
+    ClimateFinanceDeprecationWarning,
+    InvalidInputError,
+    RemovedError,
+)
 from climate_finance.methods import OECD, ONE, Method
 from climate_finance.release import Release, load
 from climate_finance.spec import Currency, Flow, View
@@ -44,23 +56,26 @@ if TYPE_CHECKING:
     import pandas as pd
 
 DEPRECATION = (
-    "ClimateData is deprecated and goes in climate-finance 3.0; use "
-    "climate_finance.load().spending(...), which takes the same choices as keyword "
-    "arguments and returns polars."
+    "ClimateData is deprecated since climate-finance 2.0 and goes in 3.0; use "
+    "climate_finance.load().spending(...), which returns polars, as the migration "
+    "guide shows."
 )
 _FLOWS: dict[str, Flow] = {
     "gross_disbursements": "disbursements",
     "commitments": "commitments",
     "grant_equivalent": "grant_equivalent",
-    "net_disbursements": "net_disbursements",
 }
 _VIEWS: dict[str, View] = {
-    "OECD_CRS": "recipient",
-    "OECD_CRS_ALLOCABLE": "recipient",
     "OECD_CRDF": "recipient",
     "OECD_CRDF_CRS": "recipient",
-    "OECD_CRDF_CRS_ALLOCABLE": "recipient",
     "OECD_CRDF_DONOR": "provider",
+}
+# The CRDF sources, which held commitments only in 1.x, with the 2.0 call for their
+# other flows.
+_COMMITMENTS_ONLY = {
+    "OECD_CRDF": "load_spending_data(source='OECD_CRDF_CRS') or "
+    "release.spending(flow=..., untraced=False)",
+    "OECD_CRDF_DONOR": "release.spending(flow=..., view='provider', untraced=False)",
 }
 _CURRENCIES: dict[str, Currency] = {
     "USD": "USD",
@@ -70,19 +85,36 @@ _CURRENCIES: dict[str, Currency] = {
     "CAD": "CAD",
 }
 _PROVIDERS_BY_TYPE = "climate_finance.providers.list(), which has a type column"
-# 1.x values that 2.0 cannot answer, with what to use instead.
-_NO_EQUIVALENT = {
-    "UNFCCC": "UNFCCC data has no ClimateData equivalent; use "
-    "Release.reconcile(), which compares BTR reports with OECD data",
+_UNFCCC = REMOVED_MODULES["unfccc"]
+_TRACED = (
+    "load_spending_data(source='OECD_CRDF_CRS') counts the CRDF's commitments and "
+    "the CRS disbursements traced to them, and release.spending(...) counts those "
+    "with the Rio-marked disbursement traced to no commitment"
+)
+# 1.x choices whose meaning 2.0 changed or has no equivalent for, with what to use.
+_CHANGED = {
+    "net_disbursements": "1.x subtracted each climate row's own usd_received, and "
+    "2.0 subtracts the principal repaid on each counted loan at its counted share. "
+    "Use release.spending(flow='net_disbursements')",
+    "OECD_CRS": "it counted every Rio-marked CRS record, which no 2.0 query "
+    f"reproduces. {_TRACED}",
+    "OECD_CRS_ALLOCABLE": "2.0 holds no allocable filter, and the CRS alone has no "
+    f"2.0 query. {_TRACED}",
+    "OECD_CRDF_CRS_ALLOCABLE": "2.0 holds no allocable filter. Use "
+    "load_spending_data(source='OECD_CRDF_CRS') or "
+    "release.spending(untraced=False)",
+    "UNFCCC": _UNFCCC,
 }
+# The cache directory `set_climate_finance_data_path` sets, which a `ClimateData`
+# without `release` downloads into, as 1.x read its data from the data path.
+_cache_dir: Path | None = None
 
 
 def _removed(call: str, replacement: str) -> Callable[..., NoReturn]:
-    """A 1.x call that 2.0 removed: it raises NotImplementedError naming
-    `replacement`."""
+    """A 1.x call that 2.0 removed: it raises RemovedError naming `replacement`."""
 
     def removed(*args: object, **kwargs: object) -> NoReturn:
-        raise NotImplementedError(f"{call} is gone in 2.0; use {replacement}")
+        raise RemovedError(call, replacement=replacement)
 
     removed.__name__ = removed.__qualname__ = call
     removed.__doc__ = f"Gone in 2.0; use {replacement}."
@@ -93,10 +125,12 @@ class ClimateData:
     """The 1.2.3 constructor and methods, returning pandas.
 
     `release` is the release to query. Without it, `load_spending_data` opens the
-    latest release with `climate_finance.load()`.
+    latest release with `climate_finance.load()`, in the directory
+    `set_climate_finance_data_path` sets.
 
     Raises:
-        ValueError: for a currency or price choice 1.2.3 refused.
+        InvalidInputError: a `ValueError`, for a currency or price choice 1.2.3
+            refused.
     """
 
     def __init__(
@@ -110,7 +144,7 @@ class ClimateData:
         *,
         release: Release | None = None,
     ) -> None:
-        warnings.warn(DEPRECATION, DeprecationWarning, stacklevel=2)
+        warnings.warn(DEPRECATION, ClimateFinanceDeprecationWarning, stacklevel=2)
         self.years = list(years)
         self.providers = _listed(providers)
         self.recipients = _listed(recipients)
@@ -172,18 +206,27 @@ class ClimateData:
         and "custom" needs `set_custom_spending_methodology` first.
 
         Raises:
-            ValueError: for a methodology, flow or source 1.2.3 did not know, or
-                "custom" without custom coefficients.
-            NotImplementedError: for a flow or source with no 2.0 equivalent.
+            InvalidInputError: a `ValueError`, for a methodology, flow or source
+                1.2.3 did not know, or "custom" without custom coefficients.
+            RemovedError: for a flow or source whose meaning 2.0 changed, or that
+                has no 2.0 equivalent, naming the 2.0 call to use.
         """
         method = self._methodology(methodology)
         chosen = [
-            (flow, _choice(flow, _FLOWS, what="flow")) for flow in _as_list(flows)
+            (flow, _choice(flow, _FLOWS, what="flows")) for flow in _as_list(flows)
         ]
         views = {
             name: _choice(name, _VIEWS, what="source") for name in _as_list(source)
         }
-        release = self._release or load(refresh=self._refresh)
+        for name in views.keys() & _COMMITMENTS_ONLY.keys():
+            for flow, _ in chosen:
+                if flow != "commitments":
+                    raise RemovedError(
+                        f"source={name!r} with flows={flow!r}",
+                        replacement=f"1.x's {name} held commitments only, so it "
+                        f"returned no rows. Use {_COMMITMENTS_ONLY[name]}",
+                    )
+        release = self._release or load(cache_dir=_cache_dir, refresh=self._refresh)
         # Sources that share a view share one query per flow.
         by_view: dict[View, pl.DataFrame] = {}
         for name, view in views.items():
@@ -199,6 +242,7 @@ class ClimateData:
                         currency=self.currency,
                         prices=self.prices,
                         oda_only=self._oda_only,
+                        untraced=False,
                     ).table.with_columns(flow=pl.lit(flow))
                     for flow, spending_flow in chosen
                 )
@@ -210,9 +254,17 @@ class ClimateData:
 
         Raises:
             AttributeError: when nothing has been loaded, as in 1.2.3.
+            ImportError: when pandas is not installed, naming the extra that adds it.
         """
         if not self._tables:
             raise AttributeError("No data has been loaded.")
+        try:
+            import pandas  # noqa: F401 - checked here so the error names the extra
+        except ImportError as error:
+            raise ImportError(
+                "ClimateData.get_data() returns pandas, which is not installed; "
+                'pip install "climate-finance[pandas]" adds it'
+            ) from error
         frame = pl.concat(
             table.with_columns(source=pl.lit(name))
             for name, table in self._tables.items()
@@ -274,23 +326,33 @@ class ClimateData:
         if methodology == "OECD":
             return OECD
         if methodology != "custom":
-            raise ValueError(
+            raise InvalidInputError(
                 f"{methodology!r} is not a valid methodology; choose ONE, OECD or "
                 "custom"
             )
         if self._custom is None:
-            raise ValueError(
+            raise InvalidInputError(
                 "You must set the custom methodology using the "
                 "set_custom_spending_methodology method"
             )
         return self._custom
 
 
-set_climate_finance_data_path = _removed(
-    "set_climate_finance_data_path",
-    "the CLIMATE_FINANCE_CACHE environment variable or load(cache_dir=...)",
-)
-get_unfccc_data = _removed("get_unfccc_data", "Release.reconcile()")
+def set_climate_finance_data_path(path: str | Path) -> None:
+    """Download the releases of every `ClimateData` without `release` into `path`,
+    as `climate_finance.load(cache_dir=path)` does."""
+    warnings.warn(
+        "set_climate_finance_data_path is deprecated since climate-finance 2.0 and "
+        "goes in 3.0; pass cache_dir= to climate_finance.load()",
+        ClimateFinanceDeprecationWarning,
+        stacklevel=2,
+    )
+    # One setting per process, as 1.x's data path was.
+    global _cache_dir
+    _cache_dir = Path(path).resolve()
+
+
+get_unfccc_data = _removed("get_unfccc_data", _UNFCCC)
 
 
 def _listed(values: list[int | str] | int | str | None) -> list[int | str] | None:
@@ -304,12 +366,13 @@ def _as_list(values: str | list[str]) -> list[str]:
 
 
 def _choice[T](value: str, choices: Mapping[str, T], *, what: str) -> T:
-    """The 2.0 value of a 1.x choice, or NotImplementedError when 2.0 has none."""
-    if value in _NO_EQUIVALENT:
-        raise NotImplementedError(_NO_EQUIVALENT[value])
+    """The 2.0 value of a 1.x choice, or RemovedError when 2.0 changed its meaning
+    or has none."""
+    if value in _CHANGED:
+        raise RemovedError(f"{what}={value!r}", replacement=_CHANGED[value])
     if value not in choices:
-        raise ValueError(
-            f"{value!r} is not a valid {what}; choose from {', '.join(choices)}"
+        raise InvalidInputError(
+            f"{what} takes {', '.join(choices)} in 2.0; got {value!r}"
         )
     return choices[value]
 
@@ -318,10 +381,16 @@ def _prices(prices: str, *, base_year: int | None) -> int | Literal["current"]:
     """`prices` and `base_year` as the 2.0 `prices` argument, checked as in 1.2.3."""
     if prices == "current":
         if base_year is not None:
-            raise ValueError("You cannot provide a base year when using current prices")
+            raise InvalidInputError(
+                "You cannot provide a base year when using current prices"
+            )
         return "current"
     if prices == "constant":
         if base_year is None:
-            raise ValueError("You must provide a base year when using constant prices")
+            raise InvalidInputError(
+                "You must provide a base year when using constant prices"
+            )
         return base_year
-    raise ValueError(f"{prices!r} is not a valid prices; choose current or constant")
+    raise InvalidInputError(
+        f"{prices!r} is not a valid prices; choose current or constant"
+    )
