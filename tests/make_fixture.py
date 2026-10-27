@@ -1,6 +1,9 @@
 """Write the synthetic release snapshot in tests/fixtures/snapshot/, or a sample of a
 real release in tests/fixtures/real_snapshot/.
 
+The build extra loads only inside the functions that write a release, so the tests that
+read the fixture import this module on a base install.
+
 Run `uv run python tests/make_fixture.py [out_dir]`. The snapshot is schema-valid,
 passes `release_invariants`, and covers six providers, a Bi_Multi 2 row, Bi_Multi 4
 rows, an id-less multilateral row, a modelled-line provider, every status, every link
@@ -27,14 +30,6 @@ from typing import NamedTuple
 import polars as pl
 
 from climate_finance import __version__
-from climate_finance.build import write_table
-from climate_finance.build.fetch import BTR_SOURCE
-from climate_finance.build.reflows import (
-    attribute_reflows,
-    loan_shares,
-    release_reflows,
-)
-from climate_finance.build.release import btr_totals
 from climate_finance.convert import DAC_TOTAL
 from climate_finance.schema import (
     CERTAIN_METHODS,
@@ -508,6 +503,8 @@ def _objectives(
 
 def build_tables() -> dict[str, pl.DataFrame]:
     """Every release table of the synthetic snapshot."""
+    from climate_finance.build.release import btr_totals
+
     certain_methods = itertools.cycle(CERTAIN_METHODS)
     estimated_methods = itertools.cycle(
         [method for method in LINK_METHODS if method not in CERTAIN_METHODS]
@@ -890,6 +887,12 @@ def _reflows(
 ) -> pl.DataFrame:
     """`REPAYMENTS` split over their loans' disbursements by the build's own
     `loan_shares`, `attribute_reflows` and `release_reflows`."""
+    from climate_finance.build.reflows import (
+        attribute_reflows,
+        loan_shares,
+        release_reflows,
+    )
+
     crs = disbursements.filter(pl.col("disbursement_source") == "crs")
     loans = pl.DataFrame(
         [
@@ -1197,6 +1200,8 @@ def _marked_allocations(disbursements: pl.DataFrame) -> pl.DataFrame:
 
 def write_fixture(out_dir: Path) -> ReleaseManifest:
     """Write every release table and `release.json` to `out_dir`."""
+    from climate_finance.build.fetch import BTR_SOURCE
+
     return _write_release(
         build_tables(),
         out_dir,
@@ -1341,7 +1346,9 @@ def sample_release(release: Path) -> dict[str, pl.DataFrame]:
 
 def write_sample(release: Path, out_dir: Path) -> ReleaseManifest:
     """Write a sample of `release` to `out_dir`, named after it."""
-    source = ReleaseManifest.model_validate_json((release / "release.json").read_text())
+    source = ReleaseManifest.model_validate_json(
+        (release / "release.json").read_text(encoding="utf-8")
+    )
     return _write_release(
         sample_release(release),
         out_dir,
@@ -1355,6 +1362,8 @@ def _write_release(
     tables: dict[str, pl.DataFrame], out_dir: Path, *, manifest: ReleaseManifest
 ) -> ReleaseManifest:
     """Validate and write `tables` and `release.json`, `manifest` with their hashes."""
+    from climate_finance.build import write_table
+
     for name, frame in tables.items():
         validate(RELEASE_TABLES[name], frame)
     if problems := release_invariants(tables):
@@ -1364,7 +1373,9 @@ def _write_release(
         sha256 = write_table(frame, RELEASE_TABLES[name], out_dir / f"{name}.parquet")
         entries[name] = TableEntry(sha256=sha256, rows=frame.height)
     written = manifest.model_copy(update={"tables": entries})
-    (out_dir / "release.json").write_text(written.model_dump_json(indent=2) + "\n")
+    (out_dir / "release.json").write_text(
+        written.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
     return written
 
 

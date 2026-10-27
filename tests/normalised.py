@@ -222,5 +222,5 @@ def record_fetch(
     )
     record = provenance.record({schema.RAW_MANIFEST.name: sha256})
     record_path(release_dir, fetch.name).write_text(
-        record.model_dump_json(indent=2) + "\n"
+        record.model_dump_json(indent=2) + "\n", encoding="utf-8"
     )

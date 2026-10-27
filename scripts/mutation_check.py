@@ -226,7 +226,7 @@ def _pytest(src: Path, tests: str) -> tuple[int, list[str]]:
         cwd=ROOT,
         env=env,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         check=False,
     )
     failed = [
@@ -245,7 +245,7 @@ def _imported_from(src: Path, module: Path) -> Path:
         cwd=ROOT,
         env=env,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         check=True,
     )
     return Path(result.stdout.strip()).resolve()
@@ -270,19 +270,19 @@ def main() -> int:
             if code != 0:
                 print(f"The unmutated {module} fails: {failed}")
                 return 1
-            original = target.read_text()
+            original = target.read_text(encoding="utf-8")
             for name, (text, replacement) in mutations.items():
                 if (count := original.count(text)) != 1:
                     print(
                         f"{name}: expected one match of the rule's text, found {count}"
                     )
                     return 1
-                target.write_text(original.replace(text, replacement))
+                target.write_text(original.replace(text, replacement), encoding="utf-8")
                 _, failed = _pytest(src, tests)
                 print(f"{name}: {len(failed)} failed: {failed}")
                 if not failed:
                     survivors.append(name)
-            target.write_text(original)
+            target.write_text(original, encoding="utf-8")
             total += len(mutations)
 
     if survivors:

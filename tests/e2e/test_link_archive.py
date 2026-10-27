@@ -309,7 +309,7 @@ def test_key_tiers_link_the_reference_disbursements(
     metrics = json.loads(
         (
             data / "prototypes" / "a1-reference" / "dated_pnuniq" / "trace_metrics.json"
-        ).read_text()
+        ).read_text(encoding="utf-8")
     )
     links = link_by_keys(units, first_year=CRS_YEARS[0])
     schema.validate(schema.LINKS, links)
@@ -330,7 +330,9 @@ def test_within_year_join_reproduces_the_reference_population(
     data: Path, crs: pl.DataFrame, units: pl.DataFrame
 ) -> None:
     summary = json.loads(
-        (data / "prototypes" / "deterministic-bulk" / "summary.json").read_text()
+        (data / "prototypes" / "deterministic-bulk" / "summary.json").read_text(
+            encoding="utf-8"
+        )
     )["population"]
     crdf = (
         normalise_crdf(

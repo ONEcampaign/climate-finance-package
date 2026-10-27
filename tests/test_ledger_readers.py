@@ -75,9 +75,11 @@ def _finances_one_2021(tmp_path: Path, edit: Callable[[list], list]) -> Path:
     """A copy of the IBRD fixture snapshots with the 2021 rows passed through `edit`."""
     folder = LEDGERS / "finances_one"
     before, after = "DS00975_31-Dec-2020.json", "DS00975_31-Dec-2021.json"
-    (tmp_path / before).write_text((folder / before).read_text())
-    rows = json.loads((folder / after).read_text())
-    (tmp_path / after).write_text(json.dumps(edit(rows)))
+    (tmp_path / before).write_text(
+        (folder / before).read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    rows = json.loads((folder / after).read_text(encoding="utf-8"))
+    (tmp_path / after).write_text(json.dumps(edit(rows)), encoding="utf-8")
     return tmp_path
 
 
@@ -300,7 +302,8 @@ def test_gcf_co_financing_commitments_are_left_out(tmp_path: Path) -> None:
         "<iati-identifier>XM-DAC-41317-FP901</iati-identifier>"
         + transaction.format(amount=10, text="GCF financing commitment")
         + transaction.format(amount=25, text="Co-financing commitment")
-        + "</iati-activity></iati-activities>"
+        + "</iati-activity></iati-activities>",
+        encoding="utf-8",
     )
 
     gcf = read_iati_ledger(tmp_path, publisher="gcf")

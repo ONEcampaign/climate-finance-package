@@ -1,7 +1,6 @@
 """`cf-build`: the build's command line. Each command delegates to its module."""
 
 import os
-import shlex
 import webbrowser
 from collections.abc import Sequence
 from pathlib import Path
@@ -378,14 +377,18 @@ def publish(
     runs. Run one publish at a time."""
 
     def gh(args: Sequence[str]) -> str:
-        console.print(f"gh {shlex.join(args)}", markup=False, soft_wrap=True)
+        console.print(
+            f"gh {publish_module.shell_join(args)}", markup=False, soft_wrap=True
+        )
         return publish_module.run_gh(args)
 
     published = publish_module.publish_release(pack, repo=repo, gh=gh, dry_run=dry_run)
     if dry_run:
         for command in published.commands:
             console.print(
-                f"would run: gh {shlex.join(command)}", markup=False, soft_wrap=True
+                f"would run: gh {publish_module.shell_join(command)}",
+                markup=False,
+                soft_wrap=True,
             )
     done = "Would publish" if dry_run else "Published"
     written = "new index previewed in" if dry_run else "index written to"

@@ -5,11 +5,50 @@ import sys
 import climate_finance as cf
 from climate_finance import methods
 
+# The exact public names, changed only in a reviewed pull request.
+EXPORTS = {
+    "Agency",
+    "Comparison",
+    "Method",
+    "Quality",
+    "Reconciliation",
+    "Release",
+    "Result",
+    "Spec",
+    "SpecInputs",
+    "UnknownNameError",
+    "UnknownProviderError",
+    "UnknownRecipientError",
+    "__version__",
+    "compare",
+    "errors",
+    "flows",
+    "load",
+    "methods",
+    "providers",
+    "recipients",
+}
+METHODS_EXPORTS = {
+    "Method",
+    "MethodRange",
+    "OECD",
+    "ONE",
+    "OXFAM",
+    "OXFAM_HIGH",
+    "OXFAM_LOW",
+    "PROVIDER",
+    "RANGE",
+    "describe",
+    "info",
+    "label",
+    "list",
+    "search",
+}
 
-def test_all_lists_the_vocabulary_and_every_name_resolves() -> None:
-    assert {"Agency", "Release", "Quality", "Reconciliation", "errors"} <= set(
-        cf.__all__
-    )
+
+def test_all_is_exactly_the_public_vocabulary_and_every_name_resolves() -> None:
+    assert set(cf.__all__) == EXPORTS
+    assert len(cf.__all__) == len(EXPORTS)
     assert all(hasattr(cf, name) for name in cf.__all__)
     assert cf.errors.ClimateFinanceError.__name__ == "ClimateFinanceError"
 
@@ -26,8 +65,7 @@ def test_dir_holds_no_imported_library_names() -> None:
     assert not hasattr(cf, "warnings")
 
 
-def test_methods_all_names_what_the_docs_use() -> None:
+def test_methods_all_is_exactly_the_public_methods() -> None:
+    assert set(methods.__all__) == METHODS_EXPORTS
+    assert len(methods.__all__) == len(METHODS_EXPORTS)
     assert all(hasattr(methods, name) for name in methods.__all__)
-    assert {"ONE", "OECD", "PROVIDER", "RANGE", "list", "info", "search"} <= set(
-        methods.__all__
-    )

@@ -41,7 +41,7 @@ def test_load_opens_the_fixture_with_its_manifest(as_path) -> None:
 def test_a_release_prints_its_name_flow_years_and_tables(tmp_path: Path) -> None:
     published = copy_release(tmp_path / "2026a")
     path = published / "release.json"
-    manifest = ReleaseManifest.model_validate_json(path.read_text())
+    manifest = ReleaseManifest.model_validate_json(path.read_text(encoding="utf-8"))
     withheld = {"btr": "built locally", "btr_links": "built locally"}
     path.write_text(
         manifest.model_copy(
@@ -54,7 +54,8 @@ def test_a_release_prints_its_name_flow_years_and_tables(tmp_path: Path) -> None
                 },
                 "withheld_tables": withheld,
             }
-        ).model_dump_json()
+        ).model_dump_json(),
+        encoding="utf-8",
     )
 
     # The fixture's name marks its figures as invented.
@@ -75,9 +76,9 @@ def _change_bytes(release: Path) -> None:
 
 
 def _drop_from_manifest(release: Path) -> None:
-    manifest = json.loads((release / "release.json").read_text())
+    manifest = json.loads((release / "release.json").read_text(encoding="utf-8"))
     del manifest["tables"]["objectives"]
-    (release / "release.json").write_text(json.dumps(manifest))
+    (release / "release.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
 @pytest.mark.parametrize(
@@ -105,7 +106,7 @@ def test_a_damaged_release_fails_its_check(
 
 def _fixture_manifest(**changes: object) -> bytes:
     """The fixture's `release.json` with `changes`, a None value dropping its key."""
-    manifest = json.loads((FIXTURE_DIR / "release.json").read_text())
+    manifest = json.loads((FIXTURE_DIR / "release.json").read_text(encoding="utf-8"))
     for key, value in changes.items():
         if value is None:
             del manifest[key]
@@ -153,8 +154,8 @@ def test_a_cached_release_with_a_malformed_manifest_downloads_again(
     cache = tmp_path / "cache"
     name = release_dirname("fixture")
     shutil.copytree(FIXTURE_DIR, cache / name)
-    (cache / name / PACK_SHA256).write_text("0")
-    (cache / name / "release.json").write_text('{"release": "fixt')
+    (cache / name / PACK_SHA256).write_text("0", encoding="utf-8")
+    (cache / name / "release.json").write_text('{"release": "fixt', encoding="utf-8")
     index = ReleaseIndex(
         latest="fixture",
         releases={
@@ -208,7 +209,7 @@ def test_load_leaves_a_directory_outside_the_cache_alone(
     (cache / release_dirname("x")).mkdir(parents=True)
     victim = tmp_path / "victim"
     victim.mkdir()
-    (victim / "sentinel").write_text("keep")
+    (victim / "sentinel").write_text("keep", encoding="utf-8")
     name = "x/../../victim"
     # model_construct skips the name check `load` relies on, to test its own.
     index = ReleaseIndex.model_construct(
@@ -228,7 +229,7 @@ def test_load_leaves_a_directory_outside_the_cache_alone(
     with pytest.raises(InvalidInputError, match="outside the cache"):
         cf.load(cache_dir=cache)
 
-    assert (victim / "sentinel").read_text() == "keep"
+    assert (victim / "sentinel").read_text(encoding="utf-8") == "keep"
     assert downloads == []
 
 
@@ -238,7 +239,7 @@ def test_a_newer_data_format_asks_for_an_upgrade_and_stays_cached(
 ) -> None:
     cache = tmp_path / "cache"
     release = shutil.copytree(FIXTURE_DIR, cache / release_dirname("fixture"))
-    (release / PACK_SHA256).write_text("0")
+    (release / PACK_SHA256).write_text("0", encoding="utf-8")
     (release / "release.json").write_bytes(
         _fixture_manifest(data_format=DATA_FORMAT + 1, **extra)
     )
@@ -303,12 +304,13 @@ def test_a_release_of_an_older_format_serves_what_it_holds(
         {0: frozenset(RELEASE_TABLES) - {"reflows"}, 1: frozenset(RELEASE_TABLES)},
     )
     path = copy_release(tmp_path / "release") / "release.json"
-    manifest = ReleaseManifest.model_validate_json(path.read_text())
+    manifest = ReleaseManifest.model_validate_json(path.read_text(encoding="utf-8"))
     tables = {name: e for name, e in manifest.tables.items() if name != "reflows"}
     path.write_text(
         manifest.model_copy(
             update={"data_format": 0, "tables": tables}
-        ).model_dump_json()
+        ).model_dump_json(),
+        encoding="utf-8",
     )
     (path.parent / "reflows.parquet").unlink()
 

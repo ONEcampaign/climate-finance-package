@@ -645,7 +645,8 @@ def test_run_normalise_writes_every_table_from_raw(
                     "bytes": (btr_dir / "NLD.xlsx").stat().st_size,
                 }
             ]
-        )
+        ),
+        encoding="utf-8",
     )
     # 2014 rows in the recipient file, as the full CRDF holds them: orchards under
     # their 2015 crs id, and school gardens under another, which the 2015 row

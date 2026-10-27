@@ -31,7 +31,7 @@ BASE_INSTALL = os.environ.get("CF_BASE_INSTALL") == "1"
 def _run(code: str) -> subprocess.CompletedProcess[str]:
     """Run `code` in a fresh interpreter so this process's imports cannot leak in."""
     return subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=False
+        [sys.executable, "-c", code], capture_output=True, encoding="utf-8", check=False
     )
 
 
@@ -76,5 +76,5 @@ def test_importing_the_build_without_its_extra_names_the_extra() -> None:
     result = _run("import climate_finance.build")
 
     assert result.returncode != 0
-    assert "ImportError" in result.stderr
+    assert "ModuleNotFoundError" in result.stderr
     assert "[build]" in result.stderr

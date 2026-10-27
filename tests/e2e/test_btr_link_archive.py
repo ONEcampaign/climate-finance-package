@@ -365,7 +365,7 @@ def _prototype_coefficients() -> pl.DataFrame:
 def _reconcile(out: Path) -> Reconciliation:
     """`reconcile` over 2021 and 2022 on the release in `out`."""
     manifest = schema.ReleaseManifest.model_validate_json(
-        (out / "release.json").read_text()
+        (out / "release.json").read_text(encoding="utf-8")
     )
     return Release(path=out, manifest=manifest).reconcile(years=(2021, 2022))
 

@@ -221,7 +221,7 @@ def test_the_population_is_marked_records_with_money_in_the_flagged_years() -> N
 def _write_cache(cache_dir: Path, answers: Mapping[str, Mapping[str, float]]) -> None:
     """Cache Jev's `answers` under the requests the flag stage sends."""
     cache_dir.mkdir(parents=True, exist_ok=True)
-    with (cache_dir / f"{MODEL}.jsonl").open("w") as lines:
+    with (cache_dir / f"{MODEL}.jsonl").open("w", encoding="utf-8") as lines:
         for text, answer in answers.items():
             request = json.loads(
                 canonical_request({**flag_request(text), "model": MODEL})

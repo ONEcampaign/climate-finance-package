@@ -55,13 +55,14 @@ def emptied(release: Path, tmp_path_factory: pytest.TempPathFactory) -> cf.Relea
     reflows = target / "reflows.parquet"
     pl.read_parquet(release / "reflows.parquet").clear().write_parquet(reflows)
     manifest = ReleaseManifest.model_validate_json(
-        (release / "release.json").read_text()
+        (release / "release.json").read_text(encoding="utf-8")
     )
     tables = dict(manifest.tables) | {
         "reflows": TableEntry(sha256=sha256_file(reflows), rows=0)
     }
     (target / "release.json").write_text(
-        manifest.model_copy(update={"tables": tables}).model_dump_json(indent=2)
+        manifest.model_copy(update={"tables": tables}).model_dump_json(indent=2),
+        encoding="utf-8",
     )
     return cf.load(path=target)
 

@@ -169,7 +169,7 @@ class GateConfig(_Section):
 
 def load_gates(path: Path = GATES_YAML) -> GateConfig:
     """Read the gate thresholds at `path`."""
-    return GateConfig.model_validate(yaml.safe_load(path.read_text()))
+    return GateConfig.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
 def release_path(path: Path) -> Path:
@@ -230,7 +230,7 @@ def run_gates(
         return scan_table(assembled / f"{table}.parquet")
 
     manifest = ReleaseManifest.model_validate_json(
-        (assembled / "release.json").read_text()
+        (assembled / "release.json").read_text(encoding="utf-8")
     )
     raw_crs = raw_dir(release_dir) / CRS_FILE
     first_year = manifest.years.get("crs", (None,))[0]

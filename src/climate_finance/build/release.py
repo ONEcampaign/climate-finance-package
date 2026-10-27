@@ -297,7 +297,9 @@ def seal_release(
             for setting in RELEASE_SETTINGS
         },
     )
-    (out_dir / "release.json").write_text(manifest.model_dump_json(indent=2) + "\n")
+    (out_dir / "release.json").write_text(
+        manifest.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
@@ -1051,7 +1053,7 @@ def pack_release(release_dir: Path, *, out_path: Path) -> Path:
     """
     assembled = release_dir / "assemble"
     manifest = ReleaseManifest.model_validate_json(
-        (assembled / "release.json").read_text()
+        (assembled / "release.json").read_text(encoding="utf-8")
     )
     workbooks = release_dir / "normalise" / f"{BTR_WORKBOOKS.name}.parquet"
     sources = release_sources(
@@ -1263,7 +1265,9 @@ def cut_release(
             None if baseline is None else load(path=baseline).manifest.release
         )
     manifest_path = release_dir / "assemble" / "release.json"
-    manifest = ReleaseManifest.model_validate_json(manifest_path.read_text())
+    manifest = ReleaseManifest.model_validate_json(
+        manifest_path.read_text(encoding="utf-8")
+    )
     gated = manifest.model_copy(
         update={
             "gates": gate.gate_results_json(results),
@@ -1273,7 +1277,7 @@ def cut_release(
             "previous_pack_sha256": previous_sha256,
         }
     )
-    manifest_path.write_text(gated.model_dump_json(indent=2) + "\n")
+    manifest_path.write_text(gated.model_dump_json(indent=2) + "\n", encoding="utf-8")
     return pack_release(
         release_dir, out_path=out_dir / f"{release_dirname(release)}.tar.zst"
     )
@@ -1299,7 +1303,7 @@ def previous_baseline(previous: Path) -> Generator[tuple[Path, str | None]]:
     if previous.is_dir():
         directory = gate.release_path(previous)
         if (stamp := directory / PACK_SHA256).exists():
-            yield directory, stamp.read_text().strip()
+            yield directory, stamp.read_text(encoding="utf-8").strip()
             return
         name = load(path=directory).manifest.release
         pack = previous.parent / f"{release_dirname(name)}.tar.zst"

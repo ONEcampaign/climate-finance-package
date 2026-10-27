@@ -539,7 +539,7 @@ def test_the_hash_seed_leaves_the_models_unchanged(tmp_path: Path) -> None:
         done = subprocess.run(
             [sys.executable, "-c", _SCORE_WORLD, str(scores), str(tmp_path / seed)],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             check=True,
             env=os.environ
             | {

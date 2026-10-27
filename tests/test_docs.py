@@ -46,7 +46,7 @@ class Block(NamedTuple):
 
 
 def blocks(page: Path) -> list[Block]:
-    text = page.read_text()
+    text = page.read_text(encoding="utf-8")
     return [
         Block(
             match["info"].strip(),
@@ -63,7 +63,7 @@ def fixture_as_latest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     through the loader's own cache path."""
     cache = tmp_path / "cache"
     cached = shutil.copytree(FIXTURE_DIR, cache / release_dirname("fixture"))
-    (cached / PACK_SHA256).write_text("0")
+    (cached / PACK_SHA256).write_text("0", encoding="utf-8")
     index = ReleaseIndex(
         latest="fixture",
         releases={
@@ -84,6 +84,9 @@ def fixture_as_latest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.mark.usefixtures("fixture_as_latest")
 @pytest.mark.filterwarnings("ignore::DeprecationWarning")
 def test_python_blocks_run_and_print_what_the_page_shows(page: Path) -> None:
+    # The pages show `to_pandas()` and a DuckDB query, which the extras provide.
+    pytest.importorskip("pandas")
+    pytest.importorskip("duckdb")
     found = blocks(page)
     namespace: dict[str, object] = {"__name__": "__docs__"}
     for index, block in enumerate(found):
@@ -117,6 +120,7 @@ COMMAND_PAGES = [page for page in PAGES if list(commands(page))]
     "page", COMMAND_PAGES, ids=lambda page: str(page.relative_to(ROOT))
 )
 def test_cf_build_examples_use_real_commands_and_options(page: Path) -> None:
+    pytest.importorskip("typer")
     import typer.main
 
     from climate_finance.build.cli import app
@@ -141,7 +145,9 @@ def test_cf_build_examples_use_real_commands_and_options(page: Path) -> None:
 
 
 def test_release_table_reference_names_every_table_and_column() -> None:
-    text = (ROOT / "docs" / "reference" / "release-tables.md").read_text()
+    text = (ROOT / "docs" / "reference" / "release-tables.md").read_text(
+        encoding="utf-8"
+    )
     missing = [
         f"{name}.{column}" if column else name
         for name, table in RELEASE_TABLES.items()
@@ -152,7 +158,7 @@ def test_release_table_reference_names_every_table_and_column() -> None:
 
 
 def test_python_reference_names_every_spec_and_method_field() -> None:
-    text = (ROOT / "docs" / "reference" / "python-api.md").read_text()
+    text = (ROOT / "docs" / "reference" / "python-api.md").read_text(encoding="utf-8")
     missing = [
         field
         for field in (*Spec.model_fields, *Method.model_fields)

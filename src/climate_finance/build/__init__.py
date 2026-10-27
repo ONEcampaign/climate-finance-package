@@ -21,10 +21,11 @@ from pathlib import Path
 
 _BUILD_EXTRA = ("typer",)
 if _missing := [name for name in _BUILD_EXTRA if find_spec(name) is None]:
-    raise ImportError(
+    raise ModuleNotFoundError(
         "climate_finance.build needs the [build] extra "
         f"(missing: {', '.join(_missing)}). "
-        "Install it with: pip install 'climate-finance[build]'"
+        "Install it with: pip install 'climate-finance[build]'",
+        name=_missing[0],
     )
 
 import polars as pl  # noqa: E402
@@ -146,7 +147,9 @@ def write_stage(
             if provenance is None
             else provenance.record(sha256)
         )
-        (staging / STAGE_RECORD).write_text(record.model_dump_json(indent=2) + "\n")
+        (staging / STAGE_RECORD).write_text(
+            record.model_dump_json(indent=2) + "\n", encoding="utf-8"
+        )
         _replace_dir(staging, stage_dir(release_dir, stage.name))
     finally:
         shutil.rmtree(staging, ignore_errors=True)

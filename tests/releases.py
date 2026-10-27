@@ -22,7 +22,7 @@ def copy_release(
     `edits` per table and rehash them."""
     shutil.copytree(source, target)
     manifest = ReleaseManifest.model_validate_json(
-        (target / "release.json").read_text()
+        (target / "release.json").read_text(encoding="utf-8")
     )
     tables = dict(manifest.tables)
     for name, edit in (edits or {}).items():
@@ -31,5 +31,7 @@ def copy_release(
         frame.write_parquet(path)
         tables[name] = TableEntry(sha256=sha256_file(path), rows=frame.height)
     rehashed = manifest.model_copy(update={"tables": tables})
-    (target / "release.json").write_text(rehashed.model_dump_json(indent=2))
+    (target / "release.json").write_text(
+        rehashed.model_dump_json(indent=2), encoding="utf-8"
+    )
     return target

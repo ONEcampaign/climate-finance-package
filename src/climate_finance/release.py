@@ -522,7 +522,7 @@ def _packed_sha256(target: Path) -> str | None:
     """The sha256 of the pack the cached release in `target` came from, if
     recorded."""
     try:
-        return (target / PACK_SHA256).read_text().strip()
+        return (target / PACK_SHA256).read_text(encoding="utf-8").strip()
     except (FileNotFoundError, NotADirectoryError):  # no stamp, or no directory
         return None
 
@@ -557,7 +557,7 @@ def _open(path: Path, *, release: str | None = None) -> Release:
     """
     manifest_path = path / "release.json"
     try:
-        text = manifest_path.read_text()
+        text = manifest_path.read_text(encoding="utf-8")
         raw = json.loads(text)
         data_format = raw.get("data_format") if isinstance(raw, dict) else None
         if type(data_format) is int and data_format > DATA_FORMAT:
@@ -601,7 +601,7 @@ def _open(path: Path, *, release: str | None = None) -> Release:
 
 
 def _shipped_index() -> ReleaseIndex:
-    return ReleaseIndex.model_validate_json(RELEASE_INDEX.read_text())
+    return ReleaseIndex.model_validate_json(RELEASE_INDEX.read_text(encoding="utf-8"))
 
 
 def _fetch_index() -> ReleaseIndex:
@@ -692,7 +692,7 @@ def _download(entry: IndexEntry, *, target: Path) -> None:
         release_dir = unpacked / target.name
         if not release_dir.is_dir():
             raise ReleaseIntegrityError(f"{entry.url} holds no {target.name}/")
-        (release_dir / PACK_SHA256).write_text(actual)
+        (release_dir / PACK_SHA256).write_text(actual, encoding="utf-8")
         while True:
             try:
                 release_dir.rename(target)

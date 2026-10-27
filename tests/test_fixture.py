@@ -19,7 +19,7 @@ from climate_finance.schema import (
 )
 
 MANIFEST = ReleaseManifest.model_validate_json(
-    (FIXTURE_DIR / "release.json").read_text()
+    (FIXTURE_DIR / "release.json").read_text(encoding="utf-8")
 )
 
 
@@ -56,6 +56,7 @@ def test_fixture_covers_the_cases_the_analysis_layer_needs() -> None:
 
 
 def test_regenerating_the_fixture_gives_the_same_tables(tmp_path: Path) -> None:
+    pytest.importorskip("climate_finance.build")
     write_fixture(tmp_path)
 
     for table in RELEASE_TABLES:

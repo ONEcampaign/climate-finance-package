@@ -4,16 +4,16 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 jobs:
+  tests:
+    name: Tests
+    uses: ./.github/workflows/tests.yml
+
   release:
     name: Create Release
+    needs: tests
     runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        python-versions: ["3.12"]
 
     # Matches the environment named in the PyPI trusted publisher for this
     # project. The names must agree or PyPI rejects the OIDC claim.
@@ -28,15 +28,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extract version from tag
-        id: tag_name
-        run: echo "current_version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
-        shell: bash
-
       - name: Set up uv (and Python)
         uses: astral-sh/setup-uv@v6
         with:
-          python-version: ${{ matrix.python-versions }}
+          python-version: "3.12"
 
       - name: Build sdist and wheel (uv)
         run: uv build --no-sources
@@ -44,9 +39,26 @@ jobs:
       - name: Show dist/
         run: ls -l dist
 
+      # A tag that disagrees with pyproject.toml would publish the wrong version.
+      - name: Check the tag equals the package version
+        run: |
+          uv run --no-project python - <<'PY'
+          import os
+          import zipfile
+          from email.parser import BytesParser
+          from pathlib import Path
+
+          (wheel,) = Path("dist").glob("*.whl")
+          with zipfile.ZipFile(wheel) as archive:
+              (metadata,) = [n for n in archive.namelist() if n.endswith(".dist-info/METADATA")]
+              built = BytesParser().parsebytes(archive.read(metadata))["Version"]
+          tag = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          assert built == tag, f"tag {tag} does not match the built version {built}"
+          print(f"Tag and built version agree: {built}")
+          PY
+
       - name: Publish package to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
-          skip-existing: true
           verify-metadata: true
           verbose: true

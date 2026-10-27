@@ -40,7 +40,10 @@ def base_python(tmp_path_factory: pytest.TempPathFactory) -> Path:
 @pytest.fixture(scope="module")
 def answers(base_python: Path, release: Path) -> dict:
     run = subprocess.run(
-        [base_python, QUERIES, release], capture_output=True, text=True, check=False
+        [base_python, QUERIES, release],
+        capture_output=True,
+        encoding="utf-8",
+        check=False,
     )
     assert run.returncode == 0, run.stderr
     return json.loads(run.stdout)

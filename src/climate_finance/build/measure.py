@@ -168,7 +168,9 @@ def load_provider_facts(path: Path = PROVIDERS_TOML) -> ProviderFacts:
         ConfigError: when the file is missing or a fact is missing or invalid.
     """
     try:
-        return ProviderFacts.model_validate(tomllib.loads(path.read_text()))
+        return ProviderFacts.model_validate(
+            tomllib.loads(path.read_text(encoding="utf-8"))
+        )
     except FileNotFoundError as error:
         raise ConfigError(f"No provider facts at {path}") from error
     except ValidationError as error:
