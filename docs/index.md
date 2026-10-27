@@ -29,6 +29,7 @@ climate-finance 2.0 returns international public climate finance from OECD and U
 - [How linking works](explanation/how-linking-works.md) explains how a disbursement counts against a commitment, and which rows a release excludes.
 - [Low and high bounds](explanation/low-and-high-bounds.md) explains which links count in each bound.
 - [About the methods](explanation/methods.md) covers marker weights, method comparisons, provider attribution, and EU Institutions.
+- [Performance](explanation/performance.md) gives the time and memory a query and a build take on the release candidate.
 
 ## Release notes
 
