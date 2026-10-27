@@ -2,23 +2,13 @@
 refusals come as one `InvalidInputError` naming each field and the form it takes."""
 
 from collections.abc import Iterable, Mapping
-from contextvars import ContextVar
 from difflib import get_close_matches
 from typing import Any, ClassVar, Self, override
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    ModelWrapValidatorHandler,
-    ValidationError,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic.config import ExtraValues
 
 from climate_finance.errors import InvalidInputError
-
-# How many `Frozen` models are validating, nested, in this context.
-_depth = ContextVar("_depth", default=0)
 
 
 class Frozen(BaseModel):
@@ -34,28 +24,57 @@ class Frozen(BaseModel):
     # keyword, such as `Spec`'s note on `spec=`.
     _keyword_notes: ClassVar[Mapping[str, str]] = {}
 
+    # The entry points restate pydantic's refusal once validation is over. Raised
+    # inside a validator, `InvalidInputError`, a `ValueError`, would come back
+    # wrapped in pydantic's error, and a nested model's refusal would end pydantic's
+    # tries at a union such as `Method | MethodRange`. The error names a nested
+    # field by its path, as `method.significant`.
+
+    def __init__(self, **data: object) -> None:
+        try:
+            super().__init__(**data)
+        except ValidationError as error:
+            raise _restated(error, model=type(self)) from None
+
+    # pydantic's mark for an `__init__` that validates as `BaseModel.__init__` does,
+    # as `RootModel.__init__` carries. Without it, pydantic validates a nested model
+    # through this `__init__`, which would restate inside the outer validation.
+    __init__.__pydantic_base_init__ = True  # ty: ignore[unresolved-attribute]
+
     def replace(self, **changes: object) -> Self:
         """Return a copy with `changes` applied, validated again."""
         return self.model_validate({**self.model_dump(), **changes})
 
-    @model_validator(mode="wrap")
+    @override
     @classmethod
-    def _restate_errors(
-        cls, data: Any, handler: ModelWrapValidatorHandler[Self]
+    def model_validate(
+        cls,
+        obj: Any,
+        *,
+        strict: bool | None = None,
+        extra: ExtraValues | None = None,
+        from_attributes: bool | None = None,
+        context: Any | None = None,
+        by_alias: bool | None = None,
+        by_name: bool | None = None,
     ) -> Self:
-        # Only the outermost model restates. A nested model's own refusal would end
-        # pydantic's tries at a union such as `Method | MethodRange`, and the
-        # outermost error names the nested field's path, as `method.significant`.
-        depth = _depth.get()
-        token = _depth.set(depth + 1)
+        """Read a model from a mapping of its fields.
+
+        Raises:
+            InvalidInputError: for a field the model refuses.
+        """
         try:
-            return handler(data)
+            return super().model_validate(
+                obj,
+                strict=strict,
+                extra=extra,
+                from_attributes=from_attributes,
+                context=context,
+                by_alias=by_alias,
+                by_name=by_name,
+            )
         except ValidationError as error:
-            if depth:
-                raise
             raise _restated(error, model=cls) from None
-        finally:
-            _depth.reset(token)
 
     @override
     @classmethod
@@ -83,7 +102,7 @@ class Frozen(BaseModel):
                 by_alias=by_alias,
                 by_name=by_name,
             )
-        except ValidationError as error:  # malformed JSON, before any validator
+        except ValidationError as error:
             raise _restated(error, model=cls) from None
 
 
@@ -114,7 +133,9 @@ def _restated(error: ValidationError, *, model: type[Frozen]) -> InvalidInputErr
                 f"{field} takes {context['expected']}; got {detail['input']!r}"
             )
         elif "error" in context:  # a validator's own ValueError, already worded
-            problems.append(str(context["error"]))
+            # A package error's `str()` ends in its code, which the restated
+            # error adds once.
+            problems.append(str(context["error"].args[0]))
         else:
             message = detail["msg"]
             problems.append(

@@ -13,6 +13,7 @@ import warnings
 from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
+from typing import get_args
 
 import numpy as np
 import polars as pl
@@ -26,6 +27,7 @@ import climate_finance as cf
 from climate_finance.catalogue import Agency, agency_name
 from climate_finance.errors import (
     CoverageWarning,
+    DoubleCountWarning,
     InvalidInputError,
     MissingLabelsError,
     UnknownRecipientError,
@@ -41,7 +43,7 @@ from climate_finance.query import (
     _aggregate,
 )
 from climate_finance.release import Release
-from climate_finance.result import AMOUNTS, ROW_KEYS, ROW_VALUES, Result
+from climate_finance.result import AMOUNTS, BASIS, ROW_KEYS, ROW_VALUES, Result
 from climate_finance.schema import NET_FLOWS, REFLOW_BASES, ReleaseManifest
 from climate_finance.spec import Flow, Measure, Spec, SpecInputs, View
 from climate_finance.sums import ordered_sum
@@ -508,6 +510,181 @@ def test_covered_years_warn_nothing(call: Callable[[], object]) -> None:
         call()
 
 
+def test_spending_help_names_every_flow() -> None:
+    for flow in get_args(Flow.__value__):
+        assert f'"{flow}"' in (Release.spending.__doc__ or "")
+
+
+def _brazil_gives_to_a_channel_without_a_share(frame: pl.DataFrame) -> pl.DataFrame:
+    # Channel 40000 holds no agency share, so the contribution attributes nothing.
+    gift = pl.DataFrame(
+        {
+            "provider_code": [431],
+            "channel_code": [40000],
+            "year": [2021],
+            "flow": ["disbursements"],
+            "contribution_usd": [5e6],
+        },
+        schema=frame.schema,
+    )
+    return pl.concat([frame, gift])
+
+
+def test_a_provider_whose_contributions_attribute_nothing_warns_why(
+    tmp_path: Path,
+) -> None:
+    release = cf.load(
+        path=copy_release(
+            tmp_path / "release",
+            edits={"core_contributions": _brazil_gives_to_a_channel_without_a_share},
+        )
+    )
+
+    with pytest.warns(
+        CoverageWarning,
+        match="Brazil, whose core contributions go to channels with no climate "
+        "share in those years$",
+    ):
+        result = release.spending(providers="Brazil", view="provider", years=2021)
+
+    assert result.table.is_empty()
+
+
+def _without_norways_2023_disbursements(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.filter((pl.col("provider_code") != 8) | (pl.col("year") != 2023))
+
+
+@pytest.mark.parametrize("flow", sorted(NET_FLOWS))
+def test_a_provider_with_repayments_alone_in_a_year_warns_nothing(
+    tmp_path: Path, flow: Flow
+) -> None:
+    # Norway repays NOR-1 in 2023, a year in which it disburses nothing.
+    release = cf.load(
+        path=copy_release(
+            tmp_path / "release",
+            edits={"disbursements": _without_norways_2023_disbursements},
+        )
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", CoverageWarning)
+        result = release.spending(providers=8, years=2023, flow=flow)
+
+    assert set(result.rows()["origin"]) <= {"repayment", "interest"}
+    assert result.table.height
+
+
+def _japan_untraced_in_2009(frame: pl.DataFrame) -> pl.DataFrame:
+    # In 2009, with an adaptation marker, as some CRS records of that year carry.
+    japan = pl.col("provider_code") == 701
+    marker = "rio_adaptation"
+    if "basis" in frame.columns:
+        japan &= pl.col("basis") == "untraced"
+        marker = "inherited_rio_adaptation"
+    return frame.with_columns(
+        year=pl.when(japan).then(pl.lit(2009, pl.Int16)).otherwise(pl.col("year")),
+        **{marker: pl.when(japan).then(pl.lit(2, pl.Int8)).otherwise(pl.col(marker))},
+    )
+
+
+@pytest.mark.parametrize("method", [ONE, OECD])
+@pytest.mark.parametrize("flow", ["disbursements", *sorted(NET_FLOWS)])
+def test_the_objectives_add_up_to_value_on_every_row(
+    tmp_path: Path, method: Method, flow: Flow
+) -> None:
+    release = cf.load(
+        path=copy_release(
+            tmp_path / "release",
+            edits={
+                "untraced": _japan_untraced_in_2009,
+                "reflows": _japan_untraced_in_2009,
+            },
+        )
+    )
+    rows = release.spending(providers=701, method=method, flow=flow).rows()
+
+    cross_cutting = pl.col("cross_cutting") * (1 if method.highest_marker else -1)
+    parts = (
+        pl.col("adaptation") + pl.col("mitigation") + cross_cutting + pl.col("unsplit")
+    )
+    known = rows.drop_nulls("value")
+    assert known.select(parts).to_series().to_list() == pytest.approx(
+        known["value"].to_list()
+    )
+    # A 2009 record that carries an adaptation marker keeps its adaptation, which
+    # its principal mitigation marker makes cross-cutting under ONE.
+    early = known.filter(year=2009)
+    assert early.height
+    assert (early["adaptation"] + early["cross_cutting"] != 0).all()
+    assert (early["no_adaptation_marker"] == 0).all()
+
+
+def _norway_as_private(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.with_columns(
+        bi_multi=pl.when(pl.col("provider_code") == 8)
+        .then(pl.lit(6, pl.Int8))
+        .otherwise(pl.col("bi_multi"))
+    )
+
+
+@pytest.mark.parametrize(
+    ("inputs", "message"),
+    [
+        # Brazil is listed and reports nothing.
+        (
+            {"providers": ["Brazil", "Germany"], "years": 2022},
+            "no rows count for Brazil, which has no disbursements in the release "
+            "in 2022$",
+        ),
+        # IDA's own outflows are Bi_Multi 4, which the provider view leaves out.
+        (
+            {"providers": "IDA", "view": "provider"},
+            r"International Development Association, whose rows \(Bi_Multi 4\) "
+            "count in view='recipient'$",
+        ),
+        (
+            {"providers": 8},
+            r"Norway, whose rows \(Bi_Multi 6\) count in neither view",
+        ),
+    ],
+    ids=["unreported", "other_view", "private"],
+)
+def test_a_provider_without_rows_in_the_query_warns_why(
+    tmp_path: Path, inputs: SpecInputs, message: str
+) -> None:
+    release = cf.load(
+        path=copy_release(
+            tmp_path / "release",
+            edits={
+                "disbursements": _norway_as_private,
+                "untraced": _norway_as_private,
+            },
+        )
+    )
+
+    with pytest.warns(CoverageWarning, match=message) as record:
+        result = release.spending(**inputs)
+
+    assert [warning.filename for warning in record] == [__file__]
+    assert set(result.table["provider_code"]) <= {5}
+
+
+@pytest.mark.parametrize(
+    "inputs",
+    [
+        {"providers": "Germany"},
+        # Germany gives Bangladesh nothing, which is an answer, so it warns of no gap.
+        {"providers": "Germany", "recipients": "Bangladesh"},
+        {"providers": "IDA"},
+        {"providers": "Germany", "view": "provider", "flow": "net_transfers"},
+    ],
+)
+def test_a_provider_with_rows_in_its_view_warns_nothing(inputs: SpecInputs) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", CoverageWarning)
+        SNAP.spending(**inputs)
+
+
 @pytest.mark.parametrize("flow", FLOWS)
 def test_the_provider_view_attributes_core_contributions_of_its_flow(
     flow: Flow,
@@ -620,10 +797,12 @@ def test_a_climate_only_share_attributes_value_as_unsplit() -> None:
     rows = result.rows(origin="attribution")
     assert rows["method"].to_list() == ["OECD"]
     assert rows.select(columns).row(0) == expected
-    # ONE and PROVIDER hold no AfDB share for 2020, so the range's low bound is 0.
+    # OECD's row keeps its own bounds. ONE and PROVIDER hold no AfDB share for
+    # 2020, so the span's low is 0.
     oecd = pl.col("method") == "OECD"
     table = result.table.filter(oecd)
-    assert table.select(columns).row(0) == (*expected[:5], 0.0, expected[6])
+    assert table.select(columns).row(0) == expected
+    assert table.select("range_low", "range_high").row(0) == (0.0, expected[6])
     # France's 2020 code 2 flows total 1.5 times its contribution.
     share = result.share_of_total().table.filter(oecd)["value"].item()
     assert share == pytest.approx(0.35 / 1.5)
@@ -737,9 +916,51 @@ def test_a_range_bounds_every_key_under_every_method(tmp_path: Path) -> None:
     keys = [frame.select(ROW_KEYS).sort(pl.all()) for frame in by_method.values()]
     for other in keys[1:]:
         assert_frame_equal(keys[0], other)
-    bounds = table.group_by("method").agg(pl.col("low").sum(), pl.col("high").sum())
-    assert bounds["low"].n_unique() == bounds["high"].n_unique() == 1
-    assert table.filter(pl.col("provider_code") == 4)["low"].min() == 0.0
+    spans = table.group_by(ROW_KEYS).agg(
+        pl.col("range_low").n_unique().alias("lows"),
+        pl.col("range_high").n_unique().alias("highs"),
+        (pl.col("range_low") == pl.col("low").min()).all().alias("lowest"),
+        (pl.col("range_high") == pl.col("high").max()).all().alias("highest"),
+    )
+    assert spans.select("lows", "highs").unique().rows() == [(1, 1)]
+    assert spans["lowest"].all()
+    assert spans["highest"].all()
+    assert table.filter(pl.col("provider_code") == 4)["range_low"].min() == 0.0
+
+
+def test_a_table_says_what_it_measures_after_a_concat() -> None:
+    spec = Spec(providers=5, currency="EUR", prices=2022, view="provider")
+    tables = [SNAP.run(spec.replace(flow=flow)).table for flow in FLOWS]
+    shares = SNAP.run(spec).share_of_total().table
+
+    stacked = pl.concat([*tables, shares])
+
+    assert stacked.select(BASIS).unique(maintain_order=True).rows() == [
+        *((flow, "provider", "EUR", "2022", "amount") for flow in FLOWS),
+        ("disbursements", "provider", "EUR", "2022", "share_of_total"),
+    ]
+    assert SNAP.spending().table.select(BASIS).unique().rows() == [
+        ("disbursements", "recipient", "USD", "current", "amount")
+    ]
+
+
+@pytest.mark.parametrize("flow", ["disbursements", "net_transfers"])
+def test_a_range_keeps_each_methods_own_bounds(flow: Flow) -> None:
+    spec = Spec(view="provider", flow=flow)
+    together = SNAP.run(spec.replace(method=RANGE))
+
+    for method in RANGE.methods:
+        alone = SNAP.run(spec.replace(method=method)).table
+        own = together.table.filter(method=label(method)).join(
+            alone, on=ROW_KEYS, how="semi", nulls_equal=True
+        )
+        assert_frame_equal(
+            own.select(*ROW_KEYS, "low", "high").sort(ROW_KEYS, nulls_last=True),
+            alone.select(*ROW_KEYS, "low", "high").sort(ROW_KEYS, nulls_last=True),
+        )
+        rows = together.rows(method=method)
+        assert rows["high"].sum() == pytest.approx(own["high"].sum())
+    assert "range_low" not in SNAP.run(spec).table.columns
 
 
 def test_sums_do_not_depend_on_row_order() -> None:
@@ -1034,10 +1255,9 @@ def test_a_result_table_prints_names_first_and_bounds_last() -> None:
     rows = result.rows()
 
     assert result.table.columns[:4] == ["year", "provider", "recipient", "method"]
-    bounds = ["value", "low", "high", "untraced", "no_grant_equivalent"]
-    assert result.table.columns[-5:] == bounds
+    assert result.table.columns[-len(AMOUNTS) - len(BASIS) :] == [*BASIS, *AMOUNTS]
     assert rows.columns[:4] == ["origin", "year", "record_id", "link_method"]
-    assert rows.columns[-5:] == bounds
+    assert rows.columns[-len(AMOUNTS) :] == list(AMOUNTS)
     assert set(rows.columns) == set(result._rows.collect_schema().names())
 
 
@@ -1355,7 +1575,10 @@ def test_share_of_total_divides_each_key_by_its_total_flows() -> None:
     assert by_key[(None, 2)] == pytest.approx(
         60e6 * 0.36 / (4 * 60e6 * 0.95 / 3 + 1.5 * 60e6)
     )
-    assert_frame_equal(shares.drop(AMOUNTS), result.table.drop(AMOUNTS))
+    assert_frame_equal(
+        shares.drop(*AMOUNTS, "measure"), result.table.drop(*AMOUNTS, "measure")
+    )
+    assert set(shares["measure"]) == {"share_of_total"}
 
 
 def test_a_share_result_reruns_from_its_own_spec() -> None:
@@ -1780,10 +2003,14 @@ def test_an_agency_returns_its_own_rows_and_no_modelled_line(
 def test_under_oecd_the_provider_view_holds_no_eib_rows(eu_release: Release) -> None:
     """OECD counts EU Institutions as a provider, whose provider view leaves the
     EIB's own rows out and attributes members' contributions to it."""
-    result = eu_release.spending(view="provider", method=OECD, providers="EIB")
+    with pytest.warns(CoverageWarning, match="leave the provider view under methods"):
+        result = eu_release.spending(view="provider", method=OECD, providers="EIB")
 
     assert result.rows().is_empty()
     assert result.table.is_empty()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", CoverageWarning)
+        eu_release.spending(view="provider", method=RANGE, providers="EIB")
 
 
 @pytest.mark.parametrize(
@@ -1853,6 +2080,34 @@ def test_eu_own_rows_count_less_the_contributions_of_queried_members(
     )
     assert value((EU_INSTITUTIONS, 4), 4) == pytest.approx(value(4, 4))
     assert value(None, EU_INSTITUTIONS) == 0
+
+
+@pytest.mark.parametrize(
+    ("inputs", "warned"),
+    [
+        # The EU's own rows keep what the members outside the query attribute.
+        ({"providers": EU_INSTITUTIONS}, True),
+        ({"providers": [EU_INSTITUTIONS, 4]}, True),
+        ({"providers": "EIB"}, True),
+        # Every member that attributes EU money is named, so none stays.
+        ({"providers": [EU_INSTITUTIONS, 4, 5]}, False),
+        ({"providers": 4}, False),
+        ({}, False),
+        ({"providers": EU_INSTITUTIONS, "method": OECD}, False),
+        ({"providers": EU_INSTITUTIONS, "view": "recipient"}, False),
+    ],
+)
+def test_naming_eu_institutions_in_the_provider_view_warns_of_double_counting(
+    two_member_release: Release, inputs: SpecInputs, warned: bool
+) -> None:
+    query = {"view": "provider", "years": EU_ATTRIBUTION_YEARS, **inputs}
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        two_member_release.spending(**query)
+
+    doubled = [w for w in record if w.category is DoubleCountWarning]
+    assert len(doubled) == warned
+    assert [w.filename for w in doubled] == [__file__] * warned
 
 
 # Untraced records of the EU budget (agency 1) and of the EIB (agency 3) in 2022,
@@ -1974,12 +2229,16 @@ def test_range_share_bounds_span_each_methods_own_share(
         two_member_release.run(spec.replace(method=method)).table.filter(eu)
         for method in RANGE.methods
     )
-    expected = alone.group_by(ROW_KEYS).agg(pl.col("low").min(), pl.col("high").max())
+    expected = alone.group_by(ROW_KEYS).agg(
+        range_low=pl.col("low").min(), range_high=pl.col("high").max()
+    )
 
     assert shares.height == 3 * expected.height
     joined = shares.join(expected, on=ROW_KEYS, suffix="_expected")
-    assert joined["low"].to_list() == pytest.approx(joined["low_expected"].to_list())
-    assert joined["high"].to_list() == pytest.approx(joined["high_expected"].to_list())
+    for name in ("range_low", "range_high"):
+        assert joined[name].to_list() == pytest.approx(
+            joined[f"{name}_expected"].to_list()
+        )
 
 
 def test_a_member_counts_its_eu_share_only_with_the_eu_as_a_channel(
@@ -2133,7 +2392,7 @@ def _unmeasured_2022_spending(frame: pl.DataFrame) -> pl.DataFrame:
 
 
 @pytest.mark.parametrize("flow", FLOWS)
-def test_unmeasured_adaptation_stays_null_and_value_counts_mitigation(
+def test_unmeasured_adaptation_counts_zero_and_its_value_has_a_column(
     tmp_path: Path, flow: Flow
 ) -> None:
     release = copy_release(
@@ -2156,24 +2415,38 @@ def test_unmeasured_adaptation_stays_null_and_value_counts_mitigation(
     assert set(rows["origin"]) == {"attribution"} | (
         {"commitment"} if flow == "commitments" else {"disbursement"}
     )
-    assert rows["adaptation"].is_null().all()
-    assert rows["cross_cutting"].is_null().all()
+    assert rows["value"].sum() > 0
+    assert (rows["adaptation"] == 0).all()
+    assert (rows["cross_cutting"] == 0).all()
     assert rows["value"].to_list() == pytest.approx(rows["mitigation"].to_list())
+    assert rows["no_adaptation_marker"].to_list() == rows["value"].to_list()
+    # The table's objectives sum the rows', so the measured adaptation of a key
+    # stays beside an unmeasured row, and the parts add up to value.
     table = result.table
-    # The table rows these rows reach, by recipient and Bi_Multi code.
-    reached = table.join(
-        rows.select("recipient_code", "bi_multi").unique(),
-        on=["recipient_code", "bi_multi"],
-        nulls_equal=True,
-    ).filter(year=2022)
-    assert reached.height == rows.select("recipient_code", "bi_multi").n_unique()
-    assert reached.select("adaptation", "cross_cutting").null_count().row(0) == (
-        reached.height,
-        reached.height,
+    every = result.rows()
+    for name in ("adaptation", "cross_cutting", "no_adaptation_marker"):
+        assert table[name].sum() == pytest.approx(every[name].sum())
+    parts = (
+        pl.col("adaptation") + pl.col("mitigation") + pl.col("cross_cutting")
+        + pl.col("unsplit")
+    )  # fmt: skip
+    assert table.select(parts)["adaptation"].to_list() == pytest.approx(
+        table["value"].to_list()
     )
     assert table.filter(year=2021).equals(original.table.filter(year=2021))
+    assert (original.table["no_adaptation_marker"] == 0).all()
+    explained = result.explain()
     years = "2022" if flow == "commitments" else "2022 to 2024"
-    assert f"not measured for rows in {years}," in result.explain()
+    own = (
+        "commitments of 2022"
+        if flow == "commitments"
+        else f"disbursements in {years} to commitments the CRDF records without an "
+        "adaptation marker"
+    )
+    assert (
+        f"Adaptation is not measured for {own} and core contributions in 2022 "
+        "whose agency's climate share spans a year before 2010: "
+    ) in explained
     assert "not measured" not in original.explain()
 
 
@@ -2337,8 +2610,8 @@ def test_an_untraced_record_before_the_adaptation_marker_counts_mitigation(
     # the CRS does not measure in 2009.
     assert row.select("year", "adaptation", "cross_cutting", "value").row(0) == (
         2009,
-        None,
-        None,
+        0.0,
+        0.0,
         0.0,
     )
 

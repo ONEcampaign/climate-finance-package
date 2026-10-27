@@ -124,6 +124,9 @@ TIERS = (
 )
 if tuple(tier.name for tier in TIERS) != schema.KEY_TIERS:
     raise RuntimeError("TIERS must follow schema.KEY_TIERS")
+# A purpose-split line: the commitment units under one crs id that share every
+# `UNIT_KEY` field but the purpose code (`purpose_units`).
+SPLIT_LINE_KEY = tuple(name for name in UNIT_KEY if name != "purpose_code")
 
 
 def separator_free_pn(project_number: pl.Expr) -> pl.Expr:
@@ -263,6 +266,94 @@ def link_by_tiers(
     return pl.concat(pairs)
 
 
+def purpose_units(
+    pairs: pl.DataFrame, *, units: pl.DataFrame, reached: pl.Series
+) -> pl.DataFrame:
+    """`pairs` with each commitment on a purpose-split line (`SPLIT_LINE_KEY`)
+    replaced by the line's unit the disbursement continues, the pairs of a
+    disbursement that continues an unreached unit dropped, and the duplicate rows
+    this makes dropped, the first kept.
+
+    A donor can file one line of a project and recipient as several units, one per
+    purpose, as Canada and the Adaptation Fund do. A disbursement continues the
+    unit of its own purpose, and the line's other units compare alike with it on
+    every field but the purpose. A pair per unit then adds false pairs a model
+    cannot tell from the true one, so a disbursement pairs with the line once.
+
+    The line's unit is the one of the disbursement's purpose code, as the
+    `crs_id_purpose` tier links. Where that unit is not among `reached`, it carries
+    no climate finance, and the disbursement keeps no pair on the line. Where the
+    line has no unit of that code, the unit is the reached one of the
+    disbursement's three-digit purpose category, else the largest reached
+    commitment, ties to the smaller unit id. The unit depends only on the
+    disbursement, the line and `reached`, whichever of the line's units `pairs`
+    reach.
+
+    Args:
+        pairs: rows of a disbursement (`left_id`) and a commitment (`right_id`)
+            unit, in any order, which the output keeps.
+        units: the link stage's units, which hold both sides of `pairs`.
+        reached: the unit ids of the commitments a `crdf_crs` link reaches.
+    """
+    key = list(SPLIT_LINE_KEY)
+    lines = (
+        units.filter(pl.col("commitment_usd") > 0)
+        .drop_nulls("crs_id")
+        .filter(pl.len().over(key) > 1)
+        .select(
+            "unit_id",
+            "purpose_code",
+            "commitment_usd",
+            line=pl.col("unit_id").min().over(key),
+            reached=pl.col("unit_id").is_in(reached.implode()),
+        )
+    )
+    on_line = (
+        pairs.select("left_id", "right_id")
+        .join(lines.select("line", right_id="unit_id"), on="right_id")
+        .select("left_id", "line")
+        .unique()
+        .join(
+            units.select(left_id="unit_id", left_purpose="purpose_code"),
+            on="left_id",
+            how="left",
+        )
+        .join(lines, on="line")
+    )
+    own = pl.col("purpose_code") == pl.col("left_purpose")
+    category = pl.col("purpose_code") // 100 == pl.col("left_purpose") // 100
+    has_own = own.fill_null(value=False).any().over("left_id", "line")
+    picks = (
+        on_line.filter(
+            pl.when(has_own).then(own.fill_null(value=False)).otherwise("reached")
+        )
+        .sort(
+            "left_id",
+            "line",
+            category.fill_null(value=False),
+            "commitment_usd",
+            "unit_id",
+            descending=[False, False, True, True, False],
+        )
+        .unique(["left_id", "line"], keep="first", maintain_order=True)
+        .select("left_id", "line", pick=pl.when("reached").then("unit_id"))
+    )
+    on = ["left_id", "line"]
+    return (
+        pairs.join(
+            lines.select("line", right_id="unit_id"),
+            on="right_id",
+            how="left",
+            maintain_order="left",
+        )
+        .join(picks, on=on, how="left", maintain_order="left")
+        .filter(pl.col("line").is_null() | pl.col("pick").is_not_null())
+        .with_columns(right_id=pl.coalesce("pick", "right_id"))
+        .drop("line", "pick")
+        .unique(["left_id", "right_id"], keep="first", maintain_order=True)
+    )
+
+
 def floor_loaded(*, first_year: int) -> pl.Expr:
     """Whether a unit's floor year is null or not before `first_year`, so that the
     build loads the year its commitment was made in."""
@@ -332,7 +423,7 @@ def partner_recipient(*, commitment: pl.Expr, disbursement: pl.Expr) -> pl.Expr:
 @cache
 def regional_codes() -> tuple[int, ...]:
     """The DAC recipient codes of regions and of unspecified recipients."""
-    regions = pl.col("name").str.contains("regional|unspecified")
+    regions = pl.col("type") != "country"
     return tuple(catalogue.recipients.list().filter(regions)["code"])
 
 

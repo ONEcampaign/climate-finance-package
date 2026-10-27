@@ -2501,6 +2501,9 @@ class ReleaseManifest(BaseModel):
     # gates fail, null without a waiver.
     precision_waiver: str | None = None
     previous_release: str | None = None
+    # The sha256 of the pack the drift gate's previous release came from, null when
+    # the copy it read records none. `cf-build publish` checks it against the index.
+    previous_pack_sha256: str | None = None
     withheld_tables: dict[str, str] = {}
 
 

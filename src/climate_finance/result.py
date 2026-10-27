@@ -51,10 +51,16 @@ from climate_finance.spec import (
 )
 from climate_finance.sums import ordered_sum
 
+# The objectives, then the parts of `value` that `untraced`, `no_grant_equivalent`
+# and `no_adaptation_marker` single out, then `value` and its bounds, so polars'
+# truncated print of a single-method table ends with them.
 AMOUNTS = (
-    "amount", "adaptation", "mitigation", "cross_cutting", "unsplit", "value", "low",
-    "high", "untraced", "no_grant_equivalent",
+    "amount", "adaptation", "mitigation", "cross_cutting", "unsplit", "untraced",
+    "no_grant_equivalent", "no_adaptation_marker", "value", "low", "high",
 )  # fmt: skip
+# The spec fields a result table repeats on every row, so a row says what it
+# measures.
+BASIS = ("flow", "view", "currency", "prices", "measure")
 # Where each of `Result.rows()` comes from, as `query` describes.
 ORIGINS = (
     "commitment",
@@ -111,19 +117,21 @@ class Meta(BaseModel):
 class Result:
     """The answer to one `Spec`: a table, the rows behind it, and its provenance.
 
-    `table` takes each method's amounts by key. Its `low` and `high` span every
-    method of the key, the lowest `low` and the highest `high` of any method, so
-    every method's row of a key carries the same bounds. Under
-    `spec.measure="share_of_total"` the result divides each method's amounts by its
-    `totals` before the bounds are taken, so a result always holds the measure its
-    spec names, and the bounds span the methods' shares.
+    `table` takes each method's amounts by key, each with its own `low` and `high`.
+    Under several methods, `range_low` and `range_high` follow `high` and hold the
+    lowest `low` and the highest `high` of any method of the key, the same on every
+    method's row of it. Under `spec.measure="share_of_total"` the result divides
+    each method's amounts by its `totals` before the span is taken, so a result
+    always holds the measure its spec names, and the span covers the methods'
+    shares.
 
-    `table` starts `year`, `provider`, `recipient`, `method` and ends `value`, `low`,
-    `high`, `untraced`, `no_grant_equivalent`, so polars' truncated print shows
-    them; `provider` and `recipient` name the codes beside them, as do `provider`,
-    `agency` and `recipient` in `rows()`, which start `origin`, `year`,
-    `record_id`, `link_method`. A spec that names an agency keys `table` by
-    `AGENCY_ROW_KEYS`, with `agency` after `provider`.
+    `table` starts `year`, `provider`, `recipient`, `method`, then the codes and
+    the spec's `flow`, `view`, `currency`, `prices` and `measure` (`BASIS`), so a
+    row says what it measures after a concat or a save, and ends with the amounts
+    (`AMOUNTS`). `provider` and `recipient` name the codes beside them, as do
+    `provider`, `agency` and `recipient` in `rows()`, which start `origin`,
+    `year`, `record_id`, `link_method`. A spec that names an agency keys `table`
+    by `AGENCY_ROW_KEYS`, with `agency` after `provider`.
     """
 
     def __init__(
@@ -148,7 +156,7 @@ class Result:
     @cached_property
     def table(self) -> pl.DataFrame:
         """The answer, one row per key and method, computed on first access."""
-        return _bounds(self._measured).collect()
+        return _described(self._measured, spec=self.spec).collect()
 
     @cached_property
     def modelled(self) -> pl.DataFrame:
@@ -233,10 +241,13 @@ class Result:
                 .filter(pl.col("origin") == "attribution", pl.col("unsplit") != 0)
                 .unique()
                 .sort(),
-                unmeasured=pl.col("year")
-                .filter(pl.col("adaptation").is_null(), pl.col("amount").is_not_null())
-                .unique(),
             )
+            .collect()
+        )
+        unmeasured = (
+            self._rows.filter(pl.col("no_adaptation_marker") != 0)
+            .group_by("origin")
+            .agg(pl.col("year").unique().sort())
             .collect()
         )
         return explain(
@@ -246,7 +257,9 @@ class Result:
             unsplit=dict(
                 zip(by_method["method"], by_method["unsplit"].to_list(), strict=True)
             ),
-            unmeasured=sorted(set(by_method["unmeasured"].explode().drop_nulls())),
+            unmeasured=dict(
+                zip(unmeasured["origin"], unmeasured["year"].to_list(), strict=True)
+            ),
             years=self.meta.years,
             conversion=self.meta.conversion,
             build=self.meta.build,
@@ -383,11 +396,25 @@ def _filter_error(name: str, item: object, *, dtype: pl.DataType) -> InvalidInpu
     return InvalidInputError(message)
 
 
-def _bounds(frame: pl.LazyFrame) -> pl.LazyFrame:
-    """`frame` with `low` and `high` spanning every method of the same key."""
-    keys = row_keys(frame.collect_schema().names())
-    return frame.with_columns(
-        low=pl.col("low").min().over(keys), high=pl.col("high").max().over(keys)
+def _described(frame: pl.LazyFrame, *, spec: Spec) -> pl.LazyFrame:
+    """`frame` with the `BASIS` columns of `spec` before the amounts and, under
+    several methods, `range_low` and `range_high` after `high`, holding the lowest
+    `low` and the highest `high` of any method of the same key."""
+    names = frame.collect_schema().names()
+    # Text, so `prices` holds "current" or a base year such as "2022".
+    basis = {field: pl.lit(str(getattr(spec, field))) for field in BASIS}
+    amounts: list[str] = list(AMOUNTS)
+    span = {}
+    if len(spec.methods) > 1:
+        keys = row_keys(names)
+        span = {
+            "range_low": pl.col("low").min().over(keys),
+            "range_high": pl.col("high").max().over(keys),
+        }
+        after = amounts.index("high") + 1
+        amounts[after:after] = span
+    return frame.with_columns(**basis, **span).select(
+        *(name for name in names if name not in AMOUNTS), *BASIS, *amounts
     )
 
 
@@ -566,7 +593,7 @@ def explain(
     release: str,
     coefficients: pl.DataFrame | None = None,
     unsplit: Mapping[str, Sequence[int]] | None = None,
-    unmeasured: Sequence[int] = (),
+    unmeasured: Mapping[str, Sequence[int]] | None = None,
     years: Mapping[str, tuple[int, int]] | None = None,
     conversion: Conversion | None = None,
     build: BuildIdentity | None = None,
@@ -577,14 +604,14 @@ def explain(
     `coefficient_basis` and `coefficient_source` its marker rows took, with the
     `provider_code` and the lists of `agency_code` and `year` values that took them.
     `unsplit` maps a method's label to the agency channel codes whose climate share
-    has no split by objective. `unmeasured` lists the years with rows whose
-    adaptation is not measured. `years` is the release's `years`; under the provider
-    view, the queried years (`spec.years`, else the recipient CRDF's) outside those
-    of `core_contributions` or of the share table a method reads (`agency_shares`
-    under the OECD's imputed shares, else `agency_spending`) are named as holding no
-    attributed finance under that method. `conversion` names the conversion factors
-    of a converted result. `build` names the digests of the package files and
-    environment that built the release.
+    has no split by objective. `unmeasured` maps an origin of rows whose
+    adaptation is not measured to their years. `years` is the release's `years`;
+    under the provider view, the queried years (`spec.years`, else the recipient
+    CRDF's) outside those of `core_contributions` or of the share table a method
+    reads (`agency_shares` under the OECD's imputed shares, else `agency_spending`)
+    are named as holding no attributed finance under that method. `conversion`
+    names the conversion factors of a converted result. `build` names the digests
+    of the package files and environment that built the release.
     """
     unsplit = unsplit or {}
     methods = spec.methods
@@ -611,14 +638,12 @@ def explain(
     if any(method in OXFAM.methods for method in methods):
         lines.append(OXFAM_CAVEAT)
     if len(methods) > 1:
-        lines.append("low and high are the lowest and highest bound across methods.")
-    if unmeasured:
         lines.append(
-            f"Adaptation is not measured for rows in {year_runs(unmeasured)}, as the "
-            "CRDF has no adaptation marker or climate components before 2010 and an "
-            "agency share of 2010 spans 2009. Their adaptation and cross_cutting are "
-            "null, and their climate value is mitigation only."
+            "Each method's low and high are its own; range_low and range_high are "
+            "the lowest low and highest high across the methods."
         )
+    if unmeasured:
+        lines.append(_unmeasured_line(unmeasured))
     lines.append(_VIEWS[spec.view])
     if spec.view == "provider":
         lines.extend(_coverage(methods, queried=spec.years, years=years or {}))
@@ -699,6 +724,37 @@ def explain(
             f"{conversion.factors_sha256}."
         )
     return "\n".join(lines)
+
+
+# Per origin, the rows whose adaptation is not measured, for `_unmeasured_line`.
+_UNMEASURED = {
+    "commitment": "commitments of {}",
+    "disbursement": "disbursements in {} to commitments the CRDF records without "
+    "an adaptation marker",
+    "repayment": "repayments in {} of loans disbursed to such commitments or "
+    "by such records",
+    "interest": "interest in {} on such loans",
+    "untraced": "untraced disbursements of {} whose CRS record carries no "
+    "adaptation marker",
+    "attribution": "core contributions in {} whose agency's climate share spans a "
+    "year before 2010",
+}
+
+
+def _unmeasured_line(unmeasured: Mapping[str, Sequence[int]]) -> str:
+    """The sentence naming the rows whose adaptation is not measured, and why."""
+    parts = [
+        _UNMEASURED[origin].format(year_runs(unmeasured[origin]))
+        for origin in ORIGINS
+        if unmeasured.get(origin)
+    ]
+    return (
+        f"Adaptation is not measured for {_listing(parts)}: before 2010 the CRDF "
+        "has no adaptation marker or climate components, and the CRS no adaptation "
+        "marker, and some CRS records after it carry none. Their adaptation and "
+        "cross_cutting count 0, their value is mitigation only, and "
+        "no_adaptation_marker holds it."
+    )
 
 
 # The share table each kind of method reads, and its name in running text.
@@ -857,10 +913,12 @@ def _coefficient_lines(method: Method, uses: pl.DataFrame) -> list[str]:
 _VIEWS = {
     "recipient": f"Recipient view: bilateral flows (Bi_Multi {_listing(BILATERAL)}) "
     f"and multilateral outflows (code {MULTILATERAL_OUTFLOW}); core contributions "
-    f"(code {CORE_CONTRIBUTION}) are left out.",
+    f"(code {CORE_CONTRIBUTION}) are left out. It answers what reached recipients; "
+    "view='provider' answers a provider's total.",
     "provider": f"Provider view: bilateral flows (Bi_Multi {_listing(BILATERAL)}) "
     "plus each provider's core contributions times the agency's climate share; "
-    f"code {CORE_CONTRIBUTION} and code {MULTILATERAL_OUTFLOW} rows are left out.",
+    f"code {CORE_CONTRIBUTION} and code {MULTILATERAL_OUTFLOW} rows are left out. "
+    "It answers a provider's total.",
 }
 _FLOWS = {
     "commitments": "Flow: commitments at face value; low and high equal value.",

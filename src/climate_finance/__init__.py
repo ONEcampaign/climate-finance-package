@@ -5,6 +5,7 @@ from importlib import import_module as _import_module
 from importlib.metadata import version as _version
 
 from climate_finance import errors, methods
+from climate_finance._removed import refuse_removed_modules as _refuse_removed_modules
 from climate_finance.catalogue import Agency, flows, providers, recipients
 from climate_finance.errors import (
     UnknownNameError,
@@ -41,17 +42,24 @@ __all__ = [
     "recipients",
 ]
 
-# 1.x names, served from climate_finance.compat with a DeprecationWarning until 3.0.
-_COMPAT = ("ClimateData", "set_climate_finance_data_path", "get_unfccc_data")
+_refuse_removed_modules()
+
+# 1.x names, served from climate_finance.compat with a deprecation warning until 3.0,
+# with what replaces each.
+_COMPAT = {
+    "ClimateData": "climate_finance.load().spending(...)",
+    "set_climate_finance_data_path": "climate_finance.load(cache_dir=...)",
+    "get_unfccc_data": "Release.reconcile() for the years of the BTR reports",
+}
 
 
 def __getattr__(name: str) -> object:
     if name not in _COMPAT:
         raise AttributeError(f"module 'climate_finance' has no attribute {name!r}")
     _warnings.warn(
-        f"climate_finance.{name} is deprecated and goes in 3.0; "
-        f"import it from climate_finance.compat, which names its replacement",
-        DeprecationWarning,
+        f"climate_finance.{name} is deprecated since 2.0 and goes in 3.0; use "
+        f"{_COMPAT[name]}",
+        errors.ClimateFinanceDeprecationWarning,
         stacklevel=2,
     )
     return getattr(_import_module("climate_finance.compat"), name)

@@ -178,6 +178,15 @@ EIB_ROUTES_MOVED_BN = {
     "no_disbursement_record": -0.0116,
     "not_traceable": -0.6143,
 }
+# A disbursement pairs with a purpose-split line once (`purpose_units`), which
+# changes the classifier's training pairs and links and moves value out of
+# disbursed.
+PURPOSE_UNITS_MOVED_BN = {
+    "disbursed": -0.0136,
+    "partly_disbursed": 0.0043,
+    "no_disbursement_record": 0.0093,
+    "not_traceable": 0.0,
+}
 TOLERANCE_BN = 0.001
 
 
@@ -276,9 +285,12 @@ def test_step_one_matches_the_target_plus_the_gef_crosswalk(
         + SIBLING_LINES_MOVED_BN[status]
         + WORLD_BANK_OWN_LINE_MOVED_BN[status]
         + EIB_ROUTES_MOVED_BN[status]
+        + PURPOSE_UNITS_MOVED_BN[status]
         for status, usd_bn in STEP_ONE_BN.items()
     }
-    assert _step_one(without_crosswalk) == pytest.approx(expected, abs=TOLERANCE_BN)
+    measured = _step_one(without_crosswalk)
+    print({"measured": measured, "expected": expected}, flush=True)
+    assert measured == pytest.approx(expected, abs=TOLERANCE_BN)
 
 
 def _build_release(out: Path, *, archive: Path, manifest: Path | None) -> BuildManifest:

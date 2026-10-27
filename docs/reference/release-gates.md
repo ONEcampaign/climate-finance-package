@@ -18,7 +18,7 @@ Without a blind sample, every provider fails with code `no_sample`. A build with
 
 ## `human_audit`
 
-Returns the share of the blind sample's draws, over every provider, whose standing decision is a person's. The sample holds no link that joins a unit to itself, so the share counts only links a person could find wrong. With no sample the row fails with code `no_sample`, and with an empty one with `empty_sample`. The threshold is 0.10, which the share must reach, so people decide at least one draw in ten and agents may decide the rest. `--waive-precision` also waives this gate. `release.upload_release` and `release.add_to_index` publish a pack only when its `release.json` records a row for every gate and every recorded row passed or was waived. Only precision and human-audit rows can be waived, and only with a recorded `precision_waiver`. Otherwise it raises `GateFailedError`.
+Returns the share of the blind sample's draws, over every provider, whose standing decision is a person's. The sample holds no link that joins a unit to itself, so the share counts only links a person could find wrong. With no sample the row fails with code `no_sample`, and with an empty one with `empty_sample`. The threshold is 0.10, which the share must reach, so people decide at least one draw in ten and agents may decide the rest. `--waive-precision` also waives this gate. `cf-build publish` publishes a pack only when its `release.json` records a row for every gate and every recorded row passed or was waived. Only precision and human-audit rows can be waived, and only with a recorded `precision_waiver`. Otherwise it raises `GateFailedError`.
 
 ## `conservation`
 
@@ -40,7 +40,7 @@ Returns the largest relative gap, by provider and year, between the release's cl
 
 ## `drift`
 
-Returns the largest relative move of a provider-year's climate commitments or disbursed climate value from the previous release, unless a cause recorded in `gates.yaml` names the release, the provider, and the year. The threshold is 0.05. A provider-year that disappears counts as a move of 1, and so does one that only this release holds in a year the previous release covered. A provider-year after the previous release's last year is named in the detail and skips the gate. Without a previous release, or with one whose `quality` table is empty, the gate fails unless `--first-release` is passed.
+Returns the largest relative move of a provider-year's climate commitments or disbursed climate value from the previous release, unless a `[[drift_causes]]` entry in `build.toml` names the release, the provider, and the year. The threshold is 0.05. A provider-year that disappears counts as a move of 1, and so does one that only this release holds in a year the previous release covered. A provider-year after the previous release's last year is named in the detail and skips the gate. Without a previous release, or with one whose `quality` table is empty, the gate fails unless `--first-release` is passed. `release.json` records the previous release's name as `previous_release` and the sha256 of the pack it came from as `previous_pack_sha256`. `cf-build publish` refuses a release compared with any release but the latest published one, with a copy from another pack, or with none once a release is published, so `--first-release` serves only the first release.
 
 ## `withheld_rows`
 

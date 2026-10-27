@@ -16,7 +16,7 @@ A donor scores each project 0, 1 (significant), or 2 (principal) for adaptation 
 
 Where a provider publishes its climate share of face value, that share caps each marker weight under every method. IFAD publishes its significant rows at 40%, so no method counts them above that. Untraced disbursement reaches no commitment, so no published share caps it: an IFAD record marked significant counts its untraced part at the method's own significant coefficient.
 
-`cf.methods.RANGE` runs the three together. For each row, `low` becomes the lowest of their `low` bounds, which count only disbursements on certain links, and `high` becomes the highest value any of them gives.
+`cf.methods.RANGE` runs the three together. Each method's row keeps its own `low` and `high`, and `range_low` and `range_high` beside them hold the lowest `low` and the highest `high` of the three, the same on each method's row of a key.
 
 `cf.methods.OXFAM_LOW` and `cf.methods.OXFAM_HIGH` follow Oxfam's Climate-Specific Net Assistance, and `cf.methods.OXFAM` runs the two together. [Oxfam's method](#oxfams-method) describes them.
 
@@ -49,6 +49,8 @@ The flags point a reviewer at records to check. They change no total. No stage o
 
 `view="provider"` counts the same bilateral flows and adds each provider's core contributions times the receiving agency's climate share. Each contribution counts once, in the provider's total. The agency's own outflows stay out of an all-provider total.
 
+The two views answer different questions. The recipient view answers how much climate finance reached recipients, and the provider view how much a provider gave, its core contributions included. For a provider's total, such as "Germany's climate finance in 2022", pass `view="provider"`. The default recipient view leaves out what Germany gave through multilateral agencies, and counts an agency such as IDA as a provider of its own outflows.
+
 Under every method but OECD, the share is the agency's own climate commitments over its total CRS commitments, summed over the year and the year before, weighed with the method's own coefficients. The release holds each agency's commitments by channel, year, and marker level in `agency_spending`, so `ONE.replace(significant=1.0)` weighs an agency's significant commitments at 100%, as it weighs a bilateral row's. Agencies have no confirmed coefficient of their own, so PROVIDER weighs them at 0.4. Where an agency's two-year span holds under USD 100,000 of CRS commitments, the share holds at its last measured value. Channels with no CRS reporter, and years before an agency's CRDF rows begin, take the OECD's imputed share. Each attributed row carries its `share_source`: `computed`, `held`, or `oecd`. Under OECD, the share is always the OECD's.
 
 Contributions to a channel with no share in a year attribute nothing. The Global Fund, Gavi, UNDP, and UNEP carry no share in any year, and the build's log lists every channel and year with contributions and no share, with the amount.
@@ -59,9 +61,13 @@ Core contributions count on leaf channels, and the aggregate channels the OECD p
 
 A share with no split by objective, as the OECD gives before 2021, sits in the `unsplit` column, so `value` equals the sum of its parts.
 
+Before 2010 the CRDF holds no adaptation marker or climate components, and the CRS no adaptation marker, and some CRS records after 2010 carry none. Rows without an adaptation marker count adaptation and `cross_cutting` at 0 and their climate value as mitigation, and `no_adaptation_marker` holds that value. The rows are commitments before 2010, disbursements and repayments of those commitments in any year, untraced disbursements whose CRS record carries no adaptation marker, and their repayments, and core contributions whose agency share spans a year before 2010. `value` still equals the sum of its parts, and `no_adaptation_marker` says how much of it has no adaptation split. `result.explain()` names the rows of a result.
+
 ## EU Institutions
 
 EU Institutions is a provider and also a channel for its members' money. `Method(eu="channel")`, the default for ONE and PROVIDER, attributes members' contributions to the EU budget, the European Development Fund, and the EIB to the members. In each year where an EU agency's channel attributes a member's contribution, the provider view scales that agency's own rows by the share of the channel's contributions from providers outside the query, so the money counts once. A query for EU Institutions alone keeps its own rows whole, a query that also names some of its members keeps the part those members do not fund, and an all-provider query keeps none. `release.quality().eu_left_out` reports the rows an all-provider total leaves out.
+
+So EU Institutions' provider-view figure depends on which members a query names, and provider-view figures from separate queries do not add up. A loop over providers that includes EU Institutions counts the members' EU money twice, once in each member's attribution and again in the EU's own rows. Name the providers in one query to count it once. A provider-view query that names EU Institutions, or one of its agencies, under `eu="channel"` gives a `DoubleCountWarning` whenever members outside the query attribute EU money that the EU's rows keep.
 
 `eu="provider"`, the setting of OECD, counts the EU budget and the European Development Fund as a provider in its own right and the EIB as a channel. The EIB's own rows leave the provider view, and members' contributions to the EIB attribute at the method's share. Under either setting an all-provider total leaves the EIB's own lending out of the provider view, USD 8.0bn of disbursements and USD 27.4bn of commitments in 2015 to 2024.
 

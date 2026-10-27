@@ -53,10 +53,13 @@ any other. Under `flow="grant_equivalent"` a disbursement or untraced row whose
 record has no grant equivalent, a loan or a fill, counts 0 in `amount`, `value`,
 `low` and `high`, and `no_grant_equivalent` holds its value at face; it is 0 on
 every other row and under every other flow.
-Where the CRDF does not measure adaptation (commitments before 2010, and agency
-shares whose span reaches one), adaptation and cross_cutting are null and `value`
-is the mitigation value. A table row's adaptation and cross_cutting are null when
-any of its rows with an amount has them null.
+Where the row's adaptation marker is missing (commitments before 2010, the
+disbursements and repayments of those commitments, untraced records and their
+repayments whose CRS record carries no adaptation marker, as none does before 2010,
+and agency shares whose span reaches one), adaptation and cross_cutting count 0,
+`value` is the mitigation value, and `no_adaptation_marker` holds that value. It is
+0 on every other row. So the objectives add up to `value` on every row, and
+`no_adaptation_marker` says how much of it has no adaptation split.
 
 A disbursement or untraced row whose record Jev labelled shows `jev_level`, Jev's
 adaptation level (0, 1 or 2), where the adaptation marker it weighs by is 1 or 2:
@@ -72,16 +75,20 @@ on Bi_Multi alone and provider attribution comes only from core contributions.
 from __future__ import annotations
 
 import tomllib
+import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from importlib.metadata import version
 from importlib.resources import files
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import polars as pl
 
-from climate_finance.catalogue import Agency, agency_name, with_names
+from climate_finance.catalogue import Agency, agency_name, name_of, with_names
 from climate_finance.convert import convert, provenance, target_factors
 from climate_finance.errors import (
+    CoverageWarning,
+    DoubleCountWarning,
     MissingLabelsError,
     ReleaseIntegrityError,
     SchemaError,
@@ -104,10 +111,11 @@ from climate_finance.result import (
     Quality,
     Reconciliation,
     Result,
+    _listing,
     named_keys,
+    year_runs,
 )
 from climate_finance.schema import (
-    ADAPTATION_FIRST_YEAR,
     BILATERAL,
     COMMITMENT_KEY,
     CORE_CONTRIBUTION,
@@ -153,6 +161,8 @@ EU_AGENCY_CHANNELS = _eu_agency_channels()
 EU_CHANNELS = tuple(sorted(set(EU_AGENCY_CHANNELS.values())))
 EIB_CHANNEL = EU_AGENCY_CHANNELS[EIB_AGENCY]
 EU_BUDGET_AND_EDF = tuple(code for code in EU_CHANNELS if code != EIB_CHANNEL)
+# Warnings point at the caller's line, outside the package.
+_PACKAGE_DIR = str(Path(__file__).parent)
 # The objective label a record shows when several sources label it: the bank's own
 # climate components first, then Jev, then the donor's markers.
 LABEL_PRECEDENCE = {"crdf": 0, "jev": 1, "marker": 2}
@@ -228,10 +238,17 @@ def spending(release: Release, *, spec: Spec) -> Result:
     Raises:
         MissingLabelsError: when a method reads Jev's labels and the release's
             `objectives` hold none, as a release built with `jev_labels` off.
+
+    Warns:
+        CoverageWarning: for named providers with no rows the query counts
+            (`_warn_absent_providers`).
+        DoubleCountWarning: for a provider view whose EU Institutions rows leave
+            out the EU money of the members the query names (`_warn_eu_netted`).
     """
     methods = spec.methods
     if any(method.relevance == "jev" for method in methods):
         _require_jev_labels(release)
+    _warn_absent_providers(release, spec=spec)
     factors = target_factors(
         release.table("conversion_factors"),
         release=release.manifest.release,
@@ -292,6 +309,7 @@ def spending(release: Release, *, spec: Spec) -> Result:
         weighted.append(
             _weigh(_coefficients(release, frame, method=method), method=method)
         )
+    _warn_eu_netted(spec, eu_kept=eu_kept)
 
     rows = convert(
         pl.concat(weighted),
@@ -333,6 +351,157 @@ def spending(release: Release, *, spec: Spec) -> Result:
                 table_sha256=release.manifest.tables["conversion_factors"].sha256,
             ),
         ),
+    )
+
+
+def _warn_absent_providers(release: Release, *, spec: Spec) -> None:
+    """Warn once, naming each provider or agency in `spec.providers` that has no
+    rows of the spec's flow and years in its view, and why.
+
+    A provider has rows in the flow's tables: commitments, or disbursements, with
+    `spec.untraced` untraced rows, and for a net flow the `reflows` parts the flow
+    subtracts (`_COUNTED_BASES`, `untraced` only with `spec.untraced`). It has none
+    when the release holds none of its rows in those years, or holds them only under
+    Bi_Multi codes the view leaves out, such as an agency's own outflows (code 4) in
+    the provider view, or a private donor's (code 6) in either view. The EIB's own
+    rows leave the provider view under methods that count EU Institutions as a
+    provider. In the provider view a provider's core contributions count only where
+    they survive the share join of `_attributed_rows` under one of the spec's
+    methods, so contributions to channels with no climate share in those years give
+    no rows and say so. Recipients and `oda_only` narrow a query without a warning,
+    since a provider may give nothing to a recipient.
+    """
+    if spec.providers is None:
+        return
+    table = "commitments" if spec.flow == "commitments" else "disbursements"
+    columns = ("provider_code", "agency_code", "bi_multi", "year")
+    rows = [
+        (
+            _counted_commitments(release)
+            if table == "commitments"
+            else release.table(table)
+        ).select(columns)
+    ]
+    if table == "disbursements" and spec.untraced:
+        rows.append(release.table("untraced").select(columns))
+    if spec.flow in NET_FLOWS:
+        bases = _COUNTED_BASES if spec.untraced else ("commitment",)
+        rows.append(
+            release.table("reflows")
+            .filter(pl.col("basis").is_in(bases))
+            .select(columns)
+        )
+    contributors: set[int] = set()
+    if spec.view == "provider":
+        rows.extend(
+            _attributed_rows(release, flow=_gross(spec.flow), method=method).select(
+                columns
+            )
+            for method in spec.methods
+        )
+        # A contribution carries no agency, so only a provider target has any.
+        provider_codes = tuple(t for t in spec.providers if isinstance(t, int))
+        contributors = set(
+            release.table("core_contributions")
+            .filter(
+                pl.col("flow") == _gross(spec.flow),
+                *_conditions(
+                    providers=provider_codes, recipients=None, years=spec.years
+                ),
+            )
+            .select("provider_code")
+            .unique()
+            .collect()["provider_code"]
+        )
+    held = (
+        pl.concat(rows, how="vertical_relaxed")
+        .filter(
+            *_conditions(providers=spec.providers, recipients=None, years=spec.years)
+        )
+        .select("provider_code", "agency_code", "bi_multi")
+        .unique()
+        .collect()
+    )
+    counted = _VIEW_CODES[spec.view]
+    other = "recipient" if spec.view == "provider" else "provider"
+    eib_left = spec.view == "provider" and all(
+        method.eu == "provider" for method in spec.methods
+    )
+    absent = []
+    for target in spec.providers:
+        name = name_of(target, kind="providers")
+        codes = set(held.filter(provider_rows((target,)))["bi_multi"])
+        if not codes & counted and target in contributors:
+            absent.append(
+                f"{name}, whose core contributions go to channels with no climate "
+                "share in those years"
+            )
+        elif not codes:
+            years = f" in {year_runs(spec.years)}" if spec.years else ""
+            held_text = (
+                "disbursements or repayments" if spec.flow in NET_FLOWS else table
+            )
+            absent.append(f"{name}, which has no {held_text} in the release{years}")
+        elif not codes & counted:
+            held_codes = _listing(sorted(codes))
+            where = (
+                f"view={other!r}"
+                if codes & _VIEW_CODES[other]
+                else "neither view, which count official flows only"
+            )
+            absent.append(
+                f"{name}, whose rows (Bi_Multi {held_codes}) count in {where}"
+            )
+        elif eib_left and target == Agency(provider=EU_INSTITUTIONS, agency=EIB_AGENCY):
+            absent.append(
+                f"{name}, whose own rows leave the provider view under methods that "
+                "count EU Institutions as a provider, such as OECD, as the EIB is a "
+                "channel there"
+            )
+    if absent:
+        warnings.warn(
+            f"no rows count for {'; '.join(absent)}",
+            CoverageWarning,
+            skip_file_prefixes=(_PACKAGE_DIR,),
+        )
+
+
+# The Bi_Multi codes each view counts, core contributions as attributed rows.
+_VIEW_CODES = {
+    "recipient": set(RECIPIENT_VIEW),
+    "provider": {*BILATERAL, CORE_CONTRIBUTION},
+}
+
+
+def _warn_eu_netted(spec: Spec, *, eu_kept: Mapping[str, pl.LazyFrame]) -> None:
+    """Warn when a provider view names EU Institutions or an EU agency, and some
+    member outside the query attributes EU money that its own rows keep.
+
+    Under a method that counts EU Institutions as a channel, their own rows count
+    only the EU money that no member in the query attributes, so the figure
+    depends on which members a query names, and results of separate queries count
+    EU money twice when added.
+    """
+    if spec.view != "provider" or spec.providers is None:
+        return
+    named = any(
+        (target.provider if isinstance(target, Agency) else target) == EU_INSTITUTIONS
+        for target in spec.providers
+    )
+    channel = [eu_kept[label(m)] for m in spec.methods if m.eu == "channel"]
+    if not named or not channel:
+        return
+    kept = pl.concat(channel).filter(pl.col("eu_kept") > 0).head(1)
+    if kept.collect().is_empty():
+        return
+    warnings.warn(
+        "EU Institutions' provider-view rows count only the EU money that no "
+        "member in this query attributes through its core contributions, so their "
+        "figure depends on which members a query names, and adding provider-view "
+        "results of separate queries counts EU money twice. Name the providers in "
+        "one query to count it once.",
+        DoubleCountWarning,
+        skip_file_prefixes=(_PACKAGE_DIR,),
     )
 
 
@@ -1166,7 +1335,7 @@ def _reflow_rows(
             reflows.filter(pl.col("basis") == "untraced").with_columns(
                 **inherited,
                 marker_source=pl.lit("record"),
-                adaptation_measured=pl.col("year") >= ADAPTATION_FIRST_YEAR,
+                adaptation_measured=pl.col("inherited_rio_adaptation").is_not_null(),
                 untraced_part=pl.lit(value=True),
             )
         )
@@ -1198,9 +1367,9 @@ def _untraced_rows(release: Release, *, view: View, flow: Flow) -> pl.LazyFrame:
     (`_grant_equivalent`), weighed by the record's own markers.
 
     No commitment publishes a share for them, so their shares stay null and cap no
-    marker weight. The CRS measures adaptation from `ADAPTATION_FIRST_YEAR`; before
-    it the release holds a null adaptation marker, as the CRDF does, and the row
-    counts mitigation alone.
+    marker weight. A record without an adaptation marker, as every record before
+    `schema.ADAPTATION_FIRST_YEAR` is, counts mitigation alone, and its adaptation
+    is not measured.
     """
     factor, missing = _grant_equivalent(flow)
     amount = pl.col("untraced_usd") * factor
@@ -1220,7 +1389,7 @@ def _untraced_rows(release: Release, *, view: View, flow: Flow) -> pl.LazyFrame:
             jev_level=_scoped_jev(pl.col("rio_adaptation")),
             marker_source=pl.lit("record"),
             share_unsplit=pl.lit(0.0),
-            adaptation_measured=pl.col("year") >= ADAPTATION_FIRST_YEAR,
+            adaptation_measured=pl.col("rio_adaptation").is_not_null(),
             untraced_part=pl.lit(value=True),
         )
     )
@@ -1649,19 +1818,30 @@ def _coefficients_by_year(release: Release, *, years: pl.LazyFrame) -> pl.LazyFr
 def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
     """Weight each row's amount by objective, unsplit and in total under `method`.
 
-    Adaptation and cross_cutting are null where adaptation is not measured."""
+    Where adaptation is not measured, adaptation and cross_cutting count 0 and
+    `no_adaptation_marker` holds the row's value."""
     amount, face = pl.col("amount"), pl.col("no_grant_equivalent_usd")
     fractions = weights(
         method, **_COEFFICIENT_INPUTS, published=pl.col("share_climate")
     )
     unsplit = pl.col("share_unsplit")
     climate = fractions["climate"] + unsplit
-    measured = pl.col("adaptation_measured").fill_null(True)
+    measured = pl.col("adaptation_measured").fill_null(value=True)
+
+    def where_measured(fraction: pl.Expr) -> pl.Expr:
+        # A literal 0.0, since amount * 0.0 is -0.0 for a repayment.
+        return (
+            pl.when(measured)
+            .then(amount * fraction)
+            .when(amount.is_not_null())
+            .then(0.0)
+        )
+
     return frame.with_columns(
         method=pl.lit(label(method)),
-        adaptation=pl.when(measured).then(amount * fractions["adaptation"]),
+        adaptation=where_measured(fractions["adaptation"]),
         mitigation=amount * fractions["mitigation"],
-        cross_cutting=pl.when(measured).then(amount * fractions["cross_cutting"]),
+        cross_cutting=where_measured(fractions["cross_cutting"]),
         unsplit=amount * unsplit,
         value=amount * climate,
         low=pl.col("amount_low") * climate,
@@ -1672,6 +1852,7 @@ def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
         no_grant_equivalent=pl.when(face.is_not_null())
         .then(face * climate)
         .otherwise(0.0),
+        no_adaptation_marker=pl.when(measured).then(0.0).otherwise(amount * climate),
     ).drop(*_WEIGHT_INPUTS, "method_coefficient")
 
 
@@ -1692,12 +1873,6 @@ def _sum(name: str) -> pl.Expr:
     """The sum of `name` in a fixed order, null when every value is missing."""
     column = pl.col(name)
     return pl.when(column.is_not_null().any()).then(ordered_sum(column))
-
-
-def _measured_sum(name: str) -> pl.Expr:
-    """`_sum(name)`, null when a row with an amount leaves `name` unmeasured."""
-    unmeasured = pl.col(name).is_null() & pl.col("amount").is_not_null()
-    return pl.when(~unmeasured.any()).then(_sum(name))
 
 
 def _agency_key(providers: tuple[Target, ...] | None) -> pl.Expr | None:
@@ -1723,34 +1898,22 @@ def _aggregate(
     rows: pl.LazyFrame, *, methods: Sequence[str], agency: pl.Expr | None = None
 ) -> pl.LazyFrame:
     """Sum rows by their row keys and method, each method's `low` and `high` its
-    own. Adaptation and cross_cutting are null where a row leaves them unmeasured.
-    With an `agency` key (`_agency_key`) the keys hold `agency_code`, and the table
+    own. With an `agency` key (`_agency_key`) the keys hold `agency_code`, and the table
     names the agency in `agency` beside its provider.
 
     Every method in `methods` holds a row for every key any method holds, with zero
     amounts where it counts nothing, so a method that has no row for a key still
     bounds it when `Result` spans the bounds across methods.
 
-    The columns start with the year, the names and the method and end with `value`,
-    `low`, `high`, `untraced` and `no_grant_equivalent`, so polars' truncated print
-    shows them.
+    The columns start with the year, the names and the method and end with the
+    amounts (`AMOUNTS`).
     """
     row_keys = ROW_KEYS if agency is None else AGENCY_ROW_KEYS
     keys = (*row_keys, "method")
     summed = (
         _keyed(rows, agency=agency)
         .group_by(keys)
-        .agg(
-            *(
-                (
-                    _measured_sum(name)
-                    if name in ("adaptation", "cross_cutting")
-                    else _sum(name)
-                ).alias(name)
-                for name in AMOUNTS
-            ),
-            _held=pl.len(),
-        )
+        .agg(*(_sum(name).alias(name) for name in AMOUNTS), _held=pl.len())
     )
     grid = (
         summed.select(row_keys)

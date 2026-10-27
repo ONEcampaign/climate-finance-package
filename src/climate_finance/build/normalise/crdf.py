@@ -5,6 +5,7 @@ from typing import Literal
 
 import polars as pl
 
+from climate_finance.build.errors import BuildError
 from climate_finance.build.normalise.ids import content_id
 from climate_finance.schema import (
     ADAPTATION_FIRST_YEAR,
@@ -69,7 +70,7 @@ _IDENTITY = (
 )
 
 
-class CRDFNormaliseError(ValueError):
+class CRDFNormaliseError(BuildError, ValueError):
     """A CRDF row that the normaliser cannot place."""
 
 

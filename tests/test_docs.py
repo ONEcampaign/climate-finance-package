@@ -22,8 +22,13 @@ from make_fixture import FIXTURE_DIR
 
 from climate_finance import release as release_module
 from climate_finance.methods import Method
-from climate_finance.release import IndexEntry, ReleaseIndex, release_dirname
-from climate_finance.schema import RELEASE_TABLES
+from climate_finance.release import (
+    PACK_SHA256,
+    IndexEntry,
+    ReleaseIndex,
+    release_dirname,
+)
+from climate_finance.schema import DATA_FORMAT, RELEASE_TABLES
 from climate_finance.spec import Spec
 
 ROOT = Path(__file__).parent.parent
@@ -57,13 +62,18 @@ def fixture_as_latest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """`cf.load()` with no arguments opens the fixture release from a cache directory,
     through the loader's own cache path."""
     cache = tmp_path / "cache"
-    shutil.copytree(FIXTURE_DIR, cache / release_dirname("fixture"))
+    cached = shutil.copytree(FIXTURE_DIR, cache / release_dirname("fixture"))
+    (cached / PACK_SHA256).write_text("0")
     index = ReleaseIndex(
         latest="fixture",
-        releases={"fixture": IndexEntry(url="https://example.org/pack", sha256="0")},
+        releases={
+            "fixture": IndexEntry(
+                url="https://example.org/pack", sha256="0", data_format=DATA_FORMAT
+            )
+        },
     )
     monkeypatch.setattr(release_module, "_shipped_index", lambda: index)
-    monkeypatch.setenv("CLIMATE_FINANCE_CACHE", str(cache))
+    monkeypatch.setenv("CLIMATE_FINANCE_CACHE_DIR", str(cache))
     work = tmp_path / "work"
     work.mkdir()
     monkeypatch.chdir(work)

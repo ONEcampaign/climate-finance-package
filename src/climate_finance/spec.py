@@ -7,7 +7,6 @@ from typing import Annotated, Any, ClassVar, Literal, Self, TypedDict, Unpack
 
 import polars as pl
 from pydantic import (
-    BaseModel,
     BeforeValidator,
     Discriminator,
     SerializerFunctionWrapHandler,
@@ -25,7 +24,7 @@ from climate_finance.catalogue import (
     each_value,
     name_of,
     resolve,
-    target_of,
+    targets_of,
 )
 from climate_finance.errors import InvalidInputError, UnknownNameError
 from climate_finance.frozen import Frozen
@@ -102,10 +101,10 @@ def read_provider_codes(
         return None
     codes: set[int] = set()
     for value in each_value(providers, kind="providers"):
-        target = target_of(value, kind="providers")
-        if isinstance(target, Agency):
-            raise _agency_error(value, target, reader=reader, keyword=keyword)
-        codes.add(target)
+        for target in targets_of(value, kind="providers"):
+            if isinstance(target, Agency):
+                raise _agency_error(value, target, reader=reader, keyword=keyword)
+            codes.add(target)
     return tuple(sorted(codes))
 
 
@@ -356,9 +355,9 @@ class Spec(Frozen):
     def __init__(self, **inputs: Unpack[SpecInputs]) -> None:
         # `SpecInputs` types the keywords. Type checkers derive a pydantic model's
         # constructor from the stored field types, which refuse `providers="Japan"`.
-        # `BaseModel` is named because they read `super()` as `Frozen`'s fieldless
-        # constructor.
-        BaseModel.__init__(self, **inputs)
+        super().__init__(**inputs)
+
+    __init__.__pydantic_base_init__ = True  # ty: ignore[unresolved-attribute]  # as `Frozen.__init__`
 
     @model_serializer(mode="wrap")
     def _drop_later_defaults(
