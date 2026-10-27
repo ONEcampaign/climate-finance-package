@@ -1,4 +1,5 @@
-# cf-build configuration. Relative paths resolve against this file.
+# cf-build configuration. Relative paths resolve against this file. The switches are
+# those of a published release, which `cf-build publish` checks.
 
 offline = false
 # Key-repair rules: new crs id under one project number, project-number variants,
@@ -11,9 +12,11 @@ recoveries = true
 gap_fill = false
 # Ledger check, review queue and pending status (the review stage). Off passes links
 # and commitments through unchanged.
-review = false
+review = true
 # Jev objective labels on linked records, and the level map behind relevance="jev".
 jev_labels = false
+# Jev flags on climate-marked CRS records from jev_flags_first_year.
+jev_flags = true
 # Jev on the classifier's band ([jev] band), Jev labels on each Splink model's
 # calibration sample, and Splink links. Off leaves the link stage's tables unchanged.
 jev_links = true
@@ -44,10 +47,9 @@ adaptation_labels = { path = "data/raw/classifiers/toetzke/wk.csv", sha256 = "6e
 
 # Bank ledgers for the review stage's ledger check. Without this section, fetch and
 # normalise skip them. `archive` is a local copy laid out as raw/ledgers/.
-# [sources.ledgers]
-# years = [2021, 2024]
-# publishers = ["ibrd", "ida", "asdb", "afdb", "iadb", "isdb", "ebrd", "bcie", "gcf", "gef"]
-# archive = "data/raw/ledgers"
+[sources.ledgers]
+years = [2021, 2024]
+publishers = ["ibrd", "ida", "asdb", "afdb", "iadb", "isdb", "ebrd", "bcie", "gcf", "gef"]
 
 # CRDF file name -> ETag of the pinned copy.
 [sources.crdf_etags]
@@ -63,3 +65,11 @@ cache_dir = "data/jev-cache"
 model = "intfloat/multilingual-e5-small"
 revision = "614241f622f53c4eeff9890bdc4f31cfecc418b3"
 cache_dir = "data/embedding-cache"
+
+# Why a provider-year total moved more than the drift gate allows, one entry per
+# release, provider and year:
+# [[drift_causes]]
+# release = "2026b"
+# provider_code = 4
+# year = 2023
+# cause = "France revised its 2023 CRS reporting"

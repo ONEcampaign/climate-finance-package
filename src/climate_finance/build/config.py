@@ -8,6 +8,7 @@ from pydantic import (
     AfterValidator,
     BaseModel,
     ConfigDict,
+    JsonValue,
     StringConstraints,
     ValidationError,
     ValidationInfo,
@@ -138,6 +139,16 @@ class Embedding(_Section):
     cache_dir: ConfigPath
 
 
+class DriftCause(_Section):
+    """Why a provider-year total moved in `release`, which lets the drift gate pass
+    that move."""
+
+    release: str
+    provider_code: int
+    year: int
+    cause: str
+
+
 class BuildConfig(_Section):
     """Every build setting.
 
@@ -151,7 +162,10 @@ class BuildConfig(_Section):
     `embed` adds embedding neighbours to the link stage's blocking, which needs the
     `embed` extra unless `embedding.cache_dir` holds every vector. `jev_flags` has
     the flag stage ask Jev four questions about each climate-marked CRS record from
-    `jev_flags_first_year` to `years.crs_last_complete`.
+    `jev_flags_first_year` to `years.crs_last_complete`. `drift_causes` explain
+    provider-year moves the drift gate would otherwise fail. They live here, beside
+    the release, since a change to the package's own files makes every built stage
+    stale.
     """
 
     offline: bool = False
@@ -169,6 +183,7 @@ class BuildConfig(_Section):
     sources: Sources
     jev: Jev
     embedding: Embedding
+    drift_causes: tuple[DriftCause, ...] = ()
 
     @model_validator(mode="after")
     def _jev_labels_need_human_labels(self) -> Self:
@@ -195,6 +210,26 @@ RELEASE_SETTINGS = (
     "jev_flags_first_year",
     *(f"years.{name}" for name in Years.model_fields),
 )
+
+
+# The settings of a published release, as `release.json` records them. With
+# `key_repair` or `recoveries` off, an EIB route skipped, or CRDF years narrowed, a
+# build measures what one route or year adds. With `review`, `jev_links` or
+# `jev_flags` off it leaves out a check or table a release carries. `gap_fill`,
+# `jev_labels` and `embed` stay off in a release until their methods are documented
+# and gated. `publishable` refuses a pack built any other way.
+PUBLISHED_SETTINGS: dict[str, JsonValue] = {
+    "key_repair": True,
+    "recoveries": True,
+    "review": True,
+    "jev_links": True,
+    "jev_flags": True,
+    "gap_fill": False,
+    "jev_labels": False,
+    "embed": False,
+    "skip_eib_routes": [],
+    "years.crdf": "all",
+}
 
 
 def load_config(path: Path) -> BuildConfig:

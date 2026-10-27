@@ -16,9 +16,9 @@ import climate_finance as cf
 from climate_finance import schema
 from climate_finance.build import evaluate, load_config, run_stages, write_table
 from climate_finance.build.cli import app
+from climate_finance.build.config import DriftCause
 from climate_finance.build.errors import (
     GateFailedError,
-    ReviewDecisionsError,
     SampleDesignError,
 )
 from climate_finance.build.evaluate import (
@@ -32,7 +32,6 @@ from climate_finance.build.fetch import CRS_FILE
 from climate_finance.build.gate import (
     GATES,
     Drift,
-    DriftCause,
     gate_results_json,
     listing_gate,
     load_gates,
@@ -48,7 +47,7 @@ from climate_finance.build.link.packet import (
 from climate_finance.build.stages import REGISTRY, raw_dir, table_path
 from climate_finance.schema import STAGE_TABLES, ReleaseManifest
 
-BUILD_TOML = Path(__file__).parents[1] / "build.toml"
+BUILD_TOML = Path(__file__).parent / "fixtures" / "build.toml"
 NOR = 8
 # Norway commits 100 in 2019 under crs id X1 and disburses 60 in 2020 and 45 in
 # 2021, so the commitment fills and 5 of 2021 is excess. CRDF row R1 publishes the
@@ -331,7 +330,9 @@ def test_precision_reads_the_blind_sample_by_allocated_value(
     design = _label(release_dir, rejected=rejected, label_source=label_source)
 
     row = (
-        _report(release_dir, sample=design).filter(gate="precision").row(0, named=True)
+        _report(release_dir, sample=design.parent)
+        .filter(gate="precision")
+        .row(0, named=True)
     )
 
     # d20 carried 60 of the 100 allocated; a complete census is exact.
@@ -391,7 +392,9 @@ def test_precision_refuses_a_sample_drawn_from_another_build(
         )
 
     row = (
-        _report(release_dir, sample=design).filter(gate="precision").row(0, named=True)
+        _report(release_dir, sample=design.parent)
+        .filter(gate="precision")
+        .row(0, named=True)
     )
 
     assert row["passed"] is False
@@ -538,7 +541,7 @@ def test_the_human_audit_reads_who_decided_the_draws(
     design = _label(release_dir, rejected=set(), label_source=label_source)
 
     row = (
-        _report(release_dir, sample=design)
+        _report(release_dir, sample=design.parent)
         .filter(gate="human_audit")
         .row(0, named=True)
     )
@@ -566,7 +569,7 @@ def test_a_persons_blind_decision_stands_over_an_agents_imported_later(
         ),
     )
 
-    results = _report(release_dir, sample=design)
+    results = _report(release_dir, sample=design.parent)
 
     assert results.filter(gate="precision")["value"].to_list() == [1.0]
     assert results.filter(gate="human_audit")["value"].to_list() == [1.0]
@@ -578,7 +581,7 @@ def test_a_waiver_lets_a_failed_precision_gate_through(release_dir: Path) -> Non
     results = run_gates(
         release_dir,
         decisions=release_dir.parent / "decisions.parquet",
-        sample=design,
+        sample=design.parent,
         first_release=True,
         waive_precision=True,
     )
@@ -952,15 +955,14 @@ def _previous(release_dir: Path, *, factor: float) -> Path:
 def test_drift_needs_a_recorded_cause_for_a_move_over_five_percent(
     release_dir: Path, factor: float, causes: tuple[DriftCause, ...], passed: bool
 ) -> None:
-    gates = GATES_CONFIG.model_copy(
-        update={"drift": Drift(max_move=0.05, causes=causes)}
-    )
+    gates = GATES_CONFIG.model_copy(update={"drift": Drift(max_move=0.05)})
 
     row = (
         _report(
             release_dir,
             previous=_previous(release_dir, factor=factor),
             first_release=False,
+            drift_causes=causes,
             gates=gates,
         )
         .filter(gate="drift")
@@ -1053,7 +1055,7 @@ def test_quality_shows_each_providers_precision_interval(
     release_dir: Path, tmp_path: Path
 ) -> None:
     design = _label(release_dir, rejected={"d20"})
-    results = _report(release_dir, sample=design)
+    results = _report(release_dir, sample=design.parent)
     release = copy_release(tmp_path / "gated", source=release_dir / "assemble")
     manifest = ReleaseManifest.model_validate_json(
         (release / "release.json").read_text()
@@ -1093,7 +1095,7 @@ def test_the_sample_and_gate_commands_read_decisions_from_the_config(
         "--config",
         str(config),
         "--sample",
-        str(design_path(out)),
+        str(out),
     ]
     missing = runner.invoke(app, [*gate, "--first-release", "--report"])
     decisions.parent.mkdir()
@@ -1103,12 +1105,17 @@ def test_the_sample_and_gate_commands_read_decisions_from_the_config(
 
     assert drawn.exit_code == 0, drawn.output
     assert pl.read_parquet(design_path(out)).height == 2
-    assert isinstance(missing.exception, ReviewDecisionsError)
-    assert str(decisions) in str(missing.exception)
-    assert "cf-build import-labels" in str(missing.exception)
+    # A refusal prints as one line naming its class, without a traceback.
+    assert missing.exit_code == 1
+    assert missing.output.startswith("ReviewDecisionsError: ")
+    assert str(decisions) in missing.output
+    assert "cf-build import-labels" in missing.output
     assert reported.exit_code == 0, reported.output
     assert f"precision {NOR}: FAIL; continue after 0 labels (census)" in (
         reported.output
     )
-    assert isinstance(refused.exception, GateFailedError)
-    assert "first_release" in str(refused.exception)
+    # Without --report every row still prints before the command fails.
+    assert refused.exit_code == 1
+    assert refused.output.startswith(reported.output.split("\n")[0])
+    assert "drift: FAIL" in refused.output
+    assert "first_release" in refused.output

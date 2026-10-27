@@ -1,6 +1,6 @@
 # How to label the blind sample
 
-`cf-build label` opens a page in your browser where you decide your share of the blind sample, one pair at a time. Each answer is saved as you give it, in the form `cf-build import-labels` records. You need the `build` extra, a built release directory, and the sample directory that `cf-build sample` wrote.
+`cf-build label` opens a page in your browser where you decide your share of the blind sample, one pair at a time. Each answer is saved as you give it, in the form `cf-build import-labels` records. You need the `build` extra, a build directory, and the sample directory that `cf-build sample` wrote.
 
 ## Your share
 
@@ -45,7 +45,7 @@ On the 2026a-rc sample, 22,814 draws fall on 11,694 pairs, and 6,628 of those pa
 
 ## What a save writes
 
-Each save records that one answer in the review decisions that `sources.review_decisions` names, and leaves your other answers as they were. It then rewrites your labels CSV beside the pair's packet, `sample/<provider>/batch-<NN>.<reviewer>.labels.csv`. The CSV has the columns `pair,label,confidence,reason` and lists the pairs you have answered in that packet. A changed answer replaces your earlier one, so the decisions hold one row per person and pair. The CSV is also valid input for `cf-build import-labels --partial` on another decisions file.
+Each save records that one answer in the review decisions that `sources.review_decisions` names, and leaves your other answers as they were. It then rewrites your labels CSV beside the pair's packet, `sample/<provider>/batch-<NN>.<reviewer>.labels.csv`. The CSV has the columns `pair,label,confidence,reason` and lists the pairs you have answered in that packet. A changed answer replaces your earlier one, so the decisions hold one row per person and pair. The CSV is also valid input for `cf-build import-labels --partial` with a `--config` that names another decisions file.
 
 Run one `cf-build label` at a time against a decisions file, and do not run `cf-build import-labels` on it meanwhile: two writers can overwrite each other's updates.
 
@@ -54,7 +54,7 @@ Run one `cf-build label` at a time against a decisions file, and do not run `cf-
 Run the gate. The `human_audit` row counts the draws a person has decided.
 
 ```bash
-cf-build gate releases/2026a --config build.toml --sample sample/design.parquet --report
+cf-build gate releases/2026a --config build.toml --sample sample --report
 ```
 
 ## Next
