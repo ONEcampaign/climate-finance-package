@@ -5,7 +5,7 @@ In climate-finance 1.2.3, `ClimateData` downloaded OECD files, matched them, and
 ## Before you start
 
 - Python 3.12 or later.
-- `pip install climate-finance`. `result.table` is a polars DataFrame, and its `to_pandas()` needs pandas, which `pip install "climate-finance[compat]"` adds. `ClimateData.get_data()` needs it too.
+- `pip install climate-finance`. `result.table` is a polars DataFrame, and its `to_pandas()` needs pandas, which `pip install "climate-finance[pandas]"` adds. `ClimateData.get_data()` needs it too.
 - Remove `set_climate_finance_data_path()` from your scripts. A release downloads to `~/.cache/climate-finance`. Set `CLIMATE_FINANCE_CACHE` or pass `cache_dir=` to `load()` to move it. Open a release folder on disk with `load(path=...)`.
 
 ## What still runs

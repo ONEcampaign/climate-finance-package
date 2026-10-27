@@ -74,6 +74,9 @@ def fixture_as_latest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.mark.usefixtures("fixture_as_latest")
 @pytest.mark.filterwarnings("ignore::DeprecationWarning")
 def test_python_blocks_run_and_print_what_the_page_shows(page: Path) -> None:
+    # The pages show `to_pandas()` and a DuckDB query, which the extras provide.
+    pytest.importorskip("pandas")
+    pytest.importorskip("duckdb")
     found = blocks(page)
     namespace: dict[str, object] = {"__name__": "__docs__"}
     for index, block in enumerate(found):
@@ -107,6 +110,7 @@ COMMAND_PAGES = [page for page in PAGES if list(commands(page))]
     "page", COMMAND_PAGES, ids=lambda page: str(page.relative_to(ROOT))
 )
 def test_cf_build_examples_use_real_commands_and_options(page: Path) -> None:
+    pytest.importorskip("typer")
     import typer.main
 
     from climate_finance.build.cli import app

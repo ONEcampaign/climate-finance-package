@@ -15,7 +15,7 @@ A release is a set of versioned tables built from the OECD's Creditor Reporting 
 pip install climate-finance
 ```
 
-Requires Python 3.12 or later. To build a release, install the `build` extra with `pip install "climate-finance[build]"`.
+Requires Python 3.12 or later. To build a release, install the `build` extra with `pip install "climate-finance[build]"`. For `.to_pandas()` and the 1.x compatibility layer, install `pip install "climate-finance[pandas]"`.
 
 ## Quickstart
 

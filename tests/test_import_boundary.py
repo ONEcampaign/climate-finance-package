@@ -76,5 +76,5 @@ def test_importing_the_build_without_its_extra_names_the_extra() -> None:
     result = _run("import climate_finance.build")
 
     assert result.returncode != 0
-    assert "ImportError" in result.stderr
+    assert "ModuleNotFoundError" in result.stderr
     assert "[build]" in result.stderr

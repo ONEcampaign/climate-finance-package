@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPT = """\
 import climate_finance as cf
 
@@ -46,6 +48,7 @@ release.spending(spec)  # flagged
 def test_documented_calls_type_check_and_bad_values_are_flagged(
     tmp_path: Path,
 ) -> None:
+    pytest.importorskip("ty")
     script = tmp_path / "user.py"
     script.write_text(SCRIPT)
 

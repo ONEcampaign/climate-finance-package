@@ -42,7 +42,7 @@ build = [
     "threadpoolctl>=3.1.0",
     "typer>=0.16.0",
 ]
-compat = [
+pandas = [
     "pandas>=2.2.2",
 ]
 # The embedding model behind the blocking's embedding neighbours (`embed = true`).

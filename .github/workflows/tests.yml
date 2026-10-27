@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # The release workflow runs these jobs before it publishes.
+  workflow_call:
 
 jobs:
   lint:
@@ -24,12 +26,20 @@ jobs:
       - run: uv run --no-sync cf-build names --check
 
   test:
-    name: test (${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }}, ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.12", "3.13", "3.14"]
+        # The cache lives under the home directory and a release unpacks and renames
+        # directories, so the other platforms run the floor version.
+        include:
+          - os: macos-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.0
@@ -38,16 +48,66 @@ jobs:
       - run: uv run --no-sync pytest -m "not integration and not slow"
 
   lowest-direct:
-    name: lowest supported dependencies
+    name: lowest supported base dependencies
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.0
-      # --isolated resolves every direct dependency to its floor in pyproject.toml
-      # without rewriting uv.lock.
-      - run: >
-          uv run --isolated --resolution lowest-direct --python 3.12 --all-extras --no-extra embed
-          pytest -m "not integration and not slow"
+      # Resolves the base dependencies alone. A project-wide resolution would also
+      # weigh the build extra, whose dependencies lift a shared one such as pyarrow
+      # above the floor the base install declares.
+      - run: uv pip compile pyproject.toml --resolution lowest-direct --python-version 3.12 -o /tmp/lowest.txt
+      - run: uv build --wheel
+      - run: uv venv --python 3.12 /tmp/lowest
+      - run: uv pip install --python /tmp/lowest/bin/python -r /tmp/lowest.txt pytest
+      - run: uv pip install --python /tmp/lowest/bin/python --no-deps dist/*.whl
+      - run: uv pip list --python /tmp/lowest/bin/python
+      - name: Check the environment sits on the floors
+        run: |
+          /tmp/lowest/bin/python - <<'PY'
+          import re
+          import tomllib
+          from importlib.metadata import version
+
+          with open("pyproject.toml", "rb") as file:
+              dependencies = tomllib.load(file)["project"]["dependencies"]
+          assert dependencies, "pyproject.toml lists no base dependencies"
+          for dependency in dependencies:
+              name, floor = re.match(r"([\w.-]+)>=([^,]+)", dependency).groups()
+              installed = version(name)
+              assert installed == floor, f"{name} resolved to {installed}, not {floor}"
+          PY
+      # The whole fast suite. With CF_BASE_INSTALL=1, tests/conftest.py skips a module
+      # whose import fails for want of a build or pandas dependency and fails on any
+      # other import error, so a new base-only module joins this job unasked. A call
+      # that needs a newer pyarrow than the floor fails here.
+      # Run from tests/ so the checkout's src/ cannot shadow the installed wheel.
+      - name: Run the tests that need no extra
+        working-directory: tests
+        env:
+          CF_BASE_INSTALL: "1"
+        run: /tmp/lowest/bin/python -m pytest -p no:cacheprovider -m "not integration and not slow"
+
+  api-diff:
+    name: public API diff
+    runs-on: ubuntu-latest
+    steps:
+      # griffe compares against a tag, so it needs the full history.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10.0.0
+      # The base is the newest final v2 tag other than the one being released, so a
+      # release tag is never compared with itself and a pre-release is never the base.
+      - name: Compare the public API with the latest released v2 tag
+        run: |
+          base=$(git tag --list 'v2.*' --sort=-v:refname | grep -E '^v2\.[0-9]+\.[0-9]+$' | grep -vx "${GITHUB_REF_NAME:-}" | head -n 1)
+          if [ -z "$base" ]; then
+            echo "Skipped: no earlier final v2 tag exists, so there is no 2.x API to compare against."
+            exit 0
+          fi
+          echo "Comparing the public API with $base."
+          uvx griffe@2.4.1 check climate_finance -s src -a "$base" -f github
 
   base-install:
     name: base install imports no build dependency
