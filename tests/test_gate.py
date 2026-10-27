@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 
 import climate_finance as cf
 from climate_finance import schema
-from climate_finance.build import load_config, run_stages, write_table
+from climate_finance.build import evaluate, load_config, run_stages, write_table
 from climate_finance.build.cli import app
 from climate_finance.build.errors import (
     GateFailedError,
@@ -357,12 +357,18 @@ def _units_of(release_dir: Path, record: str) -> pl.Series:
 
 
 @pytest.mark.parametrize(
-    "change", ["drop_pair", "change_method", "change_value", "drop_population"]
+    "change",
+    ["drop_pair", "change_method", "change_value", "drop_population", "old_frame"],
 )
 def test_precision_refuses_a_sample_drawn_from_another_build(
-    release_dir: Path, change: str
+    release_dir: Path, change: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    if change == "old_frame":
+        # A design drawn when the frame held self-linked pairs: its fingerprint
+        # started from no frame tag.
+        monkeypatch.setattr(evaluate, "_FRAME", b"")
     design = _label(release_dir, rejected=set())
+    monkeypatch.undo()
     d21 = _units_of(release_dir, "d21")
     trace = (pl.col("task") == "trace") & pl.col("left_id").is_in(d21.implode())
     if change == "change_value":
@@ -427,6 +433,55 @@ def test_precision_refuses_a_sample_after_the_population_grows(
     assert stale["passed"].to_list() == [False]
     assert stale["value"].to_list() == [None]
     assert stale["detail"].str.starts_with("stale sample").to_list() == [True]
+
+
+def _self_linked(provider: int, usd: float, *, like: pl.DataFrame) -> pl.DataFrame:
+    """An allocated pair of `provider` linking a unit to itself, carrying `usd`."""
+    return pl.DataFrame(
+        {
+            "provider_code": provider,
+            "task": "trace",
+            "left_id": f"own-{provider}",
+            "right_id": f"own-{provider}",
+            "link_method": "crs_id_purpose",
+            "allocated_usd": usd,
+            "stratum": "key",
+        },
+        schema=like.schema,
+    )
+
+
+def test_precision_counts_self_linked_value_right(release_dir: Path) -> None:
+    design = _label(release_dir, rejected={"d20"})
+    decisions = release_dir.parent / "decisions.parquet"
+    pairs = allocated_pairs(release_dir, decisions=decisions)
+    labels = read_sample_labels(design, decisions=decisions)
+    # Norway's sampled 100 is 0.4 right; a unit linked to itself adds 900, and
+    # provider 9 allocates only through one.
+    owned = pl.concat(
+        [
+            pairs,
+            _self_linked(NOR, 900.0, like=pairs),
+            _self_linked(9, 50.0, like=pairs),
+        ]
+    )
+
+    sampled = precision_gate(pairs, labels=labels, rule=GATES_CONFIG.precision)
+    rows = precision_gate(owned, labels=labels, rule=GATES_CONFIG.precision)
+
+    assert sampled["value"].to_list() == [pytest.approx(0.4)]
+    assert sampled["passed"].to_list() == [False]
+    nor, only_own = rows.rows(named=True)
+    assert (nor["subject"], only_own["subject"]) == (str(NOR), "9")
+    assert nor["value"] == nor["lower"] == pytest.approx(0.9 + 0.1 * 0.4)
+    assert (nor["passed"], nor["code"]) == (True, None)
+    assert "90.0% of value self-linked" in nor["detail"]
+    assert nor["strata"] == sampled["strata"].to_list()[0]
+    assert (only_own["value"], only_own["passed"], only_own["code"]) == (
+        1.0,
+        True,
+        None,
+    )
 
 
 def test_a_non_finite_estimate_fails(release_dir: Path) -> None:

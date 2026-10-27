@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -152,17 +153,48 @@ def packet_digest(packet: Path) -> str:
     return hashlib.sha256(packet.read_bytes()).hexdigest()
 
 
-def render_packet(
+@dataclass(frozen=True)
+class CrsRows:
+    """The CRS rows one unit sums: how many, and the first `MAX_ROWS` as display
+    strings (year, commitment date, commitment, disbursement, title)."""
+
+    total: int
+    shown: list[tuple[str, str, str, str, str]]
+
+
+@dataclass(frozen=True)
+class PairView:
+    """What a packet shows of one pair, as display strings.
+
+    Attributes:
+        pair: the pair's number in its packet.
+        fields: (label, A's text, B's text) for each row of the side-by-side table.
+        similar: the similar-commitments counts of A and B.
+        rows: the CRS rows of A and B.
+    """
+
+    pair: int
+    fields: list[tuple[str, str, str]]
+    similar: tuple[int, int]
+    rows: tuple[CrsRows, CrsRows]
+
+
+def pair_views(
     pairs: pl.DataFrame,
     *,
     units: pl.LazyFrame,
     crs: pl.LazyFrame,
-    title: str,
     show_ids: bool,
     names: pl.DataFrame | None = None,
-) -> str:
-    """The packet text for `pairs` (`pair`, `left_id`, `right_id`); see
-    `write_packet`."""
+) -> list[PairView]:
+    """The views of `pairs` (`pair`, `left_id`, `right_id`), in order, as a packet
+    shows them; see `write_packet`. A page that shows a pair takes its fields from
+    here, so it is as blind as the packet.
+
+    Raises:
+        LabelPacketError: when a pair names a unit `units` lacks, or a view meant
+            to hide ids still names one.
+    """
     view = _sides(pairs, units=units, crs=crs, names=names)
     missing = (
         pl.concat([pairs["left_id"], pairs["right_id"]])
@@ -178,6 +210,51 @@ def render_packet(
     by_unit = {row["unit_id"]: row for row in view.iter_rows(named=True)}
     rows = _unit_rows(view, crs=crs)
     siblings = _sibling_counts(pairs, view=view, units=units, crs=crs)
+    fields = _FIELDS if not show_ids else [*_ID_FIELDS, *_FIELDS]
+    views = []
+    for row in pairs.iter_rows(named=True):
+        a, b = dict(by_unit[row["left_id"]]), dict(by_unit[row["right_id"]])
+        hide = None if show_ids else _id_pattern([u[k] for u in (a, b) for k in _IDS])
+        if hide is not None:
+            for unit in (a, b):
+                unit.update(
+                    {
+                        k: hide.sub("[id]", unit[k])
+                        for k in _TEXTS
+                        if unit[k] is not None
+                    }
+                )
+        views.append(
+            PairView(
+                pair=row["pair"],
+                fields=[(label, show(a), show(b)) for label, show in fields],
+                similar=(
+                    siblings.get((row["pair"], "A"), 0),
+                    siblings.get((row["pair"], "B"), 0),
+                ),
+                rows=(
+                    _crs_rows(rows.get(a["unit_id"]), hide=hide),
+                    _crs_rows(rows.get(b["unit_id"]), hide=hide),
+                ),
+            )
+        )
+    if not show_ids:
+        _refuse_ids(_shown_text(views), view)
+    return views
+
+
+def render_packet(
+    pairs: pl.DataFrame,
+    *,
+    units: pl.LazyFrame,
+    crs: pl.LazyFrame,
+    title: str,
+    show_ids: bool,
+    names: pl.DataFrame | None = None,
+) -> str:
+    """The packet text for `pairs` (`pair`, `left_id`, `right_id`); see
+    `write_packet`."""
+    views = pair_views(pairs, units=units, crs=crs, show_ids=show_ids, names=names)
     lines = [
         f"# {title}",
         "",
@@ -193,53 +270,62 @@ def render_packet(
         "side's title: siblings, phases and yearly grants to tell apart from B.",
         "",
     ]
-    fields = _FIELDS if not show_ids else [*_ID_FIELDS, *_FIELDS]
-    for row in pairs.iter_rows(named=True):
-        a, b = dict(by_unit[row["left_id"]]), dict(by_unit[row["right_id"]])
-        hide = None if show_ids else _id_pattern([u[k] for u in (a, b) for k in _IDS])
-        if hide is not None:
-            for unit in (a, b):
-                unit.update(
-                    {
-                        k: hide.sub("[id]", unit[k])
-                        for k in _TEXTS
-                        if unit[k] is not None
-                    }
-                )
+    for view in views:
         lines += [
-            f"## Pair {row['pair']}",
+            f"## Pair {view.pair}",
             "",
             "| Field | A: later disbursement | B: earlier commitment |",
             "| --- | --- | --- |",
-            *(f"| {label} | {show(a)} | {show(b)} |" for label, show in fields),
-            "| Similar commitments | "
-            f"{siblings.get((row['pair'], 'A'), 0)} | "
-            f"{siblings.get((row['pair'], 'B'), 0)} |",
+            *(f"| {label} | {a} | {b} |" for label, a, b in view.fields),
+            f"| Similar commitments | {view.similar[0]} | {view.similar[1]} |",
             "",
         ]
-        for side, unit in (("A", a), ("B", b)):
-            frame = rows.get(unit["unit_id"], pl.DataFrame())
-            more = f", first {MAX_ROWS}" if frame.height > MAX_ROWS else ""
+        for side, crs_rows in zip("AB", view.rows, strict=True):
+            more = f", first {MAX_ROWS}" if crs_rows.total > MAX_ROWS else ""
             lines += [
-                f"{side}'s CRS rows ({frame.height}{more}):",
+                f"{side}'s CRS rows ({crs_rows.total}{more}):",
                 "",
                 "| Year | Commitment date | Commitment | Disbursement | Title |",
                 "| --- | --- | --- | --- | --- |",
+                *(f"| {' | '.join(row)} |" for row in crs_rows.shown),
+                "",
             ]
-            for year, date, commit, disburse, row_title in frame.head(
-                MAX_ROWS
-            ).iter_rows():
-                if hide is not None and row_title is not None:
-                    row_title = hide.sub("[id]", row_title)
-                lines.append(
-                    f"| {year} | {date or '-'} | {_usd(commit)} | {_usd(disburse)} "
-                    f"| {_text(row_title)} |"
-                )
-            lines.append("")
-    text = "\n".join(lines)
-    if not show_ids:
-        _refuse_ids(text, view)
-    return text
+    return "\n".join(lines)
+
+
+def _crs_rows(frame: pl.DataFrame | None, *, hide: re.Pattern[str] | None) -> CrsRows:
+    """The display strings of a unit's CRS rows, with ids replaced by `[id]` when
+    `hide` is set."""
+    frame = pl.DataFrame() if frame is None else frame
+    shown = []
+    for year, date, commit, disburse, row_title in frame.head(MAX_ROWS).iter_rows():
+        if hide is not None and row_title is not None:
+            row_title = hide.sub("[id]", row_title)
+        shown.append(
+            (
+                str(year),
+                str(date or "-"),
+                _usd(commit),
+                _usd(disburse),
+                _text(row_title),
+            )
+        )
+    return CrsRows(total=frame.height, shown=shown)
+
+
+def _shown_text(views: list[PairView]) -> str:
+    """Everything the views show, joined, for the id check."""
+    return "\n".join(
+        [
+            *(" ".join(field) for view in views for field in view.fields),
+            *(
+                " ".join(row)
+                for view in views
+                for crs_rows in view.rows
+                for row in crs_rows.shown
+            ),
+        ]
+    )
 
 
 def _sides(

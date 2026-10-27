@@ -12,6 +12,7 @@ climate-finance 2.0 returns international public climate finance from OECD and U
 - [How to check link quality](how-to/check-link-quality.md) covers link rates, status, certain share, and measured precision.
 - [How to compare gross and net climate finance](how-to/compare-gross-and-net-climate-finance.md) subtracts repayments from disbursements and checks how much of them the subtraction reaches.
 - [How to review links](how-to/review-links.md) shows release managers how a person or an agent decides the pairs a build queued.
+- [How to label the blind sample](how-to/label-the-blind-sample.md) serves a local page on which a person decides their share of the sample.
 - [How to reconcile a party's BTR report with OECD data](how-to/reconcile-with-btr.md)
 - [How to reproduce the BTR tables](how-to/reproduce-btr-tables.md) builds the BTR rows and their links locally from the UNFCCC's workbooks.
 - [How to cut a release](how-to/cut-a-release.md) shows release managers how to build, sample, gate, and pack.

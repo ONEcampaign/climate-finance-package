@@ -12,35 +12,35 @@ Cutting a release requires the `build` extra, a `build.toml`, and the OECD bulk 
 
 1. Build the release. Stages write to `releases/2026a/<stage>/`, and the release tables go to `releases/2026a/assemble/`.
 
-    ```bash
-    cf-build build 2026a --config build.toml --out-dir releases
-    ```
+   ```bash
+   cf-build build 2026a --config build.toml --out-dir releases
+   ```
 
 2. Clear the review queue. Follow [How to review links](review-links.md) to write the queue, import decisions from people and agents, and rebuild. Repeat until the queue holds only pairs you accept leaving open.
 
-3. Draw the blind sample in batches per provider from the build's allocated links.
+3. Draw the blind sample in batches per provider from the build's allocated links. A link that joins a unit to itself stays out of the sample, and the precision gate counts its value right.
 
-    ```bash
-    cf-build sample releases/2026a --out sample
-    ```
+   ```bash
+   cf-build sample releases/2026a --out sample
+   ```
 
-    `sample` writes one packet per provider and batch to `sample/<provider>/batch-<NN>.md` and saves the design to `sample/design.parquet`. Packets omit the score, link method, and stratum. Agents label every draw, and a person decides at least one draw in ten, which the `human_audit` gate checks. Record each set of labels with the `import-labels` command covered in the review guide, appending to the decisions file that `sources.review_decisions` names.
+   `sample` writes one packet per provider and batch to `sample/<provider>/batch-<NN>.md` and saves the design to `sample/design.parquet`. Packets omit the score, link method, and stratum. Agents label every draw, and a person decides at least one draw in ten, which the `human_audit` gate checks. [How to label the blind sample](label-the-blind-sample.md) shows a person how. Record each set of labels with the `import-labels` command covered in the review guide, into the decisions file that `sources.review_decisions` names.
 
 4. Check the gates after each batch. `--report` prints failures without stopping.
 
-    ```bash
-    cf-build gate releases/2026a --sample sample/design.parquet --previous releases/2025a/assemble --report
-    ```
+   ```bash
+   cf-build gate releases/2026a --sample sample/design.parquet --previous releases/2025a/assemble --report
+   ```
 
-    Each precision row shows the number of labels read and the sequential rule's verdict: `pass`, `fail`, or `continue`. Label the next batch for every provider marked `continue`. A `fail` means the sample puts that provider's precision below the threshold, which blocks the release unless waived with `--waive-precision`.
+   Each precision row shows the number of labels read and the sequential rule's verdict: `pass`, `fail`, or `continue`. Label the next batch for every provider marked `continue`. A `fail` means the sample puts that provider's precision below the threshold, which blocks the release unless waived with `--waive-precision`.
 
 5. Cut the release. `release` builds, runs the gates, and packs the archive, stopping with `GateFailedError` if any gate fails.
 
-    ```bash
-    cf-build release 2026a --config build.toml --out-dir releases --sample sample/design.parquet --previous releases/2025a/assemble
-    ```
+   ```bash
+   cf-build release 2026a --config build.toml --out-dir releases --sample sample/design.parquet --previous releases/2025a/assemble
+   ```
 
-    The command writes `releases/climate-finance-2026a.tar.zst` and records the gate rows in `release.json`. To pack with failed precision or human-audit gates, pass `--waive-precision` with the reason. The flag marks the failed rows `waived`, sets `precision_gate_waived` in `release.json`, which surfaces in `release.quality().precision`, and records the reason as `precision_waiver`.
+   The command writes `releases/climate-finance-2026a.tar.zst` and records the gate rows in `release.json`. To pack with failed precision or human-audit gates, pass `--waive-precision` with the reason. The flag marks the failed rows `waived`, sets `precision_gate_waived` in `release.json`, which surfaces in `release.quality().precision`, and records the reason as `precision_waiver`.
 
 6. Publish the pack and register it in `releases.json`, which maps each release name to its URL and sha256 and marks the latest release. Call `release.upload_release` and `release.add_to_index` in `climate_finance.build`. Both raise `GateFailedError` for a pack whose `release.json` records no result for a gate, any recorded gate row that neither passed nor was waived, or a waiver without its reason, so `upload_release` puts no such pack at its URL. `add_to_index` also raises `BuildError` when its `release` differs from the release the pack holds. The pack's `sources.json` records each source's licence and the rows excluded from the release.
 

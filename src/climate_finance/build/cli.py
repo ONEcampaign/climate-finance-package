@@ -1,5 +1,6 @@
 """`cf-build`: the build's command line. Each command delegates to its module."""
 
+import webbrowser
 from pathlib import Path
 from typing import Annotated
 
@@ -16,7 +17,7 @@ from climate_finance.build import (
     release,
 )
 from climate_finance.build.link import decisions as decisions_module
-from climate_finance.build.link import review
+from climate_finance.build.link import labelling, review
 from climate_finance.build.readers import btr
 from climate_finance.build.stages import Stage
 
@@ -132,8 +133,12 @@ def import_labels(
     decisions: Annotated[Path, typer.Option(help="Review-decisions parquet.")] = Path(
         "data/review_decisions.parquet"
     ),
+    partial: Annotated[
+        bool, typer.Option(help="Accept a CSV that answers only some of the pairs.")
+    ] = False,
 ) -> None:
-    """Record a labels CSV (pair,label,confidence,reason) answering a packet."""
+    """Record a labels CSV (pair,label,confidence,reason) answering a packet. A
+    person's answer replaces the same person's earlier answer on the pair."""
     console.print(
         decisions_module.import_labels(
             packet=packet,
@@ -143,8 +148,45 @@ def import_labels(
             reviewer=reviewer,
             model=model,
             label_round=label_round,
+            partial=partial,
         )
     )
+
+
+@app.command("label")
+def label_command(
+    release_dir: Path,
+    sample_dir: Path,
+    reviewer: Annotated[str, typer.Option(help="The person labelling.")],
+    config: ConfigOption = Path("build.toml"),
+    port: Annotated[
+        int, typer.Option(help="Local port to serve on; 0 picks a free one.")
+    ] = 0,
+    browser: Annotated[bool, typer.Option(help="Open the page in a browser.")] = True,
+) -> None:
+    """Serve a page on 127.0.0.1 for labelling a person's share of the blind sample
+    in SAMPLE_DIR: the pairs no certain rule linked, to a tenth of all draws, and 50
+    spot checks of the certain rules. Each answer is saved at once to a labels CSV
+    beside its packet and to the config's review decisions. Ctrl-C stops the
+    server."""
+    session = labelling.Session(
+        release_dir=release_dir,
+        sample_dir=sample_dir,
+        decisions=load_config(config).sources.review_decisions,
+        reviewer=reviewer,
+        share=gate.load_gates().human_audit.min_share,
+    )
+    server = labelling.make_server(session, port=port)
+    url = f"http://127.0.0.1:{server.server_port}/"
+    console.print(f"Labelling {session.state()['total']} pairs at {url}; Ctrl-C stops.")
+    if browser:
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        console.print("Stopped; answers are saved.")
+    finally:
+        server.server_close()
 
 
 @app.command("ingest-unfccc")

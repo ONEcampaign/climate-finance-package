@@ -6,10 +6,13 @@ in `GATES` order, with a row per provider for precision and one per check for
 over-allocation:
 
 - `precision`: each provider's blind-sample estimate passes the sequential rule
-  (`evaluate.estimate_precision`), and its row lists each stratum's estimate and
-  interval in `strata`. Without a blind sample every provider fails, and so does a
-  provider whose sample was drawn from another population of allocated pairs
-  (`evaluate.population_fingerprints`) or whose design records no population.
+  (`evaluate.estimate_precision`), with the value of pairs that link a unit to
+  itself (`evaluate.self_linked`) counted right, and its row lists each sampled
+  stratum's estimate and interval in `strata`. A provider whose every pair links a
+  unit to itself passes at 1 without a sample. Without a blind sample every other
+  provider fails, and so does a provider whose sample was drawn from another
+  population of allocated pairs (`evaluate.population_fingerprints`) or whose
+  design records no population.
 - `human_audit`: at least `min_share` of the blind sample's draws carry a person's
   decision.
 - `conservation`: each linked CRS record up to `years.crs_last_complete`, the
@@ -360,7 +363,10 @@ def precision_gate(
 ) -> pl.DataFrame:
     """One row per provider with allocated pairs (`evaluate.allocated_pairs`) or
     sampled draws (`labels`, from `evaluate.read_sample_labels`): its estimate and
-    bounds, passing when the sequential rule decides `pass`.
+    bounds, with its self-linked value counted right
+    (`evaluate.self_linked_shares`), passing when the sequential rule decides
+    `pass`. The detail gives the self-linked share of the provider's value. A
+    provider whose every pair is self-linked has nothing to sample and passes at 1.
 
     A provider fails unestimated, coded `stale_sample`, when its sample's population
     fingerprint is not that of its allocated pairs in this build
@@ -399,22 +405,35 @@ def precision_gate(
             .with_columns(stale=pl.lit(_UNFINGERPRINTED))
         )
     fresh = labels.join(stale, on="provider_code", how="anti")
+    certain = evaluate.self_linked_shares(pairs)
     estimates = (
-        evaluate.estimate_precision(fresh, rule=rule)
+        evaluate.estimate_precision(fresh, rule=rule, certain=certain)
         if fresh.height
         else pl.DataFrame(schema=evaluate.ESTIMATE_SCHEMA)
-    )
+    ).drop("self_linked_share")
     providers = pl.concat(
         [pairs.select("provider_code"), labels.select("provider_code")]
     ).unique()
     rows = (
         providers.join(estimates, on="provider_code", how="left")
         .join(stale, on="provider_code", how="left")
+        .join(certain, on="provider_code", how="left")
+        .with_columns(pl.col("self_linked_share").fill_null(0.0))
         .sort("provider_code")
+    )
+    share = pl.col("self_linked_share")
+    # Every pair links a unit to itself, so there is nothing to sample.
+    whole = (share == 1) & pl.col("stale").is_null()
+    certain_part = (
+        pl.when(share > 0)
+        .then(pl.format(", {}% of value self-linked", (share * 100).round(1)))
+        .otherwise(pl.lit(""))
     )
     detail = (
         pl.when(pl.col("stale").is_not_null())
         .then("stale")
+        .when(whole)
+        .then(pl.lit("every allocated pair links a unit to itself"))
         .when(pl.col("design").is_null())
         .then(pl.lit("no blind sample"))
         .otherwise(
@@ -432,22 +451,26 @@ def precision_gate(
                 )
             )
             .otherwise(pl.lit(""))
+            + certain_part
         )
     )
+    exact = pl.when(whole).then(1.0)
     return rows.select(
         gate=pl.lit("precision"),
         subject=pl.col("provider_code").cast(pl.String),
-        value="estimate",
-        lower="lower",
-        upper="upper",
+        value=exact.otherwise("estimate"),
+        lower=exact.otherwise("lower"),
+        upper=exact.otherwise("upper"),
         threshold=pl.lit(rule.threshold),
-        passed=((pl.col("decision") == "pass") & pl.col("stale").is_null()).fill_null(
-            value=False
-        ),
+        passed=(
+            whole | ((pl.col("decision") == "pass") & pl.col("stale").is_null())
+        ).fill_null(value=False),
         waived=pl.lit(value=False),
         detail=detail,
         code=pl.when(pl.col("stale").is_not_null())
         .then(pl.lit("stale_sample"))
+        .when(whole)
+        .then(None)
         .when(pl.col("design").is_null())
         .then(pl.lit("no_sample"))
         .when(evaluate.non_finite())
