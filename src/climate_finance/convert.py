@@ -79,7 +79,11 @@ def target_factors(
 
 # The little-endian `struct` code of each factor column's dtype, so the hash reads
 # the same bytes as the columns' memory without importing numpy into a base install.
-_PACKED = {pl.Int16: "h", pl.Int32: "i", pl.Float64: "d"}
+_PACKED: dict[pl.DataType | type[pl.DataType], str] = {
+    pl.Int16: "h",
+    pl.Int32: "i",
+    pl.Float64: "d",
+}
 
 
 def factors_hash(factors: pl.DataFrame) -> str:
