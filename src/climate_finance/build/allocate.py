@@ -51,6 +51,15 @@ Bank line's disbursement fills that line's commitment first, and only the remain
 pools over the loan's other lines. What the own commitment cannot take enters the
 group's pass.
 
+A line filed under several purposes, as Canada files a line as one record per
+purpose, is one unit, so a group of a key tier on the purpose holds commitment
+records of several purposes. Each purpose's records form a part of the group that
+only the records of that purpose fill (`_by_own_purpose`), so a record's money stays
+on its own purpose, whose CRDF rows can carry their own objective, and what that
+cannot take is excess, as when each purpose was a unit of its own. A record of a
+purpose none of the group's commitments carries pools over all of them, in a pass
+of its own after the group's.
+
 Two per-donor switches change the order. A dated donor's record dated in its own
 year fills that year's commitments first. A window donor's other records fill first
 the commitments whose expected start to completion window, plus `WINDOW_GRACE`
@@ -204,6 +213,7 @@ def _unit_records(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame:
                 "record_id",
                 "commitment_usd",
                 "disbursement_usd",
+                "purpose_code",
                 start_year=_year("expected_start_date"),
                 end_year=_year("completion_date"),
             ),
@@ -214,11 +224,11 @@ def _unit_records(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame:
 
 def _commitment_records(units: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
     """Records with a positive commitment in commitment units, as (record_id,
-    unit_id, face)."""
+    unit_id, purpose_code, face)."""
     return (
         _unit_records(units.filter(pl.col("commitment_usd") > 0), crs=crs)
         .filter(pl.col("commitment_usd") > 0)
-        .select("record_id", "unit_id", face="commitment_usd")
+        .select("record_id", "unit_id", "purpose_code", face="commitment_usd")
         .collect()
     )
 
@@ -325,6 +335,7 @@ def _trace_links(links: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.DataFrame:
             certain=pl.col("link_method").is_in(CERTAIN_METHODS)
             & ~pl.col("records_disagree").fill_null(value=False),
             split="split_path",
+            by_purpose=pl.col("by_purpose").fill_null(value=False),
         )
         .collect()
     )
@@ -477,6 +488,7 @@ def _trace_pairs(
             "certain",
             "method",
             "split",
+            "by_purpose",
             rank=rank,
             class_year=pl.coalesce(floor, pl.when(same_year).then(year)),
             order=order,
@@ -511,6 +523,7 @@ def _trace_pairs(
         )
         .drop("c_record")
     )
+    pairs = _by_own_purpose(pairs, commitments=commitments, crs=crs)
     own = _own_commitments(pairs, commitments=commitments, crs=crs)
     # Each own commitment is a group of its own, holding the records whose own it
     # is, so it shares no commitment with another group of its pass, and it runs
@@ -527,7 +540,7 @@ def _trace_pairs(
             pairs.with_columns(later=pl.lit(value=True)),
         ]
     )
-    by = ["year", "rank", "class_year", "later"]
+    by = ["year", "rank", "class_year", "later", "other_purpose"]
     key = ["split", "estimated", *by]
     # A group's pass is certain when all its pairs are, since the pass pools the
     # group's disbursement over all its commitments.
@@ -561,24 +574,69 @@ def _trace_pairs(
     return pairs, commitments, records.select("record_id", "year", "amount")
 
 
+def _by_own_purpose(
+    pairs: pl.DataFrame, *, commitments: pl.DataFrame, crs: pl.LazyFrame
+) -> pl.DataFrame:
+    """`pairs` with each record of a group keyed on the purpose (`LINKS.by_purpose`)
+    kept to the group's commitment records of its own purpose, and `other_purpose`
+    marking the records of a purpose none of them carries.
+
+    A line filed under several purposes is one unit, and a key tier or programme
+    number on the purpose keys on its purpose group, so the group holds commitment
+    records of several purposes. Each
+    purpose's records then form a part of the group, `<group_id>|purpose|<code>`,
+    which only the records of that purpose fill, so a record's money stays on its
+    own purpose and what that cannot take is excess, as when each purpose was a
+    unit of its own. A record of a purpose none of the group's commitment records
+    carries pools over all of them in a pass of its own after the group's, as the
+    tier on the whole key pooled it over each purpose's unit.
+    """
+    split = pairs.filter("by_purpose")
+    pairs = pairs.filter(~pl.col("by_purpose")).with_columns(
+        other_purpose=pl.lit(value=False)
+    )
+    if split.is_empty():
+        return pairs
+    purposes = (
+        crs.filter(pl.col("record_id").is_in(split["record_id"].unique().implode()))
+        .select("record_id", d_purpose="purpose_code")
+        .collect()
+    )
+    split = split.join(purposes, on="record_id", how="left").join(
+        commitments.select("c_idx", c_purpose="purpose_code"), on="c_idx"
+    )
+    carried = (pl.col("d_purpose") == pl.col("c_purpose")).fill_null(value=False)
+    other = ~carried.any().over("group_id", "record_id")
+    several = pl.col("c_purpose").n_unique().over("group_id") > 1
+    split = split.with_columns(other_purpose=other).filter(other | carried)
+    split = split.with_columns(
+        group_id=pl.when(pl.col("other_purpose"))
+        .then(pl.concat_str(["group_id", pl.lit("other_purpose")], separator="|"))
+        .when(several)
+        .then(
+            pl.concat_str(
+                ["group_id", pl.lit("purpose"), pl.col("d_purpose")], separator="|"
+            )
+        )
+        .otherwise("group_id")
+    ).drop("d_purpose", "c_purpose")
+    return pl.concat([pairs, split.select(pairs.columns)])
+
+
 def _own_commitments(
     pairs: pl.DataFrame, *, commitments: pl.DataFrame, crs: pl.LazyFrame
 ) -> pl.DataFrame:
     """Each disbursement record's own commitment record in a group, as (group_id,
     record_id, c_idx). That is the record itself where it also commits, else the one
-    commitment record of the group on a line of several purposes that shares its
-    purpose and recipient (`_same_purpose`), else the one whose real commitment date
-    (`line_date`) it carries and whose title shares at least `OWN_TITLE_SHARE` of
-    its words (`word_share`), else for IBRD and IDA the one commitment record of the
-    group under the record's own project number (`_own_lines`). A record that two
+    commitment record of the group whose real commitment date (`line_date`) it
+    carries and whose title shares at least `OWN_TITLE_SHARE` of its words
+    (`word_share`), else for IBRD and IDA the one commitment record of the group
+    under the record's own project number (`_own_lines`). A record that two
     commitments of a group pass by one rule takes neither by that rule."""
     reached = (
         pairs.select("group_id", "record_id", "c_idx")
         .unique()
-        .join(
-            commitments.select("c_idx", c_record="record_id", c_unit="unit_id"),
-            on="c_idx",
-        )
+        .join(commitments.select("c_idx", c_record="record_id"), on="c_idx")
     )
     same = reached.filter(pl.col("record_id") == pl.col("c_record"))
     rest = reached.join(same, on=["group_id", "record_id"], how="anti")
@@ -589,47 +647,15 @@ def _own_commitments(
             "record_id",
             "donor_code",
             "project_number",
-            "recipient_code",
-            "purpose_code",
             date=line_date(pl.col("commitment_date")),
         )
         .collect()
     )
     columns = ["group_id", "record_id", "c_idx"]
-    purposes = _same_purpose(rest, facts=facts).select(columns)
-    rest = rest.join(purposes, on=["group_id", "record_id"], how="anti")
     matched = _same_date_and_title(rest, facts=facts, crs=crs).select(columns)
     unmatched = rest.join(matched, on=["group_id", "record_id"], how="anti")
     lines = _own_lines(unmatched, facts=facts).select(columns)
-    return pl.concat([same.select(columns), purposes, matched, lines])
-
-
-def _same_purpose(reached: pl.DataFrame, *, facts: pl.DataFrame) -> pl.DataFrame:
-    """The pairs of `reached` whose records share a purpose and recipient, the
-    commitment record on a unit that commits under several purposes, where a record
-    has one such commitment in its group.
-
-    A donor can file one line as a record per purpose, as Canada does, each
-    committing part of the line, and the line's later records continue the
-    commitment of their own purpose. What a record disbursed beyond it pools over
-    the line."""
-    place = facts.select("record_id", "recipient_code", "purpose_code").drop_nulls()
-    lines = (
-        reached.select("c_unit", "c_record")
-        .unique()
-        .join(place.rename({"record_id": "c_record"}), on="c_record")
-        .filter(pl.col("purpose_code").n_unique().over("c_unit") > 1)
-        .select("c_record")
-    )
-    return (
-        reached.join(lines, on="c_record")
-        .join(place, on="record_id")
-        .join(
-            place.rename({"record_id": "c_record"}),
-            on=["c_record", "recipient_code", "purpose_code"],
-        )
-        .filter(pl.len().over("group_id", "record_id") == 1)
-    )
+    return pl.concat([same.select(columns), matched, lines])
 
 
 def _same_date_and_title(
@@ -861,7 +887,8 @@ def _commitment_groups(
     links: pl.LazyFrame,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """The `crdf_crs` groups as (row_id, group_id, weight, crs_face_usd),
-    (group_id, spread) and (unit_id, group_id).
+    (group_id, spread) and each commitment record's group (`_record_groups`), as
+    (record_id, unit_id, group_id).
 
     A row's weight is its face value over the larger of its group's CRS commitment
     face (its commitment records' sum) and CRDF face, so a group's weights sum to at
@@ -874,20 +901,25 @@ def _commitment_groups(
     first row, whose `crs_face_usd` must then cover the group's whole CRS face.
 
     Raises:
-        AllocationInputError: when a link has no group, or a row or a unit sits in
-            two groups.
+        AllocationInputError: when a link has no group, or a row or a commitment
+            record sits in two groups.
     """
     joined = (
         links.filter(pl.col("task") == "crdf_crs")
         .select(row_id="left_id", unit_id="right_id", group_id="group_id")
-        .join(crdf.select("row_id", "face_usd", "repeat_of"), on="row_id")
+        .join(
+            crdf.select("row_id", "face_usd", "repeat_of", row_purpose="purpose_code"),
+            on="row_id",
+        )
         .collect()
     )
     if joined["group_id"].null_count():
         raise AllocationInputError("crdf_crs links without a group_id")
-    for side in ("row_id", "unit_id"):
+    records = _commitment_records(units, crs=crs)
+    record_groups = _record_groups(joined, records=records)
+    for side, frame in (("row_id", joined), ("record_id", record_groups)):
         many = (
-            joined.group_by(side)
+            frame.group_by(side)
             .agg(pl.col("group_id").n_unique())
             .filter(pl.col("group_id") > 1)
         )
@@ -895,7 +927,6 @@ def _commitment_groups(
             raise AllocationInputError(
                 f"{many.height} crdf_crs {side} values sit in more than one group"
             )
-    unit_groups = joined.select("unit_id", "group_id").unique()
     rows = joined.select("row_id", "group_id", "face_usd", "repeat_of").unique()
     firsts = rows.select(
         repeat_of="row_id", group_id="group_id", first_in_group=pl.lit(True)
@@ -911,8 +942,7 @@ def _commitment_groups(
     )
     share_face = pl.col("share_face")
     crs_face = (
-        _commitment_records(units, crs=crs)
-        .join(unit_groups, on="unit_id")
+        records.join(record_groups.drop("unit_id"), on="record_id")
         .sort("record_id")
         .group_by("group_id", maintain_order=True)
         .agg(crs_face=ordered_sum(pl.col("face")))
@@ -942,7 +972,29 @@ def _commitment_groups(
         .then(pl.col("crdf_face") / denominator)
         .otherwise(0.0),
     )
-    return weights, spread, unit_groups
+    return weights, spread, record_groups
+
+
+def _record_groups(joined: pl.DataFrame, *, records: pl.DataFrame) -> pl.DataFrame:
+    """Each commitment record's `crdf_crs` group, as (record_id, unit_id,
+    group_id): the group of its unit's rows that carry its purpose, where the
+    unit's rows carry any of its records' purposes, else its unit's group.
+
+    A line filed under several purposes sits in the group of each purpose a row
+    carries (`link_within_year`). Its records then take the group of their own
+    purpose, so the rows of one purpose, which can carry their own objective, take
+    only that purpose's money, and a record of a purpose no row carries takes no
+    group. A unit whose rows a recovery route matched on other fields than the
+    purpose gives its group to every record.
+    """
+    own = records.join(
+        joined.select("unit_id", "group_id", purpose_code="row_purpose"),
+        on=["unit_id", "purpose_code"],
+    ).select("record_id", "unit_id", "group_id")
+    rest = records.join(own, on="unit_id", how="anti").join(
+        joined.select("unit_id", "group_id"), on="unit_id"
+    )
+    return pl.concat([own, rest.select(own.columns)]).unique().sort("record_id")
 
 
 def allocate_to_rows(
@@ -966,7 +1018,7 @@ def allocate_to_rows(
     that of the first pass to carry any of it, and within that pass the link that
     carried the most over its commitment records, then the lowest commitment unit.
     """
-    weights, spread, unit_groups = _commitment_groups(
+    weights, spread, record_groups = _commitment_groups(
         crdf, units=units, crs=crs, links=links
     )
     routes = (
@@ -975,12 +1027,11 @@ def allocate_to_rows(
         .agg(route_certain=pl.col("link_method").is_in(CERTAIN_ROUTES).all())
         .collect()
     )
-    record_groups = (
-        _commitment_records(units, crs=crs)
-        .join(unit_groups, on="unit_id")
-        .select(commitment_id="record_id", group_id="group_id")
+    grouped = pairs.join(
+        record_groups.select(commitment_id="record_id", group_id="group_id"),
+        on="commitment_id",
+        how="left",
     )
-    grouped = pairs.join(record_groups, on="commitment_id", how="left")
     carrier = ("pass", "link_method", "commitment_unit_id")
     to_rows = (
         grouped.join(weights, on="group_id")
@@ -1130,12 +1181,14 @@ def status_basis(
     status reads its allocations against (see `_commitment_groups`). It is the
     row's own face outside every group.
     """
-    weights, _, unit_groups = _commitment_groups(
+    weights, _, record_groups = _commitment_groups(
         crdf, units=units, crs=crs, links=links
     )
     commitment_units = units.filter(pl.col("commitment_usd") > 0).collect()
     group_facts = (
-        unit_groups.join(commitment_units, on="unit_id")
+        record_groups.select("unit_id", "group_id")
+        .unique()
+        .join(commitment_units, on="unit_id")
         .group_by("group_id")
         .agg(
             pl.col("donor_code").min(),

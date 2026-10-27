@@ -97,9 +97,9 @@ class Tier:
     """A key tier. It holds the commitment key, the disbursement key it must equal
     where that differs (`parent_key`), the column whose values a project-number
     tier's commitment keys must hold one of (`unique_by`, `_unique_pn`), the
-    disbursement column holding the floor it keeps, and whether its key holds the
+    disbursement column holding the floor it keeps, whether its key holds the
     crs id, so that a disbursement under the commitment's own crs id may pass its
-    floor."""
+    floor, and whether it holds the purpose group (`by_purpose`)."""
 
     name: str
     commitment_key: tuple[str, ...]
@@ -107,6 +107,7 @@ class Tier:
     unique_by: str | None = None
     floor: str = "floor_year"
     same_crs_id: bool = False
+    by_purpose: bool = False
 
     @property
     def unit_key(self) -> tuple[str, ...]:
@@ -120,6 +121,7 @@ TIERS = (
         "crs_id_purpose",
         ("donor_code", "crs_id", "crs_purpose", "recipient_code"),
         same_crs_id=True,
+        by_purpose=True,
     ),
     Tier("crs_id", ("donor_code", "crs_key"), same_crs_id=True),
     Tier(
@@ -129,7 +131,12 @@ TIERS = (
         floor="parent_floor_year",
     ),
     Tier("pn_recipient_date", (*AWARD_KEY, "line_date"), unique_by="unit_id"),
-    Tier("pn_recipient_purpose", (*AWARD_KEY, "award_purpose"), unique_by="crs_id"),
+    Tier(
+        "pn_recipient_purpose",
+        (*AWARD_KEY, "award_purpose"),
+        unique_by="crs_id",
+        by_purpose=True,
+    ),
     Tier("pn_recipient", AWARD_KEY, unique_by="crs_id"),
 )
 if tuple(tier.name for tier in TIERS) != schema.KEY_TIERS:
@@ -432,8 +439,10 @@ def purpose_group(units: pl.DataFrame, *, by: tuple[str, ...]) -> pl.Series:
     with it, and to any line those share one with, so that each unit falls in one
     group of the tier, and the groups of one tier share no commitment. Groups form
     over commitments and disbursements only, so a unit that does neither (a reflow
-    unit) changes none of them. Its group is the smallest of its codes' groups, or
-    of the codes themselves where no unit that commits or disburses carries them.
+    unit) changes none of them. Its codes fall in one group, which it takes, or
+    span several, a code that no unit that commits or disburses carries counting as
+    a group of its own, and then it takes none, so a tier on the group leaves it to
+    the tiers on the whole line.
     """
     rows = units.select(*by, "purpose_codes", "commitment_usd", "disbursement_usd")
     rows = rows.with_row_index("_row")
@@ -466,8 +475,9 @@ def purpose_group(units: pl.DataFrame, *, by: tuple[str, ...]) -> pl.Series:
         .select("_row", *by, code="purpose_codes")
         .explode("code")
         .join(groups, on=code_key, how="left")
+        .with_columns(group=pl.coalesce("group", "code"))
         .group_by("_row")
-        .agg(pl.coalesce("group", "code").min())
+        .agg(pl.when(pl.col("group").n_unique() == 1).then(pl.col("group").first()))
         .join(rows.select("_row"), on="_row", how="right")
         .sort("_row")
         .get_column("group")
@@ -503,10 +513,10 @@ def split_components(units: pl.DataFrame, *, number: str) -> pl.Series:
     policy (33110) components in Viet Nam in 2015 under three crs ids, and
     disburses its HIV/AIDS component (13040) under a fourth. A link under the award
     then stays within one component. The split keeps a disbursement with no
-    commitment of its own out of another purpose's commitment; where every unit
+    commitment of its own out of another purpose's commitment. Where every unit
     that disburses commits too, as Canada files one project's lines by purpose,
-    each is a line of the project, and what it disbursed beyond its own commitment
-    may go to its sibling lines.
+    the award is not split, and the purpose tier keeps each line to its own
+    purpose.
     """
     award = ["donor_code", "agency_code", number]
     units = units.with_columns(purpose=purpose_group(units, by=tuple(award)))
@@ -601,6 +611,7 @@ def _eligible_pairs(
             right_id="unit_id_commitment",
             group_id=group_id(pl.lit(tier.name), *tier.unit_key),
             link_method=pl.lit(tier.name),
+            by_purpose=pl.lit(tier.by_purpose),
         )
     )
 

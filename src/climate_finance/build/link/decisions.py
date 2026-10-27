@@ -19,7 +19,7 @@ from pathlib import Path
 import polars as pl
 
 from climate_finance import schema
-from climate_finance.build.errors import ReviewDecisionsError
+from climate_finance.build.errors import ReviewDecisionsError, StaleDecisionsError
 from climate_finance.build.link.packet import packet_digest, packet_pairs_path
 
 PAIR = ["task", "left_id", "right_id"]
@@ -78,6 +78,30 @@ def read_decision_labels(path: Path) -> pl.DataFrame:
         )
         .cast(columns)  # ty: ignore[invalid-argument-type]
     )
+
+
+def check_decision_units(path: Path, *, unit_ids: pl.Series) -> None:
+    """Refuse review decisions at `path` that name a unit outside `unit_ids`: either
+    side of a `trace` decision, or the commitment of a `crdf_crs` one. Such a
+    decision would match no link and stop applying without a word.
+
+    Raises:
+        StaleDecisionsError: naming the unknown unit ids.
+    """
+    if not path.exists():
+        return
+    decided = pl.read_parquet(path)
+    named = pl.concat(
+        [
+            decided.filter(task="trace").select(unit_id="left_id"),
+            decided.filter(pl.col("task").is_in(["trace", "crdf_crs"])).select(
+                unit_id="right_id"
+            ),
+        ]
+    ).drop_nulls()
+    stale = named.filter(~pl.col("unit_id").is_in(unit_ids.implode()))["unit_id"]
+    if stale.len():
+        raise StaleDecisionsError(path=path, unit_ids=stale.unique().sort().to_list())
 
 
 def standing_decisions(decided: pl.DataFrame, *, key: str | list[str]) -> pl.DataFrame:

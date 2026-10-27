@@ -358,7 +358,8 @@ def _same_number(
     programmes: pl.DataFrame,
 ) -> pl.DataFrame:
     """Pairs equal on the number `key`, grouped by it, and for a programme number
-    also on the recipient and purpose group, grouped by those too.
+    also on the recipient and purpose group, grouped by those too and marked
+    `by_purpose`.
 
     A unit falls in one group here, and `_settle` keeps or drops a group whole, so
     a unit whose group holds more than `MAX_COMMITMENTS` eligible commitments
@@ -366,9 +367,9 @@ def _same_number(
     a programme or account number pairs thousands of units with each other."""
     within = (*key, "recipient_code", f"{key[-1]}_purpose")
     found = []
-    for number, on in (
-        (commitments.join(programmes, on=key, how="anti"), key),
-        (commitments.join(programmes, on=key, how="semi"), within),
+    for number, on, by_purpose in (
+        (commitments.join(programmes, on=key, how="anti"), key, False),
+        (commitments.join(programmes, on=key, how="semi"), within, True),
     ):
         number = number.select(_columns(on, "placed_year"))
         found.append(
@@ -383,7 +384,9 @@ def _same_number(
                 number,
                 on=on,
                 key=on,
-            ).select(_PAIR)
+            )
+            .select(_PAIR)
+            .with_columns(by_purpose=pl.lit(by_purpose))
         )
     return pl.concat(found)
 
@@ -618,5 +621,9 @@ def _settle(pairs: pl.DataFrame, *, method: str, agrees: pl.Expr) -> pl.DataFram
             "right_id",
             group_id=group_id(pl.lit(method), "key"),
             link_method=pl.lit(method),
+            # Only a programme number keys on the purpose (`_same_number`).
+            by_purpose=pl.col("by_purpose")
+            if "by_purpose" in scored.columns
+            else pl.lit(value=False),
         )
     )

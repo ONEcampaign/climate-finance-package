@@ -288,26 +288,38 @@ def test_methods_run_in_link_method_order_within_a_year() -> None:
 
 
 @pytest.mark.parametrize(
-    ("purpose", "filled"),
+    ("disbursed", "filled", "excess"),
     [
-        # The record fills the line's commitment of its own purpose, and what that
-        # leaves pools over the line.
-        (230, {"c_water": 100.0, "c_health": 50.0}),
-        # A purpose the line does not carry pools over the whole line.
-        (999, {"c_water": 75.0, "c_health": 75.0}),
+        # A record fills the line's commitment of its own purpose, and what that
+        # leaves is excess, as when each purpose was a unit of its own.
+        ({230: 150.0}, {"c_water": 100.0}, {"d230": 50.0}),
+        # A purpose the line does not carry pools over the whole line, as the crs
+        # id tier pooled it over each purpose's unit.
+        ({999: 150.0}, {"c_water": 75.0, "c_health": 75.0}, {}),
+        # On one disbursement line, each record keeps to its own purpose, and one
+        # of a purpose the commitment line lacks pools after them.
+        (
+            {230: 150.0, 999: 40.0},
+            {"c_water": 100.0, "c_health": 40.0},
+            {"d230": 50.0},
+        ),
     ],
 )
-def test_a_record_fills_its_purpose_on_a_line_split_by_purpose_first(
-    purpose: int, filled: dict[str, float]
+def test_a_record_fills_only_its_own_purpose_on_a_line_split_by_purpose(
+    disbursed: dict[int, float], filled: dict[str, float], excess: dict[str, float]
 ) -> None:
     pairs = run(
         [
             record("c_water", 2020, commit=100.0, purpose=230),
             record("c_health", 2020, commit=100.0, purpose=140),
-            record("d", 2022, disburse=150.0, purpose=purpose),
+            *(
+                record(f"d{purpose}", 2022, disburse=amount, purpose=purpose)
+                for purpose, amount in disbursed.items()
+            ),
         ]
     )
     assert by_commitment(pairs) == pytest.approx(filled)
+    assert excess_of(pairs) == pytest.approx(excess)
 
 
 # A record dated its own year belongs to that year's commitment, not the older one.
@@ -539,6 +551,42 @@ def test_a_row_names_the_link_of_the_first_pass_that_filled_it() -> None:
     assert carried.select("link_method", "commitment_unit_id").rows() == [
         ("crs_id_purpose", unit_of(units, "c19"))
     ]
+
+
+@pytest.mark.parametrize(
+    ("purpose", "disbursed", "rows", "carried"),
+    [
+        # Each purpose of the line has its own CRDF row, as for two objectives:
+        # the disbursement reaches its own purpose's row alone.
+        (230, 60.0, ("RA", "RB"), {"RA": 60.0}),
+        (140, 60.0, ("RA", "RB"), {"RB": 60.0}),
+        # Beyond its own purpose's commitment, the rest is excess and reaches no
+        # other purpose's row.
+        (230, 150.0, ("RA", "RB"), {"RA": 100.0}),
+        # Purpose 140 carries no climate finance, so no row: its disbursement
+        # reaches no row of the line.
+        (140, 60.0, ("RA",), {}),
+    ],
+)
+def test_value_never_crosses_objectives_on_a_line_split_by_purpose(
+    purpose: int, disbursed: float, rows: tuple[str, ...], carried: dict[str, float]
+) -> None:
+    records = [
+        record("cA", 2019, commit=100.0, purpose=230),
+        record("cB", 2019, commit=100.0, purpose=140),
+        record("d", 2021, disburse=disbursed, purpose=purpose),
+    ]
+    faces = {
+        "RA": crdf_row("RA", 2019, 100.0),
+        "RB": crdf_row("RB", 2019, 100.0, purpose=140),
+    }
+    crs, crdf, units, links = link(records, [faces[name] for name in rows])
+    pairs = allocate(units, crs=crs, links=links, crdf=crdf)
+    table = allocate_to_rows(pairs, crdf=crdf, units=units, crs=crs, links=links)
+    to_rows = (
+        table.drop_nulls("row_id").group_by("row_id").agg(pl.col("allocated_usd").sum())
+    )
+    assert dict(to_rows.iter_rows()) == pytest.approx(carried)
 
 
 def test_a_row_names_the_link_that_carried_the_most_over_its_records() -> None:
@@ -1319,6 +1367,7 @@ def _scenario(
     )
     unit_frame = units.collect()
     members = unit_frame.select("unit_id", record_id="record_ids").explode("record_id")
+    purposes = crs.select("record_id", purpose="purpose_code").collect()
     # Record-level trace pairs: (disbursement record, commitment record), and
     # whether the record may fill the commitment, by not preceding its CRDF rows.
     groups = links.filter(pl.col("task") == "crdf_crs").collect()
@@ -1337,10 +1386,19 @@ def _scenario(
         )
         .join(unit_frame.select(left_id="unit_id", year="year"), on="left_id")
         .join(row_years, on="right_id", how="left")
-        .with_columns(
-            eligible=pl.col("row_year").is_null()
-            | (pl.col("year") >= pl.col("row_year"))
+        .join(purposes, on="record_id")
+        .join(
+            purposes.rename({"record_id": "commitment_id", "purpose": "c_purpose"}),
+            on="commitment_id",
         )
+    )
+    # A group keyed on the purpose keeps a record to the commitments of its own
+    # purpose where it has any (`_by_own_purpose`).
+    own = pl.col("purpose") == pl.col("c_purpose")
+    kept = ~pl.col("by_purpose") | own | ~own.any().over("group_id", "record_id")
+    trace = trace.with_columns(
+        eligible=kept
+        & (pl.col("row_year").is_null() | (pl.col("year") >= pl.col("row_year")))
     )
     return {
         "crs": crs.collect(),

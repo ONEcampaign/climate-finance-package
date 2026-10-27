@@ -51,7 +51,7 @@ import polars as pl
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from climate_finance.build.errors import LinkInputError
-from climate_finance.build.link.keys import as_exact_links, group_id, purpose_group
+from climate_finance.build.link.keys import as_exact_links, group_id
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.normalise.pairing import pair_one_to_one
 from climate_finance.build.normalise.project_numbers import normalise_pn
@@ -99,27 +99,25 @@ def link_within_year(crdf: pl.LazyFrame, *, units: pl.LazyFrame) -> pl.LazyFrame
     (donor, crs id, purpose), as `links` rows, a unit sharing the purpose where any
     of its records carries it (`purpose_codes`).
 
-    `group_id` names the key, its purpose as the purpose group of the key's units
-    (`purpose_group`), so the rows of the purposes of one line share a group, and a
-    commitment's face value is the sum of its group's commitment units.
+    `group_id` names the key, so a commitment's face value is the sum of its group's
+    commitment records. A line filed under several purposes sits in the group of
+    each purpose a row carries, and allocation gives each of its commitment records
+    the group of its own purpose (`allocate._record_groups`), so the rows of one
+    purpose, which can carry their own objective, take only that purpose's money.
     """
-    line = WITHIN_YEAR_KEY[:-1]
     commitments = (
         units.filter(pl.col("commitment_usd") > 0)
-        .select("unit_id", *line, "purpose_codes", "commitment_usd", "disbursement_usd")
-        .collect()
+        .select("unit_id", *WITHIN_YEAR_KEY[:-1], purpose_code="purpose_codes")
+        .explode("purpose_code")
     )
-    commitments = commitments.with_columns(
-        purpose_group=purpose_group(commitments, by=line)
-    ).select("unit_id", *line, "purpose_group", purpose_code="purpose_codes")
     return as_exact_links(
         crdf.select("row_id", *WITHIN_YEAR_KEY[1:], donor_code="provider_code")
         .drop_nulls(WITHIN_YEAR_KEY)
-        .join(commitments.lazy().explode("purpose_code"), on=WITHIN_YEAR_KEY)
+        .join(commitments, on=WITHIN_YEAR_KEY)
         .select(
             left_id="row_id",
             right_id="unit_id",
-            group_id=group_id(pl.lit("within_year"), *line, "purpose_group"),
+            group_id=group_id(pl.lit("within_year"), *WITHIN_YEAR_KEY),
             link_method=pl.lit("within_year"),
         ),
         task="crdf_crs",

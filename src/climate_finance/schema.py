@@ -593,6 +593,10 @@ LINKS = _table(
     # On a trace link, whether its records disagree on recipient or project number
     # (`flag_disagreement`); null on other tasks.
     records_disagree=Column(pl.Boolean(), nullable=True),
+    # On a trace link, whether its group keys on the purpose, so that allocation
+    # keeps each record to the group's commitments of its own purpose
+    # (`allocate._by_own_purpose`); null on other tasks.
+    by_purpose=Column(pl.Boolean(), nullable=True),
     review=_bool(),
     review_reason=_str(nullable=True, values=REVIEW_REASONS),
 )

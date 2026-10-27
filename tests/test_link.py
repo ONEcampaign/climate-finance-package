@@ -17,7 +17,7 @@ from stage_runs import (
 
 from climate_finance import schema
 from climate_finance.build.config import load_config
-from climate_finance.build.errors import StageInputMissingError
+from climate_finance.build.errors import StageInputMissingError, StaleDecisionsError
 from climate_finance.build.jev_client import JevClient
 from climate_finance.build.link import run_link
 from climate_finance.build.link.crdf_crs import link_within_year
@@ -196,19 +196,26 @@ def test_a_line_split_by_purpose_is_one_unit() -> None:
     )
 
 
-def test_purpose_groups_join_the_purposes_of_a_line() -> None:
+@pytest.mark.parametrize("reverse", [False, True])
+def test_purpose_groups_join_the_purposes_of_a_line(*, reverse: bool) -> None:
+    # Units of A and B that commit, then units of A that neither commit nor
+    # disburse, as reflow units, which join no groups. One within a group takes it;
+    # one whose codes span two groups, or a group and a code no group holds, takes
+    # none, so a tier on the group leaves it to the whole line. Code order changes
+    # nothing.
+    codes = [[2, 1], [2], [3], [2, 1], [1, 3], [3, 4], [9], [2]]
     units = pl.DataFrame(
         {
-            "key": ["A", "A", "A", "A", "B"],
-            "purpose_codes": [[2, 1], [2], [3], [3, 4], [2]],
-            "commitment_usd": [1.0, 1.0, 1.0, 0.0, 1.0],
-            # The last unit of A neither commits nor disburses, as a reflow unit,
-            # so it joins no groups.
-            "disbursement_usd": [0.0] * 5,
+            "key": ["A"] * 7 + ["B"],
+            "purpose_codes": [code[::-1] if reverse else code for code in codes],
+            "commitment_usd": [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            "disbursement_usd": [0.0] * 8,
         },
         schema_overrides={"purpose_codes": pl.List(pl.Int32)},
     )
-    assert purpose_group(units, by=("key",)).to_list() == [1, 1, 3, 3, 2]
+    assert purpose_group(units, by=("key",)).to_list() == [
+        1, 1, 3, 1, None, None, 9, 2
+    ]  # fmt: skip
 
 
 def _commitment(**fields: object) -> dict[str, object]:
@@ -1066,7 +1073,7 @@ def test_within_year_join() -> None:
     assert set(links["task"]) == {"crdf_crs"}
 
 
-def test_the_rows_of_a_line_split_by_purpose_share_its_group() -> None:
+def test_each_purpose_row_of_a_line_takes_a_group_of_its_own() -> None:
     units = _units(
         {
             "water": {"crs_id": "A", "commitment_usd": 3.0},
@@ -1080,7 +1087,12 @@ def test_the_rows_of_a_line_split_by_purpose_share_its_group() -> None:
         ("health", units["unit_id"].item()),
         ("water", units["unit_id"].item()),
     ]
-    assert links["group_id"].n_unique() == 1
+    # Rows of different purposes can carry different objectives, so each keeps its
+    # own group, which allocation maps to the line's records of that purpose.
+    assert links.sort("left_id")["group_id"].to_list() == [
+        "within_year|5|A|2020|41010",
+        "within_year|5|A|2020|23210",
+    ]
 
 
 class _NoJev(StageContext):
@@ -1273,3 +1285,12 @@ def test_a_rejected_key_link_frees_its_disbursement_and_stays_unlinked(
         (unit["d22"], unit["c18"]),
         (unit["d22"], unit["c19"]),
     }
+
+    # A decision on a unit no build holds any more, such as one a line merged into,
+    # stops the stage rather than silently applying to nothing.
+    vanished = pl.read_parquet(decisions).with_columns(left_id=pl.lit("0" * 16))
+    vanished.write_parquet(decisions)
+    with pytest.raises(StaleDecisionsError) as raised:
+        _link(_context(tmp_path, decisions, recoveries=False))
+    assert raised.value.code == "stale_decisions"
+    assert raised.value.unit_ids == ["0" * 16]

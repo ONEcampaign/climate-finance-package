@@ -39,6 +39,9 @@ CONSTRUCTED = {
         stage="link", table="commitments", path=Path("stages/commitments.parquet")
     ),
     "StaleStageError": lambda cls: cls(stage="link", reason="reads other settings"),
+    "StaleDecisionsError": lambda cls: cls(
+        path=Path("review_decisions.parquet"), unit_ids=["0" * 16]
+    ),
     "CostCapExceededError": lambda cls: cls(estimate_usd=12.5, cap_usd=10.0),
     "LinkThresholdError": lambda cls: cls(
         threshold=0.5, f1=0.8, best_threshold=0.4, best_f1=0.9

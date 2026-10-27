@@ -326,6 +326,36 @@ def test_a_programme_number_links_only_within_the_disbursements_recipient(
     assert _repaired(records) == repaired
 
 
+def test_a_programme_number_keeps_each_record_to_its_own_purpose() -> None:
+    # The programme rule keys on the purpose group, which joins the Kenyan line's
+    # two purposes. The Kenyan disbursement of 23210 fills that purpose alone,
+    # first on the line, then on c_ken2, and never the line's 91010 record.
+    line = {**_KENYA, "crs_id": "B", "year": 2019}
+    records = {
+        "c_ken_water": _commitment(**line),
+        "c_ken_gov": _commitment(**line, purpose_code=91010),
+        "c_ken2": _commitment(**_KENYA, crs_id="B2", year=2020),
+        "c_eth": _commitment(**_PROGRAMME, crs_id="A"),
+        "d_ken": _disbursement(**_KENYA, crs_id="C", disbursement_usd=15.0),
+    }
+    units, links, crs = _links(records)
+    repaired = links.filter(pl.col("link_method").is_in(schema.KEY_REPAIR_METHODS))
+    assert repaired["by_purpose"].all()
+    pairs = allocate(
+        units.lazy(),
+        crs=crs,
+        links=links.lazy(),
+        crdf=pl.LazyFrame(schema=schema.CRDF.dtypes),
+    )
+    filled = dict(
+        pairs.drop_nulls("commitment_id")
+        .group_by("commitment_id")
+        .agg(pl.col("allocated_usd").sum())
+        .iter_rows()
+    )
+    assert filled == pytest.approx({"c_ken_water": 10.0, "c_ken2": 5.0})
+
+
 @pytest.mark.parametrize(
     ("components", "reached"),
     [

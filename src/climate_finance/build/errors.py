@@ -82,6 +82,21 @@ class ReviewDecisionsError(BuildError):
     match the packet it answers."""
 
 
+class StaleDecisionsError(BuildError):
+    """Review decisions that name units the build no longer has, such as the units
+    of one line's purposes before a line became one unit."""
+
+    def __init__(self, *, path: Path, unit_ids: list[str]) -> None:
+        self.path = path
+        self.unit_ids = unit_ids
+        super().__init__(
+            f"{len(unit_ids)} unit ids in the review decisions at {path} name no "
+            f"unit of this build, such as {unit_ids[:3]}. Map each to the unit that "
+            "now holds its CRS records with scripts/remap_decision_ids.py, which "
+            "keeps a copy of the original, then rerun the link stage."
+        )
+
+
 class SampleDesignError(BuildError):
     """A blind sample's design that no precision estimate can read, such as one
     with a NaN weight."""

@@ -20,6 +20,7 @@ from climate_finance.build.link.crosswalks import (
 )
 from climate_finance.build.link.decisions import (
     accepted_pairs,
+    check_decision_units,
     drop_pairs,
     override_links,
     read_decision_labels,
@@ -85,6 +86,8 @@ def run_link(context: StageContext) -> StageOutput:
     Raises:
         JevFitError: when `jev_links` is on and the build has no truth group to
             set Jev's scale.
+        StaleDecisionsError: when a review decision names a unit the build does
+            not have.
     """
     config = context.config
     first_year, _ = fetched_years(context)["crs"]
@@ -99,6 +102,7 @@ def run_link(context: StageContext) -> StageOutput:
     crdf = context.read("normalise", "crdf").filter(perspective="recipient")
     population = trace_population(crs)
     units = build_units(population).collect()
+    check_decision_units(config.sources.review_decisions, unit_ids=units["unit_id"])
     reflow_units = build_reflow_units(context.read("normalise", "reflows")).collect()
     id_practice = classify_id_practice(units)
     trace = link_by_keys(units, first_year=first_year, decide=unrejected)
