@@ -335,8 +335,8 @@ def release_command(
         str | None,
         typer.Option(
             metavar="REASON",
-            help="Pack despite failed precision and human-audit gates, recording "
-            "REASON in release.json.",
+            help="Pack despite failed precision, stratum-precision and human-audit "
+            "gates, recording REASON in release.json.",
         ),
     ] = None,
     offline: Annotated[

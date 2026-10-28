@@ -331,7 +331,6 @@ def fill_allocations(
         year="year",
         allocated_usd=amount,
         allocated_low_usd=amount,
-        allocated_high_usd=amount,
         rule=pl.lit(source),
         disbursement_source=pl.lit(source),
         link_method=pl.lit(None, pl.String),

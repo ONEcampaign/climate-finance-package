@@ -7,7 +7,7 @@ precision:
   threshold: 0.90
   # Draws labelled between looks.
   batch: 50
-  # Draws per provider; the last look reads them all.
+  # Draws per provider. The last look reads them all.
   cap: 500
   # Interval widths in standard errors: at looks before the cap, and at the cap.
   interim_z: 2.5
@@ -19,6 +19,14 @@ precision:
   # each stratum at its value share of the estimate.
   min_draws: 50
   seed: 20261021
+
+# Each gated stratum of each provider passes when the lower bound of its own
+# interval reaches its threshold, and fails before its draws reach `min_draws` or
+# the stratum's pairs. The model value is provisional and holds the provider
+# threshold until a labelled blind sample sets it.
+stratum_precision:
+  thresholds:
+    model: 0.90
 
 # People decide at least this share of the blind sample's draws, over every
 # provider; agents may decide the rest.

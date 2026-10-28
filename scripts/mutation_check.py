@@ -140,11 +140,9 @@ ALLOCATE = {
     "status_keeps_crs_face": ('crs_face_usd=pl.col("crs_face_usd"),', ""),
     "status_sums_ordered": (
         'disbursed_usd=ordered_sum(pl.col("allocated_usd")),\n'
-        '            disbursed_low_usd=ordered_sum(pl.col("allocated_low_usd")),\n'
-        '            disbursed_high_usd=ordered_sum(pl.col("allocated_high_usd")),',
+        '            disbursed_low_usd=ordered_sum(pl.col("allocated_low_usd")),',
         'disbursed_usd=pl.col("allocated_usd").sum(),\n'
-        '            disbursed_low_usd=pl.col("allocated_low_usd").sum(),\n'
-        '            disbursed_high_usd=pl.col("allocated_high_usd").sum(),',
+        '            disbursed_low_usd=pl.col("allocated_low_usd").sum(),',
     ),
     "disbursed_at_ninety_percent": ("ratio >= DISBURSED_RATIO", "ratio >= 1.0"),
     "not_traceable": ('.when(~pl.col("traceable"))', ".when(pl.lit(False))"),

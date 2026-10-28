@@ -10,10 +10,10 @@ converts it, and sums the rows into the result table. Rows have one of six origi
   times allocated_usd over the record's disbursement, which for a grant the CRS
   gives none is its disbursement, as `normalise_crs` builds it),
   weighted by the markers and climate share it inherits from that commitment. `low`
-  and `high` weight the allocation's own bounds, `allocated_low_usd` and
-  `allocated_high_usd`, converted to grant equivalents the same way: `low` counts
-  what certain links carried (`schema.CERTAIN_METHODS`) to rows reached by certain
-  routes (`schema.CERTAIN_ROUTES`), and `high` everything allocated.
+  weights the allocation's low bound, `allocated_low_usd`, converted to grant
+  equivalents the same way, and counts what certain links carried
+  (`schema.CERTAIN_METHODS`) to rows reached by certain routes
+  (`schema.CERTAIN_ROUTES`). `high` is the value, everything allocated.
 - `untraced`: a Rio-marked CRS record's disbursement that reaches no commitment
   (`untraced_usd`), the excess beyond a full commitment or the whole of a record
   linked to none, converted to grant equivalents as a disbursement is. It weighs by
@@ -542,6 +542,7 @@ def quality(
             _attribution(release, providers=providers, years=years, method=method)
         ),
         precision=with_names(_precision(release, providers=providers)),
+        stratum_precision=with_names(_stratum_precision(release, providers=providers)),
         untraced=with_names(
             _untraced(release, conditions=conditions, method=method).sort(
                 "provider_code", "year"
@@ -711,19 +712,43 @@ _GATE_ROW = pl.Schema(
         "detail": pl.String(),
     }
 )
+# A precision row's strata in `release.json`.
+_STRATA_ROW = pl.Schema(
+    {
+        "subject": pl.String(),
+        "strata": pl.List(
+            pl.Struct(
+                {
+                    "stratum": pl.String(),
+                    "allocated_usd": pl.Float64(),
+                    "labels": pl.Int32(),
+                    "estimate": pl.Float64(),
+                    "lower": pl.Float64(),
+                    "upper": pl.Float64(),
+                }
+            )
+        ),
+    }
+)
+
+
+def _gate_rows(release: Release, gate: str, *, schema: pl.Schema) -> pl.LazyFrame:
+    """The rows `release.json` records for `gate`, in `schema`; none when the
+    release was not gated.
+
+    Raises:
+        SchemaError: when `release.json` holds rows of `gate` that are not a list.
+    """
+    rows = release.manifest.gates.get(gate, [])
+    if not isinstance(rows, list):
+        raise SchemaError("release.json", {f"gates.{gate}": "not a list of rows"})
+    return pl.LazyFrame(rows, schema=schema)
 
 
 def _precision(release: Release, *, providers: tuple[int, ...] | None) -> pl.LazyFrame:
     """The precision gate's rows in `release.json`, one per provider; none when the
-    release was not gated.
-
-    Raises:
-        SchemaError: when `release.json` holds precision rows that are not a list.
-    """
-    rows = release.manifest.gates.get("precision", [])
-    if not isinstance(rows, list):
-        raise SchemaError("release.json", {"gates.precision": "not a list of rows"})
-    frame = pl.LazyFrame(rows, schema=_GATE_ROW).select(
+    release was not gated."""
+    frame = _gate_rows(release, "precision", schema=_GATE_ROW).select(
         provider_code=pl.col("subject").cast(pl.Int32),
         estimate="value",
         lower="lower",
@@ -731,6 +756,39 @@ def _precision(release: Release, *, providers: tuple[int, ...] | None) -> pl.Laz
         passed="passed",
         waived="waived",
         detail="detail",
+    )
+    conditions = _conditions(providers=providers, recipients=None, years=None)
+    return frame.filter(*conditions) if conditions else frame
+
+
+def _stratum_precision(
+    release: Release, *, providers: tuple[int, ...] | None
+) -> pl.LazyFrame:
+    """One row per provider and stratum of its blind sample, from the precision
+    rows' `strata` in `release.json`, largest allocated value first, with the
+    verdict of the stratum's stratum_precision row; null verdicts for a stratum
+    the release does not gate, and no rows when the release was not gated."""
+    verdicts = _gate_rows(release, "stratum_precision", schema=_GATE_ROW).select(
+        pl.col("subject")
+        .str.split_exact("/", 1)
+        .struct.rename_fields(["provider_code", "stratum"])
+        .struct.unnest(),
+        "passed",
+        "waived",
+        "detail",
+    )
+    frame = (
+        _gate_rows(release, "precision", schema=_STRATA_ROW)
+        .select(provider_code=pl.col("subject").cast(pl.Int32), s="strata")
+        .explode("s")
+        .drop_nulls("s")
+        .unnest("s")
+        .join(
+            verdicts.with_columns(pl.col("provider_code").cast(pl.Int32)),
+            on=["provider_code", "stratum"],
+            how="left",
+            maintain_order="left",
+        )
     )
     conditions = _conditions(providers=providers, recipients=None, years=None)
     return frame.filter(*conditions) if conditions else frame
@@ -1253,7 +1311,7 @@ def _base_rows(
             origin=pl.lit("disbursement"),
             amount=allocated * factor,
             amount_low=pl.col("allocated_low_usd") * factor,
-            amount_high=pl.col("allocated_high_usd") * factor,
+            amount_high=allocated * factor,
             no_grant_equivalent_usd=pl.when(missing).then(allocated),
             rio_adaptation=pl.col("inherited_rio_adaptation"),
             rio_mitigation=pl.col("inherited_rio_mitigation"),
@@ -1945,11 +2003,12 @@ def _totals(
     agency: pl.Expr | None,
     factors: pl.DataFrame | None,
 ) -> pl.LazyFrame:
-    """All CRS flows of `spec.flow`, of disbursements for a net flow, by the
-    result's row keys and method, plus a row per provider, year, Bi_Multi code
-    and method with a null recipient that sums every recipient, for rows such as
-    attribution that have none. With an `agency`
-    key (`_agency_key`) the keys hold `agency_code`, as the result table's do.
+    """All CRS flows of `spec.flow`, of disbursements for a net flow, of the
+    Bi_Multi codes the view counts (`_VIEW_CODES`), by the result's row keys and
+    method, plus a row per provider, year, Bi_Multi code and method with a null
+    recipient that sums every recipient, for rows such as attribution that have
+    none. With an `agency` key (`_agency_key`) the keys hold `agency_code`, as the
+    result table's do.
 
     CRDF commitments carry their provider's class, Bi_Multi 1 for a bilateral
     provider, where the CRS splits bilateral flows over codes 1, 3, 7 and 8, so
@@ -1959,7 +2018,9 @@ def _totals(
     same rows as its amount.
     """
     flows = release.table("total_flows").filter(
-        pl.col("flow") == _gross(spec.flow), *conditions
+        pl.col("flow") == _gross(spec.flow),
+        pl.col("bi_multi").is_in(_VIEW_CODES[spec.view]),
+        *conditions,
     )
     if spec.flow == "commitments":
         flows = flows.with_columns(
