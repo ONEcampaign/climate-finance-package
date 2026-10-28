@@ -523,6 +523,28 @@ def test_release_invariants_refuse_an_untraced_adaptation_marker_before_2010() -
     ]
 
 
+def test_release_invariants_refuse_a_gross_high_bound_above_value() -> None:
+    # DEU-1-R1's high bound rises 1m above its allocation, and DEU-1's
+    # disbursed_high_usd with it, so the sums and the order low <= value <= high
+    # still hold.
+    tables = {name: _read(name) for name in INVARIANT_TABLES}
+    tables["disbursements"] = tables["disbursements"].with_columns(
+        allocated_high_usd=pl.when(pl.col("record_id") == "DEU-1-R1")
+        .then(pl.col("allocated_usd") + 1e6)
+        .otherwise(pl.col("allocated_high_usd"))
+    )
+    tables["commitments"] = tables["commitments"].with_columns(
+        disbursed_high_usd=pl.when(pl.col("row_id") == "DEU-1")
+        .then(pl.col("disbursed_high_usd") + 1e6)
+        .otherwise(pl.col("disbursed_high_usd"))
+    )
+
+    assert release_invariants(tables) == [
+        "disbursements DEU-1 DEU-1-R1 2022: allocated_high_usd differs from "
+        "allocated_usd"
+    ]
+
+
 def test_release_invariants_refuse_a_dropped_allocation_row() -> None:
     # NOR-1-R1, Norway's only Rio-marked record of 2022, loses its allocation row,
     # and NOR-1's disbursed amounts drop with it, so every per-row and per-record

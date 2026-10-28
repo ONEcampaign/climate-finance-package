@@ -4,14 +4,14 @@ Before you publish a figure for a provider, check how much of its climate financ
 
 ## Before you start
 
-Load a release. The examples check Germany and Japan on the synthetic test release, so their numbers are invented.
+Load a release. The examples check Germany and Japan on the synthetic example release, so their numbers are invented. `cf.load()` opens the published release.
 
 ```python
 import polars as pl
 
 import climate_finance as cf
 
-release = cf.load()
+release = cf.load_example()
 quality = release.quality(providers=["Germany", "Japan"])
 ```
 
@@ -63,8 +63,8 @@ quality = release.quality(providers=["Germany", "Japan"])
     ```
 
     ```output
-    5 0.37
-    701 0.09
+    5 0.39
+    701 0.1
     ```
 
 4. Read the measured precision. `quality.precision` holds one row per provider that went through the release's blind sample. `estimate` is the share of allocated value whose link a sample found right, `lower` and `upper` give its interval, and `passed` shows whether the lower bound reached the release's threshold. `waived` is true where the release shipped despite a failure.

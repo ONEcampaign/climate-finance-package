@@ -101,8 +101,8 @@ class ReleaseInvariantError(BuildError):
 
 
 class SyntheticReleaseError(BuildError):
-    """A release named `release.SYNTHETIC_RELEASE`, the name reserved for the test
-    fixture, whose figures are invented, cut or published."""
+    """A release cut or published as `release.SYNTHETIC_RELEASE`, the name reserved
+    for the synthetic example release, whose figures are invented."""
 
 
 class UnpublishedSettingsError(BuildError):

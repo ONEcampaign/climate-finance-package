@@ -1561,7 +1561,6 @@ EURO_ISSUER = "EUI"
 _ALLOCATION_ORDER = (
     ("0", "allocated_low_usd"),
     ("allocated_low_usd", "allocated_usd"),
-    ("allocated_usd", "allocated_high_usd"),
     ("0", "record_grant_equiv_usd"),
 )
 _DISBURSED_ORDER = (
@@ -1631,11 +1630,11 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     `unallocated`, `agency_shares`, `agency_spending`, `core_contributions`,
     `provider_coefficients` and BTR tables.
 
-    Every amount is finite or null; the other checks skip a non-finite amount, and
+    Every amount is finite or null. The other checks skip a non-finite amount, and
     the sum, record and untraced checks skip the commitment and the record whose
     row holds one, and the `unallocated` total its provider and year, so it is
     reported once, as non-finite. Every disbursements row holds
-    0 <= allocated_low <= allocated <= allocated_high and 0 <= record_grant_equiv,
+    0 <= allocated_low <= allocated = allocated_high and 0 <= record_grant_equiv,
     and names a commitment. Per commitment, its rows' allocated, allocated_low and
     allocated_high, each plus `withheld_usd`, sum to disbursed, disbursed_low and
     disbursed_high, and 0 <= disbursed_low <= disbursed <= disbursed_high <= face,
@@ -1661,11 +1660,10 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     aggregates another of its channels. Per party, year and status, `btr_totals`
     holds as many rows and linked rows as `btr` and `btr_links` do, and the same
     face and grant-equivalent sums within `BTR_TOTALS_TOLERANCE` of their size. The
-    `untraced` checks are those of `_untraced_problems`, the `unallocated` total
-    that of `_marked_problems`, and the `provider_coefficients` checks those of
-    `_coefficient_problems`, the `reflows` checks those of `_reflow_problems`, and
-    the `jev_flags` checks those of `_jev_flag_problems`. An empty list means every
-    check passed.
+    `untraced`, `unallocated`, `provider_coefficients`, `reflows` and `jev_flags`
+    checks are those of `_untraced_problems`, `_marked_problems`,
+    `_coefficient_problems`, `_reflow_problems` and `_jev_flag_problems`. An empty
+    list means every check passed.
     """
     commitments, problems, _ = _finite(tables["commitments"], name="commitments")
     disbursements, non_finite, flagged = _finite(
@@ -1696,6 +1694,16 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
             f"disbursements {_row_label(row)}: {smaller} > {larger}"
             for row in failing.iter_rows(named=True)
         )
+    # A gross allocation's high bound is its value. Only net flows widen `high`.
+    differs = disbursements.filter(
+        (pl.col("allocated_high_usd") - pl.col("allocated_usd")).abs()
+        > INVARIANT_TOLERANCE_USD
+    )
+    problems.extend(
+        f"disbursements {_row_label(row)}: allocated_high_usd differs from "
+        "allocated_usd"
+        for row in differs.iter_rows(named=True)
+    )
     unlinked = disbursements.filter(
         pl.col("link_method").is_null(), pl.col("disbursement_source") == "crs"
     )

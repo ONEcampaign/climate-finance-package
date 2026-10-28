@@ -1,5 +1,5 @@
 {
-  "release": "fixture",
+  "release": "synthetic-example",
   "data_format": 1,
   "created_at": "2026-10-21T00:00:00Z",
   "package_version": "2.0.0.dev0",
@@ -16,7 +16,7 @@
   },
   "tables": {
     "disbursements": {
-      "sha256": "a0da0f1146fcb0ae8ab85f73c461851fac5fa094aea9ff193036262a40616b1e",
+      "sha256": "c28db37afcaa584d8c1f433ef0215123b26c6235c31706620c088e9d5fb3f3c5",
       "rows": 36
     },
     "untraced": {
@@ -24,7 +24,7 @@
       "rows": 3
     },
     "objectives": {
-      "sha256": "3cfc7ec56d4199b3faf9e4aaabebd9e395da5726968e0715b5fafb1364916671",
+      "sha256": "a9e44612feac7b09134810a9d6bac8660828db26b28bd8abaa9140ed524ecaa3",
       "rows": 74
     },
     "agency_shares": {
@@ -72,7 +72,7 @@
       "rows": 275
     },
     "commitments": {
-      "sha256": "9c6976e78b96d85666b7ff57e81933bbb49e5c6c31e69cc2776c5fe9c119daa6",
+      "sha256": "e9c8225a95c2e00490844ff2e2b29d832d49869c5c7cf3cb3345c2f5c3e1f0fe",
       "rows": 14
     },
     "reflows": {
@@ -80,7 +80,7 @@
       "rows": 17
     },
     "quality": {
-      "sha256": "3e8efbf82c10beef60e26606808aad39ce01daf1a5fa8484a463225d09f6c34f",
+      "sha256": "84a37a1558094d4aa7d1f06156e4bed024df0081d699d4111142aceb3f7628c1",
       "rows": 12
     },
     "btr_totals": {
@@ -92,8 +92,8 @@
       "rows": 14
     },
     "total_flows": {
-      "sha256": "aea008574539ed5b04ec536cbe52ec116a9fb1c8debfd3652c939591ca16c3d8",
-      "rows": 99
+      "sha256": "ff14a78ed7a1241b0aea2568cb9c5907d7b18a9462f394946b80699dba67e93e",
+      "rows": 101
     }
   },
   "source_versions": {
@@ -132,5 +132,6 @@
   "precision_gate_waived": false,
   "precision_waiver": null,
   "previous_release": null,
+  "previous_pack_sha256": null,
   "withheld_tables": {}
 }

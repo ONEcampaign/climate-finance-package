@@ -31,10 +31,11 @@ from climate_finance.build.provenance import Provenance, record_path
 from climate_finance.build.readers.gcf import PROJECTS_FILE
 from climate_finance.build.readers.ledgers import LEDGER_DIR
 from climate_finance.build.stages import REGISTRY, Stage, table_path
+from climate_finance.release import EXAMPLE_DIR
 from climate_finance.schema import sha256_file
 
 RAW_FIXTURES = Path(__file__).parent / "fixtures" / "raw"
-SNAPSHOT = Path(__file__).parent / "fixtures" / "snapshot"
+SNAPSHOT = EXAMPLE_DIR
 # The publishers the IATI fixtures hold.
 IATI_PUBLISHERS = ("caf", "eib", "gcf", "gef")
 

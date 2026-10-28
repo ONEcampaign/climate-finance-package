@@ -21,6 +21,7 @@ from climate_finance.errors import (
 )
 from climate_finance.release import (
     PACK_SHA256,
+    SYNTHETIC_RELEASE,
     IndexEntry,
     ReleaseIndex,
     check_release_name,
@@ -34,7 +35,7 @@ def test_load_opens_the_fixture_with_its_manifest(as_path) -> None:
     release = cf.load(path=as_path(FIXTURE_DIR))
 
     assert isinstance(release, cf.Release)
-    assert release.manifest.release == "fixture"
+    assert release.manifest.release == SYNTHETIC_RELEASE
     assert release.table("commitments").collect().height == 14
 
 
@@ -58,9 +59,9 @@ def test_a_release_prints_its_name_flow_years_and_tables(tmp_path: Path) -> None
         encoding="utf-8",
     )
 
-    # The fixture's name marks its figures as invented.
-    assert repr(cf.load(path=FIXTURE_DIR)) == (
-        "Release('fixture', synthetic figures): commitments 2021 to 2022, "
+    # The example release's name marks its figures as invented.
+    assert repr(cf.load_example()) == (
+        "Release('synthetic-example', synthetic figures): commitments 2021 to 2022, "
         "disbursements 2021 to 2024; 20 tables"
     )
     assert repr(cf.load(path=published)) == (
@@ -120,7 +121,7 @@ def _fixture_manifest(**changes: object) -> bytes:
     [
         b'{"release": "fixt',
         b"\xff\xfe",
-        b'{"release": "fixture"}',
+        b'{"release": "synthetic-example"}',
         _fixture_manifest(data_format=None),
         _fixture_manifest(data_format=str(DATA_FORMAT)),
         _fixture_manifest(data_format=True),
@@ -152,14 +153,14 @@ def test_a_cached_release_with_a_malformed_manifest_downloads_again(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cache = tmp_path / "cache"
-    name = release_dirname("fixture")
+    name = release_dirname(SYNTHETIC_RELEASE)
     shutil.copytree(FIXTURE_DIR, cache / name)
     (cache / name / PACK_SHA256).write_text("0", encoding="utf-8")
     (cache / name / "release.json").write_text('{"release": "fixt', encoding="utf-8")
     index = ReleaseIndex(
-        latest="fixture",
+        latest=SYNTHETIC_RELEASE,
         releases={
-            "fixture": IndexEntry(
+            SYNTHETIC_RELEASE: IndexEntry(
                 url="https://example.org/pack", sha256="0", data_format=DATA_FORMAT
             )
         },
@@ -176,7 +177,7 @@ def test_a_cached_release_with_a_malformed_manifest_downloads_again(
     release = cf.load(cache_dir=cache)
 
     assert downloads == ["https://example.org/pack"]
-    assert release.manifest.release == "fixture"
+    assert release.manifest.release == SYNTHETIC_RELEASE
 
 
 UNSAFE_NAMES = ["x/../../victim", "..", ".hidden", "a b", "", "x\\y", "x\n"]
@@ -247,15 +248,15 @@ def test_a_newer_data_format_asks_for_an_upgrade_and_stays_cached(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extra: dict[str, object]
 ) -> None:
     cache = tmp_path / "cache"
-    release = shutil.copytree(FIXTURE_DIR, cache / release_dirname("fixture"))
+    release = shutil.copytree(FIXTURE_DIR, cache / release_dirname(SYNTHETIC_RELEASE))
     (release / PACK_SHA256).write_text("0", encoding="utf-8")
     (release / "release.json").write_bytes(
         _fixture_manifest(data_format=DATA_FORMAT + 1, **extra)
     )
     index = ReleaseIndex(
-        latest="fixture",
+        latest=SYNTHETIC_RELEASE,
         releases={
-            "fixture": IndexEntry(
+            SYNTHETIC_RELEASE: IndexEntry(
                 url="https://example.org/pack", sha256="0", data_format=DATA_FORMAT
             )
         },
@@ -358,6 +359,7 @@ def test_an_empty_index_names_path_and_where_releases_come_from(
     # index online says none is published.
     message = str(raised.value)
     assert "cf.load(path=...)" in message
+    assert "cf.load_example()" in message
     assert ("No release is published" in message) is refresh
     assert ("refresh=True" in message) is not refresh
 

@@ -775,7 +775,9 @@ def test_the_shipped_build_toml_holds_the_settings_of_a_release() -> None:
     assert config.sources.ledgers is not None
 
 
-@pytest.mark.parametrize("name", ["fixture", "2026a-rc", "2026A", "2026a_test"])
+@pytest.mark.parametrize(
+    "name", [release_module.SYNTHETIC_RELEASE, "2026a-rc", "2026A", "2026a_test"]
+)
 def test_only_a_published_name_is_cut_or_published(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
@@ -792,11 +794,11 @@ def test_only_a_published_name_is_cut_or_published(
     monkeypatch.setattr(release.build_package, "build", pytest.fail)
     github = FakeGitHub()
 
-    # `fixture` is a published name's shape, refused as the synthetic release's.
-    refused = SyntheticReleaseError if name == "fixture" else ReleaseNameError
+    synthetic = name == release_module.SYNTHETIC_RELEASE
+    refused = SyntheticReleaseError if synthetic else ReleaseNameError
     with pytest.raises(refused):
         publish.publish_release(pack, gh=github)
-    if name == "fixture":
+    if synthetic:
         with pytest.raises(SyntheticReleaseError):
             release.cut_release(name, config=BUILD_TOML, out_dir=tmp_path)
     assert github.calls == []

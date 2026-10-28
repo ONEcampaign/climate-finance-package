@@ -25,11 +25,12 @@ from climate_finance.build.stages import (
     raw_dir,
     table_path,
 )
+from climate_finance.release import EXAMPLE_DIR
 from climate_finance.schema import RAW_MANIFEST
 
 BUILD_TOML = Path(__file__).parent / "fixtures" / "build.toml"
 OECD = Path(__file__).parent / "fixtures" / "raw" / "oecd"
-SNAPSHOT = Path(__file__).parent / "fixtures" / "snapshot"
+SNAPSHOT = EXAMPLE_DIR
 # The Jev model build.toml pins, which the price table must know.
 JEV_MODEL = load_config(BUILD_TOML).jev.model
 

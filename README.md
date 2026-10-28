@@ -12,19 +12,19 @@ A release is a set of versioned tables built from the OECD's Creditor Reporting 
 ## Install
 
 ```bash
-pip install climate-finance
+pip install "climate-finance>=2"
 ```
 
-Requires Python 3.12 or later. To build a release, install the `build` extra with `pip install "climate-finance[build]"`. For `.to_pandas()` and the 1.x compatibility layer, install `pip install "climate-finance[pandas]"`.
+Requires Python 3.12 or later. To build a release, install the `build` extra with `pip install "climate-finance[build]>=2"`. For `.to_pandas()` and the 1.x compatibility layer, run `pip install "climate-finance[pandas]>=2"`.
 
 ## Quickstart
 
-`cf.load()` opens the latest release in `data/releases.json`, the release index shipped with the package. That index ships empty until the first 2.0 release is published, and until then `cf.load()` raises `UnknownNameError`. Pass the directory to open a release you built (`cf.load(path="releases/2026a/assemble")`). The examples in this repository use a small synthetic test release with invented amounts.
+`cf.load_example()` opens a small synthetic release shipped with the package, with invented amounts, to practise on. `cf.load()` opens the published release.
 
 ```python
 import climate_finance as cf
 
-release = cf.load()
+release = cf.load_example()
 result = release.spending(
     providers="Japan",
     recipients="Bangladesh",

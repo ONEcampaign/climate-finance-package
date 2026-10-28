@@ -4,7 +4,7 @@ A published release ships the BTR reconciliation totals (`btr_totals` and `btr_c
 
 ## Before you start
 
-- Install the `build` extra with `pip install "climate-finance[build]"`.
+- Install the `build` extra with `pip install "climate-finance[build]>=2"`.
 - Have a `build.toml` and the bulk CRS file, set up as in [How to cut a release](cut-a-release.md).
 - Download the workbooks in a browser from the UNFCCC's [first Biennial Transparency Reports](https://unfccc.int/first-biennial-transparency-reports) page. For each party, take the common tabular format tables on support, the workbook that holds Table III.1. Canada and the EU publish theirs as a zip of workbooks. Keep the zip whole, since the build reads it as it is.
 

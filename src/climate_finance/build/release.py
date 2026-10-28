@@ -1201,8 +1201,8 @@ def _member(name: str, size: int, mtime: int) -> tarfile.TarInfo:
 
 # Why a release named `SYNTHETIC_RELEASE` is refused.
 _SYNTHETIC_NAME = (
-    f"release name {SYNTHETIC_RELEASE!r} is reserved for the test fixture, whose "
-    "figures are invented; name the release another way"
+    f"release name {SYNTHETIC_RELEASE!r} is reserved for the synthetic example "
+    "release, whose figures are invented; name the release another way"
 )
 
 
@@ -1240,8 +1240,8 @@ def cut_release(
 
     Raises:
         GateFailedError: when a gate fails and is not waived.
-        SyntheticReleaseError: when `release` is `SYNTHETIC_RELEASE`, the test
-            fixture's name.
+        SyntheticReleaseError: when `release` is `SYNTHETIC_RELEASE`, the synthetic
+            example release's name.
         UnpublishedSettingsError: when the config sets a setting of
             `config.PUBLISHED_SETTINGS` at another value, before anything builds.
         BuildError: when `waive_precision` gives a blank reason, or `previous`
