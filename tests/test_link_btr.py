@@ -13,17 +13,22 @@ from normalised import crs_records as crs_frame
 from climate_finance import schema
 from climate_finance.build.link.btr import (
     AGGREGATE,
+    CALIBRATION_DRAWS,
+    CALIBRATION_STRATA,
     LINK_PROBABILITY,
     MIN_MAP_OUTCOMES,
     btr_rows,
     calibrate,
+    calibration_draw,
     comparisons,
     crs_records,
+    current_decisions,
     link_btr,
     link_by_ids,
     linked_pairs,
     score_party,
 )
+from climate_finance.build.link.packet import btr_digests
 
 _BTR_DEFAULTS: dict[str, object] = {
     "party": "NOR",
@@ -346,6 +351,159 @@ def test_no_labels_anywhere_gives_no_probability() -> None:
     assert calibrated["probability"].to_list() == [None]
 
 
+def _decisions(
+    pairs: pl.DataFrame,
+    *,
+    is_match: bool,
+    stratified: bool = True,
+    task: str = "btr_crs",
+    source: str = "human",
+) -> pl.DataFrame:
+    """Decisions on `pairs` (`row_id`, `record_id`) as `read_decision_labels` gives
+    them."""
+    return pairs.select(
+        task=pl.lit(task),
+        left_id="row_id",
+        right_id="record_id",
+        is_match=pl.lit(is_match),
+        pair_label_source=pl.lit(source),
+        stratified=pl.lit(stratified),
+    )
+
+
+def test_a_decision_holds_only_while_its_row_and_record_are_unchanged() -> None:
+    n = MIN_MAP_OUTCOMES
+    ids, truth = _labels("a", right=n, wrong=n)
+    idless = _best("a", [(f"x{i}", f"rx{i}", -5.0) for i in range(n)])
+    btr = _btr(*({"row_id": f"x{i}", "title": "Solar grid"} for i in range(n)))
+    crs = crs_frame(*({"record_id": f"rx{i}", "year": 2021} for i in range(n)))
+    pairs = idless.select(left_id="row_id", right_id="record_id")
+    seen = btr_digests(pairs, btr=btr.lazy(), crs=crs.lazy())
+    accepted = _decisions(idless, is_match=True).join(seen, on=["left_id", "right_id"])
+
+    def probability(
+        btr: pl.DataFrame, crs: pl.DataFrame, labels: pl.DataFrame
+    ) -> float:
+        current = current_decisions(labels, btr=btr.lazy(), crs=crs.lazy())
+        found = calibrate(pl.concat([ids, idless]), truth=truth, labels=current).filter(
+            row_id="x0"
+        )
+        return found["probability"].item()
+
+    # A revised workbook puts another activity at the same row ids, or the CRS
+    # record changes: the decisions no longer hold, and the map reads 0.25 as with
+    # none. A decision with no fingerprint never holds.
+    revised = btr.with_columns(title=pl.lit("Coastal flood barriers"))
+    changed = crs.with_columns(commitment_usd=pl.lit(5e6))
+    assert probability(btr, crs, accepted) == 1.0
+    assert probability(revised, crs, accepted) == pytest.approx(0.25)
+    assert probability(btr, changed, accepted) == pytest.approx(0.25)
+    assert probability(
+        btr, crs, accepted.with_columns(left_digest=pl.lit(None, pl.String))
+    ) == pytest.approx(0.25)
+
+
+def test_a_block_of_decisions_on_id_less_rows_moves_the_map() -> None:
+    n = MIN_MAP_OUTCOMES
+    ids, truth = _labels("a", right=n, wrong=n)
+    # Id-less rows at weight -5, between the id labels at -10 (wrong) and 10
+    # (right), where the map reads 0.25.
+    idless = _best("a", [(f"x{i}", f"rx{i}", -5.0) for i in range(n)])
+    best = pl.concat([ids, idless])
+    accepted = _decisions(idless, is_match=True)
+    # Decisions on a trace pair, on an agent's rejected id row, on a Jev label and
+    # on a record that is not the row's best candidate change nothing.
+    ignored = pl.concat(
+        [
+            _decisions(idless, is_match=False, task="trace"),
+            _decisions(ids.head(1), is_match=False, source="agent"),
+            _decisions(idless, is_match=False, source="jev"),
+            _decisions(idless.with_columns(record_id=pl.lit("other")), is_match=False),
+        ]
+    )
+
+    def probability(labels: pl.DataFrame | None) -> float:
+        found = calibrate(best, truth=truth, labels=labels).filter(row_id="x0")
+        return found["probability"].item()
+
+    assert probability(None) == pytest.approx(0.25)
+    assert probability(ignored.clear()) == probability(None)
+    assert probability(ignored) == probability(None)
+    assert probability(accepted) == 1.0
+    assert probability(pl.concat([accepted, ignored])) == 1.0
+
+
+@pytest.mark.parametrize(
+    ("stratified", "weight", "probability"),
+    [
+        (True, -5.0, 30 / 130),
+        (False, -5.0, 0.5),
+        # A drawn pair that now scores above the band, where the draw took no
+        # share, weighs 1.
+        (True, -2.0, 0.5),
+    ],
+)
+def test_drawn_decisions_weigh_the_id_less_rows_of_their_stratum(
+    *, stratified: bool, weight: float, probability: float
+) -> None:
+    n = MIN_MAP_OUTCOMES
+    ids, truth = _labels("a", right=n, wrong=n)
+    # Thirty right id labels at `weight`, and a hundred id-less rows there, thirty
+    # of them decided wrong. Drawn, each decision stands for 100 / 30 rows.
+    ids = ids.with_columns(
+        match_weight=pl.when(pl.col("match_weight") > 0).then(weight).otherwise(-10.0)
+    )
+    idless = _best("a", [(f"x{i}", f"rx{i}", weight) for i in range(100)])
+    rejected = _decisions(idless.head(n), is_match=False, stratified=stratified)
+
+    calibrated = calibrate(
+        pl.concat([ids, idless]), truth=truth, labels=rejected
+    ).filter(row_id="x99")
+
+    assert calibrated["probability"].item() == pytest.approx(probability)
+
+
+def test_the_draw_spreads_each_partys_id_less_rows_over_the_strata() -> None:
+    low, *_, high = CALIBRATION_STRATA
+    # Party A: fifty id-less rows in each of the first two strata, ten in the
+    # third, and rows outside the band and with ids, which are never drawn.
+    rows = [
+        (f"s{stratum}-{i}", f"r{stratum}-{i}", CALIBRATION_STRATA[stratum] + 0.5)
+        for stratum, size in enumerate((50, 50, 10))
+        for i in range(size)
+    ]
+    rows += [(f"out{i}", "r", weight) for i, weight in enumerate((low - 1, high))]
+    a = _best("A", [*rows, ("id0", "rid0", low)])
+    # Party B has three rows, all drawn.
+    b = _best("B", [(f"b{i}", "r", -5.0) for i in range(3)])
+    truth = pl.DataFrame({"row_id": ["id0"], "record_id": ["other"]})
+    best = pl.concat([a, b])
+
+    drawn = calibration_draw(best, truth=truth)
+    by_stratum = (
+        drawn.filter(party="A")
+        .group_by(pl.col("row_id").str.extract(r"^s(\d)"))
+        .len()
+        .sort("row_id")
+    )
+
+    in_order = drawn.filter(party="A").sort("draw_rank")
+    strata = in_order["row_id"].str.extract(r"^s(\d)")
+
+    assert drawn.filter(party="A").height == CALIBRATION_DRAWS
+    assert dict(by_stratum.iter_rows()) == {"0": 40, "1": 40, "2": 10}
+    # The draw takes the strata in turn, so any first part of it holds each stratum
+    # alike, and within a stratum it follows the pairs' digests, not their ids.
+    assert in_order["draw_rank"].to_list() == list(range(1, CALIBRATION_DRAWS + 1))
+    assert strata.head(30).to_list() == ["0", "1", "2"] * 10
+    first = in_order.filter(strata == "0")["row_id"]
+    assert first.to_list() != first.sort().to_list()
+    assert drawn.filter(party="B")["row_id"].to_list() == ["b0", "b1", "b2"]
+    assert drawn.equals(
+        calibration_draw(best.sample(fraction=1.0, shuffle=True, seed=1), truth=truth)
+    )
+
+
 _COUNTRIES = ["Kenya", "Ghana", "Uganda", "Malawi", "Zambia", "Nepal"]
 _CODES = [248, 241, 285, 253, 288, 660]
 # Three title words per activity, picked apart by these steps and shifts.
@@ -413,9 +571,10 @@ def test_the_model_links_only_once_ids_calibrate_it() -> None:
     # The misnamed ids give the map the wrong labels it needs.
     btr, crs = _synthetic(ids=100, misnamed=MIN_MAP_OUTCOMES)
 
-    links = link_btr(btr.lazy(), crs=crs.lazy())
+    links, draw, _ = link_btr(btr.lazy(), crs=crs.lazy())
 
     schema.validate(schema.LINKS, links)
+    schema.validate(schema.BTR_CALIBRATION, draw)
     methods = dict(links.group_by("link_method").len().iter_rows())
     assert methods["btr_id"] == 100
     by_model = links.filter(link_method="btr_splink")
@@ -427,7 +586,7 @@ def test_the_model_links_only_once_ids_calibrate_it() -> None:
 def test_raw_em_probabilities_never_link() -> None:
     btr, crs = _synthetic(ids=0)
 
-    links = link_btr(btr.lazy(), crs=crs.lazy())
+    links = link_btr(btr.lazy(), crs=crs.lazy()).links
 
     assert links.is_empty()
 

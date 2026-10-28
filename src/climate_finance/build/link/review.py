@@ -4,9 +4,10 @@ A trace link joins the queue when the ledger contradicts it, when a rule linked 
 though its records disagree on recipient or project number, when a classifier gave
 it a probability in the Jev band (`config.jev.band`), or when Jev gave a Splink link
 a probability in `JEV_REVIEW_BAND`, its reason the first of these that holds. The
-queue also holds the Splink calibration pairs and every commitment row allocated
-more than `OVER_FACE` times its face. A pair someone has decided stays out, and an
-over-face row returns in every build while it stays over face.
+queue also holds the Splink calibration pairs, the id-less BTR rows drawn to
+calibrate the BTR link (`btr_calibration`, task `btr_crs`), and every commitment
+row allocated more than `OVER_FACE` times its face. A pair someone has decided
+stays out, and an over-face row returns in every build while it stays over face.
 
 `write_queue_packet` renders the queue for people and agents to decide.
 
@@ -34,15 +35,18 @@ from climate_finance.build.allocate import (
     dated_donors,
     window_donors,
 )
+from climate_finance.build.errors import LabelPacketError
 from climate_finance.build.link.decisions import (
     CALIBRATION_REASON,
+    DIGESTS,
     PAIR,
     accepted_pairs,
     drop_pairs,
+    pair_decisions,
     read_decision_labels,
 )
 from climate_finance.build.link.ledger import run_ledger_check
-from climate_finance.build.link.packet import code_names, write_packet
+from climate_finance.build.link.packet import code_names, write_btr_packet, write_packet
 from climate_finance.build.normalise.crs import trace_population
 
 if TYPE_CHECKING:
@@ -70,14 +74,15 @@ def run_review(context: StageContext) -> StageOutput:
     # One collect shares the ledger check's joins between the links and the labels.
     checked, pair_labels = pl.collect_all(run_ledger_check(context))
     decided = read_decision_labels(context.config.sources.review_decisions)
-    links = flag_review(checked, labels=decided, band=context.config.jev.band)
+    by_pair = pair_decisions(decided)
+    links = flag_review(checked, labels=by_pair, band=context.config.jev.band)
     commitments = context.read("fill", "commitments").collect()
     allocations = context.read("fill", "allocations").collect()
     pending = pending_rows(
         commitments,
         allocations=allocations,
         links=links,
-        labels=decided,
+        labels=by_pair,
         units=context.read("link", "units"),
         crs=trace_population(context.read("normalise", "crs")),
         crdf=counted_rows(context.read("normalise", "crdf")),
@@ -89,6 +94,7 @@ def run_review(context: StageContext) -> StageOutput:
             links,
             commitments=commitments,
             pair_scores=context.read("link", "pair_scores").collect(),
+            btr_calibration=context.read("link", "btr_calibration").collect(),
             labels=decided,
         ),
         "commitments": compute_status(
@@ -105,8 +111,8 @@ def flag_review(
 
     Args:
         links: `links` rows, with the ledger check's `ledger_check`.
-        labels: `read_decision_labels`. A pair people or agents decided is not
-            queued.
+        labels: `pair_decisions`, one row per pair. A pair people or agents decided
+            is not queued.
         band: the classifier probabilities queued, low inclusive.
     """
     reason = (
@@ -141,11 +147,14 @@ def review_queue(
     *,
     commitments: pl.DataFrame,
     pair_scores: pl.DataFrame,
+    btr_calibration: pl.DataFrame,
     labels: pl.DataFrame,
 ) -> pl.DataFrame:
     """The `review_queue` table: the links `flag_review` flagged, the Splink
-    calibration pairs that are not links, less the pairs `labels`
-    (`read_decision_labels`) holds, and the commitment rows allocated over
+    calibration pairs that are not links, and the BTR calibration draw
+    (`btr_calibration`, as `btr_crs` pairs whether linked or not), less the pairs
+    `labels` (`read_decision_labels`) holds, a BTR pair only on the same
+    fingerprints, and the commitment rows allocated over
     `OVER_FACE` times face, as `crdf_crs` rows with no right side. `flag_review`
     flags no decided pair, and a decided pair has a right side.
 
@@ -174,6 +183,14 @@ def review_queue(
         .join(links.select(PAIR), on=PAIR, how="anti")
         .join(labels.select(PAIR), on=PAIR, how="anti")
     )
+    # A BTR decision holds only while the row and record it saw are unchanged.
+    btr = btr_calibration.select(
+        "left_id",
+        "right_id",
+        *DIGESTS,
+        task=pl.lit("btr_crs"),
+        review_reason=pl.lit(CALIBRATION_REASON),
+    ).join(labels.select(*PAIR, *DIGESTS), on=[*PAIR, *DIGESTS], how="anti")
     face = pl.col("face_usd")
     over_face = commitments.filter(
         face > 0, pl.col("disbursed_usd") > OVER_FACE * face
@@ -183,7 +200,7 @@ def review_queue(
         right_id=pl.lit(None, dtype=pl.String),
         review_reason=pl.lit("over_face"),
     )
-    queue = pl.concat([flagged, calibration, over_face], how="diagonal_relaxed")
+    queue = pl.concat([flagged, calibration, btr, over_face], how="diagonal_relaxed")
     return queue.with_columns(
         pl.lit(None).alias(name) for name in columns if name not in queue.columns
     ).select(pl.col(name).cast(dtype) for name, dtype in columns.items())
@@ -217,7 +234,7 @@ def pending_rows(
         commitments: the fill stage's `commitments`.
         allocations: the fill stage's `allocations`.
         links: the links with `review` set (`flag_review`).
-        labels: `read_decision_labels`, whose accepted pairs stay linked.
+        labels: `pair_decisions`, whose accepted pairs stay linked.
         units: the link stage's `units`.
         crs: the CRS trace population.
         crdf: the counted CRDF rows (`counted_rows`).
@@ -354,19 +371,55 @@ def _components(links: pl.DataFrame, *, rows: pl.DataFrame) -> pl.DataFrame:
     return nodes.select("kind", "id", component=pl.Series(labels, dtype=pl.Int64))
 
 
-def write_queue_packet(*, release_dir: Path, out: Path, show_ids: bool = True) -> Path:
-    """Write the review queue's pairs, the Splink calibration pairs among them, as a
-    labelling packet (`packet.write_packet`), with the commitment rows allocated
-    over `OVER_FACE` times face in a table after the pairs.
+def write_queue_packet(
+    *, release_dir: Path, out: Path, show_ids: bool = True, task: str = "trace"
+) -> Path:
+    """Write the review queue's pairs of `task` as a labelling packet.
+
+    The `trace` pairs, the Splink calibration pairs among them, go to
+    `packet.write_packet`, with the commitment rows allocated over `OVER_FACE`
+    times face in a table after the pairs. The `btr_crs` pairs, the BTR calibration
+    draw, go to `packet.write_btr_packet`, which always shows ids, in the order of
+    their `draw_rank`, then party: each party's strata in turn, in digest order, so
+    any first part of the packet a labeller finishes is a random subset of every
+    stratum, as the calibration's weights assume.
 
     Names of agencies, purposes, channels and flows come from the bulk CRS file
-    fetch wrote, when the release still holds it.
+    fetch wrote, when the release holds it.
+
+    Raises:
+        LabelPacketError: when `task` is neither `trace` nor `btr_crs`, or a
+            `btr_crs` packet is asked to hide ids.
     """
     # The stage registry imports this module, so read its paths at call time.
     from climate_finance.build.fetch import CRS_FILE
     from climate_finance.build.stages import raw_dir, table_path
 
     queue = pl.read_parquet(table_path(release_dir, "review", "review_queue"))
+    raw_crs = raw_dir(release_dir) / CRS_FILE
+    names = code_names(raw_crs) if raw_crs.exists() else None
+    crs = schema.scan_table(table_path(release_dir, "normalise", "crs"))
+    if task == "btr_crs":
+        if not show_ids:
+            raise LabelPacketError("a BTR packet always shows ids")
+        draw = pl.read_parquet(table_path(release_dir, "link", "btr_calibration"))
+        return write_btr_packet(
+            queue.filter(task=task)
+            .join(
+                draw.select("left_id", "right_id", "party", "draw_rank"),
+                on=["left_id", "right_id"],
+                how="left",
+            )
+            .sort("draw_rank", "party", *PAIR, nulls_last=True)
+            .drop("party", "draw_rank"),
+            btr=schema.scan_table(table_path(release_dir, "normalise", "btr")),
+            crs=crs,
+            out=out,
+            title="BTR calibration queue",
+            names=names,
+        )
+    if task != "trace":
+        raise LabelPacketError(f"no queue packet for task {task!r}")
     over_face = (
         queue.filter(review_reason="over_face")
         .select(row_id="left_id")
@@ -388,14 +441,13 @@ def write_queue_packet(*, release_dir: Path, out: Path, show_ids: bool = True) -
             ).iter_rows()
         ),
     ]
-    raw_crs = raw_dir(release_dir) / CRS_FILE
     return write_packet(
         queue.filter(task="trace").drop_nulls("right_id").sort(PAIR),
         units=schema.scan_table(table_path(release_dir, "link", "units")),
-        crs=schema.scan_table(table_path(release_dir, "normalise", "crs")),
+        crs=crs,
         out=out,
         title="Review queue",
         show_ids=show_ids,
-        names=code_names(raw_crs) if raw_crs.exists() else None,
+        names=names,
         appendix="\n".join(appendix) if over_face.height else None,
     )

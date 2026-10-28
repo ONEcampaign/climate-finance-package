@@ -37,6 +37,7 @@ from climate_finance.build.link.keys import (
     link_by_keys,
     pair_line_units,
 )
+from climate_finance.build.link.packet import btr_digests
 from climate_finance.build.normalise.project_numbers import normalise_pn
 from climate_finance.build.stages import StageContext, table_path
 
@@ -1129,6 +1130,7 @@ def test_run_link_writes_the_deterministic_tables_reproducibly(
         "programme_stems",
         "candidates",
         "pair_scores",
+        "btr_calibration",
         "provider_profile",
     }
     links = pl.read_parquet(table_path(tmp_path, "link", "links"))
@@ -1168,9 +1170,37 @@ def test_btr_rows_link_when_the_build_has_them(tmp_path: Path) -> None:
 
     links = run_link(_context(tmp_path, btr_archive=archive, recoveries=False))["links"]
 
+    pair = ("BTR-DEU-2022-00001", "5c1a3ae4d0c8775b")
     assert links.filter(task="btr_crs").select(
         "left_id", "right_id", "link_method"
-    ).rows() == [("BTR-DEU-2022-00001", "5c1a3ae4d0c8775b", "btr_id")]
+    ).rows() == [(*pair, "btr_id")]
+
+    # A rejection made on the row and record as they stand drops the link; one made
+    # on a row the workbook has since replaced at the same id does not.
+    seen = btr_digests(
+        pl.DataFrame({"left_id": [pair[0]], "right_id": [pair[1]]}),
+        btr=pl.scan_parquet(path),
+        crs=pl.scan_parquet(table_path(tmp_path, "normalise", "crs")),
+    ).row(0, named=True)
+
+    def btr_links(left_digest: str) -> list[tuple[str, str]]:
+        decisions = tmp_path / f"decisions-{left_digest}.parquet"
+        _table(
+            schema.REVIEW_DECISIONS,
+            [
+                {"task": "btr_crs", "left_id": pair[0], "right_id": pair[1]}
+                | {"decision": "reject", "label_source": "human"}
+                | {"reviewer": "analyst", "review_reason": "calibration"}
+                | {"decided_at": datetime(2026, 1, 1, tzinfo=UTC)}
+                | {"left_digest": left_digest, "right_digest": seen["right_digest"]}
+            ],
+        ).write_parquet(decisions)
+        context = _context(tmp_path, decisions, btr_archive=archive, recoveries=False)
+        relinked = run_link(context)["links"].filter(task="btr_crs")
+        return relinked.select("left_id", "right_id").rows()
+
+    assert btr_links("stale") == [pair]
+    assert btr_links(seen["left_digest"]) == []
 
 
 def test_recoveries_read_their_inputs_only_when_on(tmp_path: Path) -> None:

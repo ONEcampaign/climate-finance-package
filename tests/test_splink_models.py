@@ -580,7 +580,7 @@ def test_people_s_decisions_are_human_labels(tmp_path: Path) -> None:
         }
     ).write_parquet(path)
     labels = read_decision_labels(path)
-    schema.validate(schema.PAIR_LABELS, labels.drop("stratified"))
+    schema.validate(schema.PAIR_LABELS, labels.select(list(schema.PAIR_LABELS.columns)))
     # The later decision on b stands; c names no commitment; the blind-sample
     # decision on a, though later, is no label. Only a's calibration pair was drawn.
     assert labels.select("left_id", "is_match", "stratified").rows() == [

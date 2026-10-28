@@ -1,19 +1,27 @@
-"""A local page for labelling a person's share of the blind sample.
+"""A local page for labelling a person's share of the blind sample, or a review
+queue packet.
 
-`queue_pairs` picks the share: the judgement calls, the pairs whose link did not come
-from a certain rule (`schema.CERTAIN_METHODS`), in a stable hash order of their
-`sample_id` until the draws they back reach `human_audit`'s `min_share` of all the
-design's draws, which is how the gate reads the share; and `SPOT_CHECKS` pairs a
-certain rule linked, spread over the queue, as a check on that rule. `Session` holds
-the queue and a person's answers, builds each pair's fields with
-`packet.pair_views` (so the page is as blind as the packet) and saves every answer at
-once: it records the answer with `decisions.import_labels`, which replaces the
-person's earlier answer on the pair and leaves their other answers as they are, then
-rewrites the person's labels CSV beside the pair's packet, atomically. `make_server`
-serves a session on 127.0.0.1, one request at a time through the session. A pair the
-person cannot tell is set aside, recorded nowhere, and comes back once the others
-are decided. Two `cf-build label` runs, or one beside `cf-build import-labels`, on
-one decisions file can lose each other's updates.
+`queue_pairs` picks the blind sample's share: the judgement calls, the pairs whose
+link did not come from a certain rule (`schema.CERTAIN_METHODS`), in a stable hash
+order of their `sample_id` until the draws they back reach `human_audit`'s
+`min_share` of all the design's draws, which is how the gate reads the share; and
+`SPOT_CHECKS` pairs a certain rule linked, spread over the queue, as a check on that
+rule. `Session` holds the queue and a person's answers, builds each pair's fields
+with `packet.pair_views` (so the page is as blind as the packet) and saves every
+answer at once: it records the answer with `decisions.import_labels`, which replaces
+the person's earlier answer on the pair and leaves their other answers as they are,
+then rewrites the person's labels CSV beside the pair's packet, atomically.
+`make_server` serves a session on 127.0.0.1, one request at a time through the
+session. A pair the person cannot tell is set aside, recorded nowhere, and comes
+back once the others are decided. Two `cf-build label` runs, or one beside `cf-build
+import-labels`, on one decisions file can lose each other's updates.
+
+`packet_pairs` reads a review queue packet (`review.write_queue_packet`) in place of
+a sample: every pair in the packet's order, shown with its review reason. Its
+answers carry no `sample_id`, so `decisions.read_decision_labels` reads them as
+queue decisions. A `btr_crs` packet shows each pair through `packet.btr_pair_views`,
+and the page takes its heading, guide, definition and side labels from the task's
+`WORDINGS`.
 """
 
 import hashlib
@@ -37,16 +45,24 @@ from climate_finance import catalogue, schema
 from climate_finance.build.errors import BuildError, ReviewDecisionsError
 from climate_finance.build.evaluate import design_path
 from climate_finance.build.link.decisions import (
+    DIGESTS,
     LABEL_COLUMNS,
     LABELS,
     import_labels,
+    read_decisions,
     standing_decisions,
 )
 from climate_finance.build.link.packet import (
+    BTR_MATCH_DEFINITION,
     MATCH_DEFINITION,
+    BtrPairView,
     PairView,
+    btr_digests,
+    btr_pair_views,
     code_names,
+    packet_pairs_path,
     pair_views,
+    read_packet_pairs,
 )
 from climate_finance.schema import CERTAIN_METHODS
 
@@ -64,11 +80,57 @@ PACE_WINDOW = 20
 PACE_PAUSE = 120.0
 PACE_MIN = 5
 KEY = ["sample_id", "task", "left_id", "right_id"]
-type PairKey = tuple[str, str, str, str]
+# A pair's sample id, None for a queue pair, task, left id and right id.
+type PairKey = tuple[str | None, str, str, str]
+type View = PairView | BtrPairView
+# What the page says for each task: its heading, the guide's two lists, the full
+# rule, the cards' titles and the yes button.
+WORDINGS: dict[str, dict[str, object]] = {
+    "trace": {
+        "heading": "Is A money spent under commitment B?",
+        "yes": "Yes, same commitment",
+        "yes_items": [
+            "Same project and recipient, and B was committed before or with A.",
+            "B may be split over several lines, renumbered, or drawn down later.",
+            "A regional commitment covers a country inside that region.",
+        ],
+        "no_items": [
+            "A different recipient country.",
+            "A sibling project, or a later phase with its own new commitment, even "
+            "under a reused number.",
+            "A separate yearly grant spent in its own year, or an unrelated activity.",
+        ],
+        "definition": MATCH_DEFINITION,
+        "sides": ["A: later spending record", "B: earlier commitment record"],
+    },
+    "btr_crs": {
+        "heading": "Does CRS record B report the activity in BTR row A?",
+        "yes": "Yes, same activity",
+        "yes_items": [
+            "Same project or programme in the same year, or one component of it.",
+            "B's recipient is A's, or a region or global programme that holds it.",
+            "Amounts may differ (a climate share, another exchange rate, or several "
+            "records summed in one row).",
+        ],
+        "no_items": [
+            "A different project of the same donor in the same country or sector.",
+            "A sibling, or an earlier or later phase with its own record.",
+            "An unrelated activity.",
+        ],
+        "definition": BTR_MATCH_DEFINITION,
+        "sides": ["A: BTR row", "B: CRS record"],
+    },
+}
 
 
 class LabellingError(BuildError):
     """A request to the labelling page that cannot be answered."""
+
+
+class PacketReleaseMismatchError(LabellingError):
+    """A BTR packet's pairs show rows or records other than the release being
+    served holds, so an answer would record a fingerprint of what the page did not
+    show."""
 
 
 @dataclass(frozen=True)
@@ -91,8 +153,9 @@ class Answer:
 
 @dataclass(frozen=True)
 class QueuedPair:
-    """A pair of the blind sample, with its packet, its number there, its key and
-    the draws it backs."""
+    """A pair to label, with its packet, its number there, its key and the draws it
+    backs. `reason` is a queue pair's `review_reason`, None for the blind sample, and
+    `digests` fingerprint what a BTR packet shows of each side, None elsewhere."""
 
     provider: int
     packet: Path
@@ -101,6 +164,8 @@ class QueuedPair:
     key: PairKey
     draws: int
     certain: bool
+    reason: str | None = None
+    digests: tuple[str | None, str | None] = (None, None)
 
 
 def sample_pairs(sample_dir: Path) -> list[QueuedPair]:
@@ -156,6 +221,88 @@ def sample_pairs(sample_dir: Path) -> list[QueuedPair]:
     ]
 
 
+def packet_pairs(packet: Path, *, release_dir: Path) -> list[QueuedPair]:
+    """Every pair of the review queue packet `packet`, in its order, each backing one
+    draw and none certain. A pair's provider is its BTR row's party's, or its trace
+    disbursement unit's donor, from the release in `release_dir`.
+
+    Raises:
+        LabellingError: when `packet` has no pairs file, holds blind-sample pairs,
+            or names a row or unit the release lacks.
+        PacketReleaseMismatchError: when a `btr_crs` pair's digests in the pairs
+            file differ from those of the release's row and record
+            (`packet.btr_digests`), as for a packet written from another release.
+    """
+    from climate_finance.build.stages import table_path
+
+    pairs_file = packet_pairs_path(packet)
+    if not pairs_file.exists():
+        raise LabellingError(
+            f"{packet} has no pairs file; write it with `cf-build queue`"
+        )
+    pairs = read_packet_pairs(packet)
+    if pairs["sample_id"].is_not_null().any():
+        raise LabellingError(
+            f"{packet} holds blind-sample pairs; label them through SAMPLE_DIR"
+        )
+    btr = pairs.filter(task="btr_crs").select("left_id")
+    trace = pairs.filter(pl.col("task") != "btr_crs").select("left_id")
+    if btr.height:
+        pair = ["left_id", "right_id"]
+        served = btr_digests(
+            pairs.filter(task="btr_crs").select(pair),
+            btr=schema.scan_table(table_path(release_dir, "normalise", "btr")),
+            crs=schema.scan_table(table_path(release_dir, "normalise", "crs")),
+        )
+        stale = pairs.filter(task="btr_crs").join(
+            served, on=[*pair, *DIGESTS], how="anti"
+        )
+        if stale.height:
+            raise PacketReleaseMismatchError(
+                f"{stale.height} BTR pairs of {packet} differ from the rows and "
+                f"records of the release in {release_dir}, such as pair "
+                f"{stale['pair'].min()}; write the packet from this release with "
+                "`cf-build queue --task btr_crs`"
+            )
+    providers = pl.concat(
+        [
+            schema.scan_table(table_path(release_dir, "normalise", "btr"))
+            .join(btr.lazy(), left_on="row_id", right_on="left_id", how="semi")
+            .select(left_id="row_id", provider="provider_code")
+            .collect()
+            if btr.height
+            else pl.DataFrame(schema={"left_id": pl.String, "provider": pl.Int32}),
+            schema.scan_table(table_path(release_dir, "link", "units"))
+            .join(trace.lazy(), left_on="unit_id", right_on="left_id", how="semi")
+            .select(left_id="unit_id", provider="donor_code")
+            .collect()
+            if trace.height
+            else pl.DataFrame(schema={"left_id": pl.String, "provider": pl.Int32}),
+        ],
+        how="vertical_relaxed",
+    )
+    joined = pairs.join(providers, on="left_id", how="left").sort("pair")
+    if joined["provider"].null_count():
+        raise LabellingError(
+            f"{joined['provider'].null_count()} pairs of {packet} name a row or unit "
+            f"the release in {release_dir} lacks"
+        )
+    return [
+        QueuedPair(
+            provider=row["provider"],
+            packet=packet,
+            batch=1,
+            pair=row["pair"],
+            key=(None, row["task"], row["left_id"], row["right_id"]),
+            draws=1,
+            certain=False,
+            reason=row["review_reason"],
+            digests=(row["left_digest"], row["right_digest"]),
+        )
+        for row in joined.iter_rows(named=True)
+    ]
+
+
 def queue_pairs(
     pairs: Iterable[QueuedPair], *, share: float, spot_checks: int = SPOT_CHECKS
 ) -> list[QueuedPair]:
@@ -198,30 +345,53 @@ def queue_pairs(
 
 
 def _hash_order(pairs: Iterable[QueuedPair]) -> list[QueuedPair]:
-    """`pairs` in the order of a hash of each `sample_id`, then of the key."""
+    """`pairs` in the order of a hash of each `sample_id`, then of the rest of the
+    key."""
     return sorted(
         pairs,
-        key=lambda pair: (hashlib.sha256(pair.key[0].encode()).hexdigest(), pair.key),
+        key=lambda pair: (
+            hashlib.sha256((pair.key[0] or "").encode()).hexdigest(),
+            pair.key[1:],
+        ),
     )
 
 
-def read_answers(decisions: Path) -> dict[PairKey, Answer]:
-    """The standing decision of a person on each blind-sample pair at `decisions`,
-    an empty dict when the file is missing."""
+def read_answers(
+    decisions: Path, *, pairs: Iterable[QueuedPair]
+) -> dict[PairKey, Answer]:
+    """The standing decision of a person at `decisions` on each of `pairs` that has
+    one, an empty dict when the file is missing.
+
+    A decision answers a pair only on the fingerprints it was given on
+    (`QueuedPair.digests`), so a BTR row changed under the same id comes back
+    undecided.
+    """
     if not decisions.exists():
         return {}
-    people = pl.read_parquet(decisions).filter(
-        pl.col("sample_id").is_not_null(), label_source="human"
-    )
+    people = read_decisions(decisions).filter(label_source="human")
     reverse = {decision: label for label, decision in LABELS.items()}
-    return {
-        (row["sample_id"], row["task"], row["left_id"], row["right_id"]): Answer(
+    standing = {
+        (
+            row["sample_id"],
+            row["task"],
+            row["left_id"],
+            row["right_id"],
+            row["left_digest"],
+            row["right_digest"],
+        ): Answer(
             label=reverse[row["decision"]],
             strength=_strength(row["confidence"]),
             reason=row["note"] or "",
             reviewer=row["reviewer"],
         )
-        for row in standing_decisions(people, key=KEY).iter_rows(named=True)
+        for row in standing_decisions(people, key=[*KEY, *DIGESTS]).iter_rows(
+            named=True
+        )
+    }
+    return {
+        pair.key: answer
+        for pair in pairs
+        if (answer := standing.get((*pair.key, *pair.digests))) is not None
     }
 
 
@@ -234,21 +404,36 @@ def _strength(confidence: float | None) -> str | None:
 
 
 class Session:
-    """One reviewer's labelling of a queue; see the module docstring."""
+    """One reviewer's labelling of a queue; see the module docstring.
+
+    `pairs` are every pair of the packets the queue draws on, whose answers the
+    labels CSVs beside the packets hold, and `queue` the pairs to show, in order,
+    all of one task.
+
+    Raises:
+        LabellingError: when the queue mixes tasks or holds a task with no wording.
+    """
 
     def __init__(
         self,
         *,
         release_dir: Path,
-        sample_dir: Path,
+        pairs: list[QueuedPair],
+        queue: list[QueuedPair],
         decisions: Path,
         reviewer: str,
-        share: float,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         from climate_finance.build.fetch import CRS_FILE
         from climate_finance.build.stages import raw_dir, table_path
 
+        tasks = {pair.key[1] for pair in pairs}
+        if len(tasks) > 1 or not tasks <= set(WORDINGS):
+            raise LabellingError(
+                f"a session labels pairs of one task of {sorted(WORDINGS)}, not "
+                f"{sorted(tasks)}"
+            )
+        self.task = tasks.pop() if tasks else "trace"
         self.decisions = decisions
         self.reviewer = reviewer
         self.clock = clock
@@ -257,14 +442,23 @@ class Session:
         self.provider_names = dict(
             catalogue.providers.list().select("code", "name").iter_rows()
         )
-        self.units = schema.scan_table(table_path(release_dir, "link", "units"))
-        self.crs = schema.scan_table(table_path(release_dir, "normalise", "crs"))
+        crs = schema.scan_table(table_path(release_dir, "normalise", "crs"))
         raw_crs = raw_dir(release_dir) / CRS_FILE
-        self.names = code_names(raw_crs) if raw_crs.exists() else None
-        self.pairs = sample_pairs(sample_dir)
-        self.queue = queue_pairs(self.pairs, share=share)
-        self.answers = read_answers(decisions)
-        self._views: dict[int, list[PairView]] = {}
+        names = code_names(raw_crs) if raw_crs.exists() else None
+        if self.task == "btr_crs":
+            btr = schema.scan_table(table_path(release_dir, "normalise", "btr"))
+            self._read_views: Callable[[pl.DataFrame], list[View]] = lambda chunk: list(
+                btr_pair_views(chunk, btr=btr, crs=crs, names=names)
+            )
+        else:
+            units = schema.scan_table(table_path(release_dir, "link", "units"))
+            self._read_views = lambda chunk: list(
+                pair_views(chunk, units=units, crs=crs, show_ids=True, names=names)
+            )
+        self.pairs = pairs
+        self.queue = queue
+        self.answers = read_answers(decisions, pairs=pairs)
+        self._views: dict[int, list[View]] = {}
         self.mine = {
             key: answer
             for key, answer in self.answers.items()
@@ -309,7 +503,8 @@ class Session:
         if all(done[i] or self.queue[i].key in self.skipped for i in order):
             self.skipped.clear()
         return {
-            "definition": MATCH_DEFINITION,
+            "page": WORDINGS[self.task],
+            "definition": WORDINGS[self.task]["definition"],
             "done": sum(done),
             "skipped": len(self.skipped),
             "total": len(done),
@@ -336,14 +531,14 @@ class Session:
             return None
         return round(remaining * sum(gaps) / len(gaps))
 
-    def _view(self, index: int) -> PairView:
+    def _view(self, index: int) -> View:
         """The view of queue entry `index`. Views come `CHUNK` at a time, since
         each read of the units and CRS rows costs about as much for fifty pairs as
         for one. The last few chunks stay for stepping back."""
         chunk = index // CHUNK
         if chunk not in self._views:
             entries = self.queue[chunk * CHUNK : (chunk + 1) * CHUNK]
-            views = pair_views(
+            views = self._read_views(
                 pl.DataFrame(
                     {
                         "pair": range(chunk * CHUNK, chunk * CHUNK + len(entries)),
@@ -355,11 +550,7 @@ class Session:
                         "left_id": pl.String,
                         "right_id": pl.String,
                     },
-                ),
-                units=self.units,
-                crs=self.crs,
-                show_ids=True,
-                names=self.names,
+                )
             )
             self._views = {**dict(list(self._views.items())[-2:]), chunk: views}
         return self._views[chunk][index - chunk * CHUNK]
@@ -373,7 +564,8 @@ class Session:
             "i": index,
             "provider": entry.provider,
             "provider_name": self.provider_name(entry.provider),
-            "kind": "spot check" if entry.certain else "judgement call",
+            "kind": entry.reason
+            or ("spot check" if entry.certain else "judgement call"),
             "batch": entry.batch,
             "view": asdict(view),
             "answer": None

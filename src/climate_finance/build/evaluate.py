@@ -73,6 +73,7 @@ from climate_finance.build import release
 from climate_finance.build.errors import ReviewDecisionsError, SampleDesignError
 from climate_finance.build.link.decisions import (
     PAIR,
+    pair_decisions,
     read_decision_labels,
     standing_decisions,
 )
@@ -208,7 +209,7 @@ def allocated_pairs(release_dir: Path, *, decisions: Path) -> pl.DataFrame:
         held, on=pair, how="semi"
     )
     accepted = (
-        read_decision_labels(decisions)
+        pair_decisions(read_decision_labels(decisions))
         .filter("is_match")
         .select(*PAIR, reviewed=pl.lit(value=True))
         .lazy()

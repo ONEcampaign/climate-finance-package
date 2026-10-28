@@ -3,7 +3,7 @@ invented values, linked by the link stage's own `build_units`, `link_by_keys` an
 `link_within_year`."""
 
 from collections.abc import Sequence
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import polars as pl
@@ -16,6 +16,7 @@ from stage_runs import (
     write_fetched_years,
     write_inputs,
 )
+from test_link_btr import _btr
 
 from climate_finance import schema
 from climate_finance.build.allocate import (
@@ -26,8 +27,11 @@ from climate_finance.build.allocate import (
     status_basis,
 )
 from climate_finance.build.config import Ledgers, load_config
+from climate_finance.build.errors import LabelPacketError
 from climate_finance.build.link.crdf_crs import link_within_year
 from climate_finance.build.link.decisions import (
+    DECISION_LABELS,
+    DIGESTS,
     PAIR,
     accepted_pairs,
     drop_pairs,
@@ -36,7 +40,11 @@ from climate_finance.build.link.decisions import (
     read_decision_labels,
 )
 from climate_finance.build.link.keys import as_exact_links, build_units, link_by_keys
-from climate_finance.build.link.packet import packet_pairs_path, write_packet
+from climate_finance.build.link.packet import (
+    btr_digests,
+    packet_pairs_path,
+    write_packet,
+)
 from climate_finance.build.link.review import (
     flag_review,
     pending_rows,
@@ -164,6 +172,11 @@ def no_labels() -> pl.DataFrame:
     return _empty(schema.PAIR_LABELS)
 
 
+def no_decisions() -> pl.DataFrame:
+    """No decisions, as `read_decision_labels` gives them."""
+    return pl.DataFrame(schema=DECISION_LABELS)
+
+
 def pairs_of(frame: pl.DataFrame) -> set[tuple[str, str]]:
     return set(frame.select("left_id", "right_id").iter_rows())
 
@@ -226,7 +239,11 @@ def test_the_queue_holds_each_reason_once_and_leaves_decided_pairs_out() -> None
             "right_id": [unit("c19")],
             "is_match": [True],
             "pair_label_source": ["human"],
-        }
+            "stratified": [False],
+            "left_digest": [None],
+            "right_digest": [None],
+        },
+        schema=DECISION_LABELS,
     )
     flagged = flag_review(links, labels=decided, band=BAND)
     reasons = {
@@ -252,6 +269,7 @@ def test_the_queue_holds_each_reason_once_and_leaves_decided_pairs_out() -> None
         flagged,
         commitments=commitments,
         pair_scores=_empty(schema.PAIR_SCORES),
+        btr_calibration=_empty(schema.BTR_CALIBRATION),
         labels=decided,
     )
     schema.validate(schema.REVIEW_QUEUE, queue)
@@ -688,7 +706,8 @@ def test_decisions_round_trip_as_human_labels_and_exact_overrides(
         links,
         commitments=commitments,
         pair_scores=_empty(schema.PAIR_SCORES),
-        labels=no_labels(),
+        btr_calibration=_empty(schema.BTR_CALIBRATION),
+        labels=no_decisions(),
     )
     release_dir = _release(tmp_path, case, queue, commitments)
     packet = write_queue_packet(release_dir=release_dir, out=tmp_path / "queue.md")
@@ -735,7 +754,7 @@ def test_decisions_round_trip_as_human_labels_and_exact_overrides(
     assert recorded.height == 4
     assert set(recorded.drop_nulls("review_reason")["review_reason"]) == {"band"}
     labels = read_decision_labels(decisions_path)
-    schema.validate(schema.PAIR_LABELS, labels.drop("stratified"))
+    schema.validate(schema.PAIR_LABELS, labels.select(list(schema.PAIR_LABELS.columns)))
     # Queue decisions were chosen for review, not drawn by the stratified sample.
     assert not labels["stratified"].any()
     assert set(labels.select("left_id", "right_id", "is_match").iter_rows()) == {
@@ -755,6 +774,7 @@ def test_decisions_round_trip_as_human_labels_and_exact_overrides(
         again,
         commitments=commitments,
         pair_scores=_empty(schema.PAIR_SCORES),
+        btr_calibration=_empty(schema.BTR_CALIBRATION),
         labels=labels,
     )
     assert requeued["review_reason"].to_list() == ["over_face"]
@@ -775,6 +795,100 @@ def test_decisions_round_trip_as_human_labels_and_exact_overrides(
     assert (
         joined["allocated_usd"] - joined["disbursement_usd"]
     ).abs().max() < TOLERANCE
+
+
+def test_the_btr_draw_queues_and_its_decisions_return_as_drawn_labels(
+    tmp_path: Path,
+) -> None:
+    case = linked()
+    record = case.crs["record_id"][0]
+    rows = ("btr-1", "btr-2")
+    btr = _btr(*({"row_id": row, "title": "Solar grid"} for row in rows))
+
+    def drawn(btr: pl.DataFrame) -> pl.DataFrame:
+        """The draw over `rows`, btr-2 first in draw order, with the digests of
+        what `btr` and the CRS show."""
+        pairs = pl.DataFrame({"left_id": rows, "right_id": [record] * 2})
+        return (
+            pairs.with_columns(
+                party=pl.lit("NOR"),
+                match_weight=pl.Series([-5.0, -8.0]),
+                draw_rank=pl.Series([2, 1], dtype=pl.Int32),
+            )
+            .join(
+                btr_digests(pairs, btr=btr.lazy(), crs=case.crs.lazy()),
+                on=["left_id", "right_id"],
+            )
+            .select(list(schema.BTR_CALIBRATION.columns))
+        )
+
+    draw = drawn(btr)
+    schema.validate(schema.BTR_CALIBRATION, draw)
+    links = flag_review(case.links, labels=no_labels(), band=BAND)
+    commitments = case.statuses(links)
+
+    def queued(labels: pl.DataFrame, draw: pl.DataFrame = draw) -> pl.DataFrame:
+        queue = review_queue(
+            links,
+            commitments=commitments,
+            pair_scores=_empty(schema.PAIR_SCORES),
+            btr_calibration=draw,
+            labels=labels,
+        )
+        schema.validate(schema.REVIEW_QUEUE, queue)
+        return queue.filter(task="btr_crs")
+
+    assert set(queued(no_decisions()).select(*PAIR, "review_reason").iter_rows()) == {
+        ("btr_crs", row, record, "calibration") for row in rows
+    }
+
+    release_dir = _release(tmp_path, case, queued(no_decisions()), commitments)
+    btr.write_parquet(table_path(release_dir, "normalise", "btr"))
+    draw.write_parquet(table_path(release_dir, "link", "btr_calibration"))
+    with pytest.raises(LabelPacketError):
+        write_queue_packet(
+            release_dir=release_dir,
+            out=tmp_path / "x.md",
+            show_ids=False,
+            task="btr_crs",
+        )
+    packet = write_queue_packet(
+        release_dir=release_dir, out=tmp_path / "btr.md", task="btr_crs"
+    )
+    pairs = pl.read_parquet(packet_pairs_path(packet))
+    assert set(pairs.select("task", "review_reason", "sample_id").iter_rows()) == {
+        ("btr_crs", "calibration", None)
+    }
+    # The packet follows the draw's order, not the rows' ids.
+    assert pairs.sort("pair")["left_id"].to_list() == ["btr-2", "btr-1"]
+    assert pairs.select(*DIGESTS).equals(draw.sort("draw_rank").select(*DIGESTS))
+    decisions_path = tmp_path / "review_decisions.parquet"
+    import_labels(
+        packet=packet,
+        labels_csv=_answer(
+            packet, {("btr-1", record): "match", ("btr-2", record): "no_match"}
+        ),
+        decisions_path=decisions_path,
+        label_source="human",
+        reviewer="analyst",
+    )
+    labels = read_decision_labels(decisions_path)
+
+    # Decisions on drawn pairs come back stratified, which `link.btr.calibrate`
+    # weighs by the rows of their stratum, and leave the queue.
+    assert set(labels.select(*PAIR, "is_match", "stratified").iter_rows()) == {
+        ("btr_crs", "btr-1", record, True, True),
+        ("btr_crs", "btr-2", record, False, True),
+    }
+    assert queued(labels).is_empty()
+    # A revised workbook puts another activity under btr-1's id: its decision no
+    # longer holds, and the pair returns to the queue.
+    revised = btr.with_columns(
+        title=pl.when(pl.col("row_id") == "btr-1")
+        .then(pl.lit("Coastal flood barriers"))
+        .otherwise("title")
+    )
+    assert queued(labels, draw=drawn(revised))["left_id"].to_list() == ["btr-1"]
 
 
 def _ledger() -> pl.DataFrame:
@@ -802,8 +916,29 @@ def test_the_review_stage_writes_tables_that_pass_their_schemas(
     tmp_path: Path, ledger_rows: int
 ) -> None:
     case = linked()
-    links = case.links
-    commitments = case.statuses(links)
+    # A BTR link whose pair holds decisions on two fingerprints, as after a revised
+    # workbook, stays one link.
+    btr_pair = ("BTR-DEU-2022-00001", case.crs["record_id"][0])
+    btr_link = case.links.head(1).with_columns(
+        task=pl.lit("btr_crs"),
+        left_id=pl.lit(btr_pair[0]),
+        right_id=pl.lit(btr_pair[1]),
+        group_id=pl.lit(None, pl.String),
+        link_method=pl.lit("btr_splink"),
+    )
+    links = pl.concat([case.links, btr_link])
+    decided_at = datetime(2026, 1, 1, tzinfo=UTC)
+    pl.DataFrame(
+        [
+            {"task": "btr_crs", "left_id": btr_pair[0], "right_id": btr_pair[1]}
+            | {"decision": "accept", "label_source": "human", "reviewer": "analyst"}
+            | {"review_reason": "calibration", "decided_at": decided_at}
+            | {"left_digest": left, "right_digest": "r"}
+            for left in ("before", "after")
+        ],
+        schema=schema.REVIEW_DECISIONS.dtypes,
+    ).write_parquet(tmp_path / "review_decisions.parquet")
+    commitments = case.statuses(case.links)
     release_dir = tmp_path / "r"
     normalised = {
         "crs": case.crs,
@@ -815,9 +950,13 @@ def test_the_review_stage_writes_tables_that_pass_their_schemas(
         "units": case.units,
         "links": links,
         "pair_scores": _empty(schema.PAIR_SCORES),
+        "btr_calibration": _empty(schema.BTR_CALIBRATION),
     }
     write_inputs(release_dir, "link", linked_tables)
-    filled = {"allocations": _allocations(case, links), "commitments": commitments}
+    filled = {
+        "allocations": _allocations(case, case.links),
+        "commitments": commitments,
+    }
     write_inputs(release_dir, "fill", filled)
     ledgers = Ledgers(years=(2021, 2022), publishers=("ida",))
     write_fetched_years(release_dir, ledgers=ledgers)
@@ -840,3 +979,7 @@ def test_the_review_stage_writes_tables_that_pass_their_schemas(
     ]
     queue = pl.read_parquet(table_path(release_dir, "review", "review_queue"))
     assert set(queue["review_reason"]) == {"band"}
+    reviewed = pl.read_parquet(table_path(release_dir, "review", "links"))
+    assert reviewed.filter(task="btr_crs").select("left_id", "right_id").rows() == [
+        btr_pair
+    ]

@@ -32,6 +32,12 @@ map's lowest label reads 0. A row the id tier did not link takes its best candid
 when the calibrated probability is at least `LINK_PROBABILITY`. Unlinked rows are
 UNFCCC only.
 
+Id rows score high, so few labels sit at the low weights where most id-less rows
+do. `calibration_draw` draws id-less rows there for people to label, and their
+decisions on a row's best candidate join the id labels, each weighted by the id-less
+rows of its party and stratum over the decisions there. With no decisions the maps
+are the id labels' alone.
+
 Recipients link on the geo resolver's DAC code (`orgs.recipient_code`), so
 "Vietnam" and "Turkey" find Viet Nam and Türkiye. A recipient that names no single
 country (a region, a list of countries, a name the resolver does not know, a code
@@ -42,7 +48,7 @@ unspecified code (`keys.regional_codes`) both read as `aggregate`.
 import logging
 from collections.abc import Mapping
 from copy import deepcopy
-from typing import Any
+from typing import Any, NamedTuple
 
 import duckdb
 import numpy as np
@@ -55,12 +61,15 @@ from splink import DuckDBAPI, Linker, SettingsCreator
 from splink.blocking_rule_library import CustomRule
 from splink.internals.comparison_creator import ComparisonCreator
 
+from climate_finance import schema
 from climate_finance.build.geo import recipient_code
+from climate_finance.build.link.jev import spread_sample
 from climate_finance.build.link.keys import (
     country_codes,
     links_frame,
     regional_codes,
 )
+from climate_finance.build.link.packet import btr_digests
 from climate_finance.build.link.splink_models import (
     MIN_EM_PAIRS,
     isotonic_map,
@@ -71,11 +80,17 @@ from climate_finance.build.readers.btr import LEVEL_TOLERANCE, WEIGHT_LEVELS
 _log = logging.getLogger(__name__)
 
 LINK_PROBABILITY = 0.5
-# Labels of each outcome a calibration map needs. On the archive, four parties hold
-# their own map (Germany 882 right and 55 wrong, France 210 and 65, the UK 184 and
-# 86, Norway 1,156 and 84); Denmark (407 and 19) and the Netherlands (324 and 10)
-# take the pooled map, 3,164 and 320.
+# Labels of each outcome a calibration map needs. On the archive, five parties hold
+# their own map (Germany 909 right and 75 wrong, Denmark 733 and 67, France 210 and
+# 62, the UK 252 and 159, Norway 1,221 and 99), and the others take the pooled map,
+# 3,837 and 487.
 MIN_MAP_OUTCOMES = 30
+# Id-less rows drawn for people to label: `CALIBRATION_DRAWS` a party, spread over
+# the strata of match weight between the edges of `CALIBRATION_STRATA`. Germany's id
+# labels there hold 24, 4 of them right, against 316 id-less rows, none linked.
+# Thirty a stratum let each stratum form an isotonic block of thirty.
+CALIBRATION_STRATA = (-12.0, -9.0, -6.0, -3.0)
+CALIBRATION_DRAWS = 90
 # Ids parties write into titles and additional information.
 ID_PATTERN = r"\d{4}\.\d{4}\.\d|\d{6,}(?:-\d+)?|[A-Z]{2,4}-?\d{2,}[\w/\-]*"
 # An id shorter than this, once stripped, names nothing.
@@ -179,12 +194,29 @@ _BEST = {
 }
 
 
-def link_btr(btr: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
-    """`links` rows of task `btr_crs`, from BTR row (left) to CRS record (right).
+class BtrLinks(NamedTuple):
+    """`link_btr`'s output: the `links` rows of task `btr_crs`, the id-less rows
+    drawn for people to label (`btr_calibration`), and the `btr_crs` decisions
+    whose fingerprints match the release (`current_decisions`), None when
+    `link_btr` was given no decisions."""
+
+    links: pl.DataFrame
+    draw: pl.DataFrame
+    labels: pl.DataFrame | None
+
+
+def link_btr(
+    btr: pl.LazyFrame, *, crs: pl.LazyFrame, labels: pl.DataFrame | None = None
+) -> BtrLinks:
+    """`links` rows of task `btr_crs`, from BTR row (left) to CRS record (right),
+    and the `btr_calibration` draw (`calibration_draw`).
 
     Args:
         btr: The `btr` table.
         crs: The normalised `crs` table.
+        labels: Queue decisions as `decisions.read_decision_labels` gives them,
+            whose `btr_crs` labels that still match the release
+            (`current_decisions`) join calibration (`calibrate`).
     """
     rows = btr_rows(btr)
     records = crs_records(crs, rows=rows)
@@ -194,12 +226,13 @@ def link_btr(btr: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
         [pl.DataFrame(schema=_BEST)]
         + [score_party(rows.filter(party=party), records=records) for party in parties]
     )
+    current = None if labels is None else current_decisions(labels, btr=btr, crs=crs)
     by_model = (
-        calibrate(best, truth=by_id)
+        calibrate(best, truth=by_id, labels=current)
         .join(by_id, on="row_id", how="anti")
         .filter(pl.col("probability") >= LINK_PROBABILITY)
     )
-    return _as_links(
+    links = _as_links(
         pl.concat(
             [
                 by_id.with_columns(
@@ -215,6 +248,46 @@ def link_btr(btr: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.DataFrame:
             ],
             how="diagonal",
         )
+    )
+    draw = calibration_draw(best, truth=by_id).select(
+        pl.col("row_id").alias("left_id"),
+        pl.col("record_id").alias("right_id"),
+        "party",
+        "match_weight",
+        "draw_rank",
+    )
+    draw = draw.join(
+        btr_digests(draw.select("left_id", "right_id"), btr=btr, crs=crs),
+        on=["left_id", "right_id"],
+        maintain_order="left",
+    )
+    return BtrLinks(
+        links=links,
+        draw=draw,
+        labels=current,
+    )
+
+
+def current_decisions(
+    labels: pl.DataFrame, *, btr: pl.LazyFrame, crs: pl.LazyFrame
+) -> pl.DataFrame:
+    """The `btr_crs` decisions of `labels` whose fingerprints (`left_digest`,
+    `right_digest`) equal the digests of what a packet shows of the BTR row and the
+    CRS record now (`packet.btr_digests`).
+
+    A BTR row id names a party, a year and a position in the party's workbook, so
+    a revised workbook can put another activity under the same id. A decision
+    reaches only the row and record its labeller saw, and one with no fingerprint,
+    or on a side that changed, is left out, so its pair returns to the queue.
+    """
+    decided = labels.filter(task="btr_crs")
+    pair = ["left_id", "right_id"]
+    now = btr_digests(decided.select(pair).unique(), btr=btr, crs=crs)
+    return decided.join(
+        now,
+        on=[*pair, "left_digest", "right_digest"],
+        how="semi",
+        maintain_order="left",
     )
 
 
@@ -392,27 +465,39 @@ def score_party(rows: pl.DataFrame, *, records: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def calibrate(best: pl.DataFrame, *, truth: pl.DataFrame) -> pl.DataFrame:
+def calibrate(
+    best: pl.DataFrame, *, truth: pl.DataFrame, labels: pl.DataFrame | None = None
+) -> pl.DataFrame:
     """`best` (one scored candidate per BTR row, with `party` and `match_weight`)
     with `probability`, null for a party with no map.
 
     A row with id records (`truth`: row_id, record_id) labels its best candidate 1
-    when the candidate is one of them, else 0. A party with `MIN_MAP_OUTCOMES` of
-    each label takes its own isotonic map, any other the map pooled over every
-    party's labels when the pool holds as many. A party left without a map is
-    logged as a warning. A weight below the map's lowest labelled weight reads 0,
-    since no label vouches for it.
+    when the candidate is one of them, else 0. A `human` or `agent` decision of task
+    `btr_crs` in `labels` (`decisions.read_decision_labels`) on an id-less row's best
+    candidate labels it too, 1 when accepted (`_decided`). A party with
+    `MIN_MAP_OUTCOMES` of each label takes its own isotonic map, any other the map
+    pooled over every party's labels when the pool holds as many. A party left
+    without a map is logged as a warning. A weight below the map's lowest labelled
+    weight reads 0, since no label vouches for it.
     """
-    labelled = (
+    columns = ["party", "match_weight", "y", "weight", "left_id", "right_id"]
+    by_id = (
         best.join(truth.select("row_id").unique(), on="row_id", how="semi")
         .join(truth.with_columns(y=pl.lit(1.0)), on=_PAIR, how="left")
-        .with_columns(
+        .select(
+            "party",
+            "match_weight",
             pl.col("y").fill_null(0.0),
             weight=pl.lit(1.0),
             left_id="row_id",
             right_id="record_id",
         )
     )
+    labelled = (
+        by_id
+        if labels is None
+        else pl.concat([by_id, _decided(best, truth=truth, labels=labels)])
+    ).select(columns)
     pooled = _map(labelled)
     frames = [best.clear().with_columns(probability=pl.lit(None, dtype=pl.Float64))]
     for (party,), scored in best.group_by("party", maintain_order=True):
@@ -440,6 +525,95 @@ def calibrate(best: pl.DataFrame, *, truth: pl.DataFrame) -> pl.DataFrame:
             )
         )
     return pl.concat(frames).sort("row_id")
+
+
+def calibration_draw(best: pl.DataFrame, *, truth: pl.DataFrame) -> pl.DataFrame:
+    """The id-less rows of `best` drawn for people to label: `party`, `row_id`,
+    `record_id` (its best candidate), `match_weight` and `draw_rank`.
+
+    Each party gives `CALIBRATION_DRAWS` of its rows with no id records in `truth`
+    and a match weight from the first edge of `CALIBRATION_STRATA` up to the last,
+    spread evenly over the strata between the edges, a stratum short of its share
+    giving all its rows. Within a stratum, rows are taken in the order of a digest of
+    the pair (`jev.spread_sample`), so the same scores give the same draw.
+    `draw_rank` numbers a party's draw from 1 in that order, the strata in turn, so
+    the first k ranks of a party are a random subset of each of its strata.
+    """
+    weight = pl.col("match_weight")
+    idless = (
+        best.join(truth.select("row_id").unique(), on="row_id", how="anti")
+        .filter(
+            weight.is_between(
+                CALIBRATION_STRATA[0], CALIBRATION_STRATA[-1], closed="left"
+            )
+        )
+        .select("party", "row_id", "record_id", "match_weight")
+    )
+    draws = [idless.clear().with_columns(draw_rank=pl.lit(0, dtype=pl.Int32))]
+    for (_,), rows in idless.sort("party").group_by("party", maintain_order=True):
+        draws.append(
+            spread_sample(
+                rows.with_columns(left_id="row_id", right_id="record_id"),
+                band=_stratum(),
+                n=CALIBRATION_DRAWS,
+            )
+            .select(idless.columns)
+            .with_row_index("draw_rank", offset=1)
+            .select(*idless.columns, pl.col("draw_rank").cast(pl.Int32))
+        )
+    return pl.concat(draws).sort("party", "row_id")
+
+
+def _decided(
+    best: pl.DataFrame, *, truth: pl.DataFrame, labels: pl.DataFrame
+) -> pl.DataFrame:
+    """The `human` and `agent` decisions of task `btr_crs` in `labels` on the best
+    candidate of a row with no id records in `truth`, as calibration labels.
+
+    A `stratified` decision (one on a pair `calibration_draw` drew) whose pair scores
+    inside the drawn band weighs the id-less rows of its party and stratum of
+    `CALIBRATION_STRATA` over the stratified decisions there, as the draw takes a
+    share of each stratum. Any other weighs 1, including a drawn pair that scores
+    outside the band, since the draw takes no share of the open strata. A decision
+    on a record other than the row's best candidate says nothing about the
+    candidate, so it is left out.
+    """
+    idless = best.join(truth.select("row_id").unique(), on="row_id", how="anti")
+    decided = labels.filter(
+        pl.col("pair_label_source").is_in(schema.DECIDERS), task="btr_crs"
+    ).select(
+        row_id="left_id",
+        record_id="right_id",
+        y=pl.col("is_match").cast(pl.Float64),
+        stratified="stratified",
+    )
+    stratum = ["party", "stratum"]
+    drawn = pl.col("stratified") & pl.col("stratum").is_between(
+        1, len(CALIBRATION_STRATA) - 1
+    )
+    return (
+        idless.with_columns(stratum=_stratum())
+        .with_columns(rows=pl.len().over(stratum))
+        .join(decided, on=_PAIR)
+        .select(
+            "party",
+            "match_weight",
+            "y",
+            weight=pl.when(drawn)
+            .then(pl.col("rows") / drawn.sum().over(stratum))
+            .otherwise(1.0),
+            left_id="row_id",
+            right_id="record_id",
+        )
+    )
+
+
+def _stratum() -> pl.Expr:
+    """The stratum of `CALIBRATION_STRATA` a row's match weight falls in: 0 below
+    the first edge, one more past each edge."""
+    return pl.sum_horizontal(
+        pl.col("match_weight") >= edge for edge in CALIBRATION_STRATA
+    )
 
 
 def _map(labelled: pl.DataFrame) -> IsotonicRegression | None:

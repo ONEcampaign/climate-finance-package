@@ -192,7 +192,7 @@ def test_an_agent_csv_round_trips_to_agent_labels_and_overrides(tmp_path: Path) 
         ("accept", "agent", "claude-opus-5-5", 0.95, "label", "rule_disagreement"),
     ]
     labels = read_decision_labels(decisions)
-    schema.validate(schema.PAIR_LABELS, labels.drop("stratified"))
+    schema.validate(schema.PAIR_LABELS, labels.select(list(schema.PAIR_LABELS.columns)))
     assert set(labels["pair_label_source"]) == {"agent"}
     links = as_exact_links(
         case.pairs()

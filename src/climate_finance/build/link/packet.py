@@ -8,8 +8,14 @@ title words. With `show_ids` the sections carry each unit's crs id and project
 number. Without it they carry neither, and any id either unit holds is blanked in
 both units' texts, as a pilot that measures labellers against id truth needs.
 
-`write_packet` writes the packet and, beside it, the pairs its sections number
-(`packet_pairs_path`), which `decisions.import_labels` keys a returned CSV back to.
+A BTR packet (`write_btr_packet`) opens with `BTR_MATCH_DEFINITION` and shows a
+party's BTR row (A) beside one CRS record of the party's (B), ids shown. Its pairs
+file carries a digest of what it shows of each side (`btr_digests`), which a
+decision on the pair keeps, as a BTR row id names a position in a workbook.
+
+`write_packet` and `write_btr_packet` write the packet and, beside it, the pairs
+its sections number (`packet_pairs_path`), which `decisions.import_labels` keys a
+returned CSV back to.
 """
 
 from __future__ import annotations
@@ -25,7 +31,9 @@ import polars as pl
 
 from climate_finance import catalogue
 from climate_finance.build.errors import LabelPacketError
+from climate_finance.build.geo import recipient_code
 from climate_finance.build.link.text import title_words, word_share
+from climate_finance.build.normalise.ids import fields_digest
 
 MATCH_DEFINITION = (
     "A matches B when A's money is spending under the commitment B records. That "
@@ -37,11 +45,55 @@ MATCH_DEFINITION = (
     "even under a reused number, a separate yearly grant or contribution committed "
     "and spent in its own year, and an unrelated activity."
 )
+BTR_MATCH_DEFINITION = (
+    "A matches B when the CRS record B reports the activity that the party reported "
+    "to the UNFCCC in BTR row A, or one component of it: the same project or "
+    "programme in the same year, for A's recipient or for a region or global "
+    "programme that holds it. Amounts may differ, since a party may report only the "
+    "climate share of an activity, report it at its own exchange rate, or sum "
+    "several records in one row. It excludes a different project of the same donor "
+    "in the same country or sector, a sibling or an earlier or later phase with its "
+    "own record, and an unrelated activity."
+)
 MAX_ROWS = 12
 SIBLING_SHARE = 0.5
 TEXT_LIMIT = 600
 # Columns of the pairs frame a packet carries through to its pairs file.
-CARRIED = ("task", "review_reason", "sample_id")
+CARRIED = ("task", "review_reason", "sample_id", "left_digest", "right_digest")
+# The columns of a BTR row and of a CRS record a BTR packet shows (`_BTR_FIELDS`),
+# whose digests fingerprint what a labeller saw (`btr_digests`).
+BTR_SHOWN = (
+    "party",
+    "provider_code",
+    "year",
+    "recipient",
+    "face_usd",
+    "status",
+    "title",
+    "additional_information",
+    "sector",
+    "instrument",
+    "support_type",
+    "channel",
+)
+CRS_SHOWN = (
+    "donor_code",
+    "agency_code",
+    "year",
+    "recipient_code",
+    "commitment_usd",
+    "disbursement_usd",
+    "title",
+    "short_description",
+    "long_description",
+    "purpose_code",
+    "finance_t",
+    "rio_adaptation",
+    "rio_mitigation",
+    "channel_code",
+    "crs_id",
+    "project_number",
+)
 # The code columns whose names `code_names` reads from the bulk CRS.
 NAMED_CODES = {
     "agency": ("donor_code", "agency_code"),
@@ -120,21 +172,96 @@ def write_packet(
         LabelPacketError: when a pair names a unit `units` lacks, or a packet
             meant to hide ids still names one.
     """
-    numbered = (
-        pairs.with_columns(
-            pl.lit(None, dtype=pl.String).alias(name)
-            for name in CARRIED
-            if name not in pairs.columns
-        )
-        .with_columns(task=pl.col("task").fill_null("trace"))
-        .with_row_index("pair", offset=1)
-        .with_columns(pl.col("pair").cast(pl.Int32))
-    )
+    numbered = _numbered(pairs, task="trace")
     text = render_packet(
         numbered, units=units, crs=crs, title=title, show_ids=show_ids, names=names
     )
     if appendix is not None:
         text = f"{text}\n{appendix}\n"
+    return _save(numbered, text=text, out=out)
+
+
+def write_btr_packet(
+    pairs: pl.DataFrame,
+    *,
+    btr: pl.LazyFrame,
+    crs: pl.LazyFrame,
+    out: Path,
+    title: str,
+    names: pl.DataFrame | None = None,
+) -> Path:
+    """Write the packet for the BTR pairs `pairs` to `out` and its pairs beside it.
+
+    Args:
+        pairs: `left_id` (a BTR row) and `right_id` (a CRS record), numbered from 1
+            in the order given, with any of `CARRIED`; `task` defaults to `btr_crs`.
+            The pairs file takes each side's digest (`btr_digests`) in place of
+            any the pairs carry.
+        btr: the normalise stage's `btr`.
+        crs: the normalise stage's `crs`.
+        out: the packet's path.
+        title: the packet's heading.
+        names: `code_names` output; without it, codes show without names.
+
+    Returns:
+        `out`.
+
+    Raises:
+        LabelPacketError: when a pair names a row `btr` or a record `crs` lacks.
+    """
+    pair = ["left_id", "right_id"]
+    numbered = _numbered(pairs, task="btr_crs").drop("left_digest", "right_digest")
+    numbered = numbered.join(
+        btr_digests(numbered.select(pair), btr=btr, crs=crs),
+        on=pair,
+        how="left",
+        maintain_order="left",
+    )
+    text = render_btr_packet(numbered, btr=btr, crs=crs, title=title, names=names)
+    return _save(numbered, text=text, out=out)
+
+
+def btr_digests(
+    pairs: pl.DataFrame, *, btr: pl.LazyFrame, crs: pl.LazyFrame
+) -> pl.DataFrame:
+    """`pairs` (`left_id` a BTR row, `right_id` a CRS record) with the digest of
+    what a BTR packet shows of each side: `left_digest` over `BTR_SHOWN` and
+    `right_digest` over `CRS_SHOWN`, null for a row or record the tables lack."""
+    rows = (
+        btr.join(pairs.select(row_id="left_id").lazy(), on="row_id", how="semi")
+        .select(left_id="row_id", left_digest=fields_digest(BTR_SHOWN))
+        .collect()
+    )
+    records = (
+        crs.join(pairs.select(record_id="right_id").lazy(), on="record_id", how="semi")
+        .select(right_id="record_id", right_digest=fields_digest(CRS_SHOWN))
+        .collect()
+    )
+    return (
+        pairs.select("left_id", "right_id")
+        .join(rows, on="left_id", how="left", maintain_order="left")
+        .join(records, on="right_id", how="left", maintain_order="left")
+    )
+
+
+def _numbered(pairs: pl.DataFrame, *, task: str) -> pl.DataFrame:
+    """`pairs` numbered from 1, with every column of `CARRIED`, `task` defaulting to
+    `task`."""
+    return (
+        pairs.with_columns(
+            pl.lit(None, dtype=pl.String).alias(name)
+            for name in CARRIED
+            if name not in pairs.columns
+        )
+        .with_columns(task=pl.col("task").fill_null(task))
+        .with_row_index("pair", offset=1)
+        .with_columns(pl.col("pair").cast(pl.Int32))
+    )
+
+
+def _save(numbered: pl.DataFrame, *, text: str, out: Path) -> Path:
+    """Write the packet `text` to `out` and the pairs `numbered` beside it, with the
+    packet's digest."""
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
     numbered.select(
@@ -146,6 +273,17 @@ def write_packet(
         packet_sha256=pl.lit(packet_digest(out)),
     ).write_parquet(packet_pairs_path(out))
     return out
+
+
+def read_packet_pairs(packet: Path) -> pl.DataFrame:
+    """The pairs file of the packet at `packet`, with the columns of `CARRIED` a
+    file written before them lacks set to null."""
+    pairs = pl.read_parquet(packet_pairs_path(packet))
+    return pairs.with_columns(
+        pl.lit(None, dtype=pl.String).alias(name)
+        for name in CARRIED
+        if name not in pairs.columns
+    )
 
 
 def packet_digest(packet: Path) -> str:
@@ -293,6 +431,123 @@ def render_packet(
     return "\n".join(lines)
 
 
+@dataclass(frozen=True)
+class BtrPairView:
+    """What a packet shows of one BTR pair, as display strings.
+
+    Attributes:
+        pair: the pair's number in its packet.
+        fields: (label, the BTR row's text, the CRS record's text) for each row of
+            the side-by-side table, "-" where a side has no such field.
+        differs: the labels of the fields whose two sides name different things,
+            compared by code (`_BTR_COMPARED`). The other fields use different
+            words on each side, so their texts say nothing by differing.
+    """
+
+    pair: int
+    fields: list[tuple[str, str, str]]
+    differs: list[str]
+
+
+def btr_pair_views(
+    pairs: pl.DataFrame,
+    *,
+    btr: pl.LazyFrame,
+    crs: pl.LazyFrame,
+    names: pl.DataFrame | None = None,
+) -> list[BtrPairView]:
+    """The views of the BTR pairs `pairs` (`pair`, `left_id` a BTR row, `right_id`
+    a CRS record), in order, as a packet shows them. The CRS side shows its crs id
+    and project number, since the rows drawn are those whose ids the build could
+    not resolve.
+
+    Raises:
+        LabelPacketError: when a pair names a row `btr` or a record `crs` lacks.
+    """
+    rows = (
+        btr.join(pairs.select(row_id="left_id").lazy(), on="row_id", how="semi")
+        .collect()
+        .join(
+            catalogue.providers.list().select(provider_code="code", party_name="name"),
+            on="provider_code",
+            how="left",
+        )
+    )
+    records = _with_names(
+        crs.join(
+            pairs.select(record_id="right_id").lazy(), on="record_id", how="semi"
+        ).collect(),
+        names=names,
+    )
+    by_row = {row["row_id"]: row for row in rows.iter_rows(named=True)}
+    by_record = {
+        record["record_id"]: record for record in records.iter_rows(named=True)
+    }
+    missing = sorted(
+        {*pairs["left_id"]} - set(by_row) | {*pairs["right_id"]} - set(by_record)
+    )
+    if missing:
+        raise LabelPacketError(
+            f"{len(missing)} rows or records of the pairs are not in the btr or crs "
+            f"tables, such as {missing[:3]}"
+        )
+    return [
+        BtrPairView(
+            pair=pair,
+            fields=[
+                (label, row_text(by_row[left]), record_text(by_record[right]))
+                for label, row_text, record_text in _BTR_FIELDS
+            ],
+            differs=_differs(by_row[left], by_record[right]),
+        )
+        for pair, left, right in pairs.select("pair", "left_id", "right_id").iter_rows()
+    ]
+
+
+def render_btr_packet(
+    pairs: pl.DataFrame,
+    *,
+    btr: pl.LazyFrame,
+    crs: pl.LazyFrame,
+    title: str,
+    names: pl.DataFrame | None = None,
+) -> str:
+    """The packet text for the BTR pairs `pairs` (`pair`, `left_id`, `right_id`);
+    see `write_btr_packet`."""
+    lines = [
+        f"# {title}",
+        "",
+        BTR_MATCH_DEFINITION,
+        "",
+        "Each section shows a row a party reported to the UNFCCC in its Biennial "
+        "Transparency Report (A) and one record of the party's OECD CRS in the same "
+        "year (B), the record the link model scored highest for the row. Amounts are "
+        "in US dollars at current prices.",
+        "",
+    ]
+    for view in btr_pair_views(pairs, btr=btr, crs=crs, names=names):
+        lines += [
+            f"## Pair {view.pair}",
+            "",
+            "| Field | A: BTR row | B: CRS record |",
+            "| --- | --- | --- |",
+            *(f"| {label} | {a} | {b} |" for label, a, b in view.fields),
+            "",
+        ]
+    return "\n".join(lines)
+
+
+def _differs(row: Mapping[str, Any], record: Mapping[str, Any]) -> list[str]:
+    """The fields of `_BTR_COMPARED` whose codes the BTR row and the CRS record both
+    give and that differ."""
+    found = []
+    for label, row_key, record_key in _BTR_COMPARED:
+        a, b = row_key(row), record_key(record)
+        if a is not None and b is not None and a != b:
+            found.append(label)
+    return found
+
+
 def _crs_rows(frame: pl.DataFrame | None, *, hide: re.Pattern[str] | None) -> CrsRows:
     """The display strings of a unit's CRS rows, with ids replaced by `[id]` when
     `hide` is set."""
@@ -359,7 +614,11 @@ def _sides(
         .group_by("unit_id", maintain_order=True)
         .agg(pl.col("channel_code", "flow_code", *_TEXTS).first(), records=pl.len())
     )
-    view = wanted.join(largest, on="unit_id", how="left")
+    return _with_names(wanted.join(largest, on="unit_id", how="left"), names=names)
+
+
+def _with_names(view: pl.DataFrame, *, names: pl.DataFrame | None) -> pl.DataFrame:
+    """`view` with the names of its donor, recipient and `NAMED_CODES` codes."""
     view = view.join(
         catalogue.providers.list().select(donor_code="code", donor_name="name"),
         on="donor_code",
@@ -514,6 +773,98 @@ def _code(unit: Mapping[str, Any], kind: str, column: str) -> str:
 
 
 type _Field = tuple[str, Callable[[Mapping[str, Any]], str]]
+type _BtrField = tuple[
+    str, Callable[[Mapping[str, Any]], str], Callable[[Mapping[str, Any]], str]
+]
+
+
+def _none(_: Mapping[str, Any]) -> str:
+    return "-"
+
+
+def _btr_amount(row: Mapping[str, Any]) -> str:
+    amount = _usd(row["face_usd"])
+    return amount if row["status"] is None else f"{amount} {row['status']}"
+
+
+def _crs_amounts(record: Mapping[str, Any]) -> str:
+    parts = [
+        f"{name} {_usd(record[column])}"
+        for name, column in (
+            ("commitment", "commitment_usd"),
+            ("disbursement", "disbursement_usd"),
+        )
+        if _usd(record[column]) != "-"
+    ]
+    return ", ".join(parts) or "-"
+
+
+# A BTR pair's rows: the party's words on the left, the CRS record's on the right.
+_BTR_FIELDS: list[_BtrField] = [
+    (
+        "Donor",
+        lambda r: _code(r, "party", "provider_code"),
+        lambda c: _code(c, "donor", "donor_code"),
+    ),
+    ("Agency", _none, lambda c: _code(c, "agency", "agency_code")),
+    ("Year", lambda r: str(r["year"]), lambda c: str(c["year"])),
+    (
+        "Recipient",
+        lambda r: _text(r["recipient"]),
+        lambda c: _code(c, "recipient", "recipient_code"),
+    ),
+    ("Amount", _btr_amount, _crs_amounts),
+    ("Title", lambda r: _text(r["title"]), lambda c: _text(c["title"])),
+    (
+        "Description",
+        lambda r: _text(r["additional_information"]),
+        lambda c: _text(c["short_description"]),
+    ),
+    ("Long description", _none, lambda c: _text(c["long_description"])),
+    (
+        "Sector",
+        lambda r: _text(r["sector"]),
+        lambda c: _code(c, "purpose", "purpose_code"),
+    ),
+    (
+        "Instrument",
+        lambda r: _text(r["instrument"]),
+        lambda c: _text(c["finance_t"] and f"finance type {c['finance_t']}"),
+    ),
+    (
+        "Climate objective",
+        lambda r: _text(r["support_type"]),
+        lambda c: (
+            f"adaptation marker {c['rio_adaptation'] or 0}, "
+            f"mitigation marker {c['rio_mitigation'] or 0}"
+        ),
+    ),
+    (
+        "Channel",
+        lambda r: _text(r["channel"]),
+        lambda c: _code(c, "channel", "channel_code"),
+    ),
+    ("crs id", _none, lambda c: _text(c["crs_id"])),
+    ("Project number", _none, lambda c: _text(c["project_number"])),
+]
+# The BTR fields whose sides can be compared, and the code each side gives: the
+# provider, the year, and the recipient as the geo resolver reads the party's name,
+# which is None for a name it does not know or a region without a code.
+_BTR_COMPARED: list[
+    tuple[
+        str,
+        Callable[[Mapping[str, Any]], object],
+        Callable[[Mapping[str, Any]], object],
+    ]
+] = [
+    ("Donor", lambda r: r["provider_code"], lambda c: c["donor_code"]),
+    ("Year", lambda r: r["year"], lambda c: c["year"]),
+    (
+        "Recipient",
+        lambda r: recipient_code(r["recipient"]) if r["recipient"] else None,
+        lambda c: c["recipient_code"],
+    ),
+]
 
 _ID_FIELDS: list[_Field] = [
     ("crs id", lambda u: _text(u["crs_id"])),

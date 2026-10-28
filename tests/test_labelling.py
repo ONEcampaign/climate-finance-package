@@ -14,19 +14,30 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from normalised import crs_records
 from test_labels import CRS, record
+from test_link_btr import _btr
 
 from climate_finance import schema
-from climate_finance.build.link.decisions import import_labels
+from climate_finance.build.link.decisions import import_labels, read_decision_labels
 from climate_finance.build.link.keys import build_units
 from climate_finance.build.link.labelling import (
     SPOT_CHECKS,
+    WORDINGS,
+    LabellingError,
+    PacketReleaseMismatchError,
     QueuedPair,
     Session,
     make_server,
+    packet_pairs,
     queue_pairs,
+    sample_pairs,
 )
-from climate_finance.build.link.packet import write_packet
+from climate_finance.build.link.packet import (
+    btr_pair_views,
+    write_btr_packet,
+    write_packet,
+)
 from climate_finance.build.stages import table_path
 
 # Provider 1 has 20 pairs over two packets and 25 draws, the first five pairs backing
@@ -117,12 +128,26 @@ def _session(
     clock: Callable[[], float] = time.monotonic,
 ) -> Session:
     release, sample = _sample(tmp_path)
+    return _sample_session(
+        release, sample, tmp_path / "decisions.parquet", reviewer, share, clock
+    )
+
+
+def _sample_session(
+    release: Path,
+    sample: Path,
+    decisions: Path,
+    reviewer: str = "analyst",
+    share: float = 0.10,
+    clock: Callable[[], float] = time.monotonic,
+) -> Session:
+    pairs = sample_pairs(sample)
     return Session(
         release_dir=release,
-        sample_dir=sample,
-        decisions=tmp_path / "decisions.parquet",
+        pairs=pairs,
+        queue=queue_pairs(pairs, share=share),
+        decisions=decisions,
         reviewer=reviewer,
-        share=share,
         clock=clock,
     )
 
@@ -212,12 +237,8 @@ def test_the_session_queue_is_fixed_by_the_design_and_counts_decided_pairs(
         partial=True,
     )
 
-    resumed = Session(
-        release_dir=tmp_path / "release",
-        sample_dir=tmp_path / "sample",
-        decisions=tmp_path / "decisions.parquet",
-        reviewer="analyst",
-        share=0.10,
+    resumed = _sample_session(
+        tmp_path / "release", tmp_path / "sample", tmp_path / "decisions.parquet"
     )
     state = resumed.state()
 
@@ -444,3 +465,145 @@ def test_the_time_left_follows_the_pace_of_recent_actions(tmp_path: Path) -> Non
     assert state["seconds_left"] == round(
         (state["total"] - state["done"]) * sum(gaps) / len(gaps)
     )
+
+
+def test_a_btr_queue_packet_is_served_and_its_answers_are_queue_decisions(
+    tmp_path: Path,
+) -> None:
+    release = tmp_path / "release"
+    rows = ("btr-1", "btr-2")
+    for stage, table, frame in (
+        ("normalise", "btr", _btr(*({"row_id": row} for row in rows))),
+        ("normalise", "crs", crs_records({"record_id": "r1", "year": 2021})),
+    ):
+        path = table_path(release, stage, table)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        frame.write_parquet(path)
+    packet = write_btr_packet(
+        pl.DataFrame(
+            {"left_id": rows, "right_id": ["r1"] * 2, "review_reason": "calibration"}
+        ),
+        btr=pl.scan_parquet(table_path(release, "normalise", "btr")),
+        crs=pl.scan_parquet(table_path(release, "normalise", "crs")),
+        out=tmp_path / "btr.md",
+        title="BTR calibration queue",
+    )
+    pairs = packet_pairs(packet, release_dir=release)
+    decisions = tmp_path / "decisions.parquet"
+    session = Session(
+        release_dir=release,
+        pairs=pairs,
+        queue=pairs,
+        decisions=decisions,
+        reviewer="analyst",
+    )
+
+    shown = session.pair(0)
+    session.save(1, label="no_match", strength="2", reason="other project")
+
+    assert [pair.key for pair in session.queue] == [
+        (None, "btr_crs", row, "r1") for row in rows
+    ]
+    # Norway's provider code, from the BTR row.
+    assert {pair.provider for pair in pairs} == {8}
+    assert session.state()["page"] == WORDINGS["btr_crs"]
+    assert set(shown["view"]) == {"pair", "fields", "differs"}
+    assert shown["kind"] == "calibration"
+    labels = read_decision_labels(decisions)
+    assert labels.select("task", "left_id", "is_match", "stratified").rows() == [
+        ("btr_crs", "btr-2", False, True)
+    ]
+    # The answer is the reviewer's own on reopening.
+    reopened = Session(
+        release_dir=release,
+        pairs=pairs,
+        queue=pairs,
+        decisions=decisions,
+        reviewer="analyst",
+    )
+    assert reopened.state()["done"] == 1
+    assert reopened.pair(1)["answer"]["label"] == "no_match"
+    # A revised workbook puts another activity under btr-2's id. The old packet no
+    # longer shows what the release holds, so the page refuses it; the rewritten
+    # packet shows the pair undecided.
+    _btr(
+        {"row_id": "btr-1"}, {"row_id": "btr-2", "title": "Flood barriers"}
+    ).write_parquet(table_path(release, "normalise", "btr"))
+    with pytest.raises(PacketReleaseMismatchError) as refused:
+        packet_pairs(packet, release_dir=release)
+    assert refused.value.code == "packet_release_mismatch"
+    packet = write_btr_packet(
+        pl.DataFrame({"left_id": rows, "right_id": ["r1"] * 2}),
+        btr=pl.scan_parquet(table_path(release, "normalise", "btr")),
+        crs=pl.scan_parquet(table_path(release, "normalise", "crs")),
+        out=tmp_path / "btr.md",
+        title="BTR calibration queue",
+    )
+    pairs = packet_pairs(packet, release_dir=release)
+    revised = Session(
+        release_dir=release,
+        pairs=pairs,
+        queue=pairs,
+        decisions=decisions,
+        reviewer="analyst",
+    )
+    assert revised.state()["done"] == 0
+    assert revised.pair(1)["answer"] is None
+
+
+def test_a_session_refuses_a_queue_of_mixed_tasks(tmp_path: Path) -> None:
+    release, sample = _sample(tmp_path)
+    pairs = sample_pairs(sample)
+    mixed = [
+        *pairs,
+        QueuedPair(1, pairs[0].packet, 1, 99, (None, "btr_crs", "a", "b"), 1, False),
+    ]
+
+    with pytest.raises(LabellingError):
+        Session(
+            release_dir=release,
+            pairs=mixed,
+            queue=mixed,
+            decisions=tmp_path / "d.parquet",
+            reviewer="analyst",
+        )
+
+
+@pytest.mark.parametrize(
+    ("row", "record", "differs"),
+    [
+        # The party's name and the CRS code name the same country.
+        ({}, {}, []),
+        ({"recipient": "Ghana"}, {}, ["Recipient"]),
+        # A region the resolver gives no code is not compared.
+        ({"recipient": "Africa"}, {}, []),
+        ({"year": 2022}, {}, ["Year"]),
+        ({}, {"donor_code": 5}, ["Donor"]),
+        # Amounts, titles and sectors use each side's own words, so never mark.
+        ({"face_usd": 5.0, "title": "Grid", "sector": "Energy"}, {}, []),
+    ],
+)
+def test_a_btr_view_marks_only_fields_that_name_different_things(
+    row: dict[str, object], record: dict[str, object], differs: list[str]
+) -> None:
+    btr = _btr({"row_id": "b1", "recipient": "Kenya", "year": 2021} | row)
+    crs = crs_records(
+        {
+            "record_id": "r1",
+            "year": 2021,
+            "donor_code": 8,
+            "recipient_code": 248,
+            "title": "Solar grids",
+            "purpose_code": 23210,
+            "commitment_usd": 1.2e6,
+        }
+        | record
+    )
+
+    (view,) = btr_pair_views(
+        pl.DataFrame({"pair": [1], "left_id": ["b1"], "right_id": ["r1"]}),
+        btr=btr.lazy(),
+        crs=crs.lazy(),
+    )
+
+    assert view.differs == differs

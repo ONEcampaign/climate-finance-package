@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from climate_finance import schema
 from climate_finance.build.fetch import DAC_EXCHANGE_FILE, IATI_DIR, fetched_years
 from climate_finance.build.link.btr import link_btr
 from climate_finance.build.link.candidates import (
@@ -22,6 +23,7 @@ from climate_finance.build.link.decisions import (
     accepted_pairs,
     drop_pairs,
     override_links,
+    pair_decisions,
     read_decision_labels,
     rejected_pairs,
 )
@@ -75,12 +77,14 @@ def run_link(context: StageContext) -> StageOutput:
     adjudicates the classifier's band, answers each Splink model that people have
     not calibrated, and the calibrated Splink models link. Without it the link stage
     makes no Jev client. Each trace link records whether its two sides disagree on
-    recipient or project number (`flag_disagreement`). People's and agents'
-    queue decisions then override the links they decided (`override_links`). When the
+    recipient or project number (`flag_disagreement`). People's and agents' queue
+    decisions then override the links they decided (`override_links`). When the
     build has BTR rows, each links to the same-year CRS records of its party
-    (`link_btr`). Reflow records sum into `reflow_units`, which reach their loan's
-    commitment units through the exact key tiers alone (`reflow_links`), without
-    review decisions or key repair.
+    (`link_btr`), its calibration and overrides taking the decisions on `btr_crs`
+    pairs whose fingerprints match the release, and the id-less rows it draws for
+    people to label go to `btr_calibration`. Reflow records sum into `reflow_units`,
+    which reach their loan's commitment units through the exact key tiers alone
+    (`reflow_links`), without review decisions or key repair.
 
     Raises:
         JevFitError: when `jev_links` is on and the build has no truth group to
@@ -89,7 +93,8 @@ def run_link(context: StageContext) -> StageOutput:
     config = context.config
     first_year, _ = fetched_years(context)["crs"]
     decided = read_decision_labels(config.sources.review_decisions)
-    rejected, accepted = rejected_pairs(decided), accepted_pairs(decided)
+    by_pair = pair_decisions(decided)
+    rejected, accepted = rejected_pairs(by_pair), accepted_pairs(by_pair)
     rejected_trace = rejected.filter(task="trace").drop("task")
 
     def unrejected(tier: pl.DataFrame) -> pl.DataFrame:
@@ -195,7 +200,7 @@ def run_link(context: StageContext) -> StageOutput:
         crs=population,
         stems=stems,
         provider_profile=scored.profile,
-        labels=decided,
+        labels=by_pair,
         client=client,
         answer=answer,
     )
@@ -211,10 +216,17 @@ def run_link(context: StageContext) -> StageOutput:
             )
         )
     linked = [flag_disagreement(pl.concat([links, *scored_links]), units=units)]
+    btr_draw = pl.DataFrame(schema=schema.BTR_CALIBRATION.dtypes)
+    # A `btr_crs` decision overrides a link only while its fingerprints match.
+    overrides = by_pair
     if config.sources.btr_archive is not None:
-        linked.append(link_btr(context.read("normalise", "btr"), crs=crs))
+        btr = link_btr(context.read("normalise", "btr"), crs=crs, labels=decided)
+        linked.append(btr.links)
+        btr_draw = btr.draw
+        if btr.labels is not None:
+            overrides = pl.concat([overrides, btr.labels])
     return {
-        "links": override_links(pl.concat(linked), labels=decided),
+        "links": override_links(pl.concat(linked), labels=overrides),
         "units": units,
         "reflow_units": reflow_units,
         "reflow_links": link_reflows(units, reflow_units, first_year=first_year),
@@ -222,6 +234,7 @@ def run_link(context: StageContext) -> StageOutput:
         "programme_stems": stems,
         "candidates": candidates,
         "pair_scores": splink.scores,
+        "btr_calibration": btr_draw,
         "provider_profile": provider_profile(
             crosswalk_profile(crdf, links=links, crosswalks=gef),
             scoring=scored.profile,

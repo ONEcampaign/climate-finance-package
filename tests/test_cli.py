@@ -1,3 +1,6 @@
+from pathlib import Path
+
+import pytest
 import typer
 from typer.core import TyperGroup
 from typer.testing import CliRunner
@@ -23,3 +26,12 @@ def test_cf_build_declares_every_command() -> None:
         "names",
         "listings",
     }
+
+
+@pytest.mark.parametrize("sources", [[], ["sample", "--packet", "queue.md"]])
+def test_label_takes_a_sample_or_a_packet(tmp_path: Path, sources: list[str]) -> None:
+    result = CliRunner().invoke(
+        app, ["label", str(tmp_path), *sources, "--reviewer", "analyst"]
+    )
+
+    assert result.exit_code == 2

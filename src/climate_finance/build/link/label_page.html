@@ -68,18 +68,10 @@
 </style>
 </head>
 <body>
-<h1>Is A money spent under commitment B?</h1>
+<h1 id="heading"></h1>
 <div class="guide">
-  <div class="yes"><h2>Yes, same commitment</h2><ul>
-    <li>Same project and recipient, and B was committed before or with A.</li>
-    <li>B may be split over several lines, renumbered, or drawn down later.</li>
-    <li>A regional commitment covers a country inside that region.</li>
-  </ul></div>
-  <div class="no"><h2>No</h2><ul>
-    <li>A different recipient country.</li>
-    <li>A sibling project, or a later phase with its own new commitment, even under a reused number.</li>
-    <li>A separate yearly grant spent in its own year, or an unrelated activity.</li>
-  </ul></div>
+  <div class="yes"><h2 id="yes-title"></h2><ul id="yes-items"></ul></div>
+  <div class="no"><h2>No</h2><ul id="no-items"></ul></div>
 </div>
 <div class="progress"><span id="where"></span><span id="left"></span></div>
 <div class="bar"><div id="fill"></div></div>
@@ -90,7 +82,7 @@
 <div id="toast" hidden></div>
 <div class="answer"><div>
   <div class="buttons">
-    <button id="yes">Yes, same commitment (Y)</button>
+    <button id="yes">Yes (Y)</button>
     <button id="no">No (N)</button>
     <button id="tell">Can't tell (U)</button>
   </div>
@@ -139,6 +131,12 @@ function timeLeft(seconds) {
 
 function showState(next) {
   state = next;
+  const page = state.page;
+  $("heading").textContent = page.heading;
+  $("yes-title").textContent = page.yes;
+  $("yes").textContent = `${page.yes} (Y)`;
+  $("yes-items").replaceChildren(...page.yes_items.map((item) => el("li", item)));
+  $("no-items").replaceChildren(...page.no_items.map((item) => el("li", item)));
   $("rule").textContent = state.definition;
   $("fill").style.width = `${state.total ? (100 * state.done) / state.total : 100}%`;
   $("providers").replaceChildren(...state.providers.map(
@@ -175,12 +173,14 @@ function contextLine(fields, answer) {
     item.append(el("b", a === b ? name : `${name} differs`), a === b ? a : `A: ${a} · B: ${b}`);
     line.append(item);
   }
-  if (answer) {
-    const word = answer.label === "match" ? "Yes" : "No";
-    const low = answer.strength === "u" || answer.strength === "1" ? " (low confidence)" : "";
-    line.append(el("span", `You answered: ${word}${low}`, "answered"));
-  }
+  if (answer) line.append(answered(answer));
   return line;
+}
+
+function answered(answer) {
+  const word = answer.label === "match" ? "Yes" : "No";
+  const low = answer.strength === "u" || answer.strength === "1" ? " (low confidence)" : "";
+  return el("span", `You answered: ${word}${low}`, "answered");
 }
 
 function amounts(fields, col) {
@@ -211,7 +211,7 @@ function addRow(list, label, value, differs, cls) {
 function card(side, fields, shown) {
   const col = side === "A" ? 0 : 1;
   const box = el("section", undefined, `card ${side.toLowerCase()}`);
-  box.append(el("h2", side === "A" ? "A: later spending record" : "B: earlier commitment record"));
+  box.append(el("h2", state.page.sides[col]));
   const list = el("dl");
   const differs = (name) => !EXPECTED.has(name) && fields.get(name)[0] !== fields.get(name)[1];
   addRow(list, "Year", fields.get("Record year")[col], false);
@@ -264,9 +264,48 @@ function checks(pair, fields) {
   return box;
 }
 
+// A view with no CRS rows (a BTR pair) lists each side's fields as they are,
+// marking those the server found to name different things.
+function plainCard(side, pair) {
+  const col = side === "A" ? 0 : 1;
+  const box = el("section", undefined, `card ${side.toLowerCase()}`);
+  box.append(el("h2", state.page.sides[col]));
+  const list = el("dl");
+  for (const [name, a, b] of pair.view.fields) {
+    const value = col === 0 ? a : b;
+    if (value === "-") continue;
+    addRow(list, name, value, pair.view.differs.includes(name), name === "Title" ? "title" : "");
+  }
+  box.append(list);
+  return box;
+}
+
+function renderPlain(pair) {
+  const cards = el("div", undefined, "cards");
+  cards.append(plainCard("A", pair), plainCard("B", pair));
+  const line = el("div", undefined, "context");
+  if (pair.answer) line.append(answered(pair.answer));
+  $("pair").replaceChildren(line, cards, el("div", `Provider ${pair.provider}, pair ${pair.view.pair}`, "ref"));
+}
+
 function render(pair) {
   data = pair;
   index = pair.i;
+  if (pair.view.rows === undefined) renderPlain(pair);
+  else renderTrace(pair);
+  const saved = pair.answer;
+  $("yes").classList.toggle("on", !!saved && saved.label === "match");
+  $("no").classList.toggle("on", !!saved && saved.label === "no_match");
+  $("reason").value = saved ? saved.reason : "";
+  $("reason").hidden = !(saved && saved.reason);
+  $("error").textContent = "";
+  showWhere();
+  window.scrollTo(0, 0);
+  // Warm the server's next chunk of pairs while the person reads this one.
+  if (index + 1 < state.total) fetch(`/api/pair?i=${index + 1}`).catch(() => {});
+}
+
+function renderTrace(pair) {
   const fields = fieldMap(pair);
   const present = OPTIONAL.filter((name) => fields.has(name) && fields.get(name).some((v) => v !== "-"));
   const differing = present.filter((name) => fields.get(name)[0] !== fields.get(name)[1]);
@@ -280,16 +319,6 @@ function render(pair) {
     checks(pair, fields),
     el("div", `Provider ${pair.provider}, batch ${pair.batch}, pair ${pair.view.pair}`, "ref"),
   );
-  const saved = pair.answer;
-  $("yes").classList.toggle("on", !!saved && saved.label === "match");
-  $("no").classList.toggle("on", !!saved && saved.label === "no_match");
-  $("reason").value = saved ? saved.reason : "";
-  $("reason").hidden = !(saved && saved.reason);
-  $("error").textContent = "";
-  showWhere();
-  window.scrollTo(0, 0);
-  // Warm the server's next chunk of pairs while the person reads this one.
-  if (index + 1 < state.total) fetch(`/api/pair?i=${index + 1}`).catch(() => {});
 }
 
 function status(text, failed) {
