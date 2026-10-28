@@ -885,7 +885,7 @@ def test_a_record_that_allocates_nothing_has_no_allocation_weight(
     # in every bound, and DEU-1's disbursed amounts with it, as a bank-ledger or
     # IATI fill of zero allocates nothing.
     allocated = 40e6 * 0.95 / 3
-    bounds = ("allocated_usd", "allocated_low_usd", "allocated_high_usd")
+    bounds = ("allocated_usd", "allocated_low_usd")
 
     def zero_record(frame: pl.DataFrame) -> pl.DataFrame:
         record = pl.col("record_id") == "DEU-1-R0"
@@ -898,7 +898,7 @@ def test_a_record_that_allocates_nothing_has_no_allocation_weight(
         row = pl.col("row_id") == "DEU-1"
         return frame.with_columns(
             pl.when(row).then(pl.col(name) - allocated).otherwise(pl.col(name))
-            for name in ("disbursed_usd", "disbursed_low_usd", "disbursed_high_usd")
+            for name in ("disbursed_usd", "disbursed_low_usd")
         )
 
     path = copy_release(
@@ -2770,7 +2770,6 @@ def _repayments_as_disbursements(flow: Flow) -> dict[str, Edit]:
                 "climate_share",
                 allocated_usd="_repaid",
                 allocated_low_usd="_repaid",
-                allocated_high_usd="_repaid",
                 record_disbursement_usd="_repaid",
                 record_grant_equiv_usd=pl.lit(None, pl.Float64),
             )
@@ -2778,7 +2777,6 @@ def _repayments_as_disbursements(flow: Flow) -> dict[str, Edit]:
                 template.drop(
                     "allocated_usd",
                     "allocated_low_usd",
-                    "allocated_high_usd",
                     "record_disbursement_usd",
                     "record_grant_equiv_usd",
                 ),

@@ -6,7 +6,7 @@ The bounds measure link certainty alone. A method's parameters, its coefficients
 
 ## Where the bounds come from
 
-Each row of the release's `disbursements` table is one CRS record's allocation to one commitment. The row holds `allocated_usd`, `allocated_low_usd`, and `allocated_high_usd`, with `0 <= allocated_low_usd <= allocated_usd` and `allocated_high_usd` equal to `allocated_usd`. A build refuses a release whose `allocated_high_usd` differs from `allocated_usd` on any row. The query scales an allocation's climate value by the ratio of each bound to `allocated_usd`.
+Each row of the release's `disbursements` table is one CRS record's allocation to one commitment. The row holds `allocated_usd` and `allocated_low_usd`, with `0 <= allocated_low_usd <= allocated_usd`. The query scales an allocation's climate value by the ratio of its low bound to `allocated_usd` for `low`, and takes `allocated_usd` itself for `value` and `high`.
 
 - An allocation's low bound is its full amount when a certain link carried it to a commitment whose CRDF rows reached it by certain routes, and zero otherwise. A link is certain when its method is `wb_loan`, `crs_id_purpose`, `crs_id`, or `crs_id_parent` and its records agree on recipient and project number (`schema.CERTAIN_METHODS`), or when one CRS record commits and disburses and the link joins that record to its own commitment. The certain routes are `within_year`, `crosswalk`, and `aggregate_partition` (`schema.CERTAIN_ROUTES`), so money that reaches an EIB commitment matched by `eib_list`, `crosswalk_amount`, `title_recipient`, `eib_text_amount`, or `eib_amount` counts in `value` alone.
 - The certain routes include the parts of rebuilt aggregate rows. A part takes the crs id of the CRS record it stands for, and the build matches parts to records by amount, within 0.1% to 1%. Those parts carry USD 4.3bn of `low` in the 2015 to 2024 disbursements.
@@ -16,7 +16,7 @@ Each row of the release's `disbursements` table is one CRS record's allocation t
 - Untraced disbursement counts in `value` and `high` and at zero in `low`. It has no link and no commitment, so no route to it is certain. Counting it in `low` would let a lost link raise `low`: a record whose only link is estimated adds nothing to `low`, and without the link it would become untraced in full. The result's `untraced` column holds this part of `value`, and `untraced=False` leaves it out.
 - Under `flow="grant_equivalent"`, a disbursement whose CRS record has no grant equivalent, such as a loan or a disbursement filled from a source that reports no finance type, counts 0 in `low`, `value`, and `high`. Its grant equivalent is unknown, so no bound can hold it. The result's `no_grant_equivalent` column holds its climate value at face, beside every total.
 
-A commitment's `disbursed_low_usd`, `disbursed_usd`, and `disbursed_high_usd` sum its allocations' bounds. The release holds them to `0 <= disbursed_low_usd <= disbursed_usd <= disbursed_high_usd <= face_usd`.
+A commitment's `disbursed_low_usd` and `disbursed_usd` sum its allocations' bounds. The release holds them to `0 <= disbursed_low_usd <= disbursed_usd <= face_usd`.
 
 !!! note
 With `flow="commitments"`, `low`, `value`, and `high` are equal.
