@@ -924,8 +924,8 @@ def allocate_to_rows(
     CRDF row, goes to a null `row_id`, so each record's rows sum to what `allocate`
     gave it, excess included. A repeat row's share then moves to the row it repeats
     (see `_to_first_rows`). `allocated_low_usd` sums the amounts certain pairs
-    carried to rows of groups whose `crdf_crs` links all take certain routes, and
-    `allocated_high_usd` equals `allocated_usd`. `link_method` and
+    carried to rows of groups whose `crdf_crs` links all take certain routes.
+    `link_method` and
     `commitment_unit_id` name the trace link that carried the row's allocation:
     that of the first pass to carry any of it, and within that pass the link that
     carried the most over its commitment records, then the lowest commitment unit.
@@ -1003,7 +1003,6 @@ def allocate_to_rows(
             "year",
             "allocated_usd",
             "allocated_low_usd",
-            amount.alias("allocated_high_usd"),
             "rule",
             pl.lit("crs").alias("disbursement_source"),
             "link_method",
@@ -1193,7 +1192,6 @@ def compute_status(
         .agg(
             disbursed_usd=ordered_sum(pl.col("allocated_usd")),
             disbursed_low_usd=ordered_sum(pl.col("allocated_low_usd")),
-            disbursed_high_usd=ordered_sum(pl.col("allocated_high_usd")),
         )
     )
     pending_ids = (
@@ -1214,7 +1212,7 @@ def compute_status(
         .then(pl.lit("not_traceable"))
         .otherwise(pl.lit("no_disbursement_record"))
     )
-    amounts = ("disbursed_usd", "disbursed_low_usd", "disbursed_high_usd")
+    amounts = ("disbursed_usd", "disbursed_low_usd")
     return (
         commitments.lazy()
         .select(

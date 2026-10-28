@@ -91,7 +91,6 @@ def _allocations(*, routed: bool = False) -> pl.DataFrame:
                 "year": 2022,
                 "allocated_usd": 1.0,
                 "allocated_low_usd": 1.0,
-                "allocated_high_usd": 1.0,
                 "rule": rule,
                 "disbursement_source": "iati" if rule == "iati" else "crs",
             }

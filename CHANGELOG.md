@@ -12,6 +12,7 @@
 - Withholds the Green Climate Fund's ledger rows from releases, as its terms bar redistribution. `commitments.withheld_usd` states their amount.
 - Requires Python 3.12 or later.
 - Adds the columns `flow`, `view`, `currency`, `prices`, `measure` and `no_adaptation_marker` to spending results, and `range_low` and `range_high` under several methods.
+- Adds `Result.combined_share()`, which returns one climate share per method across a query's keys, or per the key columns `by` names. The share divides by every flow in the query's scope, including keys with no climate row.
 - Adds `ClimateFinanceWarning` as the base of every warning, with `CoverageWarning`, `DoubleCountWarning` and `ClimateFinanceDeprecationWarning` beneath it, and a `code` on every error, such as `unknown_provider`, shown in brackets at the end of the message.
 - Adds the `type` and `mdb` columns to `climate_finance.providers.list()`, the `type` column to `climate_finance.recipients.list()`, and the provider group `"World Bank"`, which names IBRD and IDA.
 - Adds `cf-build publish`, which uploads a pack to the GitHub release tagged `data` and replaces `releases.json` there.

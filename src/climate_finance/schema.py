@@ -769,7 +769,6 @@ ALLOCATIONS = _table(
     year=_year(),
     allocated_usd=_usd(),
     allocated_low_usd=_usd(),
-    allocated_high_usd=_usd(),
     rule=_str(values=ALLOCATION_RULES),
     disbursement_source=_str(values=DISBURSEMENT_SOURCES),
     # The trace link that carried the allocation, from the record's unit to
@@ -792,7 +791,6 @@ COMMITMENT_STATUS = _table(
     climate_usd=_usd(),
     disbursed_usd=_usd(),
     disbursed_low_usd=_usd(),
-    disbursed_high_usd=_usd(),
     project_disbursing=_bool(),
     # Status inputs that allocation fixes, so a later stage can recompute status:
     # whether the row reaches a CRS commitment through an agency whose ids persist,
@@ -990,16 +988,14 @@ COMMITMENTS = _table(
     status=_str(values=STATUSES),
     # Face value, as CRS records carry whole-project disbursements and FIFO caps at
     # face. The query applies the climate share. Sums of the commitment's
-    # `disbursements` rows: allocated, allocated_low and allocated_high, with
-    # 0 <= disbursed_low <= disbursed <= disbursed_high <= face. A negative face
-    # value (a published downward revision) stays as published, with nothing
-    # disbursed.
+    # `disbursements` rows: allocated and allocated_low, with
+    # 0 <= disbursed_low <= disbursed <= face. A negative face value (a published
+    # downward revision) stays as published, with nothing disbursed.
     disbursed_usd=_usd(),
     disbursed_low_usd=_usd(),
-    disbursed_high_usd=_usd(),
     # The part of each disbursed amount from fill records the release leaves out
     # (`WITHHELD_RECORD_PREFIXES`), which no `disbursements` row carries. A fill
-    # counts in full in both bounds, so it is the same part of all three.
+    # counts in full in both bounds, so it is the same part of both.
     withheld_usd=_usd(),
     project_disbursing=_bool(),
     # True where the bank's ledger (`ledger.UNDISBURSED_PUBLISHERS`) confirms no
@@ -1029,15 +1025,14 @@ DISBURSEMENTS = _table(
     project_number=_str(nullable=True),
     title=_str(nullable=True),
     # Face value of the record's disbursement allocated to `row_id`, with the
-    # allocation's bounds: 0 <= allocated_low <= allocated <= allocated_high.
-    # allocated_low holds what certain trace links carried (`CERTAIN_METHODS`, or
-    # one record that commits and disburses) to rows reached through certain
-    # CRDF-to-CRS routes (`CERTAIN_ROUTES`). A bank-ledger or IATI fill counts in
-    # full in both bounds, since it matches the commitment on its publisher's own
-    # id: the bank's ledger key or the fund's project id.
+    # allocation's low bound: 0 <= allocated_low <= allocated. The high bound is
+    # allocated itself. allocated_low holds what certain trace links carried
+    # (`CERTAIN_METHODS`, or one record that commits and disburses) to rows reached
+    # through certain CRDF-to-CRS routes (`CERTAIN_ROUTES`). A bank-ledger or IATI
+    # fill counts in full in both bounds, since it matches the commitment on its
+    # publisher's own id: the bank's ledger key or the fund's project id.
     allocated_usd=_usd(),
     allocated_low_usd=_usd(),
-    allocated_high_usd=_usd(),
     # The CRS record's own disbursement at face value and grant equivalent, the same
     # on every row of a record. The query takes an allocation's grant equivalent as
     # record_grant_equiv_usd * allocated_usd / record_disbursement_usd, so a record
@@ -1075,7 +1070,7 @@ DISBURSEMENT_PROFILE = _table(
 # CRDF rows reach their CRS commitment through `CERTAIN_ROUTES` alone
 # (`certain_route_usd`), and those labelled by a model or by a report.
 # `disbursed_climate_usd` and `certain_disbursed_climate_usd` are the climate value
-# of their disbursements in the high and low bounds (`allocated_high_usd`,
+# of their disbursements in the high and low bounds (`allocated_usd`,
 # `allocated_low_usd`), at each commitment's climate share of face.
 # `grant_equiv_coverage` is the part of the linked commitments' allocated value
 # (`allocated_usd`) whose record has a grant equivalent, null without allocations.
@@ -1566,14 +1561,12 @@ _ALLOCATION_ORDER = (
 _DISBURSED_ORDER = (
     ("0", "disbursed_low_usd"),
     ("disbursed_low_usd", "disbursed_usd"),
-    ("disbursed_usd", "disbursed_high_usd"),
 )
 # Columns that hold one value across all rows of a CRS record.
 _RECORD_COLUMNS = ("record_disbursement_usd", "record_grant_equiv_usd")
 _DISBURSED_SUMS = {
     "disbursed_usd": "allocated_usd",
     "disbursed_low_usd": "allocated_low_usd",
-    "disbursed_high_usd": "allocated_high_usd",
 }
 # The amounts the checks compare, by table. A null among them fails no comparison,
 # so each null is a problem of its own.
@@ -1634,10 +1627,10 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     the sum, record and untraced checks skip the commitment and the record whose
     row holds one, and the `unallocated` total its provider and year, so it is
     reported once, as non-finite. Every disbursements row holds
-    0 <= allocated_low <= allocated = allocated_high and 0 <= record_grant_equiv,
-    and names a commitment. Per commitment, its rows' allocated, allocated_low and
-    allocated_high, each plus `withheld_usd`, sum to disbursed, disbursed_low and
-    disbursed_high, and 0 <= disbursed_low <= disbursed <= disbursed_high <= face,
+    0 <= allocated_low <= allocated and 0 <= record_grant_equiv, and names a
+    commitment. Per commitment, its rows' allocated and allocated_low, each plus
+    `withheld_usd`, sum to disbursed and disbursed_low, and
+    0 <= disbursed_low <= disbursed <= face,
     where a face of zero or below (a published downward revision) allows nothing
     disbursed. A record's rows share one `record_disbursement_usd` and one
     `record_grant_equiv_usd` (all null or all set), and its allocated amounts sum
@@ -1694,16 +1687,6 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
             f"disbursements {_row_label(row)}: {smaller} > {larger}"
             for row in failing.iter_rows(named=True)
         )
-    # A gross allocation's high bound is its value. Only net flows widen `high`.
-    differs = disbursements.filter(
-        (pl.col("allocated_high_usd") - pl.col("allocated_usd")).abs()
-        > INVARIANT_TOLERANCE_USD
-    )
-    problems.extend(
-        f"disbursements {_row_label(row)}: allocated_high_usd differs from "
-        "allocated_usd"
-        for row in differs.iter_rows(named=True)
-    )
     unlinked = disbursements.filter(
         pl.col("link_method").is_null(), pl.col("disbursement_source") == "crs"
     )
@@ -1770,10 +1753,10 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
         )
     cap = pl.col("face_usd").clip(lower_bound=0.0)
     failing = commitments.filter(
-        pl.col("disbursed_high_usd") - cap > INVARIANT_TOLERANCE_USD
+        pl.col("disbursed_usd") - cap > INVARIANT_TOLERANCE_USD
     )
     problems.extend(
-        f"commitments {row_id}: disbursed_high_usd > max(face_usd, 0)"
+        f"commitments {row_id}: disbursed_usd > max(face_usd, 0)"
         for row_id in failing["row_id"]
     )
     finite = disbursements.filter(

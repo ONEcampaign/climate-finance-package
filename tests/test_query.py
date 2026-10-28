@@ -19,7 +19,7 @@ import numpy as np
 import polars as pl
 import pyarrow as pa
 import pytest
-from make_fixture import DEU, ESP, FIXTURE_DIR, FRA, GEF, JPN, LEDGER_RECORD
+from make_fixture import DEU, ESP, FIXTURE_DIR, FRA, GEF, JPN, LEDGER_RECORD, NOR
 from polars.testing import assert_frame_equal
 from releases import Edit, copy_release
 
@@ -885,7 +885,7 @@ def test_a_record_that_allocates_nothing_has_no_allocation_weight(
     # in every bound, and DEU-1's disbursed amounts with it, as a bank-ledger or
     # IATI fill of zero allocates nothing.
     allocated = 40e6 * 0.95 / 3
-    bounds = ("allocated_usd", "allocated_low_usd", "allocated_high_usd")
+    bounds = ("allocated_usd", "allocated_low_usd")
 
     def zero_record(frame: pl.DataFrame) -> pl.DataFrame:
         record = pl.col("record_id") == "DEU-1-R0"
@@ -898,7 +898,7 @@ def test_a_record_that_allocates_nothing_has_no_allocation_weight(
         row = pl.col("row_id") == "DEU-1"
         return frame.with_columns(
             pl.when(row).then(pl.col(name) - allocated).otherwise(pl.col(name))
-            for name in ("disbursed_usd", "disbursed_low_usd", "disbursed_high_usd")
+            for name in ("disbursed_usd", "disbursed_low_usd")
         )
 
     path = copy_release(
@@ -1612,6 +1612,116 @@ def test_a_share_result_reruns_from_its_own_spec() -> None:
     assert shares.spec.measure == "share_of_total"
     assert_frame_equal(SNAP.run(shares.spec).table, shares.table)
     assert_frame_equal(shares.share_of_total().table, shares.table)
+
+
+def _all_flows(*conditions: pl.Expr) -> float:
+    """The 2021 to 2024 disbursements of `total_flows` that meet `conditions`."""
+    return (
+        SNAP.table("total_flows")
+        .filter(
+            pl.col("flow") == "disbursements", pl.col("year").is_between(2021, 2024)
+        )
+        .filter(*conditions)
+        .collect()["amount_usd"]
+        .sum()
+    )
+
+
+def test_a_combined_share_under_range_divides_each_method_by_one_total() -> None:
+    result = SNAP.spending(years=range(2021, 2025), method=RANGE)
+
+    combined = result.combined_share()
+
+    # Every recipient-view flow, counted once for each method.
+    total = _all_flows(pl.col("bi_multi").is_in([1, 3, 4, 7, 8]))
+    value = result.table.group_by("method").agg(pl.col("value").sum())
+    expected = {method: amount / total for method, amount in value.iter_rows()}
+    assert combined["method"].to_list() == ["ONE", "OECD", "PROVIDER"]
+    assert combined["total"].to_list() == pytest.approx([total] * 3)
+    assert dict(zip(combined["method"], combined["share"], strict=True)) == (
+        pytest.approx(expected)
+    )
+    assert len(set(expected.values())) == 3
+
+
+def test_a_combined_share_of_an_agency_divides_by_the_agencys_flows() -> None:
+    giz = cf.providers.code("GIZ")
+    assert isinstance(giz, Agency)
+    result = SNAP.spending(providers=giz, years=range(2021, 2025), view="provider")
+
+    [share] = result.combined_share()["share"]
+
+    in_view = pl.col("bi_multi").is_in([1, 2, 3, 7, 8])
+    germany = pl.col("provider_code") == DEU
+    agency = _all_flows(in_view, germany, pl.col("agency_code") == giz.agency)
+    assert agency < _all_flows(in_view, germany)
+    assert share == pytest.approx(result.table["value"].sum() / agency)
+
+
+def test_a_combined_share_counts_keys_without_a_climate_row() -> None:
+    result = SNAP.spending(years=range(2021, 2025))
+
+    by_year = result.combined_share(by="year").filter(year=2023)
+    by_key = result.combined_share(by=["year", "provider_code", "recipient_code"])
+
+    # Norway's 2023 disbursements to Kenya carry no Rio marker, so the table has
+    # no row for them.
+    key = {"year": 2023, "provider_code": NOR, "recipient_code": 248}
+    in_view = pl.col("bi_multi").is_in([1, 3, 4, 7, 8])
+    norway = _all_flows(in_view, *(pl.col(name) == code for name, code in key.items()))
+    assert norway > 0
+    assert result.table.filter(**key).is_empty()
+    assert by_key.filter(**key).select("value", "total", "share").row(0) == (
+        0.0,
+        pytest.approx(norway),
+        0.0,
+    )
+    year_total = _all_flows(in_view, pl.col("year") == 2023)
+    assert by_year["total"].item() == pytest.approx(year_total)
+    assert by_year["share"].item() == pytest.approx(
+        result.table.filter(year=2023)["value"].sum() / year_total
+    )
+
+
+def test_a_combined_share_by_recipient_counts_core_contributions_once() -> None:
+    result = SNAP.spending(years=range(2021, 2025), view="provider", method=RANGE)
+
+    combined = result.combined_share()
+    by_recipient = result.combined_share(by="recipient_code")
+
+    # `total_flows` files core contributions under recipient 998; they count once,
+    # in the group of no recipient that holds their attributed value.
+    assert 998 not in by_recipient["recipient_code"].to_list()
+    summed = by_recipient.group_by("method").agg(pl.col("total").sum())
+    assert dict(summed.iter_rows()) == pytest.approx(
+        dict(combined.select("method", "total").iter_rows())
+    )
+
+
+@pytest.mark.parametrize(
+    ("providers", "by", "error"),
+    [
+        (None, "provider", cf.UnknownNameError),
+        (None, "agency_code", cf.UnknownNameError),
+        ("GIZ", "agency_code", InvalidInputError),
+    ],
+)
+def test_a_combined_share_refuses_a_column_outside_its_keys(
+    providers: str | None, by: str, error: type[Exception]
+) -> None:
+    result = SNAP.spending(providers=providers)
+
+    with pytest.raises(error):
+        result.combined_share(by=by)
+
+
+def test_a_combined_share_of_no_rows_is_null() -> None:
+    with pytest.warns(CoverageWarning):
+        result = SNAP.spending(years=2015)
+
+    assert result.combined_share().rows() == [
+        ("ONE", "disbursements", "recipient", "USD", "current", 0.0, 0.0, None)
+    ]
 
 
 @pytest.mark.parametrize(
@@ -2770,7 +2880,6 @@ def _repayments_as_disbursements(flow: Flow) -> dict[str, Edit]:
                 "climate_share",
                 allocated_usd="_repaid",
                 allocated_low_usd="_repaid",
-                allocated_high_usd="_repaid",
                 record_disbursement_usd="_repaid",
                 record_grant_equiv_usd=pl.lit(None, pl.Float64),
             )
@@ -2778,7 +2887,6 @@ def _repayments_as_disbursements(flow: Flow) -> dict[str, Edit]:
                 template.drop(
                     "allocated_usd",
                     "allocated_low_usd",
-                    "allocated_high_usd",
                     "record_disbursement_usd",
                     "record_grant_equiv_usd",
                 ),
@@ -2948,10 +3056,13 @@ def test_only_the_parts_gross_counts_repay() -> None:
     assert rows.filter(pl.col("provider_code") == ESP).is_empty()
 
 
+@pytest.mark.parametrize("share", [Result.share_of_total, Result.combined_share])
 @pytest.mark.parametrize("flow", NET_FLOWS)
-def test_a_net_result_refuses_shares_of_total(flow: Flow) -> None:
+def test_a_net_result_refuses_shares_of_total(
+    flow: Flow, share: Callable[[Result], object]
+) -> None:
     with pytest.raises(InvalidInputError, match="takes a gross flow"):
-        SNAP.spending(flow=flow).share_of_total()
+        share(SNAP.spending(flow=flow))
 
 
 def _with_eu_repayments(frame: pl.DataFrame) -> pl.DataFrame:

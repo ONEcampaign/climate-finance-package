@@ -70,6 +70,8 @@ ORIGINS = (
     "repayment",
     "interest",
 )
+# The `BASIS` columns of `Result.combined_share()`, which is a share itself.
+_SHARE_BASIS = ("flow", "view", "currency", "prices")
 # The keys of a result table's rows, before the method.
 ROW_KEYS = ("year", "provider_code", "recipient_code", "bi_multi")
 # The keys of a result whose spec names an agency. `agency_code` holds the agency of
@@ -278,6 +280,7 @@ class Result:
         holds face value and the grant-equivalent total leaves its records out.
         The rows and the modelled line keep their amounts. The result's spec has
         `measure="share_of_total"`, so rerunning it returns the same shares.
+        `combined_share()` returns one share across several keys.
         """
         if self.spec.measure == "share_of_total":
             return self
@@ -288,6 +291,93 @@ class Result:
             totals=self._totals,
             spec=self.spec.replace(measure="share_of_total"),
             meta=self.meta,
+        )
+
+    def combined_share(self, *, by: str | Sequence[str] = ()) -> pl.DataFrame:
+        """One climate share per method across the result's keys.
+
+        The share is the sum of `value` over the sum of the totals
+        `share_of_total()` divides by, so a large key weighs more than a small one.
+        `by` names the key columns to keep, such as `by="year"` for a share per
+        year. The default keeps none and gives one share per method. The
+        denominator covers every key of the query's flow, view, providers,
+        agencies, recipients and years in `total_flows`, including keys with no
+        climate row, at the result's currency and prices. Core contributions count
+        once, under the null recipient their attributed finance takes. Totals cover
+        every flow code, so under `oda_only` the share is ODA climate finance over
+        all flows. The share is null where the total is zero, as for a query that
+        returns no rows.
+
+        The columns are the names of the code columns in `by` (`provider`,
+        `agency`, `recipient`), the `by` columns, `method`, the spec's `flow`,
+        `view`, `currency` and `prices` as `table` holds them, then `value`,
+        `total` and `share`.
+
+        Raises:
+            UnknownNameError: for a `by` column outside the table's keys, with
+                close names as suggestions.
+            InvalidInputError: for a net flow, whose repayments the CRS totals do
+                not hold, or for `agency_code` in `by` without `provider_code`,
+                since agency codes repeat across providers.
+        """
+        if self.spec.flow in NET_FLOWS:
+            raise InvalidInputError(
+                f"combined_share() takes a gross flow; {self.spec.flow!r} subtracts"
+                " repayments, which the CRS totals do not. Pass flow='disbursements'."
+            )
+        keys = row_keys(self._sums.collect_schema().names())
+        kept = tuple(dict.fromkeys([by] if isinstance(by, str) else by))
+        for name in kept:
+            if name not in keys:
+                raise unknown_name(name, kind="key column", choices=keys)
+        if "agency_code" in kept and "provider_code" not in kept:
+            raise InvalidInputError(
+                "by takes agency_code with provider_code, as by=['provider_code',"
+                " 'agency_code'], since agency codes repeat across providers"
+            )
+        # Core contributions count once, under the null recipient their attributed
+        # value takes, and every other code under its recipients.
+        core = pl.col("bi_multi") == CORE_CONTRIBUTION
+        totals = self._totals.filter(pl.col("recipient_code").is_null() == core)
+        grouped = [*kept, "method"]
+        methods = [label(method) for method in self.spec.methods]
+        shares = (
+            self._sums.group_by(grouped)
+            .agg(value=ordered_sum(pl.col("value")))
+            .join(
+                totals.group_by(grouped).agg(total=ordered_sum(pl.col("total"))),
+                on=grouped,
+                how="full",
+                coalesce=True,
+                nulls_equal=True,
+            )
+        )
+        if not kept:
+            # A query with no rows still gives each method a null share.
+            shares = pl.LazyFrame({"method": methods}).join(
+                shares, on="method", how="left"
+            )
+        return (
+            with_names(shares)
+            .with_columns(pl.col("value", "total").fill_null(0.0))
+            .with_columns(
+                share=pl.when(pl.col("total") != 0).then(
+                    pl.col("value") / pl.col("total")
+                )
+            )
+            .sort([*kept, pl.col("method").cast(pl.Enum(methods))], nulls_last=True)
+            .select(
+                *(_NAMES[name] for name in kept if name in _NAMES),
+                *grouped,
+                *(
+                    pl.lit(str(getattr(self.spec, field))).alias(field)
+                    for field in _SHARE_BASIS
+                ),
+                "value",
+                "total",
+                "share",
+            )
+            .collect()
         )
 
 

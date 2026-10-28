@@ -132,7 +132,7 @@ CORE = pl.DataFrame(
     schema=schema.CORE_CONTRIBUTIONS.dtypes,
 )
 LATER_STAGES = ("link", "allocate", "fill", "review", "label", "assemble")
-_DISBURSED = ("disbursed_usd", "disbursed_low_usd", "disbursed_high_usd")
+_DISBURSED = ("disbursed_usd", "disbursed_low_usd")
 SOURCES = release.SOURCES_FILE
 
 
@@ -401,7 +401,6 @@ def test_a_fill_takes_its_commitments_facts_and_its_records_total() -> None:
             "year": [2021, 2021],
             "allocated_usd": [6.0, 4.0],
             "allocated_low_usd": [6.0, 4.0],
-            "allocated_high_usd": [6.0, 4.0],
             "rule": ["bank_ledger"] * 2,
             "disbursement_source": ["bank_ledger"] * 2,
         },
@@ -536,7 +535,6 @@ def test_the_release_leaves_out_gcf_rows_and_keeps_what_they_disbursed(
             "year": [2021, 2021],
             "allocated_usd": [10.0, 5.0],
             "allocated_low_usd": [10.0, 5.0],
-            "allocated_high_usd": [10.0, 5.0],
             "rule": ["bank_ledger", "iati"],
             "disbursement_source": ["bank_ledger", "iati"],
             "link_method": [None, None],
@@ -652,7 +650,6 @@ def test_quality_counts_certain_routes_only_where_every_link_takes_one() -> None
             "record_id": pl.String,
             "allocated_usd": pl.Float64,
             "allocated_low_usd": pl.Float64,
-            "allocated_high_usd": pl.Float64,
             "record_grant_equiv_usd": pl.Float64,
         }
     )
@@ -1423,7 +1420,6 @@ def _rerun_quality() -> pl.LazyFrame:
             allocated_usd="climate_usd",
             record_grant_equiv_usd="climate_usd",
             allocated_low_usd="face_usd",
-            allocated_high_usd="climate_usd",
         ),
         objectives=commitments.select(
             record_id="row_id", label_source=pl.lit("jev")

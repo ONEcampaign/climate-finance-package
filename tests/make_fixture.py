@@ -406,7 +406,7 @@ def _allocation(
     """A disbursements row allocating `allocated` of `record_id` to `commitment`.
 
     `record_disbursement` and `record_grant_equiv` are the whole CRS record's.
-    Its high bound is `allocated`, as `allocate_to_rows` sets it. The row counts in
+    Its high bound is `allocated`. The row counts in
     the low bound when a `CERTAIN_METHODS` link carried it, and a bank-ledger fill
     counts in full. A fill has no CRS record, so it carries its commitment's facts,
     no flow code and no record markers, as `release.fill_disbursements` builds it.
@@ -443,7 +443,6 @@ def _allocation(
         "title": f"Climate project {commitment['row_id']}",
         "allocated_usd": allocated,
         "allocated_low_usd": allocated if certain else 0.0,
-        "allocated_high_usd": allocated,
         "record_disbursement_usd": record_disbursement,
         "record_grant_equiv_usd": record_grant_equiv,
         "inherited_rio_adaptation": rio_a,
@@ -1027,7 +1026,6 @@ def _commitments(
     disbursed = disbursements.group_by("row_id").agg(
         disbursed_usd=pl.col("allocated_usd").sum(),
         disbursed_low_usd=pl.col("allocated_low_usd").sum(),
-        disbursed_high_usd=pl.col("allocated_high_usd").sum(),
     )
     return (
         pl.from_dicts(rows, infer_schema_length=None)
@@ -1132,7 +1130,6 @@ def _quality(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataF
     allocated = pl.col("allocated_usd")
     allocations = disbursements.group_by("row_id").agg(
         allocated=allocated.sum(),
-        high=pl.col("allocated_high_usd").sum(),
         low=pl.col("allocated_low_usd").sum(),
         with_grant_equiv=allocated.filter(
             pl.col("record_grant_equiv_usd").is_not_null()
@@ -1149,7 +1146,9 @@ def _quality(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataF
             climate_usd=climate.sum(),
             linked_usd=climate.filter(traced).sum(),
             certain_route_usd=climate.filter(traced, route.is_in(CERTAIN_ROUTES)).sum(),
-            disbursed_climate_usd=(climate * pl.col("high") / pl.col("face_usd")).sum(),
+            disbursed_climate_usd=(
+                climate * pl.col("allocated") / pl.col("face_usd")
+            ).sum(),
             certain_disbursed_climate_usd=(
                 climate * pl.col("low") / pl.col("face_usd")
             ).sum(),

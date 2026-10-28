@@ -505,7 +505,6 @@ def _stage_release(tmp_path: Path) -> Path:
             "year": [2021, 2021],
             "allocated_usd": [20.0, 5.0],
             "allocated_low_usd": [20.0, 5.0],
-            "allocated_high_usd": [20.0, 5.0],
             "rule": ["fifo", "excess"],
             "disbursement_source": ["crs", "crs"],
             "link_method": ["crs_id", None],

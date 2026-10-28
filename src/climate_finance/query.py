@@ -10,10 +10,10 @@ converts it, and sums the rows into the result table. Rows have one of six origi
   times allocated_usd over the record's disbursement, which for a grant the CRS
   gives none is its disbursement, as `normalise_crs` builds it),
   weighted by the markers and climate share it inherits from that commitment. `low`
-  and `high` weight the allocation's own bounds, `allocated_low_usd` and
-  `allocated_high_usd`, converted to grant equivalents the same way: `low` counts
-  what certain links carried (`schema.CERTAIN_METHODS`) to rows reached by certain
-  routes (`schema.CERTAIN_ROUTES`), and `high` everything allocated.
+  weights the allocation's low bound, `allocated_low_usd`, converted to grant
+  equivalents the same way, and counts what certain links carried
+  (`schema.CERTAIN_METHODS`) to rows reached by certain routes
+  (`schema.CERTAIN_ROUTES`). `high` is the value, everything allocated.
 - `untraced`: a Rio-marked CRS record's disbursement that reaches no commitment
   (`untraced_usd`), the excess beyond a full commitment or the whole of a record
   linked to none, converted to grant equivalents as a disbursement is. It weighs by
@@ -1311,7 +1311,7 @@ def _base_rows(
             origin=pl.lit("disbursement"),
             amount=allocated * factor,
             amount_low=pl.col("allocated_low_usd") * factor,
-            amount_high=pl.col("allocated_high_usd") * factor,
+            amount_high=allocated * factor,
             no_grant_equivalent_usd=pl.when(missing).then(allocated),
             rio_adaptation=pl.col("inherited_rio_adaptation"),
             rio_mitigation=pl.col("inherited_rio_mitigation"),
@@ -2003,11 +2003,12 @@ def _totals(
     agency: pl.Expr | None,
     factors: pl.DataFrame | None,
 ) -> pl.LazyFrame:
-    """All CRS flows of `spec.flow`, of disbursements for a net flow, by the
-    result's row keys and method, plus a row per provider, year, Bi_Multi code
-    and method with a null recipient that sums every recipient, for rows such as
-    attribution that have none. With an `agency`
-    key (`_agency_key`) the keys hold `agency_code`, as the result table's do.
+    """All CRS flows of `spec.flow`, of disbursements for a net flow, of the
+    Bi_Multi codes the view counts (`_VIEW_CODES`), by the result's row keys and
+    method, plus a row per provider, year, Bi_Multi code and method with a null
+    recipient that sums every recipient, for rows such as attribution that have
+    none. With an `agency` key (`_agency_key`) the keys hold `agency_code`, as the
+    result table's do.
 
     CRDF commitments carry their provider's class, Bi_Multi 1 for a bilateral
     provider, where the CRS splits bilateral flows over codes 1, 3, 7 and 8, so
@@ -2017,7 +2018,9 @@ def _totals(
     same rows as its amount.
     """
     flows = release.table("total_flows").filter(
-        pl.col("flow") == _gross(spec.flow), *conditions
+        pl.col("flow") == _gross(spec.flow),
+        pl.col("bi_multi").is_in(_VIEW_CODES[spec.view]),
+        *conditions,
     )
     if spec.flow == "commitments":
         flows = flows.with_columns(
