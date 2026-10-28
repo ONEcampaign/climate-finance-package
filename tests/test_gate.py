@@ -8,6 +8,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 from normalised import crdf_rows, crs_records
+from pydantic import ValidationError
 from releases import copy_release
 from stage_runs import write_fetch, write_recorded, year_rows
 from typer.testing import CliRunner
@@ -31,12 +32,15 @@ from climate_finance.build.evaluate import (
 from climate_finance.build.fetch import CRS_FILE
 from climate_finance.build.gate import (
     GATES,
+    RESULT_SCHEMA,
     Drift,
+    StratumPrecision,
     gate_results_json,
     listing_gate,
     load_gates,
     precision_gate,
     run_gates,
+    stratum_precision_gate,
 )
 from climate_finance.build.link.decisions import import_labels
 from climate_finance.build.link.packet import (
@@ -217,6 +221,8 @@ def test_a_sound_release_passes_every_gate_but_the_samples_without_one(
     assert results["gate"].unique(maintain_order=True).to_list() == list(GATES)
     assert _passed(results) == {
         ("precision", str(NOR)): False,
+        # The fixture's links are all key-tier, so no stratum is gated.
+        ("stratum_precision", None): True,
         ("human_audit", None): False,
         ("conservation", None): True,
         ("reflow_conservation", "received"): True,
@@ -592,6 +598,140 @@ def test_a_waiver_lets_a_failed_precision_gate_through(release_dir: Path) -> Non
     )
 
 
+# Pairs of each provider and stratum: (provider, stratum, pairs).
+type _Strata = list[tuple[int, str, int]]
+
+
+def _frame_pairs(strata: _Strata) -> pl.DataFrame:
+    """Allocated pairs between two units, as `evaluate.allocated_pairs` gives them."""
+    return pl.DataFrame(
+        [
+            (provider, "trace", f"{provider}-{name}-{i}", f"c{i}", "splink", 1.0, name)
+            for provider, name, count in strata
+            for i in range(count)
+        ],
+        schema={
+            "provider_code": pl.Int32(),
+            "task": pl.String(),
+            "left_id": pl.String(),
+            "right_id": pl.String(),
+            "link_method": pl.String(),
+            "allocated_usd": pl.Float64(),
+            "stratum": pl.String(),
+        },
+        orient="row",
+    )
+
+
+def _precision_rows(
+    code: str | None, strata: dict[str, tuple[int, float | None]]
+) -> pl.DataFrame:
+    """Norway's precision row, with each stratum's labels and lower bound."""
+    listed = [
+        {
+            "stratum": name,
+            "allocated_usd": 100.0,
+            "labels": labels,
+            "estimate": lower,
+            "lower": lower,
+            "upper": lower,
+        }
+        for name, (labels, lower) in strata.items()
+    ]
+    return pl.DataFrame(
+        [{"gate": "precision", "subject": str(NOR), "code": code, "strata": listed}],
+        schema=RESULT_SCHEMA,
+    )
+
+
+GATE_MODEL = StratumPrecision(thresholds={"model": 0.9})
+
+
+@pytest.mark.parametrize(
+    ("code", "strata", "model_pairs", "outcome"),
+    [
+        ("no_sample", {}, 200, (False, "no_sample")),
+        ("stale_sample", {}, 200, (False, "stale_sample")),
+        (None, {"key": (50, 0.95)}, 200, (False, "no_stratum_draws")),
+        (None, {"model": (0, None)}, 200, (False, "no_stratum_draws")),
+        (None, {"model": (49, 0.95)}, 200, (False, "too_few_draws")),
+        # A census of three pairs needs only its three.
+        (None, {"model": (3, 0.95)}, 3, (True, None)),
+        (None, {"model": (60, 0.85)}, 200, (False, None)),
+        (None, {"model": (60, 0.92)}, 200, (True, None)),
+        (None, {"model": (60, float("nan"))}, 200, (False, "non_finite_estimate")),
+        # The provider's own non-finite bound leaves its stratum's reading.
+        ("non_finite_estimate", {"model": (60, 0.92)}, 200, (True, None)),
+    ],
+)
+def test_a_gated_stratum_passes_on_its_own_lower_bound(
+    code: str | None,
+    strata: dict[str, tuple[int, float | None]],
+    model_pairs: int,
+    outcome: tuple[bool, str | None],
+) -> None:
+    pairs = _frame_pairs([(NOR, "key", 60), (NOR, "model", model_pairs)])
+
+    row = stratum_precision_gate(
+        pairs,
+        precision=_precision_rows(code, strata),
+        rule=GATES_CONFIG.precision,
+        config=GATE_MODEL,
+    ).row(0, named=True)
+
+    assert (row["subject"], row["threshold"]) == (f"{NOR}/model", 0.9)
+    assert (row["passed"], row["code"]) == outcome
+
+
+@pytest.mark.parametrize(
+    ("strata", "rows"),
+    [
+        # Provider 9 has no model link; provider 10's links itself, unsampled.
+        (
+            [(NOR, "key", 60), (NOR, "model", 60), (9, "key", 60), (10, "own", 1)],
+            [(f"{NOR}/model", False, "no_sample")],
+        ),
+        ([(NOR, "key", 60)], [(None, True, None)]),
+        ([], [(None, False, "no_allocated_pairs")]),
+    ],
+)
+def test_only_sampled_pairs_of_a_gated_stratum_are_gated(
+    strata: _Strata, rows: list[tuple[str | None, bool, str | None]]
+) -> None:
+    pairs = _frame_pairs(strata).with_columns(
+        right_id=pl.when(pl.col("stratum") == "own")
+        .then("left_id")
+        .otherwise("right_id"),
+        stratum=pl.col("stratum").replace("own", "model"),
+    )
+
+    gated = stratum_precision_gate(
+        pairs,
+        precision=_precision_rows("no_sample", {}),
+        rule=GATES_CONFIG.precision,
+        config=GATE_MODEL,
+    )
+
+    assert gated.select("subject", "passed", "code").rows() == rows
+
+
+@pytest.mark.parametrize(
+    ("thresholds", "match"),
+    [
+        ({"models": 0.9}, "models"),
+        ({}, "names no stratum"),
+        ({"model": 0.0}, "outside"),
+        ({"model": 1.1}, "outside"),
+        ({"model": float("nan")}, "outside"),
+    ],
+)
+def test_stratum_thresholds_name_strata_at_a_precision(
+    thresholds: dict[str, float], match: str
+) -> None:
+    with pytest.raises(ValidationError, match=match):
+        StratumPrecision(thresholds=thresholds)
+
+
 def _halve_d20(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.with_columns(
         allocated_usd=pl.when(pl.col("record_id") == "d20")
@@ -919,8 +1059,11 @@ def test_a_waiver_lets_an_empty_precision_gate_through(release_dir: Path) -> Non
 
     results = _report(release_dir, waive_precision=True)
 
-    assert results.filter(gate="precision").select("subject", "waived").rows() == [
-        (None, True)
+    assert results.filter(
+        pl.col("gate").is_in(["precision", "stratum_precision"])
+    ).select("gate", "subject", "waived", "code").rows() == [
+        ("precision", None, True, "no_allocated_pairs"),
+        ("stratum_precision", None, True, "no_allocated_pairs"),
     ]
 
 
@@ -1068,7 +1211,8 @@ def test_quality_shows_each_providers_precision_interval(
     gated = manifest.model_copy(update={"gates": gate_results_json(results)})
     (release / "release.json").write_text(gated.model_dump_json(), encoding="utf-8")
 
-    precision = cf.load(path=release).quality().precision
+    quality = cf.load(path=release).quality()
+    precision = quality.precision
     recorded = json.loads((release / "release.json").read_text(encoding="utf-8"))[
         "gates"
     ]
@@ -1076,6 +1220,51 @@ def test_quality_shows_each_providers_precision_interval(
     assert recorded["precision"][0]["strata"][0]["estimate"] == pytest.approx(0.4)
     assert precision.select("provider_code", "estimate", "lower", "passed").rows() == [
         (NOR, pytest.approx(0.4), pytest.approx(0.4), False)
+    ]
+    # The fixture's one stratum is key-tier, which the release does not gate.
+    assert quality.stratum_precision.select(
+        "provider_code", "stratum", "labels", "estimate", "passed"
+    ).rows() == [(NOR, "key", 2, pytest.approx(0.4), None)]
+
+
+def test_quality_shows_each_stratums_precision_and_verdict(tmp_path: Path) -> None:
+    recorded = copy_release(tmp_path / "gated")
+    path = recorded / "release.json"
+    strata = [
+        {"stratum": "key", "allocated_usd": 900.0, "labels": 450, "estimate": 1.0},
+        {"stratum": "model", "allocated_usd": 100.0, "labels": 50, "lower": 0.7},
+    ]
+    gates = {
+        "precision": [
+            {"subject": str(NOR), "value": 0.95, "passed": True, "strata": strata}
+        ],
+        "stratum_precision": [
+            {"subject": f"{NOR}/model", "passed": False, "waived": True}
+        ],
+    }
+    manifest = ReleaseManifest.model_validate_json(path.read_text(encoding="utf-8"))
+    path.write_text(
+        manifest.model_copy(update={"gates": gates}).model_dump_json(),
+        encoding="utf-8",
+    )
+
+    quality = cf.load(path=recorded).quality()
+
+    assert quality.precision.select("provider_code", "estimate", "passed").rows() == [
+        (NOR, 0.95, True)
+    ]
+    # The key stratum is not gated, so it carries no verdict.
+    assert quality.stratum_precision.select(
+        "provider_code",
+        "stratum",
+        "allocated_usd",
+        "labels",
+        "lower",
+        "passed",
+        "waived",
+    ).rows() == [
+        (NOR, "key", 900.0, 450, None, None, None),
+        (NOR, "model", 100.0, 50, 0.7, False, True),
     ]
 
 

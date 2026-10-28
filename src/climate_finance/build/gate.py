@@ -13,6 +13,10 @@ over-allocation:
   provider fails, and so does a provider whose sample was drawn from another
   population of allocated pairs (`evaluate.population_fingerprints`) or whose
   design records no population.
+- `stratum_precision`: each stratum `stratum_precision.thresholds` names, in each
+  provider whose sampled pairs (`evaluate.sample_frame`) hold it, passes when the
+  lower bound of its own interval in the precision row's `strata` reaches its
+  threshold. Its subject is `<provider>/<stratum>`.
 - `human_audit`: at least `min_share` of the blind sample's draws carry a person's
   decision.
 - `conservation`: each linked CRS record up to `years.crs_last_complete`, the
@@ -47,9 +51,12 @@ or the published CRDF, no disbursement row, no provider code, or an empty sample
 precision or human_audit row that could not estimate says why in `code`:
 `no_allocated_pairs`, `no_sample`, `empty_sample` or `stale_sample`, and a precision
 row whose estimate or bound is NaN or infinite fails as `non_finite_estimate`. A
+stratum_precision row carries its provider's precision code, `no_stratum_draws`
+when the look read none of the stratum's draws, `too_few_draws` when it read fewer
+than `min_draws` or the stratum's pairs, or `non_finite_estimate`. A
 reflow_conservation row that could not read an input fails as `missing_input`. The
 other gates' rows carry no `code`.
-`waive_precision` lets precision and human_audit rows fail.
+`waive_precision` lets precision, stratum_precision and human_audit rows fail.
 """
 
 from __future__ import annotations
@@ -60,7 +67,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 import yaml
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from climate_finance.build import evaluate, listings
 from climate_finance.build.config import DriftCause
@@ -80,6 +87,7 @@ if TYPE_CHECKING:
 GATES_YAML = Path(__file__).with_name("gates.yaml")
 GATES = (
     "precision",
+    "stratum_precision",
     "human_audit",
     "conservation",
     "reflow_conservation",
@@ -115,8 +123,8 @@ REFLOW_MEASURES = {
 _USD_PER_MILLION = 1e6
 # How many failing items a row's detail names.
 _SHOWN = 5
-# The gates `waive_precision` lets fail: both certify the blind sample.
-WAIVABLE = ("precision", "human_audit")
+# The gates `waive_precision` lets fail: each certifies the blind sample.
+WAIVABLE = ("precision", "stratum_precision", "human_audit")
 # The details of a `stale_sample` precision row.
 _STALE = (
     "stale sample: drawn from another population of allocated pairs, as pairs, link "
@@ -130,6 +138,28 @@ _UNFINGERPRINTED = (
 
 class _Section(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class StratumPrecision(_Section):
+    # The lower bound each gated stratum's interval must reach, by stratum.
+    thresholds: dict[str, float]
+
+    @field_validator("thresholds")
+    @classmethod
+    def _gate_strata(cls, thresholds: dict[str, float]) -> dict[str, float]:
+        """At least one stratum is gated, since an empty mapping would pass every
+        build unread, and each threshold is a precision in (0, 1]."""
+        if not thresholds:
+            raise ValueError("thresholds names no stratum, so the gate checks none")
+        if unknown := sorted(set(thresholds) - set(evaluate.STRATA)):
+            raise ValueError(f"{unknown} are not strata of {evaluate.STRATA}")
+        if outside := {
+            stratum: value
+            for stratum, value in thresholds.items()
+            if not 0 < value <= 1
+        }:
+            raise ValueError(f"{outside} lie outside (0, 1]")
+        return thresholds
 
 
 class HumanAudit(_Section):
@@ -162,6 +192,7 @@ class GateConfig(_Section):
     """The contents of `gates.yaml`."""
 
     precision: evaluate.PrecisionRule
+    stratum_precision: StratumPrecision
     human_audit: HumanAudit
     conservation: Conservation
     reflow_conservation: ReflowConservation
@@ -207,8 +238,8 @@ def run_gates(
         drift_causes: the recorded causes of provider-year moves, from
             `build.toml`.
         report_only: return the results without raising on a failure.
-        waive_precision: let failed precision and human_audit rows pass, marked
-            `waived`.
+        waive_precision: let failed precision, stratum_precision and human_audit
+            rows pass, marked `waived`.
         gates: thresholds, read from `gates.yaml` when not given.
 
     Returns:
@@ -245,12 +276,16 @@ def run_gates(
             evaluate.design_path(sample), decisions=decisions
         )
     )
+    pairs = evaluate.allocated_pairs(release_dir, decisions=decisions)
+    precision = precision_gate(pairs, labels=labels, rule=gates.precision)
     results = pl.concat(
         [
-            precision_gate(
-                evaluate.allocated_pairs(release_dir, decisions=decisions),
-                labels=labels,
+            precision,
+            stratum_precision_gate(
+                pairs,
+                precision=precision,
                 rule=gates.precision,
+                config=gates.stratum_precision,
             ),
             human_audit_gate(labels, config=gates.human_audit),
             conservation_gate(
@@ -325,7 +360,7 @@ def _row(
     gate: str,
     *,
     value: float | None,
-    threshold: float,
+    threshold: float | None,
     passed: bool,
     detail: str,
     subject: str | None = None,
@@ -485,6 +520,112 @@ def precision_gate(
         .when(evaluate.non_finite())
         .then(pl.lit("non_finite_estimate")),
         strata="strata",
+    ).cast(RESULT_SCHEMA)
+
+
+def stratum_precision_gate(
+    pairs: pl.DataFrame,
+    *,
+    precision: pl.DataFrame,
+    rule: evaluate.PrecisionRule,
+    config: StratumPrecision,
+) -> pl.DataFrame:
+    """One row per provider and gated stratum (`config.thresholds`) that the
+    `evaluate.sample_frame` of `pairs` (`evaluate.allocated_pairs`) holds, with
+    the stratum's estimate and bounds from its provider's `precision` row
+    (`precision_gate`). A row passes when its lower bound reaches the stratum's
+    threshold.
+
+    A row fails unestimated with its provider's code and detail when the provider
+    has no sample or a stale one, as `no_stratum_draws` when the look read none of
+    the stratum's draws, and as `too_few_draws` when it read fewer than
+    `rule.min_draws` or the stratum's pairs, the draws the design gives every
+    stratum so its own estimate rests on enough labels. A non-finite estimate or
+    bound fails as `non_finite_estimate`. With no allocated pairs one row fails, as
+    nothing is certified, and with none in a gated stratum one row passes.
+    """
+    if pairs.is_empty():
+        return _row(
+            "stratum_precision",
+            value=None,
+            threshold=None,
+            passed=False,
+            detail="no allocated pairs: nothing to certify",
+            code="no_allocated_pairs",
+        )
+    thresholds = pl.DataFrame(
+        list(config.thresholds.items()),
+        schema={"stratum": pl.String(), "threshold": pl.Float64()},
+        orient="row",
+    )
+    gated = (
+        evaluate.sample_frame(pairs)
+        .group_by("provider_code", "stratum")
+        .agg(stratum_pairs=pl.len())
+        .join(thresholds, on="stratum")
+    )
+    if gated.is_empty():
+        return _row(
+            "stratum_precision",
+            value=None,
+            threshold=None,
+            passed=True,
+            detail="no allocated pairs in a gated stratum",
+        )
+    providers = precision.select(
+        provider_code=pl.col("subject").cast(pl.Int32),
+        precision_code="code",
+        precision_detail="detail",
+    )
+    strata = (
+        precision.select(provider_code=pl.col("subject").cast(pl.Int32), s="strata")
+        .explode("s")
+        .drop_nulls("s")
+        .unnest("s")
+        .select("provider_code", "stratum", "labels", "estimate", "lower", "upper")
+    )
+    rows = (
+        gated.join(providers, on="provider_code", how="left")
+        .join(strata, on=["provider_code", "stratum"], how="left")
+        .with_columns(pl.col("labels").fill_null(0))
+        .sort("provider_code", "stratum")
+    )
+    labels = pl.col("labels")
+    needed = pl.min_horizontal(pl.col("stratum_pairs"), pl.lit(rule.min_draws))
+    unestimated = pl.col("precision_code").is_in(["no_sample", "stale_sample"])
+    code = (
+        pl.when(unestimated)
+        .then("precision_code")
+        .when(labels == 0)
+        .then(pl.lit("no_stratum_draws"))
+        .when(labels < needed)
+        .then(pl.lit("too_few_draws"))
+        .when(evaluate.non_finite())
+        .then(pl.lit("non_finite_estimate"))
+    )
+    detail = (
+        pl.when(unestimated)
+        .then("precision_detail")
+        .when(labels == 0)
+        .then(pl.lit("no draw of the stratum read"))
+        .when(labels < needed)
+        .then(pl.format("{} labels, under the {} the stratum needs", labels, needed))
+        .otherwise(pl.format("{} labels", labels))
+    )
+    return rows.select(
+        gate=pl.lit("stratum_precision"),
+        subject=pl.format("{}/{}", "provider_code", "stratum"),
+        value="estimate",
+        lower="lower",
+        upper="upper",
+        threshold="threshold",
+        passed=(code.is_null() & (pl.col("lower") >= pl.col("threshold"))).fill_null(
+            value=False
+        ),
+        waived=pl.lit(value=False),
+        detail=detail,
+        code=code,
+        strata=None,
     ).cast(RESULT_SCHEMA)
 
 

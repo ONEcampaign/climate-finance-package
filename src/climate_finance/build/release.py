@@ -446,7 +446,6 @@ def release_commitments(
                 "status",
                 "disbursed_usd",
                 "disbursed_low_usd",
-                "disbursed_high_usd",
                 "project_disbursing",
             ),
             on="row_id",
@@ -845,7 +844,7 @@ def quality(
     reaches it through a certain route when every such link's method is in
     `CERTAIN_ROUTES`. It is model-labelled when one of its allocated records carries
     a Jev objective label, and report-labelled otherwise. `disbursed_climate_usd` is
-    the climate value of its disbursements' `allocated_high_usd`, and
+    the climate value of its disbursements' `allocated_usd`, and
     `certain_disbursed_climate_usd` of their `allocated_low_usd`, each at the
     commitment's climate share of face. `grant_equiv_coverage` is the share of the
     linked commitments' allocated value whose record has a grant equivalent, null
@@ -871,7 +870,6 @@ def quality(
                 allocated.filter(pl.col("record_grant_equiv_usd").is_not_null())
             ),
             model_labelled=pl.col("jev").any(),
-            high=ordered_sum(pl.col("allocated_high_usd")),
             low=ordered_sum(pl.col("allocated_low_usd")),
         )
     )
@@ -890,8 +888,8 @@ def quality(
             linked_usd=ordered_sum(climate.filter(linked)),
             certain_route_usd=ordered_sum(climate.filter(linked, pl.col("certain"))),
             disbursed_climate_usd=ordered_sum(
-                (climate * pl.col("high") / face).filter(
-                    counted, face > 0, pl.col("high").is_not_null()
+                (climate * allocated / face).filter(
+                    counted, face > 0, allocated.is_not_null()
                 )
             ),
             certain_disbursed_climate_usd=ordered_sum(
@@ -1232,8 +1230,9 @@ def cut_release(
     answers questions that review decisions made since raise.
 
     Args:
-        waive_precision: the reason to let the precision and human-audit gates
-            fail, recorded as `precision_waiver` with `precision_gate_waived` true.
+        waive_precision: the reason to let the precision, stratum-precision and
+            human-audit gates fail, recorded as `precision_waiver` with
+            `precision_gate_waived` true.
         offline: True refuses all network access, so fetch reuses the earlier
             sources and Jev answers from its cache alone. False fetches afresh and
             lets Jev answer.
