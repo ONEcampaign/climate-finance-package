@@ -277,14 +277,15 @@ def line_units(units: pl.DataFrame, *, reached: pl.Series) -> pl.DataFrame:
     cannot tell from the true one, so a disbursement pairs with the line once
     (`pair_line_units`).
 
-    One row per line and purpose code its commitment units carry, with that unit
-    (`unit_id`) and its `pick`: the unit itself where it is among `reached`, as the
+    One row per commitment unit of a line (`unit_id`), with its purpose code and
+    its `pick`: the unit itself where it is among `reached`, as the
     `crs_id_purpose` tier links, else null, since it carries no climate finance
-    and the disbursement keeps no pair on the line. Then, for a disbursement whose
-    purpose code the line lacks, one row per three-digit `purpose_category` of a
-    reached unit, picking the largest reached commitment of the category, and one
-    default row, with both null, picking the largest reached commitment, or null
-    where none is reached. Ties go to the smaller unit id.
+    and the disbursement keeps no pair on the line. A unit with no purpose code is
+    no disbursement's own unit. Then the fallback rows, whose `unit_id` is null:
+    for a disbursement whose purpose code the line lacks, one row per three-digit
+    `purpose_category` of a reached unit, picking the largest reached commitment of
+    the category, and one default row, with both null, picking the largest reached
+    commitment, or null where none is reached. Ties go to the smaller unit id.
 
     Args:
         units: the link stage's units.
@@ -371,16 +372,18 @@ def pair_line_units(
         line_units: `line_units` over `units`.
         units: the units that hold the disbursements of `pairs`.
     """
-    purposes = line_units.drop_nulls("purpose_code")
-    own = purposes.select(
+    # A row with a unit is the unit's own; the rest are the line's fallbacks.
+    members = line_units.drop_nulls("unit_id")
+    fallbacks = line_units.filter(pl.col("unit_id").is_null())
+    own = members.drop_nulls("purpose_code").select(
         "line", left_purpose="purpose_code", own_pick="pick", own=pl.lit(value=True)
     )
-    category = line_units.drop_nulls("purpose_category").select(
+    category = fallbacks.drop_nulls("purpose_category").select(
         "line", left_category="purpose_category", category_pick="pick"
     )
-    default = line_units.filter(
-        pl.col("purpose_code").is_null(), pl.col("purpose_category").is_null()
-    ).select("line", default_pick="pick")
+    default = fallbacks.filter(pl.col("purpose_category").is_null()).select(
+        "line", default_pick="pick"
+    )
     pick = (
         pl.when(pl.col("own"))
         .then("own_pick")
@@ -388,7 +391,7 @@ def pair_line_units(
     )
     return (
         pairs.join(
-            purposes.select("line", right_id="unit_id"),
+            members.select("line", right_id="unit_id"),
             on="right_id",
             how="left",
             maintain_order="left",

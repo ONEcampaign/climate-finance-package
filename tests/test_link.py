@@ -111,8 +111,8 @@ def test_normalise_pn(published: str | None, normalised: str | None) -> None:
 
 
 def test_a_disbursement_takes_one_unit_of_a_purpose_split_line() -> None:
-    # Line A commits in 2018 under five purposes, all reached but 41010. Line B
-    # commits under one purpose and is not split.
+    # Line A commits in 2018 under five purposes and one unit with none, all
+    # reached but 41010. Line B commits under one purpose and is not split.
     committed = {"crs_id": "A", "year": 2018, "commitment_date": date(2018, 3, 1)}
     later = {"crs_id": "A", "commitment_date": date(2018, 3, 1)}
     units = _units(
@@ -122,6 +122,7 @@ def test_a_disbursement_takes_one_unit_of_a_purpose_split_line() -> None:
             "c_15110": {**committed, "purpose_code": 15110, "commitment_usd": 20.0},
             "c_41010": {**committed, "purpose_code": 41010, "commitment_usd": 30.0},
             "c_41020": {**committed, "purpose_code": 41020, "commitment_usd": 1.0},
+            "c_none": {**committed, "purpose_code": None, "commitment_usd": 25.0},
             "c_b": {"crs_id": "B", "year": 2018, "commitment_usd": 5.0},
             "own": {**later, "purpose_code": 23220, "disbursement_usd": 1.0},
             "category": {**later, "purpose_code": 23230, "disbursement_usd": 1.0},
@@ -133,37 +134,47 @@ def test_a_disbursement_takes_one_unit_of_a_purpose_split_line() -> None:
     name = dict(zip(units["unit_id"], units["record_ids"].list.first(), strict=True))
     unit = {record: unit_id for unit_id, record in name.items()}
     reached = pl.Series(
-        [unit[n] for n in ("c_23210", "c_23220", "c_15110", "c_41020", "c_b")]
+        [unit[n] for n in ("c_23210", "c_23220", "c_15110", "c_41020", "c_none", "c_b")]
     )
 
     table = line_units(units, reached=reached)
     assert table["line"].n_unique() == 1
-    rows = {
-        (row["purpose_code"], row["purpose_category"]): (
+    rows = [
+        (
+            row["purpose_code"],
+            row["purpose_category"],
             name.get(row["unit_id"]),
             name.get(row["pick"]),
         )
         for row in table.iter_rows(named=True)
-    }
-    assert rows == {
-        (23210, None): ("c_23210", "c_23210"),
-        (23220, None): ("c_23220", "c_23220"),
-        (15110, None): ("c_15110", "c_15110"),
-        (41010, None): ("c_41010", None),
-        (41020, None): ("c_41020", "c_41020"),
-        # The largest reached commitment of each category, then of the line.
-        (None, 232): (None, "c_23210"),
-        (None, 151): (None, "c_15110"),
-        (None, 410): (None, "c_41020"),
-        (None, None): (None, "c_15110"),
-    }
+    ]
+    assert sorted(rows, key=str) == sorted(
+        [
+            (23210, None, "c_23210", "c_23210"),
+            (23220, None, "c_23220", "c_23220"),
+            (15110, None, "c_15110", "c_15110"),
+            (41010, None, "c_41010", None),
+            (41020, None, "c_41020", "c_41020"),
+            (None, None, "c_none", "c_none"),
+            # The largest reached commitment of each category, then of the line,
+            # which a unit with no purpose can be.
+            (None, 232, None, "c_23210"),
+            (None, 151, None, "c_15110"),
+            (None, 410, None, "c_41020"),
+            (None, None, None, "c_none"),
+        ],
+        key=str,
+    )
 
     disbursements = ("own", "category", "default", "unreached", "b")
     pairs = pl.DataFrame(
         [
             (unit[left], unit[right])
             for left in disbursements
-            for right in ("c_23210", "c_23220", "c_15110", "c_41010", "c_41020", "c_b")
+            for right in (
+                *("c_23210", "c_23220", "c_15110", "c_41010", "c_41020", "c_none"),
+                "c_b",
+            )
             if (left == "b") == (right == "c_b")
         ],
         schema=["left_id", "right_id"],
@@ -174,7 +185,7 @@ def test_a_disbursement_takes_one_unit_of_a_purpose_split_line() -> None:
     assert [(name[left], name[right]) for left, right in picked.iter_rows()] == [
         ("own", "c_23220"),
         ("category", "c_23210"),
-        ("default", "c_15110"),
+        ("default", "c_none"),
         ("b", "c_b"),
     ]
 
