@@ -12,6 +12,7 @@ import pytest
 
 from climate_finance import schema
 from climate_finance.build import release as assemble
+from climate_finance.build.btr_coefficients import btr_coefficients
 from climate_finance.build.fetch import DAC_EXCHANGE_FILE
 from climate_finance.build.link.btr import (
     ID_PATTERN,
@@ -314,23 +315,42 @@ def reconciliation(
 ) -> Reconciliation:
     """The archive release with the BTR tables and the prototype's weights."""
     out = tmp_path_factory.mktemp("reconcile")
-    _with_btr_tables(release, out, btr=btr, crs=crs, links=links)
-    _prototype_coefficients().write_parquet(out / "provider_coefficients.parquet")
+    _with_btr_tables(
+        release,
+        out,
+        btr=btr,
+        crs=crs,
+        links=links,
+        coefficients=_prototype_coefficients(),
+    )
     return _reconcile(out)
 
 
 @pytest.fixture(scope="module")
-def reconciliation_at_own_coefficients(
+def own_release(
     release: Path,
     btr: pl.LazyFrame,
     crs: pl.LazyFrame,
     links: pl.DataFrame,
     tmp_path_factory: pytest.TempPathFactory,
-) -> Reconciliation:
-    """The archive release with the BTR tables and its own `provider_coefficients`."""
+) -> Path:
+    """The archive release with the BTR tables, its own `provider_coefficients` and
+    the `btr_coefficients` its links give."""
     out = tmp_path_factory.mktemp("reconcile_own")
-    _with_btr_tables(release, out, btr=btr, crs=crs, links=links)
-    return _reconcile(out)
+    _with_btr_tables(
+        release,
+        out,
+        btr=btr,
+        crs=crs,
+        links=links,
+        coefficients=pl.read_parquet(release / "provider_coefficients.parquet"),
+    )
+    return out
+
+
+@pytest.fixture(scope="module")
+def reconciliation_at_own_coefficients(own_release: Path) -> Reconciliation:
+    return _reconcile(own_release)
 
 
 def _with_btr_tables(
@@ -340,9 +360,11 @@ def _with_btr_tables(
     btr: pl.LazyFrame,
     crs: pl.LazyFrame,
     links: pl.DataFrame,
+    coefficients: pl.DataFrame,
 ) -> None:
-    """Copy `release` to `out` with its BTR tables and `total_flows` built from
-    `btr`, `crs` and `links`."""
+    """Copy `release` to `out` with `coefficients` as its `provider_coefficients`,
+    and its BTR tables, `btr_coefficients` and `total_flows` built from `btr`, `crs`
+    and `links`."""
     for name in (*schema.RELEASE_TABLES, "release"):
         suffix = ".json" if name == "release" else ".parquet"
         if (release / f"{name}{suffix}").exists():
@@ -354,6 +376,17 @@ def _with_btr_tables(
     rows.write_parquet(out / "btr.parquet")
     btr_links = assemble.btr_links(links.lazy(), crs=crs).collect()
     btr_links.write_parquet(out / "btr_links.parquet")
+    coefficients.write_parquet(out / "provider_coefficients.parquet")
+    btr_coefficients(
+        rows,
+        links=btr_links.join(
+            crs.select("record_id", "agency_code").collect(),
+            on="record_id",
+            how="left",
+            validate="m:1",
+        ),
+        coefficients=coefficients,
+    ).write_parquet(out / "btr_coefficients.parquet")
     assemble.btr_totals(rows.lazy(), links=btr_links.lazy()).collect().write_parquet(
         out / "btr_totals.parquet"
     )
@@ -457,20 +490,80 @@ def _method_shares(reconciliation: Reconciliation, party: str) -> pl.Series:
     return shares
 
 
-def test_france_rests_mostly_on_provider_coefficients(
-    reconciliation_at_own_coefficients: Reconciliation,
+@pytest.mark.parametrize(
+    ("party", "share"),
+    [
+        # AFD assesses each activity case by case and takes the coefficients
+        # France's BTR implies, so none of France's comparators weigh at PROVIDER's
+        # own; with PROVIDER's 0.4 and 1.0 its shares ran from 0.71 to 0.86.
+        ("FRA", 0.0),
+        ("CAN", 0.0),
+        # The release links no US BTR row to a CRS record, so the US keeps
+        # PROVIDER's 0.4 and 1.0 on every comparator.
+        ("USA", 1.0),
+    ],
+)
+def test_method_shares_follow_where_each_party_takes_its_coefficients(
+    reconciliation_at_own_coefficients: Reconciliation, party: str, share: float
 ) -> None:
-    # AFD assesses each activity case by case, so most of France's comparators
-    # weigh at PROVIDER's coefficients.
-    shares = _method_shares(reconciliation_at_own_coefficients, "FRA")
+    shares = _method_shares(reconciliation_at_own_coefficients, party)
 
-    assert shares.min() == pytest.approx(0.71, abs=0.005)
-    assert shares.max() == pytest.approx(0.86, abs=0.005)
+    assert len(shares) and (shares - share).abs().lt(0.01).all()
 
 
-def test_canada_rests_on_its_own_coefficients(
-    reconciliation_at_own_coefficients: Reconciliation,
+# For each provider and agency that assesses case by case, and each marker: the
+# coefficient its BTR implies, which `PROVIDER` takes, why there is none, and the
+# components behind it, after those above a share of 1.1 leave the evidence.
+# Belgium, France's AFD and the UK take both markers from their BTR and Luxembourg
+# its significant one. The rest, the US among them, have too little linked
+# evidence or none, and Australia keeps its stated default.
+type Scope = tuple[int, int | None, str]
+CASE_BY_CASE: dict[Scope, tuple[float | None, str, str | None, int]] = {
+    (2, None, "principal"): (0.902, "btr", None, 154),
+    (2, None, "significant"): (0.158, "btr", None, 203),
+    (4, 3, "principal"): (0.863, "btr", None, 77),
+    (4, 3, "significant"): (0.618, "btr", None, 67),
+    (12, None, "principal"): (0.89, "btr", None, 104),
+    (12, None, "significant"): (0.398, "btr", None, 74),
+    (18, None, "principal"): (None, "fallback", "no_links", 0),
+    (18, None, "significant"): (None, "fallback", "no_links", 0),
+    (22, None, "principal"): (None, "fallback", "thin", 83),
+    (22, None, "significant"): (0.543, "btr", None, 86),
+    (69, None, "principal"): (None, "fallback", "thin", 10),
+    (69, None, "significant"): (None, "fallback", "thin", 30),
+    (75, None, "principal"): (None, "fallback", "no_links", 0),
+    (75, None, "significant"): (None, "fallback", "no_links", 0),
+    (82, None, "principal"): (None, "fallback", "unaligned", 0),
+    (82, None, "significant"): (None, "fallback", "no_links", 0),
+    (84, None, "principal"): (None, "fallback", "no_links", 0),
+    (84, None, "significant"): (None, "fallback", "no_links", 0),
+    (301, 22, "principal"): (None, "fallback", "no_links", 0),
+    (301, 22, "significant"): (None, "fallback", "no_links", 0),
+    (301, 31, "principal"): (None, "fallback", "no_links", 0),
+    (301, 31, "significant"): (None, "fallback", "no_links", 0),
+    (302, None, "principal"): (None, "fallback", "no_links", 0),
+    (302, None, "significant"): (None, "fallback", "no_links", 0),
+    (801, None, "principal"): (None, "stated", "no_links", 0),
+    (801, None, "significant"): (None, "stated", "no_links", 0),
+}
+
+
+def test_case_by_case_providers_take_the_coefficients_their_btr_implies(
+    own_release: Path,
 ) -> None:
-    shares = _method_shares(reconciliation_at_own_coefficients, "CAN")
+    coefficients = pl.read_parquet(own_release / "provider_coefficients.parquet")
+    scopes = coefficients.filter("case_by_case").select("provider_code", "agency_code")
+    table = pl.read_parquet(own_release / "btr_coefficients.parquet").join(
+        scopes, on=["provider_code", "agency_code"], how="semi", nulls_equal=True
+    )
+    found = {
+        (row["provider_code"], row["agency_code"], row["marker"]): (
+            row["coefficient"] and round(row["coefficient"], 3),
+            row["source"],
+            row["reason"],
+            row["components"],
+        )
+        for row in table.iter_rows(named=True)
+    }
 
-    assert len(shares) and shares.lt(0.01).all()
+    assert found == CASE_BY_CASE

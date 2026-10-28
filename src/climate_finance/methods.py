@@ -34,12 +34,13 @@ NOT_CLIMATE = "not_climate_relevant"
 class Method(Frozen):
     """Coefficients applied to face value by Rio marker level.
 
-    `coefficients="provider"` reads each provider's own coefficients, and the
-    method's where it states none. `coefficients="capped"` reads them too, at most
-    the method's: `significant` and `principal` are ceilings as well as the
-    fallback. A row significant for both objectives takes the provider's
-    `both_significant`, else its significant coefficient uncapped, else counts in
-    full, as Oxfam's high bound does.
+    `coefficients="provider"` reads each provider's own coefficients, the share its
+    BTR implies where it assesses case by case and states none (`btr_coefficients`),
+    and the method's where neither gives one. `coefficients="capped"` reads the
+    stated ones too, at most the method's: `significant` and `principal` are
+    ceilings as well as the fallback. A row significant for both objectives takes
+    the provider's `both_significant`, else its significant coefficient uncapped,
+    else counts in full, as Oxfam's high bound does.
 
     `relevance="jev"` reads Jev's adaptation level, where Jev labelled a
     disbursement's record, in place of the adaptation marker it inherits.
@@ -187,6 +188,13 @@ def describe(method: Method | MethodRange) -> str:
             " Each provider takes the coefficients it applies when reporting to the "
             "UNFCCC for the activity's year and agency, as the release records them "
             "with their source, and these coefficients where it states none."
+        )
+    if method.coefficients == "provider":
+        text += (
+            " A provider that assesses each activity case by case and states no "
+            "coefficient for a marker takes, in every year, the climate share its "
+            "BTR reports on its activities so marked (btr_coefficients), where "
+            "enough of its BTR links to the CRS to measure one."
         )
     if method.coefficients == "capped":
         text += (

@@ -1,6 +1,6 @@
 {
   "release": "synthetic-example",
-  "data_format": 1,
+  "data_format": 2,
   "created_at": "2026-10-21T00:00:00Z",
   "package_version": "2.0.0.dev0",
   "build": {
@@ -45,6 +45,10 @@
     },
     "provider_coefficients": {
       "sha256": "a3e937e2080e9656ea977f54823c27a67db2b484d21a3ba80fc3a42f1c031561",
+      "rows": 6
+    },
+    "btr_coefficients": {
+      "sha256": "fc40e5c58425562c2df0400483ea1a13ea6496273354dad89cdb86a646fcf480",
       "rows": 6
     },
     "btr": {

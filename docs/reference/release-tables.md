@@ -13,9 +13,9 @@ The release holds only processed tables and metadata. The Green Climate Fund's l
 
 `build` holds `package_source_sha256`, the sha256 over the files of the climate-finance package that built the release; `python`, the exact Python version; `environment_sha256`, the sha256 over the sorted `name==version` lines of every installed distribution; `dependencies`, the exact versions of polars, pyarrow, duckdb, splink, scikit-learn, numpy, scipy, pandas, pydantic, rapidfuzz, oda-reader, openpyxl, pydeflate, resolvekit, sentence-transformers, torch, transformers, and tokenizers where installed; and `stage_identities`, the sha256 of each build stage's `stage.json` before assemble. Every query result carries it in `meta.build`, and `explain()` prints the package source and environment digests.
 
-The data format is a whole number, independent of the package version, and this package writes format 1. The format goes up by one when a release table, a column of one, or a `release.json` field is added, removed, or changes meaning. A package reads every format up to its own: `cf.load()` raises `ReleaseFormatError` for a newer format, naming the format a later climate-finance reads, and opens an older one. On a release whose format predates a table, `release.table()` and any query that reads the table raise `FormatTableError`.
+The data format is a whole number, independent of the package version, and this package writes format 2. The format goes up by one when a release table, a column of one, or a `release.json` field is added, removed, or changes meaning. A package reads every format up to its own: `cf.load()` raises `ReleaseFormatError` for a newer format, naming the format a later climate-finance reads, and opens an older one. On a release whose format predates a table, `release.table()` and any query that reads the table raise `FormatTableError`. Format 2 adds `btr_coefficients`; on a format 1 release `PROVIDER` takes the stated coefficients alone.
 
-The published release also leaves out the row-level BTR tables `btr` and `btr_links` until the UNFCCC confirms its terms cover them, and `release.table("btr")` on it raises `WithheldTableError`. A build from BTR workbooks downloaded from the UNFCCC writes both. `btr_totals` and `btr_crs_unlinked` hold the reconciliation totals in either.
+The published release also leaves out the row-level BTR tables `btr` and `btr_links` until the UNFCCC confirms its terms cover them, and `release.table("btr")` on it raises `WithheldTableError`. A build from BTR workbooks downloaded from the UNFCCC writes both. `btr_totals` and `btr_crs_unlinked` hold the reconciliation totals in either, and `btr_coefficients` the coefficients the BTR rows imply.
 
 ## `commitments`
 
@@ -216,8 +216,22 @@ Key `provider_code`, `agency_code`, `first_year`. The coefficients each provider
 - `first_year`, `last_year`: the years a row covers, null for no bound.
 - `significant`, `principal`: the coefficients for a significant and a principal marker.
 - `both_significant`: the coefficient for an activity significant for adaptation and mitigation alike, null where it equals `significant`.
-- `case_by_case`: true for a provider that assesses each activity's climate share. Its coefficients are null, or the default its source gives for an activity whose share is unknown.
+- `case_by_case`: true for a provider that assesses each activity's climate share. Its coefficients are null, or the default its source gives for an activity whose share is unknown. `PROVIDER` fills a null one from `btr_coefficients`.
 - `source`, `locator`: the document, and the page, note, or paragraph that states the coefficients.
+
+## `btr_coefficients`
+
+Key `provider_code`, `agency_code`, `marker`. For each scope of `provider_coefficients` whose provider is a BTR party, and for significant and principal markers, the climate share the party's BTR Table 1 reports on its activities so marked, and the coefficient `cf.methods.PROVIDER` takes. The build reads every BTR row the release holds and its links to CRS records, so the coefficients rest on the BTR years the table's `evidence_first_year` and `evidence_last_year` give, and move when a release adds a BTR; `PROVIDER` applies them in every year. BTR rows and CRS records that share links form a component, so a BTR row linked to several records, or a record linked from several rows, counts its money once. A component's share is its BTR amount over the CRS amount of its records. A share from 1 to 1.1 counts at 1, as BTR and CRS amounts differ by rounding. A component whose share exceeds 1.1 leaves the evidence: its BTR row links to the wrong, smaller record, or claims more than the money the CRS records. A party's status label does not say which CRS flow its amounts follow, so each party and status takes the flow, commitments or disbursements, on which the median share of its principal-marked components lies nearer 1. A party and status with fewer than 5 such components, or whose median lies outside 0.9 to 1.1, gives no coefficient, as its amounts do not line up with its CRS records. The columns are:
+
+- `provider_code`.
+- `agency_code`: the agency a row covers, as in `provider_coefficients`. Null covers every agency of the provider without a row of its own.
+- `marker`: `significant` or `principal`, the highest Rio marker of the activities.
+- `coefficient`: the share across the scope's components whose records all carry that marker, weighted by CRS amount, from at least 20 components and USD 20m. Null where the evidence gives none.
+- `source`: the coefficient `PROVIDER` takes. `stated` where a `provider_coefficients` row of the scope states one, so `coefficient` only checks it, `btr` where `PROVIDER` takes `coefficient`, and `fallback` where it takes the method's own.
+- `reason`: why `coefficient` is null. `no_links` where no linked BTR row with a face value reaches the scope's records, `unaligned` where no status of the party passes the principal check, and `thin` where the evidence falls short of 20 components or USD 20m.
+- `components`, `linked_usd`: the components behind `coefficient` and the CRS amount of their records on the flow they follow, 0 where there are none.
+- `dropped`, `dropped_usd`, `dropped_btr_usd`: the components left out of the evidence for a share above 1.1, and their CRS and BTR amounts, 0 where there are none.
+- `evidence_first_year`, `evidence_last_year`: the BTR years of those components, null where there are none.
 
 ## `jev_flags`
 

@@ -1378,6 +1378,48 @@ PROVIDER_COEFFICIENTS = _table(
     locator=_str(),
 )
 
+# Rio markers a coefficient applies to, as `provider_coefficients` names its columns.
+COEFFICIENT_MARKERS = ("significant", "principal")
+# Where `PROVIDER` takes a coefficient from: the provider's own statement in
+# `provider_coefficients`, the share its BTR implies, or the method's own.
+COEFFICIENT_SOURCES = ("stated", "btr", "fallback")
+# Why `btr_coefficients` gives no coefficient: no linked BTR row reaches the scope's
+# records, the party's amounts do not line up with its CRS records, or the linked
+# evidence is below the minimum.
+BTR_COEFFICIENT_REASONS = ("no_links", "unaligned", "thin")
+
+# For each scope of `provider_coefficients` (a provider, or one of its agencies) of a
+# BTR party and each Rio marker, the climate share of CRS value the party's BTR Table 1
+# reports on activities so marked, and which coefficient `PROVIDER` takes. BTR rows and
+# CRS records that share links form a component, whose share is its BTR climate amount
+# over the CRS amount of its records. `coefficient` is the share across
+# the scope's components whose records all carry one highest Rio marker, weighted by
+# CRS amount, and null with `reason` set where the evidence gives none. `components`
+# and `linked_usd` count those components and their CRS amount, and
+# `evidence_first_year` to `evidence_last_year` the BTR years they cover. A component
+# whose share exceeds 1.1 leaves the evidence as a link error or a claim larger than
+# the money; `dropped`, `dropped_usd`, and `dropped_btr_usd` count those components
+# and their CRS and BTR amounts. Shares from 1 to 1.1 count at 1. `source` is
+# `stated` where the provider states the coefficient, `btr` where `PROVIDER` takes
+# `coefficient` in place of the method's, and `fallback` where it takes the method's.
+BTR_COEFFICIENTS = _table(
+    "btr_coefficients",
+    ("provider_code", "agency_code", "marker"),
+    provider_code=_code(),
+    agency_code=_code(nullable=True),
+    marker=_str(values=COEFFICIENT_MARKERS),
+    coefficient=_f64(nullable=True, minimum=0.0),
+    source=_str(values=COEFFICIENT_SOURCES),
+    reason=_str(nullable=True, values=BTR_COEFFICIENT_REASONS),
+    components=_count(),
+    linked_usd=_usd(minimum=0.0),
+    dropped=_count(),
+    dropped_usd=_usd(minimum=0.0),
+    dropped_btr_usd=_usd(minimum=0.0),
+    evidence_first_year=_year(nullable=True),
+    evidence_last_year=_year(nullable=True),
+)
+
 
 # The multipliers from US dollars at current prices to each currency a query takes,
 # by DAC provider and year, as pydeflate gives them from the OECD DAC's exchange
@@ -1420,6 +1462,7 @@ RELEASE_TABLES = _by_name(
     REFLOWS,
     TOTAL_FLOWS,
     PROVIDER_COEFFICIENTS,
+    BTR_COEFFICIENTS,
     JEV_FLAGS,
     CONVERSION_FACTORS,
 )
@@ -1427,7 +1470,7 @@ RELEASE_TABLES = _by_name(
 # The data format of the releases this package writes, and the newest it reads.
 # It goes up by one when a release table or a `release.json` field is added,
 # removed or changes meaning, independent of the package version.
-DATA_FORMAT = 1
+DATA_FORMAT = 2
 # The release tables each data format holds, by format number. Each format is a
 # literal list, so adding a table to `RELEASE_TABLES` leaves older formats readable.
 FORMAT_TABLES: Mapping[int, frozenset[str]] = {
@@ -1454,7 +1497,33 @@ FORMAT_TABLES: Mapping[int, frozenset[str]] = {
             "jev_flags",
             "conversion_factors",
         }
-    )
+    ),
+    # Format 2 adds `btr_coefficients`.
+    2: frozenset(
+        {
+            "commitments",
+            "disbursements",
+            "objectives",
+            "agency_shares",
+            "agency_spending",
+            "modelled",
+            "core_contributions",
+            "btr",
+            "btr_links",
+            "btr_totals",
+            "btr_crs_unlinked",
+            "disbursement_profile",
+            "quality",
+            "untraced",
+            "unallocated",
+            "reflows",
+            "total_flows",
+            "provider_coefficients",
+            "btr_coefficients",
+            "jev_flags",
+            "conversion_factors",
+        }
+    ),
 }
 
 STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
@@ -1681,10 +1750,11 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     holds as many rows and linked rows as `btr` and `btr_links` do, and the same
     face and grant-equivalent sums within `BTR_TOTALS_TOLERANCE` of their size, and
     `btr_links` holds each pair once. The
-    `untraced`, `unallocated`, `provider_coefficients`, `reflows` and `jev_flags`
-    checks are those of `_untraced_problems`, `_marked_problems`,
-    `_coefficient_problems`, `_reflow_problems` and `_jev_flag_problems`. An empty
-    list means every check passed.
+    `untraced`, `unallocated`, `provider_coefficients`, `btr_coefficients`,
+    `reflows` and `jev_flags` checks are those of `_untraced_problems`,
+    `_marked_problems`, `_coefficient_problems`, `_btr_coefficient_problems`,
+    `_reflow_problems` and `_jev_flag_problems`; a release of format 1 holds no
+    `btr_coefficients`. An empty list means every check passed.
     """
     commitments, problems, _ = _finite(tables["commitments"], name="commitments")
     disbursements, non_finite, flagged = _finite(
@@ -1856,6 +1926,13 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
         )
     )
     problems.extend(_coefficient_problems(tables["provider_coefficients"]))
+    if "btr_coefficients" in tables:
+        problems.extend(
+            _btr_coefficient_problems(
+                tables["btr_coefficients"],
+                coefficients=tables["provider_coefficients"],
+            )
+        )
     reflows, non_finite, _ = _finite(tables["reflows"], name="reflows")
     problems.extend(non_finite)
     problems.extend(_reflow_problems(reflows, commitments=commitments))
@@ -1920,6 +1997,68 @@ def _coefficient_problems(coefficients: pl.DataFrame) -> list[str]:
         ):
             problems.append(f"{name(row)}: first_year after last_year")
     return [*problems, *coefficient_overlaps(coefficients)]
+
+
+def stated_markers(coefficients: pl.DataFrame) -> pl.DataFrame:
+    """Per scope of `provider_coefficients` (`provider_code`, `agency_code`) and
+    `marker` (`significant` or `principal`), whether a row of the scope states a
+    coefficient (`states`)."""
+    return (
+        coefficients.unpivot(
+            on=list(COEFFICIENT_MARKERS),
+            index=["provider_code", "agency_code"],
+            variable_name="marker",
+        )
+        .group_by("provider_code", "agency_code", "marker")
+        .agg(states=pl.col("value").is_not_null().any())
+    )
+
+
+def _btr_coefficient_problems(
+    btr: pl.DataFrame, *, coefficients: pl.DataFrame
+) -> list[str]:
+    """Rows of `btr_coefficients` that `PROVIDER` could not read as one rule.
+
+    A coefficient lies between 0 and 1, and is null exactly where `reason` is set. A
+    `btr` row holds a coefficient, and no `provider_coefficients` row of its scope
+    states a coefficient for its marker; some row of a `stated` row's scope does.
+    """
+    problems = [
+        f"btr_coefficients {row['provider_code']} {row['agency_code']} "
+        f"{row['marker']}: {problem}"
+        for problem, failing in (
+            ("coefficient above 1", pl.col("coefficient") > 1.0),
+            (
+                "coefficient and reason both set or both null",
+                pl.col("coefficient").is_null() == pl.col("reason").is_null(),
+            ),
+            (
+                "source btr without a coefficient",
+                (pl.col("source") == "btr") & pl.col("coefficient").is_null(),
+            ),
+        )
+        for row in btr.filter(failing.fill_null(value=False)).iter_rows(named=True)
+    ]
+    key = ["provider_code", "agency_code"]
+    stated = stated_markers(coefficients)
+    joined = btr.join(stated, on=[*key, "marker"], how="left", nulls_equal=True)
+    problems.extend(
+        f"btr_coefficients {row['provider_code']} {row['agency_code']} "
+        f"{row['marker']}: {problem}"
+        for problem, failing in (
+            ("no provider_coefficients row", pl.col("states").is_null()),
+            (
+                "source stated where no row states the coefficient",
+                (pl.col("source") == "stated") & ~pl.col("states"),
+            ),
+            (
+                "source btr where a row states the coefficient",
+                (pl.col("source") == "btr") & pl.col("states"),
+            ),
+        )
+        for row in joined.filter(failing.fill_null(value=False)).iter_rows(named=True)
+    )
+    return problems
 
 
 def coefficient_overlaps(coefficients: pl.DataFrame) -> list[str]:

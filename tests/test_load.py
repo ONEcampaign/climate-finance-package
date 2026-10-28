@@ -62,11 +62,11 @@ def test_a_release_prints_its_name_flow_years_and_tables(tmp_path: Path) -> None
     # The example release's name marks its figures as invented.
     assert repr(cf.load_example()) == (
         "Release('synthetic-example', synthetic figures): commitments 2021 to 2022, "
-        "disbursements 2021 to 2024; 20 tables"
+        "disbursements 2021 to 2024; 21 tables"
     )
     assert repr(cf.load(path=published)) == (
         "Release('2026a'): commitments 2021 to 2022, disbursements 2021 to 2024; "
-        "18 tables, withholding btr, btr_links"
+        "19 tables, withholding btr, btr_links"
     )
 
 

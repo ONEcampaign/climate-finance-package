@@ -1783,12 +1783,17 @@ def _ratio(release: Release, method: Method, row_id: str) -> tuple[float, str]:
         ("JPN-1", cf.methods.PROVIDER, 0.85, "provider"),
         ("JPN-2", cf.methods.PROVIDER, 0.6, "provider"),
         ("JPN-3", cf.methods.PROVIDER, 1.0, "provider"),
-        # France's agency 1 states no flat coefficient, so it takes PROVIDER's 0.4
-        # rather than France's 0.3.
-        ("FRA-2", cf.methods.PROVIDER, 0.4, "case_by_case"),
-        # Norway's default covers significant activities; principal ones take 1.0.
+        # France's agency 1 states no flat coefficient, so its significant
+        # activities take the 0.6 its BTR implies rather than France's 0.3, and its
+        # principal ones, whose BTR evidence is thin, PROVIDER's 1.0. Oxfam's high
+        # bound gives it the cap.
+        ("FRA-2", cf.methods.PROVIDER, 0.6, "btr"),
+        ("FRA-1", cf.methods.PROVIDER, 1.0, "case_by_case"),
+        ("FRA-2", cf.methods.OXFAM_HIGH, 0.5, "case_by_case"),
+        # Norway's default covers significant activities; principal ones take the
+        # 0.9 its BTR implies.
         ("NOR-2", cf.methods.PROVIDER, 0.3, "default"),
-        ("NOR-1", cf.methods.PROVIDER, 1.0, "default"),
+        ("NOR-1", cf.methods.PROVIDER, 0.9, "btr"),
         ("DEU-2", cf.methods.ONE, 0.4, None),
     ],
 )
@@ -1845,22 +1850,33 @@ def test_an_agency_without_its_own_row_takes_the_providers(tmp_path: Path) -> No
 
 
 def test_explain_names_each_providers_coefficient_source() -> None:
-    lines = SNAP.spending(method=cf.methods.PROVIDER).explain().splitlines()
+    lines = (
+        SNAP.spending(method=cf.methods.PROVIDER, flow="commitments")
+        .explain()
+        .splitlines()
+    )
 
     assert "Coefficients of providers 701 (year 2021): Fixture report, footnote 4." in (
         lines
     )
-    assert f"Coefficients of providers 5, 701 (years 2022, 2023, 2024): {SURVEY}." in (
-        lines
+    assert f"Coefficients of providers 5, 701 (year 2022): {SURVEY}." in lines
+    # FRA-2 and NOR-1 take their BTR's shares, NOR-2 Norway's default and FRA-1,
+    # whose BTR evidence is thin, PROVIDER's own.
+    assert (
+        "Providers 4 (year 2022), 8 (year 2021) assess each activity case by case and "
+        "state no coefficient for these activities, so they take the climate share "
+        "their BTR reports on them (the provider's BTR Table 1, 2021 to 2022, linked "
+        "to CRS records; see btr_coefficients)." in lines
     )
     assert (
-        "Providers 8 assess each activity case by case; where an activity's share is "
-        "unknown they take the default share in Fixture survey, p. 5." in lines
+        "Providers 8 (year 2022) assess each activity case by case; where an "
+        "activity's share is unknown they take the default share in Fixture survey, "
+        "p. 5." in lines
     )
     assert (
-        "Providers 4 assess each activity case by case (Fixture survey, p. 9, note f) "
-        "and state no flat coefficient, so they take significant 0.4 and principal 1."
-        in lines
+        "Providers 4 (year 2021) assess each activity case by case (Fixture survey, "
+        "p. 9, note f) and state no flat coefficient, so they take significant 0.4 "
+        "and principal 1." in lines
     )
 
 
@@ -2669,10 +2685,10 @@ def test_explain_names_queried_years_without_attributed_finance(
         ("DEU-UNLINKED", ONE, 1.0),
         ("DEU-UNLINKED", OECD, 1.0),
         # France's is significant for mitigation; its agency assesses case by case
-        # and states no default, so PROVIDER takes ONE's 0.4.
+        # and states no default, so PROVIDER takes the 0.6 its BTR implies.
         ("FRA-UNLINKED", ONE, 0.4),
         ("FRA-UNLINKED", OECD, 1.0),
-        ("FRA-UNLINKED", cf.methods.PROVIDER, 0.4),
+        ("FRA-UNLINKED", cf.methods.PROVIDER, 0.6),
         # JPN-SPLIT's 8m excess keeps the record's principal mitigation marker.
         ("JPN-SPLIT", cf.methods.PROVIDER, 1.0),
     ],

@@ -16,7 +16,7 @@ print(release)
 ```
 
 ```output
-Release('synthetic-example', synthetic figures): commitments 2021 to 2022, disbursements 2021 to 2024; 20 tables
+Release('synthetic-example', synthetic figures): commitments 2021 to 2022, disbursements 2021 to 2024; 21 tables
 ```
 
 The line names the release, marks its figures as synthetic, and gives the years each flow covers. Every result from `release` records the release name, so a figure always identifies its source data.
