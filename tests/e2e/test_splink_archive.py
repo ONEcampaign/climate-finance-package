@@ -25,6 +25,7 @@ from climate_finance.build.link.decisions import CALIBRATION_REASON
 from climate_finance.build.link.score import ELIGIBLE, scoring_groups
 from climate_finance.build.link.splink_models import (
     CALIBRATION_LABELS,
+    EM_RULES,
     SplinkResult,
     score_with_splink,
 )
@@ -123,18 +124,39 @@ def test_without_decisions_splink_only_asks_for_calibration_labels(
     assert queued.height == 6
 
 
-def test_two_runs_give_the_same_scores(tables: LinkTables, tmp_path: Path) -> None:
+@pytest.fixture(scope="module")
+def again(tables: LinkTables, tmp_path_factory: pytest.TempPathFactory) -> SplinkResult:
     # Slow: refits every Splink model, about 10 minutes.
-    again = score_with_splink(
+    return score_with_splink(
         tables.candidates,
         units=tables.units,
         crs=tables.crs,
         stems=tables.stems,
         provider_profile=tables.profile,
         labels=pl.DataFrame(schema=_LABELS),
-        client=_offline(tmp_path),
+        client=_offline(tmp_path_factory.mktemp("jev")),
     )
+
+
+def test_two_runs_give_the_same_scores(tables: LinkTables, again: SplinkResult) -> None:
     assert again.scores.equals(tables.scores)
+
+
+def test_each_model_s_failed_sessions(again: SplinkResult) -> None:
+    # Two models each lose one EM session to an m that EM drives to zero, which
+    # Splink refuses: the GEF (811) its recipient-and-purpose session, so it joins the
+    # pooled model, and the EBRD (990) its title session. Any other error would have
+    # stopped the build.
+    failed = {report.name: report.failed for report in again.models}
+    assert failed == {
+        "own_302": {},
+        "own_811": {EM_RULES[2]: "m_zero"},
+        "own_915": {},
+        "own_988": {},
+        "own_990": {EM_RULES[1]: "m_zero"},
+        "own_1615": {},
+        "pooled": {},
+    }
 
 
 def simulate(
@@ -230,6 +252,7 @@ def test_calibrated_splink_against_id_truth(tables: LinkTables) -> None:
     )
     assert client.live_calls == 0
     assert all(report.calibrated for report in result.models if report.usable)
+    assert not any(report.failed for report in result.models)
     measured = precision_recall(scores)
     # Calibration lifts precision above raw EM's for every provider.
     assert (

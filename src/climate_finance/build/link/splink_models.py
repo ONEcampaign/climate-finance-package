@@ -123,6 +123,14 @@ U_NUM_CHUNKS = 10
 EM_MAX_PAIRS = 2e5
 EM_RECORD_SAMPLE_PROPORTION = 1.0
 MIN_EM_PAIRS = 100
+# Splink raises a bare ValueError for the two refusals `_fit` expects, so the start
+# of its message is the only mark of each. `ModelReport.failed` records each by its
+# code, `prior_recall` or `m_zero`. Any other error stops the build.
+# The prior rules match more pairs than `PRIOR_RULE_RECALL` allows.
+_PRIOR_REFUSAL = "Deterministic matching rules led to more observed matches"
+# EM drives an m to zero, which Splink refuses after it has overwritten part of the
+# model.
+_M_REFUSAL = "m_probability value "
 # Bands of EM match weight that the calibration and Jev samples spread over.
 WEIGHT_BANDS = (-10.0, -5.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0)
 CALIBRATION_LABELS = 100
@@ -516,9 +524,9 @@ def _fit(
             list(PRIOR_RULES), recall=PRIOR_RULE_RECALL
         )
     except ValueError as error:
-        # The rules match more pairs than the recall allows, so nearly every pair
-        # matches.
-        report.failed["prior"] = str(error).split(".")[0]
+        if not str(error).startswith(_PRIOR_REFUSAL):
+            raise
+        report.failed["prior"] = "prior_recall"
         return None
     report.prior = linker.misc.save_model_to_json()[
         "probability_two_random_records_match"
@@ -547,9 +555,10 @@ def _fit(
                 record_sample_proportion=EM_RECORD_SAMPLE_PROPORTION,
             )
         except ValueError as error:
-            # Splink refuses an m that EM drives to zero after it has overwritten
-            # part of the model, so the session is dropped and the model rolled back.
-            report.failed[rule] = str(error).split(".")[0]
+            if not str(error).startswith(_M_REFUSAL):
+                raise
+            # The session is dropped and the model rolled back.
+            report.failed[rule] = "m_zero"
             linker = _linker(inputs, deepcopy(model))
             continue
         model = linker.misc.save_model_to_json()

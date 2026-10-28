@@ -31,6 +31,7 @@ from climate_finance.build.link.jev import CalibrationAnswers, Logistic, jev_ans
 from climate_finance.build.link.score import ELIGIBLE, scoring_groups
 from climate_finance.build.link.splink_models import (
     CALIBRATION_LABELS,
+    EM_RULES,
     JEV_SAMPLE,
     LINK_THRESHOLD,
     SplinkResult,
@@ -556,11 +557,41 @@ def test_the_hash_seed_leaves_the_models_unchanged(tmp_path: Path) -> None:
     assert scores.equals(other_scores)
 
 
-def test_a_model_too_small_to_fit_scores_nothing(tmp_path: Path) -> None:
-    run = _run(_world((DONOR, 5, 4, 6)), tmp_path / "jev", providers=(DONOR,))
+@pytest.mark.parametrize(
+    ("projects", "noise", "failed"),
+    [
+        # Every EM session blocks fewer than `MIN_EM_PAIRS` pairs.
+        (4, 6, {}),
+        # The prior rules block every pair, more than `PRIOR_RULE_RECALL` allows.
+        (1, 0, {"prior": "prior_recall"}),
+    ],
+)
+def test_a_model_too_small_to_fit_scores_nothing(
+    tmp_path: Path, projects: int, noise: int, failed: dict[str, str]
+) -> None:
+    run = _run(
+        _world((DONOR, 5, projects, noise)), tmp_path / "jev", providers=(DONOR,)
+    )
     assert run.scores.is_empty()
     [report] = run.result.models
     assert not report.usable
+    assert report.failed == failed
+
+
+def test_a_session_whose_m_splink_refuses_is_rolled_back(uncalibrated: Run) -> None:
+    # EM drives a recipient-and-purpose m to zero, Splink refuses it, and each model
+    # completes its other two sessions.
+    refused = {EM_RULES[2]: "m_zero"}
+    failed = {report.name: report.failed for report in uncalibrated.result.models}
+    assert failed == {f"own_{DONOR}": refused, "pooled": refused}
+
+
+def test_any_other_splink_refusal_stops_the_build(
+    world: dict[str, pl.DataFrame], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(splink_models, "EM_RECORD_SAMPLE_PROPORTION", 1.5)
+    with pytest.raises(ValueError, match="record_sample_proportion"):
+        _run(world, tmp_path / "jev", providers=(DONOR,))
 
 
 def test_people_s_decisions_are_human_labels(tmp_path: Path) -> None:
