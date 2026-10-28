@@ -395,7 +395,7 @@ def add_to_index(
         raise PublishedIndexError(
             f"the published {INDEX_ASSET} is not an index this package reads: "
             f"{problems}"
-        ) from error
+        ) from None
     if known.latest is not None and not PUBLISHED_NAME.fullmatch(known.latest):
         raise PublishedIndexError(
             f"the published {INDEX_ASSET} names {known.latest!r} latest, which is "
