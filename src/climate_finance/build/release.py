@@ -71,6 +71,7 @@ from climate_finance.build.allocate import (
     untraced_records,
     years_since_commitment,
 )
+from climate_finance.build.btr_coefficients import btr_coefficients
 from climate_finance.build.config import (
     PUBLISHED_SETTINGS,
     RELEASE_SETTINGS,
@@ -348,6 +349,9 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         withheld=disbursements.lazy().filter(withheld),
     ).collect()
     linked_btr = btr_links(links, crs=crs).collect()
+    coefficients = provider_coefficients(
+        yaml.safe_load(PROVIDER_COEFFICIENTS_FILE.read_text(encoding="utf-8"))
+    )
     untraced = release_untraced(untraced_records(marked), crs=crs).collect()
     reflows = context.read("normalise", "reflows").filter(pl.col("year") <= last_year)
     reflow_units = context.read("link", "reflow_units")
@@ -393,8 +397,16 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         "unallocated": unallocated(marked).collect(),
         "reflows": release_reflows(attributed, reflows=reflows, crdf=crdf).collect(),
         "total_flows": total_flows(crs).collect(),
-        "provider_coefficients": provider_coefficients(
-            yaml.safe_load(PROVIDER_COEFFICIENTS_FILE.read_text(encoding="utf-8"))
+        "provider_coefficients": coefficients,
+        "btr_coefficients": btr_coefficients(
+            btr,
+            links=linked_btr.join(
+                crs.select("record_id", "agency_code").collect(),
+                on="record_id",
+                how="left",
+                validate="m:1",
+            ),
+            coefficients=coefficients,
         ),
         "jev_flags": flags,
         "conversion_factors": pl.read_parquet(

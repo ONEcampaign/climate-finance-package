@@ -174,16 +174,16 @@ def test_core_contributions_stay_out_of_the_comparators() -> None:
 
 def test_a_case_by_case_party_reads_against_its_default() -> None:
     # Norway assesses each activity, with 0.3 for a Significant one whose share is
-    # unknown and no default for a Principal one, which counts in full at PROVIDER's
-    # 1.0. NOR-1 (18m, 2021) is Principal and NOR-2 (9m, 2022) Significant.
+    # unknown and no default for a Principal one, which takes the 0.9 its BTR
+    # implies. NOR-1 (18m, 2021) is Principal and NOR-2 (9m, 2022) Significant.
     reconciliation = SNAP.reconcile(providers="NOR")
     row = _row(reconciliation, "NOR", 2021)
 
-    assert (row["party_weight"], row["party_principal"]) == (0.3, None)
+    assert (row["party_weight"], row["party_principal"]) == (0.3, 0.9)
     assert row["coefficient_basis"] == "default"
-    assert row["crdf_at_party_weight"] == pytest.approx(18e6)
-    # A Principal row rests on PROVIDER's 1.0 though the basis is `default`.
-    assert (row["crdf_method_share"], row["crs_method_share"]) == (1.0, 1.0)
+    assert row["crdf_at_party_weight"] == pytest.approx(0.9 * 18e6)
+    # Neither rests on PROVIDER's own coefficients.
+    assert (row["crdf_method_share"], row["crs_method_share"]) == (0.0, 0.0)
     assert _row(reconciliation, "NOR", 2022)["crdf_method_share"] == 0.0
 
 
@@ -198,19 +198,19 @@ def _france_reports(frame: pl.DataFrame) -> pl.DataFrame:
 def test_an_agency_reads_against_its_own_coefficients(tmp_path: Path) -> None:
     # France counts a Significant activity at 0.3, and its agency 1 assesses each
     # activity case by case, so its Significant commitment FRA-2 (12m) and its
-    # Significant 2021 disbursement (12m) count at PROVIDER's 0.4.
+    # Significant 2021 disbursement (12m) count at the 0.6 its BTR implies.
     release = copy_release(tmp_path / "r", edits={"btr_totals": _france_reports})
     reconciliation = cf.load(path=release).reconcile(providers="FRA")
     row = _row(reconciliation, "FRA", 2022)
 
     assert row["party_weight"] == 0.3
-    assert row["crdf_at_party_weight"] == pytest.approx(0.4 * 12e6)
-    assert row["btr_over_crdf_at_party_weight"] == pytest.approx(22 / 4.8)
+    assert row["crdf_at_party_weight"] == pytest.approx(0.6 * 12e6)
+    assert row["btr_over_crdf_at_party_weight"] == pytest.approx(22 / 7.2)
     disbursed = _row(reconciliation, "FRA", 2021)
-    assert disbursed["crs_disbursed_at_party_weight"] == pytest.approx(0.4 * 12e6)
+    assert disbursed["crs_disbursed_at_party_weight"] == pytest.approx(0.6 * 12e6)
     # The fixture's grant equivalent is 0.9 of each disbursement.
     assert disbursed["crs_grant_equivalent_at_party_weight"] == pytest.approx(
-        0.9 * 0.4 * 12e6
+        0.9 * 0.6 * 12e6
     )
 
 
@@ -239,14 +239,18 @@ def _a_loan_at_agency_1(frame: pl.DataFrame) -> pl.DataFrame:
 
 
 def test_a_mixed_basis_party_shows_its_method_shares(tmp_path: Path) -> None:
-    # FRA-2 (12m) and France's Significant 2022 disbursement (4.8m) count at
-    # PROVIDER's 0.4 under agency 1 and at France's 0.3 under agency 2, so 0.4 of
-    # every 0.7 rests on PROVIDER's coefficients. Agency 1's grant equivalent is a
-    # loan's 2.16m against agency 2's 4.32m, so 0.864m of 2.16m rests on them.
+    # Without its BTR coefficients, FRA-2 (12m) and France's Significant 2022
+    # disbursement (4.8m) count at PROVIDER's 0.4 under agency 1 and at France's
+    # 0.3 under agency 2, so 0.4 of every 0.7 rests on PROVIDER's coefficients.
+    # Agency 1's grant equivalent is a loan's 2.16m against agency 2's 4.32m, so
+    # 0.864m of 2.16m rests on them.
     release = copy_release(
         tmp_path / "r",
         edits={
             "btr_totals": _france_reports,
+            "btr_coefficients": lambda frame: frame.filter(
+                pl.col("provider_code") != 4
+            ),
             "commitments": _french_agency_2,
             "total_flows": lambda frame: _a_loan_at_agency_1(_french_agency_2(frame)),
         },

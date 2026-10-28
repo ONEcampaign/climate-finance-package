@@ -226,9 +226,10 @@ BTR_CRS_UNLINKED = (
 # (provider, agency, first_year, last_year, significant, principal, both_significant,
 #  case_by_case, source, locator). Germany counts an activity significant for both
 # objectives at 1.0. Japan's coefficients change in 2022. France's agency 1 assesses
-# case by case and states no default, so its rows take the method's coefficients
-# rather than France's 0.3. Norway assesses case by case with a default of 0.3 for
-# significant activities and none for principal ones.
+# case by case and states no default, so its rows take the coefficients
+# `BTR_COEFFICIENTS` gives, else the method's, rather than France's 0.3. Norway
+# assesses case by case with a default of 0.3 for significant activities and none
+# for principal ones.
 SURVEY, REPORT = "Fixture survey", "Fixture report"
 PROVIDER_COEFFICIENTS = (
     (DEU, None, None, None, 0.5, 1.0, 1.0, False, SURVEY, "p. 8"),
@@ -237,6 +238,19 @@ PROVIDER_COEFFICIENTS = (
     (FRA, None, None, None, 0.3, 1.0, None, False, SURVEY, "p. 8"),
     (FRA, 1, None, None, None, None, None, True, SURVEY, "p. 9, note f"),
     (NOR, None, None, None, 0.3, None, None, True, SURVEY, "p. 5"),
+)
+# (provider, agency, marker, coefficient, source, reason, components, linked USD
+#  millions, components dropped above a share of 1.1 and their CRS USD millions, at
+#  twice that in BTR USD). France's agency 1 takes its BTR's significant share and the
+# method's principal one, whose evidence is thin. Norway states its significant
+# default and takes its BTR's principal share. Germany states both.
+BTR_COEFFICIENTS = (
+    (DEU, None, "significant", 0.52, "stated", None, 30, 50, 2, 4),
+    (DEU, None, "principal", 1.0, "stated", None, 24, 80, 0, 0),
+    (FRA, 1, "significant", 0.6, "btr", None, 25, 40, 1, 3),
+    (FRA, 1, "principal", None, "fallback", "thin", 3, 2, 0, 0),
+    (NOR, None, "significant", None, "stated", "thin", 4, 3, 0, 0),
+    (NOR, None, "principal", 0.9, "btr", None, 40, 60, 0, 0),
 )
 # The route by which a commitment's CRDF row reaches its CRS commitment, where it is
 # not `within_year`.
@@ -759,6 +773,35 @@ def build_tables() -> dict[str, pl.DataFrame]:
         "provider_coefficients": [
             dict(zip(RELEASE_TABLES["provider_coefficients"].columns, row, strict=True))
             for row in PROVIDER_COEFFICIENTS
+        ],
+        "btr_coefficients": [
+            {
+                "provider_code": provider,
+                "agency_code": agency,
+                "marker": marker,
+                "coefficient": coefficient,
+                "source": source,
+                "reason": reason,
+                "components": components,
+                "linked_usd": linked * 1e6,
+                "dropped": dropped,
+                "dropped_usd": dropped_usd * 1e6,
+                "dropped_btr_usd": 2 * dropped_usd * 1e6,
+                "evidence_first_year": 2021 if components else None,
+                "evidence_last_year": 2022 if components else None,
+            }
+            for (
+                provider,
+                agency,
+                marker,
+                coefficient,
+                source,
+                reason,
+                components,
+                linked,
+                dropped,
+                dropped_usd,
+            ) in BTR_COEFFICIENTS
         ],
         "btr": [
             {

@@ -949,7 +949,7 @@ def _listing(codes: Sequence[int | str]) -> str:
 
 
 # The order in which `explain` lists the bases of provider coefficients.
-_BASES = ("provider", "default", "case_by_case", None)
+_BASES = ("provider", "btr", "default", "case_by_case", None)
 
 
 def _coefficient_lines(method: Method, uses: pl.DataFrame) -> list[str]:
@@ -991,6 +991,12 @@ def _coefficient_lines(method: Method, uses: pl.DataFrame) -> list[str]:
             match held:
                 case "provider":
                     lines.append(f"Coefficients of providers {names}: {source}.")
+                case "btr":
+                    lines.append(
+                        f"Providers {names} assess each activity case by case and "
+                        "state no coefficient for these activities, so they take the "
+                        f"climate share their BTR reports on them ({source})."
+                    )
                 case "default":
                     lines.append(
                         f"Providers {names} assess each activity case by case; where "

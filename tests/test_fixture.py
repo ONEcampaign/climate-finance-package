@@ -75,6 +75,7 @@ INVARIANT_TABLES = (
     "btr_links",
     "btr_totals",
     "provider_coefficients",
+    "btr_coefficients",
     "reflows",
     "jev_flags",
 )
@@ -379,6 +380,18 @@ def _repeat_a_btr_link(frame: pl.DataFrame) -> pl.DataFrame:
     return pl.concat([frame, frame.filter(record_id="NOR-B-R1")])
 
 
+def _btr_coefficient_edit(
+    provider: int, marker: str, **changes: object
+) -> Callable[[pl.DataFrame], pl.DataFrame]:
+    """An edit setting `changes` on the provider's `btr_coefficients` row of
+    `marker`."""
+    is_row = (pl.col("provider_code") == provider) & (pl.col("marker") == marker)
+    return lambda frame: frame.with_columns(
+        pl.when(is_row).then(pl.lit(value)).otherwise(pl.col(name)).alias(name)
+        for name, value in changes.items()
+    )
+
+
 def _coefficient_edit(
     provider: int, first_year: int | None, **changes: object
 ) -> Callable[[pl.DataFrame], pl.DataFrame]:
@@ -473,15 +486,38 @@ def _coefficient_edit(
             _coefficient_edit(701, 2022, last_year=2021),
             "701 None 2022",
         ),
+        # Its `btr_coefficients` row then calls a missing coefficient stated.
         (
             "provider_coefficients",
             _coefficient_edit(5, None, significant=None),
-            "5 None None",
+            " 5 None ",
         ),
         (
             "provider_coefficients",
             _coefficient_edit(5, None, both_significant=1.5),
             "5 None None",
+        ),
+        # Germany states its significant coefficient, so its BTR's cannot stand in.
+        (
+            "btr_coefficients",
+            _btr_coefficient_edit(5, "significant", source="btr"),
+            "btr_coefficients 5 None significant",
+        ),
+        # Norway states no principal coefficient.
+        (
+            "btr_coefficients",
+            _btr_coefficient_edit(8, "principal", source="stated"),
+            "btr_coefficients 8 None principal",
+        ),
+        (
+            "btr_coefficients",
+            _btr_coefficient_edit(8, "principal", coefficient=1.2),
+            "btr_coefficients 8 None principal",
+        ),
+        (
+            "btr_coefficients",
+            _btr_coefficient_edit(8, "principal", coefficient=None),
+            "btr_coefficients 8 None principal",
         ),
     ],
 )

@@ -66,7 +66,7 @@ result = release.spending(**query)
     ```output
     ONE 0.1451
     OECD 0.1652
-    PROVIDER 0.1527
+    PROVIDER 0.1525
     ```
 
 The share is null where the total is zero, as for a query that returns no rows. Under `oda_only=True` the value counts ODA only and the total counts every flow code, so the share is ODA climate finance over all flows, as `share_of_total()` reads it.

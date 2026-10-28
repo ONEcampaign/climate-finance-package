@@ -117,11 +117,14 @@ from climate_finance.result import (
 )
 from climate_finance.schema import (
     BILATERAL,
+    BTR_COEFFICIENTS,
+    COEFFICIENT_MARKERS,
     COMMITMENT_KEY,
     CORE_CONTRIBUTION,
     EIB_AGENCY,
     EU_INSTITUTIONS,
     FLOWS,
+    FORMAT_TABLES,
     FUNDING_CLASSES,
     NET_FLOWS,
     RECIPIENT_VIEW,
@@ -821,15 +824,15 @@ def _party_coefficients(release: Release) -> pl.LazyFrame:
     """Each provider's `provider_coefficients` row for every agency without a row of
     its own, by year of the release's BTR totals, as `reconcile` shows it."""
     return (
-        _coefficients_by_year(release, years=release.table("btr_totals"))
+        _coefficients_by_year(release, years=release.table("btr_totals"), btr=True)
         .filter(pl.col("agency_code").is_null())
         .select(
             "provider_code",
             "year",
             party_weight="significant",
             party_principal="principal",
-            weight_source="citation",
-            coefficient_basis=_coefficient_basis(),
+            weight_source="citation_significant",
+            coefficient_basis=_coefficient_basis("significant"),
         )
     )
 
@@ -1759,20 +1762,36 @@ def _coefficients(
             both_significant=pl.lit(None, pl.Float64),
             method_coefficient=marker,
         )
-    held = _coefficients_by_year(release, years=frame).select(
+    # Oxfam's high bound gives a provider that assesses case by case the caps, so
+    # capped coefficients read the stated ones alone.
+    held = _coefficients_by_year(
+        release, years=frame, btr=method.coefficients == "provider"
+    ).select(
         "provider_code",
         "agency_code",
         "year",
         _significant="significant",
         _principal="principal",
         _both="both_significant",
-        _basis=_coefficient_basis(),
-        _source="citation",
+        **{
+            f"_basis_{marker}": _coefficient_basis(marker)
+            for marker in COEFFICIENT_MARKERS
+        },
+        **{f"_source_{marker}": f"citation_{marker}" for marker in COEFFICIENT_MARKERS},
     )
-    columns = ("_significant", "_principal", "_both", "_basis", "_source")
+    columns = (
+        "_significant",
+        "_principal",
+        "_both",
+        *(
+            f"_{kind}_{marker}"
+            for kind in ("basis", "source")
+            for marker in COEFFICIENT_MARKERS
+        ),
+    )
     by_agency = held.filter(pl.col("agency_code").is_not_null())
     by_provider = held.filter(pl.col("agency_code").is_null()).drop("agency_code")
-    own_agency = pl.col("_source").is_not_null()
+    own_agency = pl.col("_source_significant").is_not_null()
 
     def pick(name: str) -> pl.Expr:
         return pl.when(own_agency).then(pl.col(name)).otherwise(pl.col(f"{name}_all"))
@@ -1790,6 +1809,15 @@ def _coefficients(
 
     rio_a, rio_m = pl.col("rio_adaptation"), pl.col("rio_mitigation")
     both = (rio_a == 1) & (rio_m == 1)
+
+    def by_level(name: str) -> pl.Expr:
+        """`name`'s column for the row's higher Rio marker."""
+        return (
+            pl.when(pl.max_horizontal(rio_a, rio_m) == 2)
+            .then(pl.col(f"{name}_principal"))
+            .otherwise(pl.col(f"{name}_significant"))
+        )
+
     took_method = (
         pl.when(pl.max_horizontal(rio_a, rio_m) == 2)
         .then(took("_principal", method.principal))
@@ -1821,31 +1849,43 @@ def _coefficients(
             significant=coefficient("_significant", method.significant),
             principal=coefficient("_principal", method.principal),
             both_significant=both_significant,
-            coefficient_basis=pl.when(marker).then(pl.col("_basis")),
-            coefficient_source=pl.when(marker).then(pl.col("_source")),
+            coefficient_basis=pl.when(marker).then(by_level("_basis")),
+            coefficient_source=pl.when(marker).then(by_level("_source")),
             method_coefficient=marker & took_method,
         )
         .drop(*columns, *(f"{name}_all" for name in columns))
     )
 
 
-def _coefficient_basis() -> pl.Expr:
-    """A `provider_coefficients` row's basis: `provider` for flat coefficients,
-    `default` for the default share of a provider that assesses case by case, and
-    `case_by_case` where such a provider gives no default."""
+def _coefficient_basis(marker: str) -> pl.Expr:
+    """A `provider_coefficients` row's basis for `marker`'s coefficient: `provider`
+    for flat coefficients, `btr` for the coefficient a provider that assesses case
+    by case takes from its BTR, `default` for the default share such a provider
+    states for either marker, and `case_by_case` where it gives neither."""
     return (
         pl.when(~pl.col("case_by_case"))
         .then(pl.lit("provider"))
-        .when(pl.col("significant").is_not_null() | pl.col("principal").is_not_null())
+        .when(pl.col(f"btr_{marker}"))
+        .then(pl.lit("btr"))
+        .when(
+            pl.any_horizontal(
+                pl.col(name).is_not_null() & ~pl.col(f"btr_{name}")
+                for name in COEFFICIENT_MARKERS
+            )
+        )
         .then(pl.lit("default"))
         .otherwise(pl.lit("case_by_case"))
     )
 
 
-def _coefficients_by_year(release: Release, *, years: pl.LazyFrame) -> pl.LazyFrame:
+def _coefficients_by_year(
+    release: Release, *, years: pl.LazyFrame, btr: bool
+) -> pl.LazyFrame:
     """Each `provider_coefficients` row once for every year of `years` its span
-    covers, with `citation` its source and locator, matched on `year` after the
-    span is expanded into its years.
+    covers, with `btr` its coefficients filled from `btr_coefficients` as
+    `_with_btr_coefficients` fills them, and `citation_significant` and
+    `citation_principal` the source of each, matched on `year` after the span is
+    expanded into its years.
 
     Raises:
         ReleaseIntegrityError: when two rows of one provider and agency cover a
@@ -1857,6 +1897,7 @@ def _coefficients_by_year(release: Release, *, years: pl.LazyFrame) -> pl.LazyFr
             f"release {release.manifest.release!r} applies more than one "
             "coefficient to a year: " + "; ".join(overlaps)
         )
+    coefficients = _with_btr_coefficients(release, coefficients, btr=btr)
     first, last = pl.col("first_year"), pl.col("last_year")
     held = years.select("year").unique()
     bounds = held.select(_low=pl.col("year").min(), _high=pl.col("year").max())
@@ -1873,8 +1914,59 @@ def _coefficients_by_year(release: Release, *, years: pl.LazyFrame) -> pl.LazyFr
         .explode("year")
         .drop("_low", "_high")
         .join(held, on="year", how="semi")
-        .with_columns(citation=pl.format("{}, {}", "source", "locator"))
+        .with_columns(
+            pl.when(pl.col(f"btr_{marker}"))
+            .then(
+                pl.format(
+                    "the provider's BTR Table 1, {} to {}, linked to CRS records; "
+                    "see btr_coefficients",
+                    f"_btr_{marker}_first",
+                    f"_btr_{marker}_last",
+                )
+            )
+            .otherwise(pl.format("{}, {}", "source", "locator"))
+            .alias(f"citation_{marker}")
+            for marker in COEFFICIENT_MARKERS
+        )
     )
+
+
+def _with_btr_coefficients(
+    release: Release, coefficients: pl.DataFrame, *, btr: bool
+) -> pl.DataFrame:
+    """`coefficients` with each coefficient its row leaves null taken from
+    `btr_coefficients` where that table's `source` for the row's scope and marker is
+    `btr`, `btr_<marker>` true where so taken, and `_btr_<marker>_first` and
+    `_btr_<marker>_last` the BTR years behind it. Without `btr`, and for a release of
+    data format 1, which holds no `btr_coefficients`, the coefficients stay as
+    stated."""
+    scope = ["provider_code", "agency_code"]
+    if btr and "btr_coefficients" in FORMAT_TABLES[release.manifest.data_format]:
+        filled = release.table("btr_coefficients").filter(source="btr").collect()
+    else:
+        filled = pl.DataFrame(schema=BTR_COEFFICIENTS.dtypes)
+    for marker in COEFFICIENT_MARKERS:
+        coefficients = coefficients.join(
+            filled.filter(marker=marker).select(
+                *scope,
+                **{
+                    f"_btr_{marker}": "coefficient",
+                    f"_btr_{marker}_first": "evidence_first_year",
+                    f"_btr_{marker}_last": "evidence_last_year",
+                },
+            ),
+            on=scope,
+            how="left",
+            nulls_equal=True,
+            validate="m:1",
+        ).with_columns(
+            **{
+                f"btr_{marker}": pl.col(marker).is_null()
+                & pl.col(f"_btr_{marker}").is_not_null(),
+                marker: pl.coalesce(marker, f"_btr_{marker}"),
+            }
+        )
+    return coefficients
 
 
 def _weigh(frame: pl.LazyFrame, *, method: Method) -> pl.LazyFrame:
