@@ -734,8 +734,11 @@ PAIR_SCORES = _table(
 
 # The id-less BTR rows drawn for people to label, so the BTR link's calibration
 # covers the low match weights where few id rows sit (`link.btr.calibration_draw`):
-# each row (`left_id`) with its best candidate CRS record (`right_id`), its party, and
-# the match weight its party's model gave the pair. Empty without BTR rows.
+# each row (`left_id`) with its best candidate CRS record (`right_id`), its party, the
+# match weight its party's model gave the pair, and its place in its party's draw
+# (`draw_rank`, from 1), which takes the strata in turn in the digest order of the
+# pairs. `left_digest` and `right_digest` fingerprint what a labeller sees of the
+# row and the record (`link.packet.BTR_SHOWN`, `CRS_SHOWN`). Empty without BTR rows.
 BTR_CALIBRATION = _table(
     "btr_calibration",
     ("left_id", "right_id"),
@@ -743,6 +746,9 @@ BTR_CALIBRATION = _table(
     right_id=_str(),
     party=_str(),
     match_weight=_f64(),
+    draw_rank=Column(pl.Int32()),
+    left_digest=_str(),
+    right_digest=_str(),
 )
 
 # One row per provider: the climate value of its counted CRDF commitments and, for a
@@ -879,7 +885,10 @@ PAIR_LABELS = _table(
 # only measure precision. `label_source` says whether a person or an agent decided.
 # An agent's decision names its `model`, its `confidence` that the pair matches, and
 # its labelling `round`. `reviewer` names the person or the agent run, and `note`
-# holds the stated reason.
+# holds the stated reason. A `btr_crs` decision carries the fingerprints of the BTR
+# row and the CRS record its labeller saw (`left_digest`, `right_digest`), since a BTR
+# row id names a position in a workbook; the build reuses it only while both still
+# match. Other decisions, and rows written before the columns existed, hold none.
 REVIEW_DECISIONS = _table(
     "review_decisions",
     ("task", "left_id", "right_id", "decided_at"),
@@ -896,6 +905,8 @@ REVIEW_DECISIONS = _table(
     review_reason=_str(nullable=True, values=REVIEW_REASONS),
     sample_id=_str(nullable=True),
     decided_at=Column(pl.Datetime("us", "UTC")),
+    left_digest=_str(nullable=True),
+    right_digest=_str(nullable=True),
 )
 
 OBJECTIVE_LABELS = _table(
@@ -1673,7 +1684,8 @@ def release_invariants(tables: Mapping[str, pl.DataFrame]) -> list[str]:
     equals its published `climate_usd`, and no channel of `core_contributions`
     aggregates another of its channels. Per party, year and status, `btr_totals`
     holds as many rows and linked rows as `btr` and `btr_links` do, and the same
-    face and grant-equivalent sums within `BTR_TOTALS_TOLERANCE` of their size. The
+    face and grant-equivalent sums within `BTR_TOTALS_TOLERANCE` of their size, and
+    `btr_links` holds each pair once. The
     `untraced`, `unallocated`, `provider_coefficients`, `reflows` and `jev_flags`
     checks are those of `_untraced_problems`, `_marked_problems`,
     `_coefficient_problems`, `_reflow_problems` and `_jev_flag_problems`. An empty
@@ -1960,7 +1972,8 @@ def coefficient_overlaps(coefficients: pl.DataFrame) -> list[str]:
 def _btr_problems(
     btr: pl.DataFrame, *, links: pl.DataFrame, totals: pl.DataFrame
 ) -> list[str]:
-    """Where `totals` (`btr_totals`) differs from the `btr` rows it sums."""
+    """Where `totals` (`btr_totals`) differs from the `btr` rows it sums, and the
+    pairs `links` (`btr_links`) holds more than once."""
     keys = ("party", "year", "status")
     amounts = (
         "face_usd",
@@ -2005,6 +2018,14 @@ def _btr_problems(
             if abs(row[name] - row[f"{name}_totals"])
             > BTR_TOTALS_TOLERANCE * max(abs(row[name]), 1.0)
         )
+    repeated = links.filter(pl.struct(BTR_LINKS.sort_key).is_duplicated())
+    problems.extend(
+        f"btr_links {row_id} {record_id}: the pair repeats"
+        for row_id, record_id in repeated.select(BTR_LINKS.sort_key)
+        .unique()
+        .sort(BTR_LINKS.sort_key)
+        .iter_rows()
+    )
     return problems
 
 

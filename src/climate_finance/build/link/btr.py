@@ -69,6 +69,7 @@ from climate_finance.build.link.keys import (
     links_frame,
     regional_codes,
 )
+from climate_finance.build.link.packet import btr_digests
 from climate_finance.build.link.splink_models import (
     MIN_EM_PAIRS,
     isotonic_map,
@@ -194,11 +195,14 @@ _BEST = {
 
 
 class BtrLinks(NamedTuple):
-    """`link_btr`'s output: the `links` rows of task `btr_crs`, and the id-less rows
-    drawn for people to label (`btr_calibration`)."""
+    """`link_btr`'s output: the `links` rows of task `btr_crs`, the id-less rows
+    drawn for people to label (`btr_calibration`), and the `btr_crs` decisions
+    whose fingerprints match the release (`current_decisions`), None when
+    `link_btr` was given no decisions."""
 
     links: pl.DataFrame
     draw: pl.DataFrame
+    labels: pl.DataFrame | None
 
 
 def link_btr(
@@ -211,7 +215,8 @@ def link_btr(
         btr: The `btr` table.
         crs: The normalised `crs` table.
         labels: Queue decisions as `decisions.read_decision_labels` gives them,
-            whose `btr_crs` labels join calibration (`calibrate`).
+            whose `btr_crs` labels that still match the release
+            (`current_decisions`) join calibration (`calibrate`).
     """
     rows = btr_rows(btr)
     records = crs_records(crs, rows=rows)
@@ -221,8 +226,9 @@ def link_btr(
         [pl.DataFrame(schema=_BEST)]
         + [score_party(rows.filter(party=party), records=records) for party in parties]
     )
+    current = None if labels is None else current_decisions(labels, btr=btr, crs=crs)
     by_model = (
-        calibrate(best, truth=by_id, labels=labels)
+        calibrate(best, truth=by_id, labels=current)
         .join(by_id, on="row_id", how="anti")
         .filter(pl.col("probability") >= LINK_PROBABILITY)
     )
@@ -248,8 +254,41 @@ def link_btr(
         pl.col("record_id").alias("right_id"),
         "party",
         "match_weight",
+        "draw_rank",
     )
-    return BtrLinks(links=links, draw=draw)
+    draw = draw.join(
+        btr_digests(draw.select("left_id", "right_id"), btr=btr, crs=crs),
+        on=["left_id", "right_id"],
+        maintain_order="left",
+    )
+    return BtrLinks(
+        links=links,
+        draw=draw,
+        labels=current,
+    )
+
+
+def current_decisions(
+    labels: pl.DataFrame, *, btr: pl.LazyFrame, crs: pl.LazyFrame
+) -> pl.DataFrame:
+    """The `btr_crs` decisions of `labels` whose fingerprints (`left_digest`,
+    `right_digest`) equal the digests of what a packet shows of the BTR row and the
+    CRS record now (`packet.btr_digests`).
+
+    A BTR row id names a party, a year and a position in the party's workbook, so
+    a revised workbook can put another activity under the same id. A decision
+    reaches only the row and record its labeller saw, and one with no fingerprint,
+    or on a side that changed, is left out, so its pair returns to the queue.
+    """
+    decided = labels.filter(task="btr_crs")
+    pair = ["left_id", "right_id"]
+    now = btr_digests(decided.select(pair).unique(), btr=btr, crs=crs)
+    return decided.join(
+        now,
+        on=[*pair, "left_digest", "right_digest"],
+        how="semi",
+        maintain_order="left",
+    )
 
 
 def btr_rows(btr: pl.LazyFrame) -> pl.DataFrame:
@@ -490,13 +529,15 @@ def calibrate(
 
 def calibration_draw(best: pl.DataFrame, *, truth: pl.DataFrame) -> pl.DataFrame:
     """The id-less rows of `best` drawn for people to label: `party`, `row_id`,
-    `record_id` (its best candidate) and `match_weight`.
+    `record_id` (its best candidate), `match_weight` and `draw_rank`.
 
     Each party gives `CALIBRATION_DRAWS` of its rows with no id records in `truth`
     and a match weight from the first edge of `CALIBRATION_STRATA` up to the last,
     spread evenly over the strata between the edges, a stratum short of its share
     giving all its rows. Within a stratum, rows are taken in the order of a digest of
     the pair (`jev.spread_sample`), so the same scores give the same draw.
+    `draw_rank` numbers a party's draw from 1 in that order, the strata in turn, so
+    the first k ranks of a party are a random subset of each of its strata.
     """
     weight = pl.col("match_weight")
     idless = (
@@ -508,14 +549,17 @@ def calibration_draw(best: pl.DataFrame, *, truth: pl.DataFrame) -> pl.DataFrame
         )
         .select("party", "row_id", "record_id", "match_weight")
     )
-    draws = [idless.clear()]
+    draws = [idless.clear().with_columns(draw_rank=pl.lit(0, dtype=pl.Int32))]
     for (_,), rows in idless.sort("party").group_by("party", maintain_order=True):
         draws.append(
             spread_sample(
                 rows.with_columns(left_id="row_id", right_id="record_id"),
                 band=_stratum(),
                 n=CALIBRATION_DRAWS,
-            ).select(idless.columns)
+            )
+            .select(idless.columns)
+            .with_row_index("draw_rank", offset=1)
+            .select(*idless.columns, pl.col("draw_rank").cast(pl.Int32))
         )
     return pl.concat(draws).sort("party", "row_id")
 

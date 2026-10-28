@@ -45,9 +45,11 @@ from climate_finance import catalogue, schema
 from climate_finance.build.errors import BuildError, ReviewDecisionsError
 from climate_finance.build.evaluate import design_path
 from climate_finance.build.link.decisions import (
+    DIGESTS,
     LABEL_COLUMNS,
     LABELS,
     import_labels,
+    read_decisions,
     standing_decisions,
 )
 from climate_finance.build.link.packet import (
@@ -55,10 +57,12 @@ from climate_finance.build.link.packet import (
     MATCH_DEFINITION,
     BtrPairView,
     PairView,
+    btr_digests,
     btr_pair_views,
     code_names,
     packet_pairs_path,
     pair_views,
+    read_packet_pairs,
 )
 from climate_finance.schema import CERTAIN_METHODS
 
@@ -123,6 +127,12 @@ class LabellingError(BuildError):
     """A request to the labelling page that cannot be answered."""
 
 
+class PacketReleaseMismatchError(LabellingError):
+    """A BTR packet's pairs show rows or records other than the release being
+    served holds, so an answer would record a fingerprint of what the page did not
+    show."""
+
+
 @dataclass(frozen=True)
 class Answer:
     """A person's decision on a pair. `label` is `match` or `no_match`, and `strength`
@@ -144,7 +154,8 @@ class Answer:
 @dataclass(frozen=True)
 class QueuedPair:
     """A pair to label, with its packet, its number there, its key and the draws it
-    backs. `reason` is a queue pair's `review_reason`, None for the blind sample."""
+    backs. `reason` is a queue pair's `review_reason`, None for the blind sample, and
+    `digests` fingerprint what a BTR packet shows of each side, None elsewhere."""
 
     provider: int
     packet: Path
@@ -154,6 +165,7 @@ class QueuedPair:
     draws: int
     certain: bool
     reason: str | None = None
+    digests: tuple[str | None, str | None] = (None, None)
 
 
 def sample_pairs(sample_dir: Path) -> list[QueuedPair]:
@@ -217,6 +229,9 @@ def packet_pairs(packet: Path, *, release_dir: Path) -> list[QueuedPair]:
     Raises:
         LabellingError: when `packet` has no pairs file, holds blind-sample pairs,
             or names a row or unit the release lacks.
+        PacketReleaseMismatchError: when a `btr_crs` pair's digests in the pairs
+            file differ from those of the release's row and record
+            (`packet.btr_digests`), as for a packet written from another release.
     """
     from climate_finance.build.stages import table_path
 
@@ -225,13 +240,30 @@ def packet_pairs(packet: Path, *, release_dir: Path) -> list[QueuedPair]:
         raise LabellingError(
             f"{packet} has no pairs file; write it with `cf-build queue`"
         )
-    pairs = pl.read_parquet(pairs_file)
+    pairs = read_packet_pairs(packet)
     if pairs["sample_id"].is_not_null().any():
         raise LabellingError(
             f"{packet} holds blind-sample pairs; label them through SAMPLE_DIR"
         )
     btr = pairs.filter(task="btr_crs").select("left_id")
     trace = pairs.filter(pl.col("task") != "btr_crs").select("left_id")
+    if btr.height:
+        pair = ["left_id", "right_id"]
+        served = btr_digests(
+            pairs.filter(task="btr_crs").select(pair),
+            btr=schema.scan_table(table_path(release_dir, "normalise", "btr")),
+            crs=schema.scan_table(table_path(release_dir, "normalise", "crs")),
+        )
+        stale = pairs.filter(task="btr_crs").join(
+            served, on=[*pair, *DIGESTS], how="anti"
+        )
+        if stale.height:
+            raise PacketReleaseMismatchError(
+                f"{stale.height} BTR pairs of {packet} differ from the rows and "
+                f"records of the release in {release_dir}, such as pair "
+                f"{stale['pair'].min()}; write the packet from this release with "
+                "`cf-build queue --task btr_crs`"
+            )
     providers = pl.concat(
         [
             schema.scan_table(table_path(release_dir, "normalise", "btr"))
@@ -265,6 +297,7 @@ def packet_pairs(packet: Path, *, release_dir: Path) -> list[QueuedPair]:
             draws=1,
             certain=False,
             reason=row["review_reason"],
+            digests=(row["left_digest"], row["right_digest"]),
         )
         for row in joined.iter_rows(named=True)
     ]
@@ -323,22 +356,42 @@ def _hash_order(pairs: Iterable[QueuedPair]) -> list[QueuedPair]:
     )
 
 
-def read_answers(decisions: Path) -> dict[PairKey, Answer]:
-    """The standing decision of a person on each pair at `decisions`, keyed with its
-    `sample_id`, None for a queue pair, and an empty dict when the file is
-    missing."""
+def read_answers(
+    decisions: Path, *, pairs: Iterable[QueuedPair]
+) -> dict[PairKey, Answer]:
+    """The standing decision of a person at `decisions` on each of `pairs` that has
+    one, an empty dict when the file is missing.
+
+    A decision answers a pair only on the fingerprints it was given on
+    (`QueuedPair.digests`), so a BTR row changed under the same id comes back
+    undecided.
+    """
     if not decisions.exists():
         return {}
-    people = pl.read_parquet(decisions).filter(label_source="human")
+    people = read_decisions(decisions).filter(label_source="human")
     reverse = {decision: label for label, decision in LABELS.items()}
-    return {
-        (row["sample_id"], row["task"], row["left_id"], row["right_id"]): Answer(
+    standing = {
+        (
+            row["sample_id"],
+            row["task"],
+            row["left_id"],
+            row["right_id"],
+            row["left_digest"],
+            row["right_digest"],
+        ): Answer(
             label=reverse[row["decision"]],
             strength=_strength(row["confidence"]),
             reason=row["note"] or "",
             reviewer=row["reviewer"],
         )
-        for row in standing_decisions(people, key=KEY).iter_rows(named=True)
+        for row in standing_decisions(people, key=[*KEY, *DIGESTS]).iter_rows(
+            named=True
+        )
+    }
+    return {
+        pair.key: answer
+        for pair in pairs
+        if (answer := standing.get((*pair.key, *pair.digests))) is not None
     }
 
 
@@ -404,7 +457,7 @@ class Session:
             )
         self.pairs = pairs
         self.queue = queue
-        self.answers = read_answers(decisions)
+        self.answers = read_answers(decisions, pairs=pairs)
         self._views: dict[int, list[View]] = {}
         self.mine = {
             key: answer

@@ -38,9 +38,11 @@ from climate_finance.build.allocate import (
 from climate_finance.build.errors import LabelPacketError
 from climate_finance.build.link.decisions import (
     CALIBRATION_REASON,
+    DIGESTS,
     PAIR,
     accepted_pairs,
     drop_pairs,
+    pair_decisions,
     read_decision_labels,
 )
 from climate_finance.build.link.ledger import run_ledger_check
@@ -72,14 +74,15 @@ def run_review(context: StageContext) -> StageOutput:
     # One collect shares the ledger check's joins between the links and the labels.
     checked, pair_labels = pl.collect_all(run_ledger_check(context))
     decided = read_decision_labels(context.config.sources.review_decisions)
-    links = flag_review(checked, labels=decided, band=context.config.jev.band)
+    by_pair = pair_decisions(decided)
+    links = flag_review(checked, labels=by_pair, band=context.config.jev.band)
     commitments = context.read("fill", "commitments").collect()
     allocations = context.read("fill", "allocations").collect()
     pending = pending_rows(
         commitments,
         allocations=allocations,
         links=links,
-        labels=decided,
+        labels=by_pair,
         units=context.read("link", "units"),
         crs=trace_population(context.read("normalise", "crs")),
         crdf=counted_rows(context.read("normalise", "crdf")),
@@ -108,8 +111,8 @@ def flag_review(
 
     Args:
         links: `links` rows, with the ledger check's `ledger_check`.
-        labels: `read_decision_labels`. A pair people or agents decided is not
-            queued.
+        labels: `pair_decisions`, one row per pair. A pair people or agents decided
+            is not queued.
         band: the classifier probabilities queued, low inclusive.
     """
     reason = (
@@ -150,7 +153,8 @@ def review_queue(
     """The `review_queue` table: the links `flag_review` flagged, the Splink
     calibration pairs that are not links, and the BTR calibration draw
     (`btr_calibration`, as `btr_crs` pairs whether linked or not), less the pairs
-    `labels` (`read_decision_labels`) holds, and the commitment rows allocated over
+    `labels` (`read_decision_labels`) holds, a BTR pair only on the same
+    fingerprints, and the commitment rows allocated over
     `OVER_FACE` times face, as `crdf_crs` rows with no right side. `flag_review`
     flags no decided pair, and a decided pair has a right side.
 
@@ -179,12 +183,14 @@ def review_queue(
         .join(links.select(PAIR), on=PAIR, how="anti")
         .join(labels.select(PAIR), on=PAIR, how="anti")
     )
+    # A BTR decision holds only while the row and record it saw are unchanged.
     btr = btr_calibration.select(
         "left_id",
         "right_id",
+        *DIGESTS,
         task=pl.lit("btr_crs"),
         review_reason=pl.lit(CALIBRATION_REASON),
-    ).join(labels.select(PAIR), on=PAIR, how="anti")
+    ).join(labels.select(*PAIR, *DIGESTS), on=[*PAIR, *DIGESTS], how="anti")
     face = pl.col("face_usd")
     over_face = commitments.filter(
         face > 0, pl.col("disbursed_usd") > OVER_FACE * face
@@ -228,7 +234,7 @@ def pending_rows(
         commitments: the fill stage's `commitments`.
         allocations: the fill stage's `allocations`.
         links: the links with `review` set (`flag_review`).
-        labels: `read_decision_labels`, whose accepted pairs stay linked.
+        labels: `pair_decisions`, whose accepted pairs stay linked.
         units: the link stage's `units`.
         crs: the CRS trace population.
         crdf: the counted CRDF rows (`counted_rows`).
@@ -373,7 +379,10 @@ def write_queue_packet(
     The `trace` pairs, the Splink calibration pairs among them, go to
     `packet.write_packet`, with the commitment rows allocated over `OVER_FACE`
     times face in a table after the pairs. The `btr_crs` pairs, the BTR calibration
-    draw, go to `packet.write_btr_packet`, which always shows ids.
+    draw, go to `packet.write_btr_packet`, which always shows ids, in the order of
+    their `draw_rank`, then party: each party's strata in turn, in digest order, so
+    any first part of the packet a labeller finishes is a random subset of every
+    stratum, as the calibration's weights assume.
 
     Names of agencies, purposes, channels and flows come from the bulk CRS file
     fetch wrote, when the release holds it.
@@ -393,8 +402,16 @@ def write_queue_packet(
     if task == "btr_crs":
         if not show_ids:
             raise LabelPacketError("a BTR packet always shows ids")
+        draw = pl.read_parquet(table_path(release_dir, "link", "btr_calibration"))
         return write_btr_packet(
-            queue.filter(task=task).sort(PAIR),
+            queue.filter(task=task)
+            .join(
+                draw.select("left_id", "right_id", "party", "draw_rank"),
+                on=["left_id", "right_id"],
+                how="left",
+            )
+            .sort("draw_rank", "party", *PAIR, nulls_last=True)
+            .drop("party", "draw_rank"),
             btr=schema.scan_table(table_path(release_dir, "normalise", "btr")),
             crs=crs,
             out=out,

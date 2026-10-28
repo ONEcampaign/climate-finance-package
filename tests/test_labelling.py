@@ -25,6 +25,7 @@ from climate_finance.build.link.labelling import (
     SPOT_CHECKS,
     WORDINGS,
     LabellingError,
+    PacketReleaseMismatchError,
     QueuedPair,
     Session,
     make_server,
@@ -522,6 +523,32 @@ def test_a_btr_queue_packet_is_served_and_its_answers_are_queue_decisions(
     )
     assert reopened.state()["done"] == 1
     assert reopened.pair(1)["answer"]["label"] == "no_match"
+    # A revised workbook puts another activity under btr-2's id. The old packet no
+    # longer shows what the release holds, so the page refuses it; the rewritten
+    # packet shows the pair undecided.
+    _btr(
+        {"row_id": "btr-1"}, {"row_id": "btr-2", "title": "Flood barriers"}
+    ).write_parquet(table_path(release, "normalise", "btr"))
+    with pytest.raises(PacketReleaseMismatchError) as refused:
+        packet_pairs(packet, release_dir=release)
+    assert refused.value.code == "packet_release_mismatch"
+    packet = write_btr_packet(
+        pl.DataFrame({"left_id": rows, "right_id": ["r1"] * 2}),
+        btr=pl.scan_parquet(table_path(release, "normalise", "btr")),
+        crs=pl.scan_parquet(table_path(release, "normalise", "crs")),
+        out=tmp_path / "btr.md",
+        title="BTR calibration queue",
+    )
+    pairs = packet_pairs(packet, release_dir=release)
+    revised = Session(
+        release_dir=release,
+        pairs=pairs,
+        queue=pairs,
+        decisions=decisions,
+        reviewer="analyst",
+    )
+    assert revised.state()["done"] == 0
+    assert revised.pair(1)["answer"] is None
 
 
 def test_a_session_refuses_a_queue_of_mixed_tasks(tmp_path: Path) -> None:

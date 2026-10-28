@@ -59,7 +59,7 @@ The rebuilt queue omits the decided pairs. `cf-build queue` writes a smaller pac
 
 The BTR link calibrates each party's model on the rows whose ids name their CRS records. Those rows score high, so the low weights where most id-less rows sit hold few labels. Decisions on the draw fill them in.
 
-1. Write the draw as a packet. Each section shows a BTR row (A) beside one CRS record (B), with the record's crs id and project number. The draw always shows ids, so `--no-ids` is refused.
+1. Write the draw as a packet. Each section shows a BTR row (A) beside one CRS record (B), with the record's crs id and project number. The draw always shows ids, so `--no-ids` is refused. The pairs come in draw order: each party's three weight bands in turn, in a pseudo-random order within each band. Stop at any point and the pairs decided so far are a fair sample of every band.
 
     ```bash
     cf-build queue releases/2026a --out btr-queue.md --task btr_crs
@@ -74,6 +74,8 @@ The BTR link calibrates each party's model on the rows whose ids name their CRS 
     A matches B when B reports the activity A reports, or one component of it, in the same year, for A's recipient or a region or global programme that holds it. Amounts may differ. A different project of the same donor, a sibling or another phase, and an unrelated activity do not match. The page and the packet give this definition in full.
 
 3. Rebuild. Each decision on a row's best candidate joins that party's calibration labels. It weighs the party's id-less rows in its weight band divided by the decisions in that band. A decision on a record other than the row's best candidate is left out. With no decisions, the calibration is the ids' alone.
+
+    A decision holds only while the BTR row and the CRS record look as they did when it was made. A BTR row id names a position in a party's workbook, so a revised workbook can put another activity under the same id. The build then drops the decision and returns the pair to the queue. A decision with no record of what was shown also returns to the queue.
 
 ## Blind-sample decisions are separate
 

@@ -9,7 +9,9 @@ number. Without it they carry neither, and any id either unit holds is blanked i
 both units' texts, as a pilot that measures labellers against id truth needs.
 
 A BTR packet (`write_btr_packet`) opens with `BTR_MATCH_DEFINITION` and shows a
-party's BTR row (A) beside one CRS record of the party's (B), ids shown.
+party's BTR row (A) beside one CRS record of the party's (B), ids shown. Its pairs
+file carries a digest of what it shows of each side (`btr_digests`), which a
+decision on the pair keeps, as a BTR row id names a position in a workbook.
 
 `write_packet` and `write_btr_packet` write the packet and, beside it, the pairs
 its sections number (`packet_pairs_path`), which `decisions.import_labels` keys a
@@ -31,6 +33,7 @@ from climate_finance import catalogue
 from climate_finance.build.errors import LabelPacketError
 from climate_finance.build.geo import recipient_code
 from climate_finance.build.link.text import title_words, word_share
+from climate_finance.build.normalise.ids import fields_digest
 
 MATCH_DEFINITION = (
     "A matches B when A's money is spending under the commitment B records. That "
@@ -56,7 +59,41 @@ MAX_ROWS = 12
 SIBLING_SHARE = 0.5
 TEXT_LIMIT = 600
 # Columns of the pairs frame a packet carries through to its pairs file.
-CARRIED = ("task", "review_reason", "sample_id")
+CARRIED = ("task", "review_reason", "sample_id", "left_digest", "right_digest")
+# The columns of a BTR row and of a CRS record a BTR packet shows (`_BTR_FIELDS`),
+# whose digests fingerprint what a labeller saw (`btr_digests`).
+BTR_SHOWN = (
+    "party",
+    "provider_code",
+    "year",
+    "recipient",
+    "face_usd",
+    "status",
+    "title",
+    "additional_information",
+    "sector",
+    "instrument",
+    "support_type",
+    "channel",
+)
+CRS_SHOWN = (
+    "donor_code",
+    "agency_code",
+    "year",
+    "recipient_code",
+    "commitment_usd",
+    "disbursement_usd",
+    "title",
+    "short_description",
+    "long_description",
+    "purpose_code",
+    "finance_t",
+    "rio_adaptation",
+    "rio_mitigation",
+    "channel_code",
+    "crs_id",
+    "project_number",
+)
 # The code columns whose names `code_names` reads from the bulk CRS.
 NAMED_CODES = {
     "agency": ("donor_code", "agency_code"),
@@ -158,6 +195,8 @@ def write_btr_packet(
     Args:
         pairs: `left_id` (a BTR row) and `right_id` (a CRS record), numbered from 1
             in the order given, with any of `CARRIED`; `task` defaults to `btr_crs`.
+            The pairs file takes each side's digest (`btr_digests`) in place of
+            any the pairs carry.
         btr: the normalise stage's `btr`.
         crs: the normalise stage's `crs`.
         out: the packet's path.
@@ -170,9 +209,39 @@ def write_btr_packet(
     Raises:
         LabelPacketError: when a pair names a row `btr` or a record `crs` lacks.
     """
-    numbered = _numbered(pairs, task="btr_crs")
+    pair = ["left_id", "right_id"]
+    numbered = _numbered(pairs, task="btr_crs").drop("left_digest", "right_digest")
+    numbered = numbered.join(
+        btr_digests(numbered.select(pair), btr=btr, crs=crs),
+        on=pair,
+        how="left",
+        maintain_order="left",
+    )
     text = render_btr_packet(numbered, btr=btr, crs=crs, title=title, names=names)
     return _save(numbered, text=text, out=out)
+
+
+def btr_digests(
+    pairs: pl.DataFrame, *, btr: pl.LazyFrame, crs: pl.LazyFrame
+) -> pl.DataFrame:
+    """`pairs` (`left_id` a BTR row, `right_id` a CRS record) with the digest of
+    what a BTR packet shows of each side: `left_digest` over `BTR_SHOWN` and
+    `right_digest` over `CRS_SHOWN`, null for a row or record the tables lack."""
+    rows = (
+        btr.join(pairs.select(row_id="left_id").lazy(), on="row_id", how="semi")
+        .select(left_id="row_id", left_digest=fields_digest(BTR_SHOWN))
+        .collect()
+    )
+    records = (
+        crs.join(pairs.select(record_id="right_id").lazy(), on="record_id", how="semi")
+        .select(right_id="record_id", right_digest=fields_digest(CRS_SHOWN))
+        .collect()
+    )
+    return (
+        pairs.select("left_id", "right_id")
+        .join(rows, on="left_id", how="left", maintain_order="left")
+        .join(records, on="right_id", how="left", maintain_order="left")
+    )
 
 
 def _numbered(pairs: pl.DataFrame, *, task: str) -> pl.DataFrame:
@@ -204,6 +273,17 @@ def _save(numbered: pl.DataFrame, *, text: str, out: Path) -> Path:
         packet_sha256=pl.lit(packet_digest(out)),
     ).write_parquet(packet_pairs_path(out))
     return out
+
+
+def read_packet_pairs(packet: Path) -> pl.DataFrame:
+    """The pairs file of the packet at `packet`, with the columns of `CARRIED` a
+    file written before them lacks set to null."""
+    pairs = pl.read_parquet(packet_pairs_path(packet))
+    return pairs.with_columns(
+        pl.lit(None, dtype=pl.String).alias(name)
+        for name in CARRIED
+        if name not in pairs.columns
+    )
 
 
 def packet_digest(packet: Path) -> str:

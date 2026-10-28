@@ -375,6 +375,10 @@ def _drop_a_btr_row(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.filter(pl.col("party") != "DEU")
 
 
+def _repeat_a_btr_link(frame: pl.DataFrame) -> pl.DataFrame:
+    return pl.concat([frame, frame.filter(record_id="NOR-B-R1")])
+
+
 def _coefficient_edit(
     provider: int, first_year: int | None, **changes: object
 ) -> Callable[[pl.DataFrame], pl.DataFrame]:
@@ -445,6 +449,7 @@ def _coefficient_edit(
         ("btr_totals", _restate_a_btr_total, "NOR"),
         ("btr_totals", _unlink_a_btr_total, "DEU 2021"),
         ("btr", _drop_a_btr_row, "DEU"),
+        ("btr_links", _repeat_a_btr_link, "NOR-B-R1"),
         ("agency_shares", _measure_ida_twice, "44002 2021"),
         ("agency_spending", _give_a_marker_row_components, "44002 2021 2 0"),
         ("agency_spending", _repeat_a_components_row, "46002 2022 None None"),

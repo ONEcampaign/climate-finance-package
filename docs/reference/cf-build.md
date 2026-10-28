@@ -79,7 +79,7 @@ cf-build label BUILD_DIR --packet FILE --reviewer NAME [--config build.toml] [--
 Serves a page on `127.0.0.1` for labelling one person's share of the blind sample in `SAMPLE_DIR`, and opens it in a browser. The share is the judgement calls, the pairs whose link no certain rule made, in a stable hash order of their sample ids until their draws reach `human_audit.min_share` of all the sample's draws, with 50 spot checks of pairs a certain rule linked spread among them. A pair already decided by a person stays in the queue, counted as done and skipped. `BUILD_DIR` supplies the records the page shows.
 
 - `--reviewer` names the person in the decisions.
-- `--packet` serves every pair of a review queue packet written by `queue`, in place of `SAMPLE_DIR`, in the packet's order. Its answers carry no sample id, so the build reads them as queue decisions.
+- `--packet` serves every pair of a review queue packet written by `queue`, in place of `SAMPLE_DIR`, in the packet's order. Its answers carry no sample id, so the build reads them as queue decisions. A BTR packet written from another release, whose rows or records differ from `BUILD_DIR`'s, is refused with `PacketReleaseMismatchError` (`packet_release_mismatch`).
 - `--config` (default `build.toml`) names the file whose `sources.review_decisions` receives the decisions.
 - `--port` sets the port. The default of 0 picks a free one.
 - `--no-browser` prints the address without opening it.

@@ -55,6 +55,13 @@ def _digest(key: pl.Expr, occurrence: pl.Expr) -> pl.Expr:
     ).map_batches(_blake2b, return_dtype=pl.String, is_elementwise=True)
 
 
+def fields_digest(columns: Sequence[str]) -> pl.Expr:
+    """A 16-hex-digit digest of `columns` as text, equal for rows equal on them."""
+    return _identity(columns).map_batches(
+        _blake2b, return_dtype=pl.String, is_elementwise=True
+    )
+
+
 def text_digest(columns: Sequence[str]) -> pl.Expr:
     """The md5 of `columns` joined by newlines; null when every one is null."""
     text = pl.concat_str(

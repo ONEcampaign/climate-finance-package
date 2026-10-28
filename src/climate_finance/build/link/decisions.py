@@ -20,9 +20,18 @@ import polars as pl
 
 from climate_finance import schema
 from climate_finance.build.errors import ReviewDecisionsError
-from climate_finance.build.link.packet import packet_digest, packet_pairs_path
+from climate_finance.build.link.packet import packet_digest, read_packet_pairs
 
 PAIR = ["task", "left_id", "right_id"]
+# What a labeller saw of a BTR pair's sides; null for other tasks.
+DIGESTS = ["left_digest", "right_digest"]
+# The columns `read_decision_labels` gives: `pair_labels` with `stratified` and the
+# decision's fingerprints.
+DECISION_LABELS = schema.PAIR_LABELS.dtypes | {
+    "stratified": pl.Boolean(),
+    "left_digest": pl.String(),
+    "right_digest": pl.String(),
+}
 # A person's decision replaces the same person's decision on the same pair and draw.
 PERSON_KEY = [*PAIR, "sample_id", "reviewer", "label_source"]
 # A labels CSV's columns, and what its `label` says of a pair.
@@ -50,34 +59,63 @@ def _decided(labels: pl.DataFrame) -> pl.DataFrame:
     return labels.filter(pl.col("pair_label_source").is_in(schema.DECIDERS))
 
 
+def read_decisions(path: Path) -> pl.DataFrame:
+    """The review-decisions table at `path`, with the columns of
+    `schema.REVIEW_DECISIONS` a file written before them lacks set to null."""
+    decided = pl.read_parquet(path)
+    return decided.with_columns(
+        pl.lit(None, dtype=dtype).alias(name)
+        for name, dtype in schema.REVIEW_DECISIONS.dtypes.items()
+        if name not in decided.columns
+    ).select(list(schema.REVIEW_DECISIONS.columns))
+
+
 def read_decision_labels(path: Path) -> pl.DataFrame:
     """People's and agents' queue decisions at `path` as `pair_labels` rows with
-    source `human` or `agent`, one per pair, and none when nothing has been decided yet.
+    source `human` or `agent`, one per pair and fingerprint, and none when nothing
+    has been decided yet.
 
-    A pair's standing decision is the one `standing_decisions` keeps. A
+    A pair's standing decision is the one `standing_decisions` keeps among those
+    on the same fingerprints (`DIGESTS`), which a `btr_crs` decision carries and
+    `link.btr.current_decisions` checks against the release. A
     blind-sample decision (one with a `sample_id`) measures precision, so it is left
     out of the labels. `stratified` marks the decisions on calibration pairs, which
     `stratified_sample` drew, so only they take inverse-probability weights.
     """
-    columns = schema.PAIR_LABELS.dtypes | {"stratified": pl.Boolean()}
+    columns = DECISION_LABELS
     if not path.exists():
         return pl.DataFrame(schema=columns)
     decided = (
-        pl.read_parquet(path)
+        read_decisions(path)
         .filter(pl.col("sample_id").is_null())
         .drop_nulls("right_id")
     )
     return (
-        standing_decisions(decided, key=PAIR)
-        .sort(PAIR)
+        standing_decisions(decided, key=[*PAIR, *DIGESTS])
+        .sort([*PAIR, *DIGESTS], nulls_last=False)
         .select(
             *PAIR,
             is_match=pl.col("decision") == "accept",
             pair_label_source="label_source",
             stratified=pl.col("review_reason") == CALIBRATION_REASON,
+            left_digest="left_digest",
+            right_digest="right_digest",
         )
         .cast(columns)  # ty: ignore[invalid-argument-type]
     )
+
+
+def pair_decisions(labels: pl.DataFrame) -> pl.DataFrame:
+    """The decisions of `labels` (`read_decision_labels`) that hold pair by pair,
+    one row per pair.
+
+    Those are every task's but `btr_crs`. A `btr_crs` decision holds only on the
+    fingerprints it was made on, so `labels` can hold several for one pair; the
+    build reaches the one that matches the release through
+    `link.btr.current_decisions`. Other decisions carry no fingerprint, and
+    `read_decision_labels` keeps one per pair and fingerprint, so one per pair.
+    """
+    return labels.filter(pl.col("task") != "btr_crs")
 
 
 def standing_decisions(decided: pl.DataFrame, *, key: str | list[str]) -> pl.DataFrame:
@@ -247,6 +285,8 @@ def import_labels(
     A person's decision replaces that person's earlier decision on the same pair
     (and `sample_id`), so importing a changed or repeated answer leaves one row. An
     agent's decisions append, since each round stands as a decision of its own.
+    A decision keeps the digests of its sides that the pairs file holds, which a
+    BTR packet writes (`packet.btr_digests`).
 
     Args:
         packet: the packet the CSV answers (`packet.write_packet`).
@@ -279,7 +319,7 @@ def import_labels(
     label_round = (label_round or "label") if agent else None
     if label_round is not None and label_round not in schema.LABEL_ROUNDS:
         raise ReviewDecisionsError(f"round must be one of {schema.LABEL_ROUNDS}")
-    pairs = pl.read_parquet(packet_pairs_path(packet))
+    pairs = read_packet_pairs(packet)
     if pairs["packet_sha256"].unique().to_list() != [packet_digest(packet)]:
         raise ReviewDecisionsError(
             f"{packet} changed since its pairs were written; render it again"
@@ -337,6 +377,8 @@ def import_labels(
             review_reason="review_reason",
             sample_id="sample_id",
             decided_at=pl.lit(datetime.now(UTC)),
+            left_digest="left_digest",
+            right_digest="right_digest",
         )
         .select(
             pl.col(name).cast(dtype)
@@ -352,7 +394,7 @@ def import_labels(
         )
     schema.validate(schema.REVIEW_DECISIONS, new)
     if decisions_path.exists():
-        earlier = pl.read_parquet(decisions_path)
+        earlier = read_decisions(decisions_path)
         if not agent:
             earlier = earlier.join(
                 new.select(PERSON_KEY),
