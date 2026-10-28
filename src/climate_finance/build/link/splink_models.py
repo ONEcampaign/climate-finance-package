@@ -60,7 +60,6 @@ import splink.comparison_level_library as cll
 import splink.comparison_library as cl
 from sklearn.isotonic import IsotonicRegression
 from splink import DuckDBAPI, Linker, SettingsCreator
-from splink.blocking_rule_library import CustomRule
 
 # Splink's own reading of a comparison gives each level's number and the m it
 # scores with. Splink is pinned below 6.
@@ -96,14 +95,14 @@ _SAME_PN = f"{_LATER} and l.pn_norm = r.pn_norm and l.pn_freq <= {MAX_PN_UNITS}"
 _SAME_TITLE = (
     f"{_LATER} and l.title_norm = r.title_norm and l.title_freq <= {MAX_TITLE_UNITS}"
 )
+# A line filed under several purposes pairs once with a record that shares any of
+# them. Splink's EM refuses a rule that explodes a list column, so the session joins
+# on the recipient and filters on the overlap.
 _SAME_PLACE = (
     f"{_LATER} and l.recipient_code = r.recipient_code "
-    "and l.purpose_codes = r.purpose_codes"
+    "and list_has_any(l.purpose_codes, r.purpose_codes)"
 )
 EM_RULES = (_SAME_PN, _SAME_TITLE, _SAME_PLACE)
-# The list columns a rule joins on element by element, each pair once: a line filed
-# under several purposes pairs once with a record that shares any of them.
-EXPLODED = {_SAME_PLACE: ("purpose_codes",)}
 # Deterministic rules for the prior, and the share of id-truth continuations they
 # found on the prototype's 2021 to 2022 training half (7,759 pairs). The prior moves
 # only the raw EM probability, since the isotonic map reads the match weight and a
@@ -447,22 +446,6 @@ def _model(
     )
 
 
-def _blocked_pairs_sql(rule: str) -> str:
-    """SQL counting the distinct pairs `rule` blocks, each `EXPLODED` list column
-    unnested on both sides."""
-    columns = EXPLODED.get(rule, ())
-    if not columns:
-        return f"select count(*) from {LEFT} l join {RIGHT} r on {rule}"
-    unnest = ", ".join(f"unnest({name}) as {name}" for name in columns)
-    sides = {
-        table: f"(select * replace ({unnest}) from {table})" for table in (LEFT, RIGHT)
-    }
-    return (
-        "select count(*) from (select distinct l.unique_id, r.unique_id "
-        f"from {sides[LEFT]} l join {sides[RIGHT]} r on {rule})"
-    )
-
-
 def _count(con: duckdb.DuckDBPyConnection, sql: str) -> int:
     row = con.sql(sql).fetchone()
     assert row is not None
@@ -555,18 +538,13 @@ def _fit(
     )
     model = linker.misc.save_model_to_json()
     for rule in EM_RULES:
-        blocked = _count(con, _blocked_pairs_sql(rule))
+        blocked = _count(con, f"select count(*) from {LEFT} l join {RIGHT} r on {rule}")
         report.sessions[rule] = blocked
         if blocked < MIN_EM_PAIRS:
             continue
-        exploded = EXPLODED.get(rule)
         try:
             linker.training.estimate_parameters_using_expectation_maximisation(
-                rule
-                if exploded is None
-                else CustomRule(
-                    rule, sql_dialect="duckdb", arrays_to_explode=list(exploded)
-                ),
+                rule,
                 max_pairs=EM_MAX_PAIRS,
                 record_sample_proportion=EM_RECORD_SAMPLE_PROPORTION,
             )

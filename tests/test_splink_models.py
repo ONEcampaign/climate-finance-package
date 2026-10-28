@@ -721,5 +721,8 @@ def test_the_purpose_session_counts_a_line_once() -> None:
         )
         con.register("_frame", frame)
         con.sql(f"create table {name} as select * from _frame")
-    sql = splink_models._blocked_pairs_sql(splink_models.EM_RULES[-1])
+    left, right = splink_models.LEFT, splink_models.RIGHT
+    sql = (
+        f"select count(*) from {left} l join {right} r on {splink_models.EM_RULES[-1]}"
+    )
     assert con.sql(sql).fetchone() == (1,)

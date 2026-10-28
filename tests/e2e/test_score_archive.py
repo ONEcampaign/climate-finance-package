@@ -51,15 +51,15 @@ ECE_FLOOR = 0.05
 ECE_BINS = 10
 # 2021 to 2022 climate value in USD bn that the classifier's links move between
 # statuses with `sibling_lines` counted over the candidate pairs' units, what
-# counting it over every link-stage unit adds, and what one pair per purpose-split
-# line (`purpose_units`) adds.
+# counting it over every link-stage unit adds, and what one unit per line
+# (`build_units`) adds.
 CLASSIFIER_MOVED_BN = {
     "disbursed": 0.00301,
     "partly_disbursed": 0.00336,
     "no_disbursement_record": -0.00637,
 }
 SIBLING_LINES_MOVED_BN = {"disbursed": -0.00261, "partly_disbursed": 0.00262}
-PURPOSE_UNITS_MOVED_BN = {"disbursed": -0.00011, "partly_disbursed": 0.00010}
+LINE_UNITS_MOVED_BN = {"disbursed": -0.00011, "partly_disbursed": 0.00010}
 _CATEGORY = {
     "DAC member": "bilateral",
     "Non-DAC member": "bilateral",
@@ -200,23 +200,23 @@ def test_the_classifier_meets_its_targets_on_the_prototype_years(
     # which refits the best threshold. Template lines (`template_lines`) leave the
     # training pairs, which refits it again. Truth starts in `FIRST_MEASURED_YEAR`,
     # and the classifier reads how many sibling lines a commitment has
-    # (`sibling_lines`, counted over every link-stage unit), and a disbursement
-    # pairs with a purpose-split line once (`purpose_units`), which refits it to
-    # 0.45. Pairs link at the fixed cut of 0.40, whatever the best threshold.
+    # (`sibling_lines`, counted over every link-stage unit), and a line filed under
+    # several purposes is one unit (`build_units`), which refits it to 0.41. Pairs
+    # link at the fixed cut of 0.40, whatever the best threshold.
     assert threshold == 0.40
-    assert scores.best_threshold == 0.45
+    assert scores.best_threshold == 0.41
     assert prototype["f1"] >= F1_TARGET
     assert every_year["ece"] <= ECE_TARGET
     # Commitments from 2010 train the classifier, and their projects commit more
-    # sibling lines than later ones, which `sibling_lines` lets it weigh. A
-    # disbursement pairs with a purpose-split line once (`purpose_units`), so the
-    # held-out pairs hold no false sibling of Canada's purpose units.
+    # sibling lines than later ones, which `sibling_lines` lets it weigh. A line
+    # filed under several purposes is one unit, so the held-out pairs hold no false
+    # sibling of a Canadian line's other purposes.
     assert every_year == pytest.approx(
-        {"precision": 0.94153, "recall": 0.93856, "f1": 0.94004, "ece": 0.01086},
+        {"precision": 0.94081, "recall": 0.94234, "f1": 0.94157, "ece": 0.00587},
         abs=1e-5,
     )
     assert prototype == pytest.approx(
-        {"precision": 0.94783, "recall": 0.94831, "f1": 0.94807, "ece": 0.00952},
+        {"precision": 0.95538, "recall": 0.95505, "f1": 0.95521, "ece": 0.01074},
         abs=1e-5,
     )
 
@@ -237,27 +237,27 @@ def test_held_out_figures_by_provider_class(
         # The UK's lettered copies carry their line's id (`line_id`) and count as
         # true. The class frames hold every commitment year that trains, from 2010.
         "bilateral": pytest.approx(
-            {"precision": 0.92907, "recall": 0.92108, "f1": 0.92505, "ece": 0.00935},
+            {"precision": 0.92392, "recall": 0.92360, "f1": 0.92376, "ece": 0.00537},
             abs=1e-5,
         ),
         # Private donors write a line suffix with and without zero padding, which
         # `line_id` reads as one line.
         "private": pytest.approx(
-            {"precision": 0.98656, "recall": 0.99612, "f1": 0.99132, "ece": 0.03245},
+            {"precision": 0.99212, "recall": 0.99506, "f1": 0.99359, "ece": 0.02108},
             abs=1e-5,
         ),
         "banks": pytest.approx(
-            {"precision": 0.95455, "recall": 0.98438, "f1": 0.96923, "ece": 0.01236},
+            {"precision": 0.99206, "recall": 0.97656, "f1": 0.98425, "ece": 0.01695},
             abs=1e-5,
         ),
         # The class's held-out pairs are the Adaptation Fund's. Truth follows its
         # renumbered projects by title (`carried_continuations`). The fund files
-        # each project as one unit per purpose, and one pair per purpose-split line
-        # (`purpose_units`) leaves it 91 true and 18 false training pairs, under
-        # `MIN_CALIBRATION_PAIRS`, so its pairs take the pooled map. 46 of its 95
-        # true disbursement units link, and 1 of its 47 links is false.
+        # a project's line under several purposes, which is one unit
+        # (`build_units`), and leaves it 35 true and 12 false training pairs, under
+        # `MIN_CALIBRATION_PAIRS`, so its pairs take the pooled map. 20 of its 56
+        # true disbursement units link, and none of its 20 links is false.
         "other_multilateral": pytest.approx(
-            {"precision": 0.97872, "recall": 0.48421, "f1": 0.64789, "ece": 0.43384},
+            {"precision": 1.0, "recall": 0.35714, "f1": 0.52632, "ece": 0.53803},
             abs=1e-5,
         ),
     }
@@ -282,21 +282,23 @@ def test_the_link_stage_writes_the_classifier_links_and_profile(
     # The key tiers (the date tier and the purpose tier's own guard) and key repair
     # take units the classifier would otherwise link, and the private-donor rule
     # (`confirmable_pairs`) drops some of donor 1624's pairs. Commitments from 2000
-    # are candidates, and 931 of the links have a commitment from before 2015.
+    # are candidates, and 990 of the links have a commitment from before 2015.
     # Counted over the candidate pairs' units, `sibling_lines` gives 1,520 links;
-    # counted over every link-stage unit, it gives 104 more, and one pair per
-    # purpose-split line (`purpose_units`) takes 82.
-    assert written.height == 1_520 + 104 - 82
-    # The AsDB (915) has 255 commitments in eligible pairs, under
-    # `SPLINK_MIN_COMMITMENTS`, and scores with the pooled model. `template_lines`
-    # takes every eligible pair of the Development Bank of Latin America and the New
-    # Development Bank. Commitments from 2000 give the EBRD (990) 404 commitments, a
-    # model of its own, and the United Arab Emirates (576) 51 true training pairs,
-    # a place in the truth group.
+    # counted over every link-stage unit, it gives 104 more, and one unit per line
+    # (`build_units`) takes 270.
+    assert written.height == 1_520 + 104 - 270
+    # The AsDB (915) has 179 commitments in eligible pairs, under
+    # `SPLINK_MIN_COMMITMENTS`, and scores with the pooled model, as does donor 988,
+    # whose 1,881 eligible pairs fall under `SPLINK_MIN_PAIRS`. Portugal (76) has 26
+    # true training pairs and no eligible pair. `template_lines` takes every
+    # eligible pair of the Development Bank of Latin America and the New Development
+    # Bank. Commitments from 2000 give the EBRD (990) 404 commitments, a model of its
+    # own, and the United Arab Emirates (576) 50 true training pairs, a place in the
+    # truth group.
     assert groups == {
-        "truth": 26,
-        "splink": 5,
-        "pooled_splink": 34,
+        "truth": 25,
+        "splink": 4,
+        "pooled_splink": 36,
     }
 
 
@@ -346,11 +348,11 @@ def test_classifier_links_move_statuses(
     expected = {
         status: CLASSIFIER_MOVED_BN.get(status, 0.0)
         + SIBLING_LINES_MOVED_BN.get(status, 0.0)
-        + PURPOSE_UNITS_MOVED_BN.get(status, 0.0)
+        + LINE_UNITS_MOVED_BN.get(status, 0.0)
         for status in schema.STATUSES
     }
     print({"moved": moved, "expected": expected}, flush=True)
 
     assert sum(moved.values()) == pytest.approx(0.0, abs=1e-9)
-    # 121 of the classifier's 1,542 links reach a 2021 or 2022 commitment.
+    # 53 of the classifier's 1,354 links reach a 2021 or 2022 commitment.
     assert moved == pytest.approx(expected, abs=1e-5)

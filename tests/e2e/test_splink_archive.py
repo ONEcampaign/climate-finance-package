@@ -54,8 +54,9 @@ PAIRS_MOVED = {
     # providers' disbursements also pair with earlier commitments: 804,454 pairs
     # have a commitment from before 2015, 795,740 of them the US's.
     "commitments from 2000": 804_639,
-    # A disbursement pairs with a purpose-split line once (`purpose_units`).
-    "one pair per purpose-split line": -3_584,
+    # A line filed under several purposes is one unit (`build_units`), so a
+    # disbursement pairs with it once.
+    "one unit per line": -4_100,
 }
 _LABELS = {
     name: column.dtype for name, column in schema.PAIR_LABELS.columns.items()
@@ -107,20 +108,22 @@ def test_without_decisions_splink_only_asks_for_calibration_labels(
     queued = scores.filter(review_reason=CALIBRATION_REASON).group_by("model").len()
     assert set(queued["len"]) == {CALIBRATION_LABELS}
     assert set(scores["review_reason"].drop_nulls()) == {CALIBRATION_REASON}
-    # The archive build: 39 providers outside the truth group and six usable models
-    # (USA, four more providers of their own and the pooled model). The pairs are
-    # those providers' eligible candidates, blocked on trimmed ids and on project
-    # numbers with rounded ones null, less the disbursements the key tiers link. The
-    # GEF reuses a crs id across projects, so `crs_key` leaves most of its
-    # disbursements to scoring. Its own model then completes one EM session, its
-    # project numbers block one pair and EM drives a recipient-and-purpose m to zero,
-    # so it joins the pooled model. `template_lines` takes every pair of the
-    # Development Bank of Latin America and the New Development Bank. Commitments
-    # from 2000 give the EBRD (990) 527 commitments, over `SPLINK_MIN_COMMITMENTS`,
-    # and a model of its own.
-    assert len(providers) == 39
+    # The archive build: 40 providers outside the truth group and five usable models
+    # (USA, three more providers of their own and the pooled model). Portugal (76) has
+    # 26 true training pairs, under `MIN_TRUE_PAIRS`, and leaves the truth group. The
+    # pairs are those providers' eligible candidates, blocked on trimmed ids and on
+    # project numbers with rounded ones null, less the disbursements the key tiers link.
+    # The GEF reuses a crs id across projects, so `crs_key` leaves most of its
+    # disbursements to scoring. Its own model then completes one EM session, its project
+    # numbers block one pair and EM drives a recipient-and-purpose m to zero, so it
+    # joins the pooled model. `template_lines` takes every pair of the Development Bank
+    # of Latin America and the New Development Bank. Commitments from 2000 give the EBRD
+    # (990) 527 commitments, over `SPLINK_MIN_COMMITMENTS`, but its title session ends
+    # with an m of zero and its recipient-and-purpose session with an m of one, so it
+    # joins the pooled model.
+    assert len(providers) == 40
     assert scores.height == SPLINK_PAIRS + sum(PAIRS_MOVED.values())
-    assert queued.height == 6
+    assert queued.height == 5
 
 
 def test_two_runs_give_the_same_scores(tables: LinkTables, tmp_path: Path) -> None:

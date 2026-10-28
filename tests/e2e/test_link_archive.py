@@ -108,6 +108,12 @@ KEY_RULES_LINKED_USD = {
     # `unique_by` already reaches each component in the purpose tier, so the split
     # only stops links across components, 0.86bn of them US awards.
     "component awards": -0.887649091e9,
+    # A line filed under several purposes is one unit (`build_units`), and its
+    # purposes join the purpose groups of its award (`purpose_group`), so no tier
+    # finds one commitment for it. 10.81bn is the AsDB's: a technical-assistance
+    # disbursement line spans the purposes its award commits under separate crs
+    # ids. Key repair links 11.57bn of the AsDB's 12.19bn under new crs ids.
+    "one unit per line": -11.087756573e9,
 }
 _PERIOD_KEY = ["donor_code", "agency_code", "period"]
 # The CRS years the tests normalise; the first is the first year they load.
