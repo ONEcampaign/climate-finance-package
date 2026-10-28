@@ -245,4 +245,4 @@ def load_config(path: Path) -> BuildConfig:
     try:
         return BuildConfig.model_validate(raw, context={"root": path.parent})
     except ValidationError as error:
-        raise ConfigError(f"{path}: {error}") from error
+        raise ConfigError(f"{path}: {error}") from None

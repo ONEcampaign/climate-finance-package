@@ -1168,6 +1168,27 @@ def test_a_refusal_prints_its_causes_and_the_traceback_on_request(
     assert isinstance(full.exception.__cause__, json.JSONDecodeError)
 
 
+def test_a_malformed_index_is_refused_in_one_line_without_pydantics_dump(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pack = release.pack_release(
+        gated(built_release(tmp_path / RELEASE)), out_path=tmp_path / PACK
+    )
+    index = {"latest": "2025b", "releases": {}}
+    github = FakeGitHub({publish.INDEX_ASSET: json.dumps(index).encode()})
+    monkeypatch.setattr(publish, "run_gh", github)
+
+    refused = CliRunner().invoke(app, ["publish", str(pack)])
+
+    assert refused.exit_code == 1
+    assert "caused by" not in refused.output
+    assert "validation error" not in refused.output
+    assert (
+        sum("PublishedIndexError: " in line for line in refused.output.splitlines())
+        == 1
+    )
+
+
 def test_gh_missing_is_a_build_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PATH", "")
 
