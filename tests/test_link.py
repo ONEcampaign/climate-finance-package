@@ -156,8 +156,8 @@ def test_a_disbursement_takes_one_unit_of_a_purpose_split_line() -> None:
             (41010, None, "c_41010", None),
             (41020, None, "c_41020", "c_41020"),
             (None, None, "c_none", "c_none"),
-            # The largest reached commitment of each category, then of the line,
-            # which a unit with no purpose can be.
+            # The largest reached commitment of each category, then of the line
+            # (a unit with no purpose can be the line's).
             (None, 232, None, "c_23210"),
             (None, 151, None, "c_15110"),
             (None, 410, None, "c_41020"),

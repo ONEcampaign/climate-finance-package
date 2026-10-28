@@ -277,15 +277,17 @@ def line_units(units: pl.DataFrame, *, reached: pl.Series) -> pl.DataFrame:
     cannot tell from the true one, so a disbursement pairs with the line once
     (`pair_line_units`).
 
-    One row per commitment unit of a line (`unit_id`), with its purpose code and
-    its `pick`: the unit itself where it is among `reached`, as the
-    `crs_id_purpose` tier links, else null, since it carries no climate finance
-    and the disbursement keeps no pair on the line. A unit with no purpose code is
-    no disbursement's own unit. Then the fallback rows, whose `unit_id` is null:
-    for a disbursement whose purpose code the line lacks, one row per three-digit
-    `purpose_category` of a reached unit, picking the largest reached commitment of
-    the category, and one default row, with both null, picking the largest reached
-    commitment, or null where none is reached. Ties go to the smaller unit id.
+    The table has one row per commitment unit of a line (`unit_id`), with its
+    purpose code and its `pick`. The pick is the unit itself where it is among
+    `reached`, as the `crs_id_purpose` tier links, and otherwise null, because an
+    unreached unit carries no climate finance and the disbursement keeps no pair on
+    the line. A unit with no purpose code is no disbursement's own unit.
+
+    Fallback rows have a null `unit_id` and serve a disbursement whose purpose code
+    the line lacks. There is one row per three-digit `purpose_category` of a
+    reached unit, picking the largest reached commitment of the category, and one
+    default row, with both null, picking the line's largest reached commitment, or
+    null where none is reached. Ties go to the smaller unit id.
 
     Args:
         units: the link stage's units.
