@@ -586,16 +586,16 @@ def test_low_bounds_keep_only_what_certain_links_carried(
     rows = allocate_to_rows(pairs, crdf=crdf, units=units, crs=crs, links=links)
     routed = route == "within_year"
     got = {
-        row: (allocated, low, high)
-        for row, allocated, low, high in rows.select(
-            "row_id", "allocated_usd", "allocated_low_usd", "allocated_high_usd"
+        row: (allocated, low)
+        for row, allocated, low in rows.select(
+            "row_id", "allocated_usd", "allocated_low_usd"
         ).iter_rows()
     }
     assert got == pytest.approx(
         {
-            "c19": (100.0, 100.0 if routed and not disagree else 0.0, 100.0),
-            "cB": (50.0, 0.0, 50.0),
-            "s20": (30.0, 30.0 if routed else 0.0, 30.0),
+            "c19": (100.0, 100.0 if routed and not disagree else 0.0),
+            "cB": (50.0, 0.0),
+            "s20": (30.0, 30.0 if routed else 0.0),
         }
     )
 
@@ -925,7 +925,6 @@ def allocations(**amounts: float) -> pl.DataFrame:
             "year": pl.Series([2022] * len(amounts), dtype=pl.Int16),
             "allocated_usd": list(amounts.values()),
             "allocated_low_usd": list(amounts.values()),
-            "allocated_high_usd": list(amounts.values()),
             "rule": ["fifo"] * len(amounts),
             "disbursement_source": ["crs"] * len(amounts),
         }
@@ -1107,7 +1106,6 @@ def _status_bits(rng: np.random.Generator) -> bytes:
             "year": np.full(rows.size, 2022, dtype=np.int16),
             "allocated_usd": amounts,
             "allocated_low_usd": amounts,
-            "allocated_high_usd": amounts,
             "rule": "fifo",
         }
     )
@@ -1163,8 +1161,8 @@ def test_status_sums_a_rows_allocations_in_ascending_order() -> None:
     status = compute_status(
         commitments=basis(r=(1.0, True, False)), allocations=table
     ).collect()
-    amounts = ("disbursed_usd", "disbursed_low_usd", "disbursed_high_usd")
-    assert status.select(amounts).row(0) == (ascending,) * 3
+    amounts = ("disbursed_usd", "disbursed_low_usd")
+    assert status.select(amounts).row(0) == (ascending,) * 2
 
 
 def test_years_since_commitment_accumulates_by_record_year() -> None:
@@ -1414,7 +1412,6 @@ def test_allocated_plus_undisbursed_equals_climate_value(
     assert (total - check["climate_usd"]).abs().max() < TOLERANCE
     assert (check["disbursed_usd"] - check["face_usd"]).max() < TOLERANCE
     assert (check["disbursed_low_usd"] <= check["disbursed_usd"]).all()
-    assert (check["disbursed_usd"] <= check["disbursed_high_usd"]).all()
     assert (check["disbursed_low_usd"] >= 0).all()
 
 

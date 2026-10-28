@@ -10,10 +10,10 @@ converts it, and sums the rows into the result table. Rows have one of six origi
   times allocated_usd over the record's disbursement, which for a grant the CRS
   gives none is its disbursement, as `normalise_crs` builds it),
   weighted by the markers and climate share it inherits from that commitment. `low`
-  and `high` weight the allocation's own bounds, `allocated_low_usd` and
-  `allocated_high_usd`, converted to grant equivalents the same way: `low` counts
-  what certain links carried (`schema.CERTAIN_METHODS`) to rows reached by certain
-  routes (`schema.CERTAIN_ROUTES`), and `high` everything allocated.
+  weights the allocation's low bound, `allocated_low_usd`, converted to grant
+  equivalents the same way, and counts what certain links carried
+  (`schema.CERTAIN_METHODS`) to rows reached by certain routes
+  (`schema.CERTAIN_ROUTES`). `high` is the value, everything allocated.
 - `untraced`: a Rio-marked CRS record's disbursement that reaches no commitment
   (`untraced_usd`), the excess beyond a full commitment or the whole of a record
   linked to none, converted to grant equivalents as a disbursement is. It weighs by
@@ -1253,7 +1253,7 @@ def _base_rows(
             origin=pl.lit("disbursement"),
             amount=allocated * factor,
             amount_low=pl.col("allocated_low_usd") * factor,
-            amount_high=pl.col("allocated_high_usd") * factor,
+            amount_high=allocated * factor,
             no_grant_equivalent_usd=pl.when(missing).then(allocated),
             rio_adaptation=pl.col("inherited_rio_adaptation"),
             rio_mitigation=pl.col("inherited_rio_mitigation"),
