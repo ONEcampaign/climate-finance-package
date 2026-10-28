@@ -33,7 +33,7 @@ Cutting a release requires a source checkout with the `build` extra, the reposit
    cf-build gate releases/2026a --sample sample --previous releases/2025a --report
    ```
 
-   The command prints every row, and without `--report` exits with status 1 when a row fails. Each precision row shows the number of labels read and the sequential rule's verdict: `pass`, `fail`, or `continue`. Label the next batch for every provider marked `continue`. A `fail` means the sample puts that provider's precision below the threshold, which blocks the release unless waived with `--waive-precision`.
+   The command prints every row, and without `--report` exits with status 1 when a row fails. Each precision row shows the number of labels read and the sequential rule's verdict: `pass`, `fail`, or `continue`. Label the next batch for every provider marked `continue`, and for every provider whose `stratum_precision` row fails as `no_stratum_draws` or `too_few_draws`, even when its precision row passed. A stratum that takes the minimum of 50 draws has its draws spread over the whole sequence, so it reaches 50 only near the cap of 500. A `fail` means the sample puts that provider's precision below the threshold, which blocks the release unless waived with `--waive-precision`.
 
 5. Cut the release. `release` builds, runs the gates, and packs the archive, stopping with `GateFailedError` if any gate fails. The build reads the review decisions, which hold the sample's labels, so `release` runs every stage. When an earlier build of the release fetched its sources, the build reuses them, so the release comes from the sources the sample was drawn on, and Jev answers the questions the new labels raise. `--no-offline` fetches afresh, and a source that changed makes the sample stale. `--offline` refuses all network access, Jev included.
 
@@ -41,7 +41,7 @@ Cutting a release requires a source checkout with the `build` extra, the reposit
    cf-build release 2026a --config build.toml --out-dir releases --sample sample --previous releases/2025a
    ```
 
-   The command writes `releases/climate-finance-2026a.tar.zst` and records the gate rows in `release.json`. To pack with failed precision or human-audit gates, pass `--waive-precision` with the reason. The flag marks the failed rows `waived`, sets `precision_gate_waived` in `release.json`, which surfaces in `release.quality().precision`, and records the reason as `precision_waiver`.
+   The command writes `releases/climate-finance-2026a.tar.zst` and records the gate rows in `release.json`. To pack with failed precision, stratum-precision, or human-audit gates, pass `--waive-precision` with the reason. The flag marks the failed rows `waived`, sets `precision_gate_waived` in `release.json`, which surfaces in `release.quality().precision`, and records the reason as `precision_waiver`.
 
 6. Publish the pack. Every pack and the release index, `releases.json`, are assets of one GitHub release tagged `data`, where `cf.load(refresh=True)` reads the index. The index maps each release name to its pack's URL, sha256, and data format, and names the latest release. Check the pack against the published index first, then publish it.
 

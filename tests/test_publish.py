@@ -673,6 +673,15 @@ def test_a_failed_gate_stops_cut_release_before_the_pack(
     [
         ({}, None, None),
         ({"human_audit": [PASSED | {"passed": False, "waived": True}]}, "late", None),
+        (
+            {
+                "stratum_precision": [
+                    PASSED | {"subject": "4/model", "passed": False, "waived": True}
+                ]
+            },
+            "late",
+            None,
+        ),
         ({"human_audit": [PASSED | {"passed": False}]}, None, "human_audit: failed"),
         (
             {"human_audit": [PASSED | {"passed": False, "waived": True}]},
@@ -710,7 +719,7 @@ def test_publish_takes_only_a_release_whose_gates_passed_or_were_waived(
 @pytest.mark.parametrize(
     ("omit", "emptied"),
     [
-        (set(gate.GATES) - {"precision", "human_audit"}, set()),
+        (set(gate.GATES) - set(gate.WAIVABLE), set()),
         ({"conservation"}, set()),
         ({"drift", "withheld_rows"}, set()),
         (set(), {"listed_codes"}),

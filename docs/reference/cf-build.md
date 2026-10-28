@@ -92,7 +92,7 @@ cf-build gate BUILD_DIR [--config build.toml] [--sample DIR] [--previous PATH] [
 
 Evaluates the [release gates](release-gates.md), prints one line per gate row, and exits with status 1 when a row fails.
 
-- `--sample` passes the sample directory that `sample` wrote. The gate reads the sample's labels from `sources.review_decisions` in the configuration and raises `ReviewDecisionsError` when that file is missing. Without `--sample`, every provider fails precision and the human audit fails.
+- `--sample` passes the sample directory that `sample` wrote. The gate reads the sample's labels from `sources.review_decisions` in the configuration and raises `ReviewDecisionsError` when that file is missing. Without `--sample`, every provider fails precision and every gated stratum fails stratum precision, and the human audit fails.
 - `--previous` sets the previous release for the drift gate: a pack, a release directory, or a build directory, read as `release` reads it, so `gate` previews the comparison the cut makes. A path that does not exist raises `BuildError`, and a file that is no pack raises `ReleaseIntegrityError`. The drift gate reads its causes from `drift_causes` in the configuration.
 - `--first-release` passes the drift gate when no previous release exists. `publish` refuses a release cut this way once the index lists a release.
 - `--report` exits with status 0 when a row fails.
@@ -113,7 +113,7 @@ cf-build release RELEASE [--config build.toml] [--out-dir releases] [--sample DI
 
 Builds, gates, and packs a release. The build runs every stage, since the review decisions it reads hold the blind sample's labels. It writes `<out-dir>/climate-finance-<RELEASE>.tar.zst`, which holds the release tables, `release.json` with the gate results, and `sources.json`. Members go in name order with fixed owners and the release's creation time, so one release packs to the same bytes.
 
-- `--waive-precision REASON` packs despite failed precision and human-audit gates, marks the failed rows `waived`, and records the waiver and `REASON` in `release.json` as `precision_gate_waived` and `precision_waiver`.
+- `--waive-precision REASON` packs despite failed precision, stratum-precision, and human-audit gates, marks the failed rows `waived`, and records the waiver and `REASON` in `release.json` as `precision_gate_waived` and `precision_waiver`.
 - `--offline` refuses network access, so fetch reuses the sources and Jev answers from its cache alone. `--no-offline` fetches afresh and lets Jev answer. Without either, the configuration's `offline` sets network access, and an earlier build of `RELEASE` in `--out-dir` that fetched its sources has fetch reuse them, so the release comes from the sources the blind sample was drawn on while Jev answers the questions new review decisions raise.
 - `--sample`, `--previous`, and `--first-release` act as in `gate`.
 

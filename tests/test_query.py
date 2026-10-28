@@ -2346,7 +2346,7 @@ def test_quality_prints_its_providers_years_and_summary() -> None:
     quality = SNAP.quality()
     title = (
         "Quality: 6 providers, 2021 to 2022; also .table .status .eu_left_out "
-        ".attribution .precision .untraced .repayments"
+        ".attribution .precision .stratum_precision .untraced .repayments"
     )
 
     assert repr(quality) == f"{title}\n{quality.summary()!r}"

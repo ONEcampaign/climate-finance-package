@@ -1230,8 +1230,9 @@ def cut_release(
     answers questions that review decisions made since raise.
 
     Args:
-        waive_precision: the reason to let the precision and human-audit gates
-            fail, recorded as `precision_waiver` with `precision_gate_waived` true.
+        waive_precision: the reason to let the precision, stratum-precision and
+            human-audit gates fail, recorded as `precision_waiver` with
+            `precision_gate_waived` true.
         offline: True refuses all network access, so fetch reuses the earlier
             sources and Jev answers from its cache alone. False fetches afresh and
             lets Jev answer.

@@ -79,7 +79,17 @@ quality = release.quality(providers=["Germany", "Japan"])
 
     Ungated releases, including the synthetic release, leave this table empty. For a published release, check that every provider you report has a row, that `passed` is true, and that `waived` is false. A wide interval means the provider has few labelled links, so its estimate is rough.
 
-    A provider's estimate covers all its allocated value, certain and estimated links together. Each stratum's estimate and interval sit beside it in `release.manifest.gates["precision"]`, under `strata`. Where a provider's figure rests on estimated links, read the `model` stratum as well as the provider's row.
+    A provider's estimate covers all its allocated value, certain and estimated links together. `quality.stratum_precision` gives each stratum of the sample a figure of its own, one row per provider and stratum: `ledger`, `key`, `model`, or `reviewed`. It adds the stratum's `allocated_usd` and the `labels` its estimate read. `passed`, `waived`, and `detail` are the stratum-precision gate's verdict and are null for a stratum the release does not gate.
+
+    ```python
+    print(quality.stratum_precision.columns)
+    ```
+
+    ```output
+    ['provider', 'provider_code', 'stratum', 'allocated_usd', 'labels', 'estimate', 'lower', 'upper', 'passed', 'waived', 'detail']
+    ```
+
+    Where a provider's figure rests on estimated links, read its `model` row as well as the provider's row. The release gates that stratum on its own lower bound.
 
 5. Check what a provider view omits. For provider-view totals, `quality.eu_left_out` holds the value of EU Institutions agencies' own rows omitted from the total because members' contributions stand in for them. `quality.attribution` holds the value attributed through core contributions by share source.
 
