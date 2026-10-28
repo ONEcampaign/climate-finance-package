@@ -4,14 +4,14 @@ Trace a figure from `spending()` to the projects and links behind it, and save t
 
 ## Before you start
 
-Load a release and run the query you want to trace. The examples follow Japan's 2023 disbursements on the synthetic test release, so their amounts are invented.
+Load a release and run the query you want to trace. The examples follow Japan's 2023 disbursements on the synthetic example release, so their amounts are invented. `cf.load()` opens the published release.
 
 ```python
 import polars as pl
 
 import climate_finance as cf
 
-release = cf.load()
+release = cf.load_example()
 result = release.spending(providers="Japan", years=[2023])
 ```
 
@@ -86,6 +86,29 @@ result = release.spending(providers="Japan", years=[2023])
     ```output
     [(248, 0.1), (666, 0.25)]
     ```
+
+## Read a row whose markers differ
+
+A disbursement row weighs by the Rio markers of its commitment, `rio_adaptation` and `rio_mitigation`, and keeps the CRS record's own markers beside them in `record_rio_adaptation` and `record_rio_mitigation`. `marker_source` says how the two relate. `components` rows weigh by the commitment's climate share, `commitment` rows have record markers equal to the commitment's, and `record_differs` rows carry other record markers. The commitment's marker counts in `value` for all three, so a `record_differs` row is climate finance because the donor marked the commitment, and the record may say otherwise. Read the source record before describing the project as climate action, especially where a later record of the line carries a marker lower than the commitment's.
+
+```python
+later = release.spending(providers="Japan", years=[2024]).rows(origin="disbursement")
+lower = later.filter(pl.col("record_rio_mitigation") < pl.col("rio_mitigation"))
+for row in lower.iter_rows(named=True):
+    print(
+        row["record_id"],
+        row["marker_source"],
+        row["rio_mitigation"],
+        row["record_rio_mitigation"],
+        round(row["value"] / 1e6, 1),
+    )
+```
+
+```output
+JPN-2-R2 record_differs 1 0 6.3
+```
+
+JPN-2's commitment marks mitigation significant (1), and its 2024 disbursement record marks it 0. The row still counts USD 6.3m, 40% of the USD 15.8m disbursed, under the commitment's marker. `result.rows(marker_source="record_differs")` lists every such row of a query, including first records that report no marker at all.
 
 ## Verify it worked
 

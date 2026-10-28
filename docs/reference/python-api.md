@@ -1,6 +1,6 @@
 # Python API
 
-Everything in version 2.0 imports from `climate_finance`, usually as `cf`. The examples run on the synthetic test release, so their amounts are invented. The names in `cf.__all__` form the public API, including `Quality` and `Reconciliation`, the return types of `quality()` and `reconcile()`, and `errors`, the module of the package's [error classes](#errors). [Migrating from 1.x](../migrating-from-1x.md) covers the deprecated 1.x names.
+Everything in version 2.0 imports from `climate_finance`, usually as `cf`. The examples run on the synthetic example release, so their amounts are invented, and `cf.load()` opens the published release. The names in `cf.__all__` form the public API, including `Quality` and `Reconciliation`, the return types of `quality()` and `reconcile()`, and `errors`, the module of the package's [error classes](#errors). [Migrating from 1.x](../migrating-from-1x.md) covers the deprecated 1.x names.
 
 ## `cf.load(release="latest", *, path=None, cache_dir=None, refresh=False)`
 
@@ -8,7 +8,7 @@ Opens a release and returns a `Release`.
 
 Parameters:
 
-- `release` (`str`, default `"latest"`). A release name from the release index, or `"latest"`. The index shipped in the wheel is empty until the first 2.0 release is published, so until then a call without `path` raises `UnknownNameError`, whose message names `cf.load(path=...)` and the package's GitHub releases page, where releases built with `cf-build release` are published.
+- `release` (`str`, default `"latest"`). A release name from the release index, or `"latest"`. The index shipped in the wheel is empty until the first 2.0 release is published, so until then a call without `path` raises `UnknownNameError`, whose message names `cf.load(path=...)`, `cf.load_example()`, and `cf.load(refresh=True)`, which reads the newest index online.
 - `path` (`str | Path | None`). A release directory on disk. When given, the function ignores the other arguments and downloads nothing.
 - `cache_dir` (`str | Path | None`). Where releases unpack. Defaults to the `CLIMATE_FINANCE_CACHE_DIR` environment variable, then `~/.cache/climate-finance`.
 - `refresh` (`bool`, default `False`). When `True`, reads the newest release index online, `releases.json` on the package's GitHub release tagged `data`. When `False`, reads the index shipped in the wheel, which lists the releases published before that version of the package. A release published later opens only with `refresh=True`.
@@ -26,26 +26,39 @@ Raises:
 ```python
 import climate_finance as cf
 
-release = cf.load()
+release = cf.load_example()
 print(release.manifest.release, release.manifest.package_version)
 ```
 
 ```output
-fixture 2.0.0.dev0
+synthetic-example 2.0.0.dev0
+```
+
+## `cf.load_example()`
+
+Opens the synthetic example release shipped in the wheel and returns a `Release`, with no download. Its amounts are invented. It holds six providers and a few commitments each, with every link method and commitment status the release tables name, so code written against it runs unchanged on a published release.
+
+```python
+example = cf.load_example()
+print(example.manifest.release)
+```
+
+```output
+synthetic-example
 ```
 
 ## `Release`
 
 Represents one release on disk. `release.path` is its directory and `release.manifest` is the parsed `release.json`.
 
-A release prints its name, the years its commitments and disbursements cover, and its table count, naming any table it withholds. The synthetic test release carries the reserved name `fixture` and prints `synthetic figures` beside it. `cf-build release` refuses to cut or publish a release of that name.
+A release prints its name, the years its commitments and disbursements cover, and its table count, naming any table it withholds. The synthetic example release carries the reserved name `synthetic-example` and prints `synthetic figures` beside it. `cf-build release` refuses to cut or publish a release of that name.
 
 ```python
 print(release)
 ```
 
 ```output
-Release('fixture', synthetic figures): commitments 2021 to 2022, disbursements 2021 to 2024; 20 tables
+Release('synthetic-example', synthetic figures): commitments 2021 to 2022, disbursements 2021 to 2024; 20 tables
 ```
 
 ### `Release.spending(*, providers, recipients, years, method, flow, view, currency, prices, oda_only, measure, untraced)`

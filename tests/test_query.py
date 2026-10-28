@@ -44,7 +44,13 @@ from climate_finance.query import (
 )
 from climate_finance.release import Release
 from climate_finance.result import AMOUNTS, BASIS, ROW_KEYS, ROW_VALUES, Result
-from climate_finance.schema import NET_FLOWS, REFLOW_BASES, ReleaseManifest
+from climate_finance.schema import (
+    NET_FLOWS,
+    REFLOW_BASES,
+    RELEASE_TABLES,
+    ReleaseManifest,
+    release_invariants,
+)
 from climate_finance.spec import Flow, Measure, Spec, SpecInputs, View
 from climate_finance.sums import ordered_sum
 
@@ -855,14 +861,14 @@ def test_bounds_follow_each_allocation_in_its_own_year() -> None:
     rows = SNAP.spending(flow="disbursements").rows(row_id="DEU-2").sort("year")
 
     # DEU-2: face 25m, half disbursed in three equal records. The 2022 record's
-    # parent-id link is certain; the 2023 and 2024 records' project-number links
-    # are estimated, so they leave the low bound. Each high bound is 1.05 times
-    # the allocation.
+    # parent-id link is certain. The 2023 and 2024 records' project-number links
+    # are estimated, so they leave the low bound. A gross flow's high bound is its
+    # value.
     value = rows["value"][0]
     assert rows["year"].to_list() == [2022, 2023, 2024]
     assert rows["value"].to_list() == pytest.approx([value] * 3)
     assert rows["low"].to_list() == pytest.approx([value, 0.0, 0.0])
-    assert rows["high"].to_list() == pytest.approx([value * 1.05] * 3)
+    assert rows["high"].to_list() == pytest.approx([value] * 3)
     # DEU-2 is Germany's only 2022 commitment. Under OECD its disbursements' value
     # is quality's disbursed climate value, low and high alike.
     oecd = SNAP.spending(flow="disbursements", method=OECD).rows(row_id="DEU-2")
@@ -872,22 +878,39 @@ def test_bounds_follow_each_allocation_in_its_own_year() -> None:
     )
 
 
-def test_a_zero_central_allocation_keeps_its_upper_bound(tmp_path: Path) -> None:
-    def zero_central(frame: pl.DataFrame) -> pl.DataFrame:
+def test_a_record_that_allocates_nothing_has_no_allocation_weight(
+    tmp_path: Path,
+) -> None:
+    # DEU-1-R0's certain 12.7m, a third of 95% of DEU-1's 40m face, drops to zero
+    # in every bound, and DEU-1's disbursed amounts with it, as a bank-ledger or
+    # IATI fill of zero allocates nothing.
+    allocated = 40e6 * 0.95 / 3
+    bounds = ("allocated_usd", "allocated_low_usd", "allocated_high_usd")
+
+    def zero_record(frame: pl.DataFrame) -> pl.DataFrame:
         record = pl.col("record_id") == "DEU-1-R0"
         return frame.with_columns(
             pl.when(record).then(0.0).otherwise(pl.col(name)).alias(name)
-            for name in ("allocated_low_usd", "allocated_usd")
+            for name in bounds
         )
 
-    release = copy_release(tmp_path / "release", edits={"disbursements": zero_central})
-    row = cf.load(path=release).spending().rows(record_id="DEU-1-R0")
+    def less_disbursed(frame: pl.DataFrame) -> pl.DataFrame:
+        row = pl.col("row_id") == "DEU-1"
+        return frame.with_columns(
+            pl.when(row).then(pl.col(name) - allocated).otherwise(pl.col(name))
+            for name in ("disbursed_usd", "disbursed_low_usd", "disbursed_high_usd")
+        )
 
-    # DEU-1 is principal-marked, so the 13.3m upper allocation counts in full. The
-    # record allocates nothing at the centre, so its allocation weight is unknown.
-    assert row.select("value", "low", "high").row(0) == pytest.approx(
-        (0.0, 0.0, 13.3e6)
+    path = copy_release(
+        tmp_path / "release",
+        edits={"disbursements": zero_record, "commitments": less_disbursed},
     )
+    release = cf.load(path=path)
+    tables = {name: release.table(name).collect() for name in RELEASE_TABLES}
+    row = release.spending().rows(record_id="DEU-1-R0")
+
+    assert release_invariants(tables) == []
+    assert row.select("value", "low", "high").row(0) == (0.0, 0.0, 0.0)
     assert row["allocation_weight"].to_list() == [None]
 
 

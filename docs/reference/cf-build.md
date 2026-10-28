@@ -117,7 +117,7 @@ Builds, gates, and packs a release. The build runs every stage, since the review
 - `--offline` refuses network access, so fetch reuses the sources and Jev answers from its cache alone. `--no-offline` fetches afresh and lets Jev answer. Without either, the configuration's `offline` sets network access, and an earlier build of `RELEASE` in `--out-dir` that fetched its sources has fetch reuse them, so the release comes from the sources the blind sample was drawn on while Jev answers the questions new review decisions raise.
 - `--sample`, `--previous`, and `--first-release` act as in `gate`.
 
-The command raises `GateFailedError` when a gate fails. Before it builds, it raises `UnpublishedSettingsError` when the configuration sets a switch a published release does not use, and `SyntheticReleaseError` when `RELEASE` is `fixture`, the name reserved for the synthetic test release. `publish` refuses such packs with the same errors. It raises `BuildError` when a source lacks a licence entry.
+The command raises `GateFailedError` when a gate fails. Before it builds, it raises `UnpublishedSettingsError` when the configuration sets a switch a published release does not use, and `SyntheticReleaseError` when `RELEASE` is `synthetic-example`, the name reserved for the synthetic release `cf.load_example()` opens. `publish` refuses such packs with the same errors. It raises `BuildError` when a source lacks a licence entry.
 
 ## `cf-build publish`
 

@@ -1,6 +1,6 @@
 # climate-finance documentation
 
-climate-finance 2.0 returns international public climate finance from OECD and UNFCCC data. Each figure traces to its project records and carries a low and a high bound. Install the package with `pip install climate-finance`.
+climate-finance 2.0 returns international public climate finance from OECD and UNFCCC data. Each figure traces to its project records and carries a low and a high bound. Install the package with `pip install "climate-finance>=2"`.
 
 ## Learn
 
@@ -11,6 +11,7 @@ climate-finance 2.0 returns international public climate finance from OECD and U
 - [How to trace a figure](how-to/trace-a-figure.md) lists the projects and links behind a number, and saves the query to rerun.
 - [How to check link quality](how-to/check-link-quality.md) covers link rates, status, certain share, and measured precision.
 - [How to compare gross and net climate finance](how-to/compare-gross-and-net-climate-finance.md) subtracts repayments from disbursements and checks how much of them the subtraction reaches.
+- [How to compute one climate share across several keys](how-to/climate-share-across-keys.md) divides the combined climate value by the combined disbursements, including keys with no climate row.
 - [How to review links](how-to/review-links.md) shows release managers how a person or an agent decides the pairs a build queued.
 - [How to label the blind sample](how-to/label-the-blind-sample.md) serves a local page on which a person decides their share of the sample.
 - [How to reconcile a party's BTR report with OECD data](how-to/reconcile-with-btr.md)

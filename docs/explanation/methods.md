@@ -75,14 +75,14 @@ EU Institutions' totals for `share_of_total()` hold the same rows as their amoun
 
 ## Comparing methods
 
-The examples on this page run on the synthetic test release, so their amounts are invented.
+The examples on this page run on the synthetic example release, so their amounts are invented, and `cf.load()` opens the published release.
 
 The same query under each named method shows what the weights change. OECD counts significant markers at 100% where ONE counts them at 40%, so it gives the larger total. PROVIDER differs from ONE for providers whose stated coefficients differ from 0.4 and 1.0.
 
 ```python
 import climate_finance as cf
 
-release = cf.load()
+release = cf.load_example()
 methods = {
     "ONE": cf.methods.ONE,
     "OECD": cf.methods.OECD,
@@ -205,7 +205,7 @@ Coefficients apply in the year of the repayment. Under `PROVIDER`, a repayment w
 
 Under `view="provider"`, bilateral repayments subtract and pass through the same once-only rule for EU Institutions as gross rows. Attributed core contributions count as disbursements in a net flow, since a core contribution is not repaid.
 
-Germany's repayments in the test release show the split. Of the USD 5.0m of principal it repaid in 2022, USD 4.0m reaches a commitment and the other USD 1.0m ties to no loan. All USD 4.0m repaid in 2023 falls on bases that no total counts.
+Germany's repayments in the example release show the split. Of the USD 5.0m of principal it repaid in 2022, USD 4.0m reaches a commitment and the other USD 1.0m ties to no loan. All USD 4.0m repaid in 2023 falls on bases that no total counts.
 
 ```python
 net = release.spending(

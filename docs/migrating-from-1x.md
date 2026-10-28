@@ -5,19 +5,22 @@ In climate-finance 1.2.3, `ClimateData` downloaded OECD files, matched them, and
 ## Before you start
 
 - Python 3.12 or later.
-- `pip install climate-finance`. `result.table` is a polars DataFrame, and its `to_pandas()` needs pandas, which `pip install "climate-finance[pandas]"` adds. `ClimateData.get_data()` needs it too.
+- `pip install "climate-finance>=2"`. `result.table` is a polars DataFrame, and its `to_pandas()` needs pandas, which `pip install "climate-finance[pandas]>=2"` adds. `ClimateData.get_data()` needs it too.
 - A release downloads to `~/.cache/climate-finance`. Set `CLIMATE_FINANCE_CACHE_DIR` or pass `cache_dir=` to `load()` to move it. Open a release folder on disk with `load(path=...)`.
 
 ## What still runs
 
-`ClimateData` imports from `climate_finance` and runs until 3.0, with a `ClimateFinanceDeprecationWarning`, a `DeprecationWarning` in `climate_finance.errors`. It wraps 2.0 by calling `spending()` once per source and flow and returning pandas. The constructor, the `set_*` methods, `load_spending_data()`, and `get_data()` run for every choice whose meaning 2.0 keeps. A choice whose meaning changed raises `RemovedError` naming the 2.0 call to use, as [Choices that changed meaning](#choices-that-changed-meaning) lists. 1.x's default source, `"OECD_CRS"`, is one, so `load_spending_data()` needs `source=`, as in the example below. `get_data()` returns the 2.0 columns, so a script that reads `indicator` or `oecd_provider_code` raises `KeyError`. The examples on this page run on the synthetic test release, so their amounts are invented.
+`ClimateData` imports from `climate_finance` and runs until 3.0, with a `ClimateFinanceDeprecationWarning`, a `DeprecationWarning` in `climate_finance.errors`. It wraps 2.0 by calling `spending()` once per source and flow and returning pandas. The constructor, the `set_*` methods, `load_spending_data()`, and `get_data()` run for every choice whose meaning 2.0 keeps. A choice whose meaning changed raises `RemovedError` naming the 2.0 call to use, as [Choices that changed meaning](#choices-that-changed-meaning) lists. 1.x's default source, `"OECD_CRS"`, is one, so `load_spending_data()` needs `source=`, as in the example below. `get_data()` returns the 2.0 columns, so a script that reads `indicator` or `oecd_provider_code` raises `KeyError`. The examples on this page run on the synthetic example release, so their amounts are invented, and `cf.load()` opens the published release.
 
 `set_climate_finance_data_path(path)` runs with the same warning, and every later `ClimateData` downloads its release into `path`. Pass `release=` to point one `ClimateData` at a release you opened, such as `ClimateData(years=range(2021, 2024), release=cf.load(path="releases/2026a"))`.
 
 ```python
+import climate_finance as cf
 from climate_finance import ClimateData
 
-climate_data = ClimateData(years=range(2021, 2024), providers=[701, 5])
+climate_data = ClimateData(
+    years=range(2021, 2024), providers=[701, 5], release=cf.load_example()
+)
 climate_data.load_spending_data(
     methodology="ONE", source="OECD_CRDF_CRS", flows="gross_disbursements"
 )
@@ -51,7 +54,7 @@ The same query in 2.0 runs through `Release.spending()`.
 ```python
 import climate_finance as cf
 
-release = cf.load()
+release = cf.load_example()
 result = release.spending(
     providers=[701, 5],
     years=range(2021, 2024),

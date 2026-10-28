@@ -4,14 +4,14 @@ Subtract the principal and interest repaid on climate loans from a provider's di
 
 ## Before you start
 
-Load a release. The examples compare France and Norway in 2021 to 2024 on the synthetic test release, so their amounts are invented.
+Load a release. The examples compare France and Norway in 2021 to 2024 on the synthetic example release, so their amounts are invented. `cf.load()` opens the published release.
 
 ```python
 import polars as pl
 
 import climate_finance as cf
 
-release = cf.load()
+release = cf.load_example()
 query = {"providers": ["France", "Norway"], "years": range(2021, 2025)}
 ```
 
@@ -90,8 +90,8 @@ query = {"providers": ["France", "Norway"], "years": range(2021, 2025)}
    ```
 
    ```output
-   France -0.72 1.92 2.47
-   Norway -17.1 0.0 17.95
+   France -0.72 1.92 2.4
+   Norway -17.1 0.0 17.1
    ```
 
 ## Verify it worked

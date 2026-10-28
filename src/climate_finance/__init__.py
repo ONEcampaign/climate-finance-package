@@ -13,7 +13,7 @@ from climate_finance.errors import (
     UnknownRecipientError,
 )
 from climate_finance.methods import Method
-from climate_finance.release import Release, load
+from climate_finance.release import Release, load, load_example
 from climate_finance.result import Comparison, Quality, Reconciliation, Result, compare
 from climate_finance.spec import Spec, SpecInputs
 
@@ -37,6 +37,7 @@ __all__ = [
     "errors",
     "flows",
     "load",
+    "load_example",
     "methods",
     "providers",
     "recipients",

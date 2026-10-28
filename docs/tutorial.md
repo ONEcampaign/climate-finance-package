@@ -2,21 +2,21 @@
 
 It takes about ten minutes to query a figure, read its value and low bound, trace the CRS records behind it, and check how much of Japan's climate finance the package links.
 
-The examples run on the small synthetic release from the package tests, so the amounts are invented. You need Python 3.12 or later and `pip install climate-finance`.
+The examples run on the small synthetic release shipped with the package, so the amounts are invented. Every output below is what the code prints. You need Python 3.12 or later and `pip install "climate-finance>=2"`.
 
 ## Step 1. Load a release
 
-A release is a folder of parquet tables. `load()` opens the latest release in the index shipped with the package, and `load(path=...)` opens a release directory on disk. On first run `load()` downloads the files to `~/.cache/climate-finance` and checks each table's sha256 against `release.json`.
+A release is a folder of parquet tables. `load_example()` opens the synthetic release shipped with the package, with no download. `load()` opens the latest published release, which it downloads to `~/.cache/climate-finance` on first run, checking each table's sha256 against `release.json`, and `load(path=...)` opens a release directory on disk. Every step below runs the same way on a published release.
 
 ```python
 import climate_finance as cf
 
-release = cf.load()
+release = cf.load_example()
 print(release)
 ```
 
 ```output
-Release('fixture', synthetic figures): commitments 2021 to 2022, disbursements 2021 to 2024; 20 tables
+Release('synthetic-example', synthetic figures): commitments 2021 to 2022, disbursements 2021 to 2024; 20 tables
 ```
 
 The line names the release, marks its figures as synthetic, and gives the years each flow covers. Every result from `release` records the release name, so a figure always identifies its source data.

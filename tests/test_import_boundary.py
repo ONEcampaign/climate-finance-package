@@ -8,7 +8,6 @@ import os
 import subprocess
 import sys
 from importlib.util import find_spec
-from pathlib import Path
 
 import pytest
 
@@ -24,7 +23,6 @@ BUILD_ONLY = (
     "pydeflate",
 )
 COMPAT_ONLY = ("pandas",)
-FIXTURE = Path(__file__).parent / "fixtures" / "snapshot"
 BASE_INSTALL = os.environ.get("CF_BASE_INSTALL") == "1"
 
 
@@ -38,9 +36,8 @@ def _run(code: str) -> subprocess.CompletedProcess[str]:
 def test_queries_conversion_names_and_compare_load_no_build_or_compat() -> None:
     result = _run(
         "import sys\n"
-        "from pathlib import Path\n"
         "import climate_finance as cf\n"
-        f"release = cf.load(path=Path({str(FIXTURE)!r}))\n"
+        "release = cf.load_example()\n"
         "result = release.spending()\n"
         "assert result.table.height\n"
         "assert result.rows().height\n"

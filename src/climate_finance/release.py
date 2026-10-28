@@ -78,9 +78,11 @@ PACK_SHA256 = "pack.sha256"
 # Seconds a download may wait on the server before it fails.
 _TIMEOUT = 60
 _CHUNK = 1 << 20
-# The release name `tests/fixtures/snapshot` carries, whose figures are invented.
-# `cf-build release` refuses to publish a release of this name.
-SYNTHETIC_RELEASE = "fixture"
+# The synthetic release shipped in the wheel, which `load_example` opens. Its
+# figures are invented, so `cf-build` refuses to cut or publish a release named
+# `SYNTHETIC_RELEASE`.
+EXAMPLE_DIR = Path(__file__).parent / "data" / "example"
+SYNTHETIC_RELEASE = "synthetic-example"
 # Where releases are published, for the error `load` gives before the first one.
 RELEASES_PAGE = "https://github.com/ONEcampaign/climate-finance-package/releases"
 # A release name is one path segment of letters, digits, dots, underscores and
@@ -530,6 +532,17 @@ def load(
     return _open(target, release=name)
 
 
+def load_example() -> Release:
+    """Open the synthetic release shipped with the package, without network.
+
+    Its figures are invented: six providers, a few commitments each, and every link
+    method and commitment status the release tables name. The examples in the docs
+    run against it, and code can be tested against a release before a real one is
+    downloaded.
+    """
+    return _open(EXAMPLE_DIR, release=SYNTHETIC_RELEASE)
+
+
 def _packed_sha256(target: Path) -> str | None:
     """The sha256 of the pack the cached release in `target` came from, if
     recorded."""
@@ -645,15 +658,17 @@ def _resolve(index: ReleaseIndex, release: str, *, refreshed: bool) -> str:
             note = (
                 "No release is published yet. Open a release directory with "
                 "cf.load(path=...). Releases are built with `cf-build release` and "
-                f"published at {RELEASES_PAGE}."
+                f"published at {RELEASES_PAGE}. cf.load_example() opens a synthetic "
+                "release to try the package on."
             )
         else:
             # The index shipped in the wheel predates any release published since.
             named = "" if release == "latest" else f"{release!r}, "
             note = (
                 f"This package's index lists no release. cf.load({named}"
-                "refresh=True) reads the newest index online, and "
-                "cf.load(path=...) opens a release directory."
+                "refresh=True) reads the newest index online, "
+                "cf.load(path=...) opens a release directory, and "
+                "cf.load_example() opens a synthetic release to try the package on."
             )
         raise unknown_name(release, kind="release", choices=(), note=note)
     if name is None or name not in index.releases:

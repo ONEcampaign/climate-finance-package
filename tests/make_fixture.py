@@ -1,5 +1,6 @@
-"""Write the synthetic release snapshot in tests/fixtures/snapshot/, or a sample of a
-real release in tests/fixtures/real_snapshot/.
+"""Write the synthetic example release in src/climate_finance/data/example/, which
+`cf.load_example()` opens, or a sample of a real release in
+tests/fixtures/real_snapshot/.
 
 The build extra loads only inside the functions that write a release, so the tests that
 read the fixture import this module on a base install.
@@ -31,6 +32,7 @@ import polars as pl
 
 from climate_finance import __version__
 from climate_finance.convert import DAC_TOTAL
+from climate_finance.release import EXAMPLE_DIR, SYNTHETIC_RELEASE
 from climate_finance.schema import (
     CERTAIN_METHODS,
     CERTAIN_ROUTES,
@@ -47,9 +49,9 @@ from climate_finance.schema import (
     validate,
 )
 
-FIXTURE_DIR = Path(__file__).parent / "fixtures" / "snapshot"
+FIXTURE_DIR = EXAMPLE_DIR
 REAL_SNAPSHOT_DIR = Path(__file__).parent / "fixtures" / "real_snapshot"
-RELEASE = "fixture"
+RELEASE = SYNTHETIC_RELEASE
 
 # DAC codes: Germany, France, Norway, Japan, IDA, AfDB. IFC has only a modelled line.
 # The EIB appears only in the sample of a real release.
@@ -113,6 +115,11 @@ COMMITMENT_SPECS = [
     ("AFDB-2", AFDB, 1, IRQ, AFDB_CH, 4, 2022, None, None, 0.50, 45e6, "not_traceable"),
 ]
 
+# A later record that marks mitigation 0 where its commitment marks 1, as a CRS
+# record may report its project another way than the commitment did. Its value
+# still weighs by the commitment's markers.
+RECORD_MITIGATION = {"JPN-2-R2": 0}
+
 # CRDF rows carry their provider's class, Bi_Multi 1 for a bilateral provider, while
 # each CRS record keeps its own code. NOR-1's records are Bi_Multi 3.
 RECORD_BI_MULTI = {"NOR-1": 3}
@@ -126,9 +133,6 @@ DISBURSED_SHARE = {
     "no_disbursement_record": 0.0,
     "not_traceable": 0.0,
 }
-# An allocation's high bound is this multiple of the allocation, capped so the
-# commitment's high bounds stay within its face value.
-HIGH_FACTOR = 1.05
 # Commitments carry the CRDF's flow category: ODA (10) but for AFDB-2, an other
 # official flow (21). Records carry CRS flow codes.
 ODA_CATEGORY, OOF_CATEGORY = 10, 21
@@ -392,7 +396,6 @@ def _allocation(
     record_id: str,
     year: int,
     allocated: float,
-    allocated_high: float,
     record_disbursement: float,
     record_grant_equiv: float | None,
     link_method: str | None,
@@ -403,20 +406,21 @@ def _allocation(
     """A disbursements row allocating `allocated` of `record_id` to `commitment`.
 
     `record_disbursement` and `record_grant_equiv` are the whole CRS record's.
-    It counts in the low bound when a `CERTAIN_METHODS` link carried it, and a
-    bank-ledger fill counts in full. A fill has no
-    CRS record, so it carries its commitment's facts, no flow code and no record
-    markers, as `release.fill_disbursements` builds it.
+    Its high bound is `allocated`, as `allocate_to_rows` sets it. The row counts in
+    the low bound when a `CERTAIN_METHODS` link carried it, and a bank-ledger fill
+    counts in full. A fill has no CRS record, so it carries its commitment's facts,
+    no flow code and no record markers, as `release.fill_disbursements` builds it.
     """
     certain = link_method is None or link_method in CERTAIN_METHODS
     fill = disbursement_source != "crs"
     first = record_id.endswith("-R0")
     rio_a, rio_m = commitment["rio_adaptation"], commitment["rio_mitigation"]
     record_rio_a = None if first or fill else rio_a
+    record_rio_m = None if fill else RECORD_MITIGATION.get(record_id, rio_m)
     # As label.inherit_markers sets it.
     if commitment["climate_share"] is not None:
         marker_source = "components"
-    elif fill or record_rio_a == rio_a:
+    elif fill or (record_rio_a == rio_a and record_rio_m == rio_m):
         marker_source = "commitment"
     else:
         marker_source = "record_differs"
@@ -439,13 +443,13 @@ def _allocation(
         "title": f"Climate project {commitment['row_id']}",
         "allocated_usd": allocated,
         "allocated_low_usd": allocated if certain else 0.0,
-        "allocated_high_usd": allocated_high,
+        "allocated_high_usd": allocated,
         "record_disbursement_usd": record_disbursement,
         "record_grant_equiv_usd": record_grant_equiv,
         "inherited_rio_adaptation": rio_a,
         "inherited_rio_mitigation": rio_m,
         "record_rio_adaptation": record_rio_a,
-        "record_rio_mitigation": None if fill else rio_m,
+        "record_rio_mitigation": record_rio_m,
         "marker_source": marker_source,
         "climate_share": commitment["climate_share"],
         "link_method": link_method,
@@ -484,7 +488,11 @@ def _objectives(
     labels = (
         (
             ("adaptation", commitment["rio_adaptation"], "marker"),
-            ("mitigation", commitment["rio_mitigation"], "marker"),
+            (
+                "mitigation",
+                RECORD_MITIGATION.get(record_id, commitment["rio_mitigation"]),
+                "marker",
+            ),
         )
         if commitment["climate_share"] is None
         else (("adaptation", 2, "crdf"), ("mitigation", 2, "crdf"))
@@ -512,20 +520,6 @@ def build_tables() -> dict[str, pl.DataFrame]:
     commitments: dict[str, dict[str, object]] = {}
     disbursement_rows: list[dict[str, object]] = []
     objective_rows: list[dict[str, object]] = []
-    high_used: dict[str, float] = {}
-
-    def allocate(
-        commitment: dict[str, object], *, allocated: float, reserved: float = 0.0, **row
-    ) -> None:
-        """Add an allocation whose high bound leaves `reserved` of the commitment's
-        face value for the allocations still to come."""
-        row_id = str(commitment["row_id"])
-        headroom = float(commitment["face_usd"]) - high_used.get(row_id, 0.0) - reserved
-        high = min(allocated * HIGH_FACTOR, headroom)
-        high_used[row_id] = high_used.get(row_id, 0.0) + high
-        disbursement_rows.append(
-            _allocation(commitment, allocated=allocated, allocated_high=high, **row)
-        )
 
     for (
         row_id, provider, agency, recipient, channel, bi_multi, year, rio_a, rio_m,
@@ -575,21 +569,24 @@ def build_tables() -> dict[str, pl.DataFrame]:
         for index in range(3):
             record_id = f"{row_id}-R{index}"
             grant_equiv = allocated * GRANT_EQUIV_RATIO[flow_code]
-            allocate(
-                commitment,
-                record_id=record_id,
-                year=year + index,
-                allocated=allocated,
-                reserved=allocated * (2 - index),
-                record_disbursement=allocated,
-                record_grant_equiv=grant_equiv if index or flow_code == 11 else None,
-                link_method=next(
-                    certain_methods
-                    if record_id in CERTAIN_RECORDS
-                    else estimated_methods
-                ),
-                link_probability=1.0 if index == 0 else 0.85,
-                rule="dated" if index == 0 else "fifo",
+            disbursement_rows.append(
+                _allocation(
+                    commitment,
+                    record_id=record_id,
+                    year=year + index,
+                    allocated=allocated,
+                    record_disbursement=allocated,
+                    record_grant_equiv=grant_equiv
+                    if index or flow_code == 11
+                    else None,
+                    link_method=next(
+                        certain_methods
+                        if record_id in CERTAIN_RECORDS
+                        else estimated_methods
+                    ),
+                    link_probability=1.0 if index == 0 else 0.85,
+                    rule="dated" if index == 0 else "fifo",
+                )
             )
             objective_rows.extend(_objectives(commitment, record_id))
 
@@ -598,16 +595,18 @@ def build_tables() -> dict[str, pl.DataFrame]:
         raise ValueError(f"fixture misses link methods {sorted(missing)}")
 
     for row_id, allocated, link_method, probability in SPLIT_ALLOCATIONS:
-        allocate(
-            commitments[row_id],
-            record_id=SPLIT_RECORD,
-            year=SPLIT_YEAR,
-            allocated=allocated,
-            record_disbursement=SPLIT_DISBURSEMENT,
-            record_grant_equiv=SPLIT_GRANT_EQUIV,
-            link_method=link_method,
-            link_probability=probability,
-            rule="fifo",
+        disbursement_rows.append(
+            _allocation(
+                commitments[row_id],
+                record_id=SPLIT_RECORD,
+                year=SPLIT_YEAR,
+                allocated=allocated,
+                record_disbursement=SPLIT_DISBURSEMENT,
+                record_grant_equiv=SPLIT_GRANT_EQUIV,
+                link_method=link_method,
+                link_probability=probability,
+                rule="fifo",
+            )
         )
     objective_rows.extend(_objectives(commitments["JPN-1"], SPLIT_RECORD))
     split = next(row for row in disbursement_rows if row["record_id"] == SPLIT_RECORD)
@@ -658,17 +657,19 @@ def build_tables() -> dict[str, pl.DataFrame]:
             }
             for objective, level in (("adaptation", rio_a), ("mitigation", rio_m))
         )
-    allocate(
-        commitments["AFDB-1"],
-        record_id=LEDGER_RECORD,
-        year=2023,
-        allocated=LEDGER_ALLOCATED,
-        record_disbursement=LEDGER_ALLOCATED,
-        record_grant_equiv=None,
-        link_method=None,
-        link_probability=None,
-        rule="bank_ledger",
-        disbursement_source="bank_ledger",
+    disbursement_rows.append(
+        _allocation(
+            commitments["AFDB-1"],
+            record_id=LEDGER_RECORD,
+            year=2023,
+            allocated=LEDGER_ALLOCATED,
+            record_disbursement=LEDGER_ALLOCATED,
+            record_grant_equiv=None,
+            link_method=None,
+            link_probability=None,
+            rule="bank_ledger",
+            disbursement_source="bank_ledger",
+        )
     )
     disbursement_rows[-1]["ledger_check"] = None
     # A Jev label on a record of an adaptation-marked commitment: principal, where
@@ -1045,6 +1046,9 @@ def _polars_schema(table: str) -> pl.Schema:
 
 # The keys of `total_flows`.
 TOTAL_KEYS = ("provider_code", "agency_code", "recipient_code", "year", "bi_multi")
+# Norway's 2023 bilateral disbursement to Kenya, with no Rio marker, on a key no
+# climate row holds, as (provider, agency, recipient, year, amount).
+UNMARKED_DISBURSEMENT = (NOR, 1, KEN, 2023, 6e6)
 
 
 def _total_flows(
@@ -1054,15 +1058,35 @@ def _total_flows(
 ) -> pl.DataFrame:
     """All CRS flows: four times the climate rows' amounts (0.9 of that for grant
     equivalent), plus 1.5 times each flow's core contributions to unspecified
-    recipients, so every climate figure has a larger total. `disbursements` holds
-    the traced and untraced disbursements' keys, Rio markers and amounts."""
+    recipients, so every climate figure has a larger total, and
+    `UNMARKED_DISBURSEMENT` among the disbursements. `disbursements` holds the
+    traced and untraced disbursements' keys, Rio markers and amounts."""
     keys = [*TOTAL_KEYS, "rio_adaptation", "rio_mitigation"]
     committed = commitments.select(
         *TOTAL_KEYS,
         **_markers("rio_adaptation", "rio_mitigation"),
         amount_usd=pl.col("face_usd") * 4,
     )
-    disbursed = disbursements.select(*keys, amount_usd=pl.col("allocated_usd") * 4)
+    provider, agency, recipient, year, amount = UNMARKED_DISBURSEMENT
+    unmarked = pl.DataFrame(
+        {
+            "provider_code": [provider],
+            "agency_code": [agency],
+            "recipient_code": [recipient],
+            "year": [year],
+            "bi_multi": [1],
+            "rio_adaptation": [0],
+            "rio_mitigation": [0],
+            "amount_usd": [amount],
+        },
+        schema=committed.schema,
+    )
+    disbursed = pl.concat(
+        [
+            disbursements.select(*keys, amount_usd=pl.col("allocated_usd") * 4),
+            unmarked,
+        ]
+    )
     climate = {
         "commitments": committed,
         "disbursements": disbursed,

@@ -39,7 +39,7 @@ Key `row_id`, `record_id`, `year`. Allocations of CRS records, and of bank-ledge
 
 - `row_id`, `record_id`, `year`: the commitment, the CRS record (or fill record), and the record's year.
 - `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_code`, `project_number`, `title`: the record's own fields. `flow_code` is the CRS flow, where 11 is ODA grants, 13 is ODA loans, and 19 is equity.
-- `allocated_usd`, `allocated_low_usd`, `allocated_high_usd`: the part of the record's disbursement given to the commitment, with `0 <= allocated_low_usd <= allocated_usd <= allocated_high_usd`.
+- `allocated_usd`, `allocated_low_usd`, `allocated_high_usd`: the part of the record's disbursement given to the commitment, with `0 <= allocated_low_usd <= allocated_usd` and `allocated_high_usd` equal to `allocated_usd`.
 - `record_disbursement_usd`, `record_grant_equiv_usd`: the whole record's disbursement and grant equivalent, repeated on each row of the record. A query takes an allocation's grant equivalent as `record_grant_equiv_usd` × `allocated_usd` ÷ `record_disbursement_usd`. `record_grant_equiv_usd` is null where the CRS gives no grant equivalent, and where it gives a negative one on a positive disbursement.
 - `inherited_rio_adaptation`, `inherited_rio_mitigation`: the markers of the commitment, which weight the allocation. `record_rio_adaptation` and `record_rio_mitigation` are the record's own. `marker_source` says how they relate, taking `components`, `commitment`, or `record_differs`.
 - `climate_share`: the commitment's share for rows weighted by climate components.

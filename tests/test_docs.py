@@ -1,34 +1,26 @@
 """The README and `docs/` pages describe the code as it is.
 
-Each ```python block runs against the fixture release, in order within its page and in
-one namespace, and an ```output block right after it holds the exact stdout. A block
-fenced ```python skip is shown but not run. Every `cf-build` command in a ```bash
-block names a real command and real options, the release-table reference names every
-column, and the Python reference names every `Spec` and `Method` field.
+Each ```python block runs in order within its page and in one namespace, against the
+release `cf.load_example()` opens, and an ```output block right after it holds the
+exact stdout. A block fenced ```python skip is shown but not run. Every `cf-build`
+command in a ```bash block names a real command and real options, the release-table
+reference names every column, and the Python reference names every `Spec` and `Method`
+field.
 """
 
 import contextlib
 import io
 import re
 import shlex
-import shutil
 import textwrap
 from collections.abc import Iterator
 from pathlib import Path
 from typing import NamedTuple
 
 import pytest
-from make_fixture import FIXTURE_DIR
 
-from climate_finance import release as release_module
 from climate_finance.methods import Method
-from climate_finance.release import (
-    PACK_SHA256,
-    IndexEntry,
-    ReleaseIndex,
-    release_dirname,
-)
-from climate_finance.schema import DATA_FORMAT, RELEASE_TABLES
+from climate_finance.schema import RELEASE_TABLES
 from climate_finance.spec import Spec
 
 ROOT = Path(__file__).parent.parent
@@ -58,30 +50,14 @@ def blocks(page: Path) -> list[Block]:
 
 
 @pytest.fixture
-def fixture_as_latest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """`cf.load()` with no arguments opens the fixture release from a cache directory,
-    through the loader's own cache path."""
-    cache = tmp_path / "cache"
-    cached = shutil.copytree(FIXTURE_DIR, cache / release_dirname("fixture"))
-    (cached / PACK_SHA256).write_text("0", encoding="utf-8")
-    index = ReleaseIndex(
-        latest="fixture",
-        releases={
-            "fixture": IndexEntry(
-                url="https://example.org/pack", sha256="0", data_format=DATA_FORMAT
-            )
-        },
-    )
-    monkeypatch.setattr(release_module, "_shipped_index", lambda: index)
-    monkeypatch.setenv("CLIMATE_FINANCE_CACHE_DIR", str(cache))
-    work = tmp_path / "work"
-    work.mkdir()
-    monkeypatch.chdir(work)
-    return work
+def work_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """An empty working directory, where the pages save the files they write."""
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
 
 
 @pytest.mark.parametrize("page", PAGES, ids=lambda page: str(page.relative_to(ROOT)))
-@pytest.mark.usefixtures("fixture_as_latest")
+@pytest.mark.usefixtures("work_dir")
 @pytest.mark.filterwarnings("ignore::DeprecationWarning")
 def test_python_blocks_run_and_print_what_the_page_shows(page: Path) -> None:
     # The pages show `to_pandas()` and a DuckDB query, which the extras provide.

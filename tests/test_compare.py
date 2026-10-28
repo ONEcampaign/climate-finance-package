@@ -160,7 +160,7 @@ def test_results_of_two_releases_and_two_specs_are_named_by_both(
 
     assert table.columns[len(COLUMNS) :] == [
         "2025a, years 2021",
-        "fixture, years 2022",
+        "synthetic-example, years 2022",
     ]
 
 
@@ -192,7 +192,7 @@ def test_compare_refuses_a_list_naming_the_call_it_takes() -> None:
 
 
 RESULT_REPR = """\
-Result: ONE; disbursements; recipient view; providers Germany; years 2021; USD at current prices; release fixture
+Result: ONE; disbursements; recipient view; providers Germany; years 2021; USD at current prices; release synthetic-example
 shape: (1, 23)
 ┌──────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬───────┬───────┬───────┬───────┬───────┬───────┐
 │ year ┆ provid ┆ recipi ┆ method ┆ provid ┆ recipi ┆ bi_mul ┆ flow   ┆ view   ┆ curren ┆ prices ┆ measur ┆ amount ┆ adapta ┆ mitiga ┆ cross_ ┆ unspli ┆ untra ┆ no_gr ┆ no_ad ┆ value ┆ low   ┆ high  │
@@ -202,8 +202,8 @@ shape: (1, 23)
 │      ┆        ┆        ┆        ┆ i32    ┆ i32    ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆ f64    ┆        ┆       ┆ ---   ┆ ---   ┆       ┆       ┆       │
 │      ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆       ┆ f64   ┆ f64   ┆       ┆       ┆       │
 ╞══════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪═══════╪═══════╪═══════╪═══════╪═══════╪═══════╡
-│ 2021 ┆ German ┆ Kenya  ┆ ONE    ┆ 5      ┆ 248    ┆ 1      ┆ disbur ┆ recipi ┆ USD    ┆ curren ┆ amount ┆ 1.2667 ┆ 1.2667 ┆ 0.0    ┆ 0.0    ┆ 0.0    ┆ 0.0   ┆ 0.0   ┆ 0.0   ┆ 1.266 ┆ 1.266 ┆ 1.33e │
-│      ┆ y      ┆        ┆        ┆        ┆        ┆        ┆ sement ┆ ent    ┆        ┆ t      ┆        ┆ e7     ┆ e7     ┆        ┆        ┆        ┆       ┆       ┆       ┆ 7e7   ┆ 7e7   ┆ 7     │
+│ 2021 ┆ German ┆ Kenya  ┆ ONE    ┆ 5      ┆ 248    ┆ 1      ┆ disbur ┆ recipi ┆ USD    ┆ curren ┆ amount ┆ 1.2667 ┆ 1.2667 ┆ 0.0    ┆ 0.0    ┆ 0.0    ┆ 0.0   ┆ 0.0   ┆ 0.0   ┆ 1.266 ┆ 1.266 ┆ 1.266 │
+│      ┆ y      ┆        ┆        ┆        ┆        ┆        ┆ sement ┆ ent    ┆        ┆ t      ┆        ┆ e7     ┆ e7     ┆        ┆        ┆        ┆       ┆       ┆       ┆ 7e7   ┆ 7e7   ┆ 7e7   │
 │      ┆        ┆        ┆        ┆        ┆        ┆        ┆ s      ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆       ┆       ┆       ┆       ┆       ┆       │
 └──────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴───────┴───────┴───────┴───────┴───────┴───────┘"""  # noqa: E501 (a table snapshot)
 

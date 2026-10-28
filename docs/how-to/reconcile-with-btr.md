@@ -6,12 +6,12 @@ A published release holds the reconciliation aggregates, so `release.reconcile()
 
 ## Before you start
 
-Load a release. `providers=` names parties as `spending()` names providers, so `"Germany"`, `"DEU"`, and `5` name one party, and `"EU Institutions"` and `"EUU"` the EU. The examples run on the synthetic test release, so their numbers are invented.
+Load a release. `providers=` names parties as `spending()` names providers, so `"Germany"`, `"DEU"`, and `5` name one party, and `"EU Institutions"` and `"EUU"` the EU. The examples run on the synthetic example release, so their numbers are invented. `cf.load()` opens the published release.
 
 ```python
 import climate_finance as cf
 
-release = cf.load()
+release = cf.load_example()
 ```
 
 ## Steps

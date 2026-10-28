@@ -24,6 +24,7 @@ EXPORTS = {
     "errors",
     "flows",
     "load",
+    "load_example",
     "methods",
     "providers",
     "recipients",
