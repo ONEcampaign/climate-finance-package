@@ -196,10 +196,19 @@ def queue(
     ids: Annotated[
         bool, typer.Option(help="Show crs ids and project numbers in the packet.")
     ] = True,
+    task: Annotated[
+        str,
+        typer.Option(
+            help="The queue's pairs to write: trace, or btr_crs for the BTR "
+            "calibration draw, which always shows ids."
+        ),
+    ] = "trace",
 ) -> None:
     """Write the review queue as a labelling packet, its pairs file beside it."""
     console.print(
-        review.write_queue_packet(release_dir=build_dir, out=out, show_ids=ids)
+        review.write_queue_packet(
+            release_dir=build_dir, out=out, show_ids=ids, task=task
+        )
     )
 
 
@@ -240,12 +249,20 @@ def import_labels(
 def label_command(
     build_dir: BuildDirArgument,
     sample_dir: Annotated[
-        Path,
+        Path | None,
         typer.Argument(
-            metavar="SAMPLE_DIR", help="The sample directory, the --out of `sample`."
+            metavar="[SAMPLE_DIR]", help="The sample directory, the --out of `sample`."
         ),
-    ],
+    ] = None,
+    *,
     reviewer: Annotated[str, typer.Option(help="The person labelling.")],
+    packet: Annotated[
+        Path | None,
+        typer.Option(
+            help="A review queue packet, the --out of `queue`, to label in place of "
+            "a sample."
+        ),
+    ] = None,
     config: ConfigOption = Path("build.toml"),
     port: Annotated[
         int, typer.Option(help="Local port to serve on; 0 picks a free one.")
@@ -254,15 +271,27 @@ def label_command(
 ) -> None:
     """Serve a page on 127.0.0.1 for labelling a person's share of the blind sample
     in SAMPLE_DIR: the pairs no certain rule linked, to a tenth of all draws, and 50
-    spot checks of the certain rules. Each answer is saved at once to a labels CSV
-    beside its packet and to the config's review decisions. Ctrl-C stops the
-    server."""
+    spot checks of the certain rules. With --packet in place of SAMPLE_DIR, serve
+    every pair of a review queue packet, whose answers count as queue decisions.
+    Each answer is saved at once to a labels CSV beside its packet and to the
+    config's review decisions. Ctrl-C stops the server."""
+    if (sample_dir is None) == (packet is None):
+        raise typer.BadParameter("give SAMPLE_DIR or --packet, not both or neither")
+    if packet is not None:
+        pairs = labelling.packet_pairs(packet, release_dir=build_dir)
+        queue = pairs
+    else:
+        assert sample_dir is not None
+        pairs = labelling.sample_pairs(sample_dir)
+        queue = labelling.queue_pairs(
+            pairs, share=gate.load_gates().human_audit.min_share
+        )
     session = labelling.Session(
         release_dir=build_dir,
-        sample_dir=sample_dir,
+        pairs=pairs,
+        queue=queue,
         decisions=load_config(config).sources.review_decisions,
         reviewer=reviewer,
-        share=gate.load_gates().human_audit.min_share,
     )
     server = labelling.make_server(session, port=port)
     url = f"http://127.0.0.1:{server.server_port}/"

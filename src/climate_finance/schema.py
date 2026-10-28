@@ -732,6 +732,19 @@ PAIR_SCORES = _table(
     review_reason=_str(nullable=True, values=REVIEW_REASONS),
 )
 
+# The id-less BTR rows drawn for people to label, so the BTR link's calibration
+# covers the low match weights where few id rows sit (`link.btr.calibration_draw`):
+# each row (`left_id`) with its best candidate CRS record (`right_id`), its party, and
+# the match weight its party's model gave the pair. Empty without BTR rows.
+BTR_CALIBRATION = _table(
+    "btr_calibration",
+    ("left_id", "right_id"),
+    left_id=_str(),
+    right_id=_str(),
+    party=_str(),
+    match_weight=_f64(),
+)
+
 # One row per provider: the climate value of its counted CRDF commitments and, for a
 # provider with a crosswalk (`link.crosswalks`), the part whose commitment a crosswalk
 # link reaches, null for the others and for every provider when recoveries are off.
@@ -1460,6 +1473,7 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
         PROGRAMME_STEMS,
         CANDIDATES,
         PAIR_SCORES,
+        BTR_CALIBRATION,
         PROVIDER_PROFILE,
     ),
     "allocate": _by_name(

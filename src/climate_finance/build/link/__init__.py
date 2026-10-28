@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from climate_finance import schema
 from climate_finance.build.fetch import DAC_EXCHANGE_FILE, IATI_DIR, fetched_years
 from climate_finance.build.link.btr import link_btr
 from climate_finance.build.link.candidates import (
@@ -78,9 +79,11 @@ def run_link(context: StageContext) -> StageOutput:
     recipient or project number (`flag_disagreement`). People's and agents'
     queue decisions then override the links they decided (`override_links`). When the
     build has BTR rows, each links to the same-year CRS records of its party
-    (`link_btr`). Reflow records sum into `reflow_units`, which reach their loan's
-    commitment units through the exact key tiers alone (`reflow_links`), without
-    review decisions or key repair.
+    (`link_btr`), its calibration taking the decisions on `btr_crs` pairs, and the
+    id-less rows it draws for people to label go to `btr_calibration`. Reflow
+    records sum into `reflow_units`, which reach their loan's commitment units
+    through the exact key tiers alone (`reflow_links`), without review decisions or
+    key repair.
 
     Raises:
         JevFitError: when `jev_links` is on and the build has no truth group to
@@ -211,8 +214,11 @@ def run_link(context: StageContext) -> StageOutput:
             )
         )
     linked = [flag_disagreement(pl.concat([links, *scored_links]), units=units)]
+    btr_draw = pl.DataFrame(schema=schema.BTR_CALIBRATION.dtypes)
     if config.sources.btr_archive is not None:
-        linked.append(link_btr(context.read("normalise", "btr"), crs=crs))
+        btr = link_btr(context.read("normalise", "btr"), crs=crs, labels=decided)
+        linked.append(btr.links)
+        btr_draw = btr.draw
     return {
         "links": override_links(pl.concat(linked), labels=decided),
         "units": units,
@@ -222,6 +228,7 @@ def run_link(context: StageContext) -> StageOutput:
         "programme_stems": stems,
         "candidates": candidates,
         "pair_scores": splink.scores,
+        "btr_calibration": btr_draw,
         "provider_profile": provider_profile(
             crosswalk_profile(crdf, links=links, crosswalks=gef),
             scoring=scored.profile,

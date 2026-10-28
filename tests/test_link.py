@@ -1129,6 +1129,7 @@ def test_run_link_writes_the_deterministic_tables_reproducibly(
         "programme_stems",
         "candidates",
         "pair_scores",
+        "btr_calibration",
         "provider_profile",
     }
     links = pl.read_parquet(table_path(tmp_path, "link", "links"))

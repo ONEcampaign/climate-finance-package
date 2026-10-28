@@ -370,6 +370,7 @@ def test_run_link_writes_the_provider_profile_with_recoveries(
         "programme_stems",
         "candidates",
         "pair_scores",
+        "btr_calibration",
         "provider_profile",
     }
     profile = pl.read_parquet(table_path(tmp_path, "link", "provider_profile"))

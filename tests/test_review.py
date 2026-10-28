@@ -16,6 +16,7 @@ from stage_runs import (
     write_fetched_years,
     write_inputs,
 )
+from test_link_btr import _btr
 
 from climate_finance import schema
 from climate_finance.build.allocate import (
@@ -26,6 +27,7 @@ from climate_finance.build.allocate import (
     status_basis,
 )
 from climate_finance.build.config import Ledgers, load_config
+from climate_finance.build.errors import LabelPacketError
 from climate_finance.build.link.crdf_crs import link_within_year
 from climate_finance.build.link.decisions import (
     PAIR,
@@ -252,6 +254,7 @@ def test_the_queue_holds_each_reason_once_and_leaves_decided_pairs_out() -> None
         flagged,
         commitments=commitments,
         pair_scores=_empty(schema.PAIR_SCORES),
+        btr_calibration=_empty(schema.BTR_CALIBRATION),
         labels=decided,
     )
     schema.validate(schema.REVIEW_QUEUE, queue)
@@ -688,6 +691,7 @@ def test_decisions_round_trip_as_human_labels_and_exact_overrides(
         links,
         commitments=commitments,
         pair_scores=_empty(schema.PAIR_SCORES),
+        btr_calibration=_empty(schema.BTR_CALIBRATION),
         labels=no_labels(),
     )
     release_dir = _release(tmp_path, case, queue, commitments)
@@ -755,6 +759,7 @@ def test_decisions_round_trip_as_human_labels_and_exact_overrides(
         again,
         commitments=commitments,
         pair_scores=_empty(schema.PAIR_SCORES),
+        btr_calibration=_empty(schema.BTR_CALIBRATION),
         labels=labels,
     )
     assert requeued["review_reason"].to_list() == ["over_face"]
@@ -775,6 +780,77 @@ def test_decisions_round_trip_as_human_labels_and_exact_overrides(
     assert (
         joined["allocated_usd"] - joined["disbursement_usd"]
     ).abs().max() < TOLERANCE
+
+
+def test_the_btr_draw_queues_and_its_decisions_return_as_drawn_labels(
+    tmp_path: Path,
+) -> None:
+    case = linked()
+    record = case.crs["record_id"][0]
+    rows = ("btr-1", "btr-2")
+    draw = pl.DataFrame(
+        {
+            "left_id": rows,
+            "right_id": [record] * 2,
+            "party": ["NOR"] * 2,
+            "match_weight": [-5.0, -8.0],
+        },
+        schema=schema.BTR_CALIBRATION.dtypes,
+    )
+    links = flag_review(case.links, labels=no_labels(), band=BAND)
+    commitments = case.statuses(links)
+
+    def queued(labels: pl.DataFrame) -> pl.DataFrame:
+        queue = review_queue(
+            links,
+            commitments=commitments,
+            pair_scores=_empty(schema.PAIR_SCORES),
+            btr_calibration=draw,
+            labels=labels,
+        )
+        schema.validate(schema.REVIEW_QUEUE, queue)
+        return queue.filter(task="btr_crs")
+
+    assert set(queued(no_labels()).select(*PAIR, "review_reason").iter_rows()) == {
+        ("btr_crs", row, record, "calibration") for row in rows
+    }
+
+    release_dir = _release(tmp_path, case, queued(no_labels()), commitments)
+    btr = _btr(*({"row_id": row, "title": "Solar grid"} for row in rows))
+    btr.write_parquet(table_path(release_dir, "normalise", "btr"))
+    with pytest.raises(LabelPacketError):
+        write_queue_packet(
+            release_dir=release_dir,
+            out=tmp_path / "x.md",
+            show_ids=False,
+            task="btr_crs",
+        )
+    packet = write_queue_packet(
+        release_dir=release_dir, out=tmp_path / "btr.md", task="btr_crs"
+    )
+    pairs = pl.read_parquet(packet_pairs_path(packet))
+    assert set(pairs.select("task", "review_reason", "sample_id").iter_rows()) == {
+        ("btr_crs", "calibration", None)
+    }
+    decisions_path = tmp_path / "review_decisions.parquet"
+    import_labels(
+        packet=packet,
+        labels_csv=_answer(
+            packet, {("btr-1", record): "match", ("btr-2", record): "no_match"}
+        ),
+        decisions_path=decisions_path,
+        label_source="human",
+        reviewer="analyst",
+    )
+    labels = read_decision_labels(decisions_path)
+
+    # Decisions on drawn pairs come back stratified, which `link.btr.calibrate`
+    # weighs by the rows of their stratum, and leave the queue.
+    assert set(labels.select(*PAIR, "is_match", "stratified").iter_rows()) == {
+        ("btr_crs", "btr-1", record, True, True),
+        ("btr_crs", "btr-2", record, False, True),
+    }
+    assert queued(labels).is_empty()
 
 
 def _ledger() -> pl.DataFrame:
@@ -815,6 +891,7 @@ def test_the_review_stage_writes_tables_that_pass_their_schemas(
         "units": case.units,
         "links": links,
         "pair_scores": _empty(schema.PAIR_SCORES),
+        "btr_calibration": _empty(schema.BTR_CALIBRATION),
     }
     write_inputs(release_dir, "link", linked_tables)
     filled = {"allocations": _allocations(case, links), "commitments": commitments}

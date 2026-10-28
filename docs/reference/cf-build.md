@@ -47,10 +47,10 @@ Draws the stratified blind sample of a build's allocated links. It writes a labe
 ## `cf-build queue`
 
 ```bash
-cf-build queue BUILD_DIR --out FILE [--ids | --no-ids]
+cf-build queue BUILD_DIR --out FILE [--ids | --no-ids] [--task trace | --task btr_crs]
 ```
 
-Writes the review queue as a labelling packet, with its pairs file beside it. `--no-ids` hides crs ids and project numbers and blanks them in the records' text.
+Writes the review queue as a labelling packet, with its pairs file beside it. `--no-ids` hides crs ids and project numbers and blanks them in the records' text. `--task btr_crs` writes the BTR calibration draw in place of the trace pairs, each BTR row beside a CRS record, ids always shown.
 
 ## `cf-build import-labels`
 
@@ -73,11 +73,13 @@ The command raises `ReviewDecisionsError` when the packet differs from its pairs
 
 ```bash
 cf-build label BUILD_DIR SAMPLE_DIR --reviewer NAME [--config build.toml] [--port N] [--browser | --no-browser]
+cf-build label BUILD_DIR --packet FILE --reviewer NAME [--config build.toml] [--port N] [--browser | --no-browser]
 ```
 
 Serves a page on `127.0.0.1` for labelling one person's share of the blind sample in `SAMPLE_DIR`, and opens it in a browser. The share is the judgement calls, the pairs whose link no certain rule made, in a stable hash order of their sample ids until their draws reach `human_audit.min_share` of all the sample's draws, with 50 spot checks of pairs a certain rule linked spread among them. A pair already decided by a person stays in the queue, counted as done and skipped. `BUILD_DIR` supplies the records the page shows.
 
 - `--reviewer` names the person in the decisions.
+- `--packet` serves every pair of a review queue packet written by `queue`, in place of `SAMPLE_DIR`, in the packet's order. Its answers carry no sample id, so the build reads them as queue decisions.
 - `--config` (default `build.toml`) names the file whose `sources.review_decisions` receives the decisions.
 - `--port` sets the port. The default of 0 picks a free one.
 - `--no-browser` prints the address without opening it.

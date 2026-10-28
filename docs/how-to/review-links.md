@@ -14,7 +14,7 @@ A link joins the queue with the first `review_reason` that applies:
 - `jev_band`, when Jev gave a Splink link a probability between 0.5 and 0.9.
 - `calibration`, when it belongs to a Splink model's calibration sample, which sets the model's probabilities.
 
-The queue also holds every commitment row allocated more than 1.1 times its face value (`over_face`). A decided pair stays out of later queues. An over-face row returns in every build while its allocation exceeds 1.1 times its face value.
+The queue also holds the BTR calibration draw, task `btr_crs` with reason `calibration`: up to 90 BTR rows per party that wrote no id the build could resolve, with match weights from -12 to -3, spread evenly over three bands of weight, each beside the CRS record the party's link model scored highest. The queue also holds every commitment row allocated more than 1.1 times its face value (`over_face`). A decided pair stays out of later queues. An over-face row returns in every build while its allocation exceeds 1.1 times its face value.
 
 ## Steps
 
@@ -54,6 +54,26 @@ The queue also holds every commitment row allocated more than 1.1 times its face
 ## Verify it worked
 
 The rebuilt queue omits the decided pairs. `cf-build queue` writes a smaller packet, and `release.quality().summary()` shows the change in `pending_review_share`.
+
+## Label the BTR calibration draw
+
+The BTR link calibrates each party's model on the rows whose ids name their CRS records. Those rows score high, so the low weights where most id-less rows sit hold few labels. Decisions on the draw fill them in.
+
+1. Write the draw as a packet. Each section shows a BTR row (A) beside one CRS record (B), with the record's crs id and project number. The draw always shows ids, so `--no-ids` is refused.
+
+    ```bash
+    cf-build queue releases/2026a --out btr-queue.md --task btr_crs
+    ```
+
+2. Label it on the local page, or answer it as a labels CSV and import it as in step 4 above.
+
+    ```bash
+    cf-build label releases/2026a --packet btr-queue.md --reviewer analyst-1
+    ```
+
+    A matches B when B reports the activity A reports, or one component of it, in the same year, for A's recipient or a region or global programme that holds it. Amounts may differ. A different project of the same donor, a sibling or another phase, and an unrelated activity do not match. The page and the packet give this definition in full.
+
+3. Rebuild. Each decision on a row's best candidate joins that party's calibration labels. It weighs the party's id-less rows in its weight band divided by the decisions in that band. A decision on a record other than the row's best candidate is left out. With no decisions, the calibration is the ids' alone.
 
 ## Blind-sample decisions are separate
 

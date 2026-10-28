@@ -81,7 +81,7 @@ def crs(data: Path) -> pl.LazyFrame:
 @pytest.fixture(scope="module")
 def links(btr: pl.LazyFrame, crs: pl.LazyFrame) -> pl.DataFrame:
     # Slow: fits a Splink model for each of the 28 parties with CRS records.
-    return link_btr(btr, crs=crs)
+    return link_btr(btr, crs=crs).links
 
 
 def test_uk_programme_numbers_find_their_programme_years(
@@ -252,9 +252,9 @@ def test_links_cover_the_reported_dollars(
     }
 
     # "Global" rows hold 30% of Norway's dollars and 69% of the UK's, and key as
-    # aggregates. Germany's model links 0.528 of its dollars: its calibration map
-    # puts 230 rows under the threshold, and labels at their weights are right 30% to
-    # 50% of the time.
+    # aggregates. Germany's map leaves 399 of its 1,411 id-less rows under the
+    # threshold, most where it reads 0.21 to 0.33 on blocks of 14, 12 and 3 id
+    # labels; `calibration_draw` draws rows there for people to label.
     assert linked["face_usd"].sum() / rows["face_usd"].sum() == pytest.approx(
         0.782, abs=0.001
     )
