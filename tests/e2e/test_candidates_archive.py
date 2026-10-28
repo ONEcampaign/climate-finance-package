@@ -28,7 +28,11 @@ from climate_finance.build.link.keys import (
     pair_line_units,
 )
 from climate_finance.build.normalise.crdf import normalise_crdf
-from climate_finance.build.normalise.crs import normalise_crs, trace_population
+from climate_finance.build.normalise.crs import (
+    normalise_crs,
+    psi_flags,
+    trace_population,
+)
 
 pytestmark = pytest.mark.slow
 
@@ -115,6 +119,9 @@ def links(
         pl.scan_parquet(data / "raw" / "oecd" / "crdf_recipient.parquet"),
         perspective="recipient",
         crs=normalised.lazy(),
+        psi_flags=psi_flags(
+            pl.scan_parquet(data / "raw" / "oecd" / "CRS_v20261006.parquet")
+        ),
     )
     trace = link_by_keys(units, first_year=FIRST_YEAR)
     return pl.concat(

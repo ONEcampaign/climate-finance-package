@@ -19,7 +19,11 @@ from climate_finance.build.fetch import (
 )
 from climate_finance.build.normalise.aggregates import rebuild_aggregates
 from climate_finance.build.normalise.crdf import normalise_crdf
-from climate_finance.build.normalise.crs import normalise_crs, normalise_reflows
+from climate_finance.build.normalise.crs import (
+    normalise_crs,
+    normalise_reflows,
+    psi_flags,
+)
 from climate_finance.build.normalise.external import normalise_external, to_usd
 from climate_finance.build.normalise.ledgers import normalise_ledgers
 from climate_finance.build.normalise.orgs import org_names, resolve_orgs
@@ -66,9 +70,10 @@ def run_normalise(context: StageContext) -> StageOutput:
     first = years["crdf_recipient"][0]
     raw_crs = pl.scan_parquet(raw / CRS_FILE)
     crs = normalise_crs(raw_crs, years=years["crs"]).collect()
+    flags = psi_flags(raw_crs).collect().lazy()
     exchange = pl.read_parquet(raw / DAC_EXCHANGE_FILE)
     crdf = pl.concat(
-        normalise_crdf(frame, perspective=perspective, crs=crs.lazy())
+        normalise_crdf(frame, perspective=perspective, crs=crs.lazy(), psi_flags=flags)
         for perspective, frame in raw_crdf.items()
     )
     crdf = rebuild_aggregates(
@@ -81,6 +86,7 @@ def run_normalise(context: StageContext) -> StageOutput:
             ),
             recipient=raw_crdf["recipient"],
             crs=crs.lazy(),
+            psi_flags=flags,
             exchange=exchange,
             before=first,
         ),
@@ -158,6 +164,7 @@ def _span_rows(
     *,
     recipient: pl.LazyFrame,
     crs: pl.LazyFrame,
+    psi_flags: pl.LazyFrame,
     exchange: pl.DataFrame,
     before: int,
 ) -> pl.LazyFrame:
@@ -177,6 +184,7 @@ def _span_rows(
             ),
             perspective="recipient",
             crs=crs,
+            psi_flags=psi_flags,
         ),
         crs=crs,
         exchange=exchange,

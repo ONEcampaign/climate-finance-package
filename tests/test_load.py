@@ -12,8 +12,10 @@ from polars.testing import assert_frame_equal
 from releases import copy_release
 
 import climate_finance as cf
+from climate_finance import query
 from climate_finance import release as release_module
 from climate_finance.errors import (
+    FormatQueryError,
     FormatTableError,
     InvalidInputError,
     ReleaseFormatError,
@@ -307,12 +309,13 @@ def test_an_index_entry_of_a_newer_data_format_is_refused_before_downloading(
 def test_a_release_of_an_older_format_serves_what_it_holds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Format 0 is test-local: format 1 less `reflows`.
+    # Format 0 is test-local: format 1 less `reflows`, with memorandum rows.
     monkeypatch.setattr(
         release_module,
         "FORMAT_TABLES",
         {0: frozenset(RELEASE_TABLES) - {"reflows"}, 1: frozenset(RELEASE_TABLES)},
     )
+    monkeypatch.setattr(query, "MEMORANDUM_FORMAT", 0)
     path = copy_release(tmp_path / "release") / "release.json"
     manifest = ReleaseManifest.model_validate_json(path.read_text(encoding="utf-8"))
     tables = {name: e for name, e in manifest.tables.items() if name != "reflows"}
@@ -334,6 +337,35 @@ def test_a_release_of_an_older_format_serves_what_it_holds(
         release.spending(flow="net_disbursements", years=2022)
     for raised in (by_table, by_query):
         assert (raised.value.table, raised.value.data_format) == ("reflows", 0)
+
+
+def test_a_release_before_memorandum_rows_reads_its_tables_and_refuses_queries(
+    tmp_path: Path,
+) -> None:
+    # Its `total_flows` would hold the memorandum records and its rows no flag.
+    no_flag: dict[str, Callable[[pl.DataFrame], pl.DataFrame]] = {
+        name: lambda frame: frame.drop("psi_flag")
+        for name in ("commitments", "disbursements", "untraced", "reflows")
+    }
+    path = copy_release(tmp_path / "release", edits=no_flag) / "release.json"
+    manifest = ReleaseManifest.model_validate_json(path.read_text(encoding="utf-8"))
+    path.write_text(
+        manifest.model_copy(update={"data_format": 2}).model_dump_json(),
+        encoding="utf-8",
+    )
+    release = cf.load(path=path.parent)
+
+    assert release.table("commitments").collect().height == 14
+    queries: dict[str, Callable[[], object]] = {
+        "spending": release.spending,
+        "quality": release.quality,
+        "reconcile": release.reconcile,
+        "jev_flags": release.jev_flags,
+    }
+    for name, run in queries.items():
+        with pytest.raises(FormatQueryError) as raised:
+            run()
+        assert (raised.value.data_format, raised.value.needed) == (2, 3), name
 
 
 def test_table_refuses_names_outside_the_release_contract() -> None:

@@ -13,7 +13,7 @@ from climate_finance.build.normalise.aggregates import (
     rebuild_aggregates,
 )
 from climate_finance.build.normalise.crdf import normalise_crdf
-from climate_finance.build.normalise.crs import normalise_crs
+from climate_finance.build.normalise.crs import normalise_crs, psi_flags
 from climate_finance.build.normalise.vintages import mark_repeats
 
 pytestmark = pytest.mark.slow
@@ -36,12 +36,13 @@ def crs(bulk: pl.LazyFrame) -> pl.LazyFrame:
 
 
 @pytest.fixture(scope="module")
-def crdf(raw: Path, crs: pl.LazyFrame) -> pl.DataFrame:
+def crdf(raw: Path, bulk: pl.LazyFrame, crs: pl.LazyFrame) -> pl.DataFrame:
     normalised = pl.concat(
         normalise_crdf(
             pl.scan_parquet(raw / "oecd" / f"crdf_{perspective}.parquet"),
             perspective=perspective,
             crs=crs,
+            psi_flags=psi_flags(bulk),
         )
         for perspective in ("recipient", "provider")
     )

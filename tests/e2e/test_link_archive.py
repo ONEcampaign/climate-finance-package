@@ -17,7 +17,11 @@ from climate_finance.build.link.id_practice import (
 )
 from climate_finance.build.link.keys import build_units, link_by_keys
 from climate_finance.build.normalise.crdf import normalise_crdf
-from climate_finance.build.normalise.crs import normalise_crs, trace_population
+from climate_finance.build.normalise.crs import (
+    normalise_crs,
+    psi_flags,
+    trace_population,
+)
 
 pytestmark = pytest.mark.slow
 
@@ -339,6 +343,9 @@ def test_within_year_join_reproduces_the_reference_population(
             pl.scan_parquet(data / "raw" / "oecd" / "crdf_recipient.parquet"),
             perspective="recipient",
             crs=crs.lazy(),
+            psi_flags=psi_flags(
+                pl.scan_parquet(data / "raw" / "oecd" / "CRS_v20261006.parquet")
+            ),
         )
         .filter(pl.col("year").is_in([2021, 2022]))
         .collect()

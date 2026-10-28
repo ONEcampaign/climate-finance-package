@@ -451,6 +451,7 @@ def _allocation(
         else RECORD_BI_MULTI.get(str(commitment["row_id"]), commitment["bi_multi"]),
         "purpose_code": commitment["purpose_code"] if fill else 41010,
         "flow_code": None if fill else _flow_code(commitment),
+        "psi_flag": None,
         "project_number": commitment["project_number"]
         if fill
         else f"PN-{commitment['row_id']}",
@@ -484,6 +485,7 @@ UNTRACED_FACTS = (
     "bi_multi",
     "purpose_code",
     "flow_code",
+    "psi_flag",
     "project_number",
     "title",
 )
@@ -553,6 +555,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
             "bi_multi": bi_multi,
             "purpose_code": 41010,
             "flow_category": OOF_CATEGORY if row_id in OTHER_OFFICIAL else ODA_CATEGORY,
+            "psi_flag": None,
             "crs_id": f"{year}00{row_id}" if has_ids else None,
             "project_number": f"PN-{row_id}" if has_ids else None,
             "rio_adaptation": rio_a,
@@ -650,6 +653,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
                 "bi_multi": 1,
                 "purpose_code": 41010,
                 "flow_code": flow_code,
+                "psi_flag": None,
                 "project_number": f"PN-{record_id}",
                 "title": f"Climate project {record_id}",
                 "rio_adaptation": rio_a,
@@ -1017,6 +1021,7 @@ def _reflows(
                 "purpose_code": 41010,
                 "flow_code": 13,
                 "finance_t": 421,
+                "psi_flag": None,
                 "project_number": f"PN-{repayment.record_id}",
                 "title": f"Loan repayment {repayment.record_id}",
                 "rio_adaptation": repayment.rio[0],

@@ -70,6 +70,14 @@ under another marker, or 0, keep their marker.
 
 The release's commitments are recipient-perspective CRDF rows only, so views filter
 on Bi_Multi alone and provider attribution comes only from core contributions.
+
+No origin counts a memorandum row: a commitment, disbursement, untraced record or
+repayment whose own CRS record the provider reports for memorandum
+(`schema.MEMORANDUM_PSI_FLAGS`), such as a development finance institution's
+investment beside the capital its provider counts. Each row is decided by its own
+flag, so a counted disbursement or repayment on a memorandum commitment counts at
+that commitment's markers. The release tables keep memorandum rows with their
+`psi_flag`.
 """
 
 from __future__ import annotations
@@ -89,6 +97,7 @@ from climate_finance.convert import convert, provenance, target_factors
 from climate_finance.errors import (
     CoverageWarning,
     DoubleCountWarning,
+    FormatQueryError,
     MissingLabelsError,
     ReleaseIntegrityError,
     SchemaError,
@@ -126,11 +135,13 @@ from climate_finance.schema import (
     FLOWS,
     FORMAT_TABLES,
     FUNDING_CLASSES,
+    MEMORANDUM_FORMAT,
     NET_FLOWS,
     RECIPIENT_VIEW,
     REFLOW_BASES,
     SHARE_ORIGINS,
     coefficient_overlaps,
+    memorandum,
 )
 from climate_finance.spec import (
     ODA_FLOW_CATEGORY,
@@ -243,6 +254,8 @@ def spending(release: Release, *, spec: Spec) -> Result:
     """Climate finance for `spec` from the tables of `release`.
 
     Raises:
+        FormatQueryError: when the release's data format predates
+            `MEMORANDUM_FORMAT` (`_require_memorandum_rows`).
         MissingLabelsError: when a method reads Jev's labels and the release's
             `objectives` hold none, as a release built with `jev_labels` off.
 
@@ -252,6 +265,7 @@ def spending(release: Release, *, spec: Spec) -> Result:
         DoubleCountWarning: for a provider view whose EU Institutions rows leave
             out the EU money of the members the query names (`_warn_eu_netted`).
     """
+    _require_memorandum_rows(release)
     methods = spec.methods
     if any(method.relevance == "jev" for method in methods):
         _require_jev_labels(release)
@@ -386,15 +400,15 @@ def _warn_absent_providers(release: Release, *, spec: Spec) -> None:
         (
             _counted_commitments(release)
             if table == "commitments"
-            else release.table(table)
+            else _counted(release, table)
         ).select(columns)
     ]
     if table == "disbursements" and spec.untraced:
-        rows.append(release.table("untraced").select(columns))
+        rows.append(_counted(release, "untraced").select(columns))
     if spec.flow in NET_FLOWS:
         bases = _COUNTED_BASES if spec.untraced else ("commitment",)
         rows.append(
-            release.table("reflows")
+            _counted(release, "reflows")
             .filter(pl.col("basis").is_in(bases))
             .select(columns)
         )
@@ -526,7 +540,12 @@ def quality(
     Institutions rows an all-provider provider view leaves out under `method`,
     `untraced` the Rio-marked CRS disbursement that reaches no commitment, and
     `repayments` the CRS repayments by where their principal goes.
+
+    Raises:
+        FormatQueryError: when the release's data format predates
+            `MEMORANDUM_FORMAT` (`_require_memorandum_rows`).
     """
+    _require_memorandum_rows(release)
     conditions = _conditions(providers=providers, recipients=None, years=years)
     table = release.table("quality")
     status = (
@@ -577,8 +596,11 @@ def jev_flags(
     CRS id, year and purpose), the key that ties a CRS commitment to its CRDF row.
 
     Raises:
+        FormatQueryError: when the release's data format predates
+            `MEMORANDUM_FORMAT` (`_require_memorandum_rows`).
         MissingLabelsError: when the release was built with `jev_flags` off.
     """
+    _require_memorandum_rows(release)
     if not release.manifest.settings.get("jev_flags"):
         raise MissingLabelsError(
             "jev_flags() needs Jev's flags, and this release holds none: it was "
@@ -676,7 +698,7 @@ def _repayments(
     basis = pl.col("basis")
     received = pl.col("received_usd")
     return (
-        release.table("reflows")
+        _counted(release, "reflows")
         .filter(*conditions)
         .group_by(key)
         .agg(
@@ -897,6 +919,14 @@ def reconcile(
     null where its comparator is zero or null, and 1.0 for a party whose provider
     has no row. A party without a DAC provider code has null comparators.
 
+    `crs_memorandum_disbursed_at_party_weight` is the year's disbursements on
+    Rio-marked records the party reports for memorandum (`MEMORANDUM_PSI_FLAGS`),
+    which `crs_disbursed_at_party_weight` leaves out, weighted alike. A party whose
+    BTR counts its development finance institution's investments, as Norway's counts
+    Norfund's, reads its gap there. It sums the memorandum rows of `disbursements`
+    and `untraced`, so it leaves out what they disbursed to commitments outside the
+    release.
+
     Each `btr_over_<comparator>` divides `btr_face` by it, null where the
     comparator is zero or null, and is null for a
     comparator of the other flow: committed rows read against the first three,
@@ -906,7 +936,12 @@ def reconcile(
     as `btr_over_comparator`, and `thin_comparator` is true where it is below
     `THIN_COMPARATOR_USD`. `btr_grant_equivalent_over_crs_grant_equivalent` divides
     `btr_grant_equivalent` by its comparator on every row, null where that is zero.
+
+    Raises:
+        FormatQueryError: when the release's data format predates
+            `MEMORANDUM_FORMAT` (`_require_memorandum_rows`).
     """
+    _require_memorandum_rows(release)
     conditions = _conditions(providers=providers, recipients=None, years=years)
     totals = release.table("btr_totals").filter(*conditions)
     face = pl.col("face_usd_at_dac")
@@ -987,15 +1022,14 @@ def reconcile(
         pl.col("amount_usd") * weights(_PARTY_RULE, **_COEFFICIENT_INPUTS)["climate"]
     )
 
-    def crs_at_party_weight(flow: str) -> pl.LazyFrame:
-        """The year's CRS `flow` on Rio-marked records at `PROVIDER`'s coefficients
-        of each record's agency, weighted as the CRDF comparators weight."""
-        flows = (
-            release.table("total_flows")
-            .filter(pl.col("flow") == flow, bilateral)
-            .join(party_years, on=["provider_code", "year"], how="semi")
+    def crs_at_party_weight(records: pl.LazyFrame) -> pl.LazyFrame:
+        """The year's `amount_usd` of CRS `records` on Rio-marked records at
+        `PROVIDER`'s coefficients of each record's agency, weighted as the CRDF
+        comparators weight."""
+        flows = records.filter(bilateral).join(
+            party_years, on=["provider_code", "year"], how="semi"
         )
-        # Every `total_flows` row weighs by its markers, so it has no shares.
+        # Every record weighs by its markers, so it has no shares.
         shares = (
             "climate_share",
             "share_adaptation",
@@ -1012,14 +1046,36 @@ def reconcile(
             )
         )
 
-    crs = crs_at_party_weight("disbursements").rename(
+    def total(flow: str) -> pl.LazyFrame:
+        return release.table("total_flows").filter(pl.col("flow") == flow)
+
+    crs = crs_at_party_weight(total("disbursements")).rename(
         {"amount_usd": "crs_disbursed_at_party_weight"}
     )
-    grant_equivalent = crs_at_party_weight("grant_equivalent").rename(
+    grant_equivalent = crs_at_party_weight(total("grant_equivalent")).rename(
         {
             "amount_usd": GRANT_EQUIVALENT_COMPARATOR,
             "crs_method_share": "crs_grant_equivalent_method_share",
         }
+    )
+    record = ["provider_code", "agency_code", "year", "bi_multi", "psi_flag"]
+    memorandum_records = pl.concat(
+        [
+            release.table("disbursements").select(
+                *record,
+                rio_adaptation="record_rio_adaptation",
+                rio_mitigation="record_rio_mitigation",
+                amount_usd="allocated_usd",
+            ),
+            release.table("untraced").select(
+                *record, "rio_adaptation", "rio_mitigation", amount_usd="untraced_usd"
+            ),
+        ]
+    ).filter(memorandum(pl.col("psi_flag")))
+    memorandum_crs = crs_at_party_weight(memorandum_records).select(
+        "provider_code",
+        "year",
+        crs_memorandum_disbursed_at_party_weight="amount_usd",
     )
     frames = []
     for each in method.methods if isinstance(method, MethodRange) else (method,):
@@ -1037,6 +1093,7 @@ def reconcile(
             .join(traced, on=["provider_code", "year"], how="left")
             .join(crs, on=["provider_code", "year"], how="left")
             .join(grant_equivalent, on=["provider_code", "year"], how="left")
+            .join(memorandum_crs, on=["provider_code", "year"], how="left")
             .with_columns(method=pl.lit(label(each)))
         )
     status = pl.col("status")
@@ -1092,6 +1149,7 @@ def reconcile(
             "oecd_only_usd",
             *COMPARATORS,
             GRANT_EQUIVALENT_COMPARATOR,
+            "crs_memorandum_disbursed_at_party_weight",
             "comparator",
             "btr_over_comparator",
             "thin_comparator",
@@ -1241,8 +1299,34 @@ def _conditions(
     return conditions
 
 
+def _require_memorandum_rows(release: Release) -> None:
+    """Raise unless `release` marks memorandum rows (`MEMORANDUM_FORMAT`). An older
+    release's `total_flows` and `quality` hold the memorandum records, and its other
+    tables have no `psi_flag` to leave them out by, so a query would count them."""
+    if release.manifest.data_format < MEMORANDUM_FORMAT:
+        raise FormatQueryError(
+            release.manifest.release,
+            data_format=release.manifest.data_format,
+            needed=MEMORANDUM_FORMAT,
+        )
+
+
+def _counted(release: Release, table: str) -> pl.LazyFrame:
+    """The rows of `table` that count: every row but memorandum rows
+    (`schema.MEMORANDUM_PSI_FLAGS`)."""
+    return release.table(table).filter(~memorandum(pl.col("psi_flag")))
+
+
 def _counted_commitments(release: Release) -> pl.LazyFrame:
-    """Commitments that count: every row except repeats of an earlier vintage.
+    """Commitments that count: every row except memorandum rows and repeats of an
+    earlier vintage."""
+    return _first_vintages(release).filter(~memorandum(pl.col("psi_flag")))
+
+
+def _first_vintages(release: Release) -> pl.LazyFrame:
+    """Commitments less the repeats of an earlier vintage: the rows a disbursement
+    or repayment weighs by. A memorandum commitment stays, since a record that
+    counts by its own flag still takes its markers.
 
     The release leaves out aggregate rows rebuilt into children, so their children's
     `parent_row_id` names a published CRDF row outside the release and nothing joins
@@ -1285,7 +1369,7 @@ def _base_rows(
             )
         )
 
-    commitments = _counted_commitments(release).select(
+    commitments = _first_vintages(release).select(
         "row_id",
         "flow_category",
         "status",
@@ -1298,7 +1382,7 @@ def _base_rows(
     allocated = pl.col("allocated_usd")
     record_allocated = ordered_sum(allocated).over("record_id")
     disbursements = (
-        release.table("disbursements")
+        _counted(release, "disbursements")
         .with_columns(
             allocation_weight=pl.when(record_allocated != 0).then(
                 allocated / record_allocated
@@ -1370,8 +1454,8 @@ def _reflow_rows(
     part and what certain links carried, `amount_low` subtracts the larger and
     `amount_high` the smaller.
     """
-    reflows = release.table("reflows").filter(_in_view(view))
-    commitments = _counted_commitments(release).select(
+    reflows = _counted(release, "reflows").filter(_in_view(view))
+    commitments = _first_vintages(release).select(
         "row_id",
         "flow_category",
         "status",
@@ -1439,7 +1523,7 @@ def _untraced_rows(release: Release, *, view: View, flow: Flow) -> pl.LazyFrame:
     factor, missing = _grant_equivalent(flow)
     amount = pl.col("untraced_usd") * factor
     return _conform(
-        release.table("untraced")
+        _counted(release, "untraced")
         .filter(_in_view(view))
         .join(_labels(release), on="record_id", how="left")
         .with_columns(

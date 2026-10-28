@@ -13,16 +13,21 @@ The release holds only processed tables and metadata. The Green Climate Fund's l
 
 `build` holds `package_source_sha256`, the sha256 over the files of the climate-finance package that built the release; `python`, the exact Python version; `environment_sha256`, the sha256 over the sorted `name==version` lines of every installed distribution; `dependencies`, the exact versions of polars, pyarrow, duckdb, splink, scikit-learn, numpy, scipy, pandas, pydantic, rapidfuzz, oda-reader, openpyxl, pydeflate, resolvekit, sentence-transformers, torch, transformers, and tokenizers where installed; and `stage_identities`, the sha256 of each build stage's `stage.json` before assemble. Every query result carries it in `meta.build`, and `explain()` prints the package source and environment digests.
 
-The data format is a whole number, independent of the package version, and this package writes format 2. The format goes up by one when a release table, a column of one, or a `release.json` field is added, removed, or changes meaning. A package reads every format up to its own: `cf.load()` raises `ReleaseFormatError` for a newer format, naming the format a later climate-finance reads, and opens an older one. On a release whose format predates a table, `release.table()` and any query that reads the table raise `FormatTableError`. Format 2 adds `btr_coefficients`; on a format 1 release `PROVIDER` takes the stated coefficients alone.
+The data format is a whole number, independent of the package version, and this package writes format 3. The format goes up by one when a release table, a column of one, or a `release.json` field is added, removed, or changes meaning. A package reads every format up to its own: `cf.load()` raises `ReleaseFormatError` for a newer format, naming the format a later climate-finance reads, and opens an older one. On a release whose format predates a table, `release.table()` and any query that reads the table raise `FormatTableError`. Format 2 adds `btr_coefficients`. Format 3 adds `psi_flag`, and its `total_flows` and `quality` leave memorandum rows out. On a release of format 1 or 2 the queries raise `FormatQueryError`, since its totals hold memorandum records, and `release.table()` still reads its tables.
 
 The published release also leaves out the row-level BTR tables `btr` and `btr_links` until the UNFCCC confirms its terms cover them, and `release.table("btr")` on it raises `WithheldTableError`. A build from BTR workbooks downloaded from the UNFCCC writes both. `btr_totals` and `btr_crs_unlinked` hold the reconciliation totals in either, and `btr_coefficients` the coefficients the BTR rows imply.
+
+## Memorandum rows
+
+The CRS's private sector instrument flag tells the flow a provider counts from the records it reports beside it for memorandum. Under the DAC's institutional approach a provider counts the capital it pays into its development finance institution (flags 1 and 10) and reports the institution's investments for memorandum: flag 4 from 2018 to 2023, on flow 14, and flags 40, 41, and 42 from 2023, on flow 60. Flag 50 is capital reported for memorandum by a provider that counts the investments (flags 20 to 22). The tables carry the flag as `psi_flag`, and a row with flag 4, 40, 41, 42, or 50 (`climate_finance.schema.MEMORANDUM_PSI_FLAGS`) is a memorandum row. No query counts one, `total_flows` and `quality` leave them out, and a sum over `commitments`, `disbursements`, `untraced`, or `reflows` that should match a query leaves them out too. The CRS flags records from 2018, and an earlier record has a null flag and counts. [About the methods](../explanation/methods.md#development-finance-institutions) explains the rule.
 
 ## `commitments`
 
 Key `row_id`. One row per recipient-perspective CRDF commitment, which is the population the trace follows. Aggregate rows rebuilt from their parts keep the parts and omit the parent. Rows that repeat an earlier vintage stay, with their amounts and a `repeat_of`:
 
 - `row_id`, `vintage`, `year`: the CRDF row, the vintage of the CRDF file it came from, and the commitment year. The release's commitment years start with the first year the recipient-perspective CRDF holds, 2000.
-- `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `purpose_code`: DAC codes. `bi_multi` is the Bi_Multi code. `flow_category` is the CRDF's flow category, where 10 is ODA, 21 is other official flows, 22 and 30 are private grants, and 60 is private market flows.
+- `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `purpose_code`: DAC codes. `bi_multi` is the Bi_Multi code. `flow_category` is the CRDF's flow category, where 10 is ODA, 21 is other official flows, 22 and 30 are private grants, and 60 is private sector instruments, the investments of development finance institutions the CRDF prints from 2023.
+- `psi_flag`: the private sector instrument flag of the row's CRS records, those of the same year, provider, crs id, and flow category, and null where they carry none. Every row of flow category 60 has one, and the build stops on a row whose CRS records it cannot find.
 - `crs_id`, `project_number`: the donor's ids.
 - `rio_adaptation`, `rio_mitigation`: the Rio markers, 0, 1, or 2. `climate_share` is set for development-bank rows that report climate components, and null for marker rows.
 - `face_usd`, `climate_usd`, `adaptation_usd`, `mitigation_usd`, `overlap_usd`: the commitment and its climate part. Adaptation and mitigation each include the overlap, so `climate_usd` is `adaptation_usd` + `mitigation_usd` − `overlap_usd`. Before 2010 the CRDF measures no adaptation, so `rio_adaptation`, `adaptation_usd`, and `overlap_usd` are null and `climate_usd` is the mitigation value. A negative `face_usd` is a published downward revision with zero disbursed.
@@ -38,7 +43,8 @@ Key `row_id`. One row per recipient-perspective CRDF commitment, which is the po
 Key `row_id`, `record_id`, `year`. Allocations of CRS records, and of bank-ledger and IATI fills, to climate commitments, one row per allocation. Every row names a commitment. Records run to `crs_last_complete`. The table omits what the trace could not allocate. `untraced` holds the part of it that totals count, and `unallocated` sums all of it:
 
 - `row_id`, `record_id`, `year`: the commitment, the CRS record (or fill record), and the record's year.
-- `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_code`, `project_number`, `title`: the record's own fields. `flow_code` is the CRS flow, where 11 is ODA grants, 13 is ODA loans, and 19 is equity.
+- `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_code`, `project_number`, `title`: the record's own fields. `flow_code` is the CRS flow, where 11 is ODA grants, 13 is ODA loans, 14 is other official flows, 19 is equity, and 60 is private sector instruments.
+- `psi_flag`: the record's private sector instrument flag, null for a fill and for a record the CRS gives none.
 - `allocated_usd`, `allocated_low_usd`: the part of the record's disbursement given to the commitment, with `0 <= allocated_low_usd <= allocated_usd`. The high bound is `allocated_usd`.
 - `record_disbursement_usd`, `record_grant_equiv_usd`: the whole record's disbursement and grant equivalent, repeated on each row of the record. A query takes an allocation's grant equivalent as `record_grant_equiv_usd` × `allocated_usd` ÷ `record_disbursement_usd`. `record_grant_equiv_usd` is null where the CRS gives no grant equivalent, and where it gives a negative one on a positive disbursement.
 - `inherited_rio_adaptation`, `inherited_rio_mitigation`: the markers of the commitment, which weight the allocation. `record_rio_adaptation` and `record_rio_mitigation` are the record's own. `marker_source` says how they relate, taking `components`, `commitment`, or `record_differs`.
@@ -147,7 +153,7 @@ Key `group`, `years_since`. The cumulative disbursed share of traceable climate 
 
 ## `quality`
 
-Key `provider_code`, `year`. Link and coverage statistics. Every amount is climate value of counted commitments:
+Key `provider_code`, `year`. Link and coverage statistics. Every amount is climate value of counted commitments, which leave out memorandum rows and their disbursements:
 
 - `provider_code`, `year`, `commitments` (the count).
 - `climate_usd`: all counted commitments. `linked_usd` is the part that traces to at least one CRS record.
@@ -162,7 +168,7 @@ Key `provider_code`, `year`. Link and coverage statistics. Every amount is clima
 Key `record_id`. Rio-marked CRS disbursement that reaches no commitment in the release, one row per CRS record, at face value. Disbursement and grant-equivalent totals count it in `value` and `high` and not in `low`, weighted by the record's own markers. A record enters when its Bi_Multi code is in the recipient view, it disburses a positive amount in a year up to `crs_last_complete`, and it carries a Rio marker above 0:
 
 - `record_id`, `year`: the CRS record and its disbursement year.
-- `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_code`, `project_number`, `title`: the record's own fields, as on `disbursements`.
+- `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_code`, `psi_flag`, `project_number`, `title`: the record's own fields, as on `disbursements`.
 - `rio_adaptation`, `rio_mitigation`: the record's own markers. Before 2010 `rio_adaptation` is null, as the CRDF's is, and the record counts mitigation alone.
 - `untraced_usd`: the face value that reaches no commitment.
 - `reason`: `excess` for a linked record's disbursement beyond what its commitments take, and `unlinked` for the whole disbursement of a record linked to no commitment.
@@ -181,14 +187,14 @@ Key `provider_code`, `year`. Rio-marked CRS disbursements that reach no commitme
 - `fund_unlinked_usd`: the unlinked GEF and GCF records whose commitment the IATI route filled, 0 with `gap_fill` off.
 - `marked_usd`: every Rio-marked CRS disbursement of the provider and year.
 
-`marked_usd` equals the allocated `disbursements` of Rio-marked CRS records plus the other four amounts. `excess_usd` and `unlinked_marked_usd` equal the `untraced` sums by provider, year, and reason, and count in totals through it. No total counts `outside_release_usd` or `fund_unlinked_usd`.
+`marked_usd` equals the allocated `disbursements` of Rio-marked CRS records plus the other four amounts. `excess_usd` and `unlinked_marked_usd` equal the `untraced` sums by provider, year, and reason, and count in totals through it, apart from memorandum records, which every amount here includes. No total counts `outside_release_usd` or `fund_unlinked_usd`.
 
 ## `reflows`
 
 Key `record_id`, `basis`, `row_id`, `inherited_rio_adaptation`, `inherited_rio_mitigation`. CRS repayments of principal and interest, up to `crs_last_complete`, each split over what its loan's disbursements reached. A loan is the key one tier of the trace matched the repayment on: a crs id, a World Bank loan number, or a project number. Its disbursement is every allocation of the CRS records traced to a commitment the loan's repayments reach. Where the tiers reach no commitment, the loan is the key that ties the repayment to its own disbursement records, and its disbursement is theirs: their allocations, or the whole disbursement of a record linked to no commitment. Each part of the disbursement takes that share of the repayment, so a loan counted at 40% climate repays at 40%, and a loan gross counts as `untraced` repays at its disbursement records' own markers:
 
 - `record_id`, `year`: the CRS record and its repayment year.
-- `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_code`, `project_number`, `title`: the record's own fields, as on `disbursements`. `bi_multi` is null on repayment-only rows the CRS files without one, which no view counts and which come out `unlinked`. `finance_t` is the CRS type of finance.
+- `provider_code`, `agency_code`, `recipient_code`, `channel_code`, `bi_multi`, `purpose_code`, `flow_code`, `psi_flag`, `project_number`, `title`: the record's own fields, as on `disbursements`. `bi_multi` is null on repayment-only rows the CRS files without one, which no view counts and which come out `unlinked`. `finance_t` is the CRS type of finance.
 - `row_id`, `basis`: the part of the loan. `commitment` names the CRDF row in `row_id`. The other bases have a null `row_id`: `outside_release` for disbursement to commitments with no CRDF row, `excess` for disbursement beyond what the loan's commitments took that no total counts, `untraced` for such excess, or the disbursement of a record linked to no commitment, that `untraced` counts, `unmeasured` for the disbursement of a record linked to no commitment whose Rio markers no total counts, `beyond_disbursed` for principal past what the loan disbursed, `no_disbursement` for a loan with no disbursement up to `crs_last_complete`, and `unlinked` for a repayment no tier ties to a loan.
 - `received_usd`, `interest_usd`: the principal and interest the part takes. Interest takes the loan's shares in full.
 - `received_low_usd`, `interest_low_usd`: the same amounts where the repayment's link is certain, counting on a `commitment` row only what certain links allocated to the row, and 0 otherwise.
@@ -200,7 +206,7 @@ Key `record_id`, `basis`, `row_id`, `inherited_rio_adaptation`, `inherited_rio_m
 
 ## `total_flows`
 
-Key `provider_code`, `agency_code`, `recipient_code`, `year`, `bi_multi`, `flow`, `rio_adaptation`, `rio_mitigation`. Every CRS flow, across climate and non-climate records, up to `crs_last_complete`. It is the denominator of `Result.share_of_total()`, and the BTR reconciliation weights its climate disbursements by the two markers:
+Key `provider_code`, `agency_code`, `recipient_code`, `year`, `bi_multi`, `flow`, `rio_adaptation`, `rio_mitigation`. Every CRS flow, across climate and non-climate records, up to `crs_last_complete`, less the memorandum records. It is the denominator of `Result.share_of_total()`, and the BTR reconciliation weights its climate disbursements by the two markers:
 
 - `provider_code`, `recipient_code`, `year`, `bi_multi`, `flow`.
 - `agency_code`: the CRS agency, so a query can take out the EIB's flows where the EIB counts as a channel. Null on core contributions.

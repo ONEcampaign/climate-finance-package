@@ -8,7 +8,11 @@ import pytest
 
 from climate_finance import schema
 from climate_finance.build.normalise.crdf import normalise_crdf
-from climate_finance.build.normalise.crs import normalise_crs, trace_population
+from climate_finance.build.normalise.crs import (
+    normalise_crs,
+    psi_flags,
+    trace_population,
+)
 
 pytestmark = pytest.mark.slow
 
@@ -41,7 +45,12 @@ def test_crs_2022_trace_population(crs: pl.DataFrame) -> None:
 @pytest.mark.parametrize("perspective", ["recipient", "provider"])
 def test_crdf_validates(oecd: Path, crs: pl.DataFrame, perspective: str) -> None:
     raw = pl.scan_parquet(oecd / f"crdf_{perspective}.parquet")
-    crdf = normalise_crdf(raw, perspective=perspective, crs=crs.lazy()).collect()
+    crdf = normalise_crdf(
+        raw,
+        perspective=perspective,
+        crs=crs.lazy(),
+        psi_flags=psi_flags(pl.scan_parquet(oecd / "CRS_v20261006.parquet")),
+    ).collect()
 
     schema.validate(schema.CRDF, crdf)
     assert crdf["row_id"].is_unique().all()
@@ -49,7 +58,12 @@ def test_crdf_validates(oecd: Path, crs: pl.DataFrame, perspective: str) -> None
 
 def test_eib_id_scheme_for_every_vintage(oecd: Path, crs: pl.DataFrame) -> None:
     raw = pl.scan_parquet(oecd / "crdf_recipient.parquet")
-    crdf = normalise_crdf(raw, perspective="recipient", crs=crs.lazy()).collect()
+    crdf = normalise_crdf(
+        raw,
+        perspective="recipient",
+        crs=crs.lazy(),
+        psi_flags=psi_flags(pl.scan_parquet(oecd / "CRS_v20261006.parquet")),
+    ).collect()
 
     eib = crdf.filter(pl.col("id_scheme").is_not_null())
     counts = {

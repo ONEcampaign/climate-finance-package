@@ -13,7 +13,11 @@ from climate_finance.build.link.crdf_crs import link_within_year, recover
 from climate_finance.build.link.keys import build_units
 from climate_finance.build.normalise.aggregates import rebuild_aggregates
 from climate_finance.build.normalise.crdf import normalise_crdf
-from climate_finance.build.normalise.crs import normalise_crs, trace_population
+from climate_finance.build.normalise.crs import (
+    normalise_crs,
+    psi_flags,
+    trace_population,
+)
 from climate_finance.build.normalise.external import normalise_external
 from climate_finance.build.normalise.orgs import DFI_PACK, org_names, resolve_orgs
 from climate_finance.build.normalise.vintages import mark_repeats
@@ -132,7 +136,12 @@ def links(
     crdf = rebuild_aggregates(
         mark_repeats(
             pl.concat(
-                normalise_crdf(frame, perspective=perspective, crs=crs)
+                normalise_crdf(
+                    frame,
+                    perspective=perspective,
+                    crs=crs,
+                    psi_flags=psi_flags(bulk),
+                )
                 for frame, perspective in zip(raw_crdf, perspectives, strict=True)
             ),
             crs=crs,

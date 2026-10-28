@@ -6,6 +6,7 @@ from typing import Literal
 import polars as pl
 
 from climate_finance.build.errors import BuildError
+from climate_finance.build.normalise.crs import PSI_KEY
 from climate_finance.build.normalise.ids import content_id
 from climate_finance.schema import (
     ADAPTATION_FIRST_YEAR,
@@ -42,6 +43,9 @@ _EXCEL_ERRORS = ("#NAME?", "#VALUE!", "#REF!", "#DIV/0!", "#N/A", "#NUM!", "#NUL
 # and they reach the parquet as midnight timestamps.
 _DATE_DAMAGED = r"^\d{4}-\d{2}-\d{2} 00:00:00$"
 _TEXT_COLUMNS = ("crs_id", "project_number", "project_title", "description")
+# The flow category of private sector instruments, whose every row reports CRS
+# records with a PSI flag.
+_PSI_CATEGORY = 60
 
 # The EIB reports to the CRDF as agency 3 of EU Institutions (918). Its ids follow a
 # different scheme in each period, and no transform maps one onto another: none in
@@ -79,6 +83,7 @@ def normalise_crdf(
     *,
     perspective: Literal["provider", "recipient"],
     crs: pl.LazyFrame,
+    psi_flags: pl.LazyFrame,
 ) -> pl.LazyFrame:
     """One perspective's `download_crdf` output in the `crdf` schema.
 
@@ -103,7 +108,8 @@ def normalise_crdf(
     holds the row. The CRDF does not publish `bi_multi`. Imputed multilateral rows are
     core contributions (2), and every other row takes its provider's most common
     Bi_Multi among the provider's non-core records in `crs`. `id_scheme` classifies
-    every EIB row's id and is null for every other row.
+    every EIB row's id and is null for every other row. `psi_flag` is the PSI flag
+    of the row's CRS records (`crs.PSI_KEY`), null where they carry none.
 
     Excel damage is repaired or nulled, with counts logged. Error text such as
     `#NAME?` becomes null, and a project number Excel turned into a date takes the
@@ -115,10 +121,13 @@ def normalise_crdf(
         raw: `oda_reader.download_crdf(perspective=..., pre_process=True)` output.
         perspective: The perspective `raw` was downloaded in.
         crs: Normalised CRS records.
+        psi_flags: `crs.psi_flags` of the bulk CRS file.
 
     Raises:
         CRDFNormaliseError: when a provider has no CRS record, a row has no climate
-            part, or an EIB id follows no known scheme.
+            part, an EIB id follows no known scheme, a row's CRS records carry two
+            PSI flags, or a row of private sector instruments (flow category 60)
+            has no flagged CRS record.
     """
     ids = pl.col("crs_id", "project_number").cast(pl.String).str.strip_chars()
     frame = (
@@ -131,6 +140,7 @@ def normalise_crdf(
     )
     frame = frame.with_columns(
         bi_multi=_bi_multi(frame, crs=crs),
+        psi_flag=_psi_flag(frame, psi_flags=psi_flags),
         rio_adaptation=_marker("adaptation_objective"),
         rio_mitigation=_marker("mitigation_objective"),
         **{
@@ -169,6 +179,7 @@ def normalise_crdf(
         bi_multi="bi_multi",
         purpose_code=pl.col("purpose_code").cast(pl.Int32),
         flow_category=pl.col("flow_type_code").cast(pl.Int32),
+        psi_flag="psi_flag",
         objective="objective",
         rio_adaptation="rio_adaptation",
         rio_mitigation="rio_mitigation",
@@ -269,6 +280,37 @@ def _bi_multi(frame: pl.DataFrame, *, crs: pl.LazyFrame) -> pl.Series:
         .cast(pl.Int8)
         .alias("bi_multi")
     ).to_series()
+
+
+def _psi_flag(frame: pl.DataFrame, *, psi_flags: pl.LazyFrame) -> pl.Series:
+    """The PSI flag of each row's CRS records, which tells a flow the provider
+    counts from one it reports for memorandum (`schema.MEMORANDUM_PSI_FLAGS`)."""
+    key = list(PSI_KEY)
+    rows = frame.select(
+        pl.col("year").cast(pl.Int16),
+        pl.col("provider_code").cast(pl.Int32),
+        "crs_id",
+        flow_category=pl.col("flow_type_code").cast(pl.Int32),
+    )
+    flags = psi_flags.join(rows.lazy().unique(), on=key, how="semi").collect()
+    if (split := flags.filter(pl.len().over(key) > 1)).height:
+        raise CRDFNormaliseError(
+            f"{split.select(key).n_unique()} CRDF keys (year, provider, crs id, flow "
+            "category) have CRS records with different PSI flags, for example "
+            f"{split.sort(key).head(4).rows()}"
+        )
+    joined = rows.join(flags, on=key, how="left", maintain_order="left")
+    unflagged = joined.filter(
+        pl.col("flow_category") == _PSI_CATEGORY, pl.col("psi_flag").is_null()
+    )
+    if unflagged.height:
+        raise CRDFNormaliseError(
+            f"{unflagged.height} CRDF rows of private sector instruments (flow "
+            f"category {_PSI_CATEGORY}) have no CRS record with a PSI flag, so "
+            "nothing says whether the provider counts them, for example "
+            f"{unflagged.head(4).rows()}"
+        )
+    return joined["psi_flag"]
 
 
 def _marker(column: str) -> pl.Expr:

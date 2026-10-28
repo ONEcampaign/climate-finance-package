@@ -58,6 +58,11 @@ _REFLOW_SALT = "reflow"
 # (210). A grant's grant equivalent is its face value.
 _GRANT_FINANCE_TYPES = (110, 210)
 _IDS = ("crs_id", "project_number")
+# The CRDF prints the bulk CRS `category` as its flow category: ODA 10, OOF 21, private
+# flows 30 and private sector instruments 60. The bulk flow codes map onto them.
+FLOW_CATEGORY = {11: 10, 13: 10, 19: 10, 14: 21, 30: 30, 60: 60}
+# The fields that tie a CRDF row to the bulk records it reports.
+PSI_KEY = ("year", "provider_code", "crs_id", "flow_category")
 _TEXT = ("project_title", "short_description", "long_description")
 
 
@@ -140,6 +145,29 @@ def normalise_reflows(raw: pl.LazyFrame, *, years: tuple[int, int]) -> pl.LazyFr
     return _in_schema(pl.concat([kept, salted])).select(*CRS_REFLOWS.columns)
 
 
+def psi_flags(raw: pl.LazyFrame) -> pl.LazyFrame:
+    """The distinct PSI flags of the bulk CRS records by `PSI_KEY`, from every
+    flagged record the file holds, with or without an amount.
+
+    A CRDF row reports the records of its key, so it takes their flag. The bulk
+    file flags some records of no amount that `normalise_crs` drops, such as those
+    behind 25 of Norfund's 2023 CRDF rows, which print a climate value under USD 1.
+    """
+    return (
+        raw.filter(pl.col("ps_iflag").is_not_null())
+        .select(
+            pl.col("year").cast(pl.Int16),
+            provider_code=pl.col("donor_code").cast(pl.Int32),
+            crs_id=pl.col("crs_id").cast(pl.String).str.strip_chars(),
+            flow_category=pl.col("flow_code").replace_strict(
+                FLOW_CATEGORY, default=None, return_dtype=pl.Int32
+            ),
+            psi_flag=pl.col("ps_iflag").cast(pl.Int32),
+        )
+        .unique()
+    )
+
+
 def _has_value(sources: Mapping[str, str]) -> pl.Expr:
     """A record with a non-zero value in any of the raw columns `sources` names."""
     return pl.any_horizontal(
@@ -178,6 +206,7 @@ def _in_schema(records: pl.LazyFrame) -> pl.LazyFrame:
         bi_multi=pl.col("bi_multi").cast(pl.Int8),
         flow_code=pl.col("flow_code").cast(pl.Int32),
         finance_t=pl.col("finance_t").cast(pl.Int32),
+        psi_flag=pl.col("ps_iflag").cast(pl.Int32),
         **{
             name: pl.col(source).cast(pl.Float64) * _USD_PER_UNIT
             for name, source in (_AMOUNTS | _REFLOWS).items()

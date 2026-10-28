@@ -187,6 +187,70 @@ def test_a_case_by_case_party_reads_against_its_default() -> None:
     assert _row(reconciliation, "NOR", 2022)["crdf_method_share"] == 0.0
 
 
+def _with_norfund(frame: pl.DataFrame) -> pl.DataFrame:
+    """Norway's untraced 2021 records: 10m Principal its DFI reports for
+    memorandum (flag 41), and 4m Principal capital it counts (flag 1)."""
+    norway = frame.filter(record_id="FRA-UNLINKED").with_columns(
+        provider_code=pl.lit(8, pl.Int32),
+        rio_adaptation=pl.lit(0, pl.Int8),
+        rio_mitigation=pl.lit(2, pl.Int8),
+    )
+    return pl.concat(
+        [
+            frame,
+            norway.with_columns(
+                record_id=pl.lit("NOR-DFI"),
+                psi_flag=pl.lit(41, pl.Int32),
+                untraced_usd=pl.lit(10e6),
+            ),
+            norway.with_columns(
+                record_id=pl.lit("NOR-CAPITAL"),
+                psi_flag=pl.lit(1, pl.Int32),
+                untraced_usd=pl.lit(4e6),
+            ),
+        ]
+    )
+
+
+def _with_a_memorandum_allocation(frame: pl.DataFrame) -> pl.DataFrame:
+    """NOR-1-R0's 5.7m 2021 allocation again, Significant, as a flag-4 record."""
+    return pl.concat(
+        [
+            frame,
+            frame.filter(record_id="NOR-1-R0").with_columns(
+                record_id=pl.lit("NOR-DFI-R0"), psi_flag=pl.lit(4, pl.Int32)
+            ),
+        ]
+    )
+
+
+def test_memorandum_records_show_beside_the_crs_comparator(tmp_path: Path) -> None:
+    # Norway counts Principal at 0.9 and Significant at 0.3, and the memorandum
+    # records stay out of `total_flows`, so the CRS comparator holds neither.
+    path = copy_release(
+        tmp_path / "release",
+        edits={
+            "untraced": _with_norfund,
+            "disbursements": _with_a_memorandum_allocation,
+        },
+    )
+    reconciliation = cf.load(path=path).reconcile(providers="NOR")
+    before = _row(SNAP.reconcile(providers="NOR"), "NOR", 2021)
+    row = _row(reconciliation, "NOR", 2021)
+
+    assert row["crs_memorandum_disbursed_at_party_weight"] == pytest.approx(
+        0.9 * 10e6 + 0.3 * 5.7e6
+    )
+    assert row["crs_disbursed_at_party_weight"] == pytest.approx(
+        before["crs_disbursed_at_party_weight"]
+    )
+    assert before["crs_memorandum_disbursed_at_party_weight"] is None
+    assert (
+        _row(reconciliation, "NOR", 2022)["crs_memorandum_disbursed_at_party_weight"]
+        is None
+    )
+
+
 def _france_reports(frame: pl.DataFrame) -> pl.DataFrame:
     """France reports Germany's BTR totals."""
     france = frame.filter(party="DEU").with_columns(

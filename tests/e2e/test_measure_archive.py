@@ -17,7 +17,11 @@ from climate_finance.build.measure import (
 )
 from climate_finance.build.normalise.aggregates import rebuild_aggregates
 from climate_finance.build.normalise.crdf import normalise_crdf
-from climate_finance.build.normalise.crs import normalise_crs, trace_population
+from climate_finance.build.normalise.crs import (
+    normalise_crs,
+    psi_flags,
+    trace_population,
+)
 from climate_finance.build.normalise.vintages import mark_repeats
 from climate_finance.build.readers.imputed_shares import read_imputed_shares
 from climate_finance.methods import ONE
@@ -51,6 +55,9 @@ def crdf(raw: Path, crs: pl.LazyFrame) -> pl.LazyFrame:
             pl.scan_parquet(raw / "oecd" / f"crdf_{perspective}.parquet"),
             perspective=perspective,
             crs=crs,
+            psi_flags=psi_flags(
+                pl.scan_parquet(raw / "oecd" / "CRS_v20261006.parquet")
+            ),
         )
         for perspective in ("recipient", "provider")
     )

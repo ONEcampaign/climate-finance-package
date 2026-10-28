@@ -32,6 +32,7 @@ CONSTRUCTED = {
     "WithheldTableError": lambda cls: cls("btr", note="Build it with cf-build."),
     "ReleaseFormatError": lambda cls: cls("2027a", data_format=2, supported=1),
     "FormatTableError": lambda cls: cls("untraced", data_format=1),
+    "FormatQueryError": lambda cls: cls("2026a", data_format=2, needed=3),
     "SchemaError": lambda cls: cls("commitments", {"year": "missing"}),
     "RemovedError": lambda cls: cls("get_unfccc_data", replacement="none"),
     "RemovedModuleError": lambda cls: cls("climate_finance.core", replacement="none"),
@@ -107,6 +108,7 @@ def test_the_codes_of_the_query_errors_hold() -> None:
 
     assert codes == {
         "ClimateFinanceError": "climate_finance",
+        "FormatQueryError": "format_query",
         "FormatTableError": "format_table",
         "InvalidInputError": "invalid_input",
         "MissingLabelsError": "missing_labels",

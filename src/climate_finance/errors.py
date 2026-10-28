@@ -150,6 +150,22 @@ class FormatTableError(WithheldTableError):
         )
 
 
+class FormatQueryError(ClimateFinanceError):
+    """A query needs data format `needed` or later, and the release `release` has
+    the older `data_format`."""
+
+    def __init__(self, release: str, *, data_format: int, needed: int) -> None:
+        self.release = release
+        self.data_format = data_format
+        self.needed = needed
+        super().__init__(
+            f"Release {release!r} has data format {data_format}, and the queries "
+            f"need data format {needed} or later. Load a release of data format "
+            f"{needed} or later to query it. Release.table() still reads this "
+            "release's tables."
+        )
+
+
 class MissingLabelsError(ClimateFinanceError):
     """A method reads labels the release does not hold."""
 
