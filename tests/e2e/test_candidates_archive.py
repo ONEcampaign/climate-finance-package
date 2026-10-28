@@ -21,7 +21,12 @@ from climate_finance.build.link.candidates import (
 from climate_finance.build.link.crdf_crs import link_within_year
 from climate_finance.build.link.id_practice import classify_id_practice, period_of
 from climate_finance.build.link.key_repair import repair_keys
-from climate_finance.build.link.keys import build_units, link_by_keys, purpose_units
+from climate_finance.build.link.keys import (
+    build_units,
+    line_units,
+    link_by_keys,
+    pair_line_units,
+)
 from climate_finance.build.normalise.crdf import normalise_crdf
 from climate_finance.build.normalise.crs import normalise_crs, trace_population
 
@@ -36,7 +41,7 @@ CRDF_YEARS = (2015, 2024)
 RECALL_TARGET = 0.985
 # Eligible and training pairs under the key tiers and repair rules before the rules
 # in `KEY_RULES_ELIGIBLE`. A disbursement pairs with a purpose-split line once
-# (`purpose_units`).
+# (`line_units`).
 ELIGIBLE_PAIRS = 1_313_864
 TRAINING_PAIRS = 1_292_754
 # Eligible pairs each key rule adds by leaving disbursements unlinked, or takes by
@@ -155,7 +160,7 @@ def truth(
     candidates: pl.DataFrame,
 ) -> pl.DataFrame:
     """Every id-truth pair, one per disbursement and purpose-split line as the
-    candidates hold it (`purpose_units`), with whether blocking produced it and the
+    candidates hold it (`line_units`), with whether blocking produced it and the
     commitment's provider category."""
     categories = (
         pl.scan_parquet(data / "raw" / "oecd" / "crdf_recipient.parquet")
@@ -200,10 +205,12 @@ def truth(
         )
     )
     return (
-        purpose_units(
+        pair_line_units(
             pairs,
+            line_units=line_units(
+                units, reached=links.filter(task="crdf_crs")["right_id"]
+            ),
             units=units,
-            reached=links.filter(task="crdf_crs")["right_id"],
         )
         .join(commitments.select(right_id="unit_id"), on="right_id", how="semi")
         .join(
@@ -264,7 +271,7 @@ def test_blocking_recall_on_id_truth(truth: pl.DataFrame) -> None:
     # Every blocked truth pair carries its label.
     assert truth.filter("blocked")["same_crs_id"].all()
     # Truth holds one pair per disbursement and purpose-split line
-    # (`purpose_units`).
+    # (`line_units`).
     assert prototype_years.height == 9_828
     assert prototype_years["blocked"].mean() >= RECALL_TARGET
     # Over the build's CRDF years five crs ids, three of them Canada's, hold 100 of

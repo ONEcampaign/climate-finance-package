@@ -16,7 +16,7 @@ title is its largest record's title, or that record's short description where it
 has none.
 
 A disbursement pairs once with a purpose-split line, which a donor files as one unit
-per purpose, as Canada and the Adaptation Fund do (`keys.purpose_units`). The pair
+per purpose, as Canada and the Adaptation Fund do (`keys.line_units`). The pair
 takes the unit of the disbursement's purpose code. Where no CRDF row reaches that
 unit, the disbursement continues no climate commitment on the line and keeps no pair
 there. Where the line has no unit of that code, the pair takes the reached unit of
@@ -77,7 +77,11 @@ from climate_finance.build.link.id_practice import (
     line_id,
     period_of,
 )
-from climate_finance.build.link.keys import floor_loaded, purpose_units
+from climate_finance.build.link.keys import (
+    floor_loaded,
+    line_units,
+    pair_line_units,
+)
 from climate_finance.build.link.text import (
     NO_TITLE,
     clean_text,
@@ -335,10 +339,11 @@ def generate_candidates(
     disbursements = lines.join(disbursements.select("unit"), on="unit", how="semi")
     renumbered = _renumbered_lines(units)
     ids = sides.select("unit", "unit_id")
+    on_lines = line_units(units, reached=reached["unit_id"])
 
     def by_line(commitments: pl.DataFrame, disbursements: pl.DataFrame) -> pl.DataFrame:
         """The blocked pairs of `commitments` and `disbursements`, one per
-        purpose-split line (`purpose_units`), as unit ids. A pair whose line unit
+        purpose-split line (`line_units`), as unit ids. A pair whose line unit
         is not among `commitments` is dropped."""
         blocked = _block(
             commitments,
@@ -350,10 +355,10 @@ def generate_candidates(
         named = blocked.join(ids, left_on="left", right_on="unit").join(
             ids, left_on="right", right_on="unit", suffix="_right"
         )
-        return purpose_units(
+        return pair_line_units(
             named.select(left_id="unit_id", right_id="unit_id_right"),
+            line_units=on_lines,
             units=units,
-            reached=reached["unit_id"],
         ).join(commitments.select(right_id="unit_id"), on="right_id", how="semi")
 
     truth = by_line(commitments.filter("id_persistent"), disbursements)

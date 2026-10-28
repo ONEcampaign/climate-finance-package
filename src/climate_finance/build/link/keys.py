@@ -125,7 +125,7 @@ TIERS = (
 if tuple(tier.name for tier in TIERS) != schema.KEY_TIERS:
     raise RuntimeError("TIERS must follow schema.KEY_TIERS")
 # A purpose-split line: the commitment units under one crs id that share every
-# `UNIT_KEY` field but the purpose code (`purpose_units`).
+# `UNIT_KEY` field but the purpose code (`line_units`).
 SPLIT_LINE_KEY = tuple(name for name in UNIT_KEY if name != "purpose_code")
 
 
@@ -266,90 +266,146 @@ def link_by_tiers(
     return pl.concat(pairs)
 
 
-def purpose_units(
-    pairs: pl.DataFrame, *, units: pl.DataFrame, reached: pl.Series
-) -> pl.DataFrame:
-    """`pairs` with each commitment on a purpose-split line (`SPLIT_LINE_KEY`)
-    replaced by the line's unit the disbursement continues, the pairs of a
-    disbursement that continues an unreached unit dropped, and the duplicate rows
-    this makes dropped, the first kept.
+def line_units(units: pl.DataFrame, *, reached: pl.Series) -> pl.DataFrame:
+    """The unit a disbursement's pair takes on each purpose-split line
+    (`SPLIT_LINE_KEY`), by the disbursement's purpose.
 
     A donor can file one line of a project and recipient as several units, one per
     purpose, as Canada and the Adaptation Fund do. A disbursement continues the
     unit of its own purpose, and the line's other units compare alike with it on
     every field but the purpose. A pair per unit then adds false pairs a model
-    cannot tell from the true one, so a disbursement pairs with the line once.
+    cannot tell from the true one, so a disbursement pairs with the line once
+    (`pair_line_units`).
 
-    The line's unit is the one of the disbursement's purpose code, as the
-    `crs_id_purpose` tier links. Where that unit is not among `reached`, it carries
-    no climate finance, and the disbursement keeps no pair on the line. Where the
-    line has no unit of that code, the unit is the reached one of the
-    disbursement's three-digit purpose category, else the largest reached
-    commitment, ties to the smaller unit id. The unit depends only on the
-    disbursement, the line and `reached`, whichever of the line's units `pairs`
-    reach.
+    One row per line and purpose code its commitment units carry, with that unit
+    (`unit_id`) and its `pick`: the unit itself where it is among `reached`, as the
+    `crs_id_purpose` tier links, else null, since it carries no climate finance
+    and the disbursement keeps no pair on the line. Then, for a disbursement whose
+    purpose code the line lacks, one row per three-digit `purpose_category` of a
+    reached unit, picking the largest reached commitment of the category, and one
+    default row, with both null, picking the largest reached commitment, or null
+    where none is reached. Ties go to the smaller unit id.
+
+    Args:
+        units: the link stage's units.
+        reached: the unit ids of the commitments a `crdf_crs` link reaches.
+
+    Returns:
+        `line`, the line's `content_id` over `SPLIT_LINE_KEY`, `purpose_code`,
+        `purpose_category`, `unit_id` (null on the category and default rows) and
+        `pick`.
+    """
+    key = list(SPLIT_LINE_KEY)
+    committed = (
+        units.filter(pl.col("commitment_usd") > 0)
+        .drop_nulls("crs_id")
+        .filter(pl.len().over(key) > 1)
+    )
+    ids = (
+        committed.select(key)
+        .unique()
+        .with_columns(line=content_id(SPLIT_LINE_KEY, order_by=SPLIT_LINE_KEY))
+    )
+    on_line = committed.join(ids, on=key, nulls_equal=True).select(
+        "line",
+        "purpose_code",
+        "unit_id",
+        "commitment_usd",
+        reached=pl.col("unit_id").is_in(reached.implode()),
+    )
+    largest = (
+        on_line.filter("reached")
+        .with_columns(purpose_category=pl.col("purpose_code") // 100)
+        .sort("commitment_usd", "unit_id", descending=[True, False])
+    )
+    nothing = pl.lit(None, dtype=pl.Int32)
+    return pl.concat(
+        [
+            on_line.select(
+                "line",
+                "purpose_code",
+                purpose_category=nothing,
+                unit_id="unit_id",
+                pick=pl.when("reached").then("unit_id"),
+            ),
+            largest.drop_nulls("purpose_category")
+            .unique(["line", "purpose_category"], keep="first", maintain_order=True)
+            .select(
+                "line",
+                purpose_code=nothing,
+                purpose_category="purpose_category",
+                unit_id=pl.lit(None, dtype=pl.String),
+                pick="unit_id",
+            ),
+            on_line.select("line")
+            .unique()
+            .join(
+                largest.unique("line", keep="first", maintain_order=True).select(
+                    "line", pick="unit_id"
+                ),
+                on="line",
+                how="left",
+            )
+            .select(
+                "line",
+                purpose_code=nothing,
+                purpose_category=nothing,
+                unit_id=pl.lit(None, dtype=pl.String),
+                pick="pick",
+            ),
+        ]
+    ).sort("line", "purpose_code", "purpose_category", nulls_last=True)
+
+
+def pair_line_units(
+    pairs: pl.DataFrame, *, line_units: pl.DataFrame, units: pl.DataFrame
+) -> pl.DataFrame:
+    """`pairs` with each commitment on a purpose-split line replaced by the
+    `line_units` pick for the disbursement's purpose code: its own purpose's row,
+    else its purpose category's, else the line's default. A pair whose pick is
+    null is dropped, and so are the duplicate rows this makes, the first kept.
 
     Args:
         pairs: rows of a disbursement (`left_id`) and a commitment (`right_id`)
             unit, in any order, which the output keeps.
-        units: the link stage's units, which hold both sides of `pairs`.
-        reached: the unit ids of the commitments a `crdf_crs` link reaches.
+        line_units: `line_units` over `units`.
+        units: the units that hold the disbursements of `pairs`.
     """
-    key = list(SPLIT_LINE_KEY)
-    lines = (
-        units.filter(pl.col("commitment_usd") > 0)
-        .drop_nulls("crs_id")
-        .filter(pl.len().over(key) > 1)
-        .select(
-            "unit_id",
-            "purpose_code",
-            "commitment_usd",
-            line=pl.col("unit_id").min().over(key),
-            reached=pl.col("unit_id").is_in(reached.implode()),
-        )
+    purposes = line_units.drop_nulls("purpose_code")
+    own = purposes.select(
+        "line", left_purpose="purpose_code", own_pick="pick", own=pl.lit(value=True)
     )
-    on_line = (
-        pairs.select("left_id", "right_id")
-        .join(lines.select("line", right_id="unit_id"), on="right_id")
-        .select("left_id", "line")
-        .unique()
-        .join(
-            units.select(left_id="unit_id", left_purpose="purpose_code"),
-            on="left_id",
-            how="left",
-        )
-        .join(lines, on="line")
+    category = line_units.drop_nulls("purpose_category").select(
+        "line", left_category="purpose_category", category_pick="pick"
     )
-    own = pl.col("purpose_code") == pl.col("left_purpose")
-    category = pl.col("purpose_code") // 100 == pl.col("left_purpose") // 100
-    has_own = own.fill_null(value=False).any().over("left_id", "line")
-    picks = (
-        on_line.filter(
-            pl.when(has_own).then(own.fill_null(value=False)).otherwise("reached")
-        )
-        .sort(
-            "left_id",
-            "line",
-            category.fill_null(value=False),
-            "commitment_usd",
-            "unit_id",
-            descending=[False, False, True, True, False],
-        )
-        .unique(["left_id", "line"], keep="first", maintain_order=True)
-        .select("left_id", "line", pick=pl.when("reached").then("unit_id"))
+    default = line_units.filter(
+        pl.col("purpose_code").is_null(), pl.col("purpose_category").is_null()
+    ).select("line", default_pick="pick")
+    pick = (
+        pl.when(pl.col("own"))
+        .then("own_pick")
+        .otherwise(pl.coalesce("category_pick", "default_pick"))
     )
-    on = ["left_id", "line"]
     return (
         pairs.join(
-            lines.select("line", right_id="unit_id"),
+            purposes.select("line", right_id="unit_id"),
             on="right_id",
             how="left",
             maintain_order="left",
         )
-        .join(picks, on=on, how="left", maintain_order="left")
-        .filter(pl.col("line").is_null() | pl.col("pick").is_not_null())
-        .with_columns(right_id=pl.coalesce("pick", "right_id"))
-        .drop("line", "pick")
+        .join(
+            units.select(left_id="unit_id", left_purpose="purpose_code"),
+            on="left_id",
+            how="left",
+            maintain_order="left",
+        )
+        .with_columns(left_category=pl.col("left_purpose") // 100)
+        .join(own, on=["line", "left_purpose"], how="left", maintain_order="left")
+        .join(category, on=["line", "left_category"], how="left", maintain_order="left")
+        .join(default, on="line", how="left", maintain_order="left")
+        .filter(pl.col("line").is_null() | pick.is_not_null())
+        .with_columns(right_id=pl.coalesce(pick, "right_id"))
+        .select(pairs.columns)
         .unique(["left_id", "right_id"], keep="first", maintain_order=True)
     )
 

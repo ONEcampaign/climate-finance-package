@@ -23,7 +23,7 @@ them and nothing says which. Those pairs are `unlabelled` and sit outside both
 training and measurement. Canada also tells lines apart by purpose, so a Canadian
 disbursement continues the commitments of its own project, recipient and purpose
 where there are any (see `purpose_lines`). Truth, like the candidates, holds one
-pair per disbursement and purpose-split line (`keys.purpose_units`), so the
+pair per disbursement and purpose-split line (`keys.line_units`), so the
 classifier trains, is measured and links on lines, and the line's unit follows
 from the disbursement's purpose. Where a donor changes a project's number
 or agency and then issues a new crs id, the new line continues what the records that
@@ -97,9 +97,10 @@ from climate_finance.build.link.id_practice import (
 )
 from climate_finance.build.link.keys import (
     floor_loaded,
+    line_units,
     links_frame,
+    pair_line_units,
     partner_recipient,
-    purpose_units,
     separator_free_pn,
 )
 from climate_finance.build.link.levels import (
@@ -390,7 +391,7 @@ def id_truth(
     A `PURPOSE_LINE_DONORS` unit that continues commitments of its own project,
     recipient and purpose continues those alone (see `purpose_lines`). A
     disbursement holds one pair per purpose-split line, with the unit
-    `keys.purpose_units` picks, and that pair is ambiguous only where every pair
+    `keys.line_units` picks, and that pair is ambiguous only where every pair
     of the line was.
 
     Args:
@@ -514,10 +515,10 @@ def id_truth(
     )
     # A pair the ids leave open counts only where no pair of its line is settled.
     truth = (
-        purpose_units(
+        pair_line_units(
             continued.sort("ambiguous", *_PAIR),
+            line_units=line_units(as_filed, reached=reached["unit_id"]),
             units=as_filed,
-            reached=reached["unit_id"],
         )
         .join(commitments.select(right_id="unit_id"), on="right_id", how="semi")
         .sort(*_PAIR)

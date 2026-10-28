@@ -178,7 +178,7 @@ EIB_ROUTES_MOVED_BN = {
     "no_disbursement_record": -0.0116,
     "not_traceable": -0.6143,
 }
-# A disbursement pairs with a purpose-split line once (`purpose_units`), which
+# A disbursement pairs with a purpose-split line once (`line_units`), which
 # changes the classifier's training pairs and links and moves value out of
 # disbursed.
 PURPOSE_UNITS_MOVED_BN = {

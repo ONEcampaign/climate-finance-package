@@ -54,7 +54,7 @@ PAIRS_MOVED = {
     # providers' disbursements also pair with earlier commitments: 804,454 pairs
     # have a commitment from before 2015, 795,740 of them the US's.
     "commitments from 2000": 804_639,
-    # A disbursement pairs with a purpose-split line once (`purpose_units`).
+    # A disbursement pairs with a purpose-split line once (`line_units`).
     "one pair per purpose-split line": -3_584,
 }
 _LABELS = {
@@ -245,7 +245,7 @@ def test_calibrated_splink_against_id_truth(tables: LinkTables) -> None:
     }
     # Of the pooled model's providers (68, 1624, 76), only the Hewlett Foundation (1624)
     # links at 0.5. A disbursement pairs with a purpose-split line once
-    # (`purpose_units`), which moves New Zealand (820) most. Over commitments from 2015,
+    # (`line_units`), which moves New Zealand (820) most. Over commitments from 2015,
     # the `short_description` fallback adds 165 New Zealand pairs (21 true) and 15
     # Danish ones to the pool, and `template_lines` takes 2,908 French and 548 Danish
     # ones out. Commitments from 2000 give the pool 132,177 more pairs, all Austrian,
