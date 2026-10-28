@@ -87,9 +87,29 @@ result = release.spending(providers="Japan", years=[2023])
     [(248, 0.1), (666, 0.25)]
     ```
 
-## Read a row whose markers differ
+## Read where a row's climate value comes from
 
-A disbursement row weighs by the Rio markers of its commitment, `rio_adaptation` and `rio_mitigation`, and keeps the CRS record's own markers beside them in `record_rio_adaptation` and `record_rio_mitigation`. `marker_source` says how the two relate. `components` rows weigh by the commitment's climate share, `commitment` rows have record markers equal to the commitment's, and `record_differs` rows carry other record markers. The commitment's marker counts in `value` for all three, so a `record_differs` row is climate finance because the donor marked the commitment, and the record may say otherwise. Read the source record before describing the project as climate action, especially where a later record of the line carries a marker lower than the commitment's.
+A disbursement row takes its climate value from the commitment it fills, by one of two routes. A commitment with climate components, the climate share a development bank reports for its projects, gives `marker_source` `components`: the row counts `climate_share` of its amount, split into adaptation and mitigation as the bank reports, and its Rio markers may be null. Any other commitment weighs the row by its Rio markers, `rio_adaptation` and `rio_mitigation`, at the method's coefficients. The row keeps the CRS record's own markers beside them in `record_rio_adaptation` and `record_rio_mitigation`, and `marker_source` is `commitment` where the two agree and `record_differs` where they do not. An untraced row has `marker_source` `record` and weighs by the record's own markers.
+
+Split a figure by `marker_source` before describing it. In 2022, USD 39.5m of the example release's climate value comes from climate components and says nothing about Rio markers, so a sentence about marked activities covers only the other USD 47.7m.
+
+```python
+year_rows = release.spending(years=[2022]).rows()
+by_source = year_rows.group_by("marker_source").agg(pl.col("value").sum())
+for row in by_source.sort("marker_source").iter_rows(named=True):
+    print(row["marker_source"], round(row["value"] / 1e6, 1))
+```
+
+```output
+commitment 31.7
+components 39.5
+record 2.5
+record_differs 13.5
+```
+
+### A row whose markers differ
+
+A `record_differs` row is climate finance because the donor marked the commitment, and the record may say otherwise. Read the source record before describing the project as climate action, especially where a later record of the line carries a marker lower than the commitment's.
 
 ```python
 later = release.spending(providers="Japan", years=[2024]).rows(origin="disbursement")
@@ -109,6 +129,38 @@ JPN-2-R2 record_differs 1 0 6.3
 ```
 
 JPN-2's commitment marks mitigation significant (1), and its 2024 disbursement record marks it 0. The row still counts USD 6.3m, 40% of the USD 15.8m disbursed, under the commitment's marker. `result.rows(marker_source="record_differs")` lists every such row of a query, including first records that report no marker at all.
+
+### Describe a figure in prose
+
+IDA's 2022 disbursement to Kenya shows what a sentence about one figure needs: where the climate value comes from, how the loan is valued, and how certain the link is. `flow_code` 13 marks an ODA loan.
+
+```python
+ida = release.spending(providers="IDA", recipients="Kenya", years=[2022])
+row = ida.rows(origin="disbursement").row(0, named=True)
+print(
+    row["marker_source"],
+    row["rio_adaptation"],
+    row["climate_share"],
+    row["flow_code"],
+    row["link_method"],
+    row["link_probability"],
+)
+print(ida.table.select("amount", "adaptation", "mitigation", "value", "low").row(0))
+ida_ge = release.spending(
+    providers="IDA", recipients="Kenya", years=[2022], flow="grant_equivalent"
+)
+print(ida_ge.table.select("amount", "value").row(0))
+```
+
+```output
+components None 0.45 13 btr_splink 0.85
+(50000000.0, 11250000.0, 11250000.0, 22500000.0, 0.0)
+(30000000.0, 13500000.0)
+```
+
+A sentence that reads these columns correctly:
+
+> IDA disbursed a USD 50.0m loan to Kenya in 2022. The World Bank reports 45% of the commitment as climate components, so USD 22.5m counts as climate finance, half adaptation and half mitigation. The commitment carries no Rio marker. The figure counts the loan at face value as disbursed, before any repayment. Valued as a grant equivalent (`flow="grant_equivalent"`), the loan is worth USD 30.0m, of which USD 13.5m counts as climate finance. A model matched the disbursement record to the commitment (`btr_splink`, probability 0.85), and the low bound counts only value that certain links carry, so the low bound of this figure is zero.
 
 ## Verify it worked
 

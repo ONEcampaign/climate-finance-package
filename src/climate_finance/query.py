@@ -2003,11 +2003,12 @@ def _totals(
     agency: pl.Expr | None,
     factors: pl.DataFrame | None,
 ) -> pl.LazyFrame:
-    """All CRS flows of `spec.flow`, of disbursements for a net flow, by the
-    result's row keys and method, plus a row per provider, year, Bi_Multi code
-    and method with a null recipient that sums every recipient, for rows such as
-    attribution that have none. With an `agency`
-    key (`_agency_key`) the keys hold `agency_code`, as the result table's do.
+    """All CRS flows of `spec.flow`, of disbursements for a net flow, of the
+    Bi_Multi codes the view counts (`_VIEW_CODES`), by the result's row keys and
+    method, plus a row per provider, year, Bi_Multi code and method with a null
+    recipient that sums every recipient, for rows such as attribution that have
+    none. With an `agency` key (`_agency_key`) the keys hold `agency_code`, as the
+    result table's do.
 
     CRDF commitments carry their provider's class, Bi_Multi 1 for a bilateral
     provider, where the CRS splits bilateral flows over codes 1, 3, 7 and 8, so
@@ -2017,7 +2018,9 @@ def _totals(
     same rows as its amount.
     """
     flows = release.table("total_flows").filter(
-        pl.col("flow") == _gross(spec.flow), *conditions
+        pl.col("flow") == _gross(spec.flow),
+        pl.col("bi_multi").is_in(_VIEW_CODES[spec.view]),
+        *conditions,
     )
     if spec.flow == "commitments":
         flows = flows.with_columns(
