@@ -10,7 +10,17 @@
 - Ships each release's currency and price conversion factors in the release table `conversion_factors`, built from pydeflate's OECD DAC exchange rates and deflators, so a query converts offline and a converted figure changes only with a new release. pydeflate moves to the `build` extra.
 - Withholds the Green Climate Fund's ledger rows from releases, as its terms bar redistribution. `commitments.withheld_usd` states their amount.
 - Requires Python 3.12 or later.
-- Deprecates `ClimateData`, which runs with a `DeprecationWarning` until 3.0. `set_climate_finance_data_path` and `get_unfccc_data` import with a `DeprecationWarning` and raise `NotImplementedError` naming their replacement when called. See `docs/migrating-from-1x.md` and `docs/release-notes/2.0.0.md`, which explains why totals differ from 1.x.
+- Adds the columns `flow`, `view`, `currency`, `prices`, `measure` and `no_adaptation_marker` to spending results, and `range_low` and `range_high` under several methods.
+- Adds `ClimateFinanceWarning` as the base of every warning, with `CoverageWarning`, `DoubleCountWarning` and `ClimateFinanceDeprecationWarning` beneath it, and a `code` on every error, such as `unknown_provider`, shown in brackets at the end of the message.
+- Adds the `type` and `mdb` columns to `climate_finance.providers.list()`, the `type` column to `climate_finance.recipients.list()`, and the provider group `"World Bank"`, which names IBRD and IDA.
+- Adds `cf-build publish`, which uploads a pack to the GitHub release tagged `data` and replaces `releases.json` there.
+- Deprecates `ClimateData`, which runs with a `ClimateFinanceDeprecationWarning` until 3.0. `set_climate_finance_data_path` and `get_unfccc_data` import with the warning, and `get_unfccc_data` raises `RemovedError` naming `Release.reconcile()` when called. See `docs/migrating-from-1x.md` and `docs/release-notes/2.0.0.md`, which explains why totals differ from 1.x.
+- Removes these 1.x calls. Each raises `RemovedError` naming its 2.0 replacement:
+  - `ClimateData.get_multilateral_spending_shares`, `load_multilateral_imputations_data`, `as_share_of_total`, `convert_to_shares`, `available_methodologies`, `available_flows`, `available_sources`, `available_prices`, `available_currencies`, `available_providers`, `get_dac_providers`, `get_non_dac_providers`, `get_multilateral_providers` and `get_private_providers`.
+  - `get_unfccc_data`, and `ClimateData.load_spending_data(source="UNFCCC")`.
+  - `ClimateData.load_spending_data()` without `source=`, which 1.x read as `"OECD_CRS"`, and the sources `"OECD_CRS"`, `"OECD_CRS_ALLOCABLE"` and `"OECD_CRDF_CRS_ALLOCABLE"`.
+  - `"OECD_CRDF"` and `"OECD_CRDF_DONOR"` with a flow other than `"commitments"`, and `flows="net_disbursements"`, which 2.0 nets by loan with `Release.spending(flow="net_disbursements")`.
+  - The modules `climate_finance.common`, `config`, `core`, `methodologies`, `oecd`, `unfccc` and `validation`. Importing one raises `RemovedModuleError`, a `ModuleNotFoundError`.
 
 ## 1.2.3 (2026-08-11)
 - Declares `pydeflate`, `numpy` and `python-dateutil` as direct dependencies instead of relying on them arriving transitively.
