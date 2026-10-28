@@ -450,6 +450,26 @@ def test_a_unit_reaches_at_most_max_commitments(n: int, linked: bool) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("n", "linked"), [(MAX_COMMITMENTS, True), (MAX_COMMITMENTS + 1, False)]
+)
+def test_the_title_rule_reaches_at_most_max_commitments(n: int, linked: bool) -> None:
+    # Units of one crs id, one per purpose code, so the title names one crs id. The
+    # number rules drop such a unit before pairing. The title rule caps after.
+    commitments = {
+        f"c{i}": _commitment(
+            crs_id="A", title="Rural water supply", purpose_code=14030 + i
+        )
+        for i in range(n)
+    }
+    repaired = _repaired(
+        {**commitments, "d": _disbursement(crs_id="B", title="Rural water supply")}
+    )
+    assert repaired == (
+        {"d": {"repair_title_recipient": sorted(commitments)}} if linked else {}
+    )
+
+
 def test_the_record_year_and_floor_bound_the_commitments() -> None:
     repaired = _repaired(
         {
@@ -738,6 +758,19 @@ def test_a_crs_id_links_across_countries_where_the_records_agree(
         }
     )
     assert repaired == ({"d": {"repair_stray_country": ["c"]}} if linked else {})
+
+
+def test_a_unit_an_earlier_rule_links_takes_no_link_across_countries() -> None:
+    # The title rule links d in its own country, so the line under its crs id in
+    # another country, which agrees on title, stays out of reach.
+    repaired = _repaired(
+        {
+            "c": _commitment(**_STRAY, **_TEXT, recipient_code=248),
+            "c_title": _commitment(donor_code=301, crs_id="X", **_TEXT),
+            "d": _disbursement(**_STRAY, **_TEXT),
+        }
+    )
+    assert repaired == {"d": {"repair_title_recipient": ["c_title"]}}
 
 
 def test_allocation_fills_only_the_commitments_each_unit_links_to() -> None:

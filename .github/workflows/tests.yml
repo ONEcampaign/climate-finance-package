@@ -127,3 +127,60 @@ jobs:
         env:
           CF_BASE_INSTALL: "1"
         run: /tmp/base/bin/python -m pytest -p no:cacheprovider test_import_boundary.py
+
+  mutation:
+    name: every rule fails a test when removed
+    runs-on: ubuntu-latest
+    # One full run removes each rule in turn and takes 15 to 20 minutes.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # The mutations run when the job is started by hand, or on a pull request that
+      # changes a module the script mutates, the tests it runs on them, or the
+      # script. The paths come from its TARGETS, which import only the standard
+      # library, and `--no-renames` lists a renamed file's old path too. On a push,
+      # and when the release workflow calls this one (`github.workflow` then names
+      # the caller), the job passes without them.
+      - name: Check whether to run the mutations
+        id: changed
+        env:
+          EVENT: ${{ github.event_name }}
+          WORKFLOW: ${{ github.workflow }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$WORKFLOW" != "tests" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" = "workflow_dispatch" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT" = "pull_request" ]; then
+            git diff --no-renames --name-only "origin/$BASE_REF...HEAD" > "$RUNNER_TEMP/changed.txt"
+            python3 - <<'PY'
+          import importlib.util
+          import os
+          from pathlib import Path
+
+          spec = importlib.util.spec_from_file_location(
+              "mutation_check", "scripts/mutation_check.py"
+          )
+          script = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(script)
+          watched = {"scripts/mutation_check.py"}
+          for module, (tests, _) in script.TARGETS.items():
+              watched |= {f"src/{module.as_posix()}", *tests}
+          changed = set(Path(os.environ["RUNNER_TEMP"], "changed.txt").read_text().split())
+          touched = sorted(changed & watched)
+          print(f"Changed and watched: {touched}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"run={'true' if touched else 'false'}\n")
+          PY
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: astral-sh/setup-uv@v10.0.0
+        if: steps.changed.outputs.run == 'true'
+      - if: steps.changed.outputs.run == 'true'
+        run: uv sync --locked --python 3.12 --all-extras --no-extra embed --all-groups
+      - if: steps.changed.outputs.run == 'true'
+        run: uv run --no-sync python scripts/mutation_check.py
