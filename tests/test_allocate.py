@@ -1154,6 +1154,19 @@ def test_float_sums_give_the_same_bits_on_every_run(
     assert len(runs) == 1
 
 
+def test_status_sums_a_rows_allocations_in_ascending_order() -> None:
+    # Added as listed the amounts sum to 0.6, and in ascending order to
+    # 0.6000000000000001, so a sum in input order shows on one thread.
+    ascending = 0.1 + 0.2 + 0.3
+    assert ascending != 0.3 + 0.2 + 0.1
+    table = pl.concat([allocations(r=amount) for amount in (0.3, 0.2, 0.1)])
+    status = compute_status(
+        commitments=basis(r=(1.0, True, False)), allocations=table
+    ).collect()
+    amounts = ("disbursed_usd", "disbursed_low_usd", "disbursed_high_usd")
+    assert status.select(amounts).row(0) == (ascending,) * 3
+
+
 def test_years_since_commitment_accumulates_by_record_year() -> None:
     crdf = crdf_frame([crdf_row("r", 2019, 100.0)])
     table = pl.concat([allocations(r=30.0), allocations(r=50.0)]).with_columns(

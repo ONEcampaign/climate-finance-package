@@ -397,11 +397,10 @@ def _mutation_problem(
 def _pytest(src: Path, tests: tuple[str, ...]) -> tuple[int, list[str]]:
     """Run `tests` against the package under `src`.
 
-    Polars runs on two threads. The tests hold small frames, so a full thread pool
-    makes a run several times slower on a busy machine. One thread adds a group's
-    partial sums in a fixed order, so `status_sums_ordered` would survive the test
-    that checks float sums give the same bits on every run."""
-    env = {**os.environ, "PYTHONPATH": str(src), "POLARS_MAX_THREADS": "2"}
+    Polars runs on one thread. The tests hold small frames, so a full thread pool
+    makes a run several times slower on a busy machine, and one thread runs each
+    test the same way on every run."""
+    env = {**os.environ, "PYTHONPATH": str(src), "POLARS_MAX_THREADS": "1"}
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *tests],
         cwd=ROOT,
