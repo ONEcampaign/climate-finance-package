@@ -16,7 +16,10 @@ from climate_finance.build.link.btr import (
     CALIBRATION_DRAWS,
     CALIBRATION_STRATA,
     LINK_PROBABILITY,
+    MIN_CHECK_LABELS,
     MIN_MAP_OUTCOMES,
+    POOLED_CHECK_SHARE,
+    POOLED_FLOOR,
     btr_rows,
     calibrate,
     calibration_draw,
@@ -279,38 +282,118 @@ def _labels(party: str, *, right: int, wrong: int) -> tuple[pl.DataFrame, pl.Dat
     return best, truth
 
 
-def test_a_party_without_enough_labels_takes_the_pooled_map() -> None:
+def test_a_party_without_enough_labels_takes_the_pooled_map(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     n = MIN_MAP_OUTCOMES
     # Party A: high weights are its id records, low weights are not.
     a, truth = _labels("a", right=n, wrong=n)
     # Party B's one label says weight 10 is wrong; on its own map it would read 0.
-    b = _best("B", [("b0", "wrong", 10.0), ("b1", "rb1", 10.0)])
+    # It is too few to check the pool, so B reads the pool unchecked and the pool
+    # leaves it out. Below `POOLED_FLOOR` its rows read nothing.
+    b = _best(
+        "B",
+        [
+            ("b0", "wrong", 10.0),
+            ("b1", "rb1", 10.0),
+            ("b2", "rb2", POOLED_FLOOR - 0.1),
+            ("b3", "rb3", POOLED_FLOOR),
+        ],
+    )
     truth = pl.concat([truth, pl.DataFrame({"row_id": ["b0"], "record_id": ["rb0"]})])
 
-    probability = dict(
-        calibrate(pl.concat([a, b]), truth=truth)
-        .select("row_id", "probability")
-        .iter_rows()
-    )
+    with caplog.at_level(logging.INFO):
+        probability = dict(
+            calibrate(pl.concat([a, b]), truth=truth)
+            .select("row_id", "probability")
+            .iter_rows()
+        )
 
     assert probability["a0"] == 1.0
     assert probability[f"a{n}"] == 0.0
-    assert probability["b1"] == pytest.approx(30 / 31)
+    assert probability["b1"] == 1.0
+    # The pooled map runs straight from 0 at -10 to 1 at 10.
+    assert probability["b3"] == pytest.approx(0.75)
+    assert probability["b2"] is None
+    logged = [(r.levelno, r.args) for r in caplog.records]
+    assert logged == [
+        (logging.INFO, ("a", 0)),
+        (logging.WARNING, ("B", 2, POOLED_FLOOR, 1, MIN_CHECK_LABELS)),
+    ]
 
 
 @pytest.mark.parametrize(
-    ("right", "wrong", "weight", "probability"),
+    ("right", "kept"),
+    [
+        (round(MIN_CHECK_LABELS * POOLED_CHECK_SHARE), True),
+        (round(MIN_CHECK_LABELS * POOLED_CHECK_SHARE) - 1, False),
+    ],
+)
+def test_a_partys_labels_from_the_floor_up_can_reject_the_pooled_map(
+    *, right: int, kept: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    n = MIN_MAP_OUTCOMES
+    a, truth = _labels("a", right=n, wrong=n)
+    # Party B's `MIN_CHECK_LABELS` id labels at weight 10, `right` of them right:
+    # too few wrong for a map of its own, enough to check the pooled map.
+    b = _best(
+        "B",
+        [
+            (f"b{i}", f"rb{i}" if i < right else "wrong", 10.0)
+            for i in range(MIN_CHECK_LABELS)
+        ]
+        + [("bx", "rbx", 10.0)],
+    )
+    # Party C has no labels, so it reads the pool unchecked.
+    c = _best("C", [("cx", "rcx", 10.0)])
+    truth = pl.concat(
+        [
+            truth,
+            b.head(MIN_CHECK_LABELS).select(
+                "row_id", record_id=pl.format("r{}", "row_id")
+            ),
+        ]
+    )
+
+    with caplog.at_level(logging.INFO):
+        found = dict(
+            calibrate(pl.concat([a, b, c]), truth=truth)
+            .select("row_id", "probability")
+            .iter_rows()
+        )
+
+    logged = {r.args[0]: (r.levelno, r.args[1:]) for r in caplog.records}
+    if kept:
+        # B's labels join the pool: at weight 10, 54 of 60 right.
+        assert found["bx"] == found["cx"] == pytest.approx(0.9)
+        assert logged["B"] == (
+            logging.INFO,
+            (1, POOLED_FLOOR, MIN_CHECK_LABELS, right, POOLED_CHECK_SHARE),
+        )
+    else:
+        # B links nothing, and C reads a pool without B's labels.
+        assert found["bx"] is None
+        assert found["cx"] == 1.0
+        level, args = logged["B"]
+        assert (level, args[:3]) == (logging.WARNING, (right, MIN_CHECK_LABELS, 5.0))
+
+
+@pytest.mark.parametrize(
+    ("party", "right", "wrong", "weight", "probability"),
     [
         # Half the right labels sit at weight 0 beside the wrong ones at 1, so the
-        # lowest block reads 0.5; a clipped map would give that to weight -40.
-        (2 * MIN_MAP_OUTCOMES, MIN_MAP_OUTCOMES, -40.0, 0.0),
+        # lowest block of a's own map reads 0.5; a clipped map would give that to
+        # weight -40.
+        ("a", 2 * MIN_MAP_OUTCOMES, MIN_MAP_OUTCOMES, -40.0, 0.0),
         # One right label must not lift every row to 1.
-        (1, 0, -30.0, None),
-        (1, 0, 10.0, None),
-        (MIN_MAP_OUTCOMES, MIN_MAP_OUTCOMES - 1, 10.0, None),
+        ("B", 1, 0, -30.0, None),
+        ("B", 1, 0, 10.0, None),
+        ("B", MIN_MAP_OUTCOMES, MIN_MAP_OUTCOMES - 1, 10.0, None),
     ],
 )
 def test_calibration_fails_closed_outside_its_labels(
+    *,
+    party: str,
     right: int,
     wrong: int,
     weight: float,
@@ -326,7 +409,7 @@ def test_calibration_fails_closed_outside_its_labels(
         .then(0.0)
         .otherwise(10.0)
     )
-    b = _best("B", [("b0", "rb0", weight)])
+    b = _best(party, [("b0", "rb0", weight)])
 
     with caplog.at_level(logging.WARNING):
         calibrated = calibrate(pl.concat([a, b]), truth=truth).filter(row_id="b0")
@@ -434,22 +517,29 @@ def test_a_block_of_decisions_on_id_less_rows_moves_the_map() -> None:
 
 
 @pytest.mark.parametrize(
-    ("stratified", "weight", "probability"),
+    ("stratified", "weight", "id_wrong", "probability"),
     [
-        (True, -5.0, 30 / 130),
-        (False, -5.0, 0.5),
-        # A drawn pair that now scores above the band, where the draw took no
+        (True, -5.0, MIN_MAP_OUTCOMES, 30 / 130),
+        (False, -5.0, MIN_MAP_OUTCOMES, 0.5),
+        # The stratum from `POOLED_FLOOR` up is open-ended, and drawn alike for a
+        # party whose ids give it no map of its own.
+        (True, POOLED_FLOOR + 1, MIN_MAP_OUTCOMES - 1, 30 / 130),
+        # The draw never takes it for a party with its own map, so a pair drawn
+        # lower that now scores there weighs 1.
+        (True, POOLED_FLOOR + 1, MIN_MAP_OUTCOMES, 0.5),
+        # A drawn pair that now scores between the strata, where the draw took no
         # share, weighs 1.
-        (True, -2.0, 0.5),
+        (True, -2.0, MIN_MAP_OUTCOMES, 0.5),
     ],
 )
 def test_drawn_decisions_weigh_the_id_less_rows_of_their_stratum(
-    *, stratified: bool, weight: float, probability: float
+    *, stratified: bool, weight: float, id_wrong: int, probability: float
 ) -> None:
     n = MIN_MAP_OUTCOMES
-    ids, truth = _labels("a", right=n, wrong=n)
-    # Thirty right id labels at `weight`, and a hundred id-less rows there, thirty
-    # of them decided wrong. Drawn, each decision stands for 100 / 30 rows.
+    ids, truth = _labels("a", right=n, wrong=id_wrong)
+    # Thirty right id labels at `weight`, `id_wrong` wrong ones at -10, and a
+    # hundred id-less rows at `weight`, thirty of them decided wrong. Drawn, each
+    # decision stands for 100 / 30 rows.
     ids = ids.with_columns(
         match_weight=pl.when(pl.col("match_weight") > 0).then(weight).otherwise(-10.0)
     )
@@ -464,20 +554,27 @@ def test_drawn_decisions_weigh_the_id_less_rows_of_their_stratum(
 
 
 def test_the_draw_spreads_each_partys_id_less_rows_over_the_strata() -> None:
-    low, *_, high = CALIBRATION_STRATA
-    # Party A: fifty id-less rows in each of the first two strata, ten in the
-    # third, and rows outside the band and with ids, which are never drawn.
+    (low, _), *_, (floor, _) = CALIBRATION_STRATA
+    # Party A: fifty id-less rows in each of the first two strata, ten in the third
+    # and forty from the floor up, and rows outside every stratum and with ids,
+    # which are never drawn.
     rows = [
-        (f"s{stratum}-{i}", f"r{stratum}-{i}", CALIBRATION_STRATA[stratum] + 0.5)
-        for stratum, size in enumerate((50, 50, 10))
+        (f"s{stratum}-{i}", f"r{stratum}-{i}", CALIBRATION_STRATA[stratum][0] + 0.5)
+        for stratum, size in enumerate((50, 50, 10, 40))
         for i in range(size)
     ]
-    rows += [(f"out{i}", "r", weight) for i, weight in enumerate((low - 1, high))]
+    rows += [(f"out{i}", "r", weight) for i, weight in enumerate((low - 1, -3.0))]
     a = _best("A", [*rows, ("id0", "rid0", low)])
     # Party B has three rows, all drawn.
     b = _best("B", [(f"b{i}", "r", -5.0) for i in range(3)])
-    truth = pl.DataFrame({"row_id": ["id0"], "record_id": ["other"]})
-    best = pl.concat([a, b])
+    # Party C's id labels give it a map of its own, so its rows from the floor up,
+    # which never read the pooled map, are not drawn.
+    c, c_truth = _labels("c", right=MIN_MAP_OUTCOMES, wrong=MIN_MAP_OUTCOMES)
+    c = pl.concat([c, _best("c", [("c-low", "r", -5.0), ("c-top", "r", floor)])])
+    truth = pl.concat(
+        [pl.DataFrame({"row_id": ["id0"], "record_id": ["other"]}), c_truth]
+    )
+    best = pl.concat([a, b, c])
 
     drawn = calibration_draw(best, truth=truth)
     by_stratum = (
@@ -490,15 +587,19 @@ def test_the_draw_spreads_each_partys_id_less_rows_over_the_strata() -> None:
     in_order = drawn.filter(party="A").sort("draw_rank")
     strata = in_order["row_id"].str.extract(r"^s(\d)")
 
-    assert drawn.filter(party="A").height == CALIBRATION_DRAWS
-    assert dict(by_stratum.iter_rows()) == {"0": 40, "1": 40, "2": 10}
+    # Ninety below -3, the third stratum's shortfall made up by the other two, and
+    # thirty from the floor up.
+    size = CALIBRATION_DRAWS + MIN_CHECK_LABELS
+    assert drawn.filter(party="A").height == size
+    assert dict(by_stratum.iter_rows()) == {"0": 40, "1": 40, "2": 10, "3": 30}
     # The draw takes the strata in turn, so any first part of it holds each stratum
     # alike, and within a stratum it follows the pairs' digests, not their ids.
-    assert in_order["draw_rank"].to_list() == list(range(1, CALIBRATION_DRAWS + 1))
-    assert strata.head(30).to_list() == ["0", "1", "2"] * 10
+    assert in_order["draw_rank"].to_list() == list(range(1, size + 1))
+    assert strata.head(40).to_list() == ["0", "1", "2", "3"] * 10
     first = in_order.filter(strata == "0")["row_id"]
     assert first.to_list() != first.sort().to_list()
     assert drawn.filter(party="B")["row_id"].to_list() == ["b0", "b1", "b2"]
+    assert drawn.filter(party="c")["row_id"].to_list() == ["c-low"]
     assert drawn.equals(
         calibration_draw(best.sample(fraction=1.0, shuffle=True, seed=1), truth=truth)
     )

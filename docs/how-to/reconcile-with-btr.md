@@ -64,7 +64,7 @@ release = cf.load_example()
 
 ## What the comparison measures
 
-A BTR row links to a CRS record at a probability of 0.5 or more. The share of a party's reported dollars that links is a link rate, and it says nothing about whether the two amounts agree. In the build behind the release, 78.2% of the dollars Norway, Germany, and the UK report link, and 72% of all links come from the BTR Splink model.
+A BTR row links to a CRS record at a probability of 0.5 or more. The share of a party's reported dollars that links is a link rate, and it says nothing about whether the two amounts agree. In the build behind the release, 61.5% of the dollars the BTR parties report link, and 49% of all links come from the BTR Splink model.
 
 A party's BTR can leave out a programme that the OECD data counts as climate finance. Germany's BTR holds no rows for a Federal Ministry of Finance loan programme of about USD 1.25bn to 1.4bn a year, which the OECD marks significant on both objectives and Germany's coefficients count in full. In 2022 the programme lowers Germany's ratio from 0.90 to 0.79, and in 2021, when the CRDF carries it and the CRS does not, from 1.20 to 0.99, so the ratio moves with the programme. In a year the CRS carries such a programme, it shows in `oecd_only_usd`, and comparing the party's climate-marked flows in `release.table("total_flows")` by `agency_code` across years names the agency: Germany's Finance Ministry rises from under USD 0.05bn in 2021 to over USD 1.2bn in 2022.
 
