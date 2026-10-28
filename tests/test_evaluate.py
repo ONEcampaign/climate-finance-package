@@ -229,6 +229,28 @@ def test_a_look_reads_whole_batches_of_unbroken_labels() -> None:
 
 
 @pytest.mark.parametrize(
+    ("wrong", "decision", "failed_look"),
+    [
+        # 15 of the first 50 wrong fails the first look, though the cap passes.
+        (15, "fail", RULE.batch),
+        # 3 of the first 50 wrong fails no look, and the cap passes.
+        (3, "pass", None),
+    ],
+)
+def test_a_fail_at_any_look_stands_whatever_later_looks_decide(
+    wrong: int, decision: str, failed_look: int | None
+) -> None:
+    correct = np.arange(1, RULE.cap + 1) > wrong
+    labels = _draws(correct[np.newaxis])
+
+    row = estimate_precision(labels, rule=RULE).row(0, named=True)
+
+    assert row["labels"] == RULE.cap
+    assert row["lower"] >= RULE.threshold
+    assert (row["decision"], row["failed_look"]) == (decision, failed_look)
+
+
+@pytest.mark.parametrize(
     ("share", "decision"), [(None, "fail"), (0.0, "fail"), (0.9, "pass")]
 )
 def test_strata_combine_by_allocated_value(share: float | None, decision: str) -> None:

@@ -46,7 +46,9 @@ bound reaches the threshold. A census provider decides once every pair is decide
 when its estimate is exact. A pps provider fails when the upper bound falls below
 the threshold, when the lower bound could not reach it by the cap even with every
 later draw right (the cap's sampled estimate is then one less the weight of the
-wrong draws read over the sampled value), or at the cap. With the thresholds in
+wrong draws read over the sampled value), or at the cap. The rule decides at every
+look the labels reach, and a fail at any look stands whatever later looks decide,
+so labels read on past a fail cannot turn it into a pass. With the thresholds in
 `gates.yaml`, a provider with no self-linked pairs whose true precision is 0.90
 passes 2.6% of the time.
 The rule reads the provider's estimate, which blends its strata by value, so each
@@ -124,6 +126,7 @@ ESTIMATE_SCHEMA = pl.Schema(
         "lower": pl.Float64(),
         "upper": pl.Float64(),
         "decision": pl.String(),
+        "failed_look": pl.Int32(),
         "agent_share": pl.Float64(),
         "self_linked_share": pl.Float64(),
         "strata": pl.List(STRATUM_ESTIMATE),
@@ -537,6 +540,7 @@ def estimate_precision(
 ) -> pl.DataFrame:
     """Per provider, the precision estimate at its latest look and the rule's
     decision (`pass`, `fail` or `continue`), with each stratum's estimate beside it.
+    The decision is `fail` when any look up to the latest decides `fail`.
 
     Args:
         labels: draws in `DESIGN_SCHEMA` with a Boolean `correct` and the
@@ -553,7 +557,9 @@ def estimate_precision(
         the rest at the sample's estimate and bounds, the rule decides on them,
         and they are null before the first look. A census reads every decided
         pair and decides once all are decided, when its estimate is exact.
-        `agent_share` is the share of the draws read that an agent decided.
+        `failed_look` is the draws the first look deciding `fail` read, null
+        when none did. `agent_share` is the share of the draws read that an agent
+        decided.
         `strata` lists the provider's sampled strata in `STRATUM_ESTIMATE`,
         largest allocated value first: the draws the look reads in each, their
         weighted share right and its Wilson bounds at the provider's `z`. A census
@@ -561,22 +567,36 @@ def estimate_precision(
         has null estimate and bounds. A provider is a census when every draw is
         (`DESIGN_SCHEMA`'s `design`), else pps.
     """
-    census = (pl.col("design") == "census").all().over("provider_code")
+    census = pl.col("census")
     known = pl.col("correct").is_not_null()
     ordered = labels.sort("provider_code", "draw").with_columns(
+        census=(pl.col("design") == "census").all().over("provider_code"),
         unbroken=known.cast(pl.Int32).cum_min().over("provider_code"),
         pairs=pl.len().over("provider_code"),
         stratum_pairs=pl.len().over("provider_code", "stratum"),
         decided=known.sum().over("provider_code"),
         provider_usd=pl.col("weight_usd").sum().over("provider_code"),
     )
-    look = (pl.col("unbroken").sum() // rule.batch * rule.batch).clip(
+    latest = (pl.col("unbroken").sum() // rule.batch * rule.batch).clip(
         upper_bound=rule.cap
     )
 
-    # A census provider reads every decided pair, a pps one its look.
-    read = ordered.with_columns(look=look.over("provider_code")).filter(
-        pl.when(census).then(known).otherwise(pl.col("draw") <= pl.col("look"))
+    # A pps provider reads its draws at every look up to its latest, each draw from
+    # the first look that reaches it. A census reads every decided pair once.
+    first = ((pl.col("draw") - 1) // rule.batch + 1) * rule.batch
+    read = (
+        ordered.with_columns(latest=latest.over("provider_code"))
+        .filter(
+            pl.when(census).then(known).otherwise(pl.col("draw") <= pl.col("latest"))
+        )
+        .with_columns(
+            look=pl.int_ranges(
+                pl.when(census).then(0).otherwise(first),
+                pl.when(census).then(0).otherwise("latest") + 1,
+                rule.batch,
+            )
+        )
+        .explode("look")
     )
     cells = _cells(
         read.with_columns(
@@ -585,7 +605,7 @@ def estimate_precision(
     )
     draws = pl.col("draws")
     cell_usd = pl.col("cell_usd")
-    providers = cells.group_by("provider_code").agg(
+    looks = cells.group_by("provider_code", "look").agg(
         pl.col("pairs", "decided", "provider_usd").first(),
         labels=draws.sum(),
         wrong_usd=ordered_sum(pl.col("wrong_total")),
@@ -594,39 +614,62 @@ def estimate_precision(
         variance=ordered_sum(cell_usd**2 * pl.col("v_cell"))
         / ordered_sum(cell_usd) ** 2,
     )
-    providers = (
+    looks = (
         labels.group_by("provider_code")
         .agg(
             design=pl.when((pl.col("design") == "census").all())
             .then(pl.lit("census"))
             .otherwise(pl.lit("pps"))
         )
-        .join(providers, on="provider_code", how="left")
+        .join(looks, on="provider_code", how="left")
     )
     if certain is None:
-        providers = providers.with_columns(self_linked_share=pl.lit(0.0))
+        looks = looks.with_columns(self_linked_share=pl.lit(0.0))
     else:
-        providers = providers.join(
+        looks = looks.join(
             certain.select("provider_code", "self_linked_share"),
             on="provider_code",
             how="left",
         ).with_columns(pl.col("self_linked_share").fill_null(0.0))
-    strata = _stratum_estimates(labels, cells=cells, providers=providers, rule=rule)
+
+    # The rule decides at every look, and a fail at any look stands: a later look
+    # that passes read on past a stop.
+    decided = _decide(looks, rule=rule)
+    failed = (
+        decided.filter(decision="fail")
+        .group_by("provider_code")
+        .agg(failed_look=pl.col("labels").min())
+    )
+    providers = (
+        decided.sort("provider_code", "look")
+        .unique("provider_code", keep="last", maintain_order=True)
+        .join(failed, on="provider_code", how="left")
+        .with_columns(
+            decision=pl.when(pl.col("failed_look").is_not_null())
+            .then(pl.lit("fail"))
+            .otherwise("decision")
+        )
+    )
+    strata = _stratum_estimates(
+        labels,
+        cells=cells.join(providers, on=["provider_code", "look"], how="semi"),
+        providers=providers,
+        rule=rule,
+    )
     return (
-        _decide(providers, rule=rule)
-        .join(strata, on="provider_code", how="left", maintain_order="left")
+        providers.join(strata, on="provider_code", how="left", maintain_order="left")
         .select(ESTIMATE_SCHEMA.names())
         .cast(ESTIMATE_SCHEMA)
     )
 
 
 def _cells(read: pl.DataFrame) -> pl.DataFrame:
-    """Per provider and `cell`, the draws `read` holds, their weighted share right
+    """Per provider, look and `cell`, the draws `read` holds, their weighted share right
     (`p_cell`) and its variance (`v_cell`). A census cell of `cell_pairs` pairs,
     each drawn once, shrinks the variance by the share of them read."""
     weight, right = pl.col("weight_usd"), pl.col("correct").cast(pl.Float64)
     census = pl.col("design") == "census"
-    cells = read.group_by("provider_code", "cell").agg(
+    cells = read.group_by("provider_code", "look", "cell").agg(
         pl.col(
             "design", "pairs", "decided", "cell_usd", "cell_pairs", "provider_usd"
         ).first(),

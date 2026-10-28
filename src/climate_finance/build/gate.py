@@ -50,7 +50,9 @@ repayment in the raw CRS, no linked commitment unit, no provider-year in the rel
 or the published CRDF, no disbursement row, no provider code, or an empty sample. A
 precision or human_audit row that could not estimate says why in `code`:
 `no_allocated_pairs`, `no_sample`, `empty_sample` or `stale_sample`, and a precision
-row whose estimate or bound is NaN or infinite fails as `non_finite_estimate`. A
+row whose estimate or bound is NaN or infinite fails as `non_finite_estimate`. The
+rule decides at every look the labels reach, and a precision row whose sample
+failed at a look before its latest fails as `failed_at_earlier_look`. A
 stratum_precision row carries its provider's precision code, `no_stratum_draws`
 when the look read none of the stratum's draws, `too_few_draws` when it read fewer
 than `min_draws` or the stratum's pairs, or `non_finite_estimate`. A
@@ -411,6 +413,9 @@ def precision_gate(
     (`evaluate.self_linked_shares`), passing when the sequential rule decides
     `pass`. The detail gives the self-linked share of the provider's value. A
     provider whose every pair is self-linked has nothing to sample and passes at 1.
+    A provider whose sample failed at a look before its latest fails, coded
+    `failed_at_earlier_look`, with that look's draws in the detail, whatever later
+    looks decide.
 
     A provider fails unestimated, coded `stale_sample`, when its sample's population
     fingerprint is not that of its allocated pairs in this build
@@ -466,6 +471,7 @@ def precision_gate(
         .sort("provider_code")
     )
     share = pl.col("self_linked_share")
+    earlier = pl.col("failed_look") < pl.col("labels")
     # Every pair links a unit to itself, so there is nothing to sample.
     whole = (share == 1) & pl.col("stale").is_null()
     certain_part = (
@@ -481,11 +487,22 @@ def precision_gate(
         .when(pl.col("design").is_null())
         .then(pl.lit("no blind sample"))
         .otherwise(
-            pl.format(
-                "{} after {} labels ({})",
-                pl.col("decision"),
-                pl.col("labels"),
-                pl.col("design"),
+            pl.when(earlier)
+            .then(
+                pl.format(
+                    "fail at the look after {} labels, read to {} ({})",
+                    pl.col("failed_look"),
+                    pl.col("labels"),
+                    pl.col("design"),
+                )
+            )
+            .otherwise(
+                pl.format(
+                    "{} after {} labels ({})",
+                    pl.col("decision"),
+                    pl.col("labels"),
+                    pl.col("design"),
+                )
             )
             + pl.when(pl.col("agent_share") > 0)
             .then(
@@ -518,7 +535,9 @@ def precision_gate(
         .when(pl.col("design").is_null())
         .then(pl.lit("no_sample"))
         .when(evaluate.non_finite())
-        .then(pl.lit("non_finite_estimate")),
+        .then(pl.lit("non_finite_estimate"))
+        .when(earlier)
+        .then(pl.lit("failed_at_earlier_look")),
         strata="strata",
     ).cast(RESULT_SCHEMA)
 
