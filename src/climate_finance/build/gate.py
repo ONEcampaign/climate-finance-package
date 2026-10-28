@@ -56,12 +56,12 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import polars as pl
 import yaml
 from pydantic import BaseModel, ConfigDict
 
-import climate_finance as cf
 from climate_finance.build import evaluate, listings
 from climate_finance.build.config import DriftCause
 from climate_finance.build.errors import GateFailedError
@@ -73,6 +73,9 @@ from climate_finance.schema import (
     scan_table,
     withheld_record,
 )
+
+if TYPE_CHECKING:
+    from climate_finance.release import Release
 
 GATES_YAML = Path(__file__).with_name("gates.yaml")
 GATES = (
@@ -184,7 +187,7 @@ def run_gates(
     *,
     decisions: Path,
     sample: Path | None = None,
-    previous: Path | None = None,
+    previous: Release | None = None,
     first_release: bool = False,
     drift_causes: Collection[DriftCause] = (),
     report_only: bool = False,
@@ -199,8 +202,7 @@ def run_gates(
         sample: the blind sample's directory, where `evaluate.draw_blind_sample`
             wrote its design; without one, every provider fails precision and the
             human audit fails.
-        previous: the previous release, a build's directory or a directory
-            `cf.load(path=...)` opens (`release_path`).
+        previous: the previous release, opened (`release.previous_baseline`).
         first_release: pass the drift gate when there is no previous release.
         drift_causes: the recorded causes of provider-year moves, from
             `build.toml`.
@@ -286,7 +288,7 @@ def run_gates(
             drift_gate(
                 quality=released("quality"),
                 release=manifest.release,
-                previous=None if previous is None else release_path(previous),
+                previous=previous,
                 first_release=first_release,
                 causes=drift_causes,
                 config=gates.drift,
@@ -859,7 +861,7 @@ def drift_gate(
     *,
     quality: pl.LazyFrame,
     release: str,
-    previous: Path | None,
+    previous: Release | None,
     first_release: bool,
     causes: Collection[DriftCause],
     config: Drift,
@@ -890,7 +892,7 @@ def drift_gate(
             ),
         )
     key = ["provider_code", "year"]
-    before = cf.load(path=previous).table("quality")
+    before = previous.table("quality")
     last_year = before.select(pl.col("year").max()).collect().item()
     if last_year is None:
         return _row(

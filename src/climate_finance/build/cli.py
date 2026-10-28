@@ -83,6 +83,13 @@ def build_command(
             "`offline` applies."
         ),
     ] = None,
+    reuse_sources: Annotated[
+        bool,
+        typer.Option(
+            help="Reuse the sources an earlier build of RELEASE fetched, while Jev "
+            "may still answer online unless the build is offline."
+        ),
+    ] = False,
 ) -> None:
     """Run the build stages and write their tables."""
     build_config = load_config(config)
@@ -92,9 +99,15 @@ def build_command(
         build_config = build_config.model_copy(update={"offline": offline})
         source = "--offline" if offline else "--no-offline"
     mode = "offline" if build_config.offline else "online"
+    if reuse_sources and not build_config.offline:
+        mode += ", reusing the fetched sources"
     console.print(f"Building {release_name} {mode} ({source}).", markup=False)
     manifest = run_build(
-        release_name, config=build_config, out_dir=out_dir, stages=stage
+        release_name,
+        config=build_config,
+        out_dir=out_dir,
+        stages=stage,
+        reuse_sources=reuse_sources,
     )
     for stage_name, tables in manifest.tables.items():
         console.print(f"{stage_name}: {len(tables)} tables")
@@ -155,15 +168,16 @@ def gate_command(
     when a row fails. The blind sample's labels come from the config's review
     decisions, and the causes of drift from its `drift_causes`."""
     build_config = load_config(config)
-    results = gate.run_gates(
-        build_dir,
-        decisions=build_config.sources.review_decisions,
-        sample=sample,
-        previous=previous,
-        first_release=first_release,
-        drift_causes=build_config.drift_causes,
-        report_only=True,
-    )
+    with release.previous_baseline(previous) as baseline:
+        results = gate.run_gates(
+            build_dir,
+            decisions=build_config.sources.review_decisions,
+            sample=sample,
+            previous=None if baseline is None else baseline.release,
+            first_release=first_release,
+            drift_causes=build_config.drift_causes,
+            report_only=True,
+        )
     failed = 0
     for row in results.iter_rows(named=True):
         outcome = "pass" if row["passed"] else "waived" if row["waived"] else "FAIL"
@@ -328,9 +342,9 @@ def release_command(
     offline: Annotated[
         bool | None,
         typer.Option(
-            help="Refuse network access, or fetch afresh. Unset, the build runs "
-            "offline when the config says so or an earlier build of RELEASE fetched "
-            "its sources."
+            help="Refuse network access, or fetch afresh. Unset, the config's "
+            "`offline` applies, and the build reuses the sources an earlier build of "
+            "RELEASE fetched."
         ),
     ] = None,
 ) -> None:

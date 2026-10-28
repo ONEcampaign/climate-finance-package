@@ -700,14 +700,10 @@ def _download(entry: IndexEntry, *, target: Path) -> None:
             raise ReleaseIntegrityError(
                 f"{entry.url} has sha256 {actual}, the release index has {entry.sha256}"
             )
-        unpacked = Path(tmp) / "unpacked"
-        with (
-            pa.input_stream(str(pack), compression="zstd") as stream,
-            tarfile.open(fileobj=stream, mode="r|") as tar,
-        ):
-            tar.extractall(unpacked, filter="data")
-        release_dir = unpacked / target.name
-        if not release_dir.is_dir():
+        release_dir = unpack_release(
+            pack, into=Path(tmp) / "unpacked", source=entry.url
+        )
+        if release_dir.name != target.name:
             raise ReleaseIntegrityError(f"{entry.url} holds no {target.name}/")
         (release_dir / PACK_SHA256).write_text(actual, encoding="utf-8")
         while True:
@@ -722,6 +718,30 @@ def _download(entry: IndexEntry, *, target: Path) -> None:
             if _packed_sha256(target) == actual:
                 return
             _discard(target, keep=actual)
+
+
+def unpack_release(pack: Path, *, into: Path, source: str | Path) -> Path:
+    """Unpack the pack at `pack` into the directory `into` and return the release
+    directory it holds. Errors name `source`, where the pack came from.
+
+    Raises:
+        ReleaseIntegrityError: when `pack` is no zstd tar, or holds anything but
+            one directory with a `release.json`.
+    """
+    try:
+        with (
+            pa.input_stream(str(pack), compression="zstd") as stream,
+            tarfile.open(fileobj=stream, mode="r|") as tar,
+        ):
+            tar.extractall(into, filter="data")
+    except (OSError, tarfile.TarError) as error:
+        raise ReleaseIntegrityError(
+            f"{source} is not a release pack: {error}"
+        ) from error
+    unpacked = list(into.iterdir()) if into.is_dir() else []
+    if len(unpacked) != 1 or not (unpacked[0] / "release.json").is_file():
+        raise ReleaseIntegrityError(f"{source} holds no release directory")
+    return unpacked[0]
 
 
 def _fetch(url: str, *, out_path: Path) -> str:

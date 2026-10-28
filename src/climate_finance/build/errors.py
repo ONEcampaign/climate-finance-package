@@ -100,6 +100,17 @@ class ReleaseInvariantError(BuildError):
         super().__init__(f"{len(problems)} release invariant problems: {shown}")
 
 
+class SyntheticReleaseError(BuildError):
+    """A release named `release.SYNTHETIC_RELEASE`, the name reserved for the test
+    fixture, whose figures are invented, cut or published."""
+
+
+class UnpublishedSettingsError(BuildError):
+    """A config or pack that sets a setting of `config.PUBLISHED_SETTINGS` at
+    another value, so its release would leave out a check or table a published
+    release carries, or add one that is not yet documented and gated."""
+
+
 class GateFailedError(BuildError):
     """A release fails one or more of its gates (`build.gate.run_gates`)."""
 

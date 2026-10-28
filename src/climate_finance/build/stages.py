@@ -67,12 +67,16 @@ class StageContext:
     The runner builds one context per stage and sets `provenance`, which records
     the stages the stage reads, and `jev_client`, which returns the build's one Jev
     client, so every stage that asks Jev shares one client and one cost cap.
+    `offline` refuses network access to every stage. `reuse_sources`, set whenever
+    `offline` is, has fetch check the raw files against the earlier `raw_manifest`
+    and download nothing.
     """
 
     release: str
     release_dir: Path
     config: BuildConfig
     offline: bool
+    reuse_sources: bool = False
     provenance: Provenance | None = None
     jev_client: Callable[[], JevClient] | None = None
 

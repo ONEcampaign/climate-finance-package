@@ -22,7 +22,7 @@ A command that refuses its input, such as a misspelt `build.toml` key or a faile
 ## `cf-build build`
 
 ```bash
-cf-build build RELEASE [--config build.toml] [--out-dir releases] [--stage STAGE] [--offline | --no-offline]
+cf-build build RELEASE [--config build.toml] [--out-dir releases] [--stage STAGE] [--offline | --no-offline] [--reuse-sources]
 ```
 
 Runs the build stages and writes their tables.
@@ -32,6 +32,7 @@ Runs the build stages and writes their tables.
 - `--out-dir` (default `releases`) sets the directory where releases are built.
 - `--stage` (repeatable) runs only the named stages. A stage that reads a table missing from earlier stages raises `StageInputMissingError`.
 - `--offline` refuses network access, and `--no-offline` fetches, whatever the config's `offline`. Without either, the config decides. The command prints which applied.
+- `--reuse-sources` has fetch reuse the sources an earlier build of `RELEASE` fetched, checked against its raw manifest, and makes no download. Network access still follows `--offline` and the config, so Jev answers questions that new review decisions raise. An offline build always reuses the sources.
 
 The `build.toml` switches are `offline`, `key_repair` and `recoveries` (both on by default), `gap_fill`, `review`, `jev_labels`, `jev_links`, `embed`, and `jev_flags`. `jev_flags` has the flag stage ask Jev four questions about each climate-marked CRS record from `jev_flags_first_year` (default 2015) to `years.crs_last_complete`, and fails with a `ConfigError` when the CRS years the build reads start after `jev_flags_first_year`. `skip_eib_routes` names EIB recovery routes to omit so a test can measure what a route adds. A release builds with an empty list. `[years] crdf` takes an inclusive pair of years or `"all"`, every year the recipient-perspective CRDF holds, and the build records the years it resolved in `release.json`. The sections `[years]`, `[sources]`, `[jev]`, and `[embedding]` set the years, the pinned source files and their sha256, the Jev model version, cost cap and band, and the embedding model. Each `[[drift_causes]]` entry names a `release`, `provider_code`, `year`, and `cause` that explain a move the drift gate would otherwise fail. They live in `build.toml` because an edit to a package file makes every built stage stale.
 
@@ -86,13 +87,13 @@ Each answer is written at once to `batch-<NN>.<reviewer>.labels.csv` beside its 
 ## `cf-build gate`
 
 ```bash
-cf-build gate BUILD_DIR [--config build.toml] [--sample DIR] [--previous DIR] [--first-release] [--report]
+cf-build gate BUILD_DIR [--config build.toml] [--sample DIR] [--previous PATH] [--first-release] [--report]
 ```
 
 Evaluates the [release gates](release-gates.md), prints one line per gate row, and exits with status 1 when a row fails.
 
 - `--sample` passes the sample directory that `sample` wrote. The gate reads the sample's labels from `sources.review_decisions` in the configuration and raises `ReviewDecisionsError` when that file is missing. Without `--sample`, every provider fails precision and the human audit fails.
-- `--previous` sets the previous release for the drift gate, a build directory or a release directory. The drift gate reads its causes from `drift_causes` in the configuration.
+- `--previous` sets the previous release for the drift gate: a pack, a release directory, or a build directory, read as `release` reads it, so `gate` previews the comparison the cut makes. A path that does not exist raises `BuildError`, and a file that is no pack raises `ReleaseIntegrityError`. The drift gate reads its causes from `drift_causes` in the configuration.
 - `--first-release` passes the drift gate when no previous release exists. `publish` refuses a release cut this way once the index lists a release.
 - `--report` exits with status 0 when a row fails.
 
@@ -107,16 +108,16 @@ Parses an archive of BTR workbooks listed in its manifest and writes the rows to
 ## `cf-build release`
 
 ```bash
-cf-build release RELEASE [--config build.toml] [--out-dir releases] [--sample DIR] [--previous DIR] [--first-release] [--waive-precision REASON] [--offline | --no-offline]
+cf-build release RELEASE [--config build.toml] [--out-dir releases] [--sample DIR] [--previous PATH] [--first-release] [--waive-precision REASON] [--offline | --no-offline]
 ```
 
 Builds, gates, and packs a release. The build runs every stage, since the review decisions it reads hold the blind sample's labels. It writes `<out-dir>/climate-finance-<RELEASE>.tar.zst`, which holds the release tables, `release.json` with the gate results, and `sources.json`. Members go in name order with fixed owners and the release's creation time, so one release packs to the same bytes.
 
 - `--waive-precision REASON` packs despite failed precision and human-audit gates, marks the failed rows `waived`, and records the waiver and `REASON` in `release.json` as `precision_gate_waived` and `precision_waiver`.
-- `--offline` refuses network access, and `--no-offline` fetches afresh. Without either, the build runs offline when the configuration sets `offline` or an earlier build of `RELEASE` in `--out-dir` fetched its sources, so the release comes from the sources the blind sample was drawn on.
+- `--offline` refuses network access, so fetch reuses the sources and Jev answers from its cache alone. `--no-offline` fetches afresh and lets Jev answer. Without either, the configuration's `offline` sets network access, and an earlier build of `RELEASE` in `--out-dir` that fetched its sources has fetch reuse them, so the release comes from the sources the blind sample was drawn on while Jev answers the questions new review decisions raise.
 - `--sample`, `--previous`, and `--first-release` act as in `gate`.
 
-The command raises `GateFailedError` when a gate fails, and `BuildError` when a source lacks a licence entry or `RELEASE` is `fixture`, the name reserved for the synthetic test release. `publish` refuses a pack of that name too.
+The command raises `GateFailedError` when a gate fails. Before it builds, it raises `UnpublishedSettingsError` when the configuration sets a switch a published release does not use, and `SyntheticReleaseError` when `RELEASE` is `fixture`, the name reserved for the synthetic test release. `publish` refuses such packs with the same errors. It raises `BuildError` when a source lacks a licence entry.
 
 ## `cf-build publish`
 
@@ -129,7 +130,7 @@ Publishes a pack where `cf.load()` finds it. Every pack and the release index, `
 The command refuses the pack, changing nothing on GitHub, in these cases:
 
 - A gate has no result, a gate row neither passed nor was waived, or a waiver has no reason (`GateFailedError`).
-- `release.json` records a setting other than a release's: `key_repair`, `recoveries`, `review`, `jev_links`, or `jev_flags` off, `gap_fill`, `jev_labels`, or `embed` on, CRDF years other than `"all"`, or an EIB route skipped (`BuildError`).
+- `release.json` records a setting other than a release's: `key_repair`, `recoveries`, `review`, `jev_links`, or `jev_flags` off, `gap_fill`, `jev_labels`, or `embed` on, CRDF years other than `"all"`, or an EIB route skipped (`UnpublishedSettingsError`).
 - The release name is not a published name, a year and a lowercase letter with an optional revision such as `2026a` or `2026a.1`, or the pack's file is named for another release (`ReleaseNameError`).
 - The index already lists the release (`AlreadyPublishedError`).
 - The drift gate compared the release with a release other than the latest published one, with none once the index lists a release, or with a copy that did not come from the pack the index lists under that name (`DriftBaselineError`). A release that sorts before the latest needs a comparison with a release the index lists.
