@@ -28,6 +28,7 @@ from climate_finance.build.evaluate import (
     design_path,
     draw_blind_sample,
     read_sample_labels,
+    sample_design,
 )
 from climate_finance.build.fetch import CRS_FILE
 from climate_finance.build.gate import (
@@ -645,6 +646,27 @@ def _precision_rows(
 
 
 GATE_MODEL = StratumPrecision(thresholds={"model": 0.9})
+
+
+def test_precision_fails_a_sample_that_failed_at_an_earlier_look() -> None:
+    rule = GATES_CONFIG.precision
+    pairs = _frame_pairs([(NOR, "key", 2000)])
+    design = sample_design(pairs, rule=rule, release="r").sort("draw")
+    # The first 15 pairs drawn are wrong, so the first look fails, and the cap reads
+    # enough right draws to pass.
+    wrong = design["left_id"].unique(maintain_order=True).head(15)
+    labels = design.with_columns(
+        correct=~pl.col("left_id").is_in(wrong.implode()),
+        label_source=pl.lit("human"),
+    )
+    first_look = labels.filter(pl.col("draw") <= rule.batch)
+
+    row = precision_gate(pairs, labels=labels, rule=rule).row(0, named=True)
+
+    assert first_look["correct"].sum() < 40
+    assert row["lower"] >= rule.threshold
+    assert (row["passed"], row["code"]) == (False, "failed_at_earlier_look")
+    assert row["detail"] == "fail at the look after 50 labels, read to 500 (pps)"
 
 
 @pytest.mark.parametrize(
