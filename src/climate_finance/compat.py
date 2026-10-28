@@ -27,7 +27,8 @@ A choice whose meaning 2.0 changed raises `RemovedError` naming the 2.0 call to 
 flow "net_disbursements", which 2.0 nets by loan, source "OECD_CRS", every
 Rio-marked CRS record, which 2.0 counts only beside the CRDF's commitments, and the
 "_ALLOCABLE" sources, whose filter 2.0 does not hold. So do calls without a 2.0
-equivalent, such as source "UNFCCC" and `get_unfccc_data`.
+equivalent, such as source "UNFCCC" and `get_unfccc_data`, and `load_spending_data`
+without `source`, which 1.x read as "OECD_CRS".
 
 `get_data` returns the result tables as one pandas frame with `source` and `flow`
 columns. The module goes in 3.0.
@@ -198,23 +199,33 @@ class ClimateData:
         self,
         methodology: str = "ONE",
         flows: str | list[str] = "gross_disbursements",
-        source: str | list[str] = "OECD_CRS",
+        source: str | list[str] | None = None,
     ) -> Self:
         """Run `spending()` once per source and flow.
 
         As in 1.2.3, `methodology` overrides the `set_*_spending_methodology` calls,
-        and "custom" needs `set_custom_spending_methodology` first.
+        and "custom" needs `set_custom_spending_methodology` first. 1.2.3 read a
+        missing `source` as "OECD_CRS", whose meaning 2.0 changed, so a call
+        without `source` raises `RemovedError`.
 
         Raises:
             InvalidInputError: a `ValueError`, for a methodology, flow or source
                 1.2.3 did not know, or "custom" without custom coefficients.
             RemovedError: for a flow or source whose meaning 2.0 changed, or that
-                has no 2.0 equivalent, naming the 2.0 call to use.
+                has no 2.0 equivalent, and for a call without `source`, naming the
+                2.0 call to use.
         """
         method = self._methodology(methodology)
         chosen = [
             (flow, _choice(flow, _FLOWS, what="flows")) for flow in _as_list(flows)
         ]
+        if source is None:
+            raise RemovedError(
+                "load_spending_data() without source=, which 1.x read as "
+                "source='OECD_CRS'",
+                replacement="that default changed meaning in 2.0: "
+                + _CHANGED["OECD_CRS"],
+            )
         views = {
             name: _choice(name, _VIEWS, what="source") for name in _as_list(source)
         }

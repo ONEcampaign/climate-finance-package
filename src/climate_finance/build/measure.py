@@ -174,7 +174,7 @@ def load_provider_facts(path: Path = PROVIDERS_TOML) -> ProviderFacts:
     except FileNotFoundError as error:
         raise ConfigError(f"No provider facts at {path}") from error
     except ValidationError as error:
-        raise ConfigError(f"{path}: {error}") from error
+        raise ConfigError(f"{path}: {error}") from None
 
 
 def run_measure(context: StageContext) -> StageOutput:

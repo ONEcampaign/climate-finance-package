@@ -27,7 +27,7 @@ CI checks the rules on names, parameters, and defaults. A test pins the exact co
 
 ## How a deprecation runs
 
-The package ships the new form beside the old one in a minor release, and the old form warns with a `DeprecationWarning` that names its replacement and the major version that removes it. The old form stays for at least one more minor release and goes in the next major. `ClimateData` follows this rule: it runs with a warning in 2.x and goes in 3.0.
+The package ships the new form beside the old one in a minor release, and the old form warns with a `DeprecationWarning` that names its replacement and the major version that removes it. The old form stays for at least one more minor release and goes in the next major. `ClimateData` follows this rule for every 1.x choice whose meaning 2.0 keeps: it runs with a warning in 2.x and goes in 3.0. A choice whose meaning 2.0 changed raises `RemovedError` naming the 2.0 call, as [Migrating from 1.x](../migrating-from-1x.md#choices-that-changed-meaning) lists. 1.x's default source, `"OECD_CRS"`, is one of them, so `load_spending_data()` without `source=` raises.
 
 ## Next
 
