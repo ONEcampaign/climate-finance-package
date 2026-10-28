@@ -456,7 +456,10 @@ class Quality:
     allocated value whose link a blind human sample found right (`estimate`), its
     interval (`lower`, `upper`), whether it passed the release's precision gate,
     whether a failure was waived, and the gate's reading. It is empty for a release
-    that was not gated. `untraced` holds, by provider and disbursement year, the
+    that was not gated. `stratum_precision` holds the same figures by provider and
+    stratum of its blind sample, with each stratum's allocated value and the
+    labels read, and the stratum-precision gate's verdict where the release gates
+    the stratum. `untraced` holds, by provider and disbursement year, the
     Rio-marked CRS disbursement outside `disbursements` at face value: the excess
     and the unlinked records that disbursement totals count as untraced, with their
     climate value under the method (`excess_climate_usd`, `unlinked_climate_usd`),
@@ -479,6 +482,7 @@ class Quality:
         eu_left_out: pl.LazyFrame,
         attribution: pl.LazyFrame,
         precision: pl.LazyFrame,
+        stratum_precision: pl.LazyFrame,
         untraced: pl.LazyFrame,
         repayments: pl.LazyFrame,
     ) -> None:
@@ -487,6 +491,7 @@ class Quality:
         self._eu_left_out = eu_left_out
         self._attribution = attribution
         self._precision = precision
+        self._stratum_precision = stratum_precision
         self._untraced = untraced
         self._repayments = repayments
 
@@ -516,6 +521,11 @@ class Quality:
         return self._precision.collect()
 
     @cached_property
+    def stratum_precision(self) -> pl.DataFrame:
+        """The blind-sample precision of the links, by provider and stratum."""
+        return self._stratum_precision.collect()
+
+    @cached_property
     def untraced(self) -> pl.DataFrame:
         """The Rio-marked CRS disbursement outside `disbursements`."""
         return self._untraced.collect()
@@ -539,7 +549,8 @@ class Quality:
         years = _years_text(self.table["year"])
         return (
             f"Quality: {count} {providers}, {years}; also .table .status "
-            ".eu_left_out .attribution .precision .untraced .repayments"
+            ".eu_left_out .attribution .precision .stratum_precision .untraced "
+            ".repayments"
         )
 
     def summary(self) -> pl.DataFrame:

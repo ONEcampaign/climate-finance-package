@@ -2505,8 +2505,8 @@ class ReleaseManifest(BaseModel):
     # Every build switch and year range the release was built with, by name.
     settings: dict[str, JsonValue]
     precision_gate_waived: bool = False
-    # Why `cf-build release --waive-precision` let the precision and human-audit
-    # gates fail, null without a waiver.
+    # Why `cf-build release --waive-precision` let the precision, stratum-precision
+    # and human-audit gates fail, null without a waiver.
     precision_waiver: str | None = None
     previous_release: str | None = None
     # The sha256 of the pack the drift gate's previous release came from, null when

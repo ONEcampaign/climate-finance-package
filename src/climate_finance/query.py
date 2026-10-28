@@ -542,6 +542,7 @@ def quality(
             _attribution(release, providers=providers, years=years, method=method)
         ),
         precision=with_names(_precision(release, providers=providers)),
+        stratum_precision=with_names(_stratum_precision(release, providers=providers)),
         untraced=with_names(
             _untraced(release, conditions=conditions, method=method).sort(
                 "provider_code", "year"
@@ -711,19 +712,43 @@ _GATE_ROW = pl.Schema(
         "detail": pl.String(),
     }
 )
+# A precision row's strata in `release.json`.
+_STRATA_ROW = pl.Schema(
+    {
+        "subject": pl.String(),
+        "strata": pl.List(
+            pl.Struct(
+                {
+                    "stratum": pl.String(),
+                    "allocated_usd": pl.Float64(),
+                    "labels": pl.Int32(),
+                    "estimate": pl.Float64(),
+                    "lower": pl.Float64(),
+                    "upper": pl.Float64(),
+                }
+            )
+        ),
+    }
+)
+
+
+def _gate_rows(release: Release, gate: str, *, schema: pl.Schema) -> pl.LazyFrame:
+    """The rows `release.json` records for `gate`, in `schema`; none when the
+    release was not gated.
+
+    Raises:
+        SchemaError: when `release.json` holds rows of `gate` that are not a list.
+    """
+    rows = release.manifest.gates.get(gate, [])
+    if not isinstance(rows, list):
+        raise SchemaError("release.json", {f"gates.{gate}": "not a list of rows"})
+    return pl.LazyFrame(rows, schema=schema)
 
 
 def _precision(release: Release, *, providers: tuple[int, ...] | None) -> pl.LazyFrame:
     """The precision gate's rows in `release.json`, one per provider; none when the
-    release was not gated.
-
-    Raises:
-        SchemaError: when `release.json` holds precision rows that are not a list.
-    """
-    rows = release.manifest.gates.get("precision", [])
-    if not isinstance(rows, list):
-        raise SchemaError("release.json", {"gates.precision": "not a list of rows"})
-    frame = pl.LazyFrame(rows, schema=_GATE_ROW).select(
+    release was not gated."""
+    frame = _gate_rows(release, "precision", schema=_GATE_ROW).select(
         provider_code=pl.col("subject").cast(pl.Int32),
         estimate="value",
         lower="lower",
@@ -731,6 +756,39 @@ def _precision(release: Release, *, providers: tuple[int, ...] | None) -> pl.Laz
         passed="passed",
         waived="waived",
         detail="detail",
+    )
+    conditions = _conditions(providers=providers, recipients=None, years=None)
+    return frame.filter(*conditions) if conditions else frame
+
+
+def _stratum_precision(
+    release: Release, *, providers: tuple[int, ...] | None
+) -> pl.LazyFrame:
+    """One row per provider and stratum of its blind sample, from the precision
+    rows' `strata` in `release.json`, largest allocated value first, with the
+    verdict of the stratum's stratum_precision row; null verdicts for a stratum
+    the release does not gate, and no rows when the release was not gated."""
+    verdicts = _gate_rows(release, "stratum_precision", schema=_GATE_ROW).select(
+        pl.col("subject")
+        .str.split_exact("/", 1)
+        .struct.rename_fields(["provider_code", "stratum"])
+        .struct.unnest(),
+        "passed",
+        "waived",
+        "detail",
+    )
+    frame = (
+        _gate_rows(release, "precision", schema=_STRATA_ROW)
+        .select(provider_code=pl.col("subject").cast(pl.Int32), s="strata")
+        .explode("s")
+        .drop_nulls("s")
+        .unnest("s")
+        .join(
+            verdicts.with_columns(pl.col("provider_code").cast(pl.Int32)),
+            on=["provider_code", "stratum"],
+            how="left",
+            maintain_order="left",
+        )
     )
     conditions = _conditions(providers=providers, recipients=None, years=None)
     return frame.filter(*conditions) if conditions else frame
