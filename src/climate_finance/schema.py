@@ -733,7 +733,9 @@ PAIR_SCORES = _table(
 )
 
 # The id-less BTR rows drawn for people to label, so the BTR link's calibration
-# covers the low match weights where few id rows sit (`link.btr.calibration_draw`):
+# covers the low match weights where few id rows sit, and, for a party without its
+# own map, the weights from `link.btr.POOLED_FLOOR` up where its pooled links are
+# checked (`link.btr.calibration_draw`):
 # each row (`left_id`) with its best candidate CRS record (`right_id`), its party, the
 # match weight its party's model gave the pair, and its place in its party's draw
 # (`draw_rank`, from 1), which takes the strata in turn in the digest order of the

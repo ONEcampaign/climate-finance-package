@@ -43,19 +43,19 @@ PROTOTYPE_WEIGHTS = {918: 0.4, 8: 0.4, 10: 0.4, 7: 0.4, 11: 0.4, 5: 0.5}
 
 # Agreement of the BTR model with the ids on held-out activities, measured only where
 # a row's ids resolve. The calibration map sees the training half's labels alone.
-# Held-out rows agree at 0.931
-# over 1,953 linked. Norway agrees at 0.981 held out against 0.983 in-sample, so the
-# calibration does not overfit. France and the UK fall below 0.8. Halving France's
-# labels leaves it short of `MIN_MAP_OUTCOMES`, so it takes the pooled map. Each
+# Held-out rows agree at 0.946
+# over 1,786 linked. Norway agrees at 0.981 held out against 0.983 in-sample, so the
+# calibration does not overfit. The UK falls below 0.8. Halving France's labels
+# leaves it short of `MIN_MAP_OUTCOMES`, so it reads the pooled map from
+# `POOLED_FLOOR` up and links fewer than `MIN_PARTY_LINKED` held-out rows. Each
 # party with `MIN_PARTY_LINKED` rows linked has (rows linked, agreement, whether the
 # party holds its own map).
-HELDOUT_AGREEMENT = {"linked": 1953, "pooled_parties": 25, "agreement": 0.931}
+HELDOUT_AGREEMENT = {"linked": 1786, "pooled_parties": 25, "agreement": 0.946}
 HELDOUT_BY_PARTY: dict[str, tuple[int, float, bool]] = {
     "DEU": (451, 0.96, True),
     "DNK": (383, 0.932, True),
-    "FRA": (128, 0.742, False),
     "GBR": (164, 0.774, True),
-    "NLD": (249, 0.96, False),
+    "NLD": (176, 0.989, False),
     "NOR": (577, 0.981, True),
 }
 MIN_PARTY_LINKED = 50
@@ -254,11 +254,36 @@ def test_links_cover_the_reported_dollars(
     # "Global" rows hold 30% of Norway's dollars and 69% of the UK's, and key as
     # aggregates. Germany's map leaves 399 of its 1,411 id-less rows under the
     # threshold, most where it reads 0.21 to 0.33 on blocks of 14, 12 and 3 id
-    # labels; `calibration_draw` draws rows there for people to label.
+    # labels; `calibration_draw` draws rows there for people to label. Parties
+    # without their own map link only from `POOLED_FLOOR` up.
     assert linked["face_usd"].sum() / rows["face_usd"].sum() == pytest.approx(
-        0.782, abs=0.001
+        0.615, abs=0.001
     )
     assert share == pytest.approx({"NOR": 1.0, "DEU": 0.727, "GBR": 0.910}, abs=0.001)
+
+
+def test_parties_without_their_own_map_link_only_from_the_pooled_floor(
+    btr: pl.LazyFrame, links: pl.DataFrame
+) -> None:
+    rows = btr.select("row_id", "party").collect()
+    by_model = rows.join(
+        links.filter(link_method="btr_splink").select(row_id="left_id").unique(),
+        on="row_id",
+        how="semi",
+    )
+    linked = dict(by_model.group_by("party").len().iter_rows())
+
+    # None of the three writes an id the build resolves, so every model link reads
+    # the pooled map. The United States' rows all score under the floor.
+    # `docs/how-to/reconcile-with-btr.md` quotes the model's share of the links.
+    assert links.filter(link_method="btr_splink").height / links.height == (
+        pytest.approx(0.489, abs=0.001)
+    )
+    assert {party: linked.get(party, 0) for party in ("JPN", "USA", "SWE")} == {
+        "JPN": 1438,
+        "USA": 0,
+        "SWE": 510,
+    }
 
 
 def test_linked_pairs_give_germany_half_and_norway_forty_percent(

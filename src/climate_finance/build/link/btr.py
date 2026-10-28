@@ -26,17 +26,21 @@ spending under many commitments, so neither tier reads them.
 Raw EM probabilities do not link. The ids calibrate the model: each id row's best
 candidate is labelled by whether it is one of the row's id records, and an isotonic
 map of label on match weight gives the probability, the party's own map where its
-labels hold `MIN_MAP_OUTCOMES` of each outcome, else one pooled over every party's
-labels. A map with fewer of either outcome links nothing, and a weight below a
-map's lowest label reads 0. A row the id tier did not link takes its best candidate
-when the calibrated probability is at least `LINK_PROBABILITY`. Unlinked rows are
-UNFCCC only.
+labels hold `MIN_MAP_OUTCOMES` of each outcome. Each party's model has its own
+scale of weight, so a party without its own map reads the map pooled over every
+party's labels only from `POOLED_FLOOR` up, where every party's labels agree, and
+only while its own labels there agree with the pooled map (`POOLED_CHECK_SHARE`).
+A map with fewer of either outcome links nothing, and a weight below a map's lowest
+label reads 0. A row the id tier did not link takes its best candidate when the
+calibrated probability is at least `LINK_PROBABILITY`. Unlinked rows are UNFCCC
+only.
 
 Id rows score high, so few labels sit at the low weights where most id-less rows
-do. `calibration_draw` draws id-less rows there for people to label, and their
-decisions on a row's best candidate join the id labels, each weighted by the id-less
-rows of its party and stratum over the decisions there. With no decisions the maps
-are the id labels' alone.
+do. `calibration_draw` draws id-less rows there for people to label, and, for a
+party without its own map, rows from `POOLED_FLOOR` up to check its pooled links.
+Their decisions on a row's best candidate join the id labels, each weighted by the
+id-less rows of its party and stratum over the decisions there. With no decisions
+the maps are the id labels' alone.
 
 Recipients link on the geo resolver's DAC code (`orgs.recipient_code`), so
 "Vietnam" and "Turkey" find Viet Nam and Türkiye. A recipient that names no single
@@ -46,6 +50,7 @@ unspecified code (`keys.regional_codes`) both read as `aggregate`.
 """
 
 import logging
+import math
 from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any, NamedTuple
@@ -82,14 +87,39 @@ _log = logging.getLogger(__name__)
 LINK_PROBABILITY = 0.5
 # Labels of each outcome a calibration map needs. On the archive, five parties hold
 # their own map (Germany 909 right and 75 wrong, Denmark 733 and 67, France 210 and
-# 62, the UK 252 and 159, Norway 1,221 and 99), and the others take the pooled map,
-# 3,837 and 487.
+# 62, the UK 252 and 159, Norway 1,221 and 99), and the others read the pooled map,
+# 3,837 and 487, from `POOLED_FLOOR` up. Of those, only the Netherlands holds many
+# id labels of its own (511 right and 24 wrong).
 MIN_MAP_OUTCOMES = 30
-# Id-less rows drawn for people to label: `CALIBRATION_DRAWS` a party, spread over
-# the strata of match weight between the edges of `CALIBRATION_STRATA`. Germany's id
-# labels there hold 24, 4 of them right, against 316 id-less rows, none linked.
-# Thirty a stratum let each stratum form an isotonic block of thirty.
-CALIBRATION_STRATA = (-12.0, -9.0, -6.0, -3.0)
+# The lowest match weight at which a party without its own map reads the pooled map.
+# Fitted without each labelled party in turn, the pooled map reads that party's id
+# labels from weight 5 up at a precision of 0.93 to 0.99 (Germany, Denmark, France,
+# the UK, Norway and the Netherlands), and every one of them is right at 0.85 or more
+# in each band of weight from 5 up. Below weight -3 it misreads them by 0.19 to 0.56
+# (France's labels there are right at 0.09 and read 0.64, Denmark's at 0.66 and read
+# 0.35), and between 3 and 5 Norway's are right at 0.66 and read 0.87 to 0.92.
+POOLED_FLOOR = 5.0
+# A party without its own map keeps its pooled links while its labels from
+# `POOLED_FLOOR` up, once there are `MIN_CHECK_LABELS`, are right at a weighted share
+# of at least `POOLED_CHECK_SHARE` (`_pool_check`). The share sits under the 0.85
+# of the worst band of weight a held-out party showed from the floor up, and above
+# Norway's 0.66 between 3 and 5, the shift a party on another scale shows. Thirty is
+# the draw of the stratum from the floor up.
+POOLED_CHECK_SHARE = 0.8
+MIN_CHECK_LABELS = 30
+# Id-less rows drawn for people to label, in the strata of `CALIBRATION_STRATA`
+# (each from its lower edge up to its upper). The three from -12 to -3 share
+# `CALIBRATION_DRAWS` a party, spread evenly. They cover the weights where Germany's
+# id labels hold 24, 4 of them right, against 316 id-less rows, none linked; thirty
+# a stratum let each form an isotonic block of thirty. The last, from
+# `POOLED_FLOOR` up, gives `MIN_CHECK_LABELS` a party whose id labels give it no
+# map of its own, so its labels can check its pooled links (`_pool_check`).
+CALIBRATION_STRATA = (
+    (-12.0, -9.0),
+    (-9.0, -6.0),
+    (-6.0, -3.0),
+    (POOLED_FLOOR, math.inf),
+)
 CALIBRATION_DRAWS = 90
 # Ids parties write into titles and additional information.
 ID_PATTERN = r"\d{4}\.\d{4}\.\d|\d{6,}(?:-\d+)?|[A-Z]{2,4}-?\d{2,}[\w/\-]*"
@@ -469,19 +499,184 @@ def calibrate(
     best: pl.DataFrame, *, truth: pl.DataFrame, labels: pl.DataFrame | None = None
 ) -> pl.DataFrame:
     """`best` (one scored candidate per BTR row, with `party` and `match_weight`)
-    with `probability`, null for a party with no map.
+    with `probability`, null where no map reads the row.
 
     A row with id records (`truth`: row_id, record_id) labels its best candidate 1
     when the candidate is one of them, else 0. A `human` or `agent` decision of task
     `btr_crs` in `labels` (`decisions.read_decision_labels`) on an id-less row's best
     candidate labels it too, 1 when accepted (`_decided`). A party with
-    `MIN_MAP_OUTCOMES` of each label takes its own isotonic map, any other the map
-    pooled over every party's labels when the pool holds as many. A party left
-    without a map is logged as a warning. A weight below the map's lowest labelled
-    weight reads 0, since no label vouches for it.
+    `MIN_MAP_OUTCOMES` of each label takes its own isotonic map.
+
+    Any other party reads one pooled map at weights from `POOLED_FLOOR` up, and its
+    rows below the floor read null. The pool holds the labels of the parties with
+    their own map and of each other party whose labels from the floor up pass the
+    check (`_pool_check`). A party whose labels fail it links nothing by the model,
+    and its labels leave the pool, so a party on another scale cannot move the map
+    the others read. A party with fewer labels there than the check needs reads the
+    pool unchecked and adds nothing to it. Until people label the draw's stratum
+    from the floor up, that is most parties without their own map. A pool holding
+    fewer than `MIN_MAP_OUTCOMES` of either outcome links nothing.
+
+    Each party logs the map its id-less links read: its own map or a checked pool
+    at INFO, an unchecked pool, a failed check or no map as a warning. A weight
+    below the map's lowest labelled weight reads 0, since no label vouches for it.
     """
     columns = ["party", "match_weight", "y", "weight", "left_id", "right_id"]
-    by_id = (
+    by_id = _id_labels(best, truth=truth)
+    labelled = (
+        by_id
+        if labels is None
+        else pl.concat([by_id, _decided(best, truth=truth, labels=labels)])
+    ).select(columns)
+    maps = {
+        party: _map(labelled.filter(party=party))
+        for party in best["party"].unique(maintain_order=True)
+    }
+    checks = {
+        party: _pool_check(labelled.filter(party=party))
+        for party, own in maps.items()
+        if own is None
+    }
+    pool = [party for party, own in maps.items() if own is not None] + [
+        party for party, check in checks.items() if check.passes
+    ]
+    pooled = _map(labelled.filter(pl.col("party").is_in(pool)))
+    frames = [best.clear().with_columns(probability=pl.lit(None, dtype=pl.Float64))]
+    for (party,), scored in best.group_by("party", maintain_order=True):
+        own, check = maps[party], checks.get(party)
+        if own is not None:
+            mapping, floor = own, -math.inf
+        elif pooled is not None and check is not None and not check.fails:
+            mapping, floor = pooled, POOLED_FLOOR
+        else:
+            _log_unlinked(party, rows=scored.height, check=check, pooled=pooled)
+            frames.append(
+                scored.with_columns(probability=pl.lit(None, dtype=pl.Float64))
+            )
+            continue
+        weights = scored["match_weight"].to_numpy()
+        probability = pl.Series(
+            np.where(weights < mapping.X_min_, 0.0, mapping.predict(weights)),
+            dtype=pl.Float64,
+        )
+        read = scored.with_columns(
+            probability=pl.when(pl.col("match_weight") >= floor).then(probability)
+        )
+        linked = (
+            read.join(truth, on="row_id", how="anti")
+            .filter(pl.col("probability") >= LINK_PROBABILITY)
+            .height
+        )
+        _log_linked(party, linked=linked, check=check)
+        frames.append(read)
+    return pl.concat(frames).sort("row_id")
+
+
+class _Check(NamedTuple):
+    """A party's labels from `POOLED_FLOOR` up: how many, how many right, and
+    their share right weighted as `calibrate` weighs them."""
+
+    labels: int
+    right: int
+    share: float
+
+    @property
+    def ran(self) -> bool:
+        return self.labels >= MIN_CHECK_LABELS
+
+    @property
+    def passes(self) -> bool:
+        return self.ran and self.share >= POOLED_CHECK_SHARE
+
+    @property
+    def fails(self) -> bool:
+        return self.ran and self.share < POOLED_CHECK_SHARE
+
+
+def _pool_check(labelled: pl.DataFrame) -> _Check:
+    """The check of a party without its own map on its labels (`labelled`) from
+    `POOLED_FLOOR` up. It runs once they number `MIN_CHECK_LABELS`, and passes while
+    their weighted share right is at least `POOLED_CHECK_SHARE`.
+
+    On thirty unweighted labels, as the draw's stratum from the floor up gives, a
+    party whose rows there are right at 0.93, the lowest share a held-out party
+    showed, fails with probability 0.004, and one right at 0.85, the lowest band of
+    any held-out party, with probability 0.15. A party right at 0.7 passes with
+    probability 0.16, and one right at 0.6 with 0.017. Until it runs, the party's
+    pooled links rest on the held-out evidence behind `POOLED_FLOOR` alone.
+    """
+    above = labelled.filter(pl.col("match_weight") >= POOLED_FLOOR)
+    if above.is_empty():
+        return _Check(labels=0, right=0, share=0.0)
+    return _Check(
+        labels=above.height,
+        right=int(above["y"].sum()),
+        share=above.select(
+            (pl.col("y") * pl.col("weight")).sum() / pl.col("weight").sum()
+        ).item(),
+    )
+
+
+def _log_linked(party: str, *, linked: int, check: _Check | None) -> None:
+    """Log the map a party's `linked` id-less rows read: its own (`check` None), a
+    checked pool, or an unchecked one, the last as a warning."""
+    if check is None:
+        _log.info("BTR %s: %d id-less rows link on its own map", party, linked)
+    elif check.ran:
+        _log.info(
+            "BTR %s: %d id-less rows link on the pooled map from weight %g, checked "
+            "on its %d labels there, %d right (weighted share %.2f)",
+            party,
+            linked,
+            POOLED_FLOOR,
+            check.labels,
+            check.right,
+            check.share,
+        )
+    else:
+        _log.warning(
+            "BTR %s: %d id-less rows link on the pooled map from weight %g "
+            "unchecked, on %d of the %d labels there a check needs",
+            party,
+            linked,
+            POOLED_FLOOR,
+            check.labels,
+            MIN_CHECK_LABELS,
+        )
+
+
+def _log_unlinked(
+    party: str, *, rows: int, check: _Check | None, pooled: IsotonicRegression | None
+) -> None:
+    """Warn that none of a party's `rows` links by the model: its labels failed the
+    pool's check, or no map holds enough labels."""
+    if check is not None and check.fails:
+        _log.warning(
+            "BTR %s: %d of its %d labels from weight %g up are right (weighted "
+            "share %.2f, under %.2f), so none of its %d rows links by the pooled "
+            "map and its labels leave the pool",
+            party,
+            check.right,
+            check.labels,
+            POOLED_FLOOR,
+            check.share,
+            POOLED_CHECK_SHARE,
+            rows,
+        )
+    elif pooled is None:
+        _log.warning(
+            "BTR %s: no calibration map holds %d labels of each outcome, so "
+            "none of its %d rows links by the model",
+            party,
+            MIN_MAP_OUTCOMES,
+            rows,
+        )
+
+
+def _id_labels(best: pl.DataFrame, *, truth: pl.DataFrame) -> pl.DataFrame:
+    """The best candidate of each row with id records in `truth`, labelled `y` 1
+    when it is one of them, else 0, each of `weight` 1."""
+    return (
         best.join(truth.select("row_id").unique(), on="row_id", how="semi")
         .join(truth.with_columns(y=pl.lit(1.0)), on=_PAIR, how="left")
         .select(
@@ -493,38 +688,6 @@ def calibrate(
             right_id="record_id",
         )
     )
-    labelled = (
-        by_id
-        if labels is None
-        else pl.concat([by_id, _decided(best, truth=truth, labels=labels)])
-    ).select(columns)
-    pooled = _map(labelled)
-    frames = [best.clear().with_columns(probability=pl.lit(None, dtype=pl.Float64))]
-    for (party,), scored in best.group_by("party", maintain_order=True):
-        own = _map(labelled.filter(party=party))
-        mapping = pooled if own is None else own
-        if mapping is None:
-            _log.warning(
-                "BTR %s: no calibration map holds %d labels of each outcome, so "
-                "none of its %d rows links by the model",
-                party,
-                MIN_MAP_OUTCOMES,
-                scored.height,
-            )
-            frames.append(
-                scored.with_columns(probability=pl.lit(None, dtype=pl.Float64))
-            )
-            continue
-        weights = scored["match_weight"].to_numpy()
-        frames.append(
-            scored.with_columns(
-                probability=pl.Series(
-                    np.where(weights < mapping.X_min_, 0.0, mapping.predict(weights)),
-                    dtype=pl.Float64,
-                )
-            )
-        )
-    return pl.concat(frames).sort("row_id")
 
 
 def calibration_draw(best: pl.DataFrame, *, truth: pl.DataFrame) -> pl.DataFrame:
@@ -532,34 +695,40 @@ def calibration_draw(best: pl.DataFrame, *, truth: pl.DataFrame) -> pl.DataFrame
     `record_id` (its best candidate), `match_weight` and `draw_rank`.
 
     Each party gives `CALIBRATION_DRAWS` of its rows with no id records in `truth`
-    and a match weight from the first edge of `CALIBRATION_STRATA` up to the last,
-    spread evenly over the strata between the edges, a stratum short of its share
-    giving all its rows. Within a stratum, rows are taken in the order of a digest of
-    the pair (`jev.spread_sample`), so the same scores give the same draw.
-    `draw_rank` numbers a party's draw from 1 in that order, the strata in turn, so
-    the first k ranks of a party are a random subset of each of its strata.
+    from the strata of `CALIBRATION_STRATA` below `POOLED_FLOOR`, spread evenly over
+    them, a stratum short of its share giving all its rows. A party whose id labels
+    hold fewer than `MIN_MAP_OUTCOMES` of either outcome also gives
+    `MIN_CHECK_LABELS` from the stratum from `POOLED_FLOOR` up, which a party with
+    its own map never reads the pooled map in. Within a stratum, rows are taken in
+    the order of a digest of the pair (`jev.spread_sample`), so the same scores give
+    the same draw. `draw_rank` numbers a party's draw from 1 in that order, the
+    strata in turn, so the first k ranks of a party are a random subset of each of
+    its strata.
     """
-    weight = pl.col("match_weight")
+    top = pl.col("stratum") == len(CALIBRATION_STRATA) - 1
     idless = (
         best.join(truth.select("row_id").unique(), on="row_id", how="anti")
-        .filter(
-            weight.is_between(
-                CALIBRATION_STRATA[0], CALIBRATION_STRATA[-1], closed="left"
-            )
-        )
-        .select("party", "row_id", "record_id", "match_weight")
+        .with_columns(stratum=_stratum())
+        .filter(_drawn_stratum(best, truth=truth))
+        .select("party", "row_id", "record_id", "match_weight", "stratum")
+        .with_columns(left_id="row_id", right_id="record_id")
     )
-    draws = [idless.clear().with_columns(draw_rank=pl.lit(0, dtype=pl.Int32))]
+    columns = ["party", "row_id", "record_id", "match_weight"]
+    draws = [idless.clear().select(*columns, draw_rank=pl.lit(0, dtype=pl.Int32))]
     for (_,), rows in idless.sort("party").group_by("party", maintain_order=True):
+        drawn = pl.concat(
+            [
+                spread_sample(
+                    rows.filter(~top), band=pl.col("stratum"), n=CALIBRATION_DRAWS
+                ),
+                spread_sample(rows.filter(top), band=top, n=MIN_CHECK_LABELS),
+            ]
+        )
         draws.append(
-            spread_sample(
-                rows.with_columns(left_id="row_id", right_id="record_id"),
-                band=_stratum(),
-                n=CALIBRATION_DRAWS,
-            )
-            .select(idless.columns)
+            drawn.with_columns(turn=pl.int_range(pl.len()).over("stratum"))
+            .sort("turn", "stratum")
             .with_row_index("draw_rank", offset=1)
-            .select(*idless.columns, pl.col("draw_rank").cast(pl.Int32))
+            .select(*columns, pl.col("draw_rank").cast(pl.Int32))
         )
     return pl.concat(draws).sort("party", "row_id")
 
@@ -571,10 +740,10 @@ def _decided(
     candidate of a row with no id records in `truth`, as calibration labels.
 
     A `stratified` decision (one on a pair `calibration_draw` drew) whose pair scores
-    inside the drawn band weighs the id-less rows of its party and stratum of
-    `CALIBRATION_STRATA` over the stratified decisions there, as the draw takes a
-    share of each stratum. Any other weighs 1, including a drawn pair that scores
-    outside the band, since the draw takes no share of the open strata. A decision
+    inside a stratum the draw takes a share of for its party (`_drawn_stratum`),
+    the open-ended one from `POOLED_FLOOR` up included, weighs the id-less rows of
+    its party and stratum over the stratified decisions there. Any other weighs 1,
+    including a drawn pair that now scores outside its party's strata. A decision
     on a record other than the row's best candidate says nothing about the
     candidate, so it is left out.
     """
@@ -588,9 +757,7 @@ def _decided(
         stratified="stratified",
     )
     stratum = ["party", "stratum"]
-    drawn = pl.col("stratified") & pl.col("stratum").is_between(
-        1, len(CALIBRATION_STRATA) - 1
-    )
+    drawn = pl.col("stratified") & _drawn_stratum(best, truth=truth)
     return (
         idless.with_columns(stratum=_stratum())
         .with_columns(rows=pl.len().over(stratum))
@@ -608,12 +775,36 @@ def _decided(
     )
 
 
-def _stratum() -> pl.Expr:
-    """The stratum of `CALIBRATION_STRATA` a row's match weight falls in: 0 below
-    the first edge, one more past each edge."""
-    return pl.sum_horizontal(
-        pl.col("match_weight") >= edge for edge in CALIBRATION_STRATA
+def _drawn_stratum(best: pl.DataFrame, *, truth: pl.DataFrame) -> pl.Expr:
+    """Whether a row's `stratum` (`_stratum`) is one `calibration_draw` takes a
+    share of for its `party`: every stratum, but the one from `POOLED_FLOOR` up only
+    for a party whose id labels in `best` and `truth` hold fewer than
+    `MIN_MAP_OUTCOMES` of either outcome, as a party with its own map never reads
+    the pooled map."""
+    own = (
+        _id_labels(best, truth=truth)
+        .group_by("party")
+        .agg(right=pl.col("y").sum(), wrong=(1 - pl.col("y")).sum())
+        .filter(pl.min_horizontal("right", "wrong") >= MIN_MAP_OUTCOMES)["party"]
     )
+    stratum = pl.col("stratum")
+    return stratum.is_not_null() & (
+        (stratum < len(CALIBRATION_STRATA) - 1) | ~pl.col("party").is_in(own.implode())
+    )
+
+
+def _stratum() -> pl.Expr:
+    """The index of the stratum of `CALIBRATION_STRATA` a row's match weight falls
+    in, from its lower edge up to its upper, null outside every stratum."""
+    weight = pl.col("match_weight")
+    index = pl.lit(None, dtype=pl.Int32)
+    for i, (low, high) in reversed(list(enumerate(CALIBRATION_STRATA))):
+        index = (
+            pl.when(weight.is_between(low, high, closed="left"))
+            .then(i)
+            .otherwise(index)
+        )
+    return index
 
 
 def _map(labelled: pl.DataFrame) -> IsotonicRegression | None:
