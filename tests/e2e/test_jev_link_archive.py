@@ -67,7 +67,7 @@ _PAIR = ["left_id", "right_id"]
 # links of its commitments.
 MIN_PROVIDER_LINKS = 100
 # Each classifier's held-out links, link precision and monetary precision. A
-# disbursement pairs with a purpose-split line once (`purpose_units`). Jev's
+# disbursement pairs with a purpose-split line once (`line_units`). Jev's
 # adjudication lowers precision out of sample overall: precision is 0.9246 for
 # the classifier alone and 0.9204 with Jev, monetary precision 0.9503 and
 # 0.9417.

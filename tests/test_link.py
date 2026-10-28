@@ -30,7 +30,13 @@ from climate_finance.build.link.id_practice import (
     untraceable,
 )
 from climate_finance.build.link.jev import JevFitError
-from climate_finance.build.link.keys import as_exact_links, build_units, link_by_keys
+from climate_finance.build.link.keys import (
+    as_exact_links,
+    build_units,
+    line_units,
+    link_by_keys,
+    pair_line_units,
+)
 from climate_finance.build.normalise.project_numbers import normalise_pn
 from climate_finance.build.stages import StageContext, table_path
 
@@ -102,6 +108,86 @@ def _trace(
 def test_normalise_pn(published: str | None, normalised: str | None) -> None:
     frame = pl.DataFrame({"pn": [published]}, schema={"pn": pl.String})
     assert frame.select(normalise_pn(pl.col("pn"))).item() == normalised
+
+
+def test_a_disbursement_takes_one_unit_of_a_purpose_split_line() -> None:
+    # Line A commits in 2018 under five purposes and one unit with none, all
+    # reached but 41010. Line B commits under one purpose and is not split.
+    committed = {"crs_id": "A", "year": 2018, "commitment_date": date(2018, 3, 1)}
+    later = {"crs_id": "A", "commitment_date": date(2018, 3, 1)}
+    units = _units(
+        {
+            "c_23210": {**committed, "commitment_usd": 9.0},
+            "c_23220": {**committed, "purpose_code": 23220, "commitment_usd": 2.0},
+            "c_15110": {**committed, "purpose_code": 15110, "commitment_usd": 20.0},
+            "c_41010": {**committed, "purpose_code": 41010, "commitment_usd": 30.0},
+            "c_41020": {**committed, "purpose_code": 41020, "commitment_usd": 1.0},
+            "c_none": {**committed, "purpose_code": None, "commitment_usd": 25.0},
+            "c_b": {"crs_id": "B", "year": 2018, "commitment_usd": 5.0},
+            "own": {**later, "purpose_code": 23220, "disbursement_usd": 1.0},
+            "category": {**later, "purpose_code": 23230, "disbursement_usd": 1.0},
+            "default": {**later, "purpose_code": 31120, "disbursement_usd": 1.0},
+            "unreached": {**later, "purpose_code": 41010, "disbursement_usd": 1.0},
+            "b": {"crs_id": "B", "disbursement_usd": 1.0},
+        }
+    )
+    name = dict(zip(units["unit_id"], units["record_ids"].list.first(), strict=True))
+    unit = {record: unit_id for unit_id, record in name.items()}
+    reached = pl.Series(
+        [unit[n] for n in ("c_23210", "c_23220", "c_15110", "c_41020", "c_none", "c_b")]
+    )
+
+    table = line_units(units, reached=reached)
+    assert table["line"].n_unique() == 1
+    rows = [
+        (
+            row["purpose_code"],
+            row["purpose_category"],
+            name.get(row["unit_id"]),
+            name.get(row["pick"]),
+        )
+        for row in table.iter_rows(named=True)
+    ]
+    assert sorted(rows, key=str) == sorted(
+        [
+            (23210, None, "c_23210", "c_23210"),
+            (23220, None, "c_23220", "c_23220"),
+            (15110, None, "c_15110", "c_15110"),
+            (41010, None, "c_41010", None),
+            (41020, None, "c_41020", "c_41020"),
+            (None, None, "c_none", "c_none"),
+            # The largest reached commitment of each category, then of the line
+            # (a unit with no purpose can be the line's).
+            (None, 232, None, "c_23210"),
+            (None, 151, None, "c_15110"),
+            (None, 410, None, "c_41020"),
+            (None, None, None, "c_none"),
+        ],
+        key=str,
+    )
+
+    disbursements = ("own", "category", "default", "unreached", "b")
+    pairs = pl.DataFrame(
+        [
+            (unit[left], unit[right])
+            for left in disbursements
+            for right in (
+                *("c_23210", "c_23220", "c_15110", "c_41010", "c_41020", "c_none"),
+                "c_b",
+            )
+            if (left == "b") == (right == "c_b")
+        ],
+        schema=["left_id", "right_id"],
+        orient="row",
+    )
+    # A disbursement whose own unit is unreached keeps no pair on the line.
+    picked = pair_line_units(pairs, line_units=table, units=units)
+    assert [(name[left], name[right]) for left, right in picked.iter_rows()] == [
+        ("own", "c_23220"),
+        ("category", "c_23210"),
+        ("default", "c_none"),
+        ("b", "c_b"),
+    ]
 
 
 def test_units_sum_records_that_share_every_key() -> None:

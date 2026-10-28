@@ -52,7 +52,7 @@ ECE_BINS = 10
 # 2021 to 2022 climate value in USD bn that the classifier's links move between
 # statuses with `sibling_lines` counted over the candidate pairs' units, what
 # counting it over every link-stage unit adds, and what one pair per purpose-split
-# line (`purpose_units`) adds.
+# line (`line_units`) adds.
 CLASSIFIER_MOVED_BN = {
     "disbursed": 0.00301,
     "partly_disbursed": 0.00336,
@@ -201,7 +201,7 @@ def test_the_classifier_meets_its_targets_on_the_prototype_years(
     # training pairs, which refits it again. Truth starts in `FIRST_MEASURED_YEAR`,
     # and the classifier reads how many sibling lines a commitment has
     # (`sibling_lines`, counted over every link-stage unit), and a disbursement
-    # pairs with a purpose-split line once (`purpose_units`), which refits it to
+    # pairs with a purpose-split line once (`line_units`), which refits it to
     # 0.45. Pairs link at the fixed cut of 0.40, whatever the best threshold.
     assert threshold == 0.40
     assert scores.best_threshold == 0.45
@@ -209,7 +209,7 @@ def test_the_classifier_meets_its_targets_on_the_prototype_years(
     assert every_year["ece"] <= ECE_TARGET
     # Commitments from 2010 train the classifier, and their projects commit more
     # sibling lines than later ones, which `sibling_lines` lets it weigh. A
-    # disbursement pairs with a purpose-split line once (`purpose_units`), so the
+    # disbursement pairs with a purpose-split line once (`line_units`), so the
     # held-out pairs hold no false sibling of Canada's purpose units.
     assert every_year == pytest.approx(
         {"precision": 0.94153, "recall": 0.93856, "f1": 0.94004, "ece": 0.01086},
@@ -253,7 +253,7 @@ def test_held_out_figures_by_provider_class(
         # The class's held-out pairs are the Adaptation Fund's. Truth follows its
         # renumbered projects by title (`carried_continuations`). The fund files
         # each project as one unit per purpose, and one pair per purpose-split line
-        # (`purpose_units`) leaves it 91 true and 18 false training pairs, under
+        # (`line_units`) leaves it 91 true and 18 false training pairs, under
         # `MIN_CALIBRATION_PAIRS`, so its pairs take the pooled map. 46 of its 95
         # true disbursement units link, and 1 of its 47 links is false.
         "other_multilateral": pytest.approx(
@@ -285,7 +285,7 @@ def test_the_link_stage_writes_the_classifier_links_and_profile(
     # are candidates, and 931 of the links have a commitment from before 2015.
     # Counted over the candidate pairs' units, `sibling_lines` gives 1,520 links;
     # counted over every link-stage unit, it gives 104 more, and one pair per
-    # purpose-split line (`purpose_units`) takes 82.
+    # purpose-split line (`line_units`) takes 82.
     assert written.height == 1_520 + 104 - 82
     # The AsDB (915) has 255 commitments in eligible pairs, under
     # `SPLINK_MIN_COMMITMENTS`, and scores with the pooled model. `template_lines`
