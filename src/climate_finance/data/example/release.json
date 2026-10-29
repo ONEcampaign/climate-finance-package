@@ -1,6 +1,6 @@
 {
   "release": "synthetic-example",
-  "data_format": 2,
+  "data_format": 3,
   "created_at": "2026-10-21T00:00:00Z",
   "package_version": "2.0.0.dev0",
   "build": {
@@ -16,11 +16,11 @@
   },
   "tables": {
     "disbursements": {
-      "sha256": "57a202922a7abcf93764138fd6f31ce0daef4d9ed32b8cd2ffa41a69f1353684",
+      "sha256": "b54c2d071bfce5119a71d4383109585c16a7e4cf1a371888aa6b111a3d32326e",
       "rows": 36
     },
     "untraced": {
-      "sha256": "36127a5130ecc2fbb1139df93eeb45cdb0ea915efa98555961f695b99e197fab",
+      "sha256": "ee3f52d055dd0770f45df55e62d6eae22c4b872ff68a388691eb77bae5de9528",
       "rows": 3
     },
     "objectives": {
@@ -76,11 +76,11 @@
       "rows": 275
     },
     "commitments": {
-      "sha256": "090b9755413be1aa300091b3598a552090f96e98a2910473886199143f0730cf",
+      "sha256": "4d38895c0abf7e517a56d8d5a69095ff88600c8f4a0ffc45d7e2b55ee17a41c7",
       "rows": 14
     },
     "reflows": {
-      "sha256": "04112c914d4ff6a60242957e8f2b59d0d4216b61e4d7492ea59ee6e3a073fb65",
+      "sha256": "1c79283af76a1db110b97d201692dcc23a9ed17eeb921fcf868fc34ae6a7ae4d",
       "rows": 17
     },
     "quality": {

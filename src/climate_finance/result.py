@@ -33,6 +33,7 @@ from climate_finance.schema import (
     CORE_CONTRIBUTION,
     LABEL_SOURCES,
     LINK_METHODS,
+    MEMORANDUM_PSI_FLAGS,
     MULTILATERAL_OUTFLOW,
     NET_FLOWS,
     SHARE_ORIGINS,
@@ -274,7 +275,8 @@ class Result:
         provider, recipient and Bi_Multi code. A row without a recipient, such as
         attributed finance, divides by the sum over recipients. Totals cover every
         flow code, so under `oda_only` the share is ODA climate finance over all
-        flows. In the provider view, EU Institutions' total holds the same rows as
+        flows, and leave out records reported for memorandum, as the amounts do.
+        In the provider view, EU Institutions' total holds the same rows as
         their amounts under each method, at the same scaling. A key missing from
         `total_flows` gives null shares. `no_grant_equivalent` is null, since it
         holds face value and the grant-equivalent total leaves its records out.
@@ -305,8 +307,8 @@ class Result:
         climate row, at the result's currency and prices. Core contributions count
         once, under the null recipient their attributed finance takes. Totals cover
         every flow code, so under `oda_only` the share is ODA climate finance over
-        all flows. The share is null where the total is zero, as for a query that
-        returns no rows.
+        all flows, and leave out records reported for memorandum. The share is null
+        where the total is zero, as for a query that returns no rows.
 
         The columns are the names of the code columns in `by` (`provider`,
         `agency`, `recipient`), the `by` columns, `method`, the spec's `flow`,
@@ -772,6 +774,12 @@ def explain(
         "Commitments that repeat an earlier vintage are left out, and their "
         "disbursements count on the row they repeat; release.quality() reports their "
         "value."
+    )
+    lines.append(
+        "Rows whose CRS record the provider reports for memorandum (PSI flags "
+        f"{_listing(MEMORANDUM_PSI_FLAGS)}), such as a development finance "
+        "institution's investments beside the capital its provider counts, are left "
+        "out."
     )
     filters = [
         _field_text(field, getattr(spec, field))

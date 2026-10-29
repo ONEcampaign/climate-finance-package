@@ -142,6 +142,7 @@ from climate_finance.schema import (
     TableSchema,
     aggregate_channel,
     measured_adaptation,
+    memorandum,
     release_invariants,
     sha256_file,
     withheld_record,
@@ -496,6 +497,7 @@ def release_disbursements(
         "bi_multi",
         "purpose_code",
         "flow_code",
+        "psi_flag",
         "project_number",
         "title",
         provider_code="donor_code",
@@ -522,11 +524,11 @@ def fill_disbursements(fills: pl.LazyFrame, *, crdf: pl.LazyFrame) -> pl.LazyFra
 
     A fill has no CRS record, so it takes provider, agency, recipient, channel,
     Bi_Multi, purpose, project number, title, markers and climate share from the
-    commitment it fills, and its flow code is null. Its record is the fill's key and
-    year (`ledger:<publisher>:<key>:<year>` or `iati:...`), whose disbursement is
-    what the fill gives every commitment on it. There is no grant equivalent. Markers
-    come from the commitment (`components` where it has a climate share), and the
-    method, probability and ledger check are null.
+    commitment it fills, and its flow code and PSI flag are null. Its record is the
+    fill's key and year (`ledger:<publisher>:<key>:<year>` or `iati:...`), whose
+    disbursement is what the fill gives every commitment on it. There is no grant
+    equivalent. Markers come from the commitment (`components` where it has a
+    climate share), and the method, probability and ledger check are null.
     """
     commitment = crdf.select(
         "row_id",
@@ -550,6 +552,7 @@ def fill_disbursements(fills: pl.LazyFrame, *, crdf: pl.LazyFrame) -> pl.LazyFra
         .join(records, on="record_id", how="left", validate="m:1")
         .with_columns(
             flow_code=pl.lit(None, pl.Int32),
+            psi_flag=pl.lit(None, pl.Int32),
             record_grant_equiv_usd=pl.lit(None, pl.Float64),
             record_rio_adaptation=pl.lit(None, pl.Int8),
             record_rio_mitigation=pl.lit(None, pl.Int8),
@@ -651,8 +654,12 @@ def core_contributions(stage: pl.LazyFrame) -> pl.LazyFrame:
 
 
 def total_flows(crs: pl.LazyFrame) -> pl.LazyFrame:
-    """Every CRS record's amounts by provider, agency, recipient, year, Bi_Multi,
-    flow and the record's two Rio markers (0 for none).
+    """Every counted CRS record's amounts by provider, agency, recipient, year,
+    Bi_Multi, flow and the record's two Rio markers (0 for none).
+
+    A record reported for memorandum (`MEMORANDUM_PSI_FLAGS`) describes money the
+    provider counts at another stage, such as its capital in a development finance
+    institution, so it is left out.
 
     `assemble` passes the records up to `years.crs_last_complete`, as allocation
     reads them, so the denominator covers the years `disbursements` does.
@@ -669,7 +676,8 @@ def total_flows(crs: pl.LazyFrame) -> pl.LazyFrame:
         "rio_mitigation",
     ]
     return (
-        crs.select(
+        crs.filter(~memorandum(pl.col("psi_flag")))
+        .select(
             "agency_code",
             "recipient_code",
             "year",
@@ -861,7 +869,11 @@ def quality(
     commitment's climate share of face. `grant_equiv_coverage` is the share of the
     linked commitments' allocated value whose record has a grant equivalent, null
     where nothing is allocated to them. Repeats count only in `repeat_climate_usd`.
+    Memorandum commitments and disbursements (`MEMORANDUM_PSI_FLAGS`) count nowhere.
     """
+    counted_stage = ~memorandum(pl.col("psi_flag"))
+    commitments = commitments.filter(counted_stage)
+    disbursements = disbursements.filter(counted_stage)
     routes = (
         links.filter(pl.col("task") == "crdf_crs")
         .group_by(row_id="left_id")
@@ -937,6 +949,7 @@ def release_untraced(untraced: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFra
         "bi_multi",
         "purpose_code",
         "flow_code",
+        "psi_flag",
         "project_number",
         "title",
         "rio_adaptation",

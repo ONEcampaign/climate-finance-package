@@ -7,7 +7,8 @@ markers. The bulk CRS lists the records they add up, which no CRDF row carries.
 
 The pool is the provider's non-core records of the row's year whose (provider, crs
 id, year) no CRDF row of the perspective carries, summed by agency, crs id, project
-number, recipient, purpose, flow category and markers, with a positive commitment.
+number, recipient, purpose, flow category, markers and PSI flag, with a positive
+commitment.
 Three routes run in order:
 
 - partition: within a cell (provider, year, flow category, mitigation and
@@ -22,15 +23,19 @@ Three routes run in order:
   of the same provider, year and recipient within 1% of the row, markers aside.
 
 A matched row keeps its amounts and gains a child row per record, with the record's
-agency, crs id, project number, title, recipient and purpose, the parent's other
-fields, its amounts scaled by the record's share of the row's records, and
+agency, crs id, project number, title, recipient, purpose and PSI flag, the parent's
+other fields, its amounts scaled by the record's share of the row's records, and
 `parent_row_id` naming the row.
 """
 
 import polars as pl
 
 from climate_finance import schema
-from climate_finance.build.normalise.crs import crs_ids, trace_population
+from climate_finance.build.normalise.crs import (
+    FLOW_CATEGORY,
+    crs_ids,
+    trace_population,
+)
 from climate_finance.build.normalise.ids import content_id
 from climate_finance.build.normalise.pairing import pair_one_to_one
 
@@ -39,9 +44,6 @@ _BILATERAL = 1
 _PART_TOLERANCE = 0.001
 _CELL_TOLERANCE = 0.01
 _SINGLE_TOLERANCE = 0.01
-# The CRDF prints the bulk CRS `category` as its flow category: ODA 10, OOF 21, private
-# flows 30 and private development finance 60. The bulk flow codes map onto them.
-FLOW_CATEGORY = {11: 10, 13: 10, 19: 10, 14: 21, 30: 30, 60: 60}
 # DAC regional recipient codes for each continent, and the recipient code ranges of
 # its countries and sub-regions, as the bulk CRS `region_name` groups them.
 _CONTINENTS = (
@@ -60,7 +62,14 @@ _AMOUNTS = (
     "overlap_usd",
 )
 # A child takes these from its record, and the rest from its parent.
-_RECORD_FIELDS = ("agency_code", "crs_id", "project_number", "title", "purpose_code")
+_RECORD_FIELDS = (
+    "agency_code",
+    "crs_id",
+    "project_number",
+    "title",
+    "purpose_code",
+    "psi_flag",
+)
 # The fields a pool record is summed by.
 _RECORD_KEY = (
     "agency_code",
@@ -157,7 +166,8 @@ def _pool(
         donor_code="provider_code", crs_id="crs_id", year="year"
     ).drop_nulls()
     scope = parents.select(donor_code="provider_code", year="year").unique()
-    keys = ["donor_code", "year", *_RECORD_KEY]
+    # The PSI flag passes to the child, and no row id depends on it.
+    keys = ["donor_code", "year", *_RECORD_KEY, "psi_flag"]
     return (
         trace_population(crs)
         .join(scope.lazy(), on=["donor_code", "year"], how="semi")

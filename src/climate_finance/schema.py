@@ -99,6 +99,18 @@ ALLOCATION_RULES = ("fifo", "dated", "window", "excess", "bank_ledger", "iati")
 # files are CC0 on the IATI Registry, so `iati:gcf:` fills ship.
 # A commitment's `withheld_usd` holds what the withheld records disbursed to it.
 WITHHELD_RECORD_PREFIXES = ("ledger:gcf:", "ledger:gcf_readiness:")
+# The CRS private sector instrument flags (`ps_iflag`) of records a provider reports
+# for memorandum beside the flow it counts. Under the DAC's institutional approach a
+# provider counts the capital it pays into its development finance institution
+# (flags 1 and 10) and reports the institution's own investments for memorandum:
+# "Details of PSI activities that are reported under the institutional approach" (4,
+# 2018 to 2023, on flow 14) and "Grant equivalents of individual PSI activities for
+# memorandum" (40 to 42, from 2023, on flow 60). Flag 50, "Capital increases for
+# memorandum", is the capital of a provider that counts the instruments (20 to 22).
+# A memorandum record describes money already counted at the other stage, so every
+# all-flows figure leaves it out. The bulk file flags records from 2018; an earlier
+# record has no flag and counts.
+MEMORANDUM_PSI_FLAGS = (4, 40, 41, 42, 50)
 OBJECTIVES = ("adaptation", "mitigation", "cross_cutting")
 # An agency share's objective: one of OBJECTIVES, or `climate` for a total climate
 # share with no split by objective, as the OECD gives before 2021.
@@ -298,8 +310,11 @@ CRDF = _table(
     bi_multi=_bi_multi(),
     purpose_code=_code(nullable=True),
     # The CRS flow category the CRDF publishes: 10 ODA, 21 other official flows,
-    # 22, 30 private grants and 60 private market flows.
+    # 22, 30 private grants and 60 private sector instruments.
     flow_category=_code(nullable=True),
+    # The PSI flag of the row's CRS records (same year, provider, crs id and flow
+    # category), null where they carry none. Every row of flow category 60 has one.
+    psi_flag=_code(nullable=True),
     # Provider-perspective imputed multilateral contribution rows carry a climate
     # total only, so their objective is `climate`.
     objective=_str(values=SHARE_OBJECTIVES),
@@ -340,6 +355,9 @@ CRS = _table(
     flow_code=_code(),
     # The type of finance, such as 110 for a standard grant.
     finance_t=_code(nullable=True),
+    # The CRS private sector instrument flag (`ps_iflag`), null where the record has
+    # none; `MEMORANDUM_PSI_FLAGS` mark records reported for memorandum.
+    psi_flag=_code(nullable=True),
     commitment_usd=_usd(nullable=True),
     disbursement_usd=_usd(nullable=True),
     # The CRS's grant equivalent, or for a grant (finance type 110 or 210) that
@@ -382,6 +400,7 @@ CRS_REFLOWS = _table(
     bi_multi=_bi_multi(nullable=True),
     flow_code=_code(),
     finance_t=_code(nullable=True),
+    psi_flag=_code(nullable=True),
     received_usd=_usd(nullable=True),
     interest_usd=_usd(nullable=True),
     commitment_date=Column(pl.Date(), nullable=True),
@@ -995,10 +1014,13 @@ COMMITMENTS = _table(
     bi_multi=_bi_multi(),
     purpose_code=_code(nullable=True),
     # The CRS flow category the CRDF publishes: 10 ODA, 21 other official flows,
-    # 22, 30 private grants and 60 private market flows. A disbursement carries its
-    # CRS record's flow code (11 ODA grants, 13 ODA loans, 19 equity) instead, and a
-    # fill, which has no CRS record, a null one.
+    # 22, 30 private grants and 60 private sector instruments. A disbursement carries
+    # its CRS record's flow code (11 ODA grants, 13 ODA loans, 19 equity) instead, and
+    # a fill, which has no CRS record, a null one.
     flow_category=_code(nullable=True),
+    # The PSI flag of the row's CRS records, as `crdf` carries it. A row with one of
+    # `MEMORANDUM_PSI_FLAGS` is a memorandum row, which no total counts.
+    psi_flag=_code(nullable=True),
     crs_id=_str(nullable=True),
     project_number=_str(nullable=True),
     rio_adaptation=_rio(),
@@ -1048,6 +1070,9 @@ DISBURSEMENTS = _table(
     bi_multi=_bi_multi(),
     purpose_code=_code(nullable=True),
     flow_code=_code(nullable=True),
+    # The CRS record's PSI flag, null for a fill. A row with one of
+    # `MEMORANDUM_PSI_FLAGS` is a memorandum row, which no total counts.
+    psi_flag=_code(nullable=True),
     project_number=_str(nullable=True),
     title=_str(nullable=True),
     # Face value of the record's disbursement allocated to `row_id`, with the
@@ -1182,6 +1207,7 @@ UNTRACED = _table(
     bi_multi=_bi_multi(),
     purpose_code=_code(nullable=True),
     flow_code=_code(nullable=True),
+    psi_flag=_code(nullable=True),
     project_number=_str(nullable=True),
     title=_str(nullable=True),
     rio_adaptation=_rio(),
@@ -1247,6 +1273,7 @@ REFLOWS = _table(
     purpose_code=_code(nullable=True),
     flow_code=_code(),
     finance_t=_code(nullable=True),
+    psi_flag=_code(nullable=True),
     project_number=_str(nullable=True),
     title=_str(nullable=True),
     row_id=_str(nullable=True),
@@ -1267,7 +1294,8 @@ REFLOWS = _table(
     link_method=_str(nullable=True, values=KEY_TIERS),
 )
 
-# Every CRS flow, climate or not, summed. This is the denominator of `share_of_total`.
+# Every CRS flow, climate or not, summed, less the records reported for memorandum
+# (`MEMORANDUM_PSI_FLAGS`). This is the denominator of `share_of_total`.
 # `agency_code` lets a query take out the EIB's flows where the EIB counts as a
 # channel. `rio_adaptation` and `rio_mitigation` are a record's Rio markers, 0 for
 # none, so the BTR reconciliation can weight same-year climate disbursements as
@@ -1468,11 +1496,41 @@ RELEASE_TABLES = _by_name(
 )
 
 # The data format of the releases this package writes, and the newest it reads.
-# It goes up by one when a release table or a `release.json` field is added,
-# removed or changes meaning, independent of the package version.
-DATA_FORMAT = 2
-# The release tables each data format holds, by format number. Each format is a
+# It goes up by one when a release table, a column a query reads or a `release.json`
+# field is added, removed or changes meaning, independent of the package version.
+DATA_FORMAT = 3
+# The first data format whose tables carry `psi_flag` and whose `total_flows` and
+# `quality` leave memorandum rows out. The queries refuse an older release, whose
+# totals hold the memorandum records.
+MEMORANDUM_FORMAT = 3
+
+# The release tables each data format holds, by format number. Each set is a
 # literal list, so adding a table to `RELEASE_TABLES` leaves older formats readable.
+_FORMAT_2_TABLES = frozenset(
+    {
+        "commitments",
+        "disbursements",
+        "objectives",
+        "agency_shares",
+        "agency_spending",
+        "modelled",
+        "core_contributions",
+        "btr",
+        "btr_links",
+        "btr_totals",
+        "btr_crs_unlinked",
+        "disbursement_profile",
+        "quality",
+        "untraced",
+        "unallocated",
+        "reflows",
+        "total_flows",
+        "provider_coefficients",
+        "btr_coefficients",
+        "jev_flags",
+        "conversion_factors",
+    }
+)
 FORMAT_TABLES: Mapping[int, frozenset[str]] = {
     1: frozenset(
         {
@@ -1499,31 +1557,9 @@ FORMAT_TABLES: Mapping[int, frozenset[str]] = {
         }
     ),
     # Format 2 adds `btr_coefficients`.
-    2: frozenset(
-        {
-            "commitments",
-            "disbursements",
-            "objectives",
-            "agency_shares",
-            "agency_spending",
-            "modelled",
-            "core_contributions",
-            "btr",
-            "btr_links",
-            "btr_totals",
-            "btr_crs_unlinked",
-            "disbursement_profile",
-            "quality",
-            "untraced",
-            "unallocated",
-            "reflows",
-            "total_flows",
-            "provider_coefficients",
-            "btr_coefficients",
-            "jev_flags",
-            "conversion_factors",
-        }
-    ),
+    2: _FORMAT_2_TABLES,
+    # Format 3 adds `psi_flag` (`MEMORANDUM_FORMAT`) and no table.
+    3: _FORMAT_2_TABLES,
 }
 
 STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
@@ -1679,6 +1715,12 @@ def withheld_record(record_id: pl.Expr) -> pl.Expr:
     return pl.any_horizontal(
         record_id.str.starts_with(prefix) for prefix in WITHHELD_RECORD_PREFIXES
     ).fill_null(False)
+
+
+def memorandum(psi_flag: pl.Expr) -> pl.Expr:
+    """True where `psi_flag` marks a record reported for memorandum
+    (`MEMORANDUM_PSI_FLAGS`), false where it is null."""
+    return psi_flag.is_in(MEMORANDUM_PSI_FLAGS).fill_null(False)
 
 
 def measured_adaptation(marker: pl.Expr) -> pl.Expr:

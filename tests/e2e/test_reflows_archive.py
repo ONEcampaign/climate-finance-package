@@ -34,7 +34,7 @@ RECEIVED_BOUNDS = {2015: (50, 70), 2024: (80, 105)}
 # DAC bilateral providers, 2015 to 2024, under ONE in the recipient view, in USD
 # billion: gross, repaid (gross less net), net, and the share of principal tied to
 # a disbursement the release counts.
-PINNED = {"gross": 206.26, "repaid": 20.07, "net": 186.19, "measured_share": 0.0867}
+PINNED = {"gross": 202.08, "repaid": 20.07, "net": 182.01, "measured_share": 0.0911}
 PINNED_TOLERANCE = 0.01
 MAJOR_HOLDERS_SHARE = 0.7
 

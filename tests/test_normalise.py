@@ -17,6 +17,7 @@ from climate_finance.build.normalise.crdf import CRDFNormaliseError, normalise_c
 from climate_finance.build.normalise.crs import (
     normalise_crs,
     normalise_reflows,
+    psi_flags,
     trace_population,
 )
 from climate_finance.build.normalise.external import MULTI_COUNTRY
@@ -40,11 +41,21 @@ def reflows() -> pl.DataFrame:
 
 
 def _crdf(
-    crs: pl.DataFrame, perspective: str = "recipient", raw: pl.DataFrame | None = None
+    crs: pl.DataFrame,
+    perspective: str = "recipient",
+    raw: pl.DataFrame | None = None,
+    bulk: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     if raw is None:
         raw = pl.read_parquet(OECD / f"crdf_{perspective}.parquet")
-    return normalise_crdf(raw.lazy(), perspective=perspective, crs=crs.lazy()).collect()
+    if bulk is None:
+        bulk = pl.read_parquet(OECD / "CRS.parquet")
+    return normalise_crdf(
+        raw.lazy(),
+        perspective=perspective,
+        crs=crs.lazy(),
+        psi_flags=psi_flags(bulk.lazy()),
+    ).collect()
 
 
 def _row(frame: pl.DataFrame, **where: object) -> dict[str, object]:
@@ -472,6 +483,29 @@ def test_crdf_refuses_a_provider_without_crs_records(crs: pl.DataFrame) -> None:
 
     with pytest.raises(CRDFNormaliseError, match=r"\[5\]"):
         _crdf(crs.filter(pl.col("donor_code") != 5), raw=raw)
+
+
+def test_crdf_rows_take_their_crs_records_psi_flag(crs: pl.DataFrame) -> None:
+    # A DFI investment the CRDF prints as private sector instruments (flow category
+    # 60), reported for memorandum (PSI flag 41).
+    psi = pl.col("crs_id") == "2022000102"
+    raw = pl.read_parquet(OECD / "crdf_recipient.parquet").with_columns(
+        flow_type_code=pl.when(psi).then(60).otherwise(pl.col("flow_type_code"))
+    )
+    bulk = pl.read_parquet(OECD / "CRS.parquet")
+    flagged = bulk.with_columns(
+        flow_code=pl.when(psi).then(60).otherwise(pl.col("flow_code")),
+        ps_iflag=pl.when(psi).then(41).otherwise(pl.col("ps_iflag")),
+    )
+
+    crdf = _crdf(crs, raw=raw, bulk=flagged)
+    records = normalise_crs(flagged.lazy(), years=YEARS).collect()
+
+    assert _row(records, crs_id="2022000102")["psi_flag"] == 41
+    assert _row(crdf, crs_id="2022000102")["psi_flag"] == 41
+    assert crdf.filter(~psi)["psi_flag"].is_null().all()
+    with pytest.raises(CRDFNormaliseError, match="2022000102"):
+        _crdf(crs, raw=raw, bulk=bulk)
 
 
 def test_crdf_repairs_excel_damage(crs: pl.DataFrame) -> None:

@@ -435,10 +435,16 @@ def _reconcile(out: Path) -> Reconciliation:
         # and 1.0103, the Netherlands 1.0059, Switzerland 1.0118 and Germany 0.9385.
         ("EUU", 2021, "crdf_at_party_weight", 1.0025),
         ("EUU", 2022, "crdf_at_party_weight", 1.0093),
-        ("NOR", 2021, "crs_disbursed_at_party_weight", 1.0028),
-        ("SWE", 2021, "crs_disbursed_at_party_weight", 1.0016),
+        # The CRS comparator leaves out records reported for memorandum. Norway's
+        # BTR lists Norfund's investments, which the CRS reports for memorandum
+        # (USD 197m at these weights, `crs_memorandum_disbursed_at_party_weight`),
+        # so it reads 1.40. Sweden and Switzerland claim the capital paid into
+        # Swedfund and SIFEM; with the memorandum records kept they read 1.0016 and
+        # 1.0119.
+        ("NOR", 2021, "crs_disbursed_at_party_weight", 1.4011),
+        ("SWE", 2021, "crs_disbursed_at_party_weight", 1.0451),
         ("NLD", 2021, "crs_disbursed_at_party_weight", 1.0056),
-        ("CHE", 2022, "crs_disbursed_at_party_weight", 1.0119),
+        ("CHE", 2022, "crs_disbursed_at_party_weight", 1.0396),
         # 6.2% under, which the prototype's report rounds to 0.94. Its CRDF at 100%
         # is the same USD 12,411m.
         ("DEU", 2022, "crdf_at_party_weight", 0.9376),

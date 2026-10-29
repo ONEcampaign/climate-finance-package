@@ -16,7 +16,11 @@ from climate_finance.build.fetch import (
     _ledger_files,
 )
 from climate_finance.build.normalise.crdf import normalise_crdf
-from climate_finance.build.normalise.crs import normalise_crs, normalise_reflows
+from climate_finance.build.normalise.crs import (
+    normalise_crs,
+    normalise_reflows,
+    psi_flags,
+)
 from climate_finance.build.provenance import Provenance
 from climate_finance.build.stages import (
     REGISTRY,
@@ -174,6 +178,7 @@ def write_normalised(release_dir: Path) -> None:
             pl.scan_parquet(OECD / f"crdf_{perspective}.parquet"),
             perspective=perspective,
             crs=crs.lazy(),
+            psi_flags=psi_flags(raw_crs),
         )
         for perspective in ("recipient", "provider")
     ).collect()

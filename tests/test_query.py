@@ -2864,7 +2864,7 @@ COUNTED_BASES = ("commitment", "untraced")
 # The columns a disbursement copies from the repayment it stands for.
 _REPAYMENT_FIELDS = (
     "year", "provider_code", "agency_code", "recipient_code", "channel_code",
-    "bi_multi", "purpose_code", "flow_code", "project_number", "title",
+    "bi_multi", "purpose_code", "flow_code", "psi_flag", "project_number", "title",
 )  # fmt: skip
 
 
@@ -3160,6 +3160,129 @@ def test_oda_only_reads_a_repayments_own_flow_code(tmp_path: Path) -> None:
     everything = repaid(oda_only=False)
     assert "DEU-1-REPAY" in everything
     assert repaid(oda_only=True) == everything - {"DEU-1-REPAY"}
+
+
+# UK Climate Investments as the CRS reports it: the ODA capital a department paid
+# in (PSI flag 1, equity), and BII's record of the fund it took over, reported for
+# memorandum (flag 41, flow 60). Germany stands in for the UK, on its 2022 record.
+DFI_CAPITAL_USD = 4e6
+MEMORANDUM = pl.lit(41, pl.Int32)
+
+
+def _with_dfi_capital_and_its_memorandum(frame: pl.DataFrame) -> pl.DataFrame:
+    base = frame.filter(pl.col("record_id") == "DEU-UNLINKED")
+    stages = (("DEU-CAPITAL", 19, 1, DFI_CAPITAL_USD), ("DEU-DFI", 60, 41, 3e6))
+    return pl.concat(
+        [
+            frame,
+            *(
+                base.with_columns(
+                    record_id=pl.lit(record_id),
+                    flow_code=pl.lit(flow_code, pl.Int32),
+                    psi_flag=pl.lit(psi_flag, pl.Int32),
+                    untraced_usd=pl.lit(amount),
+                    record_disbursement_usd=pl.lit(amount),
+                    record_grant_equiv_usd=pl.lit(amount),
+                )
+                for record_id, flow_code, psi_flag, amount in stages
+            ),
+        ]
+    )
+
+
+def _with_a_memorandum_commitment(frame: pl.DataFrame) -> pl.DataFrame:
+    # The CRDF's private sector instrument row for the memorandum record.
+    return pl.concat(
+        [
+            frame,
+            frame.filter(pl.col("row_id") == "NOR-2").with_columns(
+                row_id=pl.lit("NOR-PSI"),
+                flow_category=pl.lit(60, pl.Int32),
+                psi_flag=MEMORANDUM,
+            ),
+        ]
+    )
+
+
+def _with_a_memorandum_allocation(frame: pl.DataFrame) -> pl.DataFrame:
+    # A DFI record reported for memorandum, allocated to a counted commitment, and a
+    # counted record allocated to the memorandum commitment, which counts by its own
+    # flag.
+    return pl.concat(
+        [
+            frame,
+            frame.filter(pl.col("record_id") == "DEU-2-R0").with_columns(
+                record_id=pl.lit("DEU-DFI-R0"),
+                flow_code=pl.lit(60, pl.Int32),
+                psi_flag=MEMORANDUM,
+            ),
+            frame.filter(pl.col("record_id") == "NOR-1-R0").with_columns(
+                row_id=pl.lit("NOR-PSI"), record_id=pl.lit("NOR-PSI-R0")
+            ),
+        ]
+    )
+
+
+def _with_repayments_across_stages(frame: pl.DataFrame) -> pl.DataFrame:
+    # A repayment reported for memorandum, which subtracts nothing, and a counted
+    # repayment on the memorandum commitment, which subtracts as its original does.
+    original = frame.filter(
+        pl.col("record_id") == "NOR-1-REPAY-2022", pl.col("basis") == "commitment"
+    )
+    return pl.concat(
+        [
+            frame,
+            original.with_columns(
+                record_id=pl.lit("NOR-DFI-REPAY"), psi_flag=MEMORANDUM
+            ),
+            original.with_columns(
+                record_id=pl.lit("NOR-PSI-REPAY"), row_id=pl.lit("NOR-PSI")
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ("flow", "oda_only"),
+    [
+        ("disbursements", False),
+        ("disbursements", True),
+        ("commitments", False),
+        ("net_disbursements", False),
+        ("net_disbursements", True),
+    ],
+)
+def test_a_dfi_counts_at_the_stage_its_provider_counts(
+    tmp_path: Path, flow: Flow, oda_only: bool
+) -> None:
+    release = cf.load(
+        path=copy_release(
+            tmp_path / "release",
+            edits={
+                "untraced": _with_dfi_capital_and_its_memorandum,
+                "commitments": _with_a_memorandum_commitment,
+                "disbursements": _with_a_memorandum_allocation,
+                "reflows": _with_repayments_across_stages,
+            },
+        )
+    )
+    before = SNAP.spending(flow=flow, oda_only=oda_only)
+    added = 0.0
+    if flow != "commitments":
+        # NOR-PSI-R0 carries NOR-1-R0's markers, so it counts as NOR-1-R0 does.
+        copied = before.rows(origin="disbursement", record_id="NOR-1-R0")
+        added += DFI_CAPITAL_USD + copied["value"].sum()
+    if flow == "net_disbursements":
+        repaid = before.rows(
+            origin="repayment", record_id="NOR-1-REPAY-2022", year=2022
+        )
+        added += repaid["value"].sum()
+
+    after = release.spending(flow=flow, oda_only=oda_only)
+
+    assert after.table["value"].sum() == pytest.approx(
+        before.table["value"].sum() + added
+    )
 
 
 def test_quality_reports_repayments_by_basis_and_what_net_subtracts() -> None:

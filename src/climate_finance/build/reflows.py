@@ -274,6 +274,7 @@ def release_reflows(
         "purpose_code",
         "flow_code",
         "finance_t",
+        "psi_flag",
         "project_number",
         "title",
         provider_code="donor_code",

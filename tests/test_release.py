@@ -633,8 +633,9 @@ def test_quality_counts_certain_routes_only_where_every_link_takes_one() -> None
             "face_usd": [1.0, 2.0, 4.0],
             "climate_usd": [1.0, 2.0, 4.0],
             "repeat_of": [None, None, None],
+            "psi_flag": [None, None, None],
         },
-        schema_overrides={"repeat_of": pl.String},
+        schema_overrides={"repeat_of": pl.String, "psi_flag": pl.Int32},
     )
     links = pl.LazyFrame(
         {
@@ -651,6 +652,7 @@ def test_quality_counts_certain_routes_only_where_every_link_takes_one() -> None
             "allocated_usd": pl.Float64,
             "allocated_low_usd": pl.Float64,
             "record_grant_equiv_usd": pl.Float64,
+            "psi_flag": pl.Int32,
         }
     )
 
@@ -665,6 +667,73 @@ def test_quality_counts_certain_routes_only_where_every_link_takes_one() -> None
 
     assert quality.select("linked_usd", "certain_route_usd").row(0) == (7.0, 1.0)
     assert quality["grant_equiv_coverage"].to_list() == [None]
+
+
+def test_quality_leaves_out_memorandum_commitments_and_disbursements() -> None:
+    # A DFI's commitment and disbursement reported for memorandum (PSI flag 41),
+    # beside a counted commitment the same record disburses to.
+    commitments = pl.LazyFrame(
+        {
+            "row_id": ["A", "DFI"],
+            "provider_code": [NOR] * 2,
+            "year": [2023] * 2,
+            "face_usd": [4.0, 3.0],
+            "climate_usd": [4.0, 3.0],
+            "repeat_of": [None, None],
+            "psi_flag": [1, 41],
+        },
+        schema_overrides={"repeat_of": pl.String, "psi_flag": pl.Int32},
+    )
+    disbursements = pl.LazyFrame(
+        {
+            "row_id": ["A", "A"],
+            "record_id": ["capital", "dfi"],
+            "allocated_usd": [2.0, 1.0],
+            "allocated_low_usd": [2.0, 1.0],
+            "record_grant_equiv_usd": [2.0, 1.0],
+            "psi_flag": [1, 41],
+        },
+        schema_overrides={"psi_flag": pl.Int32},
+    )
+
+    quality = release.quality(
+        commitments,
+        disbursements=disbursements,
+        objectives=pl.LazyFrame(
+            schema={"record_id": pl.String, "label_source": pl.String}
+        ),
+        links=pl.LazyFrame(
+            {
+                "task": ["crdf_crs"] * 2,
+                "left_id": ["A", "DFI"],
+                "probability": [1.0] * 2,
+                "link_method": ["within_year"] * 2,
+            }
+        ),
+    ).collect()
+
+    assert quality.select(
+        "commitments", "climate_usd", "linked_usd", "disbursed_climate_usd"
+    ).row(0) == (1, 4.0, 4.0, 2.0)
+
+
+def test_total_flows_leave_out_records_reported_for_memorandum() -> None:
+    crs = crs_records(
+        {"record_id": "capital", "year": 2023, "flow_code": 19, "psi_flag": 1,
+         "disbursement_usd": 4.0},
+        {"record_id": "dfi", "year": 2023, "flow_code": 60, "psi_flag": 41,
+         "disbursement_usd": 3.0},
+        # Before 2018 the CRS flags no record.
+        {"record_id": "unflagged", "year": 2017, "flow_code": 14,
+         "disbursement_usd": 2.0},
+    )  # fmt: skip
+
+    totals = release.total_flows(crs.lazy()).collect()
+
+    assert sorted(totals.select("year", "amount_usd").rows()) == [
+        (2017, 2.0),
+        (2023, 4.0),
+    ]
 
 
 def test_untraced_unallocated_and_release_rows_sum_to_the_marked_disbursement(
@@ -1384,11 +1453,12 @@ def _rerun_total_flows() -> pl.LazyFrame:
             "grant_equiv_usd": _amounts(3),
             "rio_adaptation": np.arange(RERUN_ROWS) % 3,
             "rio_mitigation": 0,
+            "psi_flag": None,
         },
         schema_overrides={"donor_code": pl.Int32, "agency_code": pl.Int32,
                           "recipient_code": pl.Int32, "year": pl.Int16,
                           "bi_multi": pl.Int8, "rio_adaptation": pl.Int8,
-                          "rio_mitigation": pl.Int8},
+                          "rio_mitigation": pl.Int8, "psi_flag": pl.Int32},
     )  # fmt: skip
     return release.total_flows(crs)
 
@@ -1403,9 +1473,11 @@ def _rerun_commitments() -> pl.LazyFrame:
             "climate_usd": _amounts(4),
             "face_usd": _amounts(5),
             "repeat_of": [None if i % 5 else "R0" for i in row],
+            "psi_flag": None,
         },
         schema_overrides={
-            "provider_code": pl.Int32, "year": pl.Int16, "repeat_of": pl.String
+            "provider_code": pl.Int32, "year": pl.Int16, "repeat_of": pl.String,
+            "psi_flag": pl.Int32,
         },
     )  # fmt: skip
 
@@ -1420,6 +1492,7 @@ def _rerun_quality() -> pl.LazyFrame:
             allocated_usd="climate_usd",
             record_grant_equiv_usd="climate_usd",
             allocated_low_usd="face_usd",
+            psi_flag="psi_flag",
         ),
         objectives=commitments.select(
             record_id="row_id", label_source=pl.lit("jev")
