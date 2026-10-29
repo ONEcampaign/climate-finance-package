@@ -27,8 +27,14 @@ BUILD_ONLY = ("typer", "httpx", "pydeflate", "oda_reader", "openpyxl")
 
 
 def totals(result: cf.Result) -> dict[str, dict[str, float]]:
-    """Per method: value, low and high summed over the result table."""
-    table = result.table.group_by("method").agg(pl.col("value", "low", "high").sum())
+    """Per method: value, low, high and, under several methods, range_low and
+    range_high summed over the result table."""
+    amounts = [
+        name
+        for name in ("value", "low", "high", "range_low", "range_high")
+        if name in result.table.columns
+    ]
+    table = result.table.group_by("method").agg(pl.col(amounts).sum())
     return {row.pop("method"): row for row in table.iter_rows(named=True)}
 
 
