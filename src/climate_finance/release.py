@@ -245,6 +245,11 @@ class Release:
             oda_only: True or False (default).
             measure: `"amount"` (default) or `"share_of_total"`.
             untraced: True (default) or False.
+            attribution: under `view="provider"`, `"contributions"` (default),
+                core contributions at the agency's climate share, or
+                `"outflows"`, each institution's climate outflows at the share
+                the OECD's Table 8 attributes to developed countries, split
+                among them by their core contributions.
 
         Raises:
             UnknownProviderError: for a provider name, code or agency outside the
@@ -254,12 +259,14 @@ class Release:
             InvalidInputError: for an unknown keyword, such as `spec=`, which
                 `run` takes, years, a method or prices in a form `Spec` does not
                 take, a value outside a field's choices, such as
-                `flow="commitment"`, or a base year outside those the release's
+                `flow="commitment"`, `attribution="outflows"` with
+                `view="recipient"`, or a base year outside those the release's
                 `conversion_factors` hold for the currency.
 
         Warns:
-            CoverageWarning: for years the flow's tables hold no rows for, and for
-                named providers with no rows the query counts, naming why.
+            CoverageWarning: for years the flow's tables hold no rows for, for
+                named providers with no rows the query counts, naming why, and
+                under `attribution="outflows"` for years Table 8 gives no share.
             DoubleCountWarning: for a provider view that names EU Institutions,
                 whose rows then depend on which members the query names.
         """
@@ -576,6 +583,11 @@ def _open(path: Path, *, release: str | None = None) -> Release:
     """Open the release in `path` once every table of its data format matches
     `release.json`.
 
+    A release of the current data format must also hold every column `schema.py`
+    declares for each of its tables, so a pack built before a column was added is
+    refused, since reading it would fill that column with nulls. Older formats keep
+    the columns they were written with.
+
     The data format is read before the rest of `release.json`, so a release of a
     newer format, which may carry fields this package does not know, raises
     `ReleaseFormatError` before manifest validation can reject those fields.
@@ -617,6 +629,10 @@ def _open(path: Path, *, release: str | None = None) -> Release:
             continue
         if actual != entry.sha256:
             problems.append(f"{name}: sha256 {actual}, release.json has {entry.sha256}")
+        elif manifest.data_format == DATA_FORMAT and name in RELEASE_TABLES:
+            held = pl.read_parquet_schema(file)
+            if missing := [c for c in RELEASE_TABLES[name].columns if c not in held]:
+                problems.append(f"{name}: lacks columns {missing}")
     if problems:
         raise ReleaseIntegrityError(
             f"release {release or manifest.release!r} at {path} fails its check: "

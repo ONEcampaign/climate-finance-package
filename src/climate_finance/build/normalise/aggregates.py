@@ -32,8 +32,8 @@ import polars as pl
 
 from climate_finance import schema
 from climate_finance.build.normalise.crs import (
-    FLOW_CATEGORY,
     crs_ids,
+    flow_category,
     trace_population,
 )
 from climate_finance.build.normalise.ids import content_id
@@ -173,9 +173,7 @@ def _pool(
         .join(scope.lazy(), on=["donor_code", "year"], how="semi")
         .join(carried.lazy(), on=["donor_code", "crs_id", "year"], how="anti")
         .with_columns(
-            flow_category=pl.col("flow_code").replace_strict(
-                FLOW_CATEGORY, return_dtype=pl.Int32
-            ),
+            flow_category=flow_category(pl.col("flow_code")),
             m=pl.col("rio_mitigation").fill_null(0),
             a=pl.col("rio_adaptation").fill_null(0),
         )

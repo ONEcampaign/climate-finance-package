@@ -35,7 +35,33 @@ converts it, and sums the rows into the result table. Rows have one of six origi
   spec's flow to an agency times the agency's climate share, of disbursements for a
   net flow, since core contributions are not repaid. An agency share with no
   split by objective counts in `unsplit`, with the objectives 0. `share_source` says
-  where the share comes from: `computed`, `held` or `oecd`.
+  where the share comes from: `computed`, `held` or `oecd`. Each contribution
+  spreads over the climate outflows of the channel's agencies in `providers.toml`
+  (`CHANNEL_POOLS`) in the same year and gross flow, weighed under the method: one
+  row per year, recipient and purpose the agencies reach, with the agency in
+  `via_provider_code`. Each objective spreads over the outflows of that objective,
+  or over their climate value where the agencies have none of it, and unsplit
+  value over their climate value. The weights come from the agencies' whole
+  outflows, so a recipient filter keeps that recipient's part. A contribution whose
+  agencies have no climate outflows in the year, or whose channel has no agency in
+  `providers.toml`, stays as one row with no recipient, purpose or
+  `via_provider_code`.
+
+  Under `spec.attribution="outflows"`, attribution by outflows, the attribution rows
+  come from the institutions `outflow_shares` lists instead of from core
+  contributions: each institution's climate outflows of the spec's flow, weighed
+  under the method, by year, recipient and purpose (`_institution_cells`), times
+  the year's `outflow_share`, the part the OECD's Table 8 attributes to developed
+  countries.
+  `_donor_shares` splits that part among the developed providers
+  (`developed_providers`) by their core contributions to the institution's
+  channels, pooled from the release's first year to the row's year, in
+  `donor_share`. An institution of a developed provider, the EIB of EU
+  Institutions, keeps its part as that provider's, and an institution-year with no
+  developed contributor keeps it in a row with no provider. The institutions' own
+  rows leave the provider view, and EU Institutions' own rows count in full. A
+  multilateral the table does not list, or a year it gives no share, attributes
+  nothing.
 
 Under `view="provider"` the method's `eu` setting counts EU Institutions once. As a
 channel, the own rows of each EU Institutions agency scale by one minus the share of
@@ -158,24 +184,43 @@ if TYPE_CHECKING:
     from climate_finance.release import Release
 
 
-def _eu_agency_channels() -> dict[int, int]:
-    """Each EU Institutions agency's channel, as build/providers.toml maps them."""
+def _agency_channels() -> list[dict]:
+    """The `agencies` entries of build/providers.toml: each channel's CRS reporter,
+    with the agencies that report for it where not all of them do."""
     toml = (
         files("climate_finance")
         .joinpath("build", "providers.toml")
         .read_text(encoding="utf-8")
     )
-    return {
-        agency: row["channel_code"]
-        for row in tomllib.loads(toml)["agencies"]
-        if row["provider_code"] == EU_INSTITUTIONS
-        for agency in row["agency_codes"]
-    }
+    return tomllib.loads(toml)["agencies"]
 
 
+_AGENCY_CHANNELS = _agency_channels()
 # The channels of EU Institutions by agency: the EU budget (42001), the EDF (42003)
 # and the EIB (42004), which stays a channel when EU Institutions count as a provider.
-EU_AGENCY_CHANNELS = _eu_agency_channels()
+EU_AGENCY_CHANNELS = {
+    agency: row["channel_code"]
+    for row in _AGENCY_CHANNELS
+    if row["provider_code"] == EU_INSTITUTIONS
+    for agency in row["agency_codes"]
+}
+# Per channel, the providers and agencies whose outflows its attributed finance
+# spreads over. They are the channel's reporters in build/providers.toml, the
+# crosswalk its agency share is measured on. `pool_agency` is a listed agency, or
+# null where every agency of the provider reports for the channel.
+CHANNEL_POOLS = pl.DataFrame(
+    [
+        (row["channel_code"], row["provider_code"], agency)
+        for row in _AGENCY_CHANNELS
+        for agency in row.get("agency_codes") or [None]
+    ],
+    schema={
+        "channel_code": pl.Int32(),
+        "provider_code": pl.Int32(),
+        "pool_agency": pl.Int32(),
+    },
+    orient="row",
+)
 EU_CHANNELS = tuple(sorted(set(EU_AGENCY_CHANNELS.values())))
 EIB_CHANNEL = EU_AGENCY_CHANNELS[EIB_AGENCY]
 EU_BUDGET_AND_EDF = tuple(code for code in EU_CHANNELS if code != EIB_CHANNEL)
@@ -200,10 +245,12 @@ ROW_COLUMNS: dict[str, pl.DataType] = {
     "agency_code": pl.Int32(),
     "recipient_code": pl.Int32(),
     "channel_code": pl.Int32(),
+    "via_provider_code": pl.Int32(),
     "bi_multi": pl.Int8(),
     "purpose_code": pl.Int32(),
     "flow_category": pl.Int32(),
     "flow_code": pl.Int32(),
+    "finance_t": pl.Int32(),
     "project_number": pl.String(),
     "title": pl.String(),
     "status": pl.String(),
@@ -215,6 +262,8 @@ ROW_COLUMNS: dict[str, pl.DataType] = {
     "reason": pl.String(),
     "climate_share": pl.Float64(),
     "share_source": pl.String(),
+    "outflow_share": pl.Float64(),
+    "donor_share": pl.Float64(),
     "link_method": pl.String(),
     "link_probability": pl.Float64(),
     "allocation_weight": pl.Float64(),
@@ -287,59 +336,107 @@ def spending(release: Release, *, spec: Spec) -> Result:
     if spec.oda_only:
         others = [
             *others,
-            pl.any_horizontal(
-                pl.when(pl.col("flow_code").is_not_null())
-                .then(pl.col("flow_code").is_in(ODA_FLOW_CODES))
-                .otherwise(pl.col("flow_category") == ODA_FLOW_CATEGORY),
-                pl.col("origin") == "attribution",
-            ),
+            pl.any_horizontal(_oda(), pl.col("origin") == "attribution"),
         ]
+    outflows = spec.attribution == "outflows"
     conditions = [*named, *others]
+    own_outflows = None
+    if outflows:
+        own_outflows = _own_outflows(_outflow_institutions(release))
+        conditions.append(~own_outflows)
+        donors = _donor_shares(release, flow=_gross(spec.flow))
     base = _base_rows(
         release, flow=spec.flow, view=spec.view, untraced=spec.untraced
     ).filter(*conditions)
     weighted = []
     # Per method label, the part of each EU channel-year's own rows that counts.
     eu_kept: dict[str, pl.LazyFrame] = {}
+    # Under attribution by outflows, the institution-years whose outflows count 0 for
+    # want of a share.
+    unshared = []
     for method in methods:
         frame = base
-        if spec.view == "provider":
+        if outflows:
+            cells = _institution_cells(
+                release,
+                flow=spec.flow,
+                method=method,
+                untraced=spec.untraced,
+                oda_only=spec.oda_only,
+            )
+            weighted.append(
+                _outflow_rows(cells, donors=donors, method=method).filter(
+                    *named, *others
+                )
+            )
+            unshared.append(
+                _unshared_outflows(
+                    cells.filter(
+                        *_conditions(
+                            providers=None, recipients=spec.recipients, years=spec.years
+                        )
+                    ),
+                    release=release,
+                )
+            )
+        elif spec.view == "provider":
+            # Only the years narrow contributions before they spread, so `eu_kept`
+            # and the spread weights read whole contributions. The recipient and
+            # ODA filters apply to the spread rows.
             everyone = _attributed_rows(
                 release, flow=_gross(spec.flow), method=method
-            ).filter(*others)
+            ).filter(*_conditions(providers=None, recipients=None, years=spec.years))
             attributed = everyone.filter(*named)
             kept = eu_kept[label(method)] = _eu_kept(
                 attributed=attributed, everyone=everyone
             )
-            frame = pl.concat(
-                [
-                    _count_eu_once(
-                        frame,
+            frame = _count_eu_once(
+                frame,
+                method=method,
+                kept=kept,
+                columns=(
+                    "amount",
+                    "amount_low",
+                    "amount_high",
+                    "no_grant_equivalent_usd",
+                ),
+            )
+            weights = _spread_weights(
+                _outflow_cells(release, flow=_spread_flow(spec.flow), method=method)
+            )
+            weighted.append(
+                _spread(
+                    _weigh(
+                        _coefficients(release, attributed, method=method),
                         method=method,
-                        kept=kept,
-                        columns=(
-                            "amount",
-                            "amount_low",
-                            "amount_high",
-                            "no_grant_equivalent_usd",
-                        ),
                     ),
-                    attributed,
-                ]
+                    weights=weights,
+                    method=method,
+                ).filter(*others)
             )
         weighted.append(
             _weigh(_coefficients(release, frame, method=method), method=method)
         )
     _warn_eu_netted(spec, eu_kept=eu_kept)
+    uncovered = _outside_outflow_shares(release, spec=spec) if outflows else ()
+    if uncovered:
+        warnings.warn(
+            "attribution='outflows' attributes no institution's outflows in "
+            f"{year_runs(uncovered)}: the OECD's Table 8 (outflow_shares) gives no "
+            "share for those years",
+            CoverageWarning,
+            skip_file_prefixes=(_PACKAGE_DIR,),
+        )
 
     rows = convert(
-        pl.concat(weighted),
+        pl.concat(weighted, how="diagonal"),
         columns=AMOUNTS,
         factors=factors,
         release=release.manifest.release,
     ).sort(
         "method", "origin", "provider_code", "year", "row_id", "record_id",
-        "channel_code", nulls_last=True,
+        "channel_code", "via_provider_code", "recipient_code", "purpose_code",
+        nulls_last=True,
     )  # fmt: skip
     rows = with_names(rows).select(
         *ROW_FIRST, pl.exclude(*ROW_FIRST, *AMOUNTS), *AMOUNTS
@@ -356,10 +453,13 @@ def spending(release: Release, *, spec: Spec) -> Result:
             spec=spec,
             conditions=filters,
             eu_kept=eu_kept,
+            own_outflows=own_outflows,
             agency=agency,
             factors=factors,
         ),
         spec=spec,
+        unshared=pl.concat(unshared).unique() if unshared else None,
+        uncovered=uncovered,
         meta=Meta(
             release=release.manifest.release,
             package_version=version("climate-finance"),
@@ -389,8 +489,11 @@ def _warn_absent_providers(release: Release, *, spec: Spec) -> None:
     provider. In the provider view a provider's core contributions count only where
     they survive the share join of `_attributed_rows` under one of the spec's
     methods, so contributions to channels with no climate share in those years give
-    no rows and say so. Recipients and `oda_only` narrow a query without a warning,
-    since a provider may give nothing to a recipient.
+    no rows and say so. Under `attribution="outflows"` a provider counts
+    attribution rows where `_donor_shares` gives it a part of an institution's
+    share, and the EIB's own rows return as EU Institutions' attribution rows.
+    Recipients and `oda_only` narrow a query without a warning, since a provider
+    may give nothing to a recipient.
     """
     if spec.providers is None:
         return
@@ -413,13 +516,27 @@ def _warn_absent_providers(release: Release, *, spec: Spec) -> None:
             .select(columns)
         )
     contributors: set[int] = set()
-    if spec.view == "provider":
+    outflows = spec.attribution == "outflows"
+    if outflows:
+        rows.append(
+            _donor_shares(release, flow=_gross(spec.flow))
+            .filter(pl.col("provider_code").is_not_null())
+            .select(
+                "provider_code",
+                "agency_code",
+                "year",
+                bi_multi=pl.lit(CORE_CONTRIBUTION, pl.Int8),
+            )
+            .select(columns)
+        )
+    elif spec.view == "provider":
         rows.extend(
             _attributed_rows(release, flow=_gross(spec.flow), method=method).select(
                 columns
             )
             for method in spec.methods
         )
+    if spec.view == "provider":
         # A contribution carries no agency, so only a provider target has any.
         provider_codes = tuple(t for t in spec.providers if isinstance(t, int))
         contributors = set(
@@ -445,8 +562,10 @@ def _warn_absent_providers(release: Release, *, spec: Spec) -> None:
     )
     counted = _VIEW_CODES[spec.view]
     other = "recipient" if spec.view == "provider" else "provider"
-    eib_left = spec.view == "provider" and all(
-        method.eu == "provider" for method in spec.methods
+    eib_left = (
+        spec.view == "provider"
+        and not outflows
+        and all(method.eu == "provider" for method in spec.methods)
     )
     absent = []
     for target in spec.providers:
@@ -454,8 +573,11 @@ def _warn_absent_providers(release: Release, *, spec: Spec) -> None:
         codes = set(held.filter(provider_rows((target,)))["bi_multi"])
         if not codes & counted and target in contributors:
             absent.append(
-                f"{name}, whose core contributions go to channels with no climate "
-                "share in those years"
+                f"{name}, which is not a developed country or contributes to no "
+                "institution that outflow_shares gives a share in those years"
+                if outflows
+                else f"{name}, whose core contributions go to channels with no "
+                "climate share in those years"
             )
         elif not codes:
             years = f" in {year_runs(spec.years)}" if spec.years else ""
@@ -501,9 +623,12 @@ def _warn_eu_netted(spec: Spec, *, eu_kept: Mapping[str, pl.LazyFrame]) -> None:
     Under a method that counts EU Institutions as a channel, their own rows count
     only the EU money that no member in the query attributes, so the figure
     depends on which members a query names, and results of separate queries count
-    EU money twice when added.
+    EU money twice when added. Under `attribution="outflows"` no member attributes
+    EU money, so their rows count in full and nothing warns.
     """
     if spec.view != "provider" or spec.providers is None:
+        return
+    if spec.attribution == "outflows":
         return
     named = any(
         (target.provider if isinstance(target, Agency) else target) == EU_INSTITUTIONS
@@ -1211,27 +1336,47 @@ def _attribution(
     method: Method,
 ) -> pl.LazyFrame:
     """Per provider, year and flow, the value `method` attributes through core
-    contributions, in one column per share source, in USD at current prices."""
+    contributions, in one column per share source, and the part of it that stays
+    at no recipient (`unspread_usd`, `_spread`), in USD at current prices."""
     conditions = _conditions(providers=providers, recipients=None, years=years)
 
     def by_provider(flow: Flow) -> pl.LazyFrame:
         attributed = _attributed_rows(release, flow=flow, method=method).filter(
             *conditions
         )
+        spread = (
+            _spread_weights(
+                _outflow_cells(release, flow=_spread_flow(flow), method=method)
+            )
+            .select("channel_code", "year")
+            .unique()
+            .with_columns(spread=pl.lit(value=True))
+        )
+        value = pl.col("value")
         return (
             _weigh(_coefficients(release, attributed, method=method), method=method)
+            .join(spread, on=["channel_code", "year"], how="left")
             .group_by("provider_code", "year")
             .agg(
-                ordered_sum(
-                    pl.col("value").filter(pl.col("share_source") == origin)
-                ).alias(f"{origin}_usd")
-                for origin in SHARE_ORIGINS
+                *(
+                    ordered_sum(value.filter(pl.col("share_source") == origin)).alias(
+                        f"{origin}_usd"
+                    )
+                    for origin in SHARE_ORIGINS
+                ),
+                unspread_usd=ordered_sum(value.filter(pl.col("spread").is_null())),
             )
         )
 
     return (
         _per_flow(by_provider)
-        .select("provider_code", "year", "flow", *(f"{o}_usd" for o in SHARE_ORIGINS))
+        .select(
+            "provider_code",
+            "year",
+            "flow",
+            *(f"{o}_usd" for o in SHARE_ORIGINS),
+            "unspread_usd",
+        )
         .sort("provider_code", "year", "flow")
     )
 
@@ -1341,6 +1486,16 @@ def _in_view(view: View) -> pl.Expr:
     return pl.col("bi_multi").is_in(codes)
 
 
+def _oda() -> pl.Expr:
+    """ODA rows: a row with a CRS flow code of `ODA_FLOW_CODES`, or with none, as a
+    commitment or a fill, of `ODA_FLOW_CATEGORY`."""
+    return (
+        pl.when(pl.col("flow_code").is_not_null())
+        .then(pl.col("flow_code").is_in(ODA_FLOW_CODES))
+        .otherwise(pl.col("flow_category") == ODA_FLOW_CATEGORY)
+    )
+
+
 def _gross(flow: Flow) -> Flow:
     """The stored flow `flow` reads: disbursements for a net flow, else itself."""
     return "disbursements" if flow in NET_FLOWS else flow
@@ -1369,9 +1524,10 @@ def _base_rows(
             )
         )
 
+    # A disbursement carries its own flow category, its record's or, for a fill, its
+    # commitment's.
     commitments = _first_vintages(release).select(
         "row_id",
-        "flow_category",
         "status",
         "face_usd",
         "climate_usd",
@@ -1650,6 +1806,387 @@ def _attributed_rows(release: Release, *, flow: Flow, method: Method) -> pl.Lazy
             + pl.col("share_unsplit"),
         )
     )
+
+
+# The grain of an agency's outflows that attributed finance spreads over.
+OUTFLOW_CELL = (
+    "provider_code",
+    "agency_code",
+    "year",
+    "recipient_code",
+    "purpose_code",
+)
+# The weighted amounts a spread under attribution by contributions weighs by.
+# Outflows hold no unsplit value.
+_CELL_PARTS = ("adaptation", "mitigation", "cross_cutting", "value")
+# The amounts of a spread row that follow its value, as the parts of `value` they
+# single out or bound.
+_FOLLOW_VALUE = (
+    "amount", "untraced", "no_grant_equivalent", "no_adaptation_marker", "low", "high",
+)  # fmt: skip
+
+
+def _outflow_cells(
+    release: Release,
+    *,
+    flow: Flow,
+    method: Method,
+    untraced: bool = True,
+    oda_only: bool = False,
+) -> pl.LazyFrame:
+    """Every provider's climate outflows of `flow` by agency, year, recipient and
+    purpose (`OUTFLOW_CELL`), weighed under `method` in USD at current prices, each
+    amount of `AMOUNTS` summed.
+
+    The outflows are the recipient-view rows of `flow`, with the untraced rows when
+    `untraced`, as `_base_rows` builds them, and with `oda_only` the ODA rows
+    (`_oda`) alone.
+    """
+    rows = _base_rows(release, flow=flow, view="recipient", untraced=untraced)
+    if oda_only:
+        rows = rows.filter(_oda())
+    return (
+        _weigh(_coefficients(release, rows, method=method), method=method)
+        .group_by(OUTFLOW_CELL)
+        .agg(ordered_sum(pl.col(name)).alias(name) for name in AMOUNTS)
+    )
+
+
+def _spread_flow(flow: Flow) -> Flow:
+    """The flow whose outflows attributed finance of `flow` spreads over, which is
+    commitments for `flow="commitments"` and otherwise disbursements at face value,
+    since a net flow or a grant equivalent reaches the same recipients as the
+    disbursements it counts."""
+    return "commitments" if flow == "commitments" else "disbursements"
+
+
+def _spread_weights(cells: pl.LazyFrame) -> pl.LazyFrame:
+    """Per channel and year, the weight of each of its pool's outflow cells.
+
+    A channel's pool is its `CHANNEL_POOLS` providers and agencies, and its cells
+    are `cells` (`_outflow_cells`) of the pool summed by year, provider
+    (`via_provider_code`), recipient and purpose. Each cell weighs its part of the
+    pool's outflows by objective in the year: `weight_adaptation`,
+    `weight_mitigation` and `weight_cross_cutting`, and `weight_value` of the
+    climate value. An objective the pool has no positive outflow of in the year
+    takes the value weight. A channel-year whose pool has no positive climate value
+    has no row, so its contributions stay unspread.
+    """
+    year = ["channel_code", "year"]
+    keys = [*year, "via_provider_code", "recipient_code", "purpose_code"]
+    pools = CHANNEL_POOLS.lazy()
+    pooled = (
+        cells.filter(
+            pl.col("provider_code").is_in(
+                CHANNEL_POOLS["provider_code"].unique().to_list()
+            )
+        )
+        .join(pools, on="provider_code", how="inner")
+        .filter(
+            pl.col("pool_agency").is_null()
+            | (pl.col("agency_code") == pl.col("pool_agency"))
+        )
+        .group_by(
+            *year, "recipient_code", "purpose_code", via_provider_code="provider_code"
+        )
+        .agg(ordered_sum(pl.col(part)).alias(part) for part in _CELL_PARTS)
+    )
+    totals = pooled.group_by(year).agg(
+        ordered_sum(pl.col(part)).alias(f"_total_{part}") for part in _CELL_PARTS
+    )
+
+    def weight(part: str) -> pl.Expr:
+        total = pl.col(f"_total_{part}")
+        return pl.when(total > 0).then(pl.col(part) / total)
+
+    return (
+        pooled.join(totals, on=year, how="inner", validate="m:1")
+        .with_columns(weight_value=weight("value"))
+        .filter(pl.col("weight_value").is_not_null())
+        .select(
+            *keys,
+            *(
+                pl.coalesce(weight(part), "weight_value").alias(f"weight_{part}")
+                for part in ("adaptation", "mitigation", "cross_cutting")
+            ),
+            "weight_value",
+        )
+    )
+
+
+def _spread(
+    rows: pl.LazyFrame, *, weights: pl.LazyFrame, method: Method
+) -> pl.LazyFrame:
+    """Weighed attribution `rows` spread over their channel's outflow cells.
+
+    Each row whose channel and year have `weights` (`_spread_weights`) becomes one
+    row per cell, at the cell's recipient, purpose and `via_provider_code`.
+    Adaptation, mitigation and cross_cutting take the cell's weight of their own
+    objective, unsplit the value weight, and `value` sums the parts as `_weigh`
+    does. The amounts that follow value (`_FOLLOW_VALUE`) keep their part of the
+    row's value, or take the value weight where its value is 0. A row's cells
+    sum to the row. A row whose channel-year has no weights stays as it is, with no
+    recipient, purpose or `via_provider_code`.
+    """
+    columns = rows.collect_schema().names()
+    w = {
+        part: pl.col(f"weight_{part}")
+        for part in ("adaptation", "mitigation", "cross_cutting", "value")
+    }
+    sign = 1.0 if method.highest_marker else -1.0
+    spread = pl.col("weight_value").is_not_null()
+    value = pl.col("value")
+    parts = {
+        "adaptation": pl.col("adaptation") * w["adaptation"],
+        "mitigation": pl.col("mitigation") * w["mitigation"],
+        "cross_cutting": pl.col("cross_cutting") * w["cross_cutting"],
+        "unsplit": pl.col("unsplit") * w["value"],
+    }
+    spread_value = (
+        parts["adaptation"]
+        + parts["mitigation"]
+        + sign * parts["cross_cutting"]
+        + parts["unsplit"]
+    )
+
+    # Scaled as spread value times the amount's part of value, so an amount equal to
+    # value, as low and high often are, stays equal to it after rounding.
+    def follow(name: str) -> pl.Expr:
+        amount = pl.col(name)
+        return (
+            pl.when(value != 0)
+            .then(spread_value * (amount / value))
+            .otherwise(amount * w["value"])
+        )
+
+    return (
+        rows.drop("via_provider_code", "recipient_code", "purpose_code")
+        .join(weights, on=["channel_code", "year"], how="left")
+        .with_columns(
+            pl.when(spread).then(expr).otherwise(pl.col(name)).alias(name)
+            for name, expr in {
+                **parts,
+                "value": spread_value,
+                **{name: follow(name) for name in _FOLLOW_VALUE},
+            }.items()
+        )
+        .select(columns)
+    )
+
+
+# The keys of an institution of `outflow_shares` on an attribution-by-outflows row:
+# its provider and, where the table names one, its agency.
+_INSTITUTION = ("via_provider_code", "via_agency_code")
+
+
+def _outflow_institutions(release: Release) -> tuple[Target, ...]:
+    """The institutions `outflow_shares` gives a share for some year: a provider, or
+    an agency where the table names one, as it names the EIB."""
+    held = (
+        release.table("outflow_shares")
+        .select("provider_code", "agency_code")
+        .unique()
+        .sort("provider_code", "agency_code", nulls_last=True)
+        .collect()
+    )
+    return tuple(
+        code if agency is None else Agency(provider=code, agency=agency)
+        for code, agency in held.iter_rows()
+    )
+
+
+def _own_outflows(institutions: tuple[Target, ...]) -> pl.Expr:
+    """Rows of `institutions` (`_outflow_institutions`), which attribution by
+    outflows counts only through `_outflow_rows`."""
+    return provider_rows(institutions).fill_null(value=False)
+
+
+def _outflow_shares(release: Release) -> pl.LazyFrame:
+    """`outflow_shares` keyed by institution (`_INSTITUTION`) and year, with the
+    share in `outflow_share`."""
+    return release.table("outflow_shares").select(
+        "year",
+        via_provider_code="provider_code",
+        via_agency_code="agency_code",
+        outflow_share="share",
+    )
+
+
+def _donor_shares(release: Release, *, flow: Flow) -> pl.LazyFrame:
+    """Per institution and year of `outflow_shares`, the providers its share goes to,
+    each with `donor_share`, its part of the share.
+
+    An institution that is a developed provider (`developed_providers`) or one of
+    its agencies, as the EIB is of EU Institutions, keeps its share whole as that
+    provider's, with its agency. Any other institution's share splits among the
+    developed providers by their core contributions of `flow` to its channels, the
+    `CHANNEL_POOLS` entries that list it, summed over every year the release holds
+    up to the share's year. An institution-year with no such contribution by then
+    keeps its share in one row with a null provider. So each institution-year's
+    donor shares sum to 1.
+    """
+    keys = [*_INSTITUTION, "year"]
+    shares = _outflow_shares(release)
+    developed = release.table("developed_providers").select("provider_code")
+    own = shares.join(
+        developed, left_on="via_provider_code", right_on="provider_code", how="semi"
+    )
+    others = shares.join(own, on=keys, how="anti", nulls_equal=True)
+    channels = (
+        others.select(_INSTITUTION)
+        .unique()
+        .join(
+            CHANNEL_POOLS.lazy(),
+            left_on="via_provider_code",
+            right_on="provider_code",
+            how="inner",
+        )
+        .filter(
+            pl.col("via_agency_code").is_null()
+            | pl.col("pool_agency").is_null()
+            | (pl.col("pool_agency") == pl.col("via_agency_code"))
+        )
+        .select(*_INSTITUTION, "channel_code")
+        .unique()
+    )
+    contributed = (
+        release.table("core_contributions")
+        .filter(pl.col("flow") == flow)
+        .join(developed, on="provider_code", how="semi")
+        .join(channels, on="channel_code", how="inner")
+        .select(*_INSTITUTION, "provider_code", "contribution_usd", paid="year")
+    )
+    pooled = (
+        others.join(contributed, on=_INSTITUTION, how="inner", nulls_equal=True)
+        .filter(pl.col("paid") <= pl.col("year"))
+        .group_by(*keys, "outflow_share", "provider_code")
+        .agg(contributed=ordered_sum(pl.col("contribution_usd")))
+        .with_columns(_pool=ordered_sum(pl.col("contributed")).over(keys))
+        .filter(pl.col("_pool") > 0, pl.col("contributed") != 0)
+    )
+    columns = [*keys, "outflow_share", "provider_code", "agency_code", "donor_share"]
+    whole = pl.lit(1.0)
+    return pl.concat(
+        [
+            own.with_columns(
+                provider_code=pl.col("via_provider_code"),
+                agency_code=pl.col("via_agency_code"),
+                donor_share=whole,
+            ).select(columns),
+            pooled.with_columns(
+                agency_code=pl.lit(None, pl.Int32),
+                donor_share=pl.col("contributed") / pl.col("_pool"),
+            ).select(columns),
+            others.join(pooled, on=keys, how="anti", nulls_equal=True)
+            .with_columns(
+                provider_code=pl.lit(None, pl.Int32),
+                agency_code=pl.lit(None, pl.Int32),
+                donor_share=whole,
+            )
+            .select(columns),
+        ]
+    )
+
+
+def _institution_cells(
+    release: Release, *, flow: Flow, method: Method, untraced: bool, oda_only: bool
+) -> pl.LazyFrame:
+    """The climate outflows of each `outflow_shares` institution by year, recipient
+    and purpose, weighed under `method` (`_outflow_cells` of `flow`, `untraced` and
+    `oda_only`), keyed by the institution (`_INSTITUTION`). An institution without
+    an agency holds the outflows of all its agencies."""
+    listed = (
+        _outflow_shares(release)
+        .select(_INSTITUTION)
+        .unique()
+        .rename({"via_provider_code": "provider_code"})
+    )
+    return (
+        _outflow_cells(
+            release, flow=flow, method=method, untraced=untraced, oda_only=oda_only
+        )
+        .join(listed, on="provider_code", how="inner")
+        .filter(
+            pl.col("via_agency_code").is_null()
+            | (pl.col("agency_code") == pl.col("via_agency_code"))
+        )
+        .group_by(
+            "via_agency_code",
+            "year",
+            "recipient_code",
+            "purpose_code",
+            via_provider_code="provider_code",
+        )
+        .agg(ordered_sum(pl.col(name)).alias(name) for name in AMOUNTS)
+    )
+
+
+def _outflow_rows(
+    cells: pl.LazyFrame, *, donors: pl.LazyFrame, method: Method
+) -> pl.LazyFrame:
+    """The attribution rows of attribution by outflows. Each institution cell of
+    `cells` (`_institution_cells`) gives one row per provider of `donors`
+    (`_donor_shares`), times its year's `outflow_share` and the provider's
+    `donor_share`.
+
+    A row sits at the cell's recipient and purpose with the institution in
+    `via_provider_code`, Bi_Multi 2 and no channel. Its amounts are the cell's
+    times both shares, so an institution-year's rows sum to its outflows times its
+    `outflow_share`. A cell of a year with no share has no row.
+    """
+    factor = pl.col("outflow_share") * pl.col("donor_share")
+    rows = cells.join(
+        donors, on=[*_INSTITUTION, "year"], how="inner", nulls_equal=True
+    ).with_columns(
+        pl.col(*AMOUNTS) * factor,
+        origin=pl.lit("attribution"),
+        bi_multi=pl.lit(CORE_CONTRIBUTION, pl.Int8),
+        method=pl.lit(label(method)),
+    )
+    present = rows.collect_schema().names()
+    return rows.select(
+        *(
+            pl.col(name).cast(dtype)
+            if name in present
+            else pl.lit(None, dtype).alias(name)
+            for name, dtype in ROW_COLUMNS.items()
+        ),
+        "method",
+        *(name for name in AMOUNTS if name not in ROW_COLUMNS),
+    )
+
+
+def _unshared_outflows(cells: pl.LazyFrame, *, release: Release) -> pl.LazyFrame:
+    """The institutions and years of `cells` (`_institution_cells`) with climate
+    value that `outflow_shares` gives no share, so attribution by outflows counts
+    them 0."""
+    return (
+        cells.filter(pl.col("value") != 0)
+        .join(
+            _outflow_shares(release),
+            on=[*_INSTITUTION, "year"],
+            how="anti",
+            nulls_equal=True,
+        )
+        .select("via_provider_code", "year")
+        .unique()
+    )
+
+
+def _outside_outflow_shares(release: Release, *, spec: Spec) -> tuple[int, ...]:
+    """The queried years in which `outflow_shares` gives no institution a share. The
+    queried years are `spec.years`, else the recipient CRDF's years in the manifest,
+    else none."""
+    years = spec.years
+    if years is None:
+        span = release.manifest.years.get("crdf_recipient")
+        if span is None:
+            return ()
+        years = tuple(range(span[0], span[1] + 1))
+    shared = set(
+        release.table("outflow_shares").select("year").unique().collect()["year"]
+    )
+    return tuple(year for year in years if year not in shared)
 
 
 def _eu_kept(*, attributed: pl.LazyFrame, everyone: pl.LazyFrame) -> pl.LazyFrame:
@@ -2176,6 +2713,7 @@ def _totals(
     spec: Spec,
     conditions: Sequence[pl.Expr],
     eu_kept: Mapping[str, pl.LazyFrame],
+    own_outflows: pl.Expr | None,
     agency: pl.Expr | None,
     factors: pl.DataFrame | None,
 ) -> pl.LazyFrame:
@@ -2191,7 +2729,9 @@ def _totals(
     commitment totals count those four codes as 1. In the provider view, EU
     Institutions' flows count under each method's EU setting as its own rows do,
     through `_count_eu_once` with the method's `eu_kept`, so a share divides by the
-    same rows as its amount.
+    same rows as its amount. Under `attribution="outflows"` they count in full, and
+    the flows `own_outflows` (`_own_outflows`) selects, those of the institutions
+    `outflow_shares` lists, leave, as their own rows do.
     """
     flows = release.table("total_flows").filter(
         pl.col("flow") == _gross(spec.flow),
@@ -2204,6 +2744,8 @@ def _totals(
             .then(pl.lit(BILATERAL[0], pl.Int8))
             .otherwise(pl.col("bi_multi"))
         )
+    if own_outflows is not None:
+        flows = flows.filter(~own_outflows)
     by_method = pl.concat(
         (
             _count_eu_once(
@@ -2212,7 +2754,7 @@ def _totals(
                 kept=eu_kept[label(method)],
                 columns=("amount_usd",),
             )
-            if spec.view == "provider"
+            if label(method) in eu_kept
             else flows
         ).with_columns(method=pl.lit(label(method)))
         for method in spec.methods

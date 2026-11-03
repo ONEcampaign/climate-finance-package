@@ -7,13 +7,9 @@ import polars as pl
 import pytest
 
 from climate_finance import schema
-from climate_finance.build.normalise.aggregates import (
-    FLOW_CATEGORY,
-    continent,
-    rebuild_aggregates,
-)
+from climate_finance.build.normalise.aggregates import continent, rebuild_aggregates
 from climate_finance.build.normalise.crdf import normalise_crdf
-from climate_finance.build.normalise.crs import normalise_crs, psi_flags
+from climate_finance.build.normalise.crs import FLOW_CATEGORY, normalise_crs, psi_flags
 from climate_finance.build.normalise.vintages import mark_repeats
 
 pytestmark = pytest.mark.slow

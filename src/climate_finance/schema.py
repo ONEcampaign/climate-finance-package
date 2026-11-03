@@ -312,6 +312,10 @@ CRDF = _table(
     # The CRS flow category the CRDF publishes: 10 ODA, 21 other official flows,
     # 22, 30 private grants and 60 private sector instruments.
     flow_category=_code(nullable=True),
+    # The CRS type of finance the CRDF publishes, such as 110 for a standard grant
+    # or 421 for a standard loan, null where it prints none. A rebuilt aggregate
+    # child takes its parent's.
+    finance_t=_code(nullable=True),
     # The PSI flag of the row's CRS records (same year, provider, crs id and flow
     # category), null where they carry none. Every row of flow category 60 has one.
     psi_flag=_code(nullable=True),
@@ -1014,10 +1018,10 @@ COMMITMENTS = _table(
     bi_multi=_bi_multi(),
     purpose_code=_code(nullable=True),
     # The CRS flow category the CRDF publishes: 10 ODA, 21 other official flows,
-    # 22, 30 private grants and 60 private sector instruments. A disbursement carries
-    # its CRS record's flow code (11 ODA grants, 13 ODA loans, 19 equity) instead, and
-    # a fill, which has no CRS record, a null one.
+    # 22, 30 private grants and 60 private sector instruments.
     flow_category=_code(nullable=True),
+    # The CRS type of finance the CRDF publishes, as `crdf` carries it.
+    finance_t=_code(nullable=True),
     # The PSI flag of the row's CRS records, as `crdf` carries it. A row with one of
     # `MEMORANDUM_PSI_FLAGS` is a memorandum row, which no total counts.
     psi_flag=_code(nullable=True),
@@ -1069,7 +1073,14 @@ DISBURSEMENTS = _table(
     channel_code=_code(nullable=True),
     bi_multi=_bi_multi(),
     purpose_code=_code(nullable=True),
+    # The CRS record's flow code (11 ODA grants, 13 ODA loans, 19 equity, 14 other
+    # official flows, 30 private grants, 60 private sector instruments), null for a
+    # fill, which has no CRS record.
     flow_code=_code(nullable=True),
+    # The flow category of the CRS record's flow code (`crs.FLOW_CATEGORY`), and the
+    # record's type of finance. A fill takes both from its commitment.
+    flow_category=_code(nullable=True),
+    finance_t=_code(nullable=True),
     # The CRS record's PSI flag, null for a fill. A row with one of
     # `MEMORANDUM_PSI_FLAGS` is a memorandum row, which no total counts.
     psi_flag=_code(nullable=True),
@@ -1207,6 +1218,8 @@ UNTRACED = _table(
     bi_multi=_bi_multi(),
     purpose_code=_code(nullable=True),
     flow_code=_code(nullable=True),
+    flow_category=_code(nullable=True),
+    finance_t=_code(nullable=True),
     psi_flag=_code(nullable=True),
     project_number=_str(nullable=True),
     title=_str(nullable=True),
@@ -1406,6 +1419,34 @@ PROVIDER_COEFFICIENTS = _table(
     locator=_str(),
 )
 
+# The share of an international institution's climate outflows in `year` that the OECD
+# attributes to developed countries, from Table 8 of the report `source` names, at
+# `locator`. The table prints a share for four years, and `table_column` is the one
+# whose share `year` takes; `locator` states why. A row covers the institution
+# `provider_code`, or with `agency_code` one of its agencies, as the EIB is agency 3
+# of EU Institutions. An institution-year the table gives no share has no row.
+OUTFLOW_SHARES = _table(
+    "outflow_shares",
+    ("provider_code", "agency_code", "year"),
+    provider_code=_code(),
+    agency_code=_code(nullable=True),
+    year=_year(),
+    share=_f64(minimum=0.0),
+    table_column=_year(),
+    source=_str(),
+    locator=_str(),
+)
+
+# The DAC providers the OECD counts as developed countries, as the document `source`
+# defines them at `locator`.
+DEVELOPED_PROVIDERS = _table(
+    "developed_providers",
+    ("provider_code",),
+    provider_code=_code(),
+    source=_str(),
+    locator=_str(),
+)
+
 # Rio markers a coefficient applies to, as `provider_coefficients` names its columns.
 COEFFICIENT_MARKERS = ("significant", "principal")
 # Where `PROVIDER` takes a coefficient from: the provider's own statement in
@@ -1493,6 +1534,8 @@ RELEASE_TABLES = _by_name(
     BTR_COEFFICIENTS,
     JEV_FLAGS,
     CONVERSION_FACTORS,
+    OUTFLOW_SHARES,
+    DEVELOPED_PROVIDERS,
 )
 
 # The data format of the releases this package writes, and the newest it reads.
@@ -1558,8 +1601,9 @@ FORMAT_TABLES: Mapping[int, frozenset[str]] = {
     ),
     # Format 2 adds `btr_coefficients`.
     2: _FORMAT_2_TABLES,
-    # Format 3 adds `psi_flag` (`MEMORANDUM_FORMAT`) and no table.
-    3: _FORMAT_2_TABLES,
+    # Format 3 adds `psi_flag` (`MEMORANDUM_FORMAT`), `outflow_shares` and
+    # `developed_providers`.
+    3: _FORMAT_2_TABLES | {"outflow_shares", "developed_providers"},
 }
 
 STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {

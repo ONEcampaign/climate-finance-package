@@ -55,8 +55,9 @@ import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import polars as pl
 import pyarrow as pa
@@ -94,6 +95,7 @@ from climate_finance.build.fetch import (
 from climate_finance.build.label import inherit_markers
 from climate_finance.build.link.gap_fill import routed_records
 from climate_finance.build.measure import load_provider_facts
+from climate_finance.build.normalise.crs import flow_category
 from climate_finance.build.provenance import build_identity, setting_value
 from climate_finance.build.readers.btr import party_provider
 from climate_finance.build.reflows import (
@@ -122,12 +124,14 @@ from climate_finance.schema import (
     CONTRIBUTION_KEY,
     CORE_CONTRIBUTIONS,
     DATA_FORMAT,
+    DEVELOPED_PROVIDERS,
     DISBURSEMENT_PROFILE,
     DISBURSEMENTS,
     INVARIANT_TOLERANCE_USD,
     JEV_FLAGS,
     MODELLED,
     MULTILATERAL_OUTFLOW,
+    OUTFLOW_SHARES,
     PROVIDER_COEFFICIENTS,
     QUALITY,
     RECIPIENT_VIEW,
@@ -189,6 +193,9 @@ _UNFCCC = (
 # The `sources.json` entry citing the annual reports behind `providers.toml`'s
 # `report_ratios`.
 REPORTS_SOURCE = "provider_reports"
+# The `sources.json` entry for the OECD's Table 8, behind `outflow_shares` and
+# `developed_providers`.
+ATTRIBUTION_SOURCE = "oecd_attribution"
 SOURCE_LICENCES = {
     "crs": _OECD,
     "crdf": _OECD,
@@ -206,6 +213,7 @@ SOURCE_LICENCES = {
     "https://www.imf.org/en/About/copyright-and-terms",
     "adaptation_labels": "Weikmans et al.; fits the adaptation cut, no rows ship",
     "unfccc": _UNFCCC,
+    ATTRIBUTION_SOURCE: _OECD,
     REPORTS_SOURCE: "single figures quoted from each provider's annual report, "
     "cited by title, year and page in `citations`; the publisher's terms apply",
 }
@@ -232,6 +240,9 @@ WITHHELD_TABLES = {BTR.name: BTR_WITHHELD_NOTE, BTR_LINKS.name: BTR_WITHHELD_NOT
 # The coefficients each provider applies when it reports to the UNFCCC, with their
 # sources, keyed by ISO 3 code.
 PROVIDER_COEFFICIENTS_FILE = Path(__file__).with_name("provider_coefficients.yaml")
+# Table 8 of the OECD's report on climate finance by developed countries, with the
+# year each column applies to and the developed countries, keyed as the file says.
+ATTRIBUTION_FILE = Path(__file__).with_name("oecd_attribution.yaml")
 # The file in a pack that lists each source with its version, URLs and licence.
 SOURCES_FILE = "sources.json"
 # The CRS amount column behind each flow of `total_flows`.
@@ -353,6 +364,7 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
     coefficients = provider_coefficients(
         yaml.safe_load(PROVIDER_COEFFICIENTS_FILE.read_text(encoding="utf-8"))
     )
+    attribution = attribution_file()
     untraced = release_untraced(untraced_records(marked), crs=crs).collect()
     reflows = context.read("normalise", "reflows").filter(pl.col("year") <= last_year)
     reflow_units = context.read("link", "reflow_units")
@@ -399,6 +411,8 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         "reflows": release_reflows(attributed, reflows=reflows, crdf=crdf).collect(),
         "total_flows": total_flows(crs).collect(),
         "provider_coefficients": coefficients,
+        "outflow_shares": outflow_shares(attribution),
+        "developed_providers": developed_providers(attribution),
         "btr_coefficients": btr_coefficients(
             btr,
             links=linked_btr.join(
@@ -481,8 +495,9 @@ def release_disbursements(
 ) -> pl.LazyFrame:
     """Allocations to CRDF commitments, with their CRS record and link.
 
-    A CRS allocation carries the record's own facts, the markers it inherits from
-    the commitment (`label.inherit_markers`), and the link that carried it (see
+    A CRS allocation carries the record's own facts, among them its flow category
+    (`crs.flow_category`) and type of finance, the markers it inherits from the
+    commitment (`label.inherit_markers`), and the link that carried it (see
     `with_carrying_links`). A fill (`fill_disbursements`) has no CRS record or link.
     """
     allocated = allocations.filter(
@@ -497,10 +512,12 @@ def release_disbursements(
         "bi_multi",
         "purpose_code",
         "flow_code",
+        "finance_t",
         "psi_flag",
         "project_number",
         "title",
         provider_code="donor_code",
+        flow_category=flow_category(pl.col("flow_code")),
         record_disbursement_usd="disbursement_usd",
         record_grant_equiv_usd="grant_equiv_usd",
     )
@@ -523,12 +540,13 @@ def fill_disbursements(fills: pl.LazyFrame, *, crdf: pl.LazyFrame) -> pl.LazyFra
     """Bank-ledger and IATI fills as disbursements rows.
 
     A fill has no CRS record, so it takes provider, agency, recipient, channel,
-    Bi_Multi, purpose, project number, title, markers and climate share from the
-    commitment it fills, and its flow code and PSI flag are null. Its record is the
-    fill's key and year (`ledger:<publisher>:<key>:<year>` or `iati:...`), whose
-    disbursement is what the fill gives every commitment on it. There is no grant
-    equivalent. Markers come from the commitment (`components` where it has a
-    climate share), and the method, probability and ledger check are null.
+    Bi_Multi, purpose, flow category, type of finance, project number, title,
+    markers and climate share from the commitment it fills, and its flow code and
+    PSI flag are null. Its record is the fill's key and year
+    (`ledger:<publisher>:<key>:<year>` or `iati:...`), whose disbursement is what
+    the fill gives every commitment on it. There is no grant equivalent. Markers
+    come from the commitment (`components` where it has a climate share), and the
+    method, probability and ledger check are null.
     """
     commitment = crdf.select(
         "row_id",
@@ -537,6 +555,8 @@ def fill_disbursements(fills: pl.LazyFrame, *, crdf: pl.LazyFrame) -> pl.LazyFra
         "channel_code",
         "bi_multi",
         "purpose_code",
+        "flow_category",
+        "finance_t",
         "project_number",
         "title",
         "climate_share",
@@ -851,6 +871,83 @@ def provider_coefficients(
     )
 
 
+@cache
+def attribution_file() -> Mapping[str, Any]:
+    """The contents of `ATTRIBUTION_FILE`, read once per process."""
+    return yaml.safe_load(ATTRIBUTION_FILE.read_text(encoding="utf-8"))
+
+
+def outflow_shares(attribution: Mapping[str, Any]) -> pl.DataFrame:
+    """The `outflow_shares` table from `attribution`, the attribution file's contents.
+
+    Each institution takes, for each year of the entries of `year_columns` that
+    apply to it, the share printed in that entry's column, and no row for a year
+    whose column the table leaves blank. An institution with no `provider_code`
+    compiles to no row.
+
+    Raises:
+        ValueError: when the entries of an institution cover a year twice, a share
+            lies outside 0 to 1, or two rows share a provider, agency and year.
+    """
+    entries = attribution["year_columns"]
+    rows = []
+    for institution in attribution["institutions"]:
+        code = institution["provider_code"]
+        if code is None:
+            continue
+        named = [entry for entry in entries if entry.get("provider_code") == code]
+        applying = named or [entry for entry in entries if "provider_code" not in entry]
+        seen: set[int] = set()
+        for entry in applying:
+            years = range(entry["first_year"], entry["last_year"] + 1)
+            if seen.intersection(years):
+                raise ValueError(f"{institution['name']}: a year has two table columns")
+            seen.update(years)
+            share = institution["shares"].get(entry["column"])
+            if share is None:
+                continue
+            if not 0 <= share <= 1:
+                raise ValueError(f"{institution['name']}: share {share} is not in 0-1")
+            rows.extend(
+                {
+                    "provider_code": code,
+                    "agency_code": institution.get("agency_code"),
+                    "year": year,
+                    "share": share,
+                    "table_column": entry["column"],
+                    "source": attribution["source"],
+                    "locator": entry["locator"],
+                }
+                for year in years
+            )
+    table = pl.DataFrame(
+        rows,
+        schema={name: column.dtype for name, column in OUTFLOW_SHARES.columns.items()},
+    )
+    if table.select(pl.struct(OUTFLOW_SHARES.sort_key).is_duplicated().any()).item():
+        raise ValueError("two institutions share a provider, agency and year")
+    return table
+
+
+def developed_providers(attribution: Mapping[str, Any]) -> pl.DataFrame:
+    """The `developed_providers` table from `attribution`, the attribution file's
+    contents."""
+    developed = attribution["developed"]
+    return pl.DataFrame(
+        [
+            {
+                "provider_code": code,
+                "source": developed["source"],
+                "locator": developed["locator"],
+            }
+            for code in developed["providers"]
+        ],
+        schema={
+            name: column.dtype for name, column in DEVELOPED_PROVIDERS.columns.items()
+        },
+    )
+
+
 def quality(
     commitments: pl.LazyFrame,
     *,
@@ -938,8 +1035,9 @@ def quality(
 
 def release_untraced(untraced: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame:
     """`untraced_records` rows with their CRS record's own facts and markers, the
-    adaptation marker null before `ADAPTATION_FIRST_YEAR`, and its disbursement and
-    grant equivalent as `disbursements` carries them."""
+    adaptation marker null before `ADAPTATION_FIRST_YEAR`, and its flow category,
+    type of finance, disbursement and grant equivalent as `disbursements` carries
+    them."""
     record = crs.select(
         "record_id",
         "year",
@@ -949,12 +1047,14 @@ def release_untraced(untraced: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFra
         "bi_multi",
         "purpose_code",
         "flow_code",
+        "finance_t",
         "psi_flag",
         "project_number",
         "title",
         "rio_adaptation",
         "rio_mitigation",
         provider_code="donor_code",
+        flow_category=flow_category(pl.col("flow_code")),
         record_disbursement_usd="disbursement_usd",
         record_grant_equiv_usd="grant_equiv_usd",
     )
@@ -1168,6 +1268,7 @@ def release_sources(
             f"The release holds {btr_rows} BTR rows but the raw manifest records "
             f"no {BTR_SOURCE} source to credit them to"
         )
+    urls[ATTRIBUTION_SOURCE] = [attribution_file()["url"]]
     if citations:
         urls[REPORTS_SOURCE] = []
     if unlicensed := sorted(source for source in urls if _licence(source) is None):

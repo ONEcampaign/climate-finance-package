@@ -57,6 +57,9 @@ agencies = [
     { channel_code = 47134, provider_code = 1011, agency_codes = [10] },
     { channel_code = 47135, provider_code = 1011, agency_codes = [20, 21, 22, 23] },
     { channel_code = 47136, provider_code = 1313 },  # Global Green Growth Institute
+    { channel_code = 47146, provider_code = 1037 },  # International Investment Bank
+    # The Private Infrastructure Development Group and its facilities.
+    { channel_code = 47086, provider_code = 1014 },
 ]
 
 # Providers whose disbursements no source publishes by project. Their CRDF climate

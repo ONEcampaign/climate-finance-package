@@ -168,6 +168,12 @@ def psi_flags(raw: pl.LazyFrame) -> pl.LazyFrame:
     )
 
 
+def flow_category(flow_code: pl.Expr) -> pl.Expr:
+    """The flow category of a CRS record's flow code (`FLOW_CATEGORY`), raising on
+    a code outside the map."""
+    return flow_code.replace_strict(FLOW_CATEGORY, return_dtype=pl.Int32)
+
+
 def _has_value(sources: Mapping[str, str]) -> pl.Expr:
     """A record with a non-zero value in any of the raw columns `sources` names."""
     return pl.any_horizontal(

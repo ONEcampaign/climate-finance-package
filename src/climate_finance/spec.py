@@ -57,6 +57,7 @@ type Flow = Literal[
 type View = Literal["recipient", "provider"]
 type Currency = Literal["USD", "EUR", "GBP", "CAD"]
 type Measure = Literal["amount", "share_of_total"]
+type Attribution = Literal["contributions", "outflows"]
 
 # A disbursement's ODA test reads its CRS record's flow code, and a row with no CRS
 # record (a commitment or a fill) its commitment's CRDF flow category: grants (11),
@@ -271,6 +272,7 @@ class SpecInputs(TypedDict, total=False):
     oda_only: bool
     measure: Measure
     untraced: bool
+    attribution: Attribution
 
 
 class Spec(Frozen):
@@ -299,6 +301,14 @@ class Spec(Frozen):
     equivalents: Rio-marked CRS disbursement that reaches no commitment. Commitments
     have none, so it changes nothing there.
 
+    `attribution` sets how the provider view gives providers the finance of the
+    institutions they fund. `"contributions"` counts each provider's core
+    contributions at the agency's climate share. `"outflows"` counts each
+    institution's own climate outflows at the share the OECD's Table 8 attributes
+    to developed countries (`outflow_shares`), split among developed donors by
+    their core contributions to it. The recipient view attributes nothing, so it
+    refuses `attribution="outflows"`.
+
     `providers` and `recipients` take names, DAC codes or, for providers,
     `Agency` values, one or many, and hold the codes and agencies they name, sorted
     and without duplicates (`catalogue.resolve`). So `providers=["Japan", 701]` and
@@ -315,8 +325,8 @@ class Spec(Frozen):
     field's choices included, raises one `InvalidInputError` naming each field and
     the form it takes.
 
-    A spec at the default `measure` and `untraced` leaves them out of its serialised
-    form, so it serialises as a spec written before either field.
+    A spec at the default `measure`, `untraced` and `attribution` leaves them out of
+    its serialised form, so it serialises as a spec written before those fields.
     """
 
     providers: Providers = None
@@ -330,10 +340,21 @@ class Spec(Frozen):
     oda_only: StrictBool = False
     measure: Measure = "amount"
     untraced: StrictBool = True
+    attribution: Attribution = "contributions"
 
     _keyword_notes: ClassVar[Mapping[str, str]] = {
         "spec": "rerun a saved Spec with release.run(spec)"
     }
+
+    @model_validator(mode="after")
+    def _refuse_recipient_view_attribution(self) -> Self:
+        if self.attribution == "outflows" and self.view == "recipient":
+            raise InvalidInputError(
+                "attribution='outflows' takes view='provider'; the recipient view "
+                "counts each institution's outflows as its own and attributes "
+                "nothing. Pass view='provider'."
+            )
+        return self
 
     @model_validator(mode="after")
     def _refuse_net_flow_measures(self) -> Self:
@@ -368,6 +389,8 @@ class Spec(Frozen):
             data.pop("measure", None)
         if self.untraced:
             data.pop("untraced", None)
+        if self.attribution == "contributions":
+            data.pop("attribution", None)
         return data
 
     def __repr_args__(self) -> Iterator[tuple[str, object]]:

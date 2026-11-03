@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass
 from functools import cached_property
 from html import escape
 from numbers import Integral, Real
@@ -61,7 +62,7 @@ AMOUNTS = (
 )  # fmt: skip
 # The spec fields a result table repeats on every row, so a row says what it
 # measures.
-BASIS = ("flow", "view", "currency", "prices", "measure")
+BASIS = ("flow", "view", "attribution", "currency", "prices", "measure")
 # Where each of `Result.rows()` comes from, as `query` describes.
 ORIGINS = (
     "commitment",
@@ -72,7 +73,7 @@ ORIGINS = (
     "interest",
 )
 # The `BASIS` columns of `Result.combined_share()`, which is a share itself.
-_SHARE_BASIS = ("flow", "view", "currency", "prices")
+_SHARE_BASIS = ("flow", "view", "attribution", "currency", "prices")
 # The keys of a result table's rows, before the method.
 ROW_KEYS = ("year", "provider_code", "recipient_code", "bi_multi")
 # The keys of a result whose spec names an agency. `agency_code` holds the agency of
@@ -117,6 +118,34 @@ class Meta(BaseModel):
     conversion: Conversion | None = None
 
 
+@dataclass(frozen=True)
+class OutflowGaps:
+    """What `attribution="outflows"` leaves out or leaves unattributed, for
+    `explain`. `unattributed` and `unshared` map an institution's provider code to
+    years. `unattributed` holds the years its share stays in a row with no provider,
+    since no developed country had contributed to it. `unshared` holds the years
+    outside `uncovered` in which it has climate outflows that `outflow_shares` gives
+    no share. `uncovered` holds the queried years in which it gives no institution a
+    share."""
+
+    unattributed: Mapping[int, Sequence[int]]
+    unshared: Mapping[int, Sequence[int]]
+    uncovered: Sequence[int]
+
+
+def _years_by_institution(frame: pl.LazyFrame | None) -> dict[int, list[int]]:
+    """`frame`'s years by `via_provider_code`, sorted."""
+    if frame is None:
+        return {}
+    held = (
+        frame.group_by("via_provider_code")
+        .agg(pl.col("year").unique().sort())
+        .sort("via_provider_code")
+        .collect()
+    )
+    return dict(zip(held["via_provider_code"], held["year"].to_list(), strict=True))
+
+
 class Result:
     """The answer to one `Spec`: a table, the rows behind it, and its provenance.
 
@@ -129,12 +158,12 @@ class Result:
     shares.
 
     `table` starts `year`, `provider`, `recipient`, `method`, then the codes and
-    the spec's `flow`, `view`, `currency`, `prices` and `measure` (`BASIS`), so a
-    row says what it measures after a concat or a save, and ends with the amounts
-    (`AMOUNTS`). `provider` and `recipient` name the codes beside them, as do
-    `provider`, `agency` and `recipient` in `rows()`, which start `origin`,
-    `year`, `record_id`, `link_method`. A spec that names an agency keys `table`
-    by `AGENCY_ROW_KEYS`, with `agency` after `provider`.
+    the spec's `flow`, `view`, `attribution`, `currency`, `prices` and `measure`
+    (`BASIS`), so a row says what it measures after a concat or a save, and ends
+    with the amounts (`AMOUNTS`). `provider` and `recipient` name the codes beside
+    them, as do `provider`, `agency` and `recipient` in `rows()`, which start
+    `origin`, `year`, `record_id`, `link_method`. A spec that names an agency keys
+    `table` by `AGENCY_ROW_KEYS`, with `agency` after `provider`.
     """
 
     def __init__(
@@ -146,7 +175,13 @@ class Result:
         totals: pl.LazyFrame,
         spec: Spec,
         meta: Meta,
+        unshared: pl.LazyFrame | None = None,
+        uncovered: Sequence[int] = (),
     ) -> None:
+        """`unshared` holds, under `attribution="outflows"`, the institutions
+        (`via_provider_code`) and years with climate outflows that `outflow_shares`
+        gives no share, and `uncovered` the queried years it gives none at all;
+        `explain()` names both."""
         measured = _shares(table, totals) if spec.measure == "share_of_total" else table
         self._measured = measured
         self._sums = table
@@ -155,6 +190,8 @@ class Result:
         self.meta = meta
         self._rows = rows
         self._totals = totals
+        self._unshared = unshared
+        self._uncovered = tuple(uncovered)
 
     @cached_property
     def table(self) -> pl.DataFrame:
@@ -227,6 +264,7 @@ class Result:
                 self._rows.filter(
                     pl.col("method").is_in(provider),
                     pl.col("climate_share").is_null(),
+                    pl.col("origin") != "attribution",
                 )
                 .group_by(
                     "method", "coefficient_basis", "coefficient_source", "provider_code"
@@ -244,6 +282,13 @@ class Result:
                 .filter(pl.col("origin") == "attribution", pl.col("unsplit") != 0)
                 .unique()
                 .sort(),
+                unspread=pl.col("channel_code")
+                .filter(
+                    pl.col("origin") == "attribution",
+                    pl.col("via_provider_code").is_null(),
+                )
+                .unique()
+                .sort(),
             )
             .collect()
         )
@@ -253,6 +298,19 @@ class Result:
             .agg(pl.col("year").unique().sort())
             .collect()
         )
+        outflows = None
+        if self.spec.attribution == "outflows":
+            unattributed = self._rows.filter(
+                pl.col("origin") == "attribution", pl.col("provider_code").is_null()
+            ).select("via_provider_code", "year")
+            unshared = None
+            if self._unshared is not None:
+                unshared = self._unshared.filter(~pl.col("year").is_in(self._uncovered))
+            outflows = OutflowGaps(
+                unattributed=_years_by_institution(unattributed),
+                unshared=_years_by_institution(unshared),
+                uncovered=self._uncovered,
+            )
         return explain(
             self.spec,
             release=self.meta.release,
@@ -260,10 +318,14 @@ class Result:
             unsplit=dict(
                 zip(by_method["method"], by_method["unsplit"].to_list(), strict=True)
             ),
+            unspread=dict(
+                zip(by_method["method"], by_method["unspread"].to_list(), strict=True)
+            ),
             unmeasured=dict(
                 zip(unmeasured["origin"], unmeasured["year"].to_list(), strict=True)
             ),
             years=self.meta.years,
+            outflows=outflows,
             conversion=self.meta.conversion,
             build=self.meta.build,
         )
@@ -272,8 +334,9 @@ class Result:
         """The same result with every amount divided by all CRS flows of its key.
 
         The denominator is the release's `total_flows` for the same flow, year,
-        provider, recipient and Bi_Multi code. A row without a recipient, such as
-        attributed finance, divides by the sum over recipients. Totals cover every
+        provider, recipient and Bi_Multi code. An attributed row (Bi_Multi 2) has a
+        null share, since it sits at the recipients of the agency's outflows and no
+        CRS flow of its provider to a recipient holds it. Totals cover every
         flow code, so under `oda_only` the share is ODA climate finance over all
         flows, and leave out records reported for memorandum, as the amounts do.
         In the provider view, EU Institutions' total holds the same rows as
@@ -293,6 +356,8 @@ class Result:
             totals=self._totals,
             spec=self.spec.replace(measure="share_of_total"),
             meta=self.meta,
+            unshared=self._unshared,
+            uncovered=self._uncovered,
         )
 
     def combined_share(self, *, by: str | Sequence[str] = ()) -> pl.DataFrame:
@@ -305,7 +370,7 @@ class Result:
         denominator covers every key of the query's flow, view, providers,
         agencies, recipients and years in `total_flows`, including keys with no
         climate row, at the result's currency and prices. Core contributions count
-        once, under the null recipient their attributed finance takes. Totals cover
+        once in the denominator, as the totals of no recipient. Totals cover
         every flow code, so under `oda_only` the share is ODA climate finance over
         all flows, and leave out records reported for memorandum. The share is null
         where the total is zero, as for a query that returns no rows.
@@ -319,8 +384,10 @@ class Result:
             UnknownNameError: for a `by` column outside the table's keys, with
                 close names as suggestions.
             InvalidInputError: for a net flow, whose repayments the CRS totals do
-                not hold, or for `agency_code` in `by` without `provider_code`,
-                since agency codes repeat across providers.
+                not hold, for `agency_code` in `by` without `provider_code`,
+                since agency codes repeat across providers, or for
+                `recipient_code` in `by` under `view="provider"`, whose attributed
+                finance has no CRS total at a recipient.
         """
         if self.spec.flow in NET_FLOWS:
             raise InvalidInputError(
@@ -337,8 +404,14 @@ class Result:
                 "by takes agency_code with provider_code, as by=['provider_code',"
                 " 'agency_code'], since agency codes repeat across providers"
             )
-        # Core contributions count once, under the null recipient their attributed
-        # value takes, and every other code under its recipients.
+        if "recipient_code" in kept and self.spec.view == "provider":
+            raise InvalidInputError(
+                "by takes recipient_code in the recipient view only: provider-view "
+                "attributed finance sits at the recipients of the agencies' "
+                "outflows, and no CRS total of the provider to a recipient holds it"
+            )
+        # Core contributions count once, in the totals of no recipient, and every
+        # other code under its recipients.
         core = pl.col("bi_multi") == CORE_CONTRIBUTION
         totals = self._totals.filter(pl.col("recipient_code").is_null() == core)
         grouped = [*kept, "method"]
@@ -510,10 +583,17 @@ def _described(frame: pl.LazyFrame, *, spec: Spec) -> pl.LazyFrame:
     )
 
 
+def _share(amount: pl.Expr, total: pl.Expr) -> pl.Expr:
+    """`amount` over `total`, null on an attributed row (Bi_Multi
+    `CORE_CONTRIBUTION`), which sits at the recipients of the agency's outflows
+    while no CRS flow of the provider to that recipient holds it."""
+    return pl.when(pl.col("bi_multi") != CORE_CONTRIBUTION).then(amount / total)
+
+
 def _shares(table: pl.LazyFrame, totals: pl.LazyFrame) -> pl.LazyFrame:
     """`table` with every amount divided by the total of its key and method in
-    `totals`, and `no_grant_equivalent` null: it holds face value, which a total of
-    grant equivalents does not contain."""
+    `totals` (`_share`), and `no_grant_equivalent` null: it holds face value, which
+    a total of grant equivalents does not contain."""
     return (
         table.join(
             totals,
@@ -524,7 +604,7 @@ def _shares(table: pl.LazyFrame, totals: pl.LazyFrame) -> pl.LazyFrame:
             maintain_order="left",
         )
         .with_columns(
-            pl.col(name) / pl.col("total")
+            _share(pl.col(name), pl.col("total"))
             for name in AMOUNTS
             if name != "no_grant_equivalent"
         )
@@ -544,7 +624,9 @@ class Quality:
     Add it back to compare with totals that count EU Institutions as a provider.
     `attribution` holds, by provider, year and flow, the value attributed through
     core contributions, split by the agency share's source into `computed_usd`,
-    `held_usd` and `oecd_usd`. `precision` holds, by provider, the share of
+    `held_usd` and `oecd_usd`, and in `unspread_usd` the part of it that stays at no
+    recipient, since the package maps no agency to the channel or the agency has
+    no climate outflows in the year. `precision` holds, by provider, the share of
     allocated value whose link a blind human sample found right (`estimate`), its
     interval (`lower`, `upper`), whether it passed the release's precision gate,
     whether a failure was waived, and the gate's reading. It is empty for a release
@@ -696,8 +778,10 @@ def explain(
     release: str,
     coefficients: pl.DataFrame | None = None,
     unsplit: Mapping[str, Sequence[int]] | None = None,
+    unspread: Mapping[str, Sequence[int]] | None = None,
     unmeasured: Mapping[str, Sequence[int]] | None = None,
     years: Mapping[str, tuple[int, int]] | None = None,
+    outflows: OutflowGaps | None = None,
     conversion: Conversion | None = None,
     build: BuildIdentity | None = None,
 ) -> str:
@@ -707,17 +791,33 @@ def explain(
     `coefficient_basis` and `coefficient_source` its marker rows took, with the
     `provider_code` and the lists of `agency_code` and `year` values that took them.
     `unsplit` maps a method's label to the agency channel codes whose climate share
-    has no split by objective. `unmeasured` maps an origin of rows whose
-    adaptation is not measured to their years. `years` is the release's `years`;
-    under the provider view, the queried years (`spec.years`, else the recipient
-    CRDF's) outside those of `core_contributions` or of the share table a method
-    reads (`agency_shares` under the OECD's imputed shares, else `agency_spending`)
-    are named as holding no attributed finance under that method. `conversion`
-    names the conversion factors of a converted result. `build` names the digests
-    of the package files and environment that built the release.
+    has no split by objective. `unspread` maps a method's label to the channel
+    codes whose attributed rows stay at no recipient. `unmeasured` maps an origin
+    of rows whose adaptation is not measured to their years. `years` is the
+    release's `years`; under the provider view, the queried years (`spec.years`,
+    else the recipient CRDF's) outside those of `core_contributions` or of the
+    share table a method reads (`agency_shares` under the OECD's imputed shares,
+    else `agency_spending`) are named as holding no attributed finance under that
+    method. `outflows` names, under `attribution="outflows"`, what attribution
+    by outflows leaves unattributed or out (`OutflowGaps`). `conversion` names the
+    conversion factors of a converted result.
+    `build` names the digests of the package files and environment that built the
+    release.
     """
     unsplit = unsplit or {}
+    unspread = unspread or {}
     methods = spec.methods
+    by_outflows = spec.attribution == "outflows"
+    # Attribution by contributions counts core contributions disbursed. Attribution by
+    # outflows counts the institutions' outflows.
+    flows = {
+        flow: text.format(
+            attributed=""
+            if by_outflows
+            else "Attributed finance counts core contributions disbursed. "
+        )
+        for flow, text in _FLOWS.items()
+    }
     heading = f"Release {release}."
     if build is not None:
         heading += (
@@ -738,6 +838,13 @@ def explain(
                 f"Channels {', '.join(map(str, channels))}: the climate share has no "
                 "split by objective, so their attributed value sits in unsplit."
             )
+        if channels := unspread.get(label(method)):
+            lines.append(
+                f"Channels {', '.join(map(str, channels))}: some attributed value "
+                "stays at no recipient, since the package maps no agency to the "
+                "channel or the agency has no climate outflows that year to spread "
+                "it over; release.quality().attribution reports it as unspread_usd."
+            )
     if any(method in OXFAM.methods for method in methods):
         lines.append(OXFAM_CAVEAT)
     if len(methods) > 1:
@@ -747,10 +854,14 @@ def explain(
         )
     if unmeasured:
         lines.append(_unmeasured_line(unmeasured))
-    lines.append(_VIEWS[spec.view])
-    if spec.view == "provider":
-        lines.extend(_coverage(methods, queried=spec.years, years=years or {}))
-    lines.append(_FLOWS[spec.flow])
+    if by_outflows:
+        lines.append(_OUTFLOW_VIEW)
+        lines.extend(_outflow_lines(outflows))
+    else:
+        lines.append(_VIEWS[spec.view])
+        if spec.view == "provider":
+            lines.extend(_coverage(methods, queried=spec.years, years=years or {}))
+    lines.append(flows[spec.flow])
     if spec.flow in NET_FLOWS:
         lines.append(_REPAYMENTS)
         if any(method.coefficients != "fixed" for method in methods):
@@ -759,14 +870,18 @@ def explain(
                 "coefficients of the year it is repaid, not of the year its loan "
                 "disbursed."
             )
-        if spec.view == "provider" and any(m.eu == "channel" for m in methods):
+        if (
+            spec.view == "provider"
+            and not by_outflows
+            and any(m.eu == "channel" for m in methods)
+        ):
             lines.append(
                 "An EU Institutions repayment scales by the part of EU money no "
                 "queried member's attribution counts in the year it is repaid, as "
                 "its coefficients do."
             )
         lines.append(
-            "Gross disbursements: " + _FLOWS["disbursements"].removeprefix("Flow: ")
+            "Gross disbursements: " + flows["disbursements"].removeprefix("Flow: ")
         )
     if spec.flow != "commitments":
         lines.append(_UNTRACED[spec.untraced])
@@ -788,20 +903,28 @@ def explain(
     ]
     if filters:
         lines.append(f"Filtered to {'; '.join(filters)}.")
-    if spec.view == "provider":
+    if spec.view == "provider" and not by_outflows:
         lines.append(
             "Attributed rows carry share_source: computed shares are measured on the "
             "agency's own commitments, held shares repeat its last share measured on "
             "enough commitments, and oecd shares are the OECD's imputed share, which "
             "OECD always uses and ONE uses where it has no share of its own."
         )
-    if spec.recipients is not None and spec.view == "provider":
-        lines.append("Attributed finance has no recipient, so it drops out.")
+    if spec.recipients is not None and spec.view == "provider" and not by_outflows:
+        lines.append(
+            "Attributed finance counts at the recipients its agencies' outflows "
+            "reach; attributed value left at no recipient drops out."
+        )
     if spec.oda_only:
+        attributed = (
+            "the institutions' outflows count where they are ODA"
+            if by_outflows
+            else "core contributions count as ODA"
+        )
         lines.append(
             f"ODA only: commitments of flow category {ODA_FLOW_CATEGORY} and "
             f"disbursements of flow codes {_listing(ODA_FLOW_CODES)}; rows without "
-            "either drop out, and core contributions count as ODA."
+            f"either drop out, and {attributed}."
         )
     prices = "current prices" if spec.prices == "current" else f"{spec.prices} prices"
     source = (
@@ -817,7 +940,13 @@ def explain(
             "recipient and Bi_Multi code, every flow code included. The rows and the "
             f"modelled table hold amounts in {units}."
         )
-        if spec.view == "provider":
+        if by_outflows:
+            lines.append(
+                "Totals leave out the flows of the institutions outflow_shares lists, "
+                "as their own rows leave, and hold EU Institutions' other flows in "
+                "full."
+            )
+        elif spec.view == "provider":
             lines.append(
                 "EU Institutions' totals hold the same rows as their amounts, at the "
                 "same scaling: the EIB's flows leave them where EU Institutions count "
@@ -1033,8 +1162,73 @@ _VIEWS = {
     "provider": f"Provider view: bilateral flows (Bi_Multi {_listing(BILATERAL)}) "
     "plus each provider's core contributions times the agency's climate share; "
     f"code {CORE_CONTRIBUTION} and code {MULTILATERAL_OUTFLOW} rows are left out. "
-    "It answers a provider's total.",
+    "Each attributed contribution spreads over the recipients and purposes of its "
+    "agency's climate outflows in the same year and gross flow, each objective "
+    "over that objective's outflows, and via_provider_code names the agency. It "
+    "answers a provider's total.",
 }
+_OUTFLOW_VIEW = (
+    f"Provider view, attribution='outflows': bilateral flows (Bi_Multi "
+    f"{_listing(BILATERAL)}) plus the climate outflows of each institution the "
+    "OECD's Table 8 lists (outflow_shares) times the share the table attributes to "
+    "developed countries in the year. An institution's share splits among the "
+    "developed countries (developed_providers) by their core contributions to it, "
+    "pooled from the release's first year to the row's year, and its rows sit at the "
+    "recipients and purposes its outflows reach, with Bi_Multi "
+    f"{CORE_CONTRIBUTION}, the institution in via_provider_code, the table's share "
+    "in outflow_share and the country's part of it in donor_share. The EIB, an "
+    "agency of EU Institutions, keeps its share as theirs, and EU Institutions' own "
+    "rows count in full whatever the method's EU setting. The listed institutions' "
+    f"own rows and code {MULTILATERAL_OUTFLOW} rows are left out, and a multilateral "
+    "the table does not list attributes nothing. Rows with no provider hold the "
+    "share of an institution no developed country had contributed to by then. It "
+    "answers a developed country's total on the OECD's terms."
+)
+
+
+def _outflow_lines(outflows: OutflowGaps | None) -> list[str]:
+    """The sentences naming what attribution by outflows leaves unattributed or out."""
+    if outflows is None:
+        return []
+
+    def named(years: Mapping[int, Sequence[int]]) -> str:
+        return _listing(
+            [
+                f"{_provider_text(code)} in {year_runs(held)}"
+                for code, held in years.items()
+            ]
+        )
+
+    lines = []
+    if outflows.unattributed:
+        lines.append(
+            "Developed countries, unattributed: the rows with no provider hold the "
+            f"share of {named(outflows.unattributed)}, which no developed country had "
+            "contributed to by then."
+        )
+    if outflows.unshared:
+        lines.append(
+            f"Table 8 gives no share for {named(outflows.unshared)}, so their climate "
+            "outflows attribute nothing then."
+        )
+    if outflows.uncovered:
+        lines.append(
+            "Table 8 gives no institution a share in "
+            f"{year_runs(outflows.uncovered)}, so those years hold bilateral flows "
+            "alone."
+        )
+    return lines
+
+
+def _provider_text(code: int) -> str:
+    """A provider's listing name and code, or the code alone for one the listings
+    lack."""
+    try:
+        return f"{name_of(code, kind='providers')} ({code})"
+    except KeyError:
+        return f"provider {code}"
+
+
 _FLOWS = {
     "commitments": "Flow: commitments at face value; low and high equal value.",
     "disbursements": "Flow: disbursements allocated to climate commitments, weighted "
@@ -1045,7 +1239,7 @@ _FLOWS = {
     "or the record the row was cut from), and bank-ledger and IATI fills in full, "
     "since they match on the publisher's own id; high counts every linked "
     "disbursement and the untraced disbursement. "
-    "Attributed finance counts core contributions disbursed. The modelled table "
+    "{attributed}The modelled table "
     "holds a disbursement range for commitments whose disbursements no source "
     "reports.",
     "grant_equivalent": "Flow: grant equivalent of disbursements, shared across the "
@@ -1241,7 +1435,7 @@ def _provider_values(result: Result) -> pl.LazyFrame:
     totals = result._totals.group_by(keys).agg(ordered_sum(pl.col("total")))
     return values.join(
         totals, on=keys, how="left", nulls_equal=True, validate="1:1"
-    ).select(*keys, value=pl.col("value") / pl.col("total"))
+    ).select(*keys, value=_share(pl.col("value"), pl.col("total")))
 
 
 def _result_names(results: Sequence[Result]) -> list[str]:
@@ -1279,6 +1473,8 @@ def _field_text(field: str, value: object) -> str:
             return f"{value} prices"
         case "view", _:
             return f"{value} view"
+        case "attribution", _:
+            return f"attribution by {value}"
         case (("providers" | "recipients" | "years"), None):
             return f"all {field}"
         case "providers", tuple():
@@ -1296,6 +1492,11 @@ def _title(spec: Spec, *, release: str) -> str:
         label(spec.method),
         spec.flow,
         _field_text("view", spec.view),
+        *(
+            [_field_text("attribution", spec.attribution)]
+            if spec.attribution == "outflows"
+            else []
+        ),
         *(
             _field_text(field, getattr(spec, field))
             for field in ("providers", "recipients", "years")

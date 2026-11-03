@@ -20,7 +20,7 @@ import polars as pl
 import pyarrow as pa
 import pytest
 from make_fixture import DEU, ESP, FIXTURE_DIR, FRA, GEF, JPN, LEDGER_RECORD, NOR
-from polars.testing import assert_frame_equal
+from polars.testing import assert_frame_equal, assert_series_equal
 from releases import Edit, copy_release
 
 import climate_finance as cf
@@ -51,7 +51,14 @@ from climate_finance.schema import (
     ReleaseManifest,
     release_invariants,
 )
-from climate_finance.spec import Flow, Measure, Spec, SpecInputs, View
+from climate_finance.spec import (
+    Attribution,
+    Flow,
+    Measure,
+    Spec,
+    SpecInputs,
+    View,
+)
 from climate_finance.sums import ordered_sum
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
@@ -240,6 +247,7 @@ def test_code_2_rows_leave_every_total_unchanged(
         Spec(method=cf.methods.ONE.replace(eu="provider"), view="provider"),
         Spec(view="provider", providers=(5,), measure="share_of_total"),
         Spec(providers=(5, Agency(provider=918, agency=3)), recipients=(248,)),
+        Spec(view="provider", attribution="outflows", method=RANGE),
     ],
 )
 def test_a_spec_round_trips_through_json_and_reruns_identically(spec: Spec) -> None:
@@ -284,6 +292,10 @@ def test_a_spec_holds_sorted_codes_and_agencies_whatever_names_them() -> None:
         (
             Spec(method=ONE.replace(significant=0.5)),
             f"Spec(method={ONE.replace(significant=0.5)!r})",
+        ),
+        (
+            Spec(view="provider", attribution="outflows"),
+            "Spec(view='provider', attribution='outflows')",
         ),
     ],
 )
@@ -390,6 +402,7 @@ def test_spending_takes_keywords_only_and_run_reruns_a_spec() -> None:
             {"flow": "net_transfers", "method": ONE.replace(relevance="jev")},
             "relevance='jev' takes a gross flow",
         ),
+        ({"attribution": "outflows"}, "attribution='outflows' takes view='provider'"),
     ],
 )
 def test_spec_restates_every_refusal_as_one_package_error(
@@ -703,9 +716,187 @@ def test_the_provider_view_attributes_core_contributions_of_its_flow(
         SNAP.table("core_contributions").filter(pl.col("flow") == flow).collect()
     )
 
-    assert sorted(rows["amount"]) == sorted(contributions["contribution_usd"])
+    # Each contribution spreads over its agency's outflows, and its rows sum to it
+    # and to its value at the agency's share.
+    per_contribution = rows.group_by("provider_code", "channel_code", "year").agg(
+        pl.col("amount").sum(),
+        value=pl.col("value").sum(),
+        shared=(pl.col("amount") * pl.col("climate_share")).sum(),
+    )
+    assert sorted(per_contribution["amount"]) == pytest.approx(
+        sorted(contributions["contribution_usd"]), rel=1e-12
+    )
+    assert per_contribution["value"].to_list() == pytest.approx(
+        per_contribution["shared"].to_list(), rel=1e-12
+    )
     assert set(rows["bi_multi"]) == {2}
-    assert rows["recipient_code"].is_null().all()
+    assert rows["recipient_code"].is_not_null().any()
+    assert_series_equal(
+        rows["recipient_code"].is_null(),
+        rows["via_provider_code"].is_null(),
+        check_names=False,
+    )
+
+
+def _ida_2022_parts(release: Release) -> pl.DataFrame:
+    """IDA's 2022 climate outflows under OECD by recipient, its own recipient-view
+    rows: IDA-1 to Kenya (248) and IDA-2 to Bangladesh (666), with no
+    cross-cutting value."""
+    return (
+        release.spending(providers=905, years=2022, method=OECD)
+        .table.select(
+            "recipient_code", "adaptation", "mitigation", "cross_cutting", "value"
+        )
+        .sort("recipient_code")
+    )
+
+
+def _spread_parts(release: Release) -> pl.DataFrame:
+    """Germany's 2022 contribution to IDA (44002) under OECD, by recipient."""
+    return (
+        release.spending(view="provider", providers=5, years=2022, method=OECD)
+        .rows(origin="attribution")
+        .select(
+            "via_provider_code",
+            "recipient_code",
+            "purpose_code",
+            "adaptation",
+            "mitigation",
+            "cross_cutting",
+        )
+        .sort("recipient_code")
+    )
+
+
+def test_attribution_spreads_each_objective_as_its_agency_spends_it() -> None:
+    outflows = _ida_2022_parts(SNAP)
+    spread = _spread_parts(SNAP)
+
+    assert spread["recipient_code"].to_list() == [248, 666]
+    assert set(spread["via_provider_code"]) == {905}
+    assert set(spread["purpose_code"]) == {41010}
+    # IDA spends nothing cross-cutting, so that part spreads as its climate value.
+    assert outflows["cross_cutting"].sum() == 0
+    for part, spent in [
+        ("adaptation", "adaptation"),
+        ("mitigation", "mitigation"),
+        ("cross_cutting", "value"),
+    ]:
+        assert (spread[part] / spread[part].sum()).to_list() == pytest.approx(
+            (outflows[spent] / outflows[spent].sum()).to_list(), rel=1e-12
+        )
+    # 60m at the OECD's IDA shares of 0.20, 0.25 and 0.05.
+    assert spread.select("adaptation", "mitigation", "cross_cutting").sum().row(
+        0
+    ) == pytest.approx((60e6 * 0.20, 60e6 * 0.25, 60e6 * 0.05), rel=1e-12)
+
+
+def _adaptation_only_ida_2(frame: pl.DataFrame) -> pl.DataFrame:
+    # IDA-2, IDA's 2022 commitment to Bangladesh, counts adaptation alone.
+    ida_2 = pl.col("row_id") == "IDA-2"
+    return frame.with_columns(
+        adaptation_usd=pl.when(ida_2)
+        .then(pl.col("climate_usd"))
+        .otherwise(pl.col("adaptation_usd")),
+        mitigation_usd=pl.when(ida_2).then(0.0).otherwise(pl.col("mitigation_usd")),
+        overlap_usd=pl.when(ida_2).then(0.0).otherwise(pl.col("overlap_usd")),
+    )
+
+
+def test_an_adaptation_only_cell_receives_no_mitigation(tmp_path: Path) -> None:
+    release = cf.load(
+        path=copy_release(
+            tmp_path / "release", edits={"commitments": _adaptation_only_ida_2}
+        )
+    )
+
+    spread = _spread_parts(release)
+
+    bangladesh = spread.filter(pl.col("recipient_code") == 666)
+    assert bangladesh["adaptation"].item() > 0
+    assert bangladesh["mitigation"].item() == 0
+    kenya = spread.filter(pl.col("recipient_code") == 248)
+    assert kenya["mitigation"].item() == pytest.approx(60e6 * 0.25, rel=1e-12)
+
+
+def _unpooled_contribution(release: Path) -> Path:
+    """`release` with Germany giving 10m in 2021 to the Montreal Protocol fund
+    (47078), which no providers.toml entry maps to an agency, at an OECD climate
+    share of 0.5."""
+
+    def contributed(frame: pl.DataFrame) -> pl.DataFrame:
+        row = {
+            "provider_code": 5, "channel_code": 47078, "year": 2021,
+            "flow": "disbursements", "contribution_usd": 10e6,
+        }  # fmt: skip
+        return pl.concat([frame, pl.DataFrame([row], schema=frame.schema)])
+
+    def shared(frame: pl.DataFrame) -> pl.DataFrame:
+        row = {
+            "channel_code": 47078, "year": 2021, "objective": "climate",
+            "share": 0.5, "source": "oecd",
+        }  # fmt: skip
+        return pl.concat([frame, pl.DataFrame([row], schema=frame.schema)])
+
+    return copy_release(
+        release, edits={"core_contributions": contributed, "agency_shares": shared}
+    )
+
+
+@pytest.mark.parametrize(
+    ("provider", "channel", "year", "value"),
+    [
+        # The Montreal Protocol fund has no agency in providers.toml.
+        (5, 47078, 2021, 10e6 * 0.5),
+        # France's 2020 contribution to AfDB, which disburses nothing in 2020.
+        (4, 46002, 2020, 25e6 * 0.35),
+    ],
+    ids=["channel_without_agency", "agency_without_outflows"],
+)
+def test_attribution_with_no_outflows_to_spread_over_stays_at_no_recipient(
+    tmp_path: Path, provider: int, channel: int, year: int, value: float
+) -> None:
+    release = cf.load(path=_unpooled_contribution(tmp_path / "release"))
+
+    result = release.spending(
+        view="provider", providers=provider, years=year, method=OECD
+    )
+
+    rows = result.rows(origin="attribution", channel_code=channel)
+    assert rows.height == 1
+    assert rows.select("recipient_code", "purpose_code", "via_provider_code").row(
+        0
+    ) == (None, None, None)
+    assert rows["value"].item() == pytest.approx(value)
+    assert f"Channels {channel}: some attributed value stays at no recipient" in (
+        result.explain()
+    )
+    attribution = release.quality(providers=(provider,), method=OECD).attribution
+    assert attribution.filter(flow="disbursements", year=year)[
+        "unspread_usd"
+    ].item() == pytest.approx(value)
+
+
+@pytest.mark.parametrize("method", [ONE, OECD])
+@pytest.mark.parametrize("flow", ["disbursements", "commitments"])
+def test_single_recipient_provider_views_add_up_to_the_whole(
+    method: Method, flow: Flow
+) -> None:
+    whole = SNAP.spending(view="provider", flow=flow, method=method).rows(
+        origin="attribution"
+    )
+    recipients = whole["recipient_code"].drop_nulls().unique().to_list()
+    assert len(recipients) > 1
+
+    parts = [
+        SNAP.spending(view="provider", flow=flow, method=method, recipients=recipient)
+        .rows(origin="attribution")["value"]
+        .sum()
+        for recipient in recipients
+    ]
+    unspread = whole.filter(pl.col("recipient_code").is_null())["value"].sum()
+
+    assert sum(parts) + unspread == pytest.approx(whole["value"].sum(), rel=1e-12)
 
 
 def _with_top_channel_remainders(frame: pl.DataFrame) -> pl.DataFrame:
@@ -809,9 +1000,8 @@ def test_a_climate_only_share_attributes_value_as_unsplit() -> None:
     table = result.table.filter(oecd)
     assert table.select(columns).row(0) == expected
     assert table.select("range_low", "range_high").row(0) == (0.0, expected[6])
-    # France's 2020 code 2 flows total 1.5 times its contribution.
-    share = result.share_of_total().table.filter(oecd)["value"].item()
-    assert share == pytest.approx(0.35 / 1.5)
+    # An attributed row has no CRS total of its own, even at no recipient.
+    assert result.share_of_total().table.filter(oecd)["value"].item() is None
     assert "Channels 46002: the climate share has no split" in result.explain()
     assert "value sits in unsplit" in result.explain()
 
@@ -955,15 +1145,18 @@ def test_a_table_says_what_it_measures_after_a_concat() -> None:
     spec = Spec(providers=5, currency="EUR", prices=2022, view="provider")
     tables = [SNAP.run(spec.replace(flow=flow)).table for flow in FLOWS]
     shares = SNAP.run(spec).share_of_total().table
+    outflows = SNAP.run(spec.replace(attribution="outflows")).table
 
-    stacked = pl.concat([*tables, shares])
+    stacked = pl.concat([*tables, shares, outflows])
 
+    provider = ("provider", "contributions", "EUR", "2022")
     assert stacked.select(BASIS).unique(maintain_order=True).rows() == [
-        *((flow, "provider", "EUR", "2022", "amount") for flow in FLOWS),
-        ("disbursements", "provider", "EUR", "2022", "share_of_total"),
+        *((flow, *provider, "amount") for flow in FLOWS),
+        ("disbursements", *provider, "share_of_total"),
+        ("disbursements", "provider", "outflows", "EUR", "2022", "amount"),
     ]
     assert SNAP.spending().table.select(BASIS).unique().rows() == [
-        ("disbursements", "recipient", "USD", "current", "amount")
+        ("disbursements", "recipient", "contributions", "USD", "current", "amount")
     ]
 
 
@@ -1199,6 +1392,54 @@ def test_oda_only_counts_disbursements_by_flow_code_and_fills_by_category() -> N
     assert fills["record_id"].to_list() == [LEDGER_RECORD]
     assert fills["flow_category"].to_list() == [10]
     assert result.modelled.is_empty()
+
+
+_FLOW_AND_FINANCE = ("flow_category", "finance_t")
+
+
+def test_rows_carry_the_flow_category_and_type_of_finance_of_their_own_row(
+    tmp_path: Path,
+) -> None:
+    # JPN-1's records are other official flows in equity, where its commitment is an
+    # ODA loan, so a disbursement row shows its record's values.
+    jpn = pl.col("row_id") == "JPN-1"
+
+    def disbursements(frame: pl.DataFrame) -> pl.DataFrame:
+        return frame.with_columns(
+            flow_category=pl.when(jpn).then(21).otherwise(pl.col("flow_category")),
+            finance_t=pl.when(jpn).then(510).otherwise(pl.col("finance_t")),
+        )
+
+    release = cf.load(
+        path=copy_release(tmp_path / "release", edits={"disbursements": disbursements})
+    )
+    committed, spent = (
+        release.spending(flow=flow).rows() for flow in ("commitments", "disbursements")
+    )
+    rows = {
+        "commitments": committed.filter(pl.col("origin") == "commitment"),
+        "disbursements": spent.filter(pl.col("origin") == "disbursement"),
+        "untraced": spent.filter(pl.col("origin") == "untraced"),
+    }
+    keys = {
+        "commitments": ["row_id"],
+        "disbursements": ["row_id", "record_id", "year"],
+        "untraced": ["record_id"],
+    }
+
+    for table, key in keys.items():
+        held = release.table(table).select(*key, *_FLOW_AND_FINANCE).collect()
+        joined = rows[table].join(
+            held, on=key, how="left", validate="m:1", suffix="_held"
+        )
+        assert not joined.is_empty(), table
+        for column in _FLOW_AND_FINANCE:
+            assert joined[column].equals(joined[f"{column}_held"]), (table, column)
+    traced = rows["disbursements"]
+    assert set(traced.filter(jpn).select(*_FLOW_AND_FINANCE).rows()) == {(21, 510)}
+    # A bank-ledger fill shows its commitment's, AFDB-1's.
+    fill = traced.filter(pl.col("record_id") == LEDGER_RECORD)
+    assert fill.select(*_FLOW_AND_FINANCE).rows() == [(10, 421)]
 
 
 def _publish_deu_2_at_40_percent(frame: pl.DataFrame) -> pl.DataFrame:
@@ -1594,12 +1835,8 @@ def test_share_of_total_divides_each_key_by_its_total_flows() -> None:
     }
     # Kenya: a principal-marked disbursement over four times its amount in all flows.
     assert by_key[(248, 1)] == pytest.approx(0.25)
-    # Attribution, no recipient: 60m to IDA at a 0.36 ONE climate share, over every
-    # code 2 disbursement (DEU-3's 2021 record of 60m * 0.95 / 3 times four, plus
-    # 1.5 times the 60m contribution).
-    assert by_key[(None, 2)] == pytest.approx(
-        60e6 * 0.36 / (4 * 60e6 * 0.95 / 3 + 1.5 * 60e6)
-    )
+    # Attribution spreads to Kenya, where no CRS flow of Germany's holds it.
+    assert by_key[(248, 2)] is None
     assert_frame_equal(
         shares.drop(*AMOUNTS, "measure"), result.table.drop(*AMOUNTS, "measure")
     )
@@ -1683,19 +1920,36 @@ def test_a_combined_share_counts_keys_without_a_climate_row() -> None:
     )
 
 
-def test_a_combined_share_by_recipient_counts_core_contributions_once() -> None:
+@pytest.mark.parametrize("attribution", ["contributions", "outflows"])
+def test_a_provider_view_combined_share_counts_core_contributions_once(
+    attribution: Attribution,
+) -> None:
+    result = SNAP.spending(
+        providers=DEU,
+        years=range(2021, 2025),
+        view="provider",
+        attribution=attribution,
+    )
+
+    [row] = result.combined_share().select("value", "total", "share").rows()
+
+    # `total_flows` holds Germany's core contributions at recipient 998 and in the
+    # totals of no recipient; the denominator counts them once.
+    germany = pl.col("provider_code") == DEU
+    core = _all_flows(germany, pl.col("bi_multi") == 2)
+    bilateral = _all_flows(germany, pl.col("bi_multi").is_in([1, 3, 7, 8]))
+    assert core > 0
+    assert bilateral > 0
+    value = result.table["value"].sum()
+    assert row == pytest.approx((value, bilateral + core, value / (bilateral + core)))
+
+
+def test_a_provider_view_combined_share_refuses_a_recipient_key() -> None:
+    # Attributed value sits at recipients where no CRS total of its provider does.
     result = SNAP.spending(years=range(2021, 2025), view="provider", method=RANGE)
 
-    combined = result.combined_share()
-    by_recipient = result.combined_share(by="recipient_code")
-
-    # `total_flows` files core contributions under recipient 998; they count once,
-    # in the group of no recipient that holds their attributed value.
-    assert 998 not in by_recipient["recipient_code"].to_list()
-    summed = by_recipient.group_by("method").agg(pl.col("total").sum())
-    assert dict(summed.iter_rows()) == pytest.approx(
-        dict(combined.select("method", "total").iter_rows())
-    )
+    with pytest.raises(InvalidInputError, match="recipient_code"):
+        result.combined_share(by="recipient_code")
 
 
 @pytest.mark.parametrize(
@@ -1720,7 +1974,17 @@ def test_a_combined_share_of_no_rows_is_null() -> None:
         result = SNAP.spending(years=2015)
 
     assert result.combined_share().rows() == [
-        ("ONE", "disbursements", "recipient", "USD", "current", 0.0, 0.0, None)
+        (
+            "ONE",
+            "disbursements",
+            "recipient",
+            "contributions",
+            "USD",
+            "current",
+            0.0,
+            0.0,
+            None,
+        )
     ]
 
 
@@ -1754,11 +2018,18 @@ def test_the_title_names_providers_agencies_recipients_and_year_runs() -> None:
     ) in repr(result).splitlines()[0]
 
 
-@pytest.mark.parametrize("inputs", [{"measure": "share_of_total"}, {"untraced": False}])
+@pytest.mark.parametrize(
+    "inputs",
+    [
+        {"measure": "share_of_total"},
+        {"untraced": False},
+        {"attribution": "outflows", "view": "provider"},
+    ],
+)
 def test_a_spec_serialises_only_the_later_fields_it_changes(
     inputs: SpecInputs,
 ) -> None:
-    [field] = inputs
+    field = next(iter(inputs))
     assert f'"{field}"' not in Spec(flow="commitments").model_dump_json()
     assert f'"{field}"' in Spec(**inputs).model_dump_json()
 
@@ -2059,6 +2330,263 @@ def eu_release(tmp_path_factory: pytest.TempPathFactory) -> Release:
         },
     )
     return cf.load(path=release)
+
+
+# Attribution by outflows: the institutions' own outflows at the OECD's Table 8 shares.
+OUTFLOWS: SpecInputs = {"view": "provider", "attribution": "outflows"}
+KOREA = 742
+
+
+def _recipient_value(
+    release: Release, provider: int, year: int, flow: Flow, *, oda_only: bool = False
+) -> float:
+    """`provider`'s own climate value in `year` in the recipient view."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", CoverageWarning)
+        result = release.spending(
+            providers=provider, years=year, flow=flow, oda_only=oda_only
+        )
+    return result.table["value"].sum()
+
+
+# AFDB-2, the AfDB's 2022 commitment, is an other official flow, which `oda_only`
+# leaves out of the AfDB's outflows.
+@pytest.mark.parametrize("oda_only", [False, True])
+@pytest.mark.parametrize("flow", [*FLOWS, "net_disbursements"])
+def test_outflows_attribute_each_institution_years_share_of_its_outflows(
+    flow: Flow, oda_only: bool
+) -> None:
+    shares = SNAP.table("outflow_shares").collect()
+    rows = SNAP.spending(**OUTFLOWS, flow=flow, oda_only=oda_only).rows(
+        origin="attribution"
+    )
+
+    assert set(rows["bi_multi"]) == {2}
+    assert rows["channel_code"].is_null().all()
+    assert rows["recipient_code"].is_not_null().all()
+    attributed = {
+        (provider, year): value
+        for provider, year, value in rows.group_by("via_provider_code", "year")
+        .agg(pl.col("value").sum())
+        .iter_rows()
+    }
+    expected = {
+        (provider, year): share
+        * _recipient_value(SNAP, provider, year, flow, oda_only=oda_only)
+        for provider, year, share in shares.select(
+            "provider_code", "year", "share"
+        ).iter_rows()
+    }
+    # The IFC has no outflows to attribute; the IDA and the AfDB have.
+    assert {provider for provider, _ in attributed} == {905, 913}
+    assert attributed.keys() <= expected.keys()
+    assert {key: attributed.get(key, 0.0) for key in expected} == pytest.approx(
+        expected, rel=1e-12
+    )
+    donors = rows.select("via_provider_code", "year", "provider_code", "donor_share")
+    summed = (
+        donors.unique()
+        .group_by("via_provider_code", "year")
+        .agg(pl.col("donor_share").sum())
+    )
+    assert summed["donor_share"].to_list() == pytest.approx([1.0] * summed.height)
+
+
+def _pooled_contributions(release: Path) -> Path:
+    """`release` with Norway giving the IDA nothing in 2021, and Korea, which is no
+    developed country, giving it 100m that year."""
+
+    def edited(frame: pl.DataFrame) -> pl.DataFrame:
+        norway_2021 = (pl.col("provider_code") == NOR) & (pl.col("year") == 2021)
+        korea = frame.filter(provider_code=DEU, year=2021).with_columns(
+            provider_code=pl.lit(KOREA, pl.Int32), contribution_usd=pl.lit(100e6)
+        )
+        return pl.concat([frame.filter(~norway_2021), korea])
+
+    return copy_release(release, edits={"core_contributions": edited})
+
+
+def test_outflows_split_a_share_by_developed_donors_contributions_to_date(
+    tmp_path: Path,
+) -> None:
+    release = cf.load(path=_pooled_contributions(tmp_path / "release"))
+
+    rows = release.spending(**OUTFLOWS).rows(
+        origin="attribution", via_provider_code=905
+    )
+
+    donors = rows.select("year", "provider_code", "donor_share").unique()
+    # Germany gives 60m in 2021 and 2022 and Norway 15m in 2022, so by 2022 Germany
+    # has given 120m of 135m.
+    assert {(year, code): share for year, code, share in donors.iter_rows()} == (
+        pytest.approx(
+            {(2021, DEU): 1.0, (2022, DEU): 120 / 135, (2022, NOR): 15 / 135}, rel=1e-12
+        )
+    )
+    with pytest.warns(CoverageWarning, match="Korea, which is not a developed country"):
+        korea = release.spending(**OUTFLOWS, providers=KOREA)
+    assert korea.rows().is_empty()
+
+
+def test_an_institution_year_without_a_developed_donor_keeps_its_share_unattributed(
+    tmp_path: Path,
+) -> None:
+    # France, the AfDB's only contributor, gives nothing.
+    release = cf.load(
+        path=copy_release(
+            tmp_path / "release",
+            edits={
+                "core_contributions": lambda frame: frame.filter(
+                    pl.col("provider_code") != FRA
+                )
+            },
+        )
+    )
+
+    result = release.spending(**OUTFLOWS)
+
+    rows = result.rows(origin="attribution", via_provider_code=913)
+    assert rows["provider_code"].is_null().all()
+    assert set(rows["donor_share"]) == {1.0}
+    assert rows["value"].sum() == pytest.approx(
+        sum(
+            0.612 * _recipient_value(release, 913, year, "disbursements")
+            for year in (2021, 2022)
+        ),
+        rel=1e-12,
+    )
+    unattributed = result.table.filter(pl.col("provider_code").is_null())
+    assert set(unattributed["bi_multi"]) == {2}
+    assert unattributed["value"].sum() == pytest.approx(rows["value"].sum(), rel=1e-12)
+    assert (
+        "Developed countries, unattributed: the rows with no provider hold the share "
+        "of African Development Bank (913) in 2021 to 2022"
+    ) in result.explain()
+    named = release.spending(**OUTFLOWS, providers=[DEU, NOR]).rows()
+    assert 913 not in named["via_provider_code"]
+
+
+def _without_afdb(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.filter(pl.col("provider_code") != 913)
+
+
+def _without_afdb_2022(frame: pl.DataFrame) -> pl.DataFrame:
+    return frame.filter(~((pl.col("provider_code") == 913) & (pl.col("year") == 2022)))
+
+
+@pytest.mark.parametrize(
+    ("shares", "named"),
+    [(_without_afdb, False), (_without_afdb_2022, True)],
+    ids=["unlisted", "no_share_that_year"],
+)
+def test_a_multilateral_without_a_share_attributes_nothing(
+    tmp_path: Path, shares: Edit, named: bool
+) -> None:
+    release = cf.load(
+        path=copy_release(tmp_path / "release", edits={"outflow_shares": shares})
+    )
+
+    result = release.spending(**OUTFLOWS, years=2022)
+
+    assert result.rows(via_provider_code=913).is_empty()
+    assert result.rows(provider_code=913).is_empty()
+    assert result.rows(via_provider_code=905).height > 0
+    explained = "Table 8 gives no share for African Development Bank (913) in 2022"
+    assert (explained in result.explain()) is named
+
+
+def test_outflows_warn_and_attribute_nothing_in_a_year_without_a_share() -> None:
+    with pytest.warns(
+        CoverageWarning, match="attributes no institution's outflows in 2023"
+    ):
+        result = SNAP.spending(**OUTFLOWS, years=2023)
+
+    assert result.rows(origin="attribution").is_empty()
+    assert result.rows().height > 0
+    explained = result.explain()
+    assert "Table 8 gives no institution a share in 2023" in explained
+    assert "Provider view, attribution='outflows'" in explained
+    # The sentences of attribution by contributions stay out.
+    assert "share_source" not in explained
+    assert "core contributions disbursed" not in explained
+
+
+@pytest.fixture(scope="module")
+def eib_listed_release(tmp_path_factory: pytest.TempPathFactory) -> Release:
+    """The EU Institutions release of `eu_release`, with their CRS totals, the EIB
+    in `outflow_shares` at 1.0 in 2021 to 2023, and EU Institutions a developed
+    provider."""
+
+    def listed(frame: pl.DataFrame) -> pl.DataFrame:
+        rows = pl.DataFrame(
+            [
+                {
+                    "provider_code": EU_INSTITUTIONS,
+                    "agency_code": EIB_AGENCY,
+                    "year": year,
+                    "share": 1.0,
+                    "table_column": 2020,
+                    "source": "Fixture attribution table",
+                    "locator": "p. 24, 2020 column",
+                }
+                for year in (2021, 2022, 2023)
+            ]
+        ).select(frame.columns)
+        return pl.concat([frame, rows.cast(frame.schema)])
+
+    def developed(frame: pl.DataFrame) -> pl.DataFrame:
+        eu = frame.head(1).with_columns(provider_code=pl.lit(EU_INSTITUTIONS, pl.Int32))
+        return pl.concat([frame, eu])
+
+    release = copy_release(
+        tmp_path_factory.mktemp("eib") / "release",
+        edits={
+            "commitments": _with_eu_commitments,
+            "disbursements": _with_eu_commitments,
+            "total_flows": _with_eu_total_flows,
+            "outflow_shares": listed,
+            "developed_providers": developed,
+        },
+    )
+    return cf.load(path=release)
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+def test_outflows_count_the_eib_as_eu_institutions_and_their_own_rows_in_full(
+    eib_listed_release: Release, flow: Flow
+) -> None:
+    release = eib_listed_release
+
+    rows = release.spending(**OUTFLOWS, flow=flow).rows()
+
+    own = rows.filter(pl.col("origin") != "attribution", provider_code=EU_INSTITUTIONS)
+    eib = rows.filter(origin="attribution", via_provider_code=EU_INSTITUTIONS)
+    assert set(own["agency_code"]) == {1, 2}
+    assert set(eib.select("provider_code", "agency_code").rows()) == {
+        (EU_INSTITUTIONS, EIB_AGENCY)
+    }
+    recipient = release.spending(providers=EU_INSTITUTIONS, flow=flow).rows()
+    eib_own = pl.col("agency_code") == EIB_AGENCY
+    assert own["value"].sum() == pytest.approx(
+        recipient.filter(~eib_own)["value"].sum(), rel=1e-12
+    )
+    assert eib["value"].sum() == pytest.approx(
+        recipient.filter(eib_own)["value"].sum(), rel=1e-12
+    )
+
+
+def test_outflows_shares_of_total_leave_out_the_eibs_flows(
+    eib_listed_release: Release,
+) -> None:
+    spec = Spec(**OUTFLOWS, providers=EU_INSTITUTIONS, years=2022)
+
+    amounts = eib_listed_release.run(spec).table.filter(bi_multi=3)
+    shares = eib_listed_release.run(spec).share_of_total().table.filter(bi_multi=3)
+
+    # The EU budget's 100m and the EDF's 200m, without the EIB's 300m.
+    assert shares["value"].item() == pytest.approx(
+        amounts["value"].item() / (3 * EU_FLOW_USD), rel=1e-12
+    )
 
 
 def test_the_eu_constants_match_the_channels_the_build_maps_to_eu_institutions() -> (
@@ -2864,7 +3392,8 @@ COUNTED_BASES = ("commitment", "untraced")
 # The columns a disbursement copies from the repayment it stands for.
 _REPAYMENT_FIELDS = (
     "year", "provider_code", "agency_code", "recipient_code", "channel_code",
-    "bi_multi", "purpose_code", "flow_code", "psi_flag", "project_number", "title",
+    "bi_multi", "purpose_code", "flow_code", "finance_t", "psi_flag",
+    "project_number", "title",
 )  # fmt: skip
 
 
@@ -2916,6 +3445,8 @@ def _repayments_as_disbursements(flow: Flow) -> dict[str, Edit]:
         added = parts.filter(pl.col("basis") == "untraced").select(
             "record_id",
             *_REPAYMENT_FIELDS,
+            # A repayment row of an untraced part has no flow category.
+            flow_category=pl.lit(None, pl.Int32),
             rio_adaptation="inherited_rio_adaptation",
             rio_mitigation="inherited_rio_mitigation",
             untraced_usd="_repaid",

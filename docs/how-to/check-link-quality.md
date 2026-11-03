@@ -91,7 +91,7 @@ quality = release.quality(providers=["Germany", "Japan"])
 
     Where a provider's figure rests on estimated links, read its `model` row as well as the provider's row. The release gates that stratum on its own lower bound.
 
-5. Check what a provider view omits. For provider-view totals, `quality.eu_left_out` holds the value of EU Institutions agencies' own rows omitted from the total because members' contributions stand in for them. `quality.attribution` holds the value attributed through core contributions by share source.
+5. Check what a provider view omits. For provider-view totals, `quality.eu_left_out` holds the value of EU Institutions agencies' own rows omitted from the total because members' contributions stand in for them. `quality.attribution` holds the value attributed through core contributions by share source, and `unspread_usd` the part of it that stays at no recipient.
 
     ```python
     print(quality.eu_left_out.columns)

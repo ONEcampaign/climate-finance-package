@@ -14,7 +14,8 @@ climate share with no split by objective, core contributions for every flow,
 provider coefficients that change between years, split by agency, hold a
 both-significant coefficient or a case-by-case default, commitments reached through
 certain and estimated CRDF routes, untraced excess and unlinked records, and
-unallocated disbursements of each kind.
+unallocated disbursements of each kind, and outflow shares with the developed
+providers.
 Amounts are invented.
 
 Run `uv run python tests/make_fixture.py --from-release <dir> [out_dir]` to sample a
@@ -137,8 +138,11 @@ DISBURSED_SHARE = {
 # official flow (21). Records carry CRS flow codes.
 ODA_CATEGORY, OOF_CATEGORY = 10, 21
 OTHER_OFFICIAL = {"AFDB-2"}
-# A record's grant equivalent as a share of its disbursement, by flow code.
+# A record's grant equivalent as a share of its disbursement, and its type of
+# finance (a standard grant or a standard loan), by flow code. Both flow codes are
+# ODA, of flow category 10. A commitment carries the type of finance of its records.
 GRANT_EQUIV_RATIO = {11: 1.0, 13: 0.6}
+FINANCE_TYPE = {11: 110, 13: 421}
 
 # The records a certain link carries, which count in the low bound. Every other
 # record's link is estimated. Each takes the next certain method, and the rest take
@@ -239,6 +243,19 @@ PROVIDER_COEFFICIENTS = (
     (FRA, 1, None, None, None, None, None, True, SURVEY, "p. 9, note f"),
     (NOR, None, None, None, 0.3, None, None, True, SURVEY, "p. 5"),
 )
+# (provider, agency, year, share, table_column, source, locator). The 2020 column of
+# the attribution table covers the fixture's years.
+ATTRIBUTION = "Fixture attribution table"
+OUTFLOW_SHARES = (
+    (IDA, None, 2021, 0.959, 2020, ATTRIBUTION, "p. 24, 2020 column"),
+    (IDA, None, 2022, 0.959, 2020, ATTRIBUTION, "p. 24, 2020 column"),
+    (AFDB, None, 2021, 0.612, 2020, ATTRIBUTION, "p. 24, 2020 column"),
+    (AFDB, None, 2022, 0.612, 2020, ATTRIBUTION, "p. 24, 2020 column"),
+    (IFC, None, 2021, 0.654, 2020, ATTRIBUTION, "p. 24, 2020 column"),
+    (IFC, None, 2022, 0.654, 2020, ATTRIBUTION, "p. 24, 2020 column"),
+)
+# The fixture's developed providers: its four bilateral ones.
+DEVELOPED_PROVIDERS = (DEU, FRA, NOR, JPN)
 # (provider, agency, marker, coefficient, source, reason, components, linked USD
 #  millions, components dropped above a share of 1.1 and their CRS USD millions, at
 #  twice that in BTR USD). France's agency 1 takes its BTR's significant share and the
@@ -423,7 +440,8 @@ def _allocation(
     Its high bound is `allocated`. The row counts in
     the low bound when a `CERTAIN_METHODS` link carried it, and a bank-ledger fill
     counts in full. A fill has no CRS record, so it carries its commitment's facts,
-    no flow code and no record markers, as `release.fill_disbursements` builds it.
+    flow category and type of finance included, no flow code and no record markers,
+    as `release.fill_disbursements` builds it.
     """
     certain = link_method is None or link_method in CERTAIN_METHODS
     fill = disbursement_source != "crs"
@@ -451,6 +469,10 @@ def _allocation(
         else RECORD_BI_MULTI.get(str(commitment["row_id"]), commitment["bi_multi"]),
         "purpose_code": commitment["purpose_code"] if fill else 41010,
         "flow_code": None if fill else _flow_code(commitment),
+        "flow_category": commitment["flow_category"] if fill else ODA_CATEGORY,
+        "finance_t": commitment["finance_t"]
+        if fill
+        else FINANCE_TYPE[_flow_code(commitment)],
         "psi_flag": None,
         "project_number": commitment["project_number"]
         if fill
@@ -485,6 +507,8 @@ UNTRACED_FACTS = (
     "bi_multi",
     "purpose_code",
     "flow_code",
+    "flow_category",
+    "finance_t",
     "psi_flag",
     "project_number",
     "title",
@@ -572,6 +596,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
             "repeat_of": None,
             "parent_row_id": None,
         }
+        commitment["finance_t"] = FINANCE_TYPE[_flow_code(commitment)]
         commitments[row_id] = commitment
         # Each disbursing commitment draws three records of its own, one per year
         # from the commitment year, so every link method appears across the fixture.
@@ -653,6 +678,8 @@ def build_tables() -> dict[str, pl.DataFrame]:
                 "bi_multi": 1,
                 "purpose_code": 41010,
                 "flow_code": flow_code,
+                "flow_category": ODA_CATEGORY,
+                "finance_t": FINANCE_TYPE[flow_code],
                 "psi_flag": None,
                 "project_number": f"PN-{record_id}",
                 "title": f"Climate project {record_id}",
@@ -777,6 +804,14 @@ def build_tables() -> dict[str, pl.DataFrame]:
         "provider_coefficients": [
             dict(zip(RELEASE_TABLES["provider_coefficients"].columns, row, strict=True))
             for row in PROVIDER_COEFFICIENTS
+        ],
+        "outflow_shares": [
+            dict(zip(RELEASE_TABLES["outflow_shares"].columns, row, strict=True))
+            for row in OUTFLOW_SHARES
+        ],
+        "developed_providers": [
+            {"provider_code": provider, "source": ATTRIBUTION, "locator": "p. 3"}
+            for provider in DEVELOPED_PROVIDERS
         ],
         "btr_coefficients": [
             {

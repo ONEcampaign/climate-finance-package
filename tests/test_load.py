@@ -64,11 +64,11 @@ def test_a_release_prints_its_name_flow_years_and_tables(tmp_path: Path) -> None
     # The example release's name marks its figures as invented.
     assert repr(cf.load_example()) == (
         "Release('synthetic-example', synthetic figures): commitments 2021 to 2022, "
-        "disbursements 2021 to 2024; 21 tables"
+        "disbursements 2021 to 2024; 23 tables"
     )
     assert repr(cf.load(path=published)) == (
         "Release('2026a'): commitments 2021 to 2022, disbursements 2021 to 2024; "
-        "19 tables, withholding btr, btr_links"
+        "21 tables, withholding btr, btr_links"
     )
 
 
@@ -309,23 +309,26 @@ def test_an_index_entry_of_a_newer_data_format_is_refused_before_downloading(
 def test_a_release_of_an_older_format_serves_what_it_holds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Format 0 is test-local: format 1 less `reflows`, with memorandum rows.
+    # Format 0 is test-local: format 1 less `reflows` and the Table 8 tables, with
+    # memorandum rows.
+    later = {"reflows", "outflow_shares", "developed_providers"}
     monkeypatch.setattr(
         release_module,
         "FORMAT_TABLES",
-        {0: frozenset(RELEASE_TABLES) - {"reflows"}, 1: frozenset(RELEASE_TABLES)},
+        {0: frozenset(RELEASE_TABLES) - later, 1: frozenset(RELEASE_TABLES)},
     )
     monkeypatch.setattr(query, "MEMORANDUM_FORMAT", 0)
     path = copy_release(tmp_path / "release") / "release.json"
     manifest = ReleaseManifest.model_validate_json(path.read_text(encoding="utf-8"))
-    tables = {name: e for name, e in manifest.tables.items() if name != "reflows"}
+    tables = {name: e for name, e in manifest.tables.items() if name not in later}
     path.write_text(
         manifest.model_copy(
             update={"data_format": 0, "tables": tables}
         ).model_dump_json(),
         encoding="utf-8",
     )
-    (path.parent / "reflows.parquet").unlink()
+    for name in later:
+        (path.parent / f"{name}.parquet").unlink()
 
     release = cf.load(path=path.parent)
 
@@ -337,6 +340,7 @@ def test_a_release_of_an_older_format_serves_what_it_holds(
         release.spending(flow="net_disbursements", years=2022)
     for raised in (by_table, by_query):
         assert (raised.value.table, raised.value.data_format) == ("reflows", 0)
+    assert release.spending(view="provider").table.height > 0
 
 
 def test_a_release_before_memorandum_rows_reads_its_tables_and_refuses_queries(
@@ -366,6 +370,26 @@ def test_a_release_before_memorandum_rows_reads_its_tables_and_refuses_queries(
         with pytest.raises(FormatQueryError) as raised:
             run()
         assert (raised.value.data_format, raised.value.needed) == (2, 3), name
+
+
+def test_a_release_lacking_a_schema_column_is_refused_naming_it(
+    tmp_path: Path,
+) -> None:
+    # A pack built before `finance_t` joined the schema would query with nulls.
+    cf.load(path=copy_release(tmp_path / "control"))
+    no_finance_t: dict[str, Callable[[pl.DataFrame], pl.DataFrame]] = {
+        name: lambda frame: frame.drop("finance_t")
+        for name in ("disbursements", "untraced")
+    }
+    path = copy_release(tmp_path / "release", edits=no_finance_t)
+
+    with pytest.raises(ReleaseIntegrityError) as raised:
+        cf.load(path=path)
+
+    message = str(raised.value)
+    assert "disbursements: lacks columns ['finance_t']" in message
+    assert "untraced: lacks columns ['finance_t']" in message
+    assert "commitments:" not in message
 
 
 def test_table_refuses_names_outside_the_release_contract() -> None:

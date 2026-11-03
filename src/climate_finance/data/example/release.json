@@ -16,11 +16,11 @@
   },
   "tables": {
     "disbursements": {
-      "sha256": "b54c2d071bfce5119a71d4383109585c16a7e4cf1a371888aa6b111a3d32326e",
+      "sha256": "57be2e50744d4b5237c90f123de5a6e97abe6b6aadd03462a526b1ef6276c282",
       "rows": 36
     },
     "untraced": {
-      "sha256": "ee3f52d055dd0770f45df55e62d6eae22c4b872ff68a388691eb77bae5de9528",
+      "sha256": "a9e43b68b706fa3f7c0b21ff09bd165e3f5738c2fb7168c84b96f06a744b5151",
       "rows": 3
     },
     "objectives": {
@@ -46,6 +46,14 @@
     "provider_coefficients": {
       "sha256": "a3e937e2080e9656ea977f54823c27a67db2b484d21a3ba80fc3a42f1c031561",
       "rows": 6
+    },
+    "outflow_shares": {
+      "sha256": "65feb6f18ff718835b7d199821b866e1f8db624f25440d79b4963a3e93dff373",
+      "rows": 6
+    },
+    "developed_providers": {
+      "sha256": "212df177f749b889eab950b96318f5ce21a1002ca95fa6bc03d4efec6783dbe1",
+      "rows": 4
     },
     "btr_coefficients": {
       "sha256": "fc40e5c58425562c2df0400483ea1a13ea6496273354dad89cdb86a646fcf480",
@@ -76,7 +84,7 @@
       "rows": 275
     },
     "commitments": {
-      "sha256": "4d38895c0abf7e517a56d8d5a69095ff88600c8f4a0ffc45d7e2b55ee17a41c7",
+      "sha256": "3e84a875c0fa6b67bf035b22bc3090c794ac38322d30573d765ca260dfb9de0f",
       "rows": 14
     },
     "reflows": {

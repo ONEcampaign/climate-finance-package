@@ -328,11 +328,13 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
     )
     sources = json.loads(packed[f"climate-finance-{RELEASE}/sources.json"])
     # The fixture holds IFC's modelled range, so IFC's annual report is listed
-    # beside the fetched sources, and the BTR archive once, with the BTR note.
+    # beside the fetched sources and the OECD's attribution table, and the BTR archive
+    # once, with the BTR note.
     assert [(row["source"], row["licence"]) for row in sources] == [
         ("crdf_recipient", release.SOURCE_LICENCES["crdf"]),
         ("crs", release.SOURCE_LICENCES["crs"]),
         ("ledger_iati_44000", release.SOURCE_LICENCES["ledger_iati"]),
+        (release.ATTRIBUTION_SOURCE, release.SOURCE_LICENCES["oecd_attribution"]),
         (release.REPORTS_SOURCE, release.SOURCE_LICENCES[release.REPORTS_SOURCE]),
         (BTR_SOURCE, release.SOURCE_LICENCES["unfccc"]),
     ]
@@ -341,11 +343,13 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
         None,
         None,
         None,
+        None,
         release.BTR_WITHHELD_NOTE,
     ]
-    assert [sources[i]["version"] for i in (1, 4)] == ["fixture", "fixture"]
+    assert [sources[i]["version"] for i in (1, 5)] == ["fixture", "fixture"]
     assert sources[1]["urls"] == ["https://example.org/crs"]
-    assert [citation.split(",")[0] for citation in sources[3]["citations"]] == [
+    assert sources[3]["urls"] == ["https://doi.org/10.1787/ab5eb9ad-en"]
+    assert [citation.split(",")[0] for citation in sources[4]["citations"]] == [
         "IFC Annual Report 2022"
     ] * 2
 
