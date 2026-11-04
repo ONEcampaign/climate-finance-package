@@ -9,6 +9,7 @@ from climate_finance import methods
 EXPORTS = {
     "Agency",
     "Comparison",
+    "EurostatReconciliation",
     "Method",
     "Quality",
     "Reconciliation",

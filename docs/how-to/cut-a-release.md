@@ -66,13 +66,14 @@ tar --zstd -xf releases/climate-finance-2026a.tar.zst -C unpacked
 python -c "import climate_finance as cf; print(list(cf.load(path='unpacked/climate-finance-2026a').manifest.gates))"
 ```
 
-`load()` verifies every table's sha256 against `release.json`, and the command prints the nine gate names.
+`load()` verifies every table's sha256 against `release.json`, and the command prints the eleven gate names.
 
 ## Troubleshooting
 
 - `GateFailedError` on `withheld_rows` means a row from a withheld source reached `disbursements`. [How linking works](../explanation/how-linking-works.md) lists the withheld sources.
 - `BuildError: Sources without a licence` means a fetched source is missing from `SOURCE_LICENCES` in `climate_finance/build/release.py`. Add its licence terms before packing.
 - When the drift gate fails on a provider that changed for a known reason, add a `[[drift_causes]]` entry to `build.toml` with the release, provider code, year, and cause.
+- When the `eurostat_reconciliation` gate fails on a line-year over tolerance, find the cause and add a `[[eurostat_gaps]]` entry to `build.toml` with the line's `geo`, the year, the gap in `gap_eur`, and the cause, or `"not traced"` until someone traces it. When it fails on a recorded gap that moved, update the entry's `gap_eur` and cause. When it fails on a stale entry, delete it.
 - `BuildError: release '2026a' is already published` means the index lists a pack of that name, which users may have cached. Cut the release again under a new name, such as `2026a.1`.
 
 ## Next

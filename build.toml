@@ -73,3 +73,163 @@ cache_dir = "data/embedding-cache"
 # provider_code = 4
 # year = 2023
 # cause = "France revised its 2023 CRS reporting"
+
+# Known gaps between Eurostat's sdg_13_50 lines and the release that the
+# eurostat_reconciliation gate allows, one entry per line and year, with the gap as
+# Eurostat's figure less the release's in EUR, measured on the 2026a-rc3 build.
+# "not traced" marks a gap whose cause nobody has traced yet.
+[[eurostat_gaps]]
+geo = "BE"
+year = 2022
+gap_eur = 130_212_063.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "BE"
+year = 2024
+gap_eur = -231_940_740.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "DE"
+year = 2020
+gap_eur = 1_119_903_229.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "DE"
+year = 2022
+gap_eur = -1_910_203_217.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "DE"
+year = 2023
+gap_eur = -3_739_646_100.0
+cause = "Germany's attributed disbursements to the IMF Resilience and Sustainability Trust (channel 43007), USD 2.73bn in 2023 and none in 2022 or 2024, which Germany's own figure leaves out"
+
+[[eurostat_gaps]]
+geo = "DE"
+year = 2024
+gap_eur = 1_619_600_308.0
+cause = "2024 commitments fall from 2023 by USD 1.07bn at KfW Bankengruppe, by USD 0.68bn at the Federal Ministry of Finance, which ends below USD 0.05bn, and by USD 0.17bn at the Federal Ministry for Economic Affairs and Energy"
+
+[[eurostat_gaps]]
+geo = "EIB"
+year = 2021
+gap_eur = 621_035_423.0
+cause = "the repeat rules in build/normalise/vintages.py mark 2 of the EIB's 2021 climate-marked CRDF rows, USD 0.63bn of climate value, as repeats of earlier commitments with the same project number and face value, which Eurostat counts again"
+
+[[eurostat_gaps]]
+geo = "EIB"
+year = 2022
+gap_eur = -1_179_254_881.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "EIB"
+year = 2023
+gap_eur = -384_767_754.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "EIB"
+year = 2024
+gap_eur = 1_797_522_050.0
+cause = "the repeat rules in build/normalise/vintages.py mark 29 of the EIB's 39 climate-marked 2024 CRDF rows as repeats of 2017-2023 commitments with the same project number and face value, which Eurostat counts again"
+
+[[eurostat_gaps]]
+geo = "ES"
+year = 2020
+gap_eur = 334_267_475.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "ES"
+year = 2021
+gap_eur = 523_509_049.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "ES"
+year = 2022
+gap_eur = 443_229_791.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "ES"
+year = 2023
+gap_eur = 1_105_567_661.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "ES"
+year = 2024
+gap_eur = 1_350_693_488.0
+cause = "other official flows without Rio markers (loans and guarantees for trains, a metro line and wind farms)"
+
+[[eurostat_gaps]]
+geo = "FR"
+year = 2021
+gap_eur = 795_061_701.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "FR"
+year = 2024
+gap_eur = 803_730_233.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "IT"
+year = 2022
+gap_eur = 540_743_053.0
+cause = "Italy's 2022 BTR holds EUR 500m of JETP loans to Viet Nam and Indonesia with no CRS record"
+
+[[eurostat_gaps]]
+geo = "IT"
+year = 2023
+gap_eur = 374_157_541.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "IT"
+year = 2024
+gap_eur = 566_683_488.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "NL"
+year = 2022
+gap_eur = -267_051_649.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "NL"
+year = 2023
+gap_eur = -162_620_723.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "SE"
+year = 2020
+gap_eur = -536_947_566.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "SE"
+year = 2021
+gap_eur = 180_804_922.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "SE"
+year = 2022
+gap_eur = 109_398_701.0
+cause = "not traced"
+
+[[eurostat_gaps]]
+geo = "SE"
+year = 2024
+gap_eur = 387_607_752.0
+cause = "not traced"

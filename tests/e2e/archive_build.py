@@ -30,7 +30,9 @@ from climate_finance.build.fetch import (
     held_years,
     resolve_years,
 )
+from climate_finance.build.readers.eurostat import FILE as EUROSTAT_FILE
 from climate_finance.build.readers.gcf import PROJECTS_FILE
+from climate_finance.build.sources import eurostat
 from climate_finance.build.stages import raw_dir
 from climate_finance.schema import RAW_MANIFEST, sha256_file
 
@@ -112,6 +114,11 @@ def seed_raw(release_dir: Path, *, archive: Path, config: BuildConfig) -> None:
         "gcf_projects": [(Path("external/gcf_api/projects.json"), PROJECTS_FILE)],
         "dac_exchange": [(DAC_EXCHANGE_FILE, DAC_EXCHANGE_FILE)],
         "conversion_factors": [(CONVERSION_FACTORS_FILE, CONVERSION_FACTORS_FILE)],
+        # No archive build reads Eurostat's figures, so the unit-test fixture stands
+        # in. Joining an absolute path to `archive` gives the path itself.
+        eurostat.SOURCE: [
+            (REPO / "tests/fixtures/raw/eurostat/sdg_13_50.csv", EUROSTAT_FILE)
+        ],
         **{
             f"iati_{publisher}": [
                 (origin.relative_to(archive), IATI_DIR / publisher / origin.name)

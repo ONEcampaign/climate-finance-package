@@ -14,7 +14,14 @@ from climate_finance.errors import (
 )
 from climate_finance.methods import Method
 from climate_finance.release import Release, load, load_example
-from climate_finance.result import Comparison, Quality, Reconciliation, Result, compare
+from climate_finance.result import (
+    Comparison,
+    EurostatReconciliation,
+    Quality,
+    Reconciliation,
+    Result,
+    compare,
+)
 from climate_finance.spec import Spec, SpecInputs
 
 __version__ = _version("climate-finance")
@@ -22,6 +29,7 @@ __version__ = _version("climate-finance")
 __all__ = [
     "Agency",
     "Comparison",
+    "EurostatReconciliation",
     "Method",
     "Quality",
     "Reconciliation",

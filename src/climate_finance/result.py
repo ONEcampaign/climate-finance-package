@@ -1372,6 +1372,38 @@ class Reconciliation:
         )
 
 
+class EurostatReconciliation:
+    """Eurostat's `sdg_13_50` lines set against the release by year, in EUR.
+
+    `table` holds one row per line (a member state, the Commission or the EIB) and
+    year (see `query.reconcile_eurostat`).
+    """
+
+    def __init__(self, *, table: pl.LazyFrame) -> None:
+        self._table = table
+
+    @cached_property
+    def table(self) -> pl.DataFrame:
+        """The comparison, computed on first access."""
+        return self._table.collect()
+
+    def __repr__(self) -> str:
+        return f"{self._title()}\n{self.table!r}"
+
+    def _repr_html_(self) -> str:
+        return f"<p>{escape(self._title())}</p>{self.table._repr_html_()}"
+
+    def _title(self) -> str:
+        table = self.table
+        if table.is_empty():
+            return "Eurostat reconciliation: no rows"
+        lines = table["geo"].unique().sort()
+        return (
+            f"Eurostat reconciliation: lines {', '.join(lines)}; "
+            f"years {_years_text(table['year'])}; EUR"
+        )
+
+
 class Comparison:
     """Several results side by side, as a long table with one column per result."""
 

@@ -1,6 +1,6 @@
 # Python API
 
-Everything in version 2.0 imports from `climate_finance`, usually as `cf`. The examples run on the synthetic example release, so their amounts are invented, and `cf.load()` opens the published release. The names in `cf.__all__` form the public API, including `Quality` and `Reconciliation`, the return types of `quality()` and `reconcile()`, and `errors`, the module of the package's [error classes](#errors). [Migrating from 1.x](../migrating-from-1x.md) covers the deprecated 1.x names.
+Everything in version 2.0 imports from `climate_finance`, usually as `cf`. The examples run on the synthetic example release, so their amounts are invented, and `cf.load()` opens the published release. The names in `cf.__all__` form the public API, including `Quality`, `Reconciliation`, and `EurostatReconciliation`, the return types of `quality()`, `reconcile()`, and `reconcile_eurostat()`, and `errors`, the module of the package's [error classes](#errors). [Migrating from 1.x](../migrating-from-1x.md) covers the deprecated 1.x names.
 
 ## `cf.load(release="latest", *, path=None, cache_dir=None, refresh=False)`
 
@@ -58,7 +58,7 @@ print(release)
 ```
 
 ```output
-Release('synthetic-example', synthetic figures): commitments 2021 to 2022, disbursements 2021 to 2024; 27 tables
+Release('synthetic-example', synthetic figures): commitments 2021 to 2022, disbursements 2021 to 2024; 28 tables
 ```
 
 ### `Release.spending(*, providers, recipients, years, method, flow, view, currency, prices, oda_only, measure, untraced, attribution)`
@@ -177,6 +177,13 @@ Compares each party's BTR Table III.1 total with OECD figures for its bilateral 
 - `providers` (`str | int | Iterable[str | int] | None`). The parties, named as `spending()` names providers, so `"Germany"`, `"DEU"`, and `5` name one party. `None` compares every party. An agency raises `InvalidInputError` naming its provider, since the BTR reports providers.
 - `years` (`int | Iterable[int] | None`). `None` takes every year the BTR tables hold.
 - `method` (`Method | MethodRange | str`, default `cf.methods.ONE`), in the forms `spending()` takes.
+
+### `Release.reconcile_eurostat(*, providers, years)`
+
+Sets each line of Eurostat's `sdg_13_50`, the climate finance of an EU member state, the European Commission, or the EIB, against the release by year, in EUR. The release side is fixed at `query.EUROSTAT_METHOD`, `PROVIDER` with `eu="provider"`, so it takes no `method` argument, and an unknown keyword raises `InvalidInputError` naming a close one. Returns an `EurostatReconciliation`:
+
+- `providers` (`str | int | Agency | Iterable[str | int | Agency] | None`). Lines, named as `spending()` names providers, so `"Germany"`, `"DEU"`, and `5` name Germany's line, `"EU Institutions"` the Commission's and the EIB's, and `"European Commission"`, `"European Development Fund"`, or `"EIB"` one of them. `None` compares every line. A provider or agency with no line, such as Japan or a member's agency, gives a `CoverageWarning`.
+- `years` (`int | Iterable[int] | None`). `None` takes every year from 2020 to 2024 that `eurostat_climate_finance` holds. Other years give a `CoverageWarning`.
 
 ### `Release.jev_flags(*, provider, year, flagged, experimental)`
 
@@ -362,6 +369,19 @@ Returned by `Release.reconcile()`. It prints a title line, naming the providers,
 
 The release columns are null on a row with no status, and in a year the release's CRS does not cover for the party, as `btr_crs_unlinked` tells, so a year past the last complete CRS year reads as missing.
 
+## `EurostatReconciliation`
+
+Returned by `Release.reconcile_eurostat()`. It prints a title line, naming the lines and years, above `table`. `table` has one row per Eurostat line and year, sorted by `geo` and `year`, and leaves out `EU27_2020`, the sum of the members. The columns, in order:
+
+- `geo`, `provider`, `provider_code`, `agency`, `agency_code`, `year`. `geo` is Eurostat's code. `COMM`, the Commission, is EU Institutions with no agency, and `EIB` is its agency 3.
+- `basis`: Eurostat's basis for the year (`query.EUROSTAT_BASES`), `commitments` for 2020 and 2021, and `bilateral_committed_multilateral_provided` from 2022.
+- `eurostat_eur`, `obs_flag`: Eurostat's figure and flag, as `eurostat_climate_finance` holds them.
+- `release_bilateral_eur`: the line's bilateral commitments (`BILATERAL`) at their climate value under `query.EUROSTAT_METHOD`. They are a member's own, EU Institutions agencies 1 and 2's for `COMM`, and agency 3's for `EIB`.
+- `release_multilateral_eur`: a member's core contributions at the agency's climate share, as the provider view attributes them under `attribution="contributions"`, of commitments on the `commitments` basis and of disbursements on the other. Contributions to the EU budget, the European Development Fund, and the EIB count nothing here, since `COMM` and `EIB` hold that money. Zero for `COMM` and `EIB`.
+- `release_eur`: the two added. `gap_eur`: `eurostat_eur` less `release_eur`. `gap_share`: `gap_eur` over `eurostat_eur`, null where that is zero.
+
+Amounts are EUR at current prices, converted as `spending(currency="EUR")` converts them. A release column is null in a year the release's `commitments`, for the bilateral side, or `core_contributions` of the year's flow, for the multilateral side, hold no rows.
+
 ## `compare(*results)` and `Comparison`
 
 `cf.compare(a, b, ...)` places results side by side. It returns a `Comparison` whose `table` has one row per year, provider, recipient, and Bi_Multi code, with the key columns `year`, `provider`, `recipient`, `provider_code`, `recipient_code`, and `bi_multi`, and one `value` column per result and method. When every result names an agency, the keys also hold `agency` and `agency_code`. When only some do, their agencies' amounts, and under `measure="share_of_total"` the totals that divide them, are summed to each provider's key, so `cf.compare(giz, germany)` puts GIZ's value and Germany's on one row per year and recipient, and a column's name says which agencies its spec named. A column is named by what distinguishes its result: the release (`2025a`), then each `Spec` field that differs across the results (`ONE`, `years 2021`), so `cf.compare(r2025, r2026)` gives columns `2025a` and `2026a`, and results that differ in both give `2025a, years 2021`. Fields all the results share stay out of the name. Results that nothing sets apart are numbered, as `result 1: ONE`. The bounds `low` and `high` stay on each `Result`. A key absent from a result is null in its column. Calling `compare()` with no arguments, or with a list such as `cf.compare([a, b])`, raises `InvalidInputError`. `cf.compare(*results)` compares a list.
@@ -466,7 +486,7 @@ UnknownProviderError - Unknown provider 'Japn'. Did you mean: Japan? [unknown_pr
 
 Every warning the package gives is a `ClimateFinanceWarning`, a `UserWarning` in `climate_finance.errors`, so `warnings.filterwarnings("error", category=cf.errors.ClimateFinanceWarning)` turns them all into errors. The 1.x names warn with `ClimateFinanceDeprecationWarning`, which is also a `DeprecationWarning` and carries `since` and `expected_removal`, `"2.0"` and `"3.0"`.
 
-`spending()`, `run()`, `quality()`, and `reconcile()` give one `CoverageWarning`, a `ClimateFinanceWarning`, when `years` asks for years the release holds no rows for, naming the years it holds and the years that return no rows. `spending()` reads the years of the flow's tables: `commitments` for commitments, `disbursements` and, with `untraced`, `untraced` for the other flows, and in the provider view `core_contributions` too. `quality()` reads the `quality` table and `reconcile()` the `btr_totals` and `btr_multilateral_totals` tables. `spending()` and `run()` also give one `CoverageWarning` naming each provider or agency the query names that has no rows it counts, and why: the release holds none of its rows in those years, as for a listed provider that does not report, or holds them only under Bi_Multi codes the view leaves out, as for an agency's own outflows in the provider view or a private donor's flows in either view, or the method counts EU Institutions as a provider and the EIB's own rows leave the provider view, or under `attribution="outflows"` the provider is not a developed country or funds no institution Table 8 gives a share. Under `attribution="outflows"` they also give one `CoverageWarning` naming the queried years `outflow_shares` gives no institution a share, which hold bilateral flows alone. A provider that gives nothing to the recipients named returns no rows without a warning. In the provider view, a query that names EU Institutions or one of its agencies under `eu="channel"` and `attribution="contributions"` gives a `DoubleCountWarning`, a `UserWarning` in `climate_finance.errors`, when members outside the query attribute EU money that EU Institutions' rows keep, since adding results of separate queries then counts that money twice. Silence either by class:
+`spending()`, `run()`, `quality()`, `reconcile()`, and `reconcile_eurostat()` give one `CoverageWarning`, a `ClimateFinanceWarning`, when `years` asks for years the release holds no rows for, naming the years it holds and the years that return no rows. `spending()` reads the years of the flow's tables: `commitments` for commitments, `disbursements` and, with `untraced`, `untraced` for the other flows, and in the provider view `core_contributions` too. `quality()` reads the `quality` table, `reconcile()` the `btr_totals` and `btr_multilateral_totals` tables, and `reconcile_eurostat()` the years from 2020 to 2024 that `eurostat_climate_finance` holds. `reconcile_eurostat()` also gives one `CoverageWarning` naming each provider or agency with no Eurostat line. `spending()` and `run()` also give one `CoverageWarning` naming each provider or agency the query names that has no rows it counts, and why: the release holds none of its rows in those years, as for a listed provider that does not report, or holds them only under Bi_Multi codes the view leaves out, as for an agency's own outflows in the provider view or a private donor's flows in either view, or the method counts EU Institutions as a provider and the EIB's own rows leave the provider view, or under `attribution="outflows"` the provider is not a developed country or funds no institution Table 8 gives a share. Under `attribution="outflows"` they also give one `CoverageWarning` naming the queried years `outflow_shares` gives no institution a share, which hold bilateral flows alone. A provider that gives nothing to the recipients named returns no rows without a warning. In the provider view, a query that names EU Institutions or one of its agencies under `eu="channel"` and `attribution="contributions"` gives a `DoubleCountWarning`, a `UserWarning` in `climate_finance.errors`, when members outside the query attribute EU money that EU Institutions' rows keep, since adding results of separate queries then counts that money twice. Silence either by class:
 
 ```python
 import warnings

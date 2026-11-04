@@ -149,6 +149,17 @@ class DriftCause(_Section):
     cause: str
 
 
+class EurostatGap(_Section):
+    """A known gap between Eurostat's `sdg_13_50` line `geo` and the release in
+    `year`, which lets the eurostat_reconciliation gate pass that line-year while
+    the gap stays near `gap_eur`, Eurostat's figure less the release's in EUR."""
+
+    geo: str
+    year: int
+    gap_eur: float
+    cause: str
+
+
 class BuildConfig(_Section):
     """Every build setting.
 
@@ -163,8 +174,9 @@ class BuildConfig(_Section):
     `embed` extra unless `embedding.cache_dir` holds every vector. `jev_flags` has
     the flag stage ask Jev four questions about each climate-marked CRS record from
     `jev_flags_first_year` to `years.crs_last_complete`. `drift_causes` explain
-    provider-year moves the drift gate would otherwise fail. They live here, beside
-    the release, since a change to the package's own files makes every built stage
+    provider-year moves the drift gate would otherwise fail, and `eurostat_gaps` the
+    known gaps the eurostat_reconciliation gate would. They live here, beside the
+    release, since a change to the package's own files makes every built stage
     stale.
     """
 
@@ -184,6 +196,7 @@ class BuildConfig(_Section):
     jev: Jev
     embedding: Embedding
     drift_causes: tuple[DriftCause, ...] = ()
+    eurostat_gaps: tuple[EurostatGap, ...] = ()
 
     @model_validator(mode="after")
     def _jev_labels_need_human_labels(self) -> Self:

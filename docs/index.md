@@ -15,6 +15,7 @@ climate-finance 2.0 returns international public climate finance from OECD and U
 - [How to review links](how-to/review-links.md) shows release managers how a person or an agent decides the pairs a build queued.
 - [How to label the blind sample](how-to/label-the-blind-sample.md) serves a local page on which a person decides their share of the sample.
 - [How to reconcile a party's BTR report with OECD data](how-to/reconcile-with-btr.md)
+- [How to reconcile EU figures with Eurostat](how-to/reconcile-with-eurostat.md) sets each member state's, the Commission's and the EIB's line in Eurostat's `sdg_13_50` against the release by year.
 - [How to reproduce the OECD's public climate finance total](how-to/reproduce-the-oecd-public-total.md) builds the 2024 figure the OECD reports for developed countries from `attribution="outflows"`, splits it into bilateral finance, banks and other multilaterals, and sets it against the OECD's total.
 - [How to reproduce the BTR tables](how-to/reproduce-btr-tables.md) builds the BTR rows and their links locally from the UNFCCC's workbooks.
 - [How to cut a release](how-to/cut-a-release.md) shows release managers how to build, sample, gate, and pack.
@@ -22,11 +23,11 @@ climate-finance 2.0 returns international public climate finance from OECD and U
 
 ## Look something up
 
-- [Python API](reference/python-api.md) documents `load`, `Release`, `Spec`, `Method`, `Result`, `Quality`, `Reconciliation`, and the flow, view, currency, and scope arguments.
+- [Python API](reference/python-api.md) documents `load`, `Release`, `Spec`, `Method`, `Result`, `Quality`, `Reconciliation`, `EurostatReconciliation`, and the flow, view, currency, and scope arguments.
 - [Release tables](reference/release-tables.md) lists the files in a release, every table and column, and the terms for each source.
 - [Version policy](reference/version-policy.md) lists what counts as a breaking change, what the package leaves unpromised, and how long a deprecation runs.
 - [cf-build](reference/cf-build.md) lists the build and release commands.
-- [Release gates](reference/release-gates.md) details the nine checks a release passes.
+- [Release gates](reference/release-gates.md) details the eleven checks a release passes.
 
 ## Understand
 

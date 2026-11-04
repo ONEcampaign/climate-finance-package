@@ -13,7 +13,7 @@ The release holds only processed tables and metadata. The Green Climate Fund's l
 
 `build` holds `package_source_sha256`, the sha256 over the files of the climate-finance package that built the release; `python`, the exact Python version; `environment_sha256`, the sha256 over the sorted `name==version` lines of every installed distribution; `dependencies`, the exact versions of polars, pyarrow, duckdb, splink, scikit-learn, numpy, scipy, pandas, pydantic, rapidfuzz, oda-reader, openpyxl, pydeflate, resolvekit, sentence-transformers, torch, transformers, and tokenizers where installed; and `stage_identities`, the sha256 of each build stage's `stage.json` before assemble. Every query result carries it in `meta.build`, and `explain()` prints the package source and environment digests.
 
-The data format is a whole number, independent of the package version, and this package writes format 3. The format goes up by one when a release table, a column of one, or a `release.json` field is added, removed, or changes meaning. A package reads every format up to its own: `cf.load()` raises `ReleaseFormatError` for a newer format, naming the format a later climate-finance reads, and opens an older one. On a release whose format predates a table, `release.table()` and any query that reads the table raise `FormatTableError`. Format 2 adds `btr_coefficients`. Format 3 adds `psi_flag` and the tables `outflow_shares`, `developed_providers`, `btr_multilateral`, `btr_multilateral_totals`, `btr_institution_groups`, and `btr_crs_earmarked`, and its `total_flows` and `quality` leave memorandum rows out. On a release of format 1 or 2 the queries raise `FormatQueryError`, since its totals hold memorandum records, and `release.table()` still reads its tables.
+The data format is a whole number, independent of the package version, and this package writes format 3. The format goes up by one when a release table, a column of one, or a `release.json` field is added, removed, or changes meaning. A package reads every format up to its own: `cf.load()` raises `ReleaseFormatError` for a newer format, naming the format a later climate-finance reads, and opens an older one. On a release whose format predates a table, `release.table()` and any query that reads the table raise `FormatTableError`. Format 2 adds `btr_coefficients`. Format 3 adds `psi_flag` and the tables `outflow_shares`, `developed_providers`, `btr_multilateral`, `btr_multilateral_totals`, `btr_institution_groups`, `btr_crs_earmarked`, and `eurostat_climate_finance`, and its `total_flows` and `quality` leave memorandum rows out. On a release of format 1 or 2 the queries raise `FormatQueryError`, since its totals hold memorandum records, and `release.table()` still reads its tables.
 
 The published release also leaves out the row-level BTR tables `btr`, `btr_links`, and `btr_multilateral` until the UNFCCC confirms its terms cover them, and `release.table("btr")` on it raises `WithheldTableError`. A build from BTR workbooks downloaded from the UNFCCC writes all three. `btr_totals`, `btr_crs_unlinked`, `btr_multilateral_totals`, and `btr_crs_earmarked` hold the reconciliation totals in either, and `btr_coefficients` the coefficients the BTR rows imply.
 
@@ -323,12 +323,23 @@ Key `currency`, `base_year`, `entity_code`, `year`. The multipliers from US doll
 - `entity_code`: the DAC provider code, or 20001 for the DAC countries' total, which a provider without its own series takes.
 - `year`, `factor`.
 
+## `eurostat_climate_finance`
+
+Key `geo`, `year`. Eurostat's dataset `sdg_13_50`, the climate finance of the EU member states, the European Commission and the European Investment Bank that counts towards the EU's international climate finance commitment, as Eurostat last published it. The build fetches it from Eurostat's SDMX API and keeps every year Eurostat publishes, 2014 to 2024 in the April 2026 update. Amounts are EUR at current prices, where the dataset gives EUR million. The build stops on a geo code it has no provider for, so a new Eurostat line needs a decision before a release carries it. The columns are:
+
+- `geo`: Eurostat's code, a member state (`EL` for Greece, where ISO 3166 has `GR`), `EU27_2020`, `COMM`, or `EIB`.
+- `provider_code`, `agency_code`: the DAC provider and agency the line stands for. A member state has its provider code and no agency. `COMM` is provider 918 (EU Institutions) with no agency, and counts the Commission's budget and the European Development Fund, agencies 1 and 2. `EIB` is 918 with agency 3. `EU27_2020` has neither, being the sum of the 27 members alone, without `COMM` and `EIB`.
+- `year`, `value_eur`.
+- `obs_flag`: Eurostat's flag, `b` for a break in the time series, null for an observation with none.
+- `last_update`: the date Eurostat last changed the dataset, the same for every row.
+
 ## Terms by source
 
 `sources.json` is the authority for each release, and lists these terms:
 
 - OECD datasets and tables (CRS, CRDF, Multisystem, imputed shares, DAC exchange rates and deflators, and Table 8 of the report on climate finance by developed countries): the OECD Terms and Conditions and the dataset terms in each dataset's metadata. A release is an adaptation of OECD data and carries no endorsement by the OECD, and a figure published from it should say so.
 - World Bank Finances One: the World Bank Data Catalog licence, CC BY 4.0 by default and set per dataset.
+- Eurostat `sdg_13_50`: the European Commission's reuse policy, CC BY 4.0, with Eurostat cited as the source.
 - IMF: derivative works with attribution. Commercial use and automated bulk download need permission.
 - IATI files of banks and funds: the publisher's licence in the IATI Registry.
 - UNFCCC Biennial Transparency Reports: the UNFCCC terms of use, public domain where no change to the content is introduced and the source is acknowledged. Parsed rows change the content, so the published release ships the totals in `btr_totals`, `btr_crs_unlinked`, `btr_multilateral_totals`, and `btr_crs_earmarked` and leaves out `btr`, `btr_links`, and `btr_multilateral` until the UNFCCC confirms its terms cover them.

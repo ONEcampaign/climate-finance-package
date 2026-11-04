@@ -1,0 +1,1 @@
+`sdg_13_50.csv` is Eurostat's `sdg_13_50` (climate finance contribution to the international 100bn USD commitment) in the SDMX-CSV layout the dissemination API serves, limited to 2020 and 2024 for the 30 geo codes (the 27 members, `EU27_2020`, `COMM` and `EIB`), as of the 29 April 2026 update. The values are Eurostat's, in million euro.
