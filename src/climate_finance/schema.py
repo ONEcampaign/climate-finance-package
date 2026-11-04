@@ -1621,6 +1621,28 @@ CONVERSION_FACTORS = _table(
     factor=_f64(),
 )
 
+# Eurostat's `sdg_13_50`, public climate finance of the EU member states, the European
+# Commission and the EIB for the EU's international climate finance commitment, as
+# Eurostat last published it, in EUR (the dataset gives millions) at current prices.
+# `geo` is Eurostat's code, a member state (`provider_code` is its DAC code, and Greece
+# is `EL`), `EU27_2020` (the sum of the 27 members alone, with no codes), `COMM` (the
+# Commission, `provider_code` 918 and no `agency_code`, whose counterpart in the release
+# is agencies 1 and 2, the Commission's budget and the European Development Fund) or
+# `EIB` (918, agency 3). `obs_flag` is Eurostat's flag, `b` for a break in the series,
+# and `last_update` the date it last changed the dataset. Each year Eurostat publishes
+# is kept.
+EUROSTAT_CLIMATE_FINANCE = _table(
+    "eurostat_climate_finance",
+    ("geo", "year"),
+    geo=_str(),
+    provider_code=_code(nullable=True),
+    agency_code=_code(nullable=True),
+    year=_year(),
+    value_eur=_f64(),
+    obs_flag=_str(nullable=True),
+    last_update=Column(pl.Date()),
+)
+
 
 def _by_name(*tables: TableSchema) -> Mapping[str, TableSchema]:
     return {table.name: table for table in tables}
@@ -1652,6 +1674,7 @@ RELEASE_TABLES = _by_name(
     BTR_COEFFICIENTS,
     JEV_FLAGS,
     CONVERSION_FACTORS,
+    EUROSTAT_CLIMATE_FINANCE,
     OUTFLOW_SHARES,
     DEVELOPED_PROVIDERS,
 )
@@ -1720,7 +1743,7 @@ FORMAT_TABLES: Mapping[int, frozenset[str]] = {
     # Format 2 adds `btr_coefficients`.
     2: _FORMAT_2_TABLES,
     # Format 3 adds `psi_flag` (`MEMORANDUM_FORMAT`), `outflow_shares`,
-    # `developed_providers` and the Table III.2 tables.
+    # `developed_providers`, `eurostat_climate_finance` and the Table III.2 tables.
     3: _FORMAT_2_TABLES
     | {
         "outflow_shares",
@@ -1729,6 +1752,7 @@ FORMAT_TABLES: Mapping[int, frozenset[str]] = {
         "btr_multilateral_totals",
         "btr_institution_groups",
         "btr_crs_earmarked",
+        "eurostat_climate_finance",
     },
 }
 
@@ -1862,6 +1886,9 @@ CRS_UNSPECIFIED_RECIPIENT = 9998
 # EU Institutions as a DAC provider, and the EIB, which reports as its agency 3.
 EU_INSTITUTIONS = 918
 EIB_AGENCY = 3
+# The agencies behind Eurostat's `COMM` line: the Commission's budget (agency 1) and the
+# European Development Fund (agency 2), which match the line within 3% in 2020 to 2022.
+COMMISSION_AGENCIES = (1, 2)
 # DAC exchange rates are by country, and the euro's is held by EU Institutions.
 EURO_ISSUER = "EUI"
 

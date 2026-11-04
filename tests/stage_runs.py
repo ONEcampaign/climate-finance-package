@@ -22,6 +22,7 @@ from climate_finance.build.normalise.crs import (
     psi_flags,
 )
 from climate_finance.build.provenance import Provenance
+from climate_finance.build.readers.eurostat import FILE as EUROSTAT_FILE
 from climate_finance.build.stages import (
     REGISTRY,
     StageContext,
@@ -98,11 +99,15 @@ def write_fetch(
     release_dir: Path, raw_manifest: pl.DataFrame, *, config: BuildConfig
 ) -> None:
     """Write `raw_manifest` as the fetch stage's output with its `stage.json`, and
-    the snapshot's conversion factors in `raw/`, which assemble ships."""
+    the snapshot's conversion factors and the Eurostat fixture in `raw/`, which assemble
+    ships."""
     write_recorded(release_dir, "fetch", {"raw_manifest": raw_manifest}, config=config)
     factors = raw_dir(release_dir) / CONVERSION_FACTORS_FILE
     factors.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(SNAPSHOT / "conversion_factors.parquet", factors)
+    eurostat = raw_dir(release_dir) / EUROSTAT_FILE
+    eurostat.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(OECD.parent / "eurostat" / "sdg_13_50.csv", eurostat)
 
 
 def year_rows(

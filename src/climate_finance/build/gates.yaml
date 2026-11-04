@@ -64,3 +64,14 @@ oecd_reconciliation:
 # and the year.
 drift:
   max_move: 0.05
+
+# Each Eurostat sdg_13_50 line-year from 2020 to 2024 against the release
+# (`reconcile_eurostat`). A gap above `min_gap_eur` and `max_gap_share` of Eurostat's
+# figure passes only with an entry in build.toml's `eurostat_gaps` naming the line
+# and year, and only while the gap stays within the larger of `max_move_share` of
+# Eurostat's figure and `min_gap_eur` of the recorded gap. The floor leaves out the
+# small members, whose lines sum to well under EUR 0.1bn a year.
+eurostat_reconciliation:
+  max_gap_share: 0.10
+  min_gap_eur: 1.0e8
+  max_move_share: 0.05

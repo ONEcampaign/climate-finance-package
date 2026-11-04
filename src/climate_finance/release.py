@@ -15,7 +15,7 @@ import tempfile
 import urllib.request
 import uuid
 import warnings
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from importlib.resources import files
 from pathlib import Path
 from typing import Annotated, Literal, Self, Unpack
@@ -31,7 +31,7 @@ from pydantic import (
 )
 
 from climate_finance import query
-from climate_finance.catalogue import unknown_name
+from climate_finance.catalogue import Agency, resolve, unknown_name
 from climate_finance.errors import (
     CoverageWarning,
     FormatTableError,
@@ -43,7 +43,13 @@ from climate_finance.errors import (
 )
 from climate_finance.frozen import unknown_keyword
 from climate_finance.methods import ONE, Method, MethodRange
-from climate_finance.result import Quality, Reconciliation, Result, year_runs
+from climate_finance.result import (
+    EurostatReconciliation,
+    Quality,
+    Reconciliation,
+    Result,
+    year_runs,
+)
 from climate_finance.schema import (
     DATA_FORMAT,
     FORMAT_TABLES,
@@ -391,6 +397,55 @@ class Release:
         )
 
     @_keywords
+    def reconcile_eurostat(
+        self,
+        *,
+        providers: str | int | Agency | Iterable[str | int | Agency] | None = None,
+        years: int | Iterable[int] | None = None,
+    ) -> EurostatReconciliation:
+        """Set each line of Eurostat's `sdg_13_50`, an EU member state's, the
+        Commission's or the EIB's climate finance, against the release by year, in
+        EUR (`query.reconcile_eurostat`).
+
+        The release side is fixed at `query.EUROSTAT_METHOD`, `ONE` with EU
+        Institutions as a provider. It weighs a member's bilateral commitments and
+        its attributed core contributions, and the Commission's and the EIB's own
+        commitments. `basis` gives each year's basis, which sets the flow of the
+        contributions: commitments for 2020 and 2021, disbursements from 2022.
+
+        `providers` takes the forms `spending` takes, so `"Germany"`, `"DEU"` and
+        `5` name one line, `"EU Institutions"` the Commission's and the EIB's, and
+        `"European Commission"`, `"European Development Fund"` or `"EIB"` one of
+        them. `years` takes the forms `spending` takes. None compares every line,
+        or every year from 2020 to 2024 the release holds Eurostat figures for.
+
+        Raises:
+            UnknownProviderError: for a provider name, code or agency outside the
+                listings.
+            InvalidInputError: for years in a form `Spec` does not take, for an
+                empty list of providers, or for an unknown keyword, naming a close
+                one.
+            FormatTableError: when the release's data format predates
+                `eurostat_climate_finance`.
+
+        Warns:
+            CoverageWarning: for years outside 2020 to 2024 or that
+                `eurostat_climate_finance` holds no rows for, and for a provider or
+                agency with no Eurostat line, such as Japan.
+        """
+        read = read_years(years)
+        self._check_held("eurostat_climate_finance")
+        held = sorted(
+            set(self._years_of("eurostat_climate_finance")) & set(query.EUROSTAT_YEARS)
+        )
+        _warn_missing(read, held=held, holds="Eurostat figures to compare")
+        return query.reconcile_eurostat(
+            self,
+            providers=resolve(providers, kind="providers"),
+            years=held if read is None else [year for year in read if year in held],
+        )
+
+    @_keywords
     def jev_flags(
         self,
         *,
@@ -466,19 +521,29 @@ class Release:
         if years is None:
             return
         held = sorted({year for table in tables for year in self._years_of(table)})
-        if not (missing := sorted(set(years) - set(held))):
-            return
-        span = f"{holds} for {year_runs(held)}" if held else f"no {holds}"
-        asked = (
-            f"year {missing[0]} returns"
-            if len(missing) == 1
-            else f"years {year_runs(missing)} return"
-        )
-        warnings.warn(
-            f"the release holds {span}; {asked} no rows",
-            CoverageWarning,
-            skip_file_prefixes=(_PACKAGE_DIR,),
-        )
+        _warn_missing(years, held=held, holds=holds)
+
+
+def _warn_missing(
+    years: Iterable[int] | None, *, held: Sequence[int], holds: str
+) -> None:
+    """Warn once when `years` asks for years outside `held`, the years the release
+    holds `holds` for. None asks for none."""
+    if years is None:
+        return
+    if not (missing := sorted(set(years) - set(held))):
+        return
+    span = f"{holds} for {year_runs(held)}" if held else f"no {holds}"
+    asked = (
+        f"year {missing[0]} returns"
+        if len(missing) == 1
+        else f"years {year_runs(missing)} return"
+    )
+    warnings.warn(
+        f"the release holds {span}; {asked} no rows",
+        CoverageWarning,
+        skip_file_prefixes=(_PACKAGE_DIR,),
+    )
 
 
 def load(

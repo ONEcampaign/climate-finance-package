@@ -51,7 +51,7 @@ from climate_finance.build.readers.ledgers.gcf import (
     READINESS_PUBLISHER,
 )
 from climate_finance.build.readers.ledgers.imf import SDR_FILE, needs_sdr
-from climate_finance.build.sources import finances_one, iati, imf
+from climate_finance.build.sources import eurostat, finances_one, iati, imf
 from climate_finance.build.sources.files import (
     RawFile,
     describe,
@@ -263,6 +263,7 @@ def fetch_sources(
         *download_gcf_projects(raw, client=client),
         _download_dac_exchange(raw),
         _download_conversion_factors(raw),
+        *eurostat.download_climate_finance(raw, client=client),
         *_copy_iati(
             raw, archive=sources.iati_archive, publishers=sources.iati_publishers
         ),
@@ -304,6 +305,7 @@ def expected_sources(config: BuildConfig) -> list[str]:
         "gcf_projects",
         "dac_exchange",
         "conversion_factors",
+        eurostat.SOURCE,
         *(f"iati_{publisher}" for publisher in config.sources.iati_publishers),
         *([BTR_SOURCE] if config.sources.btr_archive is not None else []),
         *(["adaptation_labels"] if config.jev_labels else []),

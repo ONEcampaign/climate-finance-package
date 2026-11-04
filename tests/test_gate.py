@@ -17,7 +17,7 @@ import climate_finance as cf
 from climate_finance import schema
 from climate_finance.build import evaluate, load_config, run_stages, write_table
 from climate_finance.build.cli import app
-from climate_finance.build.config import DriftCause
+from climate_finance.build.config import DriftCause, EurostatGap
 from climate_finance.build.errors import (
     GateFailedError,
     SampleDesignError,
@@ -49,8 +49,15 @@ from climate_finance.build.link.packet import (
     NAMED_CODES,
     packet_pairs_path,
 )
+from climate_finance.build.readers.eurostat import COMPARED_LINES, LINES
 from climate_finance.build.stages import REGISTRY, raw_dir, table_path
-from climate_finance.schema import STAGE_TABLES, ReleaseManifest
+from climate_finance.query import EUROSTAT_YEARS
+from climate_finance.schema import (
+    STAGE_TABLES,
+    ReleaseManifest,
+    TableEntry,
+    sha256_file,
+)
 
 BUILD_TOML = Path(__file__).parent / "fixtures" / "build.toml"
 NOR = 8
@@ -123,6 +130,7 @@ CORE = pl.DataFrame(
     },
     schema={name: c.dtype for name, c in schema.CORE_CONTRIBUTIONS.columns.items()},
 )
+EUROSTAT = "eurostat_climate_finance"
 LATER_STAGES = ("link", "allocate", "fill", "review", "label", "assemble")
 GATES_CONFIG = load_gates()
 
@@ -195,7 +203,79 @@ def release_dir(tmp_path: Path) -> Path:
     )
     (raw_dir(release_dir) / CRS_FILE).parent.mkdir(parents=True)
     RAW_CRS.write_parquet(raw_dir(release_dir) / CRS_FILE)
+    for stage, table in (("normalise", "crdf"), ("assemble", "commitments")):
+        _edit(table_path(release_dir, stage, table), _commit_in_eurostat_years)
+    _edit(table_path(release_dir, "assemble", "core_contributions"), _contribute_yearly)
+    _edit(table_path(release_dir, "assemble", EUROSTAT), _every_line)
+    _rehash(release_dir / "assemble", ("commitments", "core_contributions", EUROSTAT))
     return release_dir
+
+
+def _rehash(assembled: Path, names: tuple[str, ...]) -> None:
+    """Record the edited release tables `names` in `release.json`, so `cf.load`
+    opens the release."""
+    path = assembled / "release.json"
+    manifest = ReleaseManifest.model_validate_json(path.read_text(encoding="utf-8"))
+    tables = dict(manifest.tables)
+    for name in names:
+        table = assembled / f"{name}.parquet"
+        tables[name] = TableEntry(
+            sha256=sha256_file(table),
+            rows=pl.scan_parquet(table).select(pl.len()).collect().item(),
+        )
+    path.write_text(
+        manifest.model_copy(update={"tables": tables}).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+
+def _commit_in_eurostat_years(frame: pl.DataFrame) -> pl.DataFrame:
+    """R1 again in each Eurostat year, unlinked, so the release covers every year
+    the eurostat_reconciliation gate compares, in the published CRDF and the
+    release alike."""
+    copies = [
+        frame.filter(row_id="R1").with_columns(
+            row_id=pl.lit(f"R{year}"),
+            year=pl.lit(year, pl.Int16),
+            vintage=pl.lit(year, pl.Int16),
+        )
+        for year in EUROSTAT_YEARS
+    ]
+    return pl.concat([frame, *copies])
+
+
+def _contribute_yearly(frame: pl.DataFrame) -> pl.DataFrame:
+    """Norway's 2021 contribution again at 0 in each Eurostat year and flow, so
+    `core_contributions` holds every year the comparison reads."""
+    copies = [
+        frame.head(1).with_columns(
+            year=pl.lit(year, pl.Int16), flow=pl.lit(flow), contribution_usd=0.0
+        )
+        for year in EUROSTAT_YEARS
+        for flow in ("commitments", "disbursements")
+    ]
+    return pl.concat([frame, *copies])
+
+
+def _every_line(frame: pl.DataFrame) -> pl.DataFrame:
+    """Every compared Eurostat line in every compared year at EUR 50m, a gap under
+    the floor, since the release holds none of their rows."""
+    return pl.DataFrame(
+        [
+            {
+                "geo": geo,
+                "provider_code": LINES[geo][0],
+                "agency_code": LINES[geo][1],
+                "year": year,
+                "value_eur": 50e6,
+                "obs_flag": None,
+                "last_update": frame["last_update"][0],
+            }
+            for geo in COMPARED_LINES
+            for year in EUROSTAT_YEARS
+        ],
+        schema=frame.schema,
+    )
 
 
 def _report(release_dir: Path, **options: object) -> pl.DataFrame:
@@ -232,6 +312,7 @@ def test_a_sound_release_passes_every_gate_but_the_samples_without_one(
         ("over_allocation", "raw_links"): True,
         ("oecd_reconciliation", None): True,
         ("drift", None): True,
+        ("eurostat_reconciliation", None): True,
         ("withheld_rows", None): True,
         ("listed_codes", None): True,
     }
@@ -1030,6 +1111,12 @@ def _drop_trace(frame: pl.DataFrame) -> pl.DataFrame:
             pl.DataFrame.clear,
             {("oecd_reconciliation", None)},
         ),
+        # No Eurostat line-year to compare.
+        (
+            [("assemble", EUROSTAT)],
+            pl.DataFrame.clear,
+            {("eurostat_reconciliation", None)},
+        ),
     ],
 )
 def test_a_gate_with_nothing_to_measure_fails(
@@ -1087,6 +1174,92 @@ def test_a_waiver_lets_an_empty_precision_gate_through(release_dir: Path) -> Non
         ("precision", None, True, "no_allocated_pairs"),
         ("stratum_precision", None, True, "no_allocated_pairs"),
     ]
+
+
+def _eib(*, eur: float) -> dict[str, Callable]:
+    """An edit setting the EIB's 2022 Eurostat figure to `eur`."""
+    eib = (pl.col("geo") == "EIB") & (pl.col("year") == 2022)
+    return {
+        EUROSTAT: lambda frame: frame.with_columns(
+            value_eur=pl.when(eib).then(eur).otherwise("value_eur")
+        )
+    }
+
+
+def _gap(geo: str, year: int, gap_eur: float) -> EurostatGap:
+    return EurostatGap(geo=geo, year=year, gap_eur=gap_eur, cause="x")
+
+
+@pytest.mark.parametrize(
+    ("edits", "gaps", "passed", "named"),
+    [
+        ({}, (), True, "0 recorded"),
+        # Above the EUR 100m floor and 10% of Eurostat's figure.
+        (_eib(eur=500e6), (), False, "without a recorded gap: EIB/2022"),
+        (_eib(eur=500e6), (_gap("EIB", 2022, 480e6),), True, "1 recorded"),
+        # A EUR 200m move is above both EUR 100m and 5% of EUR 500m.
+        (
+            _eib(eur=500e6),
+            (_gap("EIB", 2022, 300e6),),
+            False,
+            "moved: EIB/2022 (gap EUR 500m, recorded 300m)",
+        ),
+        # A recorded gap now under the floor, and one of no line-year, are stale.
+        ({}, (_gap("EIB", 2022, 50e6),), False, "stale"),
+        ({}, (_gap("XX", 2022, 1e9),), False, "stale"),
+        # A year the release holds no commitments for has no release figure.
+        (
+            {"commitments": lambda frame: frame.filter(pl.col("year") != 2023)},
+            (),
+            False,
+            "AT/2023 (gap EUR none)",
+        ),
+        # A line-year Eurostat's table lacks, as from a partial response.
+        (
+            {
+                EUROSTAT: lambda frame: frame.filter(
+                    ~((pl.col("geo") == "MT") & (pl.col("year") == 2023))
+                )
+            },
+            (),
+            False,
+            "line-years missing from eurostat_climate_finance: MT/2023",
+        ),
+    ],
+)
+def test_eurostat_gaps_over_tolerance_need_a_recorded_gap_that_holds(
+    release_dir: Path,
+    edits: dict[str, Callable[[pl.DataFrame], pl.DataFrame]],
+    gaps: tuple[EurostatGap, ...],
+    passed: bool,
+    named: str,
+) -> None:
+    for table, edit in edits.items():
+        _edit(table_path(release_dir, "assemble", table), edit)
+
+    row = (
+        _report(release_dir, eurostat_gaps=gaps)
+        .filter(gate="eurostat_reconciliation")
+        .row(0, named=True)
+    )
+
+    assert row["passed"] is passed
+    assert named in row["detail"]
+
+
+def test_a_release_without_the_eurostat_table_fails(release_dir: Path) -> None:
+    path = release_dir / "assemble" / "release.json"
+    manifest = ReleaseManifest.model_validate_json(path.read_text(encoding="utf-8"))
+    tables = {k: v for k, v in manifest.tables.items() if k != EUROSTAT}
+    path.write_text(
+        manifest.model_copy(update={"tables": tables}).model_dump_json(),
+        encoding="utf-8",
+    )
+
+    row = _report(release_dir).filter(gate="eurostat_reconciliation").row(0, named=True)
+
+    assert (row["passed"], row["value"]) == (False, None)
+    assert EUROSTAT in row["detail"]
 
 
 def _previous(release_dir: Path, *, factor: float) -> cf.Release:

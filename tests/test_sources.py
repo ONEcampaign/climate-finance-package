@@ -19,6 +19,8 @@ from climate_finance.build.readers.ledgers.gcf import (
 from climate_finance.build.readers.ledgers.iati import read_iati_ledger
 from climate_finance.build.readers.ledgers.imf import read_sdr_rates
 from climate_finance.build.sources import files
+from climate_finance.build.sources.eurostat import URL as EUROSTAT_URL
+from climate_finance.build.sources.eurostat import download_climate_finance
 from climate_finance.build.sources.finances_one import API, download_finances_one
 from climate_finance.build.sources.gcf import (
     PROJECTS_URL,
@@ -31,7 +33,8 @@ from climate_finance.build.sources.imf import URL as IMF_URL
 from climate_finance.build.sources.imf import download_sdr_rates
 from climate_finance.errors import SourceUnavailableError
 
-LEDGERS = Path(__file__).parent / "fixtures" / "raw" / "ledgers"
+RAW = Path(__file__).parent / "fixtures" / "raw"
+LEDGERS = RAW / "ledgers"
 Handler = Callable[[httpx.Request], httpx.Response]
 
 
@@ -467,6 +470,36 @@ def test_gcf_readiness_imports_a_local_archive_without_a_request(
 
     assert readiness["method"] == "manual"
     assert read_gcf_readiness(tmp_path / "ledgers" / "gcf" / "readiness.json").height
+
+
+# Eurostat -----------------------------------------------------------------------
+
+
+def test_eurostat_is_saved_as_served_with_its_last_update_as_the_version(
+    tmp_path: Path,
+) -> None:
+    body = (RAW / "eurostat" / "sdg_13_50.csv").read_bytes()
+
+    def api(request: httpx.Request) -> httpx.Response:
+        assert request.url.copy_with(query=None) == EUROSTAT_URL
+        assert request.url.params["format"] == "SDMX-CSV"
+        return httpx.Response(200, content=body)
+
+    (record,) = download_climate_finance(tmp_path, client=_client(api), pause_seconds=0)
+
+    assert record["path"] == "eurostat/sdg_13_50.csv"
+    assert record["version"] == "2026-04-29"
+    assert (tmp_path / record["path"]).read_bytes() == body
+    _manifest_row(record, tmp_path)
+
+
+def test_eurostat_refuses_a_reply_that_is_not_the_dataset(tmp_path: Path) -> None:
+    with pytest.raises(SourceUnavailableError, match="SDMX-CSV"):
+        download_climate_finance(
+            tmp_path,
+            client=_client(lambda r: httpx.Response(200, text="<html></html>")),
+            pause_seconds=0,
+        )
 
 
 # IMF ----------------------------------------------------------------------------

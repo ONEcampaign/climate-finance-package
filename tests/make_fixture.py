@@ -38,6 +38,8 @@ from climate_finance.schema import (
     CERTAIN_METHODS,
     CERTAIN_ROUTES,
     DATA_FORMAT,
+    EIB_AGENCY,
+    EU_INSTITUTIONS,
     FLOWS,
     LINK_METHODS,
     RECIPIENT_VIEW,
@@ -682,6 +684,44 @@ def _btr_multilateral_row(
     }
 
 
+def _eurostat() -> pl.DataFrame:
+    """Eurostat lines for France and Germany in the example's commitment years, the
+    EIB, which the example holds no rows of, in 2022, and `EU27_2020`, which
+    `reconcile_eurostat` leaves out, sized to the example's amounts."""
+    rows = [
+        ("DE", 5, None, 2021, 65.0e6, None),
+        ("DE", 5, None, 2022, 38.0e6, None),
+        ("FR", 4, None, 2021, 40.0e6, None),
+        ("FR", 4, None, 2022, 25.0e6, "p"),
+        ("EIB", EU_INSTITUTIONS, EIB_AGENCY, 2022, 3.0e6, None),
+        ("EU27_2020", None, None, 2021, 105.0e6, None),
+        ("EU27_2020", None, None, 2022, 63.0e6, "p"),
+    ]
+    return (
+        pl.DataFrame(
+            rows,
+            schema=[
+                "geo",
+                "provider_code",
+                "agency_code",
+                "year",
+                "value_eur",
+                "obs_flag",
+            ],
+            orient="row",
+        )
+        .select(
+            pl.col("geo"),
+            pl.col("provider_code", "agency_code").cast(pl.Int32),
+            pl.col("year").cast(pl.Int16),
+            pl.col("value_eur").cast(pl.Float64),
+            pl.col("obs_flag").cast(pl.String),
+            last_update=pl.date(2026, 4, 29),
+        )
+        .sort("geo", "year")
+    )
+
+
 def build_tables() -> dict[str, pl.DataFrame]:
     """Every release table of the synthetic snapshot."""
     from climate_finance.build.btr_institutions import institution_map
@@ -1095,6 +1135,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
         frames["btr_multilateral"].lazy()
     ).collect()
     frames["btr_institution_groups"] = btr_institution_groups(institution_map().groups)
+    frames["eurostat_climate_finance"] = _eurostat()
     frames["unallocated"] = _unallocated(frames["untraced"], frames["disbursements"])
     frames["total_flows"] = _total_flows(
         frames["commitments"],
@@ -1476,6 +1517,7 @@ def write_fixture(out_dir: Path) -> ReleaseManifest:
                 "crdf": "fixture",
                 BTR_SOURCE: "fixture",
                 "conversion_factors": "fixture",
+                "eurostat_sdg_13_50": "2026-04-29",
             },
             model_versions={"jev": "jev-1.14.0"},
             gates={},

@@ -492,6 +492,7 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
         previous: cf.Release | None,
         first_release: bool,
         drift_causes: object,
+        eurostat_gaps: object,
         waive_precision: bool,
     ) -> pl.DataFrame:
         assert previous is not None

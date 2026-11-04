@@ -166,7 +166,8 @@ def gate_command(
 ) -> None:
     """Evaluate the release gates, one line per gate row, and exit with status 1
     when a row fails. The blind sample's labels come from the config's review
-    decisions, and the causes of drift from its `drift_causes`."""
+    decisions, the causes of drift from its `drift_causes`, and the known Eurostat
+    gaps from its `eurostat_gaps`."""
     build_config = load_config(config)
     with release.previous_baseline(previous) as baseline:
         results = gate.run_gates(
@@ -176,6 +177,7 @@ def gate_command(
             previous=None if baseline is None else baseline.release,
             first_release=first_release,
             drift_causes=build_config.drift_causes,
+            eurostat_gaps=build_config.eurostat_gaps,
             report_only=True,
         )
     failed = 0

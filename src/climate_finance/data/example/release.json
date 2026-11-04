@@ -115,6 +115,10 @@
       "sha256": "218d0b3f9033c8b4aaac4ba7d45e8ef6cc8c1f17266647368d0532d243cd8bec",
       "rows": 88
     },
+    "eurostat_climate_finance": {
+      "sha256": "740758f0dd767eb074d5b50536f619eb3baeeada5d31b3a019e680ed768229b9",
+      "rows": 7
+    },
     "unallocated": {
       "sha256": "a477c4925b20d979206b1bd661330a1bea6dc708fd2aa578af2cbb168e55fc6e",
       "rows": 14
@@ -128,7 +132,8 @@
     "crs": "fixture",
     "crdf": "fixture",
     "unfccc_btr1": "fixture",
-    "conversion_factors": "fixture"
+    "conversion_factors": "fixture",
+    "eurostat_sdg_13_50": "2026-04-29"
   },
   "years": {},
   "model_versions": {

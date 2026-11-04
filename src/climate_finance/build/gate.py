@@ -35,6 +35,14 @@ over-allocation:
 - `drift`: provider-year climate commitments and disbursements move by at most
   `max_move` from the previous release, unless a cause in `build.toml`'s
   `drift_causes` covers the move.
+- `eurostat_reconciliation`: each line-year of Eurostat's `sdg_13_50` from 2020 to
+  2024 (`Release.reconcile_eurostat`) whose gap is above `min_gap_eur` and
+  `max_gap_share` of Eurostat's figure has an entry in `build.toml`'s
+  `eurostat_gaps`, and stays within the larger of `max_move_share` of Eurostat's
+  figure and `min_gap_eur` of the gap recorded there. An entry whose line-year is
+  now within tolerance, or that names no line-year, fails as stale. A line-year
+  without a release figure fails, and so does a release without
+  `eurostat_climate_finance` or with no line-year to compare.
 - `withheld_rows`: no release row comes from a source the release withholds, such
   as the Green Climate Fund's ledger, whose terms allow only private study, research
   and teaching (`schema.withheld_record`).
@@ -72,10 +80,12 @@ import yaml
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from climate_finance.build import evaluate, listings
-from climate_finance.build.config import DriftCause
+from climate_finance.build.config import DriftCause, EurostatGap
 from climate_finance.build.errors import GateFailedError
 from climate_finance.build.normalise.crs import allocated_population
+from climate_finance.build.readers.eurostat import COMPARED_LINES
 from climate_finance.build.sums import ordered_sum
+from climate_finance.query import EUROSTAT_YEARS
 from climate_finance.schema import (
     RELEASE_TABLES,
     ReleaseManifest,
@@ -96,6 +106,7 @@ GATES = (
     "over_allocation",
     "oecd_reconciliation",
     "drift",
+    "eurostat_reconciliation",
     "withheld_rows",
     "listed_codes",
 )
@@ -190,6 +201,12 @@ class Drift(_Section):
     max_move: float
 
 
+class EurostatTolerance(_Section):
+    max_gap_share: float
+    min_gap_eur: float
+    max_move_share: float
+
+
 class GateConfig(_Section):
     """The contents of `gates.yaml`."""
 
@@ -201,6 +218,7 @@ class GateConfig(_Section):
     over_allocation: OverAllocation
     oecd_reconciliation: Reconciliation
     drift: Drift
+    eurostat_reconciliation: EurostatTolerance
 
 
 def load_gates(path: Path = GATES_YAML) -> GateConfig:
@@ -223,6 +241,7 @@ def run_gates(
     previous: Release | None = None,
     first_release: bool = False,
     drift_causes: Collection[DriftCause] = (),
+    eurostat_gaps: Collection[EurostatGap] = (),
     report_only: bool = False,
     waive_precision: bool = False,
     gates: GateConfig | None = None,
@@ -239,6 +258,8 @@ def run_gates(
         first_release: pass the drift gate when there is no previous release.
         drift_causes: the recorded causes of provider-year moves, from
             `build.toml`.
+        eurostat_gaps: the recorded gaps between Eurostat's lines and the release,
+            from `build.toml`.
         report_only: return the results without raising on a failure.
         waive_precision: let failed precision, stratum_precision and human_audit
             rows pass, marked `waived`.
@@ -329,6 +350,11 @@ def run_gates(
                 first_release=first_release,
                 causes=drift_causes,
                 config=gates.drift,
+            ),
+            eurostat_gate(
+                _eurostat_reconciliation(assembled, manifest=manifest),
+                gaps=eurostat_gaps,
+                config=gates.eurostat_reconciliation,
             ),
             withheld_gate({name: released(name) for name in RELEASE_TABLES}),
             listing_gate({name: released(name) for name in RELEASE_TABLES}),
@@ -1127,6 +1153,136 @@ def drift_gate(
         threshold=config.max_move,
         passed=unexplained.is_empty(),
         detail="; ".join(parts),
+    )
+
+
+_EUROSTAT_TABLE = "eurostat_climate_finance"
+
+
+def _eurostat_reconciliation(
+    assembled: Path, *, manifest: ReleaseManifest
+) -> pl.DataFrame | None:
+    """`Release.reconcile_eurostat()`'s table for the release in `assembled`, or None
+    when the release holds no `eurostat_climate_finance`."""
+    from climate_finance.release import Release
+
+    if _EUROSTAT_TABLE not in manifest.tables:
+        return None
+    return Release(path=assembled, manifest=manifest).reconcile_eurostat().table
+
+
+def eurostat_gate(
+    reconciliation: pl.DataFrame | None,
+    *,
+    gaps: Collection[EurostatGap],
+    config: EurostatTolerance,
+) -> pl.DataFrame:
+    """The number of Eurostat line-years in `reconciliation` (`reconcile_eurostat`'s
+    table) that `gaps` leave unexplained.
+
+    A line-year is over tolerance when its `gap_eur` is above `min_gap_eur` and its
+    `gap_share` above `max_gap_share`, or null for a Eurostat figure of 0, or when
+    the release side is null. It fails without an entry in `gaps`, and with one
+    whose gap moved from the recorded `gap_eur` by more than the larger of
+    `max_move_share` of Eurostat's figure and `min_gap_eur`. An entry whose
+    line-year is within tolerance, or absent, fails as stale, so the entries stay
+    true. A line-year of `COMPARED_LINES` in `EUROSTAT_YEARS` that
+    `reconciliation` lacks fails as missing, so a partial Eurostat response or a
+    dropped observation cannot pass unseen. Without `reconciliation`, or with an
+    empty one, the gate fails.
+    """
+    if reconciliation is None:
+        return _row(
+            "eurostat_reconciliation",
+            value=None,
+            threshold=0.0,
+            passed=False,
+            detail=f"the release holds no {_EUROSTAT_TABLE}: nothing to compare",
+        )
+    if reconciliation.is_empty():
+        return _row(
+            "eurostat_reconciliation",
+            value=None,
+            threshold=0.0,
+            passed=False,
+            detail="no Eurostat line-year from 2020 to 2024: nothing to compare",
+        )
+    key = ["geo", "year"]
+    recorded = pl.DataFrame(
+        [(gap.geo, gap.year, gap.gap_eur) for gap in gaps],
+        schema={"geo": pl.String(), "year": pl.Int16(), "recorded_eur": pl.Float64()},
+        orient="row",
+    )
+    gap, eurostat = pl.col("gap_eur"), pl.col("eurostat_eur")
+    over = gap.is_null() | (
+        (gap.abs() > config.min_gap_eur)
+        & pl.col("gap_share").abs().gt(config.max_gap_share).fill_null(value=True)
+    )
+    moved = gap.is_null() | (
+        (gap - pl.col("recorded_eur")).abs()
+        > pl.max_horizontal(config.max_move_share * eurostat, config.min_gap_eur)
+    )
+    expected = pl.DataFrame(
+        [(geo, year) for geo in COMPARED_LINES for year in EUROSTAT_YEARS],
+        schema={"geo": pl.String(), "year": pl.Int16()},
+        orient="row",
+    )
+    missing = [
+        f"{geo}/{year}"
+        for geo, year in expected.join(reconciliation, on=key, how="anti")
+        .sort(key)
+        .iter_rows()
+    ]
+    compared = (
+        reconciliation.select(*key, "eurostat_eur", "gap_eur", "gap_share")
+        .join(recorded, on=key, how="full", coalesce=True)
+        .with_columns(
+            held=eurostat.is_not_null(),
+            over=over,
+            entry=pl.col("recorded_eur").is_not_null(),
+        )
+        .with_columns(
+            unrecorded=pl.col("held") & pl.col("over") & ~pl.col("entry"),
+            moved=pl.col("held") & pl.col("over") & pl.col("entry") & moved,
+            stale=pl.col("entry") & ~(pl.col("held") & pl.col("over")),
+        )
+        .sort(key)
+    )
+
+    def line_years(flag: str, describe: pl.Expr) -> list[str]:
+        rows = compared.filter(flag).select(pl.format("{}/{}", "geo", "year"), describe)
+        return [f"{name} ({text})" for name, text in rows.iter_rows()]
+
+    def eur_m(column: str) -> pl.Expr:
+        return (
+            (pl.col(column) / 1e6).round(0).cast(pl.Int64).cast(pl.String) + pl.lit("m")
+        ).fill_null("none")
+
+    groups = {
+        f"line-years missing from {_EUROSTAT_TABLE}": missing,
+        "line-years over tolerance without a recorded gap": line_years(
+            "unrecorded", pl.format("gap EUR {}", eur_m("gap_eur"))
+        ),
+        "recorded gaps that moved": line_years(
+            "moved",
+            pl.format(
+                "gap EUR {}, recorded {}", eur_m("gap_eur"), eur_m("recorded_eur")
+            ),
+        ),
+        "stale recorded gaps, now within tolerance or without a line-year": (
+            line_years("stale", pl.format("recorded EUR {}", eur_m("recorded_eur")))
+        ),
+    }
+    failing = [f"{what}: {_named(items)}" for what, items in groups.items() if items]
+    count = sum(len(items) for items in groups.values())
+    return _row(
+        "eurostat_reconciliation",
+        value=float(count),
+        threshold=0.0,
+        passed=count == 0,
+        detail="; ".join(failing)
+        or f"every line-year within tolerance or recorded "
+        f"({compared.filter('entry').height} recorded)",
     )
 
 

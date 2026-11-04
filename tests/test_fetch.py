@@ -21,6 +21,7 @@ from climate_finance.build import BuildConfig, Stage, build, fetch, load_config
 from climate_finance.build.config import Ledgers, LocalFile
 from climate_finance.build.errors import ConfigError
 from climate_finance.build.sources import files
+from climate_finance.build.sources.eurostat import URL as EUROSTAT_URL
 from climate_finance.build.sources.gcf import PROJECTS_URL, READINESS_URL
 from climate_finance.build.stages import REGISTRY, raw_dir
 from climate_finance.errors import SourceUnavailableError
@@ -186,6 +187,11 @@ class FakeSources:
                 text='<script id="__NEXT_DATA__" type="application/json">'
                 f"{json.dumps(page)}</script>",
             )
+        if str(request.url).startswith(EUROSTAT_URL):
+            self.calls.append(("eurostat", {}))
+            return httpx.Response(
+                200, content=(FIXTURES / "eurostat" / "sdg_13_50.csv").read_bytes()
+            )
         self.calls.append(("gcf", {"url": str(request.url)}))
         return self.gcf_response
 
@@ -307,6 +313,7 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
             "external/gcf/projects.json",
             "dac_exchange.parquet",
             "conversion_factors.parquet",
+            "eurostat/sdg_13_50.csv",
             *iati,
         ]
     )
@@ -319,6 +326,7 @@ def test_online_fetch_writes_the_raw_layout_and_one_manifest_row_per_file(
     methods = dict(manifest.select("path", "method").iter_rows())
     versions = dict(manifest.select("source", "version").iter_rows())
     assert versions["conversion_factors"] == f"pydeflate {version('pydeflate')}"
+    assert versions["eurostat_sdg_13_50"] == "2026-04-29"
     assert methods["oecd/CRS.parquet"] == "manual"
     assert all(methods[path] == "manual" for path in iati)
     assert methods["oecd/multisystem.parquet"] == "http"

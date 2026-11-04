@@ -28,8 +28,10 @@ from climate_finance.build.fetch import (
     resolve_years,
 )
 from climate_finance.build.provenance import Provenance, record_path
+from climate_finance.build.readers.eurostat import FILE as EUROSTAT_FILE
 from climate_finance.build.readers.gcf import PROJECTS_FILE
 from climate_finance.build.readers.ledgers import LEDGER_DIR
+from climate_finance.build.sources import eurostat
 from climate_finance.build.stages import REGISTRY, Stage, table_path
 from climate_finance.release import EXAMPLE_DIR
 from climate_finance.schema import sha256_file
@@ -153,6 +155,11 @@ def write_raw(
             "conversion_factors",
             SNAPSHOT / "conversion_factors.parquet",
             CONVERSION_FACTORS_FILE,
+        ),
+        (
+            eurostat.SOURCE,
+            RAW_FIXTURES / "eurostat" / "sdg_13_50.csv",
+            EUROSTAT_FILE,
         ),
         *(
             (f"iati_{publisher}", xml, IATI_DIR / publisher / xml.name)

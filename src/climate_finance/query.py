@@ -144,6 +144,7 @@ from climate_finance.result import (
     AGENCY_ROW_KEYS,
     AMOUNTS,
     ROW_KEYS,
+    EurostatReconciliation,
     Meta,
     Quality,
     Reconciliation,
@@ -156,6 +157,7 @@ from climate_finance.schema import (
     BILATERAL,
     BTR_COEFFICIENTS,
     COEFFICIENT_MARKERS,
+    COMMISSION_AGENCIES,
     COMMITMENT_KEY,
     CORE_CONTRIBUTION,
     EIB_AGENCY,
@@ -1505,6 +1507,256 @@ def _reconciliation_rows(
         )
         .sort("party", "year", "row_id", "record_id", nulls_last=True)
     )
+
+
+# The basis of Eurostat's `sdg_13_50` by year, as its metadata gives it: commitments
+# for 2020 and 2021, and from 2022 bilateral finance committed and multilateral
+# finance provided. Each basis names the flow of the core contributions the release
+# side attributes; bilateral finance counts commitments under both. Eurostat
+# documents no basis before 2020, so the comparison starts there.
+EUROSTAT_BASES: tuple[tuple[range, str, Flow], ...] = (
+    (range(2020, 2022), "commitments", "commitments"),
+    (range(2022, 2025), "bilateral_committed_multilateral_provided", "disbursements"),
+)
+EUROSTAT_YEARS = tuple(year for years, _, _ in EUROSTAT_BASES for year in years)
+_EUROSTAT_BASIS = {year: basis for span, basis, _ in EUROSTAT_BASES for year in span}
+_EUROSTAT_FLOW = {year: flow for span, _, flow in EUROSTAT_BASES for year in span}
+# The release side of every Eurostat line: `ONE`, the provider-coefficient rule, with
+# EU Institutions as a provider, since Eurostat counts the EU budget and the EDF under
+# the Commission and leaves them out of the members that fund them.
+EUROSTAT_METHOD = ONE.replace(eu="provider")
+_LINE_KEY = ("provider_code", "agency_code", "year")
+# The `agency_code` of the Eurostat line each EU Institutions agency counts in: none
+# for the Commission's (`COMM`), whose line has no agency, and its own for the EIB.
+_LINE_AGENCIES: dict[int, int | None] = {
+    **dict.fromkeys(COMMISSION_AGENCIES),
+    EIB_AGENCY: EIB_AGENCY,
+}
+
+
+def _line_of(target: Target) -> tuple[int, int | None] | None:
+    """The `(provider_code, agency_code)` of the Eurostat line an agency names alone,
+    by `_LINE_AGENCIES`, or None for an agency no line stands for."""
+    if isinstance(target, int) or target.provider != EU_INSTITUTIONS:
+        return None
+    if target.agency not in _LINE_AGENCIES:
+        return None
+    return (EU_INSTITUTIONS, _LINE_AGENCIES[target.agency])
+
+
+def _eurostat_lines(
+    release: Release, *, providers: tuple[Target, ...] | None, years: Sequence[int]
+) -> pl.LazyFrame:
+    """The `eurostat_climate_finance` rows of `years` with a provider, so without
+    `EU27_2020`, of the lines `providers` names: every line of a provider, and the
+    line of an agency (`_line_of`). None takes every line.
+
+    Warns:
+        CoverageWarning: naming each provider or agency of `providers` that no line
+            holds, such as a provider outside the EU.
+    """
+    lines = release.table("eurostat_climate_finance").filter(
+        pl.col("provider_code").is_not_null(), pl.col("year").is_in(list(years))
+    )
+    if providers is None:
+        return lines
+    held = set(
+        lines.select("provider_code", "agency_code").unique().collect().iter_rows()
+    )
+    codes = [target for target in providers if isinstance(target, int)]
+    named = {line for target in providers if (line := _line_of(target)) is not None}
+    held_codes = {code for code, _ in held}
+    missing = [
+        target
+        for target in providers
+        if (
+            target not in held_codes
+            if isinstance(target, int)
+            else _line_of(target) not in held
+        )
+    ]
+    # An agency of a member with a line counts in the member's line, its total.
+    totals = [
+        target
+        for target in missing
+        if isinstance(target, Agency)
+        and target.provider != EU_INSTITUTIONS
+        and target.provider in held_codes
+    ]
+    parts = [
+        f"its line for {name_of(agency.provider, kind='providers')} is the member's "
+        f"total, so name {name_of(agency.provider, kind='providers')!r} for the "
+        f"{agency_name(agency)}"
+        for agency in totals
+    ]
+    if outside := [target for target in missing if target not in totals]:
+        names = ", ".join(name_of(target, kind="providers") for target in outside)
+        parts.append(
+            f"it holds no line in the years asked for {names}, since it covers EU "
+            "member states, the Commission and the EIB"
+        )
+    if parts:
+        warnings.warn(
+            f"Eurostat's sdg_13_50: {'; '.join(parts)}",
+            CoverageWarning,
+            skip_file_prefixes=(_PACKAGE_DIR,),
+        )
+    agency = pl.col("agency_code")
+    return lines.filter(
+        pl.any_horizontal(
+            pl.col("provider_code").is_in(codes),
+            *(
+                (pl.col("provider_code") == provider) & agency.eq_missing(code)
+                for provider, code in named
+            ),
+        )
+    )
+
+
+def _in_eurostat_line() -> pl.Expr:
+    """The `agency_code` of the Eurostat line a release row counts in: null for a
+    member's row, `_LINE_AGENCIES` for an EU Institutions row, and -1 for an EU
+    Institutions agency no line holds, which joins no line."""
+    return (
+        pl.when(pl.col("provider_code") != EU_INSTITUTIONS)
+        .then(pl.lit(None, pl.Int32))
+        .otherwise(
+            pl.col("agency_code").replace_strict(
+                _LINE_AGENCIES, default=-1, return_dtype=pl.Int32
+            )
+        )
+    )
+
+
+def reconcile_eurostat(
+    release: Release, *, providers: tuple[Target, ...] | None, years: Sequence[int]
+) -> EurostatReconciliation:
+    """Each Eurostat `sdg_13_50` line against the release, one row per line and
+    year of `years`, in EUR at current prices.
+
+    The lines are the member states, the Commission (`COMM`) and the EIB of
+    `eurostat_climate_finance`, as `providers` names them (`_eurostat_lines`);
+    `EU27_2020`, the sum of the members, is left out. `basis` is the year's basis in
+    `EUROSTAT_BASES`. The release side weighs every row under `EUROSTAT_METHOD`.
+
+    `release_bilateral_eur` is the line's bilateral commitments (`BILATERAL`),
+    those of a member, of EU Institutions agencies 1 and 2 for the Commission, and
+    of agency 3 for the EIB, whose own rows count here although `spending` leaves
+    them out of the provider view under `EUROSTAT_METHOD`. `release_multilateral_eur`
+    is a member's core contributions at the agency's climate share, attributed as the
+    provider view attributes them, as commitments on the `commitments` basis and as
+    disbursements on the other. It leaves out contributions through the EU
+    channels (`EU_CHANNELS`). Under `EUROSTAT_METHOD` the EU budget and the EDF
+    attribute nothing, and the EIB's own commitments make its line, so the members'
+    money through all three counts in the Commission's or the EIB's line alone. It
+    is zero for the Commission and the EIB. Each release column is null for a year
+    its table holds no rows for, `commitments` for the bilateral side and
+    `core_contributions` of the basis's flow for the multilateral side.
+
+    `release_eur` adds the two, `gap_eur` is `eurostat_eur` less `release_eur`, and
+    `gap_share` is `gap_eur` over `eurostat_eur`, null where that is zero. The
+    amounts convert to EUR as `spending(currency="EUR")` converts them, by provider
+    and year.
+
+    Warns:
+        CoverageWarning: for a provider or agency of `providers` that no line holds
+            (`_eurostat_lines`).
+    """
+    lines = _eurostat_lines(release, providers=providers, years=years).with_columns(
+        eurostat_eur=pl.col("value_eur"),
+        basis=pl.col("year").replace_strict(_EUROSTAT_BASIS, return_dtype=pl.String),
+        flow=pl.col("year").replace_strict(_EUROSTAT_FLOW, return_dtype=pl.String),
+    )
+    line_providers = lines.select("provider_code").unique()
+    factors = target_factors(
+        release.table("conversion_factors"),
+        release=release.manifest.release,
+        currency="EUR",
+        prices="current",
+    )
+
+    def by_line(rows: pl.LazyFrame, name: str) -> pl.LazyFrame:
+        """The climate value of `rows` under `EUROSTAT_METHOD` in EUR, summed by
+        line."""
+        weighed = _weigh(
+            _coefficients(release, rows, method=EUROSTAT_METHOD),
+            method=EUROSTAT_METHOD,
+        )
+        return (
+            convert(
+                weighed,
+                columns=["value"],
+                factors=factors,
+                release=release.manifest.release,
+            )
+            .group_by("provider_code", "year", agency_code=_in_eurostat_line())
+            .agg(ordered_sum(pl.col("value")).alias(name))
+        )
+
+    bilateral = by_line(
+        _base_rows(release, flow="commitments", view="provider", untraced=False)
+        .filter(pl.col("year").is_in(list(years)))
+        .join(line_providers, on="provider_code", how="semi"),
+        "release_bilateral_eur",
+    )
+    multilateral = by_line(
+        pl.concat(
+            _attributed_rows(release, flow=flow, method=EUROSTAT_METHOD).filter(
+                pl.col("year").is_in([year for year in span if year in years]),
+                pl.col("provider_code") != EU_INSTITUTIONS,
+                ~pl.col("channel_code").is_in(EU_CHANNELS),
+            )
+            for span, _, flow in EUROSTAT_BASES
+        ).join(line_providers, on="provider_code", how="semi"),
+        "release_multilateral_eur",
+    )
+    # The years, and flows by year, the release's tables hold rows for.
+    commitment_years = (
+        release.table("commitments")
+        .select("year")
+        .unique()
+        .with_columns(bilateral_held=pl.lit(value=True))
+    )
+    contribution_years = (
+        release.table("core_contributions")
+        .select("year", "flow")
+        .unique()
+        .with_columns(multilateral_held=pl.lit(value=True))
+    )
+    eu = pl.col("provider_code") == EU_INSTITUTIONS
+    release_eur = pl.col("release_bilateral_eur") + pl.col("release_multilateral_eur")
+    table = (
+        lines.join(bilateral, on=_LINE_KEY, how="left", nulls_equal=True)
+        .join(multilateral, on=_LINE_KEY, how="left", nulls_equal=True)
+        .join(commitment_years, on="year", how="left")
+        .join(contribution_years, on=["year", "flow"], how="left")
+        .with_columns(
+            release_bilateral_eur=pl.when(pl.col("bilateral_held")).then(
+                pl.col("release_bilateral_eur").fill_null(0.0)
+            ),
+            release_multilateral_eur=pl.when(eu)
+            .then(0.0)
+            .when(pl.col("multilateral_held"))
+            .then(pl.col("release_multilateral_eur").fill_null(0.0)),
+        )
+        .with_columns(release_eur=release_eur)
+        .with_columns(gap_eur=pl.col("eurostat_eur") - pl.col("release_eur"))
+        .select(
+            "geo",
+            "provider_code",
+            "agency_code",
+            "year",
+            "basis",
+            "eurostat_eur",
+            "obs_flag",
+            "release_bilateral_eur",
+            "release_multilateral_eur",
+            "release_eur",
+            "gap_eur",
+            gap_share=_ratio(pl.col("gap_eur"), pl.col("eurostat_eur")),
+        )
+    )
+    return EurostatReconciliation(table=with_names(table).sort("geo", "year"))
 
 
 def _attribution(

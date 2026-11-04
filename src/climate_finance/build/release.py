@@ -100,6 +100,8 @@ from climate_finance.build.measure import load_provider_facts
 from climate_finance.build.normalise.crs import flow_category
 from climate_finance.build.provenance import build_identity, setting_value
 from climate_finance.build.readers.btr import party_provider
+from climate_finance.build.readers.eurostat import FILE as EUROSTAT_FILE
+from climate_finance.build.readers.eurostat import read_eurostat
 from climate_finance.build.reflows import (
     attribute_reflows,
     loan_records,
@@ -187,6 +189,11 @@ _WORLD_BANK = (
     "World Bank Data Catalog licence (CC BY 4.0 by default; per dataset), "
     "https://datacatalog.worldbank.org/public-licenses"
 )
+_EUROSTAT = (
+    "Eurostat dataset sdg_13_50, https://ec.europa.eu/eurostat/databrowser/view/"
+    "sdg_13_50; reuse under the European Commission's reuse policy, CC BY 4.0 "
+    "(Decision 2011/833/EU), with Eurostat cited as the source"
+)
 _IATI = "the publisher's licence in the IATI Registry, https://iatiregistry.org"
 _GCF = (
     "Green Climate Fund website terms: private study, research and teaching only, "
@@ -210,6 +217,7 @@ SOURCE_LICENCES = {
     "imputed_shares": _OECD,
     "dac_exchange": _OECD,
     "conversion_factors": _OECD,
+    "eurostat": _EUROSTAT,
     "gcf_projects": _GCF,
     "ledger_gcf": _GCF,
     "iati": _IATI,
@@ -454,6 +462,7 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         "conversion_factors": pl.read_parquet(
             context.raw_dir / CONVERSION_FACTORS_FILE
         ),
+        "eurostat_climate_finance": read_eurostat(context.raw_dir / EUROSTAT_FILE),
     }
     # The tables above read every record, so quality and `withheld_usd` count the
     # withheld ones; the release leaves out their rows.
@@ -1519,6 +1528,7 @@ def cut_release(
             previous=None if baseline is None else baseline.release,
             first_release=first_release,
             drift_causes=build_config.drift_causes,
+            eurostat_gaps=build_config.eurostat_gaps,
             waive_precision=waive_precision is not None,
         )
     manifest_path = release_dir / "assemble" / "release.json"
