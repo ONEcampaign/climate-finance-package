@@ -407,7 +407,7 @@ class Release:
         Commission's or the EIB's climate finance, against the release by year, in
         EUR (`query.reconcile_eurostat`).
 
-        The release side is fixed at `query.EUROSTAT_METHOD`, `PROVIDER` with EU
+        The release side is fixed at `query.EUROSTAT_METHOD`, `ONE` with EU
         Institutions as a provider. It weighs a member's bilateral commitments and
         its attributed core contributions, and the Commission's and the EIB's own
         commitments. `basis` gives each year's basis, which sets the flow of the

@@ -1521,10 +1521,10 @@ EUROSTAT_BASES: tuple[tuple[range, str, Flow], ...] = (
 EUROSTAT_YEARS = tuple(year for years, _, _ in EUROSTAT_BASES for year in years)
 _EUROSTAT_BASIS = {year: basis for span, basis, _ in EUROSTAT_BASES for year in span}
 _EUROSTAT_FLOW = {year: flow for span, _, flow in EUROSTAT_BASES for year in span}
-# The release side of every Eurostat line: `PROVIDER` with EU Institutions as a
-# provider, since Eurostat counts the EU budget and the EDF under the Commission and
-# leaves them out of the members that fund them.
-EUROSTAT_METHOD = PROVIDER.replace(eu="provider")
+# The release side of every Eurostat line: `ONE`, the provider-coefficient rule, with
+# EU Institutions as a provider, since Eurostat counts the EU budget and the EDF under
+# the Commission and leaves them out of the members that fund them.
+EUROSTAT_METHOD = ONE.replace(eu="provider")
 _LINE_KEY = ("provider_code", "agency_code", "year")
 # The `agency_code` of the Eurostat line each EU Institutions agency counts in: none
 # for the Commission's (`COMM`), whose line has no agency, and its own for the EIB.

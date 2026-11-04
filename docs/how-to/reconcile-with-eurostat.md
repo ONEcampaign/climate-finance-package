@@ -60,7 +60,7 @@ release = cf.load_example()
 
 ## What the comparison measures
 
-The release side is fixed, so the query takes no `method`. It weighs every row at `PROVIDER`'s coefficients with EU Institutions counted as a provider, `cf.methods.PROVIDER.replace(eu="provider")`, which the package names `query.EUROSTAT_METHOD`. Eurostat counts the EU budget and the European Development Fund under the Commission and the EIB's lending under the EIB, so members' contributions to all three count nothing in the members' lines, and the Commission's and the EIB's lines hold the money once.
+The release side is fixed, so the query takes no `method`. It weighs every row at `ONE`'s provider coefficients with EU Institutions counted as a provider, `cf.methods.ONE.replace(eu="provider")`, which the package names `query.EUROSTAT_METHOD`. Eurostat counts the EU budget and the European Development Fund under the Commission and the EIB's lending under the EIB, so members' contributions to all three count nothing in the members' lines, and the Commission's and the EIB's lines hold the money once.
 
 `basis` follows Eurostat's metadata. For 2020 and 2021 it is `commitments`, and the release side counts members' core contributions as committed. From 2022 it is `bilateral_committed_multilateral_provided`, and the release side counts them as disbursed. Bilateral money counts as committed under both. Eurostat documents no basis before 2020, so the comparison starts there.
 

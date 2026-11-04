@@ -180,7 +180,7 @@ Compares each party's BTR Table III.1 total with OECD figures for its bilateral 
 
 ### `Release.reconcile_eurostat(*, providers, years)`
 
-Sets each line of Eurostat's `sdg_13_50`, the climate finance of an EU member state, the European Commission, or the EIB, against the release by year, in EUR. The release side is fixed at `query.EUROSTAT_METHOD`, `PROVIDER` with `eu="provider"`, so it takes no `method` argument, and an unknown keyword raises `InvalidInputError` naming a close one. Returns an `EurostatReconciliation`:
+Sets each line of Eurostat's `sdg_13_50`, the climate finance of an EU member state, the European Commission, or the EIB, against the release by year, in EUR. The release side is fixed at `query.EUROSTAT_METHOD`, `ONE`, the provider-coefficient rule, with `eu="provider"`, so it takes no `method` argument, and an unknown keyword raises `InvalidInputError` naming a close one. Returns an `EurostatReconciliation`:
 
 - `providers` (`str | int | Agency | Iterable[str | int | Agency] | None`). Lines, named as `spending()` names providers, so `"Germany"`, `"DEU"`, and `5` name Germany's line, `"EU Institutions"` the Commission's and the EIB's, and `"European Commission"`, `"European Development Fund"`, or `"EIB"` one of them. `None` compares every line. A provider or agency with no line, such as Japan or a member's agency, gives a `CoverageWarning`.
 - `years` (`int | Iterable[int] | None`). `None` takes every year from 2020 to 2024 that `eurostat_climate_finance` holds. Other years give a `CoverageWarning`.

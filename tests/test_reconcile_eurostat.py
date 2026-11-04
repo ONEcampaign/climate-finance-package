@@ -10,13 +10,13 @@ from releases import copy_release
 
 import climate_finance as cf
 from climate_finance.errors import CoverageWarning, InvalidInputError
-from climate_finance.methods import PROVIDER
+from climate_finance.methods import ONE
 from climate_finance.result import EurostatReconciliation
 from climate_finance.spec import Flow, View
 
 SNAP = cf.load(path=FIXTURE_DIR)
 # The release side's method, spelled out here so a change to the query's shows.
-EU_AS_PROVIDER = PROVIDER.replace(eu="provider")
+EU_AS_PROVIDER = ONE.replace(eu="provider")
 
 
 def _line(reconciliation: EurostatReconciliation, geo: str, year: int) -> dict:
