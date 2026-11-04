@@ -129,7 +129,7 @@ On the 2026a release candidate, the steps above with `year = 2024` give these fi
 | Multilateral climate funds     |         7.2 |                 6.0 |                   1.6 |
 | Total public                   |       101.6 |                89.7 |                  60.4 |
 
-The OECD figure mostly counts commitments, so the commitments column is the comparison. It falls USD 11.9bn short: USD 7.8bn in bilateral finance, 2.9bn in the development banks and 1.2bn in the climate funds. The OECD reads bilateral finance from the reports donors send the UN, which hold amounts and climate shares the CRS does not, and the release reads the CRS alone, so the bilateral shortfall measures how far those reports go beyond the CRS. The release has no stated cause for the other two shortfalls.
+The OECD figure mostly counts commitments, so the commitments column is the comparison. It falls USD 11.9bn short: USD 7.8bn in bilateral finance, 2.9bn in the development banks and 1.2bn in the climate funds. The OECD compiles bilateral finance from the providers' own reporting for its series, while the release reads the CRS under its own counting rules and coefficients. The table measures each shortfall, and none of the three has a quantified cause.
 
 The disbursements column is what was paid in 2024. It is two-thirds of the year's commitments, since payments in a year settle commitments from earlier years.
 
