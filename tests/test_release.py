@@ -60,18 +60,26 @@ from climate_finance.errors import SchemaError
 from climate_finance.schema import STAGE_TABLES
 
 NOR, GEF, IDA_CHANNEL = 8, 811, 44002
-# Norway commits 100 in 2019 under crs id X1 and disburses 60 in 2020 and 70 in 2021,
-# so the commitment fills and 30 of 2021 is excess. Y1 commits 50 with no CRDF row
-# and disburses 20 to it; Z9 disburses 15 with no commitment, and Z8 disburses 5
-# with no Rio marker. The GEF, a fund the fill stage can route through its IATI
-# files, disburses 7 under G1 with no commitment.
+# Norway commits 100 in 2019 under crs id X1 and disburses 60 in 2020 as a grant and
+# 70 in 2021 as a loan, so the commitment fills and 30 of 2021 is excess. Y1 commits
+# 50 with no CRDF row and disburses 20 to it; Z9 disburses 15 as other official flows
+# with no commitment, and Z8 disburses 5 with no Rio marker. The GEF, a fund the fill
+# stage can route through its IATI files, disburses 7 under G1 with no commitment.
 CRS = crs_records(
     {"record_id": "c19", "year": 2019, "crs_id": "X1", "commitment_usd": 100.0},
-    {"record_id": "d20", "year": 2020, "crs_id": "X1", "disbursement_usd": 60.0},
+    {
+        "record_id": "d20",
+        "year": 2020,
+        "crs_id": "X1",
+        "finance_t": 110,
+        "disbursement_usd": 60.0,
+    },
     {
         "record_id": "d21",
         "year": 2021,
         "crs_id": "X1",
+        "flow_code": 13,
+        "finance_t": 421,
         "disbursement_usd": 70.0,
         "grant_equiv_usd": 35.0,
     },
@@ -84,7 +92,14 @@ CRS = crs_records(
     },
     {"record_id": "y19", "year": 2019, "crs_id": "Y1", "commitment_usd": 50.0},
     {"record_id": "y20", "year": 2020, "crs_id": "Y1", "disbursement_usd": 20.0},
-    {"record_id": "z20", "year": 2020, "crs_id": "Z9", "disbursement_usd": 15.0},
+    {
+        "record_id": "z20",
+        "year": 2020,
+        "crs_id": "Z9",
+        "flow_code": 14,
+        "finance_t": 421,
+        "disbursement_usd": 15.0,
+    },
     {
         "record_id": "g20",
         "year": 2020,
@@ -107,6 +122,7 @@ CRDF = crdf_rows(
         "row_id": "R1",
         "year": 2019,
         "crs_id": "X1",
+        "finance_t": 421,
         "climate_usd": 40.0,
         "face_usd": 1e2,
     },
@@ -118,7 +134,14 @@ CRDF = crdf_rows(
         "repeat_of": "R1",
     },
     {"row_id": "P", "year": 2019, "climate_usd": 25.0},
-    {"row_id": "C", "year": 2019, "climate_usd": 25.0, "parent_row_id": "P"},
+    {
+        "row_id": "C",
+        "year": 2019,
+        "flow_category": 21,
+        "finance_t": 110,
+        "climate_usd": 25.0,
+        "parent_row_id": "P",
+    },
     {"row_id": "N", "year": 2019, "climate_usd": -5.0},
 )
 CORE = pl.DataFrame(
@@ -387,6 +410,10 @@ def test_disbursements_carry_the_record_and_its_link_and_leave_out_excess(
     ]
     assert rows["record_disbursement_usd"].to_list() == [60.0, 70.0]
     assert rows["record_grant_equiv_usd"].to_list() == [None, 35.0]
+    assert rows.select("flow_code", "flow_category", "finance_t").rows() == [
+        (11, 10, 110),
+        (13, 10, 421),
+    ]
     assert rows["link_method"].to_list() == ["crs_id_purpose"] * 2
     assert rows["link_probability"].to_list() == [1.0, 1.0]
     assert rows["provider_code"].to_list() == [NOR, NOR]
@@ -410,7 +437,13 @@ def test_a_fill_takes_its_commitments_facts_and_its_records_total() -> None:
     rows = release.fill_disbursements(fills, crdf=CRDF.lazy()).collect().sort("row_id")
 
     expected = CRDF.filter(pl.col("row_id").is_in(["C", "R1"])).sort("row_id")
-    for column in ("provider_code", "recipient_code", "bi_multi"):
+    for column in (
+        "provider_code",
+        "recipient_code",
+        "bi_multi",
+        "flow_category",
+        "finance_t",
+    ):
         assert rows[column].to_list() == expected[column].to_list(), column
     assert rows["flow_code"].is_null().all()
     assert rows["record_disbursement_usd"].to_list() == [10.0, 10.0]
@@ -621,6 +654,7 @@ def test_the_release_leaves_out_gcf_rows_and_keeps_what_they_disbursed(
     assert notes == dict.fromkeys(YEAR_SOURCES) | {
         "gcf_projects": release.WITHHELD_NOTE,
         "iati_gcf": None,
+        release.ATTRIBUTION_SOURCE: None,
     }
 
 
@@ -754,18 +788,20 @@ def test_untraced_unallocated_and_release_rows_sum_to_the_marked_disbursement(
         (GEF, 2020, 7.0, 0.0, 0.0, 7.0, 0.0),
     ]
     # The excess and the unlinked records count as untraced, with the record's own
-    # disbursement and grant equivalent. The build runs no gap fill, so no IATI
-    # route counts the GEF's record.
+    # disbursement, grant equivalent, flow category and type of finance. The build
+    # runs no gap fill, so no IATI route counts the GEF's record.
     assert untraced.select(
         "record_id",
         "reason",
         "untraced_usd",
         "record_disbursement_usd",
         "record_grant_equiv_usd",
+        "flow_category",
+        "finance_t",
     ).rows() == [
-        ("d21", "excess", 30.0, 70.0, 35.0),
-        ("g20", "unlinked", 7.0, 7.0, None),
-        ("z20", "unlinked", 15.0, 15.0, None),
+        ("d21", "excess", 30.0, 70.0, 35.0, 10, 421),
+        ("g20", "unlinked", 7.0, 7.0, None, 10, None),
+        ("z20", "unlinked", 15.0, 15.0, None, 21, 421),
     ]
     totals = (
         unallocated.group_by("year")
@@ -1145,6 +1181,170 @@ def test_the_coefficients_file_gives_a_valid_table() -> None:
 
     schema.validate(schema.PROVIDER_COEFFICIENTS, coefficients)
     assert schema._coefficient_problems(coefficients) == []
+
+
+# The 2020 column of Table 8 as the earlier analysis held it for the 26 institutions
+# that report climate outflows to the DAC: the IMF Resilience and Sustainability
+# Trust (1058) takes its one share from the 2024 column.
+TABLE_8_CHECK = {
+    913: 0.612, 914: 0.934, 915: 0.716, 1024: 0.286, 981: 0.442, 906: 0.346,
+    910: 0.052, 1013: 0.937, 1015: 0.048, 990: 0.914, 918: 1.0, 901: 0.713,
+    905: 0.959, 909: 0.739, 1019: 0.344, 903: 0.654, 1037: 0.517, 1045: 0.632,
+    1014: 0.995, 1012: 1.0, 1011: 0.999, 811: 0.976, 1016: 0.990, 988: 0.710,
+    1058: 0.775, 104: 1.0,
+}  # fmt: skip
+
+
+def test_the_2020_column_of_table_8_gives_the_shares_of_2020() -> None:
+    shares = release.outflow_shares(release.attribution_file())
+
+    schema.validate(schema.OUTFLOW_SHARES, shares)
+    # The check list gives each provider's row for every agency without its own.
+    of_2020 = dict(
+        shares.filter(
+            pl.col("agency_code").is_null() | (pl.col("provider_code") == 918),
+            year=2020,
+        )
+        .select("provider_code", "share")
+        .rows()
+    )
+    assert len(TABLE_8_CHECK) == 26
+    assert {code: of_2020[code] for code in TABLE_8_CHECK if code != 1058} == {
+        code: share for code, share in TABLE_8_CHECK.items() if code != 1058
+    }
+    # The trust's share sits in the 2024 column, and it started in 2022.
+    assert 1058 not in of_2020
+    assert shares.filter(provider_code=1058).select("year", "share").rows() == [
+        (year, TABLE_8_CHECK[1058]) for year in (2022, 2023, 2024)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("provider", "agencies"),
+    [
+        # The EIB is agency 3 of EU Institutions.
+        (918, {3: 1.0}),
+        # The LDCF and the SCCF are agencies 12 and 13 of the GEF, and the GEF Trust
+        # Funds its other agencies.
+        (811, {None: 0.976, 12: 1.0, 13: 1.0}),
+    ],
+    ids=["eib", "gef"],
+)
+def test_a_fund_of_a_provider_takes_the_share_of_its_agency(
+    provider: int, agencies: dict[int | None, float]
+) -> None:
+    shares = release.outflow_shares(release.attribution_file()).filter(
+        provider_code=provider, year=2020
+    )
+
+    assert dict(shares.select("agency_code", "share").rows()) == agencies
+
+
+@pytest.mark.parametrize(
+    ("year", "column", "share"),
+    [
+        (2013, 2015, 0.590),
+        (2015, 2015, 0.590),
+        (2016, 2018, 0.564),
+        (2019, 2018, 0.564),
+        (2020, 2020, 0.612),
+        (2024, 2020, 0.612),
+    ],
+)
+def test_a_year_takes_the_share_of_the_column_that_covers_it(
+    year: int, column: int, share: float
+) -> None:
+    """The African Development Bank prints a different share in each column."""
+    row = (
+        release.outflow_shares(release.attribution_file())
+        .filter(provider_code=913, year=year)
+        .row(0, named=True)
+    )
+
+    assert (row["table_column"], row["share"]) == (column, share)
+
+
+def test_a_year_whose_column_is_blank_has_no_row() -> None:
+    """The table prints N/A for CGIF before 2020 and no code for the Asian
+    Development Bank Special Fund, so neither holds a row for those years."""
+    shares = release.outflow_shares(release.attribution_file())
+
+    assert shares.filter(provider_code=1017)["year"].to_list() == list(
+        range(2020, 2025)
+    )
+    assert shares.filter(provider_code=1024)["year"].min() == 2016
+
+
+def _institution(**fields: object) -> dict[str, object]:
+    return {"name": "Fund", "provider_code": 1, "shares": {2020: 0.5}} | fields
+
+
+@pytest.mark.parametrize(
+    ("institutions", "entries", "message"),
+    [
+        ([_institution(shares={2020: 1.2})], [(2020, 2020, 2020)], "not in 0-1"),
+        ([_institution()], [(2019, 2020, 2020), (2020, 2021, 2020)], "two table"),
+        (
+            [_institution(), _institution(name="Twin")],
+            [(2020, 2020, 2020)],
+            "share a provider",
+        ),
+    ],
+)
+def test_an_attribution_file_the_table_cannot_hold_is_refused(
+    institutions: list[dict[str, object]],
+    entries: list[tuple[int, int, int]],
+    message: str,
+) -> None:
+    attribution = {
+        "source": "S",
+        "institutions": institutions,
+        "year_columns": [
+            {"first_year": first, "last_year": last, "column": column, "locator": "p"}
+            for first, last, column in entries
+        ],
+    }
+
+    with pytest.raises(ValueError, match=message):
+        release.outflow_shares(attribution)
+
+
+def test_an_institution_without_a_provider_code_gives_no_row() -> None:
+    attribution = {
+        "source": "S",
+        "institutions": [_institution(provider_code=None)],
+        "year_columns": [
+            {"first_year": 2020, "last_year": 2020, "column": 2020, "locator": "p"}
+        ],
+    }
+
+    assert release.outflow_shares(attribution).is_empty()
+
+
+def test_the_developed_providers_are_the_dac_less_korea_and_eight_others() -> None:
+    developed = release.developed_providers(release.attribution_file())
+    listing = cf.providers.list()
+    names = dict(listing.select("code", "name").rows())
+    dac = set(listing.filter(type="DAC member")["code"]) - {742}
+
+    schema.validate(schema.DEVELOPED_PROVIDERS, developed)
+    codes = set(developed["provider_code"])
+    assert 742 not in codes
+    assert {names[code] for code in codes - dac} == {
+        "Bulgaria",
+        "Croatia",
+        "Cyprus",
+        "Latvia",
+        "Malta",
+        "Romania",
+        "Liechtenstein",
+        "Monaco",
+    }
+    assert dac <= codes
+    # Each code carries the name the file lists beside it.
+    assert release.attribution_file()["developed"]["providers"] == {
+        code: names[code] for code in codes
+    }
 
 
 @pytest.mark.parametrize(

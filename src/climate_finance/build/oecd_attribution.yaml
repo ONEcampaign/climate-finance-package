@@ -1,0 +1,117 @@
+# OECD Table 8, the shares of multilateral climate finance attributable to developed
+# countries, and the developed countries themselves. The build compiles the file into
+# the release tables `outflow_shares` and `developed_providers`.
+#
+# `source` cites the report and `url` links it. Each `outflow_shares` row carries the
+# source, and its page, table and column in the `locator` of its `year_columns` entry.
+#
+# `institutions` holds every row of the table as printed. A cell the table prints as
+# "N/A" or "-" has no entry in `shares`, so an institution-year whose column has no
+# share has no `outflow_shares` row. A row with a null `provider_code` has no code in
+# the DAC listing and compiles to no row. `agency_code` is the agency the row covers,
+# null for every agency of the provider without a row of its own.
+#
+# `year_columns` maps each year from `first_year` to `last_year` to the table column
+# whose share applies, with the basis in `locator`. An institution takes the entries
+# that name its `provider_code`, else the entries that name none. The table prints
+# four columns, 2015, 2018, 2020 and 2024, and the OECD's note under the table maps
+# 2013-2015 to the 2015 column, 2016-2018 to the 2018 column and 2020-2022 to the 2020
+# column. Years the note leaves open are the package's choice and say so.
+#
+# `developed` lists the 39 entries of the report's Table 7, the countries it counts as
+# developed. They are the Annex II Parties to the UNFCCC, the member states of the
+# European Union, Liechtenstein and Monaco (p. 20), which makes them the DAC members
+# less Korea, and Bulgaria, Croatia, Cyprus, Latvia, Malta, Romania, Liechtenstein and Monaco. The
+# table's European Union is EU Institutions (918). The EIB is a multilateral and has
+# a row of `institutions`.
+source: "OECD (2026), Climate Finance Provided and Mobilised by Developed Countries in 2013-2024, OECD Publishing, Paris, https://doi.org/10.1787/ab5eb9ad-en"
+url: https://doi.org/10.1787/ab5eb9ad-en
+year_columns:
+  - {first_year: 2013, last_year: 2015, column: 2015, locator: "Table 8, p. 23, 2015 column, which the table note applies to 2013 to 2015"}
+  - {first_year: 2016, last_year: 2018, column: 2018, locator: "Table 8, p. 23, 2018 column, which the table note applies to 2016 to 2018"}
+  - {first_year: 2019, last_year: 2019, column: 2018, locator: "Table 8, p. 23, 2018 column, applied to 2019 by choice: the table note names no column for 2019"}
+  - {first_year: 2020, last_year: 2022, column: 2020, locator: "Table 8, p. 23, 2020 column, which the table note applies to 2020 to 2022"}
+  - {first_year: 2023, last_year: 2024, column: 2020, locator: "Table 8, p. 23, 2020 column, applied to 2023 and 2024 by choice: the table note names no column for them, and the text says the shares were last updated in 2020"}
+  # The IMF Resilience and Sustainability Trust first committed funds in 2022, and its
+  # one share sits in the 2024 column.
+  - {provider_code: 1058, first_year: 2022, last_year: 2024, column: 2024, locator: "Table 8, p. 23, 2024 column, the only share the table gives the trust, applied to each year from its first commitments in 2022"}
+institutions:
+  - {name: African Development Bank, abbreviation: AfDB, provider_code: 913, shares: {2015: 0.590, 2018: 0.564, 2020: 0.612}}
+  - {name: African Development Fund, abbreviation: AfDF, provider_code: 914, shares: {2015: 0.940, 2018: 0.936, 2020: 0.934}}
+  - {name: Asian Development Bank, abbreviation: AsDB, provider_code: 915, shares: {2015: 0.710, 2018: 0.714, 2020: 0.716}}
+  # The listing has no code for the fund, which merged into the AsDB (915) from 2017.
+  - {name: Asian Development Bank Special Fund, abbreviation: AsDF, provider_code: null, shares: {2015: 0.960, 2018: 0.952}}
+  - {name: Asian Development Bank Credit Guarantee and Investment Facility, abbreviation: CGIF, provider_code: 1017, shares: {2020: 0.428}}
+  - {name: Asian Infrastructure Investment Bank, abbreviation: AIIB, provider_code: 1024, shares: {2018: 0.273, 2020: 0.286}}
+  - {name: Black Sea Trade and Development Bank, abbreviation: BSTDB, provider_code: 981, shares: {2020: 0.442}}
+  - {name: Caribbean Development Bank, abbreviation: CDB, provider_code: 906, shares: {2018: 0.346, 2020: 0.346}}
+  - {name: Central American Bank for Economic Integration, abbreviation: CABEI, provider_code: 910, shares: {2020: 0.052}}
+  - {name: Council of Europe Development Bank, abbreviation: COEB, provider_code: 1013, shares: {2018: 0.937, 2020: 0.937}}
+  - {name: Development Bank of Latin America, abbreviation: CAF, provider_code: 1015, shares: {2018: 0.046, 2020: 0.048}}
+  - {name: European Bank for Reconstruction and Development, abbreviation: EBRD, provider_code: 990, shares: {2015: 0.890, 2018: 0.914, 2020: 0.914}}
+  - {name: European Investment Bank, abbreviation: EIB, provider_code: 918, agency_code: 3, shares: {2015: 0.990, 2018: 1.000, 2020: 1.000}}
+  - {name: International Bank for Reconstruction and Development, abbreviation: IBRD, provider_code: 901, shares: {2015: 0.700, 2018: 0.699, 2020: 0.713}}
+  - {name: International Development Association, abbreviation: IDA, provider_code: 905, shares: {2015: 0.950, 2018: 0.959, 2020: 0.959}}
+  - {name: Inter-American Development Bank, abbreviation: IADB, provider_code: 909, shares: {2015: 0.740, 2018: 0.736, 2020: 0.739}}
+  # The listing has no code for the fund, whose assets moved to the IADB (909) from 2017. The table prints no abbreviation, and IADB-FSO is the table note's name for it.
+  - {name: Inter-American Development Bank Special Fund, abbreviation: IADB-FSO, provider_code: null, shares: {2015: 0.730, 2018: 0.725}}
+  - {name: IDB Invest, abbreviation: IDB Invest, provider_code: 1019, shares: {2018: 0.336, 2020: 0.344}}
+  - {name: International Finance Corporation, abbreviation: IFC, provider_code: 903, shares: {2015: 0.641, 2018: 0.654, 2020: 0.654}}
+  - {name: International Investment Bank, abbreviation: IIB, provider_code: 1037, shares: {2018: 0.522, 2020: 0.517}}
+  - {name: Multilateral Investment Guarantee Agency, abbreviation: MIGA, provider_code: 902, shares: {2015: 0.643, 2018: 0.661, 2020: 0.662}}
+  - {name: North American Development Bank, abbreviation: NADB, provider_code: 1045, shares: {2020: 0.632}}
+  - {name: Private Infrastructure Development Group, abbreviation: PIDG, provider_code: 1014, shares: {2018: 0.995, 2020: 0.995}}
+  - {name: Adaptation Fund, abbreviation: AF, provider_code: 1012, shares: {2015: 1.000, 2018: 1.000, 2020: 1.000}}
+  - {name: Climate Investment Funds, abbreviation: CIFs, provider_code: 1011, shares: {2015: 1.000, 2018: 0.990, 2020: 0.999}}
+  # The GEF Trust Funds are every agency of the GEF (811) but the LDCF and the SCCF.
+  - {name: Global Environment Facility Trust Funds, abbreviation: GEF, provider_code: 811, shares: {2015: 0.980, 2018: 0.980, 2020: 0.976}}
+  # The listing holds the LDCF as agency 12 of the GEF and the SCCF as agency 13.
+  - {name: Global Environment Facility Least Developed Countries Fund, abbreviation: GEF LDCF, provider_code: 811, agency_code: 12, shares: {2015: 1.000, 2018: 1.000, 2020: 1.000}}
+  - {name: Global Environment Facility Special Climate Change Fund, abbreviation: GEF SCCF, provider_code: 811, agency_code: 13, shares: {2015: 1.000, 2018: 1.000, 2020: 1.000}}
+  - {name: Green Climate Fund, abbreviation: GCF, provider_code: 1016, shares: {2018: 0.996, 2020: 0.990}}
+  - {name: International Fund for Agricultural Development, abbreviation: IFAD, provider_code: 988, shares: {2018: 0.742, 2020: 0.710}}
+  - {name: International Monetary Fund Resilience and Sustainability Trust, abbreviation: IMF RST, provider_code: 1058, shares: {2024: 0.775}}
+  - {name: Nordic Development Fund, abbreviation: NDF, provider_code: 104, shares: {2015: 1.000, 2018: 1.000, 2020: 1.000}}
+developed:
+  source: "OECD (2026), Climate Finance Provided and Mobilised by Developed Countries in 2013-2024, OECD Publishing, Paris, https://doi.org/10.1787/ab5eb9ad-en"
+  locator: "Table 7, p. 22, Developed countries, under the definition in Lists of developed and developing countries, p. 20"
+  providers:
+    1: Austria
+    2: Belgium
+    3: Denmark
+    4: France
+    5: Germany
+    6: Italy
+    7: Netherlands
+    8: Norway
+    9: Portugal
+    10: Sweden
+    11: Switzerland
+    12: United Kingdom
+    18: Finland
+    20: Iceland
+    21: Ireland
+    22: Luxembourg
+    26: Monaco
+    30: Cyprus
+    40: Greece
+    45: Malta
+    50: Spain
+    61: Slovenia
+    62: Croatia
+    68: Czechia
+    69: Slovak Republic
+    70: Liechtenstein
+    72: Bulgaria
+    75: Hungary
+    76: Poland
+    77: Romania
+    82: Estonia
+    83: Latvia
+    84: Lithuania
+    301: Canada
+    302: United States
+    701: Japan
+    801: Australia
+    820: New Zealand
+    918: EU Institutions

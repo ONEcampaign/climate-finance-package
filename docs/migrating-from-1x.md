@@ -29,7 +29,7 @@ print(data.columns.tolist())
 ```
 
 ```output
-['year', 'provider', 'recipient', 'method', 'provider_code', 'recipient_code', 'bi_multi', 'flow', 'view', 'currency', 'prices', 'measure', 'amount', 'adaptation', 'mitigation', 'cross_cutting', 'unsplit', 'untraced', 'no_grant_equivalent', 'no_adaptation_marker', 'value', 'low', 'high', 'source']
+['year', 'provider', 'recipient', 'method', 'provider_code', 'recipient_code', 'bi_multi', 'flow', 'view', 'attribution', 'currency', 'prices', 'measure', 'amount', 'adaptation', 'mitigation', 'cross_cutting', 'unsplit', 'untraced', 'no_grant_equivalent', 'no_adaptation_marker', 'value', 'low', 'high', 'source']
 ```
 
 The 1.x frame was long, with one row per `indicator`. The 2.0 frame is wide, with one column per objective. A script that reads these columns changes as follows:

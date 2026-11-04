@@ -110,6 +110,7 @@ def normalise_crdf(
     Bi_Multi among the provider's non-core records in `crs`. `id_scheme` classifies
     every EIB row's id and is null for every other row. `psi_flag` is the PSI flag
     of the row's CRS records (`crs.PSI_KEY`), null where they carry none.
+    `flow_category` and `finance_t` are the CRDF's flow type and finance type codes.
 
     Excel damage is repaired or nulled, with counts logged. Error text such as
     `#NAME?` becomes null, and a project number Excel turned into a date takes the
@@ -179,6 +180,7 @@ def normalise_crdf(
         bi_multi="bi_multi",
         purpose_code=pl.col("purpose_code").cast(pl.Int32),
         flow_category=pl.col("flow_type_code").cast(pl.Int32),
+        finance_t=pl.col("finance_type_code").cast(pl.Int32),
         psi_flag="psi_flag",
         objective="objective",
         rio_adaptation="rio_adaptation",

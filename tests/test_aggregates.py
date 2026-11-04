@@ -65,9 +65,11 @@ def _parts(children: pl.DataFrame) -> list[tuple[str, int, str, float]]:
 
 
 def test_records_roll_up_to_their_continents_row() -> None:
-    crdf = crdf_rows(_aggregate("africa", AFRICA, 10e6))
+    # The parent is a loan, and its records print an equity type of finance.
+    crdf = crdf_rows(_aggregate("africa", AFRICA, 10e6, finance_t=421))
+    records = [record | {"finance_t": 510} for record in NORFUND]
 
-    children = _children(crdf, crs_records(*NORFUND))
+    children = _children(crdf, crs_records(*records))
 
     assert _parts(children) == [
         ("africa", KENYA, "2021000001", 4e6),
@@ -77,6 +79,8 @@ def test_records_roll_up_to_their_continents_row() -> None:
     assert child["agency_code"] == 6
     assert child["face_usd"] == pytest.approx(4e6)
     assert (child["flow_category"], child["rio_mitigation"]) == (21, 2)
+    # A child takes its flow category and type of finance from its parent.
+    assert child["finance_t"] == 421
 
 
 def test_a_record_goes_to_its_own_recipients_row_first() -> None:

@@ -31,7 +31,7 @@ result = release.spending(**query)
     ```
 
     ```output
-    ['method', 'flow', 'view', 'currency', 'prices', 'value', 'total', 'share']
+    ['method', 'flow', 'view', 'attribution', 'currency', 'prices', 'value', 'total', 'share']
     ONE USD 288.3 1986.8 0.1451
     ```
 

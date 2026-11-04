@@ -533,6 +533,31 @@ def test_crdf_carries_the_long_description(crs: pl.DataFrame) -> None:
     assert _row(crdf, crs_id="2022000301")["description"] is None
 
 
+def test_crdf_carries_the_flow_category_and_type_of_finance(
+    crs: pl.DataFrame,
+) -> None:
+    raw = pl.read_parquet(OECD / "crdf_recipient.parquet").with_columns(
+        finance_type_code=pl.col("crs_id").replace_strict(
+            {"2022000101": 110, "2022000301": 421}, default=None, return_dtype=pl.Int32
+        )
+    )
+    crdf = _crdf(crs, raw=raw)
+
+    for crs_id, finance_t in (("2022000101", 110), ("2022000301", 421)):
+        row = _row(crdf, crs_id=crs_id)
+        published = _row(raw, crs_id=crs_id)
+        assert (row["flow_category"], row["finance_t"]) == (
+            published["flow_type_code"],
+            finance_t,
+        )
+    # A row the CRDF prints no type of finance for has none.
+    assert (
+        crdf.filter(~pl.col("crs_id").is_in(["2022000101", "2022000301"]))["finance_t"]
+        .is_null()
+        .all()
+    )
+
+
 def test_crdf_trims_ids(crs: pl.DataFrame) -> None:
     raw = pl.read_parquet(OECD / "crdf_recipient.parquet")
     padded = raw.with_columns(

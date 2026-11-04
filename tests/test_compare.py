@@ -118,6 +118,18 @@ def test_compare_names_amounts_and_shares_apart() -> None:
     assert table.columns[len(COLUMNS) :] == ["amounts", "share of total"]
 
 
+def test_compare_names_the_two_attribution_rules_apart() -> None:
+    table = cf.compare(
+        SNAP.spending(view="provider"),
+        SNAP.spending(view="provider", attribution="outflows"),
+    ).table
+
+    assert table.columns[len(COLUMNS) :] == [
+        "attribution by contributions",
+        "attribution by outflows",
+    ]
+
+
 def test_results_nothing_sets_apart_are_numbered() -> None:
     table = cf.compare(SNAP.spending(), SNAP.spending()).table
 
@@ -193,19 +205,19 @@ def test_compare_refuses_a_list_naming_the_call_it_takes() -> None:
 
 RESULT_REPR = """\
 Result: ONE; disbursements; recipient view; providers Germany; years 2021; USD at current prices; release synthetic-example
-shape: (1, 23)
-┌──────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬───────┬───────┬───────┬───────┬───────┬───────┐
-│ year ┆ provid ┆ recipi ┆ method ┆ provid ┆ recipi ┆ bi_mul ┆ flow   ┆ view   ┆ curren ┆ prices ┆ measur ┆ amount ┆ adapta ┆ mitiga ┆ cross_ ┆ unspli ┆ untra ┆ no_gr ┆ no_ad ┆ value ┆ low   ┆ high  │
-│ ---  ┆ er     ┆ ent    ┆ ---    ┆ er_cod ┆ ent_co ┆ ti     ┆ ---    ┆ ---    ┆ cy     ┆ ---    ┆ e      ┆ ---    ┆ tion   ┆ tion   ┆ cuttin ┆ t      ┆ ced   ┆ ant_e ┆ aptat ┆ ---   ┆ ---   ┆ ---   │
-│ i16  ┆ ---    ┆ ---    ┆ str    ┆ e      ┆ de     ┆ ---    ┆ str    ┆ str    ┆ ---    ┆ str    ┆ ---    ┆ f64    ┆ ---    ┆ ---    ┆ g      ┆ ---    ┆ ---   ┆ quiva ┆ ion_m ┆ f64   ┆ f64   ┆ f64   │
-│      ┆ str    ┆ str    ┆        ┆ ---    ┆ ---    ┆ i8     ┆        ┆        ┆ str    ┆        ┆ str    ┆        ┆ f64    ┆ f64    ┆ ---    ┆ f64    ┆ f64   ┆ lent  ┆ arker ┆       ┆       ┆       │
-│      ┆        ┆        ┆        ┆ i32    ┆ i32    ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆ f64    ┆        ┆       ┆ ---   ┆ ---   ┆       ┆       ┆       │
-│      ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆       ┆ f64   ┆ f64   ┆       ┆       ┆       │
-╞══════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪═══════╪═══════╪═══════╪═══════╪═══════╪═══════╡
-│ 2021 ┆ German ┆ Kenya  ┆ ONE    ┆ 5      ┆ 248    ┆ 1      ┆ disbur ┆ recipi ┆ USD    ┆ curren ┆ amount ┆ 1.2667 ┆ 1.2667 ┆ 0.0    ┆ 0.0    ┆ 0.0    ┆ 0.0   ┆ 0.0   ┆ 0.0   ┆ 1.266 ┆ 1.266 ┆ 1.266 │
-│      ┆ y      ┆        ┆        ┆        ┆        ┆        ┆ sement ┆ ent    ┆        ┆ t      ┆        ┆ e7     ┆ e7     ┆        ┆        ┆        ┆       ┆       ┆       ┆ 7e7   ┆ 7e7   ┆ 7e7   │
-│      ┆        ┆        ┆        ┆        ┆        ┆        ┆ s      ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆       ┆       ┆       ┆       ┆       ┆       │
-└──────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴───────┴───────┴───────┴───────┴───────┴───────┘"""  # noqa: E501 (a table snapshot)
+shape: (1, 24)
+┌──────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┬───────┬───────┬───────┬───────┬───────┬───────┬───────┬───────┬───────┬───────┬───────┬───────┬───────┬───────┬───────┐
+│ year ┆ provid ┆ recipi ┆ method ┆ provid ┆ recipi ┆ bi_mul ┆ flow   ┆ view   ┆ attri ┆ curre ┆ price ┆ measu ┆ amoun ┆ adapt ┆ mitig ┆ cross ┆ unspl ┆ untra ┆ no_gr ┆ no_ad ┆ value ┆ low   ┆ high  │
+│ ---  ┆ er     ┆ ent    ┆ ---    ┆ er_cod ┆ ent_co ┆ ti     ┆ ---    ┆ ---    ┆ butio ┆ ncy   ┆ s     ┆ re    ┆ t     ┆ ation ┆ ation ┆ _cutt ┆ it    ┆ ced   ┆ ant_e ┆ aptat ┆ ---   ┆ ---   ┆ ---   │
+│ i16  ┆ ---    ┆ ---    ┆ str    ┆ e      ┆ de     ┆ ---    ┆ str    ┆ str    ┆ n     ┆ ---   ┆ ---   ┆ ---   ┆ ---   ┆ ---   ┆ ---   ┆ ing   ┆ ---   ┆ ---   ┆ quiva ┆ ion_m ┆ f64   ┆ f64   ┆ f64   │
+│      ┆ str    ┆ str    ┆        ┆ ---    ┆ ---    ┆ i8     ┆        ┆        ┆ ---   ┆ str   ┆ str   ┆ str   ┆ f64   ┆ f64   ┆ f64   ┆ ---   ┆ f64   ┆ f64   ┆ lent  ┆ arker ┆       ┆       ┆       │
+│      ┆        ┆        ┆        ┆ i32    ┆ i32    ┆        ┆        ┆        ┆ str   ┆       ┆       ┆       ┆       ┆       ┆       ┆ f64   ┆       ┆       ┆ ---   ┆ ---   ┆       ┆       ┆       │
+│      ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆        ┆       ┆       ┆       ┆       ┆       ┆       ┆       ┆       ┆       ┆       ┆ f64   ┆ f64   ┆       ┆       ┆       │
+╞══════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪════════╪═══════╪═══════╪═══════╪═══════╪═══════╪═══════╪═══════╪═══════╪═══════╪═══════╪═══════╪═══════╪═══════╪═══════╪═══════╡
+│ 2021 ┆ German ┆ Kenya  ┆ ONE    ┆ 5      ┆ 248    ┆ 1      ┆ disbur ┆ recipi ┆ contr ┆ USD   ┆ curre ┆ amoun ┆ 1.266 ┆ 1.266 ┆ 0.0   ┆ 0.0   ┆ 0.0   ┆ 0.0   ┆ 0.0   ┆ 0.0   ┆ 1.266 ┆ 1.266 ┆ 1.266 │
+│      ┆ y      ┆        ┆        ┆        ┆        ┆        ┆ sement ┆ ent    ┆ ibuti ┆       ┆ nt    ┆ t     ┆ 7e7   ┆ 7e7   ┆       ┆       ┆       ┆       ┆       ┆       ┆ 7e7   ┆ 7e7   ┆ 7e7   │
+│      ┆        ┆        ┆        ┆        ┆        ┆        ┆ s      ┆        ┆ ons   ┆       ┆       ┆       ┆       ┆       ┆       ┆       ┆       ┆       ┆       ┆       ┆       ┆       ┆       │
+└──────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┘"""  # noqa: E501 (a table snapshot)
 
 COMPARISON_REPR = """\
 Comparison of 2 results: ONE; OECD
