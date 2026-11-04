@@ -1419,18 +1419,24 @@ PROVIDER_COEFFICIENTS = _table(
     locator=_str(),
 )
 
+# The types of institution Table 8 groups its rows under: its Multilateral Development
+# Banks and its Multilateral Climate Funds.
+INSTITUTION_TYPES = ("development_bank", "climate_fund")
 # The share of an international institution's climate outflows in `year` that the OECD
 # attributes to developed countries, from Table 8 of the report `source` names, at
 # `locator`. The table prints a share for four years, and `table_column` is the one
 # whose share `year` takes; `locator` states why. A row covers the institution
 # `provider_code`, or with `agency_code` one of its agencies, as the EIB is agency 3
-# of EU Institutions. An institution-year the table gives no share has no row.
+# of EU Institutions. `institution_type` is the table's type of institution,
+# `development_bank` for its Multilateral Development Banks and `climate_fund` for its
+# Multilateral Climate Funds. An institution-year the table gives no share has no row.
 OUTFLOW_SHARES = _table(
     "outflow_shares",
     ("provider_code", "agency_code", "year"),
     provider_code=_code(),
     agency_code=_code(nullable=True),
     year=_year(),
+    institution_type=_str(values=INSTITUTION_TYPES),
     share=_f64(minimum=0.0),
     table_column=_year(),
     source=_str(),

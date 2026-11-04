@@ -913,6 +913,7 @@ def outflow_shares(attribution: Mapping[str, Any]) -> pl.DataFrame:
                     "provider_code": code,
                     "agency_code": institution.get("agency_code"),
                     "year": year,
+                    "institution_type": institution["type"],
                     "share": share,
                     "table_column": entry["column"],
                     "source": attribution["source"],
