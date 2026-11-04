@@ -32,7 +32,7 @@ from climate_finance.errors import (
     MissingLabelsError,
     UnknownRecipientError,
 )
-from climate_finance.methods import OECD, ONE, RANGE, Method, MethodRange, label
+from climate_finance.methods import MARKERS, OECD, RANGE, Method, MethodRange, label
 from climate_finance.query import (
     BILATERAL,
     EIB_AGENCY,
@@ -243,8 +243,10 @@ def test_code_2_rows_leave_every_total_unchanged(
             view="provider",
             oda_only=True,
         ),
-        Spec(method=cf.methods.ONE.replace(significant=0.25), flow="grant_equivalent"),
-        Spec(method=cf.methods.ONE.replace(eu="provider"), view="provider"),
+        Spec(
+            method=cf.methods.MARKERS.replace(significant=0.25), flow="grant_equivalent"
+        ),
+        Spec(method=cf.methods.MARKERS.replace(eu="provider"), view="provider"),
         Spec(view="provider", providers=(5,), measure="share_of_total"),
         Spec(providers=(5, Agency(provider=918, agency=3)), recipients=(248,)),
         Spec(view="provider", attribution="outflows", method=RANGE),
@@ -290,8 +292,8 @@ def test_a_spec_holds_sorted_codes_and_agencies_whatever_names_them() -> None:
             "Spec(method=cf.methods.RANGE, untraced=False)",
         ),
         (
-            Spec(method=ONE.replace(significant=0.5)),
-            f"Spec(method={ONE.replace(significant=0.5)!r})",
+            Spec(method=MARKERS.replace(significant=0.5)),
+            f"Spec(method={MARKERS.replace(significant=0.5)!r})",
         ),
         (
             Spec(view="provider", attribution="outflows"),
@@ -339,7 +341,7 @@ def test_years_refuse_anything_but_ints(years: object) -> None:
     [
         ("oecd", OECD),
         (" Range ", RANGE),
-        (["one", OECD], MethodRange(methods=(ONE, OECD))),
+        (["markers", OECD], MethodRange(methods=(MARKERS, OECD))),
     ],
 )
 def test_a_method_reads_from_its_name_ignoring_case(
@@ -399,7 +401,7 @@ def test_spending_takes_keywords_only_and_run_reruns_a_spec() -> None:
             "measure='share_of_total' takes a gross flow",
         ),
         (
-            {"flow": "net_transfers", "method": ONE.replace(relevance="jev")},
+            {"flow": "net_transfers", "method": MARKERS.replace(relevance="jev")},
             "relevance='jev' takes a gross flow",
         ),
         ({"attribution": "outflows"}, "attribution='outflows' takes view='provider'"),
@@ -606,7 +608,7 @@ def _japan_untraced_in_2009(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-@pytest.mark.parametrize("method", [ONE, OECD])
+@pytest.mark.parametrize("method", [MARKERS, OECD])
 @pytest.mark.parametrize("flow", ["disbursements", *sorted(NET_FLOWS)])
 def test_the_objectives_add_up_to_value_on_every_row(
     tmp_path: Path, method: Method, flow: Flow
@@ -631,7 +633,7 @@ def test_the_objectives_add_up_to_value_on_every_row(
         known["value"].to_list()
     )
     # A 2009 record that carries an adaptation marker keeps its adaptation, which
-    # its principal mitigation marker makes cross-cutting under ONE.
+    # its principal mitigation marker makes cross-cutting under MARKERS.
     early = known.filter(year=2009)
     assert early.height
     assert (early["adaptation"] + early["cross_cutting"] != 0).all()
@@ -948,7 +950,7 @@ def test_attribution_with_no_outflows_to_spread_over_stays_at_no_recipient(
     ].item() == pytest.approx(value)
 
 
-@pytest.mark.parametrize("method", [ONE, OECD])
+@pytest.mark.parametrize("method", [MARKERS, OECD])
 @pytest.mark.parametrize("flow", ["disbursements", "commitments"])
 def test_single_recipient_provider_views_add_up_to_the_whole(
     method: Method, flow: Flow
@@ -982,7 +984,7 @@ def _with_top_channel_remainders(frame: pl.DataFrame) -> pl.DataFrame:
     return pl.concat([frame, remainders.select(frame.columns)])
 
 
-@pytest.mark.parametrize("method", [ONE, OECD, RANGE])
+@pytest.mark.parametrize("method", [MARKERS, OECD, RANGE])
 def test_a_channel_with_no_agency_share_attributes_nothing(
     tmp_path: Path, method: MethodRange | Method
 ) -> None:
@@ -1000,7 +1002,7 @@ def test_a_channel_with_no_agency_share_attributes_nothing(
 # Fixture inputs: Germany gives IDA (channel 44002) 60m in 2021. IDA's commitments,
 # as fractions of its spending, are 0.06 principal adaptation, 0.2 significant
 # adaptation, 0.1 principal mitigation, 0.2 significant mitigation and 0.1
-# significant on both, so its ONE shares are adaptation 0.18, mitigation 0.22 and
+# significant on both, so its agency shares are adaptation 0.18, mitigation 0.22 and
 # cross-cutting 0.04. Its OECD shares are 0.20, 0.25 and 0.05, each of adaptation
 # and mitigation including the cross-cutting share.
 ONE_IDA = (60e6 * 0.14, 60e6 * 0.18, 60e6 * 0.04, 60e6 * (0.18 + 0.22 - 0.04))
@@ -1013,7 +1015,7 @@ SIGNIFICANT_IDA = (60e6 * 0.26, 60e6 * 0.30, 60e6 * 0.10, 60e6 * 0.66)
     ("method", "expected"),
     [
         # The highest-marker rule takes cross-cutting out of both objectives.
-        (cf.methods.ONE, ONE_IDA),
+        (cf.methods.MARKERS, ONE_IDA),
         (
             cf.methods.OECD,
             (60e6 * 0.20, 60e6 * 0.25, 60e6 * 0.05, 60e6 * (0.20 + 0.25 - 0.05)),
@@ -1024,14 +1026,14 @@ SIGNIFICANT_IDA = (60e6 * 0.26, 60e6 * 0.30, 60e6 * 0.10, 60e6 * 0.66)
             (60e6 * 0.20, 60e6 * 0.25, 60e6 * 0.05, 60e6 * (0.20 + 0.25 - 0.05)),
         ),
         # Agency shares follow the method's coefficients.
-        (cf.methods.ONE.replace(significant=1.0), SIGNIFICANT_IDA),
+        (cf.methods.MARKERS.replace(significant=1.0), SIGNIFICANT_IDA),
         # Agencies take the method's significant coefficient, not Germany's 0.5.
-        (cf.methods.PROVIDER, ONE_IDA),
-        (cf.methods.PROVIDER.replace(significant=1.0), SIGNIFICANT_IDA),
+        (cf.methods.ONE, ONE_IDA),
+        (cf.methods.ONE.replace(significant=1.0), SIGNIFICANT_IDA),
         # Each marker counts: adaptation 0.06 + 0.4 x 0.3, mitigation 0.1 + 0.4 x
         # 0.3, overlap 0.4 x 0.1.
         (
-            cf.methods.ONE.replace(highest_marker=False),
+            cf.methods.MARKERS.replace(highest_marker=False),
             (60e6 * 0.18, 60e6 * 0.22, 60e6 * 0.04, 60e6 * 0.36),
         ),
     ],
@@ -1055,7 +1057,7 @@ def test_attribution_reads_agency_shares_as_inclusive_of_cross_cutting(
 
 def test_a_climate_only_share_attributes_value_as_unsplit() -> None:
     # France gives AfDB (channel 46002) 25m in 2020. AfDB's 2020 OECD share is 0.35
-    # in total, with no split by objective, and it has no ONE share that year.
+    # in total, with no split by objective, and it has no agency share that year.
     result = SNAP.run(CLIMATE_ONLY_SPEC)
     columns = (
         "adaptation", "mitigation", "cross_cutting", "unsplit", "value", "low", "high",
@@ -1065,7 +1067,7 @@ def test_a_climate_only_share_attributes_value_as_unsplit() -> None:
     rows = result.rows(origin="attribution")
     assert rows["method"].to_list() == ["OECD"]
     assert rows.select(columns).row(0) == expected
-    # OECD's row keeps its own bounds. ONE and PROVIDER hold no AfDB share for
+    # OECD's row keeps its own bounds. MARKERS and ONE hold no AfDB share for
     # 2020, so the span's low is 0.
     oecd = pl.col("method") == "OECD"
     table = result.table.filter(oecd)
@@ -1077,7 +1079,7 @@ def test_a_climate_only_share_attributes_value_as_unsplit() -> None:
     assert "value sits in unsplit" in result.explain()
 
 
-@pytest.mark.parametrize("method", [cf.methods.ONE, cf.methods.OECD])
+@pytest.mark.parametrize("method", [cf.methods.MARKERS, cf.methods.OECD])
 def test_a_component_row_counts_its_climate_share_of_face_value_disbursed(
     method: Method,
 ) -> None:
@@ -1087,7 +1089,7 @@ def test_a_component_row_counts_its_climate_share_of_face_value_disbursed(
     assert rows["value"].sum() == pytest.approx(200e6 * 0.5 * 0.30)
 
 
-@pytest.mark.parametrize("method", [cf.methods.ONE, cf.methods.OECD])
+@pytest.mark.parametrize("method", [cf.methods.MARKERS, cf.methods.OECD])
 def test_a_fully_disbursed_component_counts_all_of_its_climate_value(
     method: Method,
 ) -> None:
@@ -1176,8 +1178,8 @@ def test_a_record_that_allocates_nothing_has_no_allocation_weight(
 
 
 def test_a_range_bounds_every_key_under_every_method(tmp_path: Path) -> None:
-    # Without ONE shares or spending for AfDB, France's attribution to it counts under
-    # OECD only.
+    # Without agency shares or spending for AfDB, France's attribution to it
+    # counts under OECD only.
     def oecd_only_for_afdb(frame: pl.DataFrame) -> pl.DataFrame:
         return frame.filter(
             (pl.col("channel_code") != 46002) | (pl.col("source") == "oecd")
@@ -1259,13 +1261,13 @@ def test_sums_do_not_depend_on_row_order() -> None:
             "provider_code": pl.Series([5] * 3, dtype=pl.Int32),
             "recipient_code": pl.Series([248] * 3, dtype=pl.Int32),
             "bi_multi": pl.Series([1] * 3, dtype=pl.Int8),
-            "method": ["ONE"] * 3,
+            "method": ["MARKERS"] * 3,
             **dict.fromkeys(AMOUNTS, values),
         }
     )
 
     def summed(order: list[int]) -> pl.DataFrame:
-        return _aggregate(rows[order].lazy(), methods=["ONE"]).collect()
+        return _aggregate(rows[order].lazy(), methods=["MARKERS"]).collect()
 
     first = summed([0, 1, 2])
     for order in ([0, 2, 1], [1, 0, 2], [2, 0, 1]):
@@ -1285,7 +1287,10 @@ def test_an_empty_sum_is_positive_zero(groups: list[int] | None) -> None:
 
 
 def test_a_range_of_close_methods_counts_each_member_once() -> None:
-    close = (ONE.replace(significant=0.5000001), ONE.replace(significant=0.5000002))
+    close = (
+        MARKERS.replace(significant=0.5000001),
+        MARKERS.replace(significant=0.5000002),
+    )
     spec = Spec(providers=(5,), recipients=(248,), years=(2022,))
 
     together = SNAP.run(spec.replace(method=MethodRange(methods=close)))
@@ -1313,7 +1318,7 @@ def test_oecd_attribution_uses_the_imputed_shares() -> None:
         rows = SNAP.spending(view="provider", method=method).rows(origin="attribution")
         return rows["value"].sum()
 
-    assert attributed(cf.methods.OECD) > attributed(cf.methods.ONE)
+    assert attributed(cf.methods.OECD) > attributed(cf.methods.MARKERS)
 
 
 def _hold_afdb_2022(frame: pl.DataFrame) -> pl.DataFrame:
@@ -1652,9 +1657,10 @@ def test_rows_refuse_a_filter_its_column_cannot_hold(
 def test_rows_read_a_method_filter_as_spending_reads_a_method() -> None:
     result = SNAP.spending(method=RANGE)
 
-    for name in ("one", " One ", ONE, ["ONE"]):
+    for name in ("markers", " Markers ", MARKERS, ["MARKERS"]):
         assert_frame_equal(
-            result.rows(method=name), result.rows().filter(pl.col("method") == "ONE")
+            result.rows(method=name),
+            result.rows().filter(pl.col("method") == "MARKERS"),
         )
     assert result.rows(method="OECD").height > 0
 
@@ -1736,14 +1742,14 @@ def test_a_record_shows_its_jev_label_before_its_markers() -> None:
     )
 
 
-JEV_ONE = ONE.replace(relevance="jev")
+JEV_ONE = MARKERS.replace(relevance="jev")
 
 
 @pytest.mark.parametrize(
     ("method", "adaptation", "cross_cutting", "value"),
     [
         # JPN-2 marks both objectives significant: cross-cutting at 0.4.
-        (ONE, 0.0, 0.4, 0.4),
+        (MARKERS, 0.0, 0.4, 0.4),
         # Jev's principal adaptation level outranks the significant mitigation one.
         (JEV_ONE, 1.0, 0.0, 1.0),
         # Each marker counts at the method's own coefficients: 0.5 and 1.0.
@@ -1779,7 +1785,7 @@ def test_jev_relevance_leaves_records_jev_did_not_label_alone() -> None:
             .drop("method")
         )
 
-    assert_frame_equal(unlabelled(JEV_ONE), unlabelled(ONE))
+    assert_frame_equal(unlabelled(JEV_ONE), unlabelled(MARKERS))
 
 
 def test_explain_says_what_jev_relevance_replaces() -> None:
@@ -1944,7 +1950,7 @@ def test_a_combined_share_under_range_divides_each_method_by_one_total() -> None
     total = _all_flows(pl.col("bi_multi").is_in([1, 3, 4, 7, 8]))
     value = result.table.group_by("method").agg(pl.col("value").sum())
     expected = {method: amount / total for method, amount in value.iter_rows()}
-    assert combined["method"].to_list() == ["ONE", "OECD", "PROVIDER"]
+    assert combined["method"].to_list() == ["MARKERS", "ONE", "OECD"]
     assert combined["total"].to_list() == pytest.approx([total] * 3)
     assert dict(zip(combined["method"], combined["share"], strict=True)) == (
         pytest.approx(expected)
@@ -2133,24 +2139,24 @@ def _ratio(release: Release, method: Method, row_id: str) -> tuple[float, str]:
     [
         # Germany counts an activity significant for both objectives at 1.0, under
         # either marker rule.
-        ("DEU-2", cf.methods.PROVIDER, 1.0, "provider"),
-        ("DEU-2", cf.methods.PROVIDER.replace(highest_marker=False), 1.0, "provider"),
+        ("DEU-2", cf.methods.ONE, 1.0, "provider"),
+        ("DEU-2", cf.methods.ONE.replace(highest_marker=False), 1.0, "provider"),
         # Japan's principal coefficient is 0.85 up to 2021 and 1.0 from 2022.
-        ("JPN-1", cf.methods.PROVIDER, 0.85, "provider"),
-        ("JPN-2", cf.methods.PROVIDER, 0.6, "provider"),
-        ("JPN-3", cf.methods.PROVIDER, 1.0, "provider"),
+        ("JPN-1", cf.methods.ONE, 0.85, "provider"),
+        ("JPN-2", cf.methods.ONE, 0.6, "provider"),
+        ("JPN-3", cf.methods.ONE, 1.0, "provider"),
         # France's agency 1 states no flat coefficient, so its significant
         # activities take the 0.6 its BTR implies rather than France's 0.3, and its
-        # principal ones, whose BTR evidence is thin, PROVIDER's 1.0. Oxfam's high
+        # principal ones, whose BTR evidence is thin, ONE's 1.0. Oxfam's high
         # bound gives it the cap.
-        ("FRA-2", cf.methods.PROVIDER, 0.6, "btr"),
-        ("FRA-1", cf.methods.PROVIDER, 1.0, "case_by_case"),
+        ("FRA-2", cf.methods.ONE, 0.6, "btr"),
+        ("FRA-1", cf.methods.ONE, 1.0, "case_by_case"),
         ("FRA-2", cf.methods.OXFAM_HIGH, 0.5, "case_by_case"),
         # Norway's default covers significant activities; principal ones take the
         # 0.9 its BTR implies.
-        ("NOR-2", cf.methods.PROVIDER, 0.3, "default"),
-        ("NOR-1", cf.methods.PROVIDER, 0.9, "btr"),
-        ("DEU-2", cf.methods.ONE, 0.4, None),
+        ("NOR-2", cf.methods.ONE, 0.3, "default"),
+        ("NOR-1", cf.methods.ONE, 0.9, "btr"),
+        ("DEU-2", cf.methods.MARKERS, 0.4, None),
     ],
 )
 def test_provider_coefficients_apply_by_year_agency_and_marker(
@@ -2185,8 +2191,8 @@ def test_both_significant_reads_the_jev_level(tmp_path: Path) -> None:
         row = release.spending(method=method).rows(record_id="DEU-2-R0")
         return row["value"].item() / row["amount"].item()
 
-    assert ratio(cf.methods.PROVIDER) == pytest.approx(1.0)
-    assert ratio(cf.methods.PROVIDER.replace(relevance="jev")) == pytest.approx(0.5)
+    assert ratio(cf.methods.ONE) == pytest.approx(1.0)
+    assert ratio(cf.methods.ONE.replace(relevance="jev")) == pytest.approx(0.5)
 
 
 def test_an_agency_without_its_own_row_takes_the_providers(tmp_path: Path) -> None:
@@ -2199,7 +2205,7 @@ def test_an_agency_without_its_own_row_takes_the_providers(tmp_path: Path) -> No
         tmp_path / "release", edits={"provider_coefficients": move_agency}
     )
 
-    assert _ratio(cf.load(path=release), cf.methods.PROVIDER, "FRA-2") == (
+    assert _ratio(cf.load(path=release), cf.methods.ONE, "FRA-2") == (
         pytest.approx(0.3),
         "provider",
     )
@@ -2207,9 +2213,7 @@ def test_an_agency_without_its_own_row_takes_the_providers(tmp_path: Path) -> No
 
 def test_explain_names_each_providers_coefficient_source() -> None:
     lines = (
-        SNAP.spending(method=cf.methods.PROVIDER, flow="commitments")
-        .explain()
-        .splitlines()
+        SNAP.spending(method=cf.methods.ONE, flow="commitments").explain().splitlines()
     )
 
     assert "Coefficients of providers 701 (year 2021): Fixture report, footnote 4." in (
@@ -2217,7 +2221,7 @@ def test_explain_names_each_providers_coefficient_source() -> None:
     )
     assert f"Coefficients of providers 5, 701 (year 2022): {SURVEY}." in lines
     # FRA-2 and NOR-1 take their BTR's shares, NOR-2 Norway's default and FRA-1,
-    # whose BTR evidence is thin, PROVIDER's own.
+    # whose BTR evidence is thin, ONE's own.
     assert (
         "Providers 4 (year 2022), 8 (year 2021) assess each activity case by case and "
         "state no coefficient for these activities, so they take the climate share "
@@ -2243,7 +2247,7 @@ def test_explain_names_providers_without_coefficients(tmp_path: Path) -> None:
     release = copy_release(
         tmp_path / "release", edits={"provider_coefficients": drop_norway}
     )
-    text = cf.load(path=release).spending(method=cf.methods.PROVIDER).explain()
+    text = cf.load(path=release).spending(method=cf.methods.ONE).explain()
 
     assert (
         "Providers 8 have no coefficient in the release and take significant 0.4 and "
@@ -2300,7 +2304,7 @@ def test_a_bilateral_commitment_divides_by_every_bilateral_code(
     assert_frame_equal(shares.table, expected)
 
 
-ONE_EU_AS_PROVIDER = cf.methods.ONE.replace(eu="provider")
+ONE_EU_AS_PROVIDER = cf.methods.MARKERS.replace(eu="provider")
 # France gives the EU budget (channel 42001) and the EDF (42003) 30m each and the EIB
 # (42004) 10m a year in 2021 and 2022 in every flow. Their ONE climate shares are
 # 0.30, 0.30 and 0.20, and the EIB's OECD share is 0.40. EU Institutions' own
@@ -2774,7 +2778,7 @@ def test_the_eu_constants_match_the_channels_the_build_maps_to_eu_institutions()
         # As a channel, France's contributions carry the EU's shares and the EU's
         # own rows leave the all-provider total.
         (
-            cf.methods.ONE,
+            cf.methods.MARKERS,
             set(),
             len(EU_BUDGET_AND_EDF) * EU_CONTRIBUTION * EU_SHARE
             + EIB_CONTRIBUTION * EIB_ONE_SHARE,
@@ -2815,7 +2819,7 @@ def test_eu_institutions_alone_return_their_own_spending(
         )
         return result.rows().drop("method")
 
-    as_channel = eu_alone(cf.methods.ONE)
+    as_channel = eu_alone(cf.methods.MARKERS)
     eib = pl.col("agency_code") == EIB_AGENCY
     assert as_channel.filter(eib).height
     # As a provider, the EU leaves out the EIB's own rows in the provider view.
@@ -2998,9 +3002,9 @@ def eu_untraced_release(tmp_path_factory: pytest.TempPathFactory) -> Release:
     [
         # France funds a quarter of each EU channel, so a query naming it keeps three
         # quarters of the EU's own untraced rows, and one naming every member none.
-        (cf.methods.ONE, (EU_INSTITUTIONS,), {1: 1.0, EIB_AGENCY: 1.0}),
-        (cf.methods.ONE, (EU_INSTITUTIONS, 4), {1: 0.75, EIB_AGENCY: 0.75}),
-        (cf.methods.ONE, None, {}),
+        (cf.methods.MARKERS, (EU_INSTITUTIONS,), {1: 1.0, EIB_AGENCY: 1.0}),
+        (cf.methods.MARKERS, (EU_INSTITUTIONS, 4), {1: 0.75, EIB_AGENCY: 0.75}),
+        (cf.methods.MARKERS, None, {}),
         # As a provider, the EU keeps the EU budget's rows whole and drops the EIB's.
         (ONE_EU_AS_PROVIDER, (EU_INSTITUTIONS, 4), {1: 1.0}),
     ],
@@ -3035,7 +3039,7 @@ def test_eu_shares_of_total_divide_by_the_rows_each_method_counts(
     amounts = result.table.filter(eu)
     shares = result.share_of_total().table.filter(eu)
 
-    # ONE and PROVIDER count the EU as a channel: all three agencies' flows, scaled
+    # MARKERS and ONE count the EU as a channel: all three agencies' flows, scaled
     # as the EU's own rows are by the part France's contributions do not fund. OECD
     # counts the EU as a provider and leaves the EIB's own rows and flows out.
     def total(method: str, year: int) -> float:
@@ -3044,7 +3048,7 @@ def test_eu_shares_of_total_divide_by_the_rows_each_method_counts(
         named = 4 in providers and year in EU_ATTRIBUTION_YEARS
         return 6 * EU_FLOW_USD * (1 - FRANCE_EU_SHARE if named else 1)
 
-    assert set(amounts["method"]) == {"ONE", "OECD", "PROVIDER"}
+    assert set(amounts["method"]) == {"MARKERS", "OECD", "ONE"}
     assert amounts["value"].min() > 0
     assert shares["value"].to_list() == pytest.approx(
         [
@@ -3092,7 +3096,7 @@ def test_a_member_counts_its_eu_share_only_with_the_eu_as_a_channel(
         )
         return result.rows(origin="attribution")["value"].sum()
 
-    assert france(cf.methods.ONE) - france(ONE_EU_AS_PROVIDER) == pytest.approx(
+    assert france(cf.methods.MARKERS) - france(ONE_EU_AS_PROVIDER) == pytest.approx(
         len(EU_BUDGET_AND_EDF) * EU_CONTRIBUTION * EU_SHARE
     )
 
@@ -3106,7 +3110,7 @@ def test_eu_own_rows_stay_in_a_year_without_eu_attribution(eu_release: Release) 
         )
         return rows.drop("method")
 
-    as_channel = eu_rows(cf.methods.ONE)
+    as_channel = eu_rows(cf.methods.MARKERS)
 
     assert set(as_channel["year"]) == {2023}
     assert set(as_channel["agency_code"]) == set(EU_AGENCIES.values())
@@ -3152,9 +3156,11 @@ def test_a_year_without_a_budget_share_keeps_the_budgets_own_rows(
     assert set(rows["year"]) == {2022, 2023}
 
 
-@pytest.mark.parametrize("method", ["RANGE", RANGE, ["ONE", "OECD"]])
+@pytest.mark.parametrize("method", ["RANGE", RANGE, ["MARKERS", "OECD"]])
 def test_quality_refuses_a_range_of_methods(method: object) -> None:
-    with pytest.raises(TypeError, match=r"quality\(\) reads one method; .* holds ONE"):
+    with pytest.raises(
+        TypeError, match=r"quality\(\) reads one method; .* holds MARKERS"
+    ):
         # A range is outside the type quality() takes; the test checks the run time.
         SNAP.quality(method=method)  # ty: ignore[invalid-argument-type]
 
@@ -3245,7 +3251,7 @@ def test_unmeasured_adaptation_counts_zero_and_its_value_has_a_column(
             "agency_spending": _unmeasured_2022_spending,
         },
     )
-    spec = Spec(providers=(5,), view="provider", flow=flow, method=ONE)
+    spec = Spec(providers=(5,), view="provider", flow=flow, method=MARKERS)
     result = cf.load(path=release).run(spec)
     original = SNAP.run(spec)
 
@@ -3307,9 +3313,9 @@ _IMPUTED_COVERS = (
     [
         (
             "provider",
-            ONE,
+            MARKERS,
             None,
-            [_SPENDING_COVERS.format("ONE") + "2015 to 2021 and 2023 to 2024."],
+            [_SPENDING_COVERS.format("MARKERS") + "2015 to 2021 and 2023 to 2024."],
         ),
         (
             "provider",
@@ -3319,9 +3325,9 @@ _IMPUTED_COVERS = (
         ),
         (
             "provider",
-            ONE,
+            MARKERS,
             (2020, 2021),
-            [_SPENDING_COVERS.format("ONE") + "2020 to 2021."],
+            [_SPENDING_COVERS.format("MARKERS") + "2020 to 2021."],
         ),
         ("provider", OECD, (2021, 2022), []),
         (
@@ -3329,12 +3335,12 @@ _IMPUTED_COVERS = (
             RANGE,
             (2020, 2021),
             [
-                _SPENDING_COVERS.format("ONE and PROVIDER") + "2020 to 2021.",
+                _SPENDING_COVERS.format("MARKERS and ONE") + "2020 to 2021.",
                 _IMPUTED_COVERS + "2020.",
             ],
         ),
         ("provider", RANGE, (2022,), []),
-        ("recipient", ONE, None, []),
+        ("recipient", MARKERS, None, []),
     ],
 )
 def test_explain_names_queried_years_without_attributed_finance(
@@ -3373,15 +3379,15 @@ def test_explain_names_queried_years_without_attributed_finance(
     ("record_id", "method", "weight"),
     [
         # Germany's unlinked record is principal for adaptation.
-        ("DEU-UNLINKED", ONE, 1.0),
+        ("DEU-UNLINKED", MARKERS, 1.0),
         ("DEU-UNLINKED", OECD, 1.0),
         # France's is significant for mitigation; its agency assesses case by case
-        # and states no default, so PROVIDER takes the 0.6 its BTR implies.
-        ("FRA-UNLINKED", ONE, 0.4),
+        # and states no default, so ONE takes the 0.6 its BTR implies.
+        ("FRA-UNLINKED", MARKERS, 0.4),
         ("FRA-UNLINKED", OECD, 1.0),
-        ("FRA-UNLINKED", cf.methods.PROVIDER, 0.6),
+        ("FRA-UNLINKED", cf.methods.ONE, 0.6),
         # JPN-SPLIT's 8m excess keeps the record's principal mitigation marker.
-        ("JPN-SPLIT", cf.methods.PROVIDER, 1.0),
+        ("JPN-SPLIT", cf.methods.ONE, 1.0),
     ],
 )
 def test_untraced_rows_weigh_by_the_records_own_markers_in_value_and_high(
@@ -3443,7 +3449,7 @@ def _before_adaptation(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-@pytest.mark.parametrize("method", [ONE, JEV_ONE])
+@pytest.mark.parametrize("method", [MARKERS, JEV_ONE])
 def test_an_untraced_record_before_the_adaptation_marker_counts_mitigation(
     tmp_path: Path, method: Method
 ) -> None:
@@ -3515,7 +3521,7 @@ def test_a_jev_label_reaches_only_the_rows_a_record_weighs_as_adaptation(
 
     # The traced rows weigh by their commitments' 0 and count nothing, label or not.
     # The excess weighs by its own adaptation marker, which the label replaces.
-    assert values(ONE) == pytest.approx({"JPN-1": 0.0, "JPN-3": 0.0, None: 8e6})
+    assert values(MARKERS) == pytest.approx({"JPN-1": 0.0, "JPN-3": 0.0, None: 8e6})
     assert values(JEV_ONE) == pytest.approx(
         {"JPN-1": 0.0, "JPN-3": 0.0, None: 0.4 * 8e6}
     )
@@ -3541,7 +3547,7 @@ def test_quality_reports_the_untraced_and_left_out_marked_disbursement() -> None
     ]
     one = SNAP.quality(providers=["France"]).untraced
     assert one.select("provider_code", "year", "unlinked_climate_usd").rows() == [
-        (FRA, 2021, pytest.approx(1.2e6)),
+        (FRA, 2021, pytest.approx(1.8e6)),
         (FRA, 2023, 0.0),
         (FRA, 2024, 0.0),
     ]
@@ -3636,7 +3642,7 @@ def repaid_twice(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Release]
     }
 
 
-@pytest.mark.parametrize("method", [ONE, OECD, cf.methods.PROVIDER])
+@pytest.mark.parametrize("method", [MARKERS, OECD, cf.methods.ONE])
 @pytest.mark.parametrize("view", VIEWS)
 @pytest.mark.parametrize("flow", NET_FLOWS)
 def test_a_repayment_subtracts_what_its_part_would_add_as_a_disbursement(
@@ -3690,7 +3696,7 @@ def test_net_transfers_are_net_disbursements_less_interest(view: View) -> None:
 
     assert_frame_equal(rows.filter(~interest), disbursements.rows())
     paid = (
-        rows.filter(interest, pl.col("method") == "ONE")
+        rows.filter(interest, pl.col("method") == "MARKERS")
         .group_by("record_id")
         .agg(pl.col("amount").sum())
     )
@@ -3743,7 +3749,7 @@ def test_negative_interest_keeps_its_value_between_its_bounds(tmp_path: Path) ->
             tmp_path / "release", edits={"reflows": _with_negative_interest}
         )
     )
-    interest = release.spending(flow="net_transfers", method=ONE).rows(
+    interest = release.spending(flow="net_transfers", method=MARKERS).rows(
         origin="interest", record_id="FRA-2-REPAY-2022"
     )
 
@@ -3758,7 +3764,7 @@ def test_only_the_parts_gross_counts_repay() -> None:
     spain = REFLOWS.filter(pl.col("provider_code") == ESP)
     assert spain.select("basis", "record_rio_adaptation").rows() == [("unlinked", 2)]
 
-    rows = SNAP.spending(flow="net_transfers", method=ONE).rows(origin="repayment")
+    rows = SNAP.spending(flow="net_transfers", method=MARKERS).rows(origin="repayment")
     counted = REFLOWS.filter(pl.col("basis").is_in(COUNTED_BASES))
     assert sorted(rows.select("record_id", "row_id").rows(), key=str) == sorted(
         counted.select("record_id", "row_id").rows(), key=str
@@ -3812,7 +3818,7 @@ def eu_net_release(tmp_path_factory: pytest.TempPathFactory) -> Release:
     [
         # As a channel, the EU's own repayments leave an all-provider total in 2022,
         # when France's contributions attribute, and stay in 2023.
-        (cf.methods.ONE, set(), {1, 2, EIB_AGENCY}),
+        (cf.methods.MARKERS, set(), {1, 2, EIB_AGENCY}),
         # As a provider, the EU budget and the EDF keep theirs and the EIB's leave.
         (ONE_EU_AS_PROVIDER, {1, 2}, {1, 2}),
         (cf.methods.OECD, {1, 2}, {1, 2}),
@@ -4021,13 +4027,13 @@ def test_quality_reports_repayments_by_basis_and_what_net_subtracts() -> None:
 
 @pytest.mark.parametrize("flow", NET_FLOWS)
 def test_explain_says_how_a_net_flow_subtracts_repayments(flow: Flow) -> None:
-    text = SNAP.spending(flow=flow, method=cf.methods.PROVIDER).explain()
+    text = SNAP.spending(flow=flow, method=cf.methods.ONE).explain()
 
     assert "release.quality().repayments reports them" in text
     assert "high sits above value" in text
     assert "coefficients of the year it is repaid" in text
     assert "coefficients of the year it is repaid" not in (
-        SNAP.spending(flow=flow).explain()
+        SNAP.spending(flow=flow, method=MARKERS).explain()
     )
     assert ("no interest after 2018" in text) == (flow == "net_transfers")
     eu_rule = "EU Institutions repayment scales by"

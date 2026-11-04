@@ -15,7 +15,7 @@ from climate_finance.errors import (
     ReleaseIntegrityError,
     WithheldTableError,
 )
-from climate_finance.methods import OECD, ONE, MethodRange
+from climate_finance.methods import MARKERS, OECD, MethodRange
 from climate_finance.result import Reconciliation
 from climate_finance.schema import ReleaseManifest
 
@@ -60,8 +60,10 @@ def test_providers_name_a_party_in_any_form(germany: str | int) -> None:
 
 
 def test_a_reconciliation_prints_its_providers_years_methods_and_table() -> None:
-    reconciliation = SNAP.reconcile(method=["ONE", "OECD"])
-    title = "Reconciliation: providers Germany, Norway; years 2021 to 2022; OECD, ONE"
+    reconciliation = SNAP.reconcile(method=["MARKERS", "OECD"])
+    title = (
+        "Reconciliation: providers Germany, Norway; years 2021 to 2022; MARKERS, OECD"
+    )
 
     assert repr(reconciliation) == f"{title}\n{reconciliation.table!r}"
     assert reconciliation._repr_html_().startswith(f"<p>{title}</p><div>")
@@ -125,8 +127,8 @@ def test_germany_reads_against_its_own_weight() -> None:
     assert row["crs_disbursed_at_party_weight"] == pytest.approx(
         DEU_2022_DISBURSED, rel=1e-6
     )
-    # ONE counts DEU-2's disbursed 12.5m at 0.4.
-    assert row["traced_climate_value"] == pytest.approx(5e6)
+    # ONE counts DEU-2's disbursed 12.5m at Germany's coefficient for such activities.
+    assert row["traced_climate_value"] == pytest.approx(12.5e6)
     assert row["btr_over_crdf_at_party_weight"] == pytest.approx(22 / 25)
     # Germany reports commitments, so it reads against the CRDF first and not
     # against disbursements.
@@ -182,7 +184,7 @@ def test_a_case_by_case_party_reads_against_its_default() -> None:
     assert (row["party_weight"], row["party_principal"]) == (0.3, 0.9)
     assert row["coefficient_basis"] == "default"
     assert row["crdf_at_party_weight"] == pytest.approx(0.9 * 18e6)
-    # Neither rests on PROVIDER's own coefficients.
+    # Neither rests on ONE's own coefficients.
     assert (row["crdf_method_share"], row["crs_method_share"]) == (0.0, 0.0)
     assert _row(reconciliation, "NOR", 2022)["crdf_method_share"] == 0.0
 
@@ -304,8 +306,8 @@ def _a_loan_at_agency_1(frame: pl.DataFrame) -> pl.DataFrame:
 
 def test_a_mixed_basis_party_shows_its_method_shares(tmp_path: Path) -> None:
     # Without its BTR coefficients, FRA-2 (12m) and France's Significant 2022
-    # disbursement (4.8m) count at PROVIDER's 0.4 under agency 1 and at France's
-    # 0.3 under agency 2, so 0.4 of every 0.7 rests on PROVIDER's coefficients.
+    # disbursement (4.8m) count at ONE's 0.4 under agency 1 and at France's
+    # 0.3 under agency 2, so 0.4 of every 0.7 rests on ONE's coefficients.
     # Agency 1's grant equivalent is a loan's 2.16m against agency 2's 4.32m, so
     # 0.864m of 2.16m rests on them.
     release = copy_release(
@@ -361,7 +363,7 @@ def test_a_case_by_case_party_without_a_default_reads_at_provider_coefficients(
     tmp_path: Path,
 ) -> None:
     # Norway assesses each activity and here states no default, so its Significant
-    # NOR-2 (9m) counts at PROVIDER's 0.4, as `spending` counts it.
+    # NOR-2 (9m) counts at ONE's 0.4, as `spending` counts it.
     release = copy_release(
         tmp_path / "release", edits={"provider_coefficients": _without_a_default}
     )
@@ -379,7 +381,7 @@ def test_a_party_without_a_coefficient_row_reads_at_provider_coefficients(
     tmp_path: Path,
 ) -> None:
     # Without its row Germany weighs as `spending` weighs it: DEU-2 (25m), Significant
-    # on both objectives, counts at PROVIDER's 0.4, and so does DEU-2's 16.67m
+    # on both objectives, counts at ONE's 0.4, and so does DEU-2's 16.67m
     # disbursed.
     release = copy_release(
         tmp_path / "release",
@@ -402,11 +404,11 @@ def test_a_party_without_a_coefficient_row_reads_at_provider_coefficients(
 
 def test_each_method_gives_its_traced_value() -> None:
     table = SNAP.reconcile(
-        providers=["DEU"], years=[2022], method=MethodRange(methods=(ONE, OECD))
+        providers=["DEU"], years=[2022], method=MethodRange(methods=(MARKERS, OECD))
     ).table
 
     assert dict(table.select("method", "traced_climate_value").iter_rows()) == {
-        "ONE": pytest.approx(5e6),
+        "MARKERS": pytest.approx(5e6),
         "OECD": pytest.approx(12.5e6),
     }
 

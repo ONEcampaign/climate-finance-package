@@ -9,8 +9,8 @@ from make_fixture import DEU, FIXTURE_DIR, FRA, JPN, NOR
 import climate_finance as cf
 from climate_finance.errors import InvalidInputError
 from climate_finance.methods import (
+    MARKERS,
     OECD,
-    ONE,
     OXFAM,
     OXFAM_CAVEAT,
     OXFAM_HIGH,
@@ -46,8 +46,8 @@ def _by_objective(frame: pl.DataFrame) -> dict[str, float]:
     ("method", "adaptation", "mitigation", "expected"),
     [
         (OECD, 1, 0, {"adaptation": DISBURSED}),
-        (ONE, 1, 0, {"adaptation": pytest.approx(0.4 * DISBURSED)}),
-        (ONE, 0, 2, {"mitigation": DISBURSED}),
+        (MARKERS, 1, 0, {"adaptation": pytest.approx(0.4 * DISBURSED)}),
+        (MARKERS, 0, 2, {"mitigation": DISBURSED}),
         (OECD, 0, 2, {"mitigation": DISBURSED}),
         (OXFAM_LOW, 1, 0, {"adaptation": pytest.approx(0.3 * DISBURSED)}),
         (OXFAM_LOW, 0, 2, {"mitigation": pytest.approx(0.85 * DISBURSED)}),
@@ -55,8 +55,8 @@ def _by_objective(frame: pl.DataFrame) -> dict[str, float]:
     ],
     ids=[
         "OECD significant",
-        "ONE significant",
-        "ONE principal",
+        "MARKERS significant",
+        "MARKERS principal",
         "OECD principal",
         "OXFAM_LOW significant",
         "OXFAM_LOW principal",
@@ -76,18 +76,18 @@ def test_a_single_marker_counts_at_its_coefficient(
 def test_the_highest_marker_takes_the_activity_at_its_level(
     adaptation: int, mitigation: int, objective: str
 ) -> None:
-    result = _indicators(adaptation, mitigation, ONE)
+    result = _indicators(adaptation, mitigation, MARKERS)
 
     assert _by_objective(result) == {objective: DISBURSED}
     assert result["level"].to_list() == [2]
 
 
 def test_equal_markers_become_cross_cutting_under_the_highest_marker() -> None:
-    assert _by_objective(_indicators(2, 2, ONE)) == {"cross_cutting": DISBURSED}
+    assert _by_objective(_indicators(2, 2, MARKERS)) == {"cross_cutting": DISBURSED}
 
 
 def test_without_the_highest_marker_each_marker_gives_its_own_row() -> None:
-    method = ONE.replace(highest_marker=False)
+    method = MARKERS.replace(highest_marker=False)
 
     result = _by_objective(_indicators(2, 1, method))
 
@@ -99,7 +99,7 @@ def test_without_the_highest_marker_each_marker_gives_its_own_row() -> None:
 
 
 def test_an_activity_without_markers_keeps_its_value_as_not_climate() -> None:
-    result = _indicators(0, 0, ONE)
+    result = _indicators(0, 0, MARKERS)
 
     assert _by_objective(result) == {"not_climate_relevant": DISBURSED}
     assert result["level"].to_list() == [0]
@@ -118,7 +118,7 @@ COMPONENTS = {
 @pytest.mark.parametrize(
     ("method", "expected"),
     [
-        (ONE, {"adaptation": 0.2, "mitigation": 0.2, "cross_cutting": 0.1}),
+        (MARKERS, {"adaptation": 0.2, "mitigation": 0.2, "cross_cutting": 0.1}),
         (OECD, {"adaptation": 0.3, "mitigation": 0.3, "cross_cutting": 0.1}),
     ],
 )
@@ -133,11 +133,11 @@ def test_climate_components_ignore_coefficients_and_count_the_overlap_once(
 
 
 def test_named_methods_print_their_names_and_custom_ones_their_coefficients() -> None:
-    assert label(ONE) == "ONE"
-    assert label(ONE.replace(significant=0.5)).startswith(
+    assert label(MARKERS) == "MARKERS"
+    assert label(MARKERS.replace(significant=0.5)).startswith(
         "significant 0.5, principal 1,"
     )
-    assert label(ONE.replace(eu="provider")) == "ONE, EU as a provider"
+    assert label(MARKERS.replace(eu="provider")) == "MARKERS, EU as a provider"
     assert label(OECD.replace(eu="channel")) == "OECD, EU as a channel"
     assert (label(OXFAM), label(OXFAM_LOW), label(OXFAM_HIGH)) == (
         "OXFAM",
@@ -151,7 +151,10 @@ def test_named_methods_print_their_names_and_custom_ones_their_coefficients() ->
 
 
 def test_methods_with_close_coefficients_keep_distinct_labels() -> None:
-    close = (ONE.replace(significant=0.5000001), ONE.replace(significant=0.5000002))
+    close = (
+        MARKERS.replace(significant=0.5000001),
+        MARKERS.replace(significant=0.5000002),
+    )
 
     assert label(close[0]) != label(close[1])
 
@@ -159,8 +162,8 @@ def test_methods_with_close_coefficients_keep_distinct_labels() -> None:
 @pytest.mark.parametrize(
     ("build", "match"),
     [
-        (lambda: MethodRange(methods=(ONE, OECD, ONE)), "more than once"),
-        (lambda: ONE.replace(principal=1.5), "principal"),
+        (lambda: MethodRange(methods=(MARKERS, OECD, MARKERS)), "more than once"),
+        (lambda: MARKERS.replace(principal=1.5), "principal"),
         # Each call below is the wrong input under test, so a type checker flags it.
         (lambda: Method(significant=0.4, principal=1.0), "highest_marker"),  # ty: ignore[missing-argument]
         (
@@ -204,20 +207,20 @@ def _marker_row(
     ("method", "markers", "jev_level", "expected"),
     [
         # Jev finds no adaptation aim in a principal adaptation row: it counts 0.
-        (ONE, (2, 0), 0, {"adaptation": 0.0, "climate": 0.0}),
+        (MARKERS, (2, 0), 0, {"adaptation": 0.0, "climate": 0.0}),
         # A significant Jev level counts at the method's significant coefficient.
-        (ONE, (2, 0), 1, {"adaptation": 0.4, "climate": 0.4}),
+        (MARKERS, (2, 0), 1, {"adaptation": 0.4, "climate": 0.4}),
         (OECD, (2, 0), 1, {"adaptation": 1.0, "climate": 1.0}),
         # Equal levels are cross-cutting under the highest-marker rule.
-        (ONE, (1, 2), 2, {"cross_cutting": 1.0, "mitigation": 0.0, "climate": 1.0}),
+        (MARKERS, (1, 2), 2, {"cross_cutting": 1.0, "mitigation": 0.0, "climate": 1.0}),
         (
-            ONE.replace(highest_marker=False),
+            MARKERS.replace(highest_marker=False),
             (1, 1),
             2,
             {"adaptation": 1.0, "mitigation": 0.4, "cross_cutting": 0.4},
         ),
         # A record Jev did not label keeps its marker.
-        (ONE, (1, 0), None, {"adaptation": 0.4, "climate": 0.4}),
+        (MARKERS, (1, 0), None, {"adaptation": 0.4, "climate": 0.4}),
     ],
 )
 def test_a_jev_level_weighs_like_the_adaptation_marker_it_replaces(
@@ -236,7 +239,7 @@ def test_a_jev_level_weighs_like_the_adaptation_marker_it_replaces(
 def test_marker_relevance_ignores_a_jev_level() -> None:
     frame = _marker_row(1, 0, 2)
 
-    assert frame.select(**weights(ONE)).row(0, named=True)["adaptation"] == 0.4
+    assert frame.select(**weights(MARKERS)).row(0, named=True)["adaptation"] == 0.4
 
 
 _PARTS = ("adaptation", "mitigation", "overlap")
@@ -295,10 +298,10 @@ def test_capped_coefficients_take_the_providers_up_to_the_methods() -> None:
     ]
 
 
-@pytest.mark.parametrize("method", [OXFAM, OXFAM_LOW, OXFAM_HIGH, ONE])
+@pytest.mark.parametrize("method", [OXFAM, OXFAM_LOW, OXFAM_HIGH, MARKERS])
 def test_explain_states_how_an_oxfam_bound_differs_from_oxfams_figures(
     method: Method | MethodRange,
 ) -> None:
     text = cf.load(path=FIXTURE_DIR).spending(method=method).explain()
 
-    assert text.count(OXFAM_CAVEAT) == (0 if method == ONE else 1)
+    assert text.count(OXFAM_CAVEAT) == (0 if method == MARKERS else 1)

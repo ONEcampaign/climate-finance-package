@@ -1449,7 +1449,7 @@ DEVELOPED_PROVIDERS = _table(
 
 # Rio markers a coefficient applies to, as `provider_coefficients` names its columns.
 COEFFICIENT_MARKERS = ("significant", "principal")
-# Where `PROVIDER` takes a coefficient from: the provider's own statement in
+# Where `ONE` takes a coefficient from: the provider's own statement in
 # `provider_coefficients`, the share its BTR implies, or the method's own.
 COEFFICIENT_SOURCES = ("stated", "btr", "fallback")
 # Why `btr_coefficients` gives no coefficient: no linked BTR row reaches the scope's
@@ -1459,7 +1459,7 @@ BTR_COEFFICIENT_REASONS = ("no_links", "unaligned", "thin")
 
 # For each scope of `provider_coefficients` (a provider, or one of its agencies) of a
 # BTR party and each Rio marker, the climate share of CRS value the party's BTR Table 1
-# reports on activities so marked, and which coefficient `PROVIDER` takes. BTR rows and
+# reports on activities so marked, and which coefficient `ONE` takes. BTR rows and
 # CRS records that share links form a component, whose share is its BTR climate amount
 # over the CRS amount of its records. `coefficient` is the share across
 # the scope's components whose records all carry one highest Rio marker, weighted by
@@ -1469,7 +1469,7 @@ BTR_COEFFICIENT_REASONS = ("no_links", "unaligned", "thin")
 # whose share exceeds 1.1 leaves the evidence as a link error or a claim larger than
 # the money; `dropped`, `dropped_usd`, and `dropped_btr_usd` count those components
 # and their CRS and BTR amounts. Shares from 1 to 1.1 count at 1. `source` is
-# `stated` where the provider states the coefficient, `btr` where `PROVIDER` takes
+# `stated` where the provider states the coefficient, `btr` where `ONE` takes
 # `coefficient` in place of the method's, and `fallback` where it takes the method's.
 BTR_COEFFICIENTS = _table(
     "btr_coefficients",
@@ -2103,7 +2103,7 @@ def stated_markers(coefficients: pl.DataFrame) -> pl.DataFrame:
 def _btr_coefficient_problems(
     btr: pl.DataFrame, *, coefficients: pl.DataFrame
 ) -> list[str]:
-    """Rows of `btr_coefficients` that `PROVIDER` could not read as one rule.
+    """Rows of `btr_coefficients` that `ONE` could not read as one rule.
 
     A coefficient lies between 0 and 1, and is null exactly where `reason` is set. A
     `btr` row holds a coefficient, and no `provider_coefficients` row of its scope

@@ -58,7 +58,7 @@ release = cf.load_example()
 result = release.spending(
     providers=[701, 5],
     years=range(2021, 2024),
-    method=cf.methods.ONE,
+    method=cf.methods.MARKERS,
     flow="disbursements",
     untraced=False,
 )
@@ -70,7 +70,7 @@ print(len(data), "rows")
 10 rows
 ```
 
-`untraced=False` keeps the disbursements traced to the CRDF's commitments, as `source="OECD_CRDF_CRS"` counted them. Leave it out to add the Rio-marked CRS disbursement traced to no commitment, which `spending()` counts by default. Any Arrow-aware library reads the frame without pandas, such as `pa.table(result.table)`.
+`method=cf.methods.MARKERS` is 1.x's `methodology="ONE"`, which applied 40% to significant markers and 100% to principal ones for every provider. The 2.0 default, `cf.methods.ONE`, takes each provider's own coefficients instead. `untraced=False` keeps the disbursements traced to the CRDF's commitments, as `source="OECD_CRDF_CRS"` counted them. Leave it out to add the Rio-marked CRS disbursement traced to no commitment, which `spending()` counts by default. Any Arrow-aware library reads the frame without pandas, such as `pa.table(result.table)`.
 
 | 1.x                                                                          | 2.0                                                                                                                                                                            |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -80,7 +80,7 @@ print(len(data), "rows")
 | `prices="constant", base_year=2022`                                          | `prices=2022`                                                                                                                                                                  |
 | `set_only_oda()`                                                             | `oda_only=True`                                                                                                                                                                |
 | `set_update_data()`                                                          | `load(refresh=True)`                                                                                                                                                           |
-| `methodology="ONE"` or `"OECD"`                                              | `method=cf.methods.ONE` or `cf.methods.OECD`                                                                                                                                   |
+| `methodology="ONE"` or `"OECD"`                                              | `method=cf.methods.MARKERS` or `cf.methods.OECD`                                                                                                                               |
 | `set_custom_spending_methodology((0.5, 1.0), highest_marker=True)`           | `method=cf.Method(significant=0.5, principal=1.0, highest_marker=True)`                                                                                                        |
 | `flows="gross_disbursements"`, `"commitments"`, `"grant_equivalent"`         | `flow="disbursements"`, `"commitments"`, `"grant_equivalent"`                                                                                                                  |
 | `source="OECD_CRDF_CRS"`, and `"OECD_CRDF"` with commitments                 | `view="recipient"`, the default, with `untraced=False`. The traced disbursements include those from development banks' own ledgers, which stand in for the banks' CRS records. |
@@ -109,14 +109,14 @@ These 1.x choices run in 2.0 with another meaning, so `ClimateData` refuses them
 
 Importing a 1.x module raises `RemovedModuleError`, a `ModuleNotFoundError` that names what replaces it.
 
-| 1.x module                                             | 2.0                                                                                      |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `climate_finance.unfccc`                               | none for the Biennial Report data. `release.reconcile()` compares BTR totals from 2021.  |
-| `climate_finance.core`                                 | `ClimateData` from `climate_finance.compat`, or `cf.load().spending()`                   |
-| `climate_finance.oecd`                                 | a release, which holds the matched OECD data. `cf-build` fetches it.                     |
-| `climate_finance.methodologies`                        | `method=` on `spending()`, with `cf.methods.ONE`, `cf.methods.OECD`, or `cf.Method(...)` |
-| `climate_finance.config`                               | `load(cache_dir=...)`                                                                    |
-| `climate_finance.common`, `climate_finance.validation` | none                                                                                     |
+| 1.x module                                             | 2.0                                                                                          |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `climate_finance.unfccc`                               | none for the Biennial Report data. `release.reconcile()` compares BTR totals from 2021.      |
+| `climate_finance.core`                                 | `ClimateData` from `climate_finance.compat`, or `cf.load().spending()`                       |
+| `climate_finance.oecd`                                 | a release, which holds the matched OECD data. `cf-build` fetches it.                         |
+| `climate_finance.methodologies`                        | `method=` on `spending()`, with `cf.methods.MARKERS`, `cf.methods.OECD`, or `cf.Method(...)` |
+| `climate_finance.config`                               | `load(cache_dir=...)`                                                                        |
+| `climate_finance.common`, `climate_finance.validation` | none                                                                                         |
 
 ## What else is different
 

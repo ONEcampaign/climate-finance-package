@@ -64,7 +64,7 @@ def btr_coefficients(
 ) -> pl.DataFrame:
     """The `btr_coefficients` table: per scope of `coefficients` whose provider is a
     BTR party, and per Rio marker, the share its BTR implies and the coefficient
-    `PROVIDER` takes.
+    `ONE` takes.
 
     Args:
         btr: The `btr` table. Rows without a status or a face value in USD at the DAC

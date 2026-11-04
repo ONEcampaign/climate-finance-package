@@ -60,6 +60,7 @@ def test_get_data_equals_traced_spending_for_each_flow() -> None:
             recipients="Kenya",
             years=YEARS,
             flow=flow,
+            method=cf.methods.MARKERS,
             untraced=False,
         )
 
@@ -90,7 +91,12 @@ def test_get_data_equals_traced_spending_for_each_flow() -> None:
         (
             lambda data: data.set_only_oda(),
             {"source": "OECD_CRDF_DONOR", "flows": "commitments"},
-            {"oda_only": True, "view": "provider", "flow": "commitments"},
+            {
+                "method": cf.methods.MARKERS,
+                "oda_only": True,
+                "view": "provider",
+                "flow": "commitments",
+            },
         ),
     ],
 )
@@ -121,7 +127,7 @@ def test_the_methodology_argument_overrides_the_set_methods_as_in_1x() -> None:
         (
             "OECD_CRDF_CRS",
             "gross_disbursements",
-            RELEASE.spending(years=YEARS, untraced=False),
+            RELEASE.spending(years=YEARS, untraced=False, method=cf.methods.MARKERS),
         )
     )
     pd.testing.assert_frame_equal(data.get_data(), expected)

@@ -32,10 +32,10 @@ result = release.spending(**query)
 
     ```output
     ['method', 'flow', 'view', 'attribution', 'currency', 'prices', 'value', 'total', 'share']
-    ONE USD 288.3 1986.8 0.1451
+    ONE USD 302.9 1986.8 0.1525
     ```
 
-    Climate finance is 14.5% of the disbursements of these providers and recipients. The total covers the query's flow, the Bi_Multi codes of its view, and every `providers=`, `recipients=`, and `years=` filter, at the query's currency and prices. It includes Norway's USD 6.0m of 2023 disbursements to Kenya, which carry no Rio marker and have no row in `result.table`.
+    Climate finance is 15.2% of the disbursements of these providers and recipients. The total covers the query's flow, the Bi_Multi codes of its view, and every `providers=`, `recipients=`, and `years=` filter, at the query's currency and prices. It includes Norway's USD 6.0m of 2023 disbursements to Kenya, which carry no Rio marker and have no row in `result.table`.
 
 2. Keep the key columns you want a share for. `by` names them, so `by="year"` gives one share per year.
 
@@ -46,10 +46,10 @@ result = release.spending(**query)
     ```
 
     ```output
-    2021 0.1619
-    2022 0.1403
-    2023 0.1554
-    2024 0.0986
+    2021 0.1568
+    2022 0.1488
+    2023 0.1626
+    2024 0.1234
     ```
 
     `by` takes the key columns of `result.table`: `year`, `provider_code`, `recipient_code`, `bi_multi`, and, for a query that names an agency, `agency_code` beside `provider_code`. The output puts the names of the code columns, such as `provider`, first.
@@ -64,9 +64,9 @@ result = release.spending(**query)
     ```
 
     ```output
-    ONE 0.1451
+    MARKERS 0.1451
+    ONE 0.1525
     OECD 0.1652
-    PROVIDER 0.1525
     ```
 
 The share is null where the total is zero, as for a query that returns no rows. Under `oda_only=True` the value counts ODA only and the total counts every flow code, so the share is ODA climate finance over all flows, as `share_of_total()` reads it.
@@ -81,10 +81,10 @@ print(round(per_key.mean(), 4), round(combined["share"].item(), 4))
 ```
 
 ```output
-0.1556 0.1451
+0.1793 0.1525
 ```
 
-The average reads 15.6%. The combined share, 14.5%, is the share of the combined disbursements.
+The average reads 17.9%. The combined share, 15.2%, is the share of the combined disbursements.
 
 ## Verify it worked
 
@@ -97,7 +97,7 @@ print(round(every_key["value"].sum() / every_key["total"].sum(), 4))
 ```
 
 ```output
-0.1451
+0.1525
 ```
 
 ## Troubleshooting

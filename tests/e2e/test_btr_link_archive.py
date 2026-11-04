@@ -33,6 +33,7 @@ from climate_finance.build.normalise import btr_at_dac_rates
 from climate_finance.build.normalise.crs import normalise_crs
 from climate_finance.build.readers.btr import estimate_party_weights, ingest_unfccc
 from climate_finance.build.stages import raw_dir
+from climate_finance.methods import MARKERS
 from climate_finance.release import Release
 from climate_finance.result import Reconciliation
 
@@ -425,7 +426,9 @@ def _reconcile(out: Path) -> Reconciliation:
     manifest = schema.ReleaseManifest.model_validate_json(
         (out / "release.json").read_text(encoding="utf-8")
     )
-    return Release(path=out, manifest=manifest).reconcile(years=(2021, 2022))
+    return Release(path=out, manifest=manifest).reconcile(
+        years=(2021, 2022), method=MARKERS
+    )
 
 
 @pytest.mark.parametrize(
@@ -458,7 +461,7 @@ def test_party_totals_agree_at_the_prototype_weights(
     ratio: float,
 ) -> None:
     rows = reconciliation.table.filter(
-        party=party, year=year, method="ONE", comparator=comparator
+        party=party, year=year, method="MARKERS", comparator=comparator
     )
 
     assert rows.height == 1
@@ -472,7 +475,7 @@ def test_germany_counts_both_significant_disbursements_in_full(
     # and one significant on one at 0.5. Its 1,341 both-significant records of 2021
     # disburse USD 1.82bn, which at 0.5 would give USD 4.54bn.
     rows = reconciliation_at_own_coefficients.table.filter(
-        party="DEU", year=2021, method="ONE"
+        party="DEU", year=2021, method="MARKERS"
     )
 
     assert rows.height == 1
@@ -490,7 +493,7 @@ METHOD_SHARES = (
 
 def _method_shares(reconciliation: Reconciliation, party: str) -> pl.Series:
     """`party`'s method shares of 2021 and 2022, every comparator's alike."""
-    rows = reconciliation.table.filter(party=party, method="ONE")
+    rows = reconciliation.table.filter(party=party, method="MARKERS")
     shares = rows.select(pl.concat_list(METHOD_SHARES).explode()).to_series()
     assert shares.null_count() == 0
     return shares
@@ -500,12 +503,12 @@ def _method_shares(reconciliation: Reconciliation, party: str) -> pl.Series:
     ("party", "share"),
     [
         # AFD assesses each activity case by case and takes the coefficients
-        # France's BTR implies, so none of France's comparators weigh at PROVIDER's
-        # own; with PROVIDER's 0.4 and 1.0 its shares ran from 0.71 to 0.86.
+        # France's BTR implies, so none of France's comparators weigh at ONE's
+        # own; with ONE's 0.4 and 1.0 its shares ran from 0.71 to 0.86.
         ("FRA", 0.0),
         ("CAN", 0.0),
         # The release links no US BTR row to a CRS record, so the US keeps
-        # PROVIDER's 0.4 and 1.0 on every comparator.
+        # ONE's 0.4 and 1.0 on every comparator.
         ("USA", 1.0),
     ],
 )
@@ -518,7 +521,7 @@ def test_method_shares_follow_where_each_party_takes_its_coefficients(
 
 
 # For each provider and agency that assesses case by case, and each marker: the
-# coefficient its BTR implies, which `PROVIDER` takes, why there is none, and the
+# coefficient its BTR implies, which `ONE` takes, why there is none, and the
 # components behind it, after those above a share of 1.1 leave the evidence.
 # Belgium, France's AFD and the UK take both markers from their BTR and Luxembourg
 # its significant one. The rest, the US among them, have too little linked

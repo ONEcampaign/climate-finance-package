@@ -312,11 +312,12 @@ def test_a_release_of_an_older_format_serves_what_it_holds(
     # Format 0 is test-local: format 1 less `reflows` and the Table 8 tables, with
     # memorandum rows.
     later = {"reflows", "outflow_shares", "developed_providers"}
-    monkeypatch.setattr(
-        release_module,
-        "FORMAT_TABLES",
-        {0: frozenset(RELEASE_TABLES) - later, 1: frozenset(RELEASE_TABLES)},
-    )
+    format_tables = {
+        0: frozenset(RELEASE_TABLES) - later,
+        1: frozenset(RELEASE_TABLES),
+    }
+    monkeypatch.setattr(release_module, "FORMAT_TABLES", format_tables)
+    monkeypatch.setattr(query, "FORMAT_TABLES", format_tables)
     monkeypatch.setattr(query, "MEMORANDUM_FORMAT", 0)
     path = copy_release(tmp_path / "release") / "release.json"
     manifest = ReleaseManifest.model_validate_json(path.read_text(encoding="utf-8"))

@@ -44,10 +44,10 @@ results = {
     cf.methods.label(method): release.spending(
         providers="Germany", years=years, method=method
     )
-    for method in (cf.methods.ONE, cf.methods.OECD, cf.methods.RANGE)
+    for method in (cf.methods.MARKERS, cf.methods.OECD, cf.methods.RANGE)
 }
-rows = results["ONE"].rows(year=2022)
-comparison = cf.compare(results["ONE"], results["OECD"]).table
+rows = results["MARKERS"].rows(year=2022)
+comparison = cf.compare(results["MARKERS"], results["OECD"]).table
 quality = release.quality(providers="Germany").summary()
 profile = release.disbursement_profile().filter(group="all")
 repeats = (
@@ -69,7 +69,7 @@ print(
                     pl.col("row_id").is_in(repeats["row_id"].implode())
                 ).height,
             },
-            "compare": {name: comparison[name].sum() for name in ("ONE", "OECD")},
+            "compare": {name: comparison[name].sum() for name in ("MARKERS", "OECD")},
             "quality": quality.to_dicts(),
             "profile": dict(
                 zip(profile["years_since"], profile["cumulative_share"], strict=True)

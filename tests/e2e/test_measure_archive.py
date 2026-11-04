@@ -24,13 +24,13 @@ from climate_finance.build.normalise.crs import (
 )
 from climate_finance.build.normalise.vintages import mark_repeats
 from climate_finance.build.readers.imputed_shares import read_imputed_shares
-from climate_finance.methods import ONE
+from climate_finance.methods import MARKERS
 from climate_finance.query import measured_shares
 
 pytestmark = pytest.mark.slow
 
-# Banks that report climate components, which ONE takes as reported, as the OECD
-# does, so their ONE shares should equal the OECD's: IBRD, IDA, IFC, AfDB, AfDF,
+# Banks that report climate components, which MARKERS takes as reported, as the OECD
+# does, so their agency shares should equal the OECD's: IBRD, IDA, IFC, AfDB, AfDF,
 # CABEI, CAF, EBRD and AIIB.
 COMPONENT_BANKS = (44001, 44002, 44004, 46002, 46003, 46007, 46008, 46015, 46026)
 IFC, CAF, IDB_INVEST, NDB, EU = 903, 1015, 1019, 1044, 918
@@ -97,7 +97,7 @@ def test_one_shares_equal_the_oecds_for_component_banks(
         years=(2015, 2024),
     ).collect()
     schema.validate(schema.AGENCY_SHARES, shares)
-    one = measured_shares(spending.lazy(), method=ONE).select(
+    one = measured_shares(spending.lazy(), method=MARKERS).select(
         "channel_code",
         "year",
         one=pl.col("share_adaptation")

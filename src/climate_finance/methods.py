@@ -1,6 +1,7 @@
-"""Climate weighting: `Method`, the named methods ONE, OECD, PROVIDER, RANGE,
+"""Climate weighting: `Method`, the named methods ONE, MARKERS, OECD, RANGE,
 OXFAM_LOW, OXFAM_HIGH and OXFAM, and the marker rules that turn Rio markers or
-climate components into objective weights."""
+climate components into objective weights. ONE reads each provider's own coefficients;
+MARKERS applies one set of coefficients to every provider."""
 
 from typing import Literal, Self
 
@@ -12,12 +13,12 @@ from climate_finance.frozen import Frozen
 from climate_finance.schema import OBJECTIVES
 
 __all__ = [
+    "MARKERS",
     "OECD",
     "ONE",
     "OXFAM",
     "OXFAM_HIGH",
     "OXFAM_LOW",
-    "PROVIDER",
     "RANGE",
     "Method",
     "MethodRange",
@@ -91,15 +92,18 @@ class MethodRange(Frozen):
         return describe(self)
 
 
-ONE = Method(significant=0.4, principal=1.0, highest_marker=True)
-# The OECD's imputed shares hold the EIB alone of the EU channels, because it counts
-# the EU budget and the EDF as a provider. PROVIDER reads ONE's agency shares, so it
-# keeps ONE's EU setting.
-OECD = Method(significant=1.0, principal=1.0, highest_marker=False, eu="provider")
-PROVIDER = Method(
+# ONE Data's rule: each provider's own coefficients, 40% and 100% where it has none.
+ONE = Method(
     significant=0.4, principal=1.0, highest_marker=True, coefficients="provider"
 )
-RANGE = MethodRange(methods=(ONE, OECD, PROVIDER))
+# The flat rule: 40% for significant markers and 100% for principal ones, for every
+# provider.
+MARKERS = Method(significant=0.4, principal=1.0, highest_marker=True)
+# The OECD's imputed shares hold the EIB alone of the EU channels, because it counts
+# the EU budget and the EDF as a provider. ONE reads the same agency shares as
+# MARKERS, so it keeps MARKERS' EU setting.
+OECD = Method(significant=1.0, principal=1.0, highest_marker=False, eu="provider")
+RANGE = MethodRange(methods=(MARKERS, ONE, OECD))
 # Oxfam's Climate-Specific Net Assistance bounds. Oxfam counts EU Institutions as a
 # developed provider and the EIB as a development bank, as the provider setting does.
 OXFAM_LOW = Method(significant=0.3, principal=0.85, highest_marker=True, eu="provider")
@@ -114,8 +118,8 @@ OXFAM = MethodRange(methods=(OXFAM_LOW, OXFAM_HIGH))
 
 _NAMED = {
     "ONE": ONE,
+    "MARKERS": MARKERS,
     "OECD": OECD,
-    "PROVIDER": PROVIDER,
     "OXFAM_LOW": OXFAM_LOW,
     "OXFAM_HIGH": OXFAM_HIGH,
 }
@@ -183,7 +187,9 @@ def describe(method: Method | MethodRange) -> str:
         f"{method.principal:.0%}; {rule}. Climate-component rows from development "
         "banks count their reported climate share and ignore the coefficients."
     )
-    if method.coefficients != "fixed":
+    if method.coefficients == "fixed":
+        text += " Every provider takes these coefficients."
+    else:
         text += (
             " Each provider takes the coefficients it applies when reporting to the "
             "UNFCCC for the activity's year and agency, as the release records them "
@@ -244,9 +250,9 @@ _EU = {
     "channel's attributed contributions that come from the providers in the query, "
     "so EU spending counts once. The EIB's own lending "
     "reaches members' totals only through their paid-in capital, as every "
-    "development bank's own lending does: under ONE, USD 0.035bn attributed against "
-    "2.72bn the EIB disbursed in 2021 and 2022. It stays in the recipient view, and "
-    "quality() reports the EU rows left out.",
+    "development bank's own lending does: under ONE and MARKERS, USD 0.035bn "
+    "attributed against 2.72bn the EIB disbursed in 2021 and 2022. It stays in the "
+    "recipient view, and quality() reports the EU rows left out.",
     "provider": " In the provider view EU Institutions count as a provider and the "
     "EIB as a channel: the rows of the EU budget and the EDF count in EU "
     "Institutions' own right and contributions to them attribute nothing, while the "

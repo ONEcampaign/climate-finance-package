@@ -23,7 +23,7 @@ The line names the release, marks its figures as synthetic, and gives the years 
 
 ## Step 2. Ask for a figure
 
-`spending()` takes providers and recipients by name or DAC code. It returns disbursements under ONE's method by default.
+`spending()` takes providers and recipients by name or DAC code. It returns disbursements under ONE, the provider-coefficient method, by default.
 
 ```python
 result = release.spending(
@@ -36,12 +36,12 @@ for row in result.table.iter_rows(named=True):
 ```
 
 ```output
-2021 13.3 0.0
+2021 11.3 0.0
 2022 18.3 0.0
 2023 48.3 12.0
 ```
 
-The columns are year, climate `value` in USD million, and the `low` bound. In 2021 the value is 13.3 and the low bound is 0.0, because an estimated link connects the disbursement to its commitment. Only certain links, which rest on the donor's own ids, count in the low bound. The 2023 value includes 8.0 of untraced disbursement, the part of one CRS record's disbursement that no commitment could take, which the `untraced` column shows. The table also holds a `high` bound, explained in [Low and high bounds](explanation/low-and-high-bounds.md).
+The columns are year, climate `value` in USD million, and the `low` bound. In 2021 the value is 11.3 and the low bound is 0.0, because an estimated link connects the disbursement to its commitment. Only certain links, which rest on the donor's own ids, count in the low bound. The 2023 value includes 8.0 of untraced disbursement, the part of one CRS record's disbursement that no commitment could take, which the `untraced` column shows. The table also holds a `high` bound, explained in [Low and high bounds](explanation/low-and-high-bounds.md).
 
 ## Step 3. See the records behind the figure
 
@@ -78,7 +78,7 @@ print(result.explain().splitlines()[-2:])
 ['Filtered to providers Japan; recipients Bangladesh; years 2021 to 2023.', 'Amounts in USD at current prices.']
 ```
 
-Print the full string to see how `value` is calculated. Significant Rio markers count at 40% of face value, principal markers count at 100%, and each activity counts once under its higher marker.
+Print the full string to see how `value` is calculated. Each provider's Rio markers count at the coefficients it reports to the UNFCCC, 40% of face value for significant markers and 100% for principal ones where it reports none, and each activity counts once under its higher marker.
 
 ## Step 5. Change what is counted
 
@@ -91,15 +91,15 @@ for flow in ("commitments", "disbursements"):
 ```
 
 ```output
-commitments 130.0
-disbursements 38.0
+commitments 128.0
+disbursements 39.2
 ```
 
-Japan's climate commitments for 2021 and 2022 total 130.0. The 38.0 is what Japan disbursed in those two years against climate commitments of any year the release holds, so the two figures measure different money. `oda_only=True`, `currency=`, and `prices=` filter or convert a query the same way. [Python API](reference/python-api.md) lists the parameters.
+Japan's climate commitments for 2021 and 2022 total 128.0. The 39.2 is what Japan disbursed in those two years against climate commitments of any year the release holds, so the two figures measure different money. `oda_only=True`, `currency=`, and `prices=` filter or convert a query the same way. [Python API](reference/python-api.md) lists the parameters.
 
 ## Step 6. Ask for one objective
 
-The table splits `value` into `adaptation`, `mitigation`, `cross_cutting`, and `unsplit` columns, so an adaptation question needs no filter. What the columns hold depends on the method's `highest_marker` rule. ONE and PROVIDER set it. Each activity counts once, under its higher Rio marker, so `adaptation` holds the activities whose adaptation marker is the higher, `cross_cutting` holds those with equal markers, and adaptation finance is the sum of the two. The recipe below applies to these two methods.
+The table splits `value` into `adaptation`, `mitigation`, `cross_cutting`, and `unsplit` columns, so an adaptation question needs no filter. What the columns hold depends on the method's `highest_marker` rule. ONE and MARKERS set it. Each activity counts once, under its higher Rio marker, so `adaptation` holds the activities whose adaptation marker is the higher, `cross_cutting` holds those with equal markers, and adaptation finance is the sum of the two. The recipe below applies to these two methods.
 
 ```python
 import polars as pl
@@ -120,11 +120,11 @@ for row in adaptation.iter_rows(named=True):
 
 ```output
 2021 12.7 0.0
-2022 15.2 1.7
-2023 12.7 1.7
+2022 15.2 4.2
+2023 12.7 4.2
 ```
 
-Under ONE, Germany's adaptation finance for 2022 is 15.2 million USD, or 16.8 with the cross-cutting activities. A row without an adaptation marker, as every row that rests on a year before 2010 is, such as a disbursement to a 2008 commitment, counts 0 in `adaptation` and `cross_cutting`, and `no_adaptation_marker` holds its value. Sum it beside the two columns to see how much of a total has no adaptation split. OECD (`method=cf.methods.OECD`) counts each marker on its own, so its `adaptation` holds every activity marked for adaptation and its `cross_cutting` is the overlap with mitigation. Under OECD, adaptation finance is the `adaptation` column alone, and adding `cross_cutting` counts the overlap twice. `method.highest_marker` says which rule a method follows. `low` and `high` bound only `value`, the total over all objectives.
+Under ONE, Germany's adaptation finance for 2022 is 15.2 million USD, or 19.4 with the cross-cutting activities. A row without an adaptation marker, as every row that rests on a year before 2010 is, such as a disbursement to a 2008 commitment, counts 0 in `adaptation` and `cross_cutting`, and `no_adaptation_marker` holds its value. Sum it beside the two columns to see how much of a total has no adaptation split. OECD (`method=cf.methods.OECD`) counts each marker on its own, so its `adaptation` holds every activity marked for adaptation and its `cross_cutting` is the overlap with mitigation. Under OECD, adaptation finance is the `adaptation` column alone, and adding `cross_cutting` counts the overlap twice. `method.highest_marker` says which rule a method follows. `low` and `high` bound only `value`, the total over all objectives.
 
 ## Step 7. Check how much traces
 
@@ -149,5 +149,5 @@ This synthetic release skips the blind-sample gate, so `release.quality().precis
 
 ## Next
 
-- [About the methods](explanation/methods.md) compares ONE, OECD, and PROVIDER weights for the same query.
+- [About the methods](explanation/methods.md) compares ONE, MARKERS, and OECD weights for the same query.
 - [Low and high bounds](explanation/low-and-high-bounds.md) explains which rows set each bound.

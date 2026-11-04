@@ -27,7 +27,7 @@ from climate_finance.build.measure import (
     unshared_contributions,
 )
 from climate_finance.build.stages import table_path
-from climate_finance.methods import ONE
+from climate_finance.methods import MARKERS
 from climate_finance.query import measured_shares
 
 ASDB, EU, ADAPTATION_FUND, CAF, IFC, NDB = 915, 918, 1012, 1015, 903, 1044
@@ -65,12 +65,12 @@ def _component(
 
 
 def _one_shares(spending: pl.LazyFrame) -> dict[tuple[int, int, str], float]:
-    """The ONE shares the query weighs from `spending`, by channel, year and part."""
+    """The agency shares the query weighs from `spending`, by channel, year and part."""
     collected = spending.collect()
     schema.validate(schema.AGENCY_SPENDING, collected)
     return {
         (row["channel_code"], row["year"], part): row[f"share_{part}"]
-        for row in measured_shares(collected.lazy(), method=ONE)
+        for row in measured_shares(collected.lazy(), method=MARKERS)
         .collect()
         .iter_rows(named=True)
         for part in ("adaptation", "mitigation", "overlap")
@@ -104,7 +104,7 @@ def test_one_shares_are_inclusive_two_year_shares_of_crs_commitments(
     crdf = crdf_rows(
         _component("a20", 2020, face=100.0, a=30.0, m=20.0, o=10.0),
         _component("a21", 2021, face=50.0, a=0.0, m=50.0, o=0.0),
-        # A significant adaptation marker counts at 0.4 under ONE.
+        # A significant adaptation marker counts at 0.4 under MARKERS.
         _bank("f21", 2021, provider_code=ADAPTATION_FUND, rio_adaptation=1,
               rio_mitigation=0, face_usd=10.0, climate_usd=10.0,
               adaptation_usd=10.0, mitigation_usd=0.0),
@@ -174,7 +174,7 @@ def test_one_shares_are_inclusive_two_year_shares_of_crs_commitments(
 
 
 def test_a_marker_weight_stops_at_the_published_climate_share() -> None:
-    # A significant mitigation marker counts 0.4 under ONE; the provider published
+    # A significant mitigation marker counts 0.4 under MARKERS; the provider published
     # 30% of face value as climate.
     crdf = crdf_rows(
         _bank("i21", 2021, provider_code=ADAPTATION_FUND, rio_adaptation=0,
@@ -354,7 +354,7 @@ def test_a_span_below_the_floor_holds_the_last_computed_share() -> None:
         agency_spending(
             crdf.lazy(), crs=crs.lazy(), agencies=AGENCIES[:1], years=(2020, 2023)
         ),
-        method=ONE,
+        method=MARKERS,
     ).collect()
 
     assert {
@@ -429,7 +429,7 @@ def test_contributions_without_a_one_share_are_listed() -> None:
     shares = pl.LazyFrame(
         [
             (46005, 2021, "climate", 0.1, "oecd"),
-            # A fallback ONE share for the Montreal Protocol fund.
+            # A fallback agency share for the Montreal Protocol fund.
             (47078, 2021, "climate", 1.0, "one"),
         ],
         schema=schema.AGENCY_SHARES.dtypes,

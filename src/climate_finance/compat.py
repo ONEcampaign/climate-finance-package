@@ -4,8 +4,9 @@ The 1.2.3 constructor, its `set_*` methods, `load_spending_data` and `get_data` 
 onto one `Release.spending` call per source and flow, for the choices whose meaning
 2.0 keeps:
 
-- `methodology` "ONE" and "OECD" map to `methods.ONE` and `methods.OECD`; "custom"
-  takes the coefficients of `set_custom_spending_methodology`.
+- `methodology` "ONE" and "OECD" map to `methods.MARKERS`, the flat 40% and 100%
+  rule 1.x applied, and `methods.OECD`; "custom" takes the coefficients of
+  `set_custom_spending_methodology`.
 - Flows "gross_disbursements", "commitments" and "grant_equivalent" map to
   `flow="disbursements"`, `"commitments"` and `"grant_equivalent"`.
 - Source "OECD_CRDF_CRS", the CRDF's commitments and the CRS disbursements
@@ -49,7 +50,7 @@ from climate_finance.errors import (
     InvalidInputError,
     RemovedError,
 )
-from climate_finance.methods import OECD, ONE, Method
+from climate_finance.methods import MARKERS, OECD, Method
 from climate_finance.release import Release, load
 from climate_finance.spec import Currency, Flow, View
 
@@ -333,7 +334,7 @@ class ClimateData:
 
     def _methodology(self, methodology: str) -> Method:
         if methodology == "ONE":
-            return ONE
+            return MARKERS
         if methodology == "OECD":
             return OECD
         if methodology != "custom":
