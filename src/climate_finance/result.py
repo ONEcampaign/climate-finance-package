@@ -385,9 +385,10 @@ class Result:
                 close names as suggestions.
             InvalidInputError: for a net flow, whose repayments the CRS totals do
                 not hold, for `agency_code` in `by` without `provider_code`,
-                since agency codes repeat across providers, or for
-                `recipient_code` in `by` under `view="provider"`, whose attributed
-                finance has no CRS total at a recipient.
+                since agency codes repeat across providers, or under
+                `view="provider"` for `recipient_code` in `by` or a spec that names
+                recipients, since attributed finance has no CRS total at a
+                recipient.
         """
         if self.spec.flow in NET_FLOWS:
             raise InvalidInputError(
@@ -404,12 +405,24 @@ class Result:
                 "by takes agency_code with provider_code, as by=['provider_code',"
                 " 'agency_code'], since agency codes repeat across providers"
             )
-        if "recipient_code" in kept and self.spec.view == "provider":
-            raise InvalidInputError(
-                "by takes recipient_code in the recipient view only: provider-view "
-                "attributed finance sits at the recipients of the agencies' "
-                "outflows, and no CRS total of the provider to a recipient holds it"
-            )
+        # Attributed value sits at the recipients of the agencies' outflows, and no
+        # CRS total of its provider to a recipient holds it.
+        if self.spec.view == "provider":
+            if "recipient_code" in kept:
+                raise InvalidInputError(
+                    "by takes recipient_code in the recipient view only: "
+                    "provider-view attributed finance sits at the recipients of the "
+                    "agencies' outflows, and no CRS total of the provider to a "
+                    "recipient holds it"
+                )
+            if self.spec.recipients is not None:
+                raise InvalidInputError(
+                    "combined_share() takes a provider view of every recipient: "
+                    "attributed finance sits at the recipients of the agencies' "
+                    "outflows, and no CRS total of the provider to a recipient holds "
+                    "it, so a share for the recipients named would exceed 100%. Drop "
+                    "recipients= or pass view='recipient'."
+                )
         # Core contributions count once, in the totals of no recipient, and every
         # other code under its recipients.
         core = pl.col("bi_multi") == CORE_CONTRIBUTION
@@ -1163,8 +1176,9 @@ _VIEWS = {
     "plus each provider's core contributions times the agency's climate share; "
     f"code {CORE_CONTRIBUTION} and code {MULTILATERAL_OUTFLOW} rows are left out. "
     "Each attributed contribution spreads over the recipients and purposes of its "
-    "agency's climate outflows in the same year and gross flow, each objective "
-    "over that objective's outflows, and via_provider_code names the agency. It "
+    "agency's climate outflows in the same year and gross flow, each disjoint "
+    "part of its value (adaptation only, mitigation only, cross-cutting) over "
+    "that part's outflows, and via_provider_code names the agency. It "
     "answers a provider's total.",
 }
 _OUTFLOW_VIEW = (

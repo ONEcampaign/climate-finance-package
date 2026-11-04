@@ -39,13 +39,16 @@ converts it, and sums the rows into the result table. Rows have one of six origi
   spreads over the climate outflows of the channel's agencies in `providers.toml`
   (`CHANNEL_POOLS`) in the same year and gross flow, weighed under the method: one
   row per year, recipient and purpose the agencies reach, with the agency in
-  `via_provider_code`. Each objective spreads over the outflows of that objective,
-  or over their climate value where the agencies have none of it, and unsplit
-  value over their climate value. The weights come from the agencies' whole
-  outflows, so a recipient filter keeps that recipient's part. A contribution whose
-  agencies have no climate outflows in the year, or whose channel has no agency in
-  `providers.toml`, stays as one row with no recipient, purpose or
-  `via_provider_code`.
+  `via_provider_code`. The value splits into disjoint parts, adaptation only,
+  mitigation only and cross_cutting, and each part spreads over the outflows of
+  that part, or over their climate value where the agencies have none of it, and
+  unsplit value over their climate value. Adaptation and mitigation are then
+  their part plus, unless under the highest-marker rule, cross_cutting, so no
+  spread row is negative where the contribution and outflows are not. The weights
+  come from the agencies' whole outflows, so a recipient filter keeps that
+  recipient's part. A contribution whose agencies have no climate outflows in the
+  year, or whose channel has no agency in `providers.toml`, stays as one row with
+  no recipient, purpose or `via_provider_code`.
 
   Under `spec.attribution="outflows"`, attribution by outflows, the attribution rows
   come from the institutions `outflow_shares` lists instead of from core
@@ -1816,9 +1819,10 @@ OUTFLOW_CELL = (
     "recipient_code",
     "purpose_code",
 )
-# The weighted amounts a spread under attribution by contributions weighs by.
-# Outflows hold no unsplit value.
-_CELL_PARTS = ("adaptation", "mitigation", "cross_cutting", "value")
+# The disjoint parts of a row's climate value (`_disjoint_parts`) that a spread
+# under attribution by contributions weighs by, each part over its own outflows,
+# and the value. Outflows hold no unsplit value.
+_CELL_PARTS = ("adaptation_only", "mitigation_only", "cross_cutting", "value")
 # The amounts of a spread row that follow its value, as the parts of `value` they
 # single out or bound.
 _FOLLOW_VALUE = (
@@ -1836,7 +1840,8 @@ def _outflow_cells(
 ) -> pl.LazyFrame:
     """Every provider's climate outflows of `flow` by agency, year, recipient and
     purpose (`OUTFLOW_CELL`), weighed under `method` in USD at current prices, each
-    amount of `AMOUNTS` summed.
+    amount of `AMOUNTS` summed, and the rows' `adaptation_only` and
+    `mitigation_only` parts (`_disjoint_parts`) summed.
 
     The outflows are the recipient-view rows of `flow`, with the untraced rows when
     `untraced`, as `_base_rows` builds them, and with `oda_only` the ODA rows
@@ -1847,9 +1852,27 @@ def _outflow_cells(
         rows = rows.filter(_oda())
     return (
         _weigh(_coefficients(release, rows, method=method), method=method)
+        .with_columns(**_disjoint_parts(method))
         .group_by(OUTFLOW_CELL)
-        .agg(ordered_sum(pl.col(name)).alias(name) for name in AMOUNTS)
+        .agg(
+            ordered_sum(pl.col(name)).alias(name)
+            for name in (*AMOUNTS, "adaptation_only", "mitigation_only")
+        )
     )
+
+
+def _disjoint_parts(method: Method) -> dict[str, pl.Expr]:
+    """A weighed row's adaptation and mitigation value outside its cross-cutting
+    value under `method`: `adaptation_only` and `mitigation_only`. Under the
+    highest-marker rule the objectives are disjoint and the parts are adaptation and
+    mitigation; under any other rule each includes cross_cutting, which the part
+    leaves out. With cross_cutting and unsplit, the parts sum to the row's value,
+    and none is negative when the row's amount and shares are not."""
+    overlap = pl.lit(0.0) if method.highest_marker else pl.col("cross_cutting")
+    return {
+        "adaptation_only": pl.col("adaptation") - overlap,
+        "mitigation_only": pl.col("mitigation") - overlap,
+    }
 
 
 def _spread_flow(flow: Flow) -> Flow:
@@ -1866,11 +1889,12 @@ def _spread_weights(cells: pl.LazyFrame) -> pl.LazyFrame:
     A channel's pool is its `CHANNEL_POOLS` providers and agencies, and its cells
     are `cells` (`_outflow_cells`) of the pool summed by year, provider
     (`via_provider_code`), recipient and purpose. Each cell weighs its part of the
-    pool's outflows by objective in the year: `weight_adaptation`,
-    `weight_mitigation` and `weight_cross_cutting`, and `weight_value` of the
-    climate value. An objective the pool has no positive outflow of in the year
-    takes the value weight. A channel-year whose pool has no positive climate value
-    has no row, so its contributions stay unspread.
+    pool's outflows in the year of each disjoint part of climate value
+    (`_disjoint_parts`): `weight_adaptation_only`, `weight_mitigation_only` and
+    `weight_cross_cutting`, and `weight_value` of the climate value. A part the
+    pool has no positive outflow of in the year takes the value weight. A
+    channel-year whose pool has no positive climate value has no row, so its
+    contributions stay unspread.
     """
     year = ["channel_code", "year"]
     keys = [*year, "via_provider_code", "recipient_code", "purpose_code"]
@@ -1907,7 +1931,7 @@ def _spread_weights(cells: pl.LazyFrame) -> pl.LazyFrame:
             *keys,
             *(
                 pl.coalesce(weight(part), "weight_value").alias(f"weight_{part}")
-                for part in ("adaptation", "mitigation", "cross_cutting")
+                for part in ("adaptation_only", "mitigation_only", "cross_cutting")
             ),
             "weight_value",
         )
@@ -1920,32 +1944,38 @@ def _spread(
     """Weighed attribution `rows` spread over their channel's outflow cells.
 
     Each row whose channel and year have `weights` (`_spread_weights`) becomes one
-    row per cell, at the cell's recipient, purpose and `via_provider_code`.
-    Adaptation, mitigation and cross_cutting take the cell's weight of their own
-    objective, unsplit the value weight, and `value` sums the parts as `_weigh`
-    does. The amounts that follow value (`_FOLLOW_VALUE`) keep their part of the
-    row's value, or take the value weight where its value is 0. A row's cells
-    sum to the row. A row whose channel-year has no weights stays as it is, with no
-    recipient, purpose or `via_provider_code`.
+    row per cell, at the cell's recipient, purpose and `via_provider_code`. Each
+    disjoint part of the row's value (`_disjoint_parts`), adaptation only,
+    mitigation only and cross_cutting, takes the cell's weight of that part, and
+    unsplit the value weight. Adaptation and mitigation are then their part plus,
+    unless under the highest-marker rule, cross_cutting, and `value` sums the
+    parts. So no cell is negative when the row and the outflows are not. The
+    amounts that follow value (`_FOLLOW_VALUE`) keep their part of the row's
+    value, or take the value weight where its value is 0. A row's cells sum to the
+    row. A row whose channel-year has no weights stays as it is, with no recipient,
+    purpose or `via_provider_code`.
     """
     columns = rows.collect_schema().names()
-    w = {
-        part: pl.col(f"weight_{part}")
-        for part in ("adaptation", "mitigation", "cross_cutting", "value")
-    }
-    sign = 1.0 if method.highest_marker else -1.0
     spread = pl.col("weight_value").is_not_null()
     value = pl.col("value")
+    disjoint = {
+        **_disjoint_parts(method),
+        "cross_cutting": pl.col("cross_cutting"),
+    }
+    weighed = {
+        part: amount * pl.col(f"weight_{part}") for part, amount in disjoint.items()
+    }
+    overlap = pl.lit(0.0) if method.highest_marker else weighed["cross_cutting"]
     parts = {
-        "adaptation": pl.col("adaptation") * w["adaptation"],
-        "mitigation": pl.col("mitigation") * w["mitigation"],
-        "cross_cutting": pl.col("cross_cutting") * w["cross_cutting"],
-        "unsplit": pl.col("unsplit") * w["value"],
+        "adaptation": weighed["adaptation_only"] + overlap,
+        "mitigation": weighed["mitigation_only"] + overlap,
+        "cross_cutting": weighed["cross_cutting"],
+        "unsplit": pl.col("unsplit") * pl.col("weight_value"),
     }
     spread_value = (
-        parts["adaptation"]
-        + parts["mitigation"]
-        + sign * parts["cross_cutting"]
+        weighed["adaptation_only"]
+        + weighed["mitigation_only"]
+        + weighed["cross_cutting"]
         + parts["unsplit"]
     )
 
@@ -1956,7 +1986,7 @@ def _spread(
         return (
             pl.when(value != 0)
             .then(spread_value * (amount / value))
-            .otherwise(amount * w["value"])
+            .otherwise(amount * pl.col("weight_value"))
         )
 
     return (
@@ -2001,6 +2031,34 @@ def _own_outflows(institutions: tuple[Target, ...]) -> pl.Expr:
     return provider_rows(institutions).fill_null(value=False)
 
 
+def _of_institutions(
+    frame: pl.LazyFrame, *, listed: pl.LazyFrame, agency: str
+) -> pl.LazyFrame:
+    """The rows of `frame` that belong to an institution of `listed`, which holds
+    `_INSTITUTION` columns, with the institution's keys. A row belongs to the
+    institution of its `provider_code` and `agency` column where `listed` holds one,
+    and otherwise to its provider's institution without an agency, so that row
+    covers every agency of the provider without one of its own."""
+    institutions = listed.select(_INSTITUTION).unique()
+    agencies = institutions.filter(pl.col("via_agency_code").is_not_null()).select(
+        *_INSTITUTION,
+        provider_code="via_provider_code",
+        **{agency: "via_agency_code"},
+    )
+    providers = institutions.filter(pl.col("via_agency_code").is_null()).select(
+        *_INSTITUTION, provider_code="via_provider_code"
+    )
+    keys = ["provider_code", agency]
+    return pl.concat(
+        [
+            frame.join(agencies, on=keys, how="inner"),
+            frame.join(agencies, on=keys, how="anti").join(
+                providers, on="provider_code", how="inner"
+            ),
+        ]
+    )
+
+
 def _outflow_shares(release: Release) -> pl.LazyFrame:
     """`outflow_shares` keyed by institution (`_INSTITUTION`) and year, with the
     share in `outflow_share`."""
@@ -2020,7 +2078,8 @@ def _donor_shares(release: Release, *, flow: Flow) -> pl.LazyFrame:
     its agencies, as the EIB is of EU Institutions, keeps its share whole as that
     provider's, with its agency. Any other institution's share splits among the
     developed providers by their core contributions of `flow` to its channels, the
-    `CHANNEL_POOLS` entries that list it, summed over every year the release holds
+    `CHANNEL_POOLS` entries whose agencies belong to it (`_of_institutions`),
+    summed over every year the release holds
     up to the share's year. An institution-year with no such contribution by then
     keeps its share in one row with a null provider. So each institution-year's
     donor shares sum to 1.
@@ -2033,19 +2092,7 @@ def _donor_shares(release: Release, *, flow: Flow) -> pl.LazyFrame:
     )
     others = shares.join(own, on=keys, how="anti", nulls_equal=True)
     channels = (
-        others.select(_INSTITUTION)
-        .unique()
-        .join(
-            CHANNEL_POOLS.lazy(),
-            left_on="via_provider_code",
-            right_on="provider_code",
-            how="inner",
-        )
-        .filter(
-            pl.col("via_agency_code").is_null()
-            | pl.col("pool_agency").is_null()
-            | (pl.col("pool_agency") == pl.col("via_agency_code"))
-        )
+        _of_institutions(CHANNEL_POOLS.lazy(), listed=shares, agency="pool_agency")
         .select(*_INSTITUTION, "channel_code")
         .unique()
     )
@@ -2094,29 +2141,17 @@ def _institution_cells(
     """The climate outflows of each `outflow_shares` institution by year, recipient
     and purpose, weighed under `method` (`_outflow_cells` of `flow`, `untraced` and
     `oda_only`), keyed by the institution (`_INSTITUTION`). An institution without
-    an agency holds the outflows of all its agencies."""
-    listed = (
-        _outflow_shares(release)
-        .select(_INSTITUTION)
-        .unique()
-        .rename({"via_provider_code": "provider_code"})
-    )
+    an agency holds the outflows of every agency of its provider without an
+    institution of its own (`_of_institutions`)."""
     return (
-        _outflow_cells(
-            release, flow=flow, method=method, untraced=untraced, oda_only=oda_only
+        _of_institutions(
+            _outflow_cells(
+                release, flow=flow, method=method, untraced=untraced, oda_only=oda_only
+            ),
+            listed=_outflow_shares(release),
+            agency="agency_code",
         )
-        .join(listed, on="provider_code", how="inner")
-        .filter(
-            pl.col("via_agency_code").is_null()
-            | (pl.col("agency_code") == pl.col("via_agency_code"))
-        )
-        .group_by(
-            "via_agency_code",
-            "year",
-            "recipient_code",
-            "purpose_code",
-            via_provider_code="provider_code",
-        )
+        .group_by(*_INSTITUTION, "year", "recipient_code", "purpose_code")
         .agg(ordered_sum(pl.col(name)).alias(name) for name in AMOUNTS)
     )
 

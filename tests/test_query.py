@@ -763,14 +763,28 @@ def _spread_parts(release: Release) -> pl.DataFrame:
             "adaptation",
             "mitigation",
             "cross_cutting",
+            "value",
         )
         .sort("recipient_code")
     )
 
 
-def test_attribution_spreads_each_objective_as_its_agency_spends_it() -> None:
-    outflows = _ida_2022_parts(SNAP)
+def _disjoint(frame: pl.DataFrame) -> pl.DataFrame:
+    """`frame`'s OECD parts as disjoint parts: adaptation and mitigation without
+    their cross-cutting overlap, and the overlap."""
+    overlap = pl.col("cross_cutting")
+    return frame.select(
+        adaptation_only=pl.col("adaptation") - overlap,
+        mitigation_only=pl.col("mitigation") - overlap,
+        cross_cutting=overlap,
+        value=pl.col("value"),
+    )
+
+
+def test_attribution_spreads_each_part_as_its_agency_spends_it() -> None:
+    outflows = _disjoint(_ida_2022_parts(SNAP))
     spread = _spread_parts(SNAP)
+    parts = _disjoint(spread)
 
     assert spread["recipient_code"].to_list() == [248, 666]
     assert set(spread["via_provider_code"]) == {905}
@@ -778,11 +792,11 @@ def test_attribution_spreads_each_objective_as_its_agency_spends_it() -> None:
     # IDA spends nothing cross-cutting, so that part spreads as its climate value.
     assert outflows["cross_cutting"].sum() == 0
     for part, spent in [
-        ("adaptation", "adaptation"),
-        ("mitigation", "mitigation"),
+        ("adaptation_only", "adaptation_only"),
+        ("mitigation_only", "mitigation_only"),
         ("cross_cutting", "value"),
     ]:
-        assert (spread[part] / spread[part].sum()).to_list() == pytest.approx(
+        assert (parts[part] / parts[part].sum()).to_list() == pytest.approx(
             (outflows[spent] / outflows[spent].sum()).to_list(), rel=1e-12
         )
     # 60m at the OECD's IDA shares of 0.20, 0.25 and 0.05.
@@ -803,20 +817,77 @@ def _adaptation_only_ida_2(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def test_an_adaptation_only_cell_receives_no_mitigation(tmp_path: Path) -> None:
+def test_an_adaptation_only_cell_receives_no_mitigation_only_value(
+    tmp_path: Path,
+) -> None:
     release = cf.load(
         path=copy_release(
             tmp_path / "release", edits={"commitments": _adaptation_only_ida_2}
         )
     )
 
+    spread = _disjoint(_spread_parts(release))
+
+    # Bangladesh's mitigation is its cross-cutting part alone, which spreads over
+    # IDA's climate value since IDA spends nothing cross-cutting.
+    bangladesh = spread.row(1, named=True)
+    assert bangladesh["adaptation_only"] > 0
+    assert bangladesh["mitigation_only"] == 0
+    kenya = spread.row(0, named=True)
+    assert kenya["mitigation_only"] == pytest.approx(60e6 * (0.25 - 0.05), rel=1e-12)
+
+
+def _small_cross_cutting_ida_1(frame: pl.DataFrame) -> pl.DataFrame:
+    # IDA-1, IDA's commitment to Kenya, counts 1% of its face value, all of it for
+    # both objectives.
+    ida_1 = pl.col("row_id") == "IDA-1"
+    climate = pl.col("face_usd") * 0.01
+    return frame.with_columns(
+        climate_share=pl.when(ida_1).then(0.01).otherwise(pl.col("climate_share")),
+        **{
+            name: pl.when(ida_1).then(climate).otherwise(pl.col(name))
+            for name in (
+                "climate_usd",
+                "adaptation_usd",
+                "mitigation_usd",
+                "overlap_usd",
+            )
+        },
+    )
+
+
+def test_a_cross_cutting_cell_receives_no_more_than_its_overlap(
+    tmp_path: Path,
+) -> None:
+    release = cf.load(
+        path=copy_release(
+            tmp_path / "release", edits={"commitments": _small_cross_cutting_ida_1}
+        )
+    )
+
     spread = _spread_parts(release)
 
-    bangladesh = spread.filter(pl.col("recipient_code") == 666)
-    assert bangladesh["adaptation"].item() > 0
-    assert bangladesh["mitigation"].item() == 0
-    kenya = spread.filter(pl.col("recipient_code") == 248)
-    assert kenya["mitigation"].item() == pytest.approx(60e6 * 0.25, rel=1e-12)
+    # IDA's 2022 disbursements put all its cross-cutting value in Kenya (0.5m) and
+    # most of its adaptation and mitigation in Bangladesh (5m each, no overlap).
+    # Germany's 60m at shares 0.20, 0.25 and 0.05 splits into 9m adaptation only,
+    # 12m mitigation only and 3m cross-cutting, each spread as IDA spends that part.
+    # Spread as whole objectives, Kenya's value was 12m/11 + 15m/11 - 3m, below 0.
+    assert_frame_equal(
+        spread.select(
+            "recipient_code", "adaptation", "mitigation", "cross_cutting", "value"
+        ),
+        pl.DataFrame(
+            {
+                "recipient_code": [248, 666],
+                "adaptation": [3e6, 9e6],
+                "mitigation": [3e6, 12e6],
+                "cross_cutting": [3e6, 0.0],
+                "value": [3e6, 21e6],
+            },
+            schema_overrides={"recipient_code": pl.Int32},
+        ),
+        rel_tol=1e-12,
+    )
 
 
 def _unpooled_contribution(release: Path) -> Path:
@@ -1944,12 +2015,26 @@ def test_a_provider_view_combined_share_counts_core_contributions_once(
     assert row == pytest.approx((value, bilateral + core, value / (bilateral + core)))
 
 
-def test_a_provider_view_combined_share_refuses_a_recipient_key() -> None:
+@pytest.mark.parametrize(
+    ("recipients", "by", "message"),
+    [
+        (None, "recipient_code", "by takes recipient_code in the recipient view"),
+        # Attributed rows at Kenya count in the numerator, while the recipient
+        # filter keeps core contributions out of the denominator.
+        ("Kenya", (), "takes a provider view of every recipient"),
+    ],
+    ids=["recipient_key", "named_recipients"],
+)
+def test_a_provider_view_combined_share_refuses_a_recipient_scope(
+    recipients: str | None, by: str | tuple[str, ...], message: str
+) -> None:
     # Attributed value sits at recipients where no CRS total of its provider does.
-    result = SNAP.spending(years=range(2021, 2025), view="provider", method=RANGE)
+    result = SNAP.spending(
+        years=range(2021, 2025), view="provider", method=RANGE, recipients=recipients
+    )
 
-    with pytest.raises(InvalidInputError, match="recipient_code"):
-        result.combined_share(by="recipient_code")
+    with pytest.raises(InvalidInputError, match=message):
+        result.combined_share(by=by)
 
 
 @pytest.mark.parametrize(
@@ -2509,6 +2594,84 @@ def test_outflows_warn_and_attribute_nothing_in_a_year_without_a_share() -> None
     # The sentences of attribution by contributions stay out.
     assert "share_source" not in explained
     assert "core contributions disbursed" not in explained
+
+
+def _gef_funds(release: Path) -> Path:
+    """`release` with the GEF's 2022 commitments of USD 100 climate value each: one
+    by the LDCF (agency 12) to Kenya and one by the GEF Trust Funds (agency 1) to
+    Bangladesh. `outflow_shares` lists the GEF at 0.976 and the LDCF at 1.0, and
+    Germany gives the LDCF (47129) 10m."""
+
+    def committed(frame: pl.DataFrame) -> pl.DataFrame:
+        row = frame.filter(row_id="IDA-2")
+        funds = [
+            row.with_columns(
+                row_id=pl.lit(row_id),
+                provider_code=pl.lit(GEF, pl.Int32),
+                agency_code=pl.lit(agency, pl.Int32),
+                recipient_code=pl.lit(recipient, pl.Int32),
+                channel_code=pl.lit(None, pl.Int32),
+                climate_share=pl.lit(1.0),
+                face_usd=pl.lit(100.0),
+                climate_usd=pl.lit(100.0),
+                adaptation_usd=pl.lit(100.0),
+                mitigation_usd=pl.lit(0.0),
+                overlap_usd=pl.lit(0.0),
+            )
+            for row_id, agency, recipient in [("LDCF-1", 12, 248), ("GEF-1", 1, 666)]
+        ]
+        return pl.concat([frame, *funds])
+
+    def listed(frame: pl.DataFrame) -> pl.DataFrame:
+        rows = pl.DataFrame(
+            [
+                {
+                    "provider_code": GEF, "agency_code": agency, "year": 2022,
+                    "share": share, "table_column": 2020,
+                    "source": "Fixture attribution table",
+                    "locator": "p. 24, 2020 column",
+                }
+                for agency, share in [(None, 0.976), (12, 1.0)]
+            ]
+        ).select(frame.columns)  # fmt: skip
+        return pl.concat([frame, rows.cast(frame.schema)])
+
+    def contributed(frame: pl.DataFrame) -> pl.DataFrame:
+        row = {
+            "provider_code": DEU, "channel_code": 47129, "year": 2022,
+            "flow": "commitments", "contribution_usd": 10e6,
+        }  # fmt: skip
+        return pl.concat([frame, pl.DataFrame([row], schema=frame.schema)])
+
+    return copy_release(
+        release,
+        edits={
+            "commitments": committed,
+            "outflow_shares": listed,
+            "core_contributions": contributed,
+        },
+    )
+
+
+def test_outflows_give_an_agency_its_own_share_and_its_provider_the_rest(
+    tmp_path: Path,
+) -> None:
+    release = cf.load(path=_gef_funds(tmp_path / "release"))
+
+    rows = release.spending(**OUTFLOWS, flow="commitments", years=2022).rows(
+        origin="attribution", via_provider_code=GEF
+    )
+
+    # The LDCF's 100 counts at its own 1.0 alone, and Germany's contribution to it
+    # makes it Germany's. The GEF Trust Funds' 100 counts at 0.976, and no developed
+    # country gave to their channel, so it has no provider.
+    by_recipient = rows.group_by("recipient_code", "provider_code").agg(
+        pl.col("value").sum()
+    )
+    assert {
+        (recipient, provider): value
+        for recipient, provider, value in by_recipient.iter_rows()
+    } == pytest.approx({(248, DEU): 100.0, (666, None): 97.6}, rel=1e-12)
 
 
 @pytest.fixture(scope="module")

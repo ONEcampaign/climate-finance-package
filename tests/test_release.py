@@ -1199,7 +1199,15 @@ def test_the_2020_column_of_table_8_gives_the_shares_of_2020() -> None:
     shares = release.outflow_shares(release.attribution_file())
 
     schema.validate(schema.OUTFLOW_SHARES, shares)
-    of_2020 = dict(shares.filter(year=2020).select("provider_code", "share").rows())
+    # The check list gives each provider's row for every agency without its own.
+    of_2020 = dict(
+        shares.filter(
+            pl.col("agency_code").is_null() | (pl.col("provider_code") == 918),
+            year=2020,
+        )
+        .select("provider_code", "share")
+        .rows()
+    )
     assert len(TABLE_8_CHECK) == 26
     assert {code: of_2020[code] for code in TABLE_8_CHECK if code != 1058} == {
         code: share for code, share in TABLE_8_CHECK.items() if code != 1058
@@ -1211,12 +1219,25 @@ def test_the_2020_column_of_table_8_gives_the_shares_of_2020() -> None:
     ]
 
 
-def test_the_eib_share_is_the_share_of_agency_3_of_eu_institutions() -> None:
+@pytest.mark.parametrize(
+    ("provider", "agencies"),
+    [
+        # The EIB is agency 3 of EU Institutions.
+        (918, {3: 1.0}),
+        # The LDCF and the SCCF are agencies 12 and 13 of the GEF, and the GEF Trust
+        # Funds its other agencies.
+        (811, {None: 0.976, 12: 1.0, 13: 1.0}),
+    ],
+    ids=["eib", "gef"],
+)
+def test_a_fund_of_a_provider_takes_the_share_of_its_agency(
+    provider: int, agencies: dict[int | None, float]
+) -> None:
     shares = release.outflow_shares(release.attribution_file()).filter(
-        provider_code=918
+        provider_code=provider, year=2020
     )
 
-    assert shares["agency_code"].to_list() == [3] * shares.height
+    assert dict(shares.select("agency_code", "share").rows()) == agencies
 
 
 @pytest.mark.parametrize(

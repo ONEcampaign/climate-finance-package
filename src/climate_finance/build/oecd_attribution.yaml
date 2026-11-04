@@ -9,7 +9,7 @@
 # "N/A" or "-" has no entry in `shares`, so an institution-year whose column has no
 # share has no `outflow_shares` row. A row with a null `provider_code` has no code in
 # the DAC listing and compiles to no row. `agency_code` is the agency the row covers,
-# null for the provider as a whole.
+# null for every agency of the provider without a row of its own.
 #
 # `year_columns` maps each year from `first_year` to `last_year` to the table column
 # whose share applies, with the basis in `locator`. An institution takes the entries
@@ -63,11 +63,11 @@ institutions:
   - {name: Private Infrastructure Development Group, abbreviation: PIDG, provider_code: 1014, shares: {2018: 0.995, 2020: 0.995}}
   - {name: Adaptation Fund, abbreviation: AF, provider_code: 1012, shares: {2015: 1.000, 2018: 1.000, 2020: 1.000}}
   - {name: Climate Investment Funds, abbreviation: CIFs, provider_code: 1011, shares: {2015: 1.000, 2018: 0.990, 2020: 0.999}}
+  # The GEF Trust Funds are every agency of the GEF (811) but the LDCF and the SCCF.
   - {name: Global Environment Facility Trust Funds, abbreviation: GEF, provider_code: 811, shares: {2015: 0.980, 2018: 0.980, 2020: 0.976}}
-  # The listing has no code separate from the GEF Trust Funds (811).
-  - {name: Global Environment Facility Least Developed Countries Fund, abbreviation: GEF LDCF, provider_code: null, shares: {2015: 1.000, 2018: 1.000, 2020: 1.000}}
-  # The listing has no code separate from the GEF Trust Funds (811).
-  - {name: Global Environment Facility Special Climate Change Fund, abbreviation: GEF SCCF, provider_code: null, shares: {2015: 1.000, 2018: 1.000, 2020: 1.000}}
+  # The listing holds the LDCF as agency 12 of the GEF and the SCCF as agency 13.
+  - {name: Global Environment Facility Least Developed Countries Fund, abbreviation: GEF LDCF, provider_code: 811, agency_code: 12, shares: {2015: 1.000, 2018: 1.000, 2020: 1.000}}
+  - {name: Global Environment Facility Special Climate Change Fund, abbreviation: GEF SCCF, provider_code: 811, agency_code: 13, shares: {2015: 1.000, 2018: 1.000, 2020: 1.000}}
   - {name: Green Climate Fund, abbreviation: GCF, provider_code: 1016, shares: {2018: 0.996, 2020: 0.990}}
   - {name: International Fund for Agricultural Development, abbreviation: IFAD, provider_code: 988, shares: {2018: 0.742, 2020: 0.710}}
   - {name: International Monetary Fund Resilience and Sustainability Trust, abbreviation: IMF RST, provider_code: 1058, shares: {2024: 0.775}}
