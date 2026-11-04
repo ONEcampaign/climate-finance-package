@@ -1212,6 +1212,19 @@ def test_the_2020_column_of_table_8_gives_the_shares_of_2020() -> None:
     assert {code: of_2020[code] for code in TABLE_8_CHECK if code != 1058} == {
         code: share for code, share in TABLE_8_CHECK.items() if code != 1058
     }
+    # Table 8 types IFAD, the IMF's trust and the NDF as climate funds, and MIGA, the
+    # NADB and PIDG as banks.
+    types = dict(shares.select("provider_code", "institution_type").unique().rows())
+    assert {code for code, kind in types.items() if kind == "climate_fund"} == {
+        1012,
+        1011,
+        811,
+        1016,
+        988,
+        1058,
+        104,
+    }
+    assert {902, 1014, 1045} <= {c for c, k in types.items() if k == "development_bank"}
     # The trust's share sits in the 2024 column, and it started in 2022.
     assert 1058 not in of_2020
     assert shares.filter(provider_code=1058).select("year", "share").rows() == [
@@ -1276,7 +1289,12 @@ def test_a_year_whose_column_is_blank_has_no_row() -> None:
 
 
 def _institution(**fields: object) -> dict[str, object]:
-    return {"name": "Fund", "provider_code": 1, "shares": {2020: 0.5}} | fields
+    return {
+        "name": "Fund",
+        "type": "development_bank",
+        "provider_code": 1,
+        "shares": {2020: 0.5},
+    } | fields
 
 
 @pytest.mark.parametrize(

@@ -232,6 +232,7 @@ Key `provider_code`, `agency_code`, `year`. The share of an international instit
 
 - `provider_code`, `year`.
 - `agency_code`: the agency a row covers. Null covers every agency of the provider without a row of its own. The European Investment Bank's row is agency 3 of EU Institutions (918), and the Global Environment Facility's Least Developed Countries Fund and Special Climate Change Fund are agencies 12 and 13 of the GEF (811), whose null row covers its other agencies.
+- `institution_type`: the table's type of institution, `development_bank` for its Multilateral Development Banks and `climate_fund` for its Multilateral Climate Funds. The funds include IFAD, the IMF's Resilience and Sustainability Trust and the Nordic Development Fund, and the banks include MIGA, the NADB and PIDG.
 - `share`: the share, from 0 to 1.
 - `table_column`: the column of Table 8 the share comes from, 2015, 2018, 2020 or 2024.
 - `source`, `locator`: the report, and the table, page and column with the reason `year` takes it.

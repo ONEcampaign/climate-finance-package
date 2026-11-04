@@ -243,16 +243,70 @@ PROVIDER_COEFFICIENTS = (
     (FRA, 1, None, None, None, None, None, True, SURVEY, "p. 9, note f"),
     (NOR, None, None, None, 0.3, None, None, True, SURVEY, "p. 5"),
 )
-# (provider, agency, year, share, table_column, source, locator). The 2020 column of
-# the attribution table covers the fixture's years.
+# (provider, agency, year, institution type, share, table_column, source, locator).
+# The 2020 column of the attribution table covers the fixture's years.
 ATTRIBUTION = "Fixture attribution table"
 OUTFLOW_SHARES = (
-    (IDA, None, 2021, 0.959, 2020, ATTRIBUTION, "p. 24, 2020 column"),
-    (IDA, None, 2022, 0.959, 2020, ATTRIBUTION, "p. 24, 2020 column"),
-    (AFDB, None, 2021, 0.612, 2020, ATTRIBUTION, "p. 24, 2020 column"),
-    (AFDB, None, 2022, 0.612, 2020, ATTRIBUTION, "p. 24, 2020 column"),
-    (IFC, None, 2021, 0.654, 2020, ATTRIBUTION, "p. 24, 2020 column"),
-    (IFC, None, 2022, 0.654, 2020, ATTRIBUTION, "p. 24, 2020 column"),
+    (
+        IDA,
+        None,
+        2021,
+        "development_bank",
+        0.959,
+        2020,
+        ATTRIBUTION,
+        "p. 24, 2020 column",
+    ),
+    (
+        IDA,
+        None,
+        2022,
+        "development_bank",
+        0.959,
+        2020,
+        ATTRIBUTION,
+        "p. 24, 2020 column",
+    ),
+    (
+        AFDB,
+        None,
+        2021,
+        "development_bank",
+        0.612,
+        2020,
+        ATTRIBUTION,
+        "p. 24, 2020 column",
+    ),
+    (
+        AFDB,
+        None,
+        2022,
+        "development_bank",
+        0.612,
+        2020,
+        ATTRIBUTION,
+        "p. 24, 2020 column",
+    ),
+    (
+        IFC,
+        None,
+        2021,
+        "development_bank",
+        0.654,
+        2020,
+        ATTRIBUTION,
+        "p. 24, 2020 column",
+    ),
+    (
+        IFC,
+        None,
+        2022,
+        "development_bank",
+        0.654,
+        2020,
+        ATTRIBUTION,
+        "p. 24, 2020 column",
+    ),
 )
 # The fixture's developed providers: its four bilateral ones.
 DEVELOPED_PROVIDERS = (DEU, FRA, NOR, JPN)

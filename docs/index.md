@@ -15,6 +15,7 @@ climate-finance 2.0 returns international public climate finance from OECD and U
 - [How to review links](how-to/review-links.md) shows release managers how a person or an agent decides the pairs a build queued.
 - [How to label the blind sample](how-to/label-the-blind-sample.md) serves a local page on which a person decides their share of the sample.
 - [How to reconcile a party's BTR report with OECD data](how-to/reconcile-with-btr.md)
+- [How to reproduce the OECD's public climate finance total](how-to/reproduce-the-oecd-public-total.md) builds the 2024 figure the OECD reports for developed countries from `attribution="outflows"`, splits it into bilateral finance, banks and other multilaterals, and sets it against the OECD's total.
 - [How to reproduce the BTR tables](how-to/reproduce-btr-tables.md) builds the BTR rows and their links locally from the UNFCCC's workbooks.
 - [How to cut a release](how-to/cut-a-release.md) shows release managers how to build, sample, gate, and pack.
 - [Migrating from 1.x](migrating-from-1x.md)

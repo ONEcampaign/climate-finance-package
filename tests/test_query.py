@@ -2631,6 +2631,7 @@ def _gef_funds(release: Path) -> Path:
             [
                 {
                     "provider_code": GEF, "agency_code": agency, "year": 2022,
+                    "institution_type": "climate_fund",
                     "share": share, "table_column": 2020,
                     "source": "Fixture attribution table",
                     "locator": "p. 24, 2020 column",
@@ -2691,6 +2692,7 @@ def eib_listed_release(tmp_path_factory: pytest.TempPathFactory) -> Release:
                     "provider_code": EU_INSTITUTIONS,
                     "agency_code": EIB_AGENCY,
                     "year": year,
+                    "institution_type": "development_bank",
                     "share": 1.0,
                     "table_column": 2020,
                     "source": "Fixture attribution table",
