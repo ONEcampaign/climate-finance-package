@@ -38,13 +38,13 @@ year = 2022
    4 ['development_bank']
    ```
 
-2. Run the provider view with `attribution="outflows"` for every provider, and keep the rows of the developed countries. Use `method="PROVIDER"`, which applies each donor's own marker coefficients. `flow="commitments"` gives the figure comparable with the OECD's, and `flow="disbursements"` the money paid in the year.
+2. Run the provider view with `attribution="outflows"` for every provider, and keep the rows of the developed countries. Use `method="ONE"`, which applies each donor's own marker coefficients, as the bilateral figures the OECD compiles from the providers' reports do. `flow="commitments"` gives the figure comparable with the OECD's, and `flow="disbursements"` the money paid in the year.
 
    ```python
    def oecd_rows(flow):
        spending = release.spending(
            years=year,
-           method="PROVIDER",
+           method="ONE",
            flow=flow,
            view="provider",
            attribution="outflows",
@@ -100,7 +100,7 @@ The total equals the query for the developed countries plus the rows with no pro
 spending = release.spending(
     providers=developed,
     years=year,
-    method="PROVIDER",
+    method="ONE",
     flow="commitments",
     view="provider",
     attribution="outflows",
@@ -122,14 +122,15 @@ On the example release no institution lacks a developed contributor, so `unshare
 
 On the 2026a release candidate, the steps above with `year = 2024` give these figures in USD bn. The OECD column is Table 1 of _Climate Finance Provided and Mobilised by Developed Countries in 2013-2024_ (May 2026).
 
-| Source                         | OECD report | Release commitments | Release disbursements |
-| ------------------------------ | ----------: | ------------------: | --------------------: |
-| Bilateral                      |        43.9 |                36.1 |                  32.1 |
-| Multilateral development banks |        50.5 |                47.6 |                  26.8 |
-| Multilateral climate funds     |         7.2 |                 6.0 |                   1.6 |
-| Total public                   |       101.6 |                89.7 |                  60.4 |
+| Source                                          | OECD report | Release commitments | Release disbursements |
+| ----------------------------------------------- | ----------: | ------------------: | --------------------: |
+| Bilateral                                       |        43.9 |                36.1 |                  32.1 |
+| Multilateral development banks                  |        50.5 |                47.6 |                  26.8 |
+| Multilateral climate funds                      |         6.8 |                 6.0 |                   1.6 |
+| Inflows to multilateral institutions (where outflows are unavailable) | 0.4 | - | - |
+| Total public                                    |       101.6 |                89.7 |                  60.4 |
 
-The OECD figure mostly counts commitments, so the commitments column is the comparison. It falls USD 11.9bn short: USD 7.8bn in bilateral finance, 2.9bn in the development banks and 1.2bn in the climate funds. The OECD compiles bilateral finance from the providers' own reporting for its series, while the release reads the CRS under its own counting rules and coefficients. The table measures each shortfall, and none of the three has a quantified cause.
+The OECD figure mostly counts commitments, so the commitments column is the comparison. It falls USD 11.9bn short: USD 7.8bn in bilateral finance, 2.9bn in the development banks, 0.8bn in the climate funds, and the 0.4bn the OECD counts as developed countries' inflows to multilaterals whose outflows it lacks. The release attributes outflows alone, so it has no line for those inflows. The OECD compiles bilateral finance from the providers' own reporting for its series, while the release reads the CRS under its own counting rules and coefficients. The table measures each shortfall, and none of them has a quantified cause.
 
 The disbursements column is what was paid in 2024. It is two-thirds of the year's commitments, since payments in a year settle commitments from earlier years.
 
@@ -137,7 +138,7 @@ The disbursements column is what was paid in 2024. It is two-thirds of the year'
 
 - `CoverageWarning` that Table 8 gives no share for a year. A year without a share attributes no institution's outflows, so the total holds bilateral finance alone. The example release has shares for 2021 and 2022.
 - A total USD 0.04bn to 0.06bn lower than this page's. The query named `providers=` with the developed countries and dropped the rows with no provider. Query every provider and filter the rows, as step 2 does.
-- A different total under another method. The 2024 commitments are USD 87.8bn under `ONE`, 89.7bn under `PROVIDER`, and 108.8bn under `OECD`, which counts every marker at 100%. Name the method in the query, as the steps do.
+- A different total under another method. The 2024 commitments are USD 89.7bn under `ONE`, 87.8bn under `MARKERS`, which counts every donor's significant markers at 40%, and 108.8bn under `OECD`, which counts every marker at 100%. Name the method in the query, as the steps do.
 
 ## Next
 

@@ -2631,6 +2631,7 @@ def _gef_funds(release: Path) -> Path:
             [
                 {
                     "provider_code": GEF, "agency_code": agency, "year": 2022,
+                    "institution_type": "climate_fund",
                     "share": share, "table_column": 2020,
                     "source": "Fixture attribution table",
                     "locator": "p. 24, 2020 column",
