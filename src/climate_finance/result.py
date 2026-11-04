@@ -921,7 +921,8 @@ def explain(
             "Attributed rows carry share_source: computed shares are measured on the "
             "agency's own commitments, held shares repeat its last share measured on "
             "enough commitments, and oecd shares are the OECD's imputed share, which "
-            "OECD always uses and ONE uses where it has no share of its own."
+            "OECD always uses, and every other method uses where it has no share of "
+            "its own."
         )
     if spec.recipients is not None and spec.view == "provider" and not by_outflows:
         lines.append(

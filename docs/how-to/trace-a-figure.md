@@ -29,7 +29,7 @@ result = release.spending(providers="Japan", years=[2023])
     ```output
     JPN-1 Climate project JPN-1 25.3
     JPN-3 Climate project JPN-3 15.0
-    JPN-2 Climate project JPN-2 6.3
+    JPN-2 Climate project JPN-2 9.5
     ```
 
 2. Split certain from estimated links. Each row's `low` column holds the part of its value that certain links carried by certain routes, so the rows' `low` sums to the table's `low`.
@@ -56,7 +56,7 @@ result = release.spending(providers="Japan", years=[2023])
     ```
 
     ```output
-    disbursed 6.3
+    disbursed 9.5
     partly_disbursed 40.3
     ```
 
@@ -84,14 +84,14 @@ result = release.spending(providers="Japan", years=[2023])
     ```
 
     ```output
-    [(248, 0.1), (666, 0.25)]
+    [(248, 0.15), (666, 0.25)]
     ```
 
 ## Read where a row's climate value comes from
 
 A disbursement row takes its climate value from the commitment it fills, by one of two routes. A commitment with climate components, the climate share a development bank reports for its projects, gives `marker_source` `components`: the row counts `climate_share` of its amount, split into adaptation and mitigation as the bank reports, and its Rio markers may be null. Any other commitment weighs the row by its Rio markers, `rio_adaptation` and `rio_mitigation`, at the method's coefficients. The row keeps the CRS record's own markers beside them in `record_rio_adaptation` and `record_rio_mitigation`, and `marker_source` is `commitment` where the two agree and `record_differs` where they do not. An untraced row has `marker_source` `record` and weighs by the record's own markers.
 
-Split a figure by `marker_source` before describing it. In 2022, USD 39.5m of the example release's climate value comes from climate components and says nothing about Rio markers, so a sentence about marked activities covers only the other USD 47.7m.
+Split a figure by `marker_source` before describing it. In 2022, USD 39.5m of the example release's climate value comes from climate components and says nothing about Rio markers, so a sentence about marked activities covers only the other USD 53.0m.
 
 ```python
 year_rows = release.spending(years=[2022]).rows()
@@ -101,10 +101,10 @@ for row in by_source.sort("marker_source").iter_rows(named=True):
 ```
 
 ```output
-commitment 31.7
+commitment 31.1
 components 39.5
 record 2.5
-record_differs 13.5
+record_differs 19.4
 ```
 
 ### A row whose markers differ
@@ -125,10 +125,10 @@ for row in lower.iter_rows(named=True):
 ```
 
 ```output
-JPN-2-R2 record_differs 1 0 6.3
+JPN-2-R2 record_differs 1 0 9.5
 ```
 
-JPN-2's commitment marks mitigation significant (1), and its 2024 disbursement record marks it 0. The row still counts USD 6.3m, 40% of the USD 15.8m disbursed, under the commitment's marker. `result.rows(marker_source="record_differs")` lists every such row of a query, including first records that report no marker at all.
+JPN-2's commitment marks mitigation significant (1), and its 2024 disbursement record marks it 0. The row still counts USD 9.5m, 60% of the USD 15.8m disbursed (Japan's significant coefficient), under the commitment's marker. `result.rows(marker_source="record_differs")` lists every such row of a query, including first records that report no marker at all.
 
 ### Describe a figure in prose
 

@@ -1,6 +1,6 @@
 """Net flows on the archive release: the reflows tables against the bulk CRS, the
 gross flows beside a release whose `reflows` table is empty, and the repayments of
-the DAC's bilateral providers, 2015 to 2024, under ONE. The `release` fixture in
+the DAC's bilateral providers, 2015 to 2024, under MARKERS. The `release` fixture in
 conftest.py builds the archive.
 
 The pins marked "pinned from the first archive run" hold a sentinel until the first
@@ -31,7 +31,7 @@ YEARS = range(2015, 2025)
 GERMANY, FRANCE, SPAIN, JAPAN = 5, 4, 50, 701
 # Principal repaid in the normalise `reflows` table, all providers, in USD billion.
 RECEIVED_BOUNDS = {2015: (50, 70), 2024: (80, 105)}
-# DAC bilateral providers, 2015 to 2024, under ONE in the recipient view, in USD
+# DAC bilateral providers, 2015 to 2024, under MARKERS in the recipient view, in USD
 # billion: gross, repaid (gross less net), net, and the share of principal tied to
 # a disbursement the release counts.
 PINNED = {"gross": 202.08, "repaid": 20.07, "net": 182.01, "measured_share": 0.0911}
@@ -122,16 +122,23 @@ def test_principal_repaid_rises_from_2015_to_2024(release: Path) -> None:
 def test_gross_flows_ignore_the_reflows_table(
     loaded: cf.Release, emptied: cf.Release, flow: str, view: str
 ) -> None:
-    """Gross totals under ONE for every provider, 2015 to 2024, equal those of the
+    """Gross totals under MARKERS for every provider, 2015 to 2024, equal those of the
     release with no reflows."""
-    query = {"flow": flow, "view": view, "years": YEARS}
+    query = {
+        "flow": flow,
+        "view": view,
+        "years": YEARS,
+        "method": cf.methods.MARKERS,
+    }
 
     assert_frame_equal(loaded.spending(**query).table, emptied.spending(**query).table)
 
 
 def test_a_net_flow_is_gross_less_its_repayment_rows(loaded: cf.Release) -> None:
-    gross = loaded.spending(years=YEARS)
-    net = loaded.spending(flow="net_disbursements", years=YEARS)
+    gross = loaded.spending(years=YEARS, method=cf.methods.MARKERS)
+    net = loaded.spending(
+        flow="net_disbursements", years=YEARS, method=cf.methods.MARKERS
+    )
     repayments = net.rows(origin="repayment")
 
     assert repayments["value"].sum() < 0
@@ -142,9 +149,14 @@ def test_a_net_flow_is_gross_less_its_repayment_rows(loaded: cf.Release) -> None
 
 @pytest.fixture(scope="module")
 def dac_results(loaded: cf.Release, dac: list[int]) -> dict[str, pl.DataFrame]:
-    """The DAC providers' bilateral rows, 2015 to 2024, under ONE, recipient view."""
+    """The DAC providers' bilateral rows, 2015 to 2024, under MARKERS,
+    recipient view."""
     return {
-        flow: _bilateral(loaded.spending(providers=dac, years=YEARS, flow=flow))
+        flow: _bilateral(
+            loaded.spending(
+                providers=dac, years=YEARS, flow=flow, method=cf.methods.MARKERS
+            )
+        )
         for flow in ("disbursements", "net_disbursements")
     }
 
@@ -191,7 +203,10 @@ def test_germany_japan_and_france_hold_most_repayments(
 
 def test_spain_repays_no_more_than_it_disbursed(loaded: cf.Release) -> None:
     spain = loaded.spending(
-        providers=SPAIN, years=YEARS, flow="net_disbursements"
+        providers=SPAIN,
+        years=YEARS,
+        flow="net_disbursements",
+        method=cf.methods.MARKERS,
     ).table
     print(f"Spain's net, 2015 to 2024: {_value(spain) / 1e9:.4f} billion")
 
@@ -204,7 +219,7 @@ def test_provider_view_net_less_gross_is_the_bilateral_repayments(
     """For the DAC providers but EU Institutions, which the provider view counts
     once through its channels."""
     members = [code for code in dac if code != EU_INSTITUTIONS]
-    query = {"providers": members, "years": YEARS}
+    query = {"providers": members, "years": YEARS, "method": cf.methods.MARKERS}
     net = _value(
         loaded.spending(view="provider", flow="net_disbursements", **query).table
     )

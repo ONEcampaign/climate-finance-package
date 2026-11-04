@@ -33,7 +33,7 @@ DEVELOPED = (
 # The reproduction's CSNA for 2024 from the grant-element data the CRS holds, in USD
 # billion, low and high: the snapshot the two methods are compared with by eye.
 HELD_SNAPSHOT_2024 = (25.3, 34.0)
-# Multilateral outflows, 2015 to 2024, under ONE in the recipient view, as shares of
+# Multilateral outflows, 2015 to 2024, under MARKERS in the recipient view, as shares of
 # the climate-weighted disbursements: the part on records whose grant equivalent is
 # their disbursement, and the part on records with no grant equivalent.
 MULTILATERAL_SHARES = {"at_face": 0.0990, "no_grant_equivalent": 0.9010}
@@ -136,7 +136,7 @@ def test_every_grant_has_a_grant_equivalent_and_no_other_record_changed(
 
 @pytest.fixture(scope="module")
 def multilateral(loaded: cf.Release, crs: pl.DataFrame) -> dict[str, pl.DataFrame]:
-    """The multilateral outflows' rows of the recipient view under ONE, 2015 to
+    """The multilateral outflows' rows of the recipient view under MARKERS, 2015 to
     2024, by flow, summed by the kind of record they come from: `at_face` when the
     record's grant equivalent is its disbursement, `none` when it has no grant
     equivalent, else `other`."""
@@ -153,7 +153,7 @@ def multilateral(loaded: cf.Release, crs: pl.DataFrame) -> dict[str, pl.DataFram
     )
     sums: dict[str, pl.DataFrame] = {}
     for flow in ("disbursements", "grant_equivalent"):
-        rows = loaded.spending(years=YEARS, flow=flow).rows(
+        rows = loaded.spending(years=YEARS, flow=flow, method=cf.methods.MARKERS).rows(
             bi_multi=MULTILATERAL_OUTFLOW
         )
         joined = rows.join(kinds, on="record_id", how="left", validate="m:1")

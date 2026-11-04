@@ -27,7 +27,7 @@ from climate_finance.build.label import (
     jev_objectives,
     read_adaptation_labels,
 )
-from climate_finance.methods import ONE
+from climate_finance.methods import MARKERS
 
 pytestmark = pytest.mark.slow
 
@@ -36,7 +36,7 @@ SEED = 20241020
 FITTING_SHARE = 0.2
 BOOTSTRAP_DRAWS = 2000
 BOOTSTRAP_SEED = 1
-COEFFICIENT = {0: 0.0, 1: ONE.significant, 2: ONE.principal}
+COEFFICIENT = {0: 0.0, 1: MARKERS.significant, 2: MARKERS.principal}
 
 
 def _data() -> Path:
@@ -151,7 +151,7 @@ def test_adaptation_f1_on_unseen_texts_reaches_0_72(
 def test_the_fixed_weight_total_is_reported_with_its_interval(
     evaluated: pl.DataFrame, record_property: Callable[[str, object], None]
 ) -> None:
-    """The held-out dollar total at ONE's fixed weights, Jev's levels against the
+    """The held-out dollar total at MARKERS' fixed weights, Jev's levels against the
     human ones, with a 95% interval from resampling distinct texts."""
     amount = pl.col("commitment_usd")
     by_text = (

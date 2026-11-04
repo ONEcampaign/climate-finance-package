@@ -8,15 +8,15 @@ A donor scores each project 0, 1 (significant), or 2 (principal) for adaptation 
 
 ## The named methods
 
-`cf.methods.ONE` counts significant markers at 40% of face value and principal markers at 100%. Each activity counts once, under its higher marker: adaptation if that is higher, mitigation if that is, and cross-cutting if the two are equal. The three objectives are disjoint, so they add up to the total.
-
-`cf.methods.OECD` counts significant and principal markers both at 100%. Adaptation and mitigation each count their own marker, so a project marked for both counts in both. `cross_cutting` is the overlap, which `value` counts once. OECD also counts the EU budget and the European Development Fund as a provider and the EIB as a channel, as the OECD does.
-
-`cf.methods.PROVIDER` uses the coefficients each provider applies when it reports to the UNFCCC, as the OECD's survey DCD/DAC/STAT(2024)28/REV1 records them. Ireland's coefficients before 2021 come from its own report, and Luxembourg's practice from its first BTR. Each provider has a significant and a principal coefficient, by agency and year, and Germany also has one for an activity significant on both objectives. Australia assesses each activity case by case and states a default of 0.3, which it takes.
+`cf.methods.ONE`, the default, uses the coefficients each provider applies when it reports to the UNFCCC, as the OECD's survey DCD/DAC/STAT(2024)28/REV1 records them. Ireland's coefficients before 2021 come from its own report, and Luxembourg's practice from its first BTR. Each provider has a significant and a principal coefficient, by agency and year, and Germany also has one for an activity significant on both objectives. Australia assesses each activity case by case and states a default of 0.3, which it takes. Each activity counts once, under its higher marker: adaptation if that is higher, mitigation if that is, and cross-cutting if the two are equal. The three objectives are disjoint, so they add up to the total.
 
 A provider that assesses each activity case by case and states no coefficient takes for each marker the climate share its own BTR reports on its activities so marked, where enough of its BTR links to the CRS to measure one. Its BTR reports a climate-specific amount for each activity, and the build divides that by the CRS amount of the records the BTR row links to, taking rows and records that share links together so that no amount counts twice. The share across a provider's significant-marked activities becomes its significant coefficient, and likewise for principal. The coefficients come from the BTR years the release holds, which `btr_coefficients` records, and apply in every year; a release that adds a BTR moves them. An activity whose BTR amount exceeds its CRS amount by up to 10% counts as wholly climate, as the two differ by rounding. One that exceeds it by more is left out: its BTR row links to the wrong, smaller record, or claims more than the money the CRS records, as the UK's USD 728m for BII's capital increase does against USD 265m disbursed. `btr_coefficients` reports what it leaves out. A provider whose principal-marked activities do not sit near a share of 1 reports amounts that do not line up with its CRS records and gets no coefficient. Where the BTR gives no coefficient, from too few linked activities (under 20, or under USD 20m) or a failed check, the provider takes the method's 0.4 and 1.0, as do providers with no row. The UK counts significant activities at 0.40 and principal ones at 0.89, France's AFD at 0.62 and 0.86, Belgium at 0.16 and 0.90, and Luxembourg significant ones at 0.54. The US, Finland, and the other providers that assess case by case have too few linked activities, and take 0.4 and 1.0. `btr_coefficients` holds each coefficient with the components and CRS amount behind it, and the coefficient the BTR implies for providers that state their own, which checks them. `result.explain()` names each provider's source.
 
 Where a provider publishes its climate share of face value, that share caps each marker weight under every method. IFAD publishes its significant rows at 40%, so no method counts them above that. Untraced disbursement reaches no commitment, so no published share caps it: an IFAD record marked significant counts its untraced part at the method's own significant coefficient.
+
+`cf.methods.MARKERS` counts significant markers at 40% of face value and principal markers at 100% for every provider, whatever coefficients it reports. It counts each activity once under its higher marker, as ONE does.
+
+`cf.methods.OECD` counts significant and principal markers both at 100%. Adaptation and mitigation each count their own marker, so a project marked for both counts in both. `cross_cutting` is the overlap, which `value` counts once. OECD also counts the EU budget and the European Development Fund as a provider and the EIB as a channel, as the OECD does.
 
 `cf.methods.RANGE` runs the three together. Each method's row keeps its own `low` and `high`, and `range_low` and `range_high` beside them hold the lowest `low` and the highest `high` of the three, the same on each method's row of a key.
 
@@ -24,7 +24,7 @@ Where a provider publishes its climate share of face value, that share caps each
 
 Development banks report a climate share (the climate components) for their projects. Rows from these banks use that share under every method and ignore the coefficients.
 
-`Method` takes any other coefficients. Calling `cf.methods.ONE.replace(significant=0.5)` returns a valid method, and `result.explain()` describes it in words.
+`Method` takes any other coefficients. Calling `cf.methods.MARKERS.replace(significant=0.5)` returns a valid method, and `result.explain()` describes it in words.
 
 ## Jev labels
 
@@ -53,7 +53,7 @@ The flags point a reviewer at records to check. They change no total. No stage o
 
 The two views answer different questions. The recipient view answers how much climate finance reached recipients, and the provider view how much a provider gave, its core contributions included. For a provider's total, such as "Germany's climate finance in 2022", pass `view="provider"`. The default recipient view leaves out what Germany gave through multilateral agencies, and counts an agency such as IDA as a provider of its own outflows.
 
-Under every method but OECD, the share is the agency's own climate commitments over its total CRS commitments, summed over the year and the year before, weighed with the method's own coefficients. The release holds each agency's commitments by channel, year, and marker level in `agency_spending`, so `ONE.replace(significant=1.0)` weighs an agency's significant commitments at 100%, as it weighs a bilateral row's. Agencies have no confirmed coefficient of their own, so PROVIDER weighs them at 0.4. Where an agency's two-year span holds under USD 100,000 of CRS commitments, the share holds at its last measured value. Channels with no CRS reporter, and years before an agency's CRDF rows begin, take the OECD's imputed share. Each attributed row carries its `share_source`: `computed`, `held`, or `oecd`. Under OECD, the share is always the OECD's.
+Under every method but OECD, the share is the agency's own climate commitments over its total CRS commitments, summed over the year and the year before, weighed with the method's own coefficients. The release holds each agency's commitments by channel, year, and marker level in `agency_spending`, so `MARKERS.replace(significant=1.0)` weighs an agency's significant commitments at 100%, as it weighs a bilateral row's. Agencies have no confirmed coefficient of their own, so ONE weighs them at 0.4. Where an agency's two-year span holds under USD 100,000 of CRS commitments, the share holds at its last measured value. Channels with no CRS reporter, and years before an agency's CRDF rows begin, take the OECD's imputed share. Each attributed row carries its `share_source`: `computed`, `held`, or `oecd`. Under OECD, the share is always the OECD's.
 
 Contributions to a channel with no share in a year attribute nothing. The Global Fund, Gavi, UNDP, and UNEP carry no share in any year, and the build's log lists every channel and year with contributions and no share, with the amount.
 
@@ -87,7 +87,7 @@ Each disbursement, untraced record, and repayment counts by its own flag, so a c
 
 ## EU Institutions
 
-EU Institutions is a provider and also a channel for its members' money. `Method(eu="channel")`, the default for ONE and PROVIDER, attributes members' contributions to the EU budget, the European Development Fund, and the EIB to the members. In each year where an EU agency's channel attributes a member's contribution, the provider view scales that agency's own rows by the share of the channel's contributions from providers outside the query, so the money counts once. A query for EU Institutions alone keeps its own rows whole, a query that also names some of its members keeps the part those members do not fund, and an all-provider query keeps none. `release.quality().eu_left_out` reports the rows an all-provider total leaves out.
+EU Institutions is a provider and also a channel for its members' money. `Method(eu="channel")`, the default for ONE and MARKERS, attributes members' contributions to the EU budget, the European Development Fund, and the EIB to the members. In each year where an EU agency's channel attributes a member's contribution, the provider view scales that agency's own rows by the share of the channel's contributions from providers outside the query, so the money counts once. A query for EU Institutions alone keeps its own rows whole, a query that also names some of its members keeps the part those members do not fund, and an all-provider query keeps none. `release.quality().eu_left_out` reports the rows an all-provider total leaves out.
 
 So EU Institutions' provider-view figure depends on which members a query names, and provider-view figures from separate queries do not add up. A loop over providers that includes EU Institutions counts the members' EU money twice, once in each member's attribution and again in the EU's own rows. Name the providers in one query to count it once. A provider-view query that names EU Institutions, or one of its agencies, under `eu="channel"` gives a `DoubleCountWarning` whenever members outside the query attribute EU money that the EU's rows keep.
 
@@ -99,7 +99,7 @@ EU Institutions' totals for `share_of_total()` hold the same rows as their amoun
 
 The examples on this page run on the synthetic example release, so their amounts are invented, and `cf.load()` opens the published release.
 
-The same query under each named method shows what the weights change. OECD counts significant markers at 100% where ONE counts them at 40%, so it gives the larger total. PROVIDER differs from ONE for providers whose stated coefficients differ from 0.4 and 1.0.
+The same query under each named method shows what the weights change. OECD counts significant markers at 100% where MARKERS counts them at 40%, so it gives the larger total. ONE differs from MARKERS for providers whose stated coefficients differ from 0.4 and 1.0.
 
 ```python
 import climate_finance as cf
@@ -107,8 +107,8 @@ import climate_finance as cf
 release = cf.load_example()
 methods = {
     "ONE": cf.methods.ONE,
+    "MARKERS": cf.methods.MARKERS,
     "OECD": cf.methods.OECD,
-    "PROVIDER": cf.methods.PROVIDER,
 }
 for name, method in methods.items():
     result = release.spending(
@@ -118,9 +118,9 @@ for name, method in methods.items():
 ```
 
 ```output
-ONE 136.5
+ONE 145.8
+MARKERS 136.5
 OECD 160.5
-PROVIDER 145.8
 ```
 
 `cf.compare()` joins results on year, provider, recipient, and Bi_Multi code, and names each column after what sets the results apart, which is the release where the releases differ, and each spec field that differs, such as the method.
@@ -143,13 +143,13 @@ print(sorted(result.table["method"].unique()))
 ```
 
 ```output
-['OECD', 'ONE', 'PROVIDER']
+['MARKERS', 'OECD', 'ONE']
 ```
 
 `Method` takes any coefficients, and `replace()` copies a method with changes. `explain()` describes the result in words.
 
 ```python
-half = cf.methods.ONE.replace(significant=0.5)
+half = cf.methods.MARKERS.replace(significant=0.5)
 result = release.spending(providers="Japan", years=[2023], method=half)
 print(result.explain().splitlines()[1][:46])
 ```
@@ -158,11 +158,11 @@ print(result.explain().splitlines()[1][:46])
 Method significant 0.5, principal 1, highest m
 ```
 
-Under PROVIDER, `explain()` names the source of each provider's coefficients.
+Under ONE, `explain()` names the source of each provider's coefficients.
 
 ```python
 result = release.spending(
-    providers=["Germany", "Japan"], years=[2021], method=cf.methods.PROVIDER
+    providers=["Germany", "Japan"], years=[2021], method=cf.methods.ONE
 )
 for line in result.explain().splitlines():
     if line.startswith("Coefficients of"):
@@ -178,7 +178,7 @@ Coefficients of providers 5: Fixture survey, p. 8.
 
 Oxfam's Climate-Specific Net Assistance counts climate finance between two bounds. `cf.methods.OXFAM_LOW` holds the low bound: significant markers at 30% of face value and principal markers at 85%, for every provider. `cf.methods.OXFAM_HIGH` holds the high bound: each provider's own coefficients, capped at 50% for significant markers and 100% for principal ones, and the caps where a provider states none. An activity significant for both objectives takes the provider's coefficient for such activities, else its significant coefficient without the cap, else 100%. Both bounds count each activity once under its higher marker, count development banks' climate components at their reported share, and count EU Institutions as a provider and the EIB as a channel, as Oxfam does.
 
-`OXFAM_HIGH` sets `coefficients="capped"`, which reads the stated coefficients of `provider_coefficients` and caps each at the method's own. It leaves out the coefficients PROVIDER takes from the BTR, so a provider that assesses case by case takes the caps, as Oxfam gives them. A row whose coefficient the cap lowers counts as weighed at the method's coefficient, as a row with no provider coefficient does.
+`OXFAM_HIGH` sets `coefficients="capped"`, which reads the stated coefficients of `provider_coefficients` and caps each at the method's own. It leaves out the coefficients ONE takes from the BTR, so a provider that assesses case by case takes the caps, as Oxfam gives them. A row whose coefficient the cap lowers counts as weighed at the method's coefficient, as a row with no provider coefficient does.
 
 ```python
 for name in ("OXFAM_LOW", "OXFAM_HIGH"):
@@ -223,7 +223,7 @@ Some repayments stay out of every total. `release.quality().repayments` reports 
 
 The development banks report their interest to the CRS up to 2018 and none after. From 2019 their net transfers equal their net disbursements, and `explain()` says so.
 
-Coefficients apply in the year of the repayment. Under `PROVIDER`, a repayment weighs at the coefficients the provider applies in the year it is repaid, whatever year the loan disbursed, so a provider that changed its practice repays a loan at a different share than it counted.
+Coefficients apply in the year of the repayment. Under `ONE`, a repayment weighs at the coefficients the provider applies in the year it is repaid, whatever year the loan disbursed, so a provider that changed its practice repays a loan at a different share than it counted.
 
 Under `view="provider"`, bilateral repayments subtract and pass through the same once-only rule for EU Institutions as gross rows. Attributed core contributions count as disbursements in a net flow, since a core contribution is not repaid.
 
@@ -242,7 +242,7 @@ for row in repayments.iter_rows(named=True):
 ```
 
 ```output
-41.5
+49.0
 2022 5.0 4.0 0.8
 2023 4.0 0.0 0.0
 ```

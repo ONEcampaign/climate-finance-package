@@ -29,12 +29,12 @@ from climate_finance.catalogue import (
 from climate_finance.errors import InvalidInputError, UnknownNameError
 from climate_finance.frozen import Frozen
 from climate_finance.methods import (
+    MARKERS,
     OECD,
     ONE,
     OXFAM,
     OXFAM_HIGH,
     OXFAM_LOW,
-    PROVIDER,
     RANGE,
     Method,
     MethodRange,
@@ -142,7 +142,7 @@ def read_one_method(
 # The methods `method` takes by name, keyed by the names `cf.methods.list()` prints.
 _METHODS = {
     label(method): method
-    for method in (ONE, OECD, PROVIDER, RANGE, OXFAM_LOW, OXFAM_HIGH, OXFAM)
+    for method in (ONE, MARKERS, OECD, RANGE, OXFAM_LOW, OXFAM_HIGH, OXFAM)
 }
 
 

@@ -37,7 +37,7 @@ The interval is wider than a gross one. Gross `low` and `high` differ by link ce
 
 ## Under several methods
 
-`cf.methods.RANGE` computes ONE, OECD, and PROVIDER together. Every method carries a row for every year, provider, recipient, and Bi_Multi code that any of them holds, at zero where it has no money. Each method's row keeps that method's own `low` and `high`, so `result.rows(method="ONE")` sums to the ONE row's bounds. `range_low` and `range_high` span the methods, the same on every method's row of a key. `range_low` is the lowest of the three methods' `low` bounds, each counting only what certain links carried. `range_high` is the highest value any of the three gives for a gross flow, because each method's `high` equals its `value`. For a net flow it is the highest `high` any of them gives. The span covers marker weights and link certainty.
+`cf.methods.RANGE` computes MARKERS, ONE, and OECD together. Every method carries a row for every year, provider, recipient, and Bi_Multi code that any of them holds, at zero where it has no money. Each method's row keeps that method's own `low` and `high`, so `result.rows(method="ONE")` sums to the ONE row's bounds. `range_low` and `range_high` span the methods, the same on every method's row of a key. `range_low` is the lowest of the three methods' `low` bounds, each counting only what certain links carried. `range_high` is the highest value any of the three gives for a gross flow, because each method's `high` equals its `value`. For a net flow it is the highest `high` any of them gives. The span covers marker weights and link certainty.
 
 ## How to read a wide gap
 
@@ -59,5 +59,5 @@ Providers that publish no project disbursements (IFC, IDB Invest, CAF, and the N
 
 ## Next
 
-- [About the methods](methods.md) explains ONE, OECD, PROVIDER, and RANGE.
+- [About the methods](methods.md) explains ONE, MARKERS, OECD, and RANGE.
 - [Release tables](../reference/release-tables.md) lists every column named here.

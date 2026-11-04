@@ -5,7 +5,7 @@ commitments by Rio markers, and those reporting climate components, as fractions
 its total CRS commitments, both summed over the year and the year before. The query
 weighs these rows with a method's coefficients into the agency's climate share,
 which is the OECD's imputed-share construction with that method's coefficients.
-Under ONE (the highest-marker rule, significant markers at 0.4, climate components
+Under MARKERS (the highest-marker rule, significant markers at 0.4, climate components
 as reported) the banks that report climate components agree with the OECD within
 0.004 in 2021 and 2022 (IBRD 0.310 and 0.309, IDA 0.313 and 0.313, AfDB 0.399 and
 0.398, CAF 0.224 and 0.226). Shares rest on commitments. Dividing matched
@@ -13,7 +13,7 @@ disbursements by all disbursements would leave untraced disbursement in the
 denominator and push banks the trace cannot follow to zero. Where the span of a
 share year holds a year the CRDF does not measure adaptation in, its rows are not
 `adaptation_measured`, and the query's adaptation and cross-cutting shares are null.
-The stage refuses a table whose ONE shares differ from those summed row by row from
+The stage refuses a table whose agency shares differ from those summed row by row from
 the CRDF.
 
 A share's `share_source` says where it comes from. `computed` shares are measured.
@@ -51,7 +51,7 @@ from climate_finance.build.errors import ConfigError, ReleaseInvariantError
 from climate_finance.build.fetch import fetched_years, last_complete_year
 from climate_finance.build.normalise.crs import trace_population
 from climate_finance.build.sums import ordered_sum
-from climate_finance.methods import ONE, face_shares, weights
+from climate_finance.methods import MARKERS, face_shares, weights
 from climate_finance.query import measured_shares
 from climate_finance.schema import AGENCY_SHARES, AGENCY_SPENDING, MODELLED, STATUSES
 
@@ -63,9 +63,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 PROVIDERS_TOML = Path(__file__).with_name("providers.toml")
-# Years summed for an agency's ONE share: the share year and the one before.
+# Years summed for an agency's share: the share year and the one before.
 SHARE_YEARS = 2
-# The least CRS commitment a ONE share's span rests on. In 2015 to 2024 the smallest
+# The least CRS commitment an agency share's span rests on. In 2015 to 2024 the smallest
 # span of any agency is USD 2.3m (the Special Climate Change Fund in 2018); the
 # European Development Fund's 2024 span, after its last commitments in 2022, is USD
 # 2,984.
@@ -185,7 +185,7 @@ def run_measure(context: StageContext) -> StageOutput:
     has its two-year span.
 
     Raises:
-        ReleaseInvariantError: when the ONE shares weighed from `agency_spending`
+        ReleaseInvariantError: when the agency shares weighed from `agency_spending`
             differ from those summed row by row from the CRDF.
     """
     facts = load_provider_facts()
@@ -218,7 +218,7 @@ def run_measure(context: StageContext) -> StageOutput:
     ).collect()
     for row in gaps.iter_rows(named=True):
         logger.warning(
-            "No ONE agency share for channel %s in %s: USD %.1fm of core "
+            "No agency share for channel %s in %s: USD %.1fm of core "
             "contributions disbursed attribute nothing",
             row["channel_code"],
             row["year"],
@@ -357,13 +357,13 @@ def one_share_problems(
     agencies: Sequence[AgencyChannel],
     years: tuple[int, int],
 ) -> list[str]:
-    """Channels and years whose `computed` ONE shares weighed from `spending` by the
+    """Channels and years whose `computed` agency shares weighed from `spending` by the
     query differ by more than `SHARE_TOLERANCE` from the shares summed row by row
     from `crdf` over the same measured share years, or that only one of the two
     holds. Shares both leave unmeasured agree. An empty list means they agree."""
     keys = ["channel_code", "year"]
     weighed = measured_shares(
-        spending.filter(pl.col("share_source") == "computed"), method=ONE
+        spending.filter(pl.col("share_source") == "computed"), method=MARKERS
     ).rename({f"share_{part}": part for part in _SHARE_PARTS})
     rows, spans = _share_spans(crdf, crs=crs, agencies=agencies, years=years)
     summed = (
@@ -395,7 +395,7 @@ def one_share_problems(
     for row in compared.iter_rows(named=True):
         label = f"agency_spending {row['channel_code']} {row['year']}"
         if row["unsplit"] is None or row["unsplit_summed"] is None:
-            problems.append(f"{label}: a ONE share only one route measures")
+            problems.append(f"{label}: an agency share only one route measures")
             continue
         problems.extend(
             f"{label}: ONE {part} share {row[part]!r} differs from "
@@ -551,7 +551,7 @@ def unshared_contributions(
     core_contributions: pl.LazyFrame,
 ) -> pl.LazyFrame:
     """Disbursed core contributions to every channel in the years neither `spending`
-    nor a `one` row of `shares` gives it a ONE share, by channel and year."""
+    nor a `one` row of `shares` gives it an agency share, by channel and year."""
     keys = ["channel_code", "year"]
     one = pl.concat(
         [
@@ -616,14 +616,14 @@ def _adaptation_unmeasured(crdf: pl.LazyFrame) -> pl.LazyFrame:
 
 
 def _one_climate(crdf: pl.LazyFrame) -> pl.LazyFrame:
-    """Each commitment's inclusive adaptation and mitigation value under ONE, and
+    """Each commitment's inclusive adaptation and mitigation value under MARKERS, and
     its overlap, whose objectives are disjoint before the overlap is added back to
     the other two. A marker weight stops at the climate share the provider
     published, as IFAD's significant rows at 40% of face value."""
     # An unmeasured adaptation part weighs as 0 here, and `one_share_problems` nulls
     # the shares it would reach.
     weighted = crdf.with_columns(**face_shares()).with_columns(
-        **weights(ONE, published=pl.col("share_climate"))
+        **weights(MARKERS, published=pl.col("share_climate"))
     )
     cross_cutting = pl.col("cross_cutting")
     return weighted.select(

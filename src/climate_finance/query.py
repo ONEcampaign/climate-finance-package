@@ -133,7 +133,6 @@ from climate_finance.errors import (
 )
 from climate_finance.methods import (
     ONE,
-    PROVIDER,
     Method,
     MethodRange,
     face_shares,
@@ -1027,11 +1026,11 @@ def reconcile(
     own: `party_weight` the significant one, `party_principal` the principal one,
     `weight_source` their source, and `coefficient_basis` the row's basis as
     `spending` gives it. The weighted comparators weigh each activity or record as
-    `PROVIDER` does, by its agency's row, else its provider's. Where that row
+    `ONE` does, by its agency's row, else its provider's. Where that row
     gives no coefficient for the activity's marker, because it assesses each
     activity case by case at the agency level as for France's AFD or the provider
     level as for the UK, or because the provider has no row, the activity takes
-    `PROVIDER`'s coefficients, as `spending` gives it. `crdf_at_party_weight` is its
+    `ONE`'s coefficients, as `spending` gives it. `crdf_at_party_weight` is its
     CRDF commitments so weighted; `crdf_at_100` the same commitments with
     Significant at 100%; `traced_climate_value` the climate value `method` gives
     what those commitments disbursed; `crs_disbursed_at_party_weight` the year's
@@ -1039,7 +1038,7 @@ def reconcile(
     coefficient for a record significant on both objectives where the provider
     states one; and `crs_grant_equivalent_at_party_weight` their grant equivalent,
     weighted alike. `crdf_method_share` is the share of `crdf_at_party_weight` that
-    rests on `PROVIDER`'s coefficients in place of the party's own,
+    rests on `ONE`'s coefficients in place of the party's own,
     `crs_method_share` the same share of `crs_disbursed_at_party_weight`, and
     `crs_grant_equivalent_method_share` that of
     `crs_grant_equivalent_at_party_weight`, which differs from `crs_method_share`
@@ -1138,7 +1137,7 @@ def reconcile(
 
     at_party_weight = crdf_at(**_COEFFICIENT_INPUTS)
     crdf = (
-        _coefficients(release, commitments, method=PROVIDER)
+        _coefficients(release, commitments, method=ONE)
         .group_by("provider_code", "year")
         .agg(
             crdf_at_party_weight=ordered_sum(at_party_weight),
@@ -1152,7 +1151,7 @@ def reconcile(
 
     def crs_at_party_weight(records: pl.LazyFrame) -> pl.LazyFrame:
         """The year's `amount_usd` of CRS `records` on Rio-marked records at
-        `PROVIDER`'s coefficients of each record's agency, weighted as the CRDF
+        `ONE`'s coefficients of each record's agency, weighted as the CRDF
         comparators weight."""
         flows = records.filter(bilateral).join(
             party_years, on=["provider_code", "year"], how="semi"
@@ -1165,7 +1164,7 @@ def reconcile(
             "share_overlap",
         )
         return (
-            _coefficients(release, flows, method=PROVIDER)
+            _coefficients(release, flows, method=ONE)
             .with_columns(pl.lit(None, pl.Float64).alias(name) for name in shares)
             .group_by("provider_code", "year")
             .agg(

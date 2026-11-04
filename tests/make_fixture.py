@@ -181,7 +181,7 @@ LEDGER_ALLOCATED = 1e6
 AGENCY_SHARES = {IDA_CH: (0.20, 0.25, 0.05), AFDB_CH: (0.30, 0.35, 0.10)}
 # Each agency's commitments by Rio markers as fractions of its spending, with the
 # components of rows that report them: (rio_adaptation, rio_mitigation, face_share,
-# (adaptation_share, mitigation_share, overlap_share) or None). Under ONE the IDA's
+# (adaptation_share, mitigation_share, overlap_share) or None). Under MARKERS the IDA's
 # markers give shares of 0.18, 0.22 and 0.04: significant markers at 0.4 of 0.2 + 0.2
 # + 0.1, principal ones at 1.0 of 0.06 + 0.1. The AfDB reports components alone.
 AGENCY_SPENDING = {
@@ -195,7 +195,7 @@ AGENCY_SPENDING = {
     AFDB_CH: ((None, None, 0.6, (0.27, 0.30, 0.08)),),
 }
 # AfDB's OECD share for 2020: a climate total with no split by objective, as the
-# OECD gives before 2021. AfDB has no ONE share that year.
+# OECD gives before 2021. AfDB has no agency share that year.
 CLIMATE_ONLY_SHARE = {
     "channel_code": AFDB_CH,
     "year": 2020,
@@ -317,7 +317,7 @@ REPAYMENTS = (
     # split's excess too.
     Repayment("JPN-1-REPAY", JPN, 2, BGD, 2023, 2e6, 0.5e6, "crs_id:JPN-1", "crs_id",
               (0, 2)),
-    # France's loan behind FRA-2 is counted at 40% (significant under ONE) and
+    # France's loan behind FRA-2 is counted at 40% (significant under MARKERS) and
     # repays in two years. Its disbursements carry estimated links.
     Repayment("FRA-2-REPAY-2022", FRA, 1, KEN, 2022, 0.5e6, 0.1e6, "crs_id:FRA-2",
               "crs_id", (1, 0)),

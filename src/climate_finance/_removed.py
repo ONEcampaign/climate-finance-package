@@ -20,7 +20,7 @@ REMOVED_MODULES = {
     "download",
     "core": "ClimateData imports from climate_finance.compat until 3.0, and "
     "climate_finance.load().spending() replaces it",
-    "methodologies": "pass method=cf.methods.ONE, cf.methods.OECD or a "
+    "methodologies": "pass method=cf.methods.MARKERS, cf.methods.OECD or a "
     "cf.Method(...) to Release.spending()",
     "oecd": "a release holds the matched OECD data, which cf-build in the build "
     f"extra fetches; {_QUERY}",

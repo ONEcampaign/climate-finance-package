@@ -32,7 +32,7 @@ release.spending(
 )
 release.spending(providers=cf.Agency(provider=918, agency=3), recipients=[248, "KEN"])
 release.spending(method=cf.methods.RANGE)
-release.spending(method=["ONE", cf.methods.OECD])
+release.spending(method=["MARKERS", cf.methods.OECD])
 spec = cf.Spec(providers="Japan", years=[2021, 2022], method="oecd")
 release.run(spec)
 release.run(spec.replace(years=2023))

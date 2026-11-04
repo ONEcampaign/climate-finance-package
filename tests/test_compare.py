@@ -10,7 +10,7 @@ from releases import copy_release
 
 import climate_finance as cf
 from climate_finance.errors import InvalidInputError
-from climate_finance.methods import ONE, RANGE
+from climate_finance.methods import MARKERS, RANGE
 from climate_finance.schema import ReleaseManifest
 from climate_finance.spec import Measure
 
@@ -104,9 +104,9 @@ def test_a_result_under_several_methods_gives_a_column_per_method() -> None:
     assert table.columns == [
         *COLUMNS,
         "ONE",
+        "RANGE: MARKERS",
         "RANGE: ONE",
         "RANGE: OECD",
-        "RANGE: PROVIDER",
     ]
 
 
@@ -154,12 +154,12 @@ def test_results_of_two_releases_under_several_methods_keep_the_release(
     table = cf.compare(older.spending(method=RANGE), newer.spending(method=RANGE)).table
 
     assert table.columns[len(COLUMNS) :] == [
+        "2025a: MARKERS",
         "2025a: ONE",
         "2025a: OECD",
-        "2025a: PROVIDER",
+        "2026a: MARKERS",
         "2026a: ONE",
         "2026a: OECD",
-        "2026a: PROVIDER",
     ]
 
 
@@ -220,10 +220,10 @@ shape: (1, 24)
 └──────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┘"""  # noqa: E501 (a table snapshot)
 
 COMPARISON_REPR = """\
-Comparison of 2 results: ONE; OECD
+Comparison of 2 results: MARKERS; OECD
 shape: (1, 8)
 ┌──────┬──────────┬───────────┬───────────────┬────────────────┬──────────┬──────────┬──────────┐
-│ year ┆ provider ┆ recipient ┆ provider_code ┆ recipient_code ┆ bi_multi ┆ ONE      ┆ OECD     │
+│ year ┆ provider ┆ recipient ┆ provider_code ┆ recipient_code ┆ bi_multi ┆ MARKERS  ┆ OECD     │
 │ ---  ┆ ---      ┆ ---       ┆ ---           ┆ ---            ┆ ---      ┆ ---      ┆ ---      │
 │ i16  ┆ str      ┆ str       ┆ i32           ┆ i32            ┆ i8       ┆ f64      ┆ f64      │
 ╞══════╪══════════╪═══════════╪═══════════════╪════════════════╪══════════╪══════════╪══════════╡
@@ -243,34 +243,35 @@ def test_a_comparison_prints_its_columns_and_table() -> None:
     def germany(method: cf.Method) -> cf.Result:
         return SNAP.spending(providers="Germany", years=2021, method=method)
 
-    comparison = cf.compare(germany(ONE), germany(cf.methods.OECD))
+    comparison = cf.compare(germany(MARKERS), germany(cf.methods.OECD))
 
     assert repr(comparison) == COMPARISON_REPR
     assert "<table" in comparison._repr_html_()
 
 
 def test_methods_print_as_models_and_render_their_description() -> None:
-    assert repr(ONE) == (
+    assert repr(MARKERS) == (
         "Method(significant=0.4, principal=1.0, highest_marker=True, "
         "coefficients='fixed', relevance='markers', eu='channel')"
     )
-    assert ONE._repr_markdown_() == (
-        "Method ONE: significant markers count 40% of face value and principal "
+    assert MARKERS._repr_markdown_() == (
+        "Method MARKERS: significant markers count 40% of face value and principal "
         "markers 100%; each activity counts once, under its higher Rio marker, with "
         "equal markers as cross-cutting. Climate-component rows from development "
-        "banks count their reported climate share and ignore the coefficients. In "
+        "banks count their reported climate share and ignore the coefficients. Every "
+        "provider takes these coefficients. In "
         "the provider view EU Institutions count as a channel: members' core "
         "contributions to the EU budget, the EDF and the EIB carry the EU's climate "
         "share, and each EU agency's own rows count times one minus the share of its "
         "channel's attributed contributions that come from the providers in the query, "
         "so EU spending counts once. The EIB's own lending reaches members' totals "
         "only through their paid-in capital, as every development bank's own lending "
-        "does: under ONE, USD 0.035bn attributed against 2.72bn the EIB disbursed in "
-        "2021 and 2022. It stays in the recipient view, and quality() reports the EU "
-        "rows left out."
+        "does: under ONE and MARKERS, USD 0.035bn attributed against 2.72bn the EIB "
+        "disbursed in 2021 and 2022. It stays in the recipient view, and quality() "
+        "reports the EU rows left out."
     )
     assert RANGE._repr_markdown_() == (
-        "Methods ONE / OECD / PROVIDER, reported together; low is the lowest of "
+        "Methods MARKERS / ONE / OECD, reported together; low is the lowest of "
         "their lows, which count only what certain links carried, and high the "
         "highest value across them."
     )

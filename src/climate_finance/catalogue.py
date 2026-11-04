@@ -586,7 +586,7 @@ def _methods() -> pl.DataFrame:
     # Imported here: methods.py binds its listing from this module at import time.
     from climate_finance import methods
 
-    named = (methods.ONE, methods.OECD, methods.PROVIDER)
+    named = (methods.ONE, methods.MARKERS, methods.OECD)
     oxfam = (methods.OXFAM_LOW, methods.OXFAM_HIGH)
     rows = [
         {

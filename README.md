@@ -36,7 +36,7 @@ for row in result.table.iter_rows(named=True):
 ```
 
 ```output
-2021 0.0 13.3
+2021 0.0 11.3
 2022 0.0 18.3
 2023 12.0 48.3
 ```
@@ -46,7 +46,7 @@ for row in result.table.iter_rows(named=True):
 ## What you can ask
 
 - Commitments, disbursements, and grant equivalents of climate finance by provider, recipient, and year, in USD, EUR, GBP, or CAD, at current or constant prices.
-- Climate value under `ONE` or `OECD` marker weights, under `PROVIDER`, which takes the coefficients each provider applies when it reports to the UNFCCC, or under all three at once with `RANGE`. A release built with Jev's labels also answers `relevance="jev"` queries.
+- Climate value under `ONE`, which takes the coefficients each provider applies when it reports to the UNFCCC, under `MARKERS`, which counts significant markers at 40% and principal markers at 100% for every provider, under `OECD` marker weights, or under all three at once with `RANGE`. A release built with Jev's labels also answers `relevance="jev"` queries.
 - Core contributions to multilateral agencies attributed to the providers that pay them, so each dollar counts once.
 - Link rates, commitment status, and the measured precision of the links with `release.quality()`, and a party's BTR report against the OECD data with `release.reconcile()`.
 

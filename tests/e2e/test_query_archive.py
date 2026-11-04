@@ -1,5 +1,5 @@
 """The archive release, queried in a venv holding only the base package, with
-sockets blocked: Germany under ONE, OECD and RANGE, its 2022 rows, a comparison,
+sockets blocked: Germany under MARKERS, OECD and RANGE, its 2022 rows, a comparison,
 quality and the disbursement profile.
 """
 
@@ -63,24 +63,26 @@ def test_germany_spans_one_to_oecd_under_range(answers: dict) -> None:
                     f"{key} {amount / 1e9:.2f}" for key, amount in amounts.items()
                 )
             )
-    one = totals["ONE"]["ONE"]["value"]
+    one = totals["MARKERS"]["MARKERS"]["value"]
     oecd = totals["OECD"]["OECD"]["value"]
 
     assert 0 < one < oecd
-    assert totals["RANGE"]["ONE"]["value"] == pytest.approx(one)
+    assert totals["RANGE"]["MARKERS"]["value"] == pytest.approx(one)
     # Each method's row keeps its own low and high, as in its single-method run.
-    for method in ("ONE", "OECD"):
+    for method in ("MARKERS", "OECD"):
         for bound in ("low", "high"):
             assert totals["RANGE"][method][bound] == pytest.approx(
                 totals[method][method][bound]
             )
-    # The range's bounds hold across methods: ONE's low, below ONE's value, and
+    # The range's bounds hold across methods: MARKERS' low, below MARKERS' value, and
     # OECD's high.
     for amounts in totals["RANGE"].values():
-        assert amounts["range_low"] == pytest.approx(totals["ONE"]["ONE"]["low"])
+        assert amounts["range_low"] == pytest.approx(
+            totals["MARKERS"]["MARKERS"]["low"]
+        )
         assert amounts["range_high"] == pytest.approx(totals["OECD"]["OECD"]["high"])
-    assert totals["RANGE"]["ONE"]["range_low"] < one
-    assert answers["compare"] == pytest.approx({"ONE": one, "OECD": oecd})
+    assert totals["RANGE"]["MARKERS"]["range_low"] < one
+    assert answers["compare"] == pytest.approx({"MARKERS": one, "OECD": oecd})
 
 
 def test_the_2022_rows_leave_out_repeats(answers: dict) -> None:

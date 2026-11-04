@@ -218,8 +218,8 @@ def test_listings_hold_the_entries_the_api_accepts() -> None:
     assert set(cf.flows.list()["name"]) == set(get_args(Flow.__value__))
     assert cf.methods.list()["name"].to_list() == [
         "ONE",
+        "MARKERS",
         "OECD",
-        "PROVIDER",
         "OXFAM_LOW",
         "OXFAM_HIGH",
         "RANGE",
@@ -330,8 +330,8 @@ def test_code_reads_a_name_or_passes_a_code_through() -> None:
 
 
 def test_method_info_is_the_method_description() -> None:
-    assert cf.methods.info("PROVIDER") == cf.methods.describe(cf.methods.PROVIDER)
-    assert "reporting to the UNFCCC" in cf.methods.info("PROVIDER")
+    assert cf.methods.info("ONE") == cf.methods.describe(cf.methods.ONE)
+    assert "reporting to the UNFCCC" in cf.methods.info("ONE")
 
 
 @pytest.mark.parametrize(

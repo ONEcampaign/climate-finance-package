@@ -32,11 +32,11 @@ query = {"providers": ["France", "Norway"], "years": range(2021, 2025)}
    ```
 
    ```output
-   France 2.64 1.92
-   Norway 17.1 0.0
+   France 3.96 2.88
+   Norway 15.39 0.0
    ```
 
-   A row in a year of repayments can read below zero. Norway's net flow in 2022 is USD -4.3m, as it repaid more that year than it disbursed to Bangladesh.
+   A row in a year of repayments can read below zero. Norway's net flow in 2022 is USD -3.9m, as it repaid more that year than it disbursed to Bangladesh.
 
 2. List the repayments behind a net figure. `rows(origin="repayment")` returns one row per repayment part, with a negative `value`, and `origin="interest"` the interest of a net transfer. `row_id` names the commitment whose climate share the repayment takes.
 
@@ -48,10 +48,10 @@ query = {"providers": ["France", "Norway"], "years": range(2021, 2025)}
    ```
 
    ```output
-   France 2022 -0.2
-   France 2023 -0.52
-   Norway 2022 -10.0
-   Norway 2023 -7.1
+   France 2022 -0.3
+   France 2023 -0.78
+   Norway 2022 -9.0
+   Norway 2023 -6.39
    ```
 
 3. Check how much of the principal the subtraction reaches. `quality().repayments` holds each provider's principal by repayment year in `received_usd`, and `measured_share` is the part tied to a disbursement the release counts. The rest sits in the other `<basis>_usd` columns and enters no total.
@@ -90,8 +90,8 @@ query = {"providers": ["France", "Norway"], "years": range(2021, 2025)}
    ```
 
    ```output
-   France -0.72 1.92 2.4
-   Norway -17.1 0.0 17.1
+   France -1.08 2.88 3.6
+   Norway -15.39 0.0 15.39
    ```
 
 ## Verify it worked
