@@ -306,7 +306,8 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
     assert set(packed) == {
         f"climate-finance-{RELEASE}/{path.name}"
         for path in [*FIXTURE_DIR.iterdir(), Path("sources.json")]
-        if path.name not in {"btr.parquet", "btr_links.parquet"}
+        if path.name
+        not in {"btr.parquet", "btr_links.parquet", "btr_multilateral.parquet"}
     }
     built = ReleaseManifest.model_validate_json(
         (release_dir / "assemble" / "release.json").read_text(encoding="utf-8")
@@ -314,14 +315,12 @@ def test_a_pack_holds_the_release_and_its_sources_and_repacks_to_the_same_bytes(
     manifest = ReleaseManifest.model_validate_json(
         packed[f"climate-finance-{RELEASE}/release.json"]
     )
-    assert manifest.withheld_tables == {
-        "btr": release.BTR_WITHHELD_NOTE,
-        "btr_links": release.BTR_WITHHELD_NOTE,
-    }
+    withheld = {"btr", "btr_links", "btr_multilateral"}
+    assert manifest.withheld_tables == dict.fromkeys(
+        withheld, release.BTR_WITHHELD_NOTE
+    )
     assert manifest.tables == {
-        name: entry
-        for name, entry in built.tables.items()
-        if name not in {"btr", "btr_links"}
+        name: entry for name, entry in built.tables.items() if name not in withheld
     }
     assert manifest.model_dump(exclude={"tables", "withheld_tables"}) == (
         built.model_dump(exclude={"tables", "withheld_tables"})
@@ -404,17 +403,31 @@ def test_sources_list_each_btr_workbook_with_its_rows_kept_and_dropped(
             "draft_marker": None,
         },
     ]
+    # Japan's Table III.2 sheet, recorded apart from its Table III.1 sheet.
+    multilateral = [
+        workbooks[1]
+        | {
+            "sheets": ["Japan__JPN-CTF-FTC-20241031r.xlsx#Table2_2022"],
+            "rows_kept": 40,
+            "dropped_notation": 2,
+            "dropped_total": 0,
+        }
+    ]
     (release_dir / "normalise").mkdir()
-    pl.DataFrame(
-        workbooks,
-        schema={name: column.dtype for name, column in BTR_WORKBOOKS.columns.items()},
-    ).write_parquet(release_dir / "normalise" / "btr_workbooks.parquet")
+    for name, rows in (
+        ("btr_workbooks", workbooks),
+        ("btr_multilateral_workbooks", multilateral),
+    ):
+        pl.DataFrame(rows, schema=BTR_WORKBOOKS.dtypes).write_parquet(
+            release_dir / "normalise" / f"{name}.parquet"
+        )
 
     pack = release.pack_release(release_dir, out_path=tmp_path / PACK)
 
     sources = json.loads(members(pack)[f"climate-finance-{RELEASE}/sources.json"])
     btr = next(row for row in sources if row["source"] == BTR_SOURCE)
     assert btr["workbooks"] == workbooks
+    assert btr["multilateral_workbooks"] == multilateral
 
 
 def test_a_published_release_holds_the_btr_totals_and_a_build_the_rows_too(
@@ -431,13 +444,14 @@ def test_a_published_release_holds_the_btr_totals_and_a_build_the_rows_too(
     published = cf.load(path=tmp_path / "unpacked" / f"climate-finance-{RELEASE}")
     built = cf.load(path=release_dir / "assemble")
 
-    for name in ("btr", "btr_links"):
+    for name in ("btr", "btr_links", "btr_multilateral"):
         with pytest.raises(WithheldTableError, match="cf-build build"):
             published.table(name)
         assert built.table(name).collect().height > 0
-    totals = published.table("btr_totals").collect()
-    assert totals.height > 0
-    assert totals.equals(built.table("btr_totals").collect())
+    for name in ("btr_totals", "btr_multilateral_totals"):
+        totals = published.table(name).collect()
+        assert totals.height > 0
+        assert totals.equals(built.table(name).collect())
 
 
 def test_a_source_without_a_licence_stops_the_pack(tmp_path: Path) -> None:
@@ -1455,7 +1469,8 @@ def test_a_pack_whose_sha256_differs_from_the_index_is_refused(
     tmp_path: Path, published: tuple[ReleaseIndex, Path]
 ) -> None:
     _, served = published
-    (served / PACK).write_bytes((served / PACK).read_bytes()[:-1] + b"\0")
+    packed = (served / PACK).read_bytes()
+    (served / PACK).write_bytes(packed[:-1] + bytes([packed[-1] ^ 0xFF]))
     cache = tmp_path / "cache"
 
     with pytest.raises(ReleaseIntegrityError, match="the release index has"):

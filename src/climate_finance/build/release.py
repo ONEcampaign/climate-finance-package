@@ -20,10 +20,11 @@ their rows (`schema.withheld_record`), as `disbursements` drops their fills and
 with a `record_id` that holds one.
 `sources.json` notes the sources whose rows stay out (`WITHHELD_SOURCES`).
 The packed release, the one published, also leaves out the row-level BTR tables
-`btr` and `btr_links` (`WITHHELD_TABLES`) until the UNFCCC confirms its terms cover
-them. Its `btr_totals` holds what the reconciliation reads. A build keeps both
-tables in `<release_dir>/assemble/`, so a build from BTR workbooks a person
-downloads from the UNFCCC gives the row-level reconciliation.
+`btr`, `btr_links` and `btr_multilateral` (`WITHHELD_TABLES`) until the UNFCCC
+confirms its terms cover them. Its `btr_totals` and `btr_multilateral_totals` hold
+what the reconciliation reads. A build keeps the row-level tables in
+`<release_dir>/assemble/`, so a build from BTR workbooks a person downloads from the
+UNFCCC gives the row-level reconciliation.
 
 `untraced` holds, per CRS record, the Rio-marked disbursement that reaches no
 commitment: excess beyond a full commitment, and records linked to nothing
@@ -73,6 +74,7 @@ from climate_finance.build.allocate import (
     years_since_commitment,
 )
 from climate_finance.build.btr_coefficients import btr_coefficients
+from climate_finance.build.btr_institutions import institution_map
 from climate_finance.build.config import (
     PUBLISHED_SETTINGS,
     RELEASE_SETTINGS,
@@ -115,8 +117,13 @@ from climate_finance.release import (
 from climate_finance.schema import (
     BILATERAL,
     BTR,
+    BTR_CRS_EARMARKED,
     BTR_CRS_UNLINKED,
+    BTR_INSTITUTION_GROUPS,
     BTR_LINKS,
+    BTR_MULTILATERAL,
+    BTR_MULTILATERAL_TOTALS,
+    BTR_MULTILATERAL_WORKBOOKS,
     BTR_TOTALS,
     BTR_WORKBOOKS,
     CERTAIN_ROUTES,
@@ -229,14 +236,17 @@ WITHHELD_NOTE = (
 # Release tables the pack leaves out, and the note `release.json` and `sources.json`
 # give them.
 BTR_WITHHELD_NOTE = (
-    "The row-level BTR tables btr and btr_links are left out of the published "
-    "release until the UNFCCC confirms its terms cover them; btr_totals holds the "
-    "reconciliation totals. To build them, download the BTR workbooks from the "
+    "The row-level BTR tables btr, btr_links and btr_multilateral are left out of "
+    "the published release until the UNFCCC confirms its terms cover them; "
+    "btr_totals and btr_multilateral_totals hold the reconciliation totals. To "
+    "build them, download the BTR workbooks from the "
     "UNFCCC, point sources.btr_archive in build.toml at them, run "
     "`cf-build build RELEASE --config build.toml` and open the build with "
     '`cf.load(path="releases/RELEASE/assemble")`.'
 )
-WITHHELD_TABLES = {BTR.name: BTR_WITHHELD_NOTE, BTR_LINKS.name: BTR_WITHHELD_NOTE}
+WITHHELD_TABLES = {
+    table.name: BTR_WITHHELD_NOTE for table in (BTR, BTR_LINKS, BTR_MULTILATERAL)
+}
 # The coefficients each provider applies when it reports to the UNFCCC, with their
 # sources, keyed by ISO 3 code.
 PROVIDER_COEFFICIENTS_FILE = Path(__file__).with_name("provider_coefficients.yaml")
@@ -331,6 +341,12 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
     crs = context.read("normalise", "crs").filter(pl.col("year") <= last_year)
     links = context.read("review", "links")
     btr = _optional(context, "normalise", BTR)
+    multilateral = _optional(context, "normalise", BTR_MULTILATERAL)
+    groups = btr_institution_groups(institution_map().groups)
+    # Each provider-year a BTR party's Table III.1 or III.2 rows cover.
+    btr_years = pl.concat(
+        [frame.lazy().select("provider_code", "year") for frame in (btr, multilateral)]
+    )
     allocations = context.read("fill", "allocations")
     status = context.read("review", "commitments")
     objectives = context.read("label", "objectives").collect()
@@ -392,7 +408,18 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         "btr_links": linked_btr,
         "btr_totals": btr_totals(btr.lazy(), links=linked_btr.lazy()).collect(),
         "btr_crs_unlinked": btr_crs_unlinked(
-            crs, btr=btr.lazy(), links=links
+            crs, party_years=btr_years, links=links
+        ).collect(),
+        "btr_multilateral": multilateral,
+        "btr_multilateral_totals": btr_multilateral_totals(
+            multilateral.lazy()
+        ).collect(),
+        "btr_institution_groups": groups,
+        "btr_crs_earmarked": btr_crs_earmarked(
+            crs,
+            party_years=btr_years,
+            links=links,
+            channels=groups.lazy(),
         ).collect(),
         "disbursement_profile": disbursement_profile(
             commitments.lazy(),
@@ -772,13 +799,90 @@ def btr_totals(btr: pl.LazyFrame, *, links: pl.LazyFrame) -> pl.LazyFrame:
     )
 
 
-def btr_crs_unlinked(
-    crs: pl.LazyFrame, *, btr: pl.LazyFrame, links: pl.LazyFrame
+def btr_multilateral_totals(rows: pl.LazyFrame) -> pl.LazyFrame:
+    """The `btr_multilateral` rows summed by `BTR_MULTILATERAL_TOTALS.sort_key`."""
+    amounts = [
+        name
+        for name in BTR_MULTILATERAL_TOTALS.columns
+        if name.startswith(("core_", "climate_specific_"))
+    ]
+    return (
+        rows.group_by(*BTR_MULTILATERAL_TOTALS.sort_key, "provider_code")
+        .agg(
+            rows=pl.len().cast(pl.Int32),
+            **{
+                name: pl.when(pl.col(name).is_not_null().any()).then(
+                    ordered_sum(pl.col(name).drop_nulls())
+                )
+                for name in amounts
+            },
+        )
+        .select(list(BTR_MULTILATERAL_TOTALS.columns))
+    )
+
+
+def btr_institution_groups(groups: Mapping[str, Sequence[int]]) -> pl.DataFrame:
+    """Each group's channel codes in `groups`, one row per code."""
+    return pl.DataFrame(
+        [(group, code) for group, codes in groups.items() for code in codes],
+        schema=BTR_INSTITUTION_GROUPS.dtypes,
+        orient="row",
+    )
+
+
+def btr_crs_earmarked(
+    crs: pl.LazyFrame,
+    *,
+    party_years: pl.LazyFrame,
+    links: pl.LazyFrame,
+    channels: pl.LazyFrame,
 ) -> pl.LazyFrame:
-    """Each provider-year of `btr` and flow of `BTR_CRS_UNLINKED`, with the sum of
-    that flow over the provider's bilateral climate-marked CRS records of the year
-    that no `btr_crs` link in `links` reaches, null for a provider-year without a
-    record in `crs`."""
+    """The bilateral climate-marked amounts of `crs` through `channels`
+    (`btr_institution_groups`) that no `btr_crs` link in `links` reaches, for each
+    provider-year of `party_years`, by `BTR_CRS_EARMARKED.sort_key`, less the records
+    reported for memorandum."""
+    reached = (
+        links.filter(pl.col("task") == "btr_crs").select(record_id="right_id").unique()
+    )
+    keys = [name for name in BTR_CRS_EARMARKED.sort_key if name != "flow"]
+    return (
+        crs.filter(
+            pl.col("bi_multi").is_in(BILATERAL),
+            pl.max_horizontal("rio_adaptation", "rio_mitigation") >= 1,
+            ~memorandum(pl.col("psi_flag")),
+        )
+        .join(channels.select("channel_code"), on="channel_code", how="semi")
+        .join(reached, on="record_id", how="anti")
+        .select(
+            "agency_code",
+            "year",
+            "channel_code",
+            pl.col("rio_adaptation", "rio_mitigation").fill_null(0).cast(pl.Int8),
+            provider_code="donor_code",
+            **_FLOW_AMOUNTS,
+        )
+        .join(
+            party_years.drop_nulls().unique(),
+            on=["provider_code", "year"],
+            how="semi",
+        )
+        .unpivot(
+            index=keys, on=list(_FLOW_AMOUNTS), variable_name="flow", value_name="usd"
+        )
+        .drop_nulls("usd")
+        .group_by(*keys, "flow")
+        .agg(amount_usd=ordered_sum(pl.col("usd")))
+        .select(list(BTR_CRS_EARMARKED.columns))
+    )
+
+
+def btr_crs_unlinked(
+    crs: pl.LazyFrame, *, party_years: pl.LazyFrame, links: pl.LazyFrame
+) -> pl.LazyFrame:
+    """Each provider-year of `party_years`, the BTR rows' of either table, and flow
+    of `BTR_CRS_UNLINKED`, with the sum of that flow over the provider's bilateral
+    climate-marked CRS records of the year that no `btr_crs` link in `links`
+    reaches, null for a provider-year without a record in `crs`."""
     flows = {"commitments": "commitment_usd", "disbursements": "disbursement_usd"}
     reached = (
         links.filter(pl.col("task") == "btr_crs").select(record_id="right_id").unique()
@@ -805,7 +909,7 @@ def btr_crs_unlinked(
         .with_columns(covered=pl.lit(True))
     )
     return (
-        btr.select("provider_code", "year")
+        party_years.select("provider_code", "year")
         .drop_nulls()
         .unique()
         .join(pl.LazyFrame({"flow": list(flows)}), how="cross")
@@ -1186,12 +1290,12 @@ def pack_release(release_dir: Path, *, out_path: Path) -> Path:
     manifest = ReleaseManifest.model_validate_json(
         (assembled / "release.json").read_text(encoding="utf-8")
     )
-    workbooks = release_dir / "normalise" / f"{BTR_WORKBOOKS.name}.parquet"
     sources = release_sources(
         pl.read_parquet(release_dir / "fetch" / "raw_manifest.parquet"),
         versions=manifest.source_versions,
         btr_rows=manifest.tables[BTR.name].rows,
-        btr_workbooks=pl.read_parquet(workbooks) if workbooks.exists() else None,
+        btr_workbooks=_normalised(release_dir, BTR_WORKBOOKS),
+        btr_multilateral_workbooks=_normalised(release_dir, BTR_MULTILATERAL_WORKBOOKS),
         citations=report_citations(
             set(
                 pl.read_parquet(assembled / f"{MODELLED.name}.parquet")["provider_code"]
@@ -1237,12 +1341,19 @@ def pack_release(release_dir: Path, *, out_path: Path) -> Path:
     return out_path
 
 
+def _normalised(release_dir: Path, table: TableSchema) -> pl.DataFrame | None:
+    """The normalise stage's `table` in `release_dir`, None where it wrote none."""
+    path = release_dir / "normalise" / f"{table.name}.parquet"
+    return pl.read_parquet(path) if path.exists() else None
+
+
 def release_sources(
     raw_manifest: pl.DataFrame,
     *,
     versions: Mapping[str, str],
     btr_rows: int,
     btr_workbooks: pl.DataFrame | None,
+    btr_multilateral_workbooks: pl.DataFrame | None,
     citations: Sequence[str],
 ) -> list[dict[str, object]]:
     """Each source in `raw_manifest`, and `REPORTS_SOURCE` with its `citations` when
@@ -1254,7 +1365,9 @@ def release_sources(
     stage's `btr_workbooks`): the workbook's file name, its party, the Table III.1
     sheets read, the rows kept, the rows dropped for each reason, and the reporting
     tool's draft state in the file name. A workbook giving no rows shows there, so a
-    party that reports nothing reads apart from one that was not loaded.
+    party that reports nothing reads apart from one that was not loaded. It lists
+    as `multilateral_workbooks` each row of `btr_multilateral_workbooks`, the same
+    record of the Table III.2 sheets.
 
     Raises:
         BuildError: when a source has no entry in `SOURCE_LICENCES`, or when the
@@ -1284,6 +1397,11 @@ def release_sources(
             **(
                 {"workbooks": btr_workbooks.to_dicts()}
                 if source == BTR_SOURCE and btr_workbooks is not None
+                else {}
+            ),
+            **(
+                {"multilateral_workbooks": btr_multilateral_workbooks.to_dicts()}
+                if source == BTR_SOURCE and btr_multilateral_workbooks is not None
                 else {}
             ),
             **({"citations": list(citations)} if source == REPORTS_SOURCE else {}),

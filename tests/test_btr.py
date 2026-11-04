@@ -253,12 +253,23 @@ def test_unreadable_sheets_are_refused(
 def _archive(tmp_path: Path, files: dict[str, str]) -> Path:
     """An archive of fixtures under manifest names, with the manifest."""
     archive = tmp_path / "archive"
-    archive.mkdir()
-    entries = []
-    for name, party in files.items():
+    archive.mkdir(parents=True)
+    for name in files:
         shutil.copy(BTR / name.rsplit("__", 1)[1], archive / name)
-        size = (archive / name).stat().st_size
-        entries.append({"party": party, "name": name, "ok": True, "bytes": size})
+    return _listed(archive, files)
+
+
+def _listed(archive: Path, files: dict[str, str]) -> Path:
+    """`archive` with a manifest listing `files` under their parties' names."""
+    entries = [
+        {
+            "party": party,
+            "name": name,
+            "ok": True,
+            "bytes": (archive / name).stat().st_size,
+        }
+        for name, party in files.items()
+    ]
     (archive / "manifest.json").write_text(json.dumps(entries), encoding="utf-8")
     return archive
 
@@ -404,6 +415,306 @@ def test_the_archive_counts_each_workbooks_rows_kept_and_dropped(
         ("DEU", 2),
         ("FIN", 3),
     ]
+
+
+# Table III.2's header rows as Germany, France, Japan and the United Kingdom
+# write them: three label rows of amount groups over the currency labels.
+_III2_TEXT_LABELS = [
+    "Recipientc, e, g",
+    "Title of the project, programme, activity or otherc, e, g, h",
+    "Statusc",
+    "Channelc",
+    "Funding sourcec",
+    "Financial instrumentc, i",
+    "Type of supportc",
+    "Sectorc, g",
+    "Subsectorc, g",
+    "Contribution to capacity-building objectivesc, e, g",
+    "Contribution to technology development and transfer objectivesc, e, g",
+    "Additional informationl",
+]
+_III2_GROUP_ROWS = [
+    [None, None, "Inflows c, e", *[None] * 7, "Outflows c, e"],
+    [None, None, "Core/generalc, e, f", *[None] * 3, "Climate-specifice"]
+    + [None] * 3
+    + ["Climate-specifice"],
+    [None, None, *["Face value", None, "Grant equivalent", None] * 3],
+]
+_III2_CURRENCIES = ["Domestic\ncurrency", "USD"] * 6
+_III2_HEADER = [
+    [None, "Institutionc", "Amount c, d", *[None] * 11, *_III2_TEXT_LABELS],
+    *_III2_GROUP_ROWS,
+    [None, None, *_III2_CURRENCIES],
+]
+# Canada's macro workbooks: "Amount" on the first row, "Institution" on the
+# currency row, no title or rate above.
+_III2_CANADA_HEADER = [
+    [None, None, "Amount c, d", *[None] * 11, "Recipientc, e, g"],
+    *_III2_GROUP_ROWS,
+    [None, "Institutionc", *_III2_CURRENCIES, "Recipient", *_III2_TEXT_LABELS[1:]],
+]
+
+
+def _iii2_row(
+    institution: str | None,
+    core: tuple = (None,) * 4,
+    climate: tuple = (None,) * 4,
+    outflows: tuple = ("NA",) * 4,
+    *,
+    title: str | None = "Contribution",
+    status: str | None = "Disbursed",
+    shift: int = 0,
+) -> list[object]:
+    """A Table III.2 data row: each amount group as (face domestic, face USD,
+    grant equivalent domestic, grant equivalent USD), text cells `shift` columns
+    right of their labels."""
+    text = ["Global", title, status, "Multilateral", "ODA", "Grant", "Adaptation"]
+    return [None, institution, *core, *climate, *outflows, *[None] * shift, *text]
+
+
+def _iii2_sheet(rows: list[list[object]], *, year: int, rate: float) -> list[list]:
+    """A Table III.2 sheet as the reporting tool lays it out, from the title rows."""
+    return [
+        [None, "TABLE III. 2  "],
+        [None, "Information on financial support provided", *[None] * 7, str(year)],
+        [None, "Exchange rate used:", rate],
+        [],
+        [None, "Back to index"],
+        [],
+        *_III2_HEADER,
+        *rows,
+        [None, "Abbreviations: ODA = official development assistance"],
+    ]
+
+
+def _with_sheets(workbook: openpyxl.Workbook, sheets: dict[str, list[list]]) -> None:
+    for title, rows in sheets.items():
+        sheet = workbook.create_sheet(title)
+        for row in rows:
+            sheet.append(row)
+
+
+# Per case: the party's name, its sheets, then per kept row (institution, core_face_usd,
+# climate_specific_face_usd, climate_specific_grant_equiv_usd, status), and the
+# rows dropped as blank, notation and total.
+MULTILATERAL = {
+    "deu-institution-carried-down-outflows-unread": (
+        "Germany",
+        {
+            "Table2_2021": _iii2_sheet(
+                [
+                    _iii2_row(
+                        "World Bank", (0, 0, None, None), (400_000,) + (None,) * 3
+                    ),
+                    # Continues the World Bank; its outflow amounts go unread.
+                    _iii2_row(
+                        None, climate=(850_000, 1e6, None, None), outflows=(5,) * 4
+                    ),
+                    # Only outflows: blank, though it names the next institution.
+                    _iii2_row("Least Developed Country Fund", outflows=(1e6,) * 4),
+                    _iii2_row(
+                        None, climate=(None, 2e5, None, 1.5e5), status="Committed"
+                    ),
+                    _iii2_row("Total", climate=(None, 1.67e6, None, None)),
+                    ["NA"] * 26,
+                ],
+                year=2021,
+                rate=0.85,
+            )
+        },
+        {
+            "BTRM-DEU-2021-00012": (
+                "World Bank",
+                0.0,
+                400_000 / 0.85,
+                None,
+                "disbursed",
+            ),
+            "BTRM-DEU-2021-00013": ("World Bank", None, 1e6, None, "disbursed"),
+            "BTRM-DEU-2021-00015": (
+                "Least Developed Country Fund",
+                None,
+                2e5,
+                1.5e5,
+                "committed",
+            ),
+        },
+        (1, 1, 1),
+    ),
+    "usa-millions-and-unlabelled-sum-row": (
+        "United States of America",
+        {
+            "Table 2_2021": _iii2_sheet(
+                [
+                    _iii2_row("African Development Bank", (None, 225.9, None, "NR")),
+                    _iii2_row(
+                        "Global Environment Facility", climate=(None, 89.18, None, None)
+                    ),
+                    _iii2_row(
+                        "Montreal Protocol Multilateral Fund",
+                        climate=(None, 40.33, None, None),
+                    ),
+                    [None, None, None, None, None, None, None, 129.51],
+                ],
+                year=2021,
+                rate=1,
+            )
+        },
+        {
+            "BTRM-USA-2021-00012": (
+                "African Development Bank",
+                225.9e6,
+                None,
+                None,
+                "disbursed",
+            ),
+            "BTRM-USA-2021-00013": (
+                "Global Environment Facility",
+                None,
+                89.18e6,
+                None,
+                "disbursed",
+            ),
+            "BTRM-USA-2021-00014": (
+                "Montreal Protocol Multilateral Fund",
+                None,
+                40.33e6,
+                None,
+                "disbursed",
+            ),
+        },
+        (0, 0, 1),
+    ),
+    "irl-2022-text-one-column-right": (
+        "Ireland",
+        {
+            "Table2_2022": _iii2_sheet(
+                [
+                    _iii2_row(
+                        "Global Environment Facility ",
+                        (2e6, 2.1e6, None, None),
+                        shift=1,
+                    )
+                ],
+                year=2022,
+                rate=0.95,
+            )
+        },
+        {
+            "BTRM-IRL-2022-00012": (
+                "Global Environment Facility",
+                2.1e6,
+                None,
+                None,
+                "disbursed",
+            )
+        },
+        (0, 0, 0),
+    ),
+    "can-amount-label-above-institution-empty": (
+        "Canada",
+        {"Table III.2": [*_III2_CANADA_HEADER, [None] * 14]},
+        {},
+        (0, 0, 0),
+    ),
+    "idn-footnote-in-an-amount-column": (
+        "Indonesia",
+        {
+            "Table 2": _iii2_sheet(
+                [["NA"] * 24, [*[None] * 6, "NA =  Not Aplicable"]], year=2021, rate=1
+            )
+        },
+        {},
+        (0, 1, 0),
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("party", "sheets", "expected", "dropped"),
+    MULTILATERAL.values(),
+    ids=MULTILATERAL.keys(),
+)
+def test_reads_each_table_iii_2_layout(
+    tmp_path: Path,
+    party: str,
+    sheets: dict[str, list[list]],
+    expected: dict[str, tuple],
+    dropped: tuple[int, int, int],
+) -> None:
+    workbook = openpyxl.Workbook()
+    _with_sheets(workbook, sheets)
+    workbook.save(tmp_path / "party.xlsx")
+    archive = _listed(tmp_path, {"party.xlsx": party})
+
+    read = read_btr_archive(archive)
+
+    frame = read.multilateral
+    got = {
+        row[0]: row[1:]
+        for row in frame.select(
+            "row_id",
+            "institution",
+            "core_face_usd",
+            "climate_specific_face_usd",
+            "climate_specific_grant_equiv_usd",
+            "status",
+        ).iter_rows()
+    }
+    assert got.keys() == expected.keys()
+    for row_id, values in expected.items():
+        assert got[row_id] == pytest.approx(values), row_id
+    counts = read.multilateral_workbooks.row(0, named=True)
+    assert counts["sheets"] == [f"party.xlsx#{title}" for title in sheets]
+    assert counts["rows_kept"] == len(expected)
+    assert (
+        counts["dropped_blank"],
+        counts["dropped_notation"],
+        counts["dropped_total"],
+    ) == dropped
+    assert read.rows.is_empty()
+
+
+def test_table_iii_2_leaves_the_table_iii_1_record_alone(tmp_path: Path) -> None:
+    name = "Germany__DEU-table-1.xlsx"
+    alone = read_btr_archive(_archive(tmp_path / "alone", {name: "Germany"}))
+    archive = _archive(tmp_path / "both", {name: "Germany"})
+    workbook = openpyxl.load_workbook(archive / name)
+    rows = [_iii2_row("World Bank", climate=(850_000, 1e6, None, None))]
+    _with_sheets(workbook, {"Table2_2021": _iii2_sheet(rows, year=2021, rate=0.85)})
+    workbook.save(archive / name)
+    archive = _listed(archive, {name: "Germany"})
+
+    both = read_btr_archive(archive)
+
+    assert both.rows.equals(alone.rows)
+    assert both.workbooks.equals(alone.workbooks)
+    assert both.multilateral["row_id"].to_list() == ["BTRM-DEU-2021-00012"]
+    assert both.multilateral_workbooks["sheets"].to_list() == [[f"{name}#Table2_2021"]]
+
+
+def test_a_table_iii_1_read_skips_a_table_iii_2_the_build_refuses(
+    tmp_path: Path,
+) -> None:
+    name = "Germany__DEU-table-1.xlsx"
+    archive = _archive(tmp_path, {name: "Germany"})
+    workbook = openpyxl.load_workbook(archive / name)
+    # A USD amount to fill from the domestic one, on a sheet that states no rate.
+    rows = [_iii2_row("World Bank", climate=(1e6, None, None, None))]
+    _with_sheets(workbook, {"Table2_2021": _iii2_sheet(rows, year=2021, rate=None)})
+    workbook.save(archive / name)
+    archive = _listed(archive, {name: "Germany"})
+    out = tmp_path / "btr.parquet"
+
+    with pytest.raises(ValueError, match="no rate stated"):
+        read_btr_archive(archive)
+    ingest_unfccc(archive, out_path=out)
+
+    # The copy's file name aside, its rows are the fixture's.
+    expected = read_btr_workbook(BTR / "DEU-table-1.xlsx", party="DEU")
+    read = read_btr_workbook(archive / name, party="DEU")
+    assert read.drop("source_file").equals(expected.drop("source_file"))
+    assert pl.read_parquet(out)["row_id"].to_list() == expected["row_id"].to_list()
 
 
 def _pairs(

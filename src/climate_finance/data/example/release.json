@@ -63,13 +63,21 @@
       "sha256": "1957b751bce9f84db2b6662b4131511da02707a41bc3fa8adb44589766804250",
       "rows": 4
     },
+    "btr_multilateral": {
+      "sha256": "a64d1a2ea40ae3a28334bfd90a1c9e73e5ff1720cbe2b26f2962f2f461a4eda0",
+      "rows": 7
+    },
+    "btr_crs_earmarked": {
+      "sha256": "8ff2a9b695b41ff5cd8d3c92094f4ac47352fdb08696a91e40c0255600c7c24e",
+      "rows": 5
+    },
     "btr_links": {
       "sha256": "cbf548b9d73e8c70c6f24d8810bbec12c16494c5c2e28e7802d1bfc749ab9ff3",
       "rows": 3
     },
     "btr_crs_unlinked": {
-      "sha256": "cfbc1b7c0ee20f1f98aca96e9b7f6509bd41b3cad35c3569496a72666516b661",
-      "rows": 8
+      "sha256": "871e305e4bbf3541fbd69fb03a7f0275bf53e3c27b8fe65a7b26ccc0fbf750a3",
+      "rows": 10
     },
     "disbursement_profile": {
       "sha256": "8ad93644528bf7178ab05f25dd121c1a5939bdfb670e14c4ce4dffb9dbc4fd73",
@@ -98,6 +106,14 @@
     "btr_totals": {
       "sha256": "43ca3ac9583f29514d192fac891a0c6be2633ef9cd18fc314eb15473dfb99208",
       "rows": 4
+    },
+    "btr_multilateral_totals": {
+      "sha256": "af06d6fe8289fb32520ed619374de974c9d5780917c81444a74049bac7488446",
+      "rows": 7
+    },
+    "btr_institution_groups": {
+      "sha256": "218d0b3f9033c8b4aaac4ba7d45e8ef6cc8c1f17266647368d0532d243cd8bec",
+      "rows": 88
     },
     "unallocated": {
       "sha256": "a477c4925b20d979206b1bd661330a1bea6dc708fd2aa578af2cbb168e55fc6e",

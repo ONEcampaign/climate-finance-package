@@ -14,8 +14,8 @@ climate share with no split by objective, core contributions for every flow,
 provider coefficients that change between years, split by agency, hold a
 both-significant coefficient or a case-by-case default, commitments reached through
 certain and estimated CRDF routes, untraced excess and unlinked records, and
-unallocated disbursements of each kind, and outflow shares with the developed
-providers.
+unallocated disbursements of each kind, outflow shares with the developed
+providers, and BTR Table III.2 rows of mapped and unmapped institutions.
 Amounts are invented.
 
 Run `uv run python tests/make_fixture.py --from-release <dir> [out_dir]` to sample a
@@ -222,11 +222,43 @@ BTR_LINKS = (
     ("BTR-DEU-2021", "DEU-B-R2", "btr_id", 1.0, DEU, 2021, "300123-105", 7e6, 2e6),
     ("BTR-NOR-2021", "NOR-B-R1", "btr_splink", 0.93, NOR, 2021, None, None, 15e6),
 )
-# The OECD-only side of each BTR provider-year: bilateral climate-marked CRS amounts
-# on records no BTR row links, in USD millions by provider, year and flow.
+# The OECD-only side of each provider-year of the BTR's Table III.1 or III.2 rows:
+# bilateral climate-marked CRS amounts on records no BTR row links, in USD millions
+# by provider, year and flow. France reports Table III.2 alone in 2022.
 BTR_CRS_UNLINKED = (
     (DEU, 2021, 12, 4), (DEU, 2022, 9, 3), (NOR, 2021, 0, 0), (NOR, 2022, 6, 2),
+    (FRA, 2022, 1, 1),
 )  # fmt: skip
+# BTR Table III.2 rows: (party, year, institution, core and climate-specific amounts
+# in the party's currency, status). Germany names the World Bank two ways, gives the
+# LDCF no core amount, and reports an initiative the institution map leaves out.
+# France reports Table III.2 and no Table III.1 row.
+BTR_MULTILATERAL = (
+    ("DEU", 2021, "World Bank", 50e6, 10e6, "committed"),
+    ("DEU", 2022, "World Bank (IDA)", 50e6, 12e6, "committed"),
+    ("DEU", 2022, "Least Developed Country Fund", None, 20e6, "committed"),
+    ("DEU", 2022, "Climate Risk and Early Warning Systems Initiative", None, 5e6,
+     "committed"),
+    ("NOR", 2021, "World Bank", 120e6, 30e6, "disbursed"),
+    ("NOR", 2022, "Green Climate Fund", 0.0, 400e6, "disbursed"),
+    ("FRA", 2022, "African Development Bank", 20e6, 5e6, "disbursed"),
+)  # fmt: skip
+# Bilateral climate-marked CRS amounts through a multilateral channel that no BTR row
+# links: (provider, agency, year, channel, flow, rio_adaptation, rio_mitigation, USD
+# millions). Germany earmarks for the LDCF and Norway for the GCF.
+BTR_CRS_EARMARKED = (
+    (DEU, 52, 2022, 47129, "commitments", 2, 0, 4),
+    (DEU, 52, 2022, 47129, "disbursements", 2, 0, 3),
+    (DEU, 52, 2022, 47129, "grant_equivalent", 2, 0, 3),
+    (NOR, 8, 2022, 41317, "disbursements", 1, 1, 6),
+    (NOR, 8, 2022, 41317, "grant_equivalent", 1, 1, 6),
+)
+# Each BTR party's DAC provider, currency and own rate in USD per unit.
+BTR_PARTIES = {
+    "DEU": (DEU, "EUR", 1.1),
+    "NOR": (NOR, "NOK", 0.1),
+    "FRA": (FRA, "EUR", 1.1),
+}
 # (provider, agency, first_year, last_year, significant, principal, both_significant,
 #  case_by_case, source, locator). Germany counts an activity significant for both
 # objectives at 1.0. Japan's coefficients change in 2022. France's agency 1 assesses
@@ -602,9 +634,62 @@ def _objectives(
     ]
 
 
+def _btr_multilateral_row(
+    number: int,
+    party: str,
+    year: int,
+    institution: str,
+    core: float | None,
+    climate_specific: float | None,
+    status: str,
+    *,
+    group: str | None,
+) -> dict[str, object]:
+    """One `btr_multilateral` row, its grant equivalents at face and the DAC rate
+    the party's own."""
+    provider, currency, rate = BTR_PARTIES[party]
+    amounts = {}
+    for prefix, amount in (("core_", core), ("climate_specific_", climate_specific)):
+        usd = None if amount is None else amount * rate
+        amounts |= {
+            f"{prefix}amount_domestic": amount,
+            f"{prefix}face_usd": usd,
+            f"{prefix}grant_equiv_domestic": amount,
+            f"{prefix}grant_equiv_usd": usd,
+            f"{prefix}face_usd_at_dac": usd,
+            f"{prefix}grant_equiv_usd_at_dac": usd,
+        }
+    return {
+        "row_id": f"BTRM-{party}-{year}-{number:05}",
+        "party": party,
+        "provider_code": provider,
+        "year": year,
+        "institution": institution,
+        "institution_group": group,
+        "recipient": "Global",
+        "title": f"Contribution to {institution}",
+        **amounts,
+        "currency": currency,
+        "dac_rate": 1 / rate,
+        "status": status,
+        "channel": "multilateral",
+        "funding_source": "ODA",
+        "instrument": "grant",
+        "support_type": "cross-cutting",
+        "sector": None,
+        "additional_information": None,
+        "source_file": f"{party}-BTR1.xlsx#Table2_{year}",
+    }
+
+
 def build_tables() -> dict[str, pl.DataFrame]:
     """Every release table of the synthetic snapshot."""
-    from climate_finance.build.release import btr_totals
+    from climate_finance.build.btr_institutions import institution_map
+    from climate_finance.build.release import (
+        btr_institution_groups,
+        btr_multilateral_totals,
+        btr_totals,
+    )
 
     certain_methods = itertools.cycle(CERTAIN_METHODS)
     estimated_methods = itertools.cycle(
@@ -923,11 +1008,21 @@ def build_tables() -> dict[str, pl.DataFrame]:
                 "is_aggregate": False,
                 "source_file": f"{party}-BTR1.xlsx",
             }
-            for party, provider, currency, rate, amount, status in (
-                ("DEU", DEU, "EUR", 1.1, 20e6, "committed"),
-                ("NOR", NOR, "NOK", 0.1, 150e6, "disbursed"),
+            for party, amount, status in (
+                ("DEU", 20e6, "committed"),
+                ("NOR", 150e6, "disbursed"),
             )
+            for provider, currency, rate in [BTR_PARTIES[party]]
             for year in (2021, 2022)
+        ],
+        "btr_multilateral": [
+            _btr_multilateral_row(number, *row, group=institution_map().group(row[2]))
+            for number, row in enumerate(BTR_MULTILATERAL, start=12)
+        ],
+        "btr_crs_earmarked": [
+            dict(zip(RELEASE_TABLES["btr_crs_earmarked"].columns, row, strict=True))
+            | {"amount_usd": row[-1] * 1e6}
+            for row in BTR_CRS_EARMARKED
         ],
         "btr_links": [
             dict(zip(BTR_LINK_COLUMNS, link, strict=True))
@@ -996,6 +1091,10 @@ def build_tables() -> dict[str, pl.DataFrame]:
     frames["btr_totals"] = btr_totals(
         frames["btr"].lazy(), links=frames["btr_links"].lazy()
     ).collect()
+    frames["btr_multilateral_totals"] = btr_multilateral_totals(
+        frames["btr_multilateral"].lazy()
+    ).collect()
+    frames["btr_institution_groups"] = btr_institution_groups(institution_map().groups)
     frames["unallocated"] = _unallocated(frames["untraced"], frames["disbursements"])
     frames["total_flows"] = _total_flows(
         frames["commitments"],

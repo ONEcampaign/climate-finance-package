@@ -356,6 +356,11 @@ class Release:
     ) -> Reconciliation:
         """Compare each BTR party's figures with OECD data (`query.reconcile`).
 
+        `table` sets each party's Table III.1 bilateral finance against OECD
+        figures, and `multilateral` its Table III.2 contributions, by institution
+        group, against its core contributions, their climate value under `method`,
+        and its bilateral climate-marked money through the same channels.
+
         `providers`, `years` and `method` take the forms `spending` takes, so
         `providers="Germany"`, `"DEU"` and `5` name one party. None compares every
         party, or every year the BTR tables hold.
@@ -369,10 +374,15 @@ class Release:
                 keyword, such as `parties=`, naming a close one.
 
         Warns:
-            CoverageWarning: for years the `btr_totals` table holds no rows for.
+            CoverageWarning: for years neither `btr_totals` nor
+                `btr_multilateral_totals` holds rows for.
         """
         read = read_years(years)
-        self._warn_uncovered(read, tables=["btr_totals"], holds="BTR totals")
+        self._warn_uncovered(
+            read,
+            tables=["btr_totals", "btr_multilateral_totals"],
+            holds="BTR totals",
+        )
         return query.reconcile(
             self,
             providers=read_provider_codes(providers, reader="reconcile()"),

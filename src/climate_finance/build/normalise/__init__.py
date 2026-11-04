@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import polars as pl
 
+from climate_finance import schema
+from climate_finance.build.btr_institutions import institution_map
 from climate_finance.build.fetch import (
     BTR_DIR,
     CRDF_FILES,
@@ -47,8 +50,10 @@ def run_normalise(context: StageContext) -> StageOutput:
     interest paid, and `crs` those that report an amount. A record with both is in
     both under one `record_id`. `btr` holds the BTR workbooks' Table III.1 rows
     with the DAC rate of each row's currency and year and their amounts restated at
-    it, and `btr_workbooks` what was read from each workbook. Both are written only
-    when the build config names a BTR archive. `crdf` marks rows repeated across
+    it, and `btr_workbooks` what was read from each workbook. `btr_multilateral`
+    and `btr_multilateral_workbooks` hold the same for Table III.2, each row with
+    its institution group. The four are written only when the build config names a
+    BTR archive. `crdf` marks rows repeated across
     vintages (`repeat_of`) and gains child rows for the bilateral aggregate rows
     the bulk records rebuild (`parent_row_id`). `crdf_span` holds the recipient
     rows of the year before the first CRDF year, which the recipient file holds
@@ -116,6 +121,10 @@ def run_normalise(context: StageContext) -> StageOutput:
         btr = read_btr_archive(raw / BTR_DIR)
         tables["btr"] = btr_at_dac_rates(btr.rows, exchange=exchange)
         tables["btr_workbooks"] = btr.workbooks
+        tables["btr_multilateral"] = btr_multilateral(
+            btr.multilateral, exchange=exchange
+        )
+        tables["btr_multilateral_workbooks"] = btr.multilateral_workbooks
     if (ledgers := context.config.sources.ledgers) is not None:
         tables["ledger"] = normalise_ledgers(
             raw,
@@ -134,28 +143,62 @@ def run_normalise(context: StageContext) -> StageOutput:
     return tables
 
 
-def btr_at_dac_rates(btr: pl.DataFrame, *, exchange: pl.DataFrame) -> pl.DataFrame:
+def btr_at_dac_rates(
+    btr: pl.DataFrame, *, exchange: pl.DataFrame, groups: Sequence[str] = ("",)
+) -> pl.DataFrame:
     """`btr` with `dac_rate`, the DAC rate of each row's currency and year in that
     currency per USD as `to_usd` finds it, and the domestic amounts restated at it.
-    A row without the domestic amount or the rate keeps the party's USD."""
+    A row without the domestic amount or the rate keeps the party's USD. Each of
+    `groups` prefixes one set of amounts: `{group}amount_domestic` restates as
+    `{group}face_usd_at_dac` and `{group}grant_equiv_domestic` as
+    `{group}grant_equiv_usd_at_dac`."""
     rates = to_usd(
         btr.select("currency", "year")
         .unique()
         .with_columns(amount=pl.lit(1.0), amount_usd=pl.lit(None, pl.Float64)),
         exchange=exchange,
     ).select("currency", "year", dac_rate=1 / pl.col("amount_usd"))
+    restated = {
+        f"{group}{kind}_usd_at_dac": pl.coalesce(
+            pl.col(f"{group}{domestic}") / pl.col("dac_rate"), f"{group}{kind}_usd"
+        )
+        for group in groups
+        for kind, domestic in (
+            ("face", "amount_domestic"),
+            ("grant_equiv", "grant_equiv_domestic"),
+        )
+    }
     return (
         btr.drop("dac_rate")
         .join(rates, on=["currency", "year"], how="left", nulls_equal=True)
-        .with_columns(
-            face_usd_at_dac=pl.coalesce(
-                pl.col("amount_domestic") / pl.col("dac_rate"), "face_usd"
-            ),
-            grant_equiv_usd_at_dac=pl.coalesce(
-                pl.col("grant_equiv_domestic") / pl.col("dac_rate"), "grant_equiv_usd"
-            ),
-        )
+        .with_columns(**restated)
         .select(btr.columns)
+    )
+
+
+def btr_multilateral(rows: pl.DataFrame, *, exchange: pl.DataFrame) -> pl.DataFrame:
+    """The Table III.2 rows of `read_btr_archive` as `btr_multilateral`: each with
+    the group `institution_map` gives its institution, and its amounts restated at
+    DAC rates as `btr_at_dac_rates` restates Table III.1's."""
+    names = institution_map()
+    groups = {
+        name: group
+        for name in rows["institution"].drop_nulls().unique()
+        if (group := names.group(name)) is not None
+    }
+    table = schema.BTR_MULTILATERAL
+    filled = rows.with_columns(
+        institution_group=pl.col("institution").replace_strict(
+            groups, default=None, return_dtype=pl.String
+        ),
+        **{
+            name: pl.lit(None, pl.Float64)
+            for name in table.columns
+            if name == "dac_rate" or name.endswith("_at_dac")
+        },
+    ).select(list(table.columns))
+    return btr_at_dac_rates(
+        filled, exchange=exchange, groups=("core_", "climate_specific_")
     )
 
 

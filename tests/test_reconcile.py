@@ -1,5 +1,6 @@
 """`Release.reconcile()` on the fixture release: BTR totals against OECD figures."""
 
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 
@@ -11,11 +12,13 @@ from releases import copy_release
 import climate_finance as cf
 from climate_finance.build.release import btr_totals
 from climate_finance.errors import (
+    CoverageWarning,
     InvalidInputError,
     ReleaseIntegrityError,
     WithheldTableError,
 )
 from climate_finance.methods import MARKERS, OECD, MethodRange
+from climate_finance.release import Release
 from climate_finance.result import Reconciliation
 from climate_finance.schema import ReleaseManifest
 
@@ -510,13 +513,22 @@ def test_a_release_with_no_btr_rows_reconciles_to_an_empty_table(
     release = copy_release(
         tmp_path / "r",
         edits=dict.fromkeys(
-            ("btr", "btr_links", "btr_totals", "btr_crs_unlinked"), clear
+            (
+                "btr",
+                "btr_links",
+                "btr_totals",
+                "btr_crs_unlinked",
+                "btr_multilateral",
+                "btr_multilateral_totals",
+            ),
+            clear,
         ),
     )
 
     reconciliation = cf.load(path=release).reconcile()
 
     assert reconciliation.table.is_empty()
+    assert reconciliation.multilateral.is_empty()
     assert repr(reconciliation).startswith("Reconciliation: no rows\nshape: (0, ")
 
 
@@ -650,7 +662,7 @@ def test_a_release_without_btr_rows_reconciles_from_its_totals(
     manifest = ReleaseManifest.model_validate_json(
         (release / "release.json").read_text(encoding="utf-8")
     )
-    withheld = {"btr": "Build it.", "btr_links": "Build it."}
+    withheld = dict.fromkeys(("btr", "btr_links", "btr_multilateral"), "Build it.")
     published = manifest.model_copy(
         update={
             "tables": {
@@ -668,5 +680,174 @@ def test_a_release_without_btr_rows_reconciles_from_its_totals(
     reconciliation = cf.load(path=release).reconcile()
 
     assert reconciliation.table.equals(SNAP.reconcile().table)
+    assert reconciliation.multilateral.equals(SNAP.reconcile().multilateral)
     with pytest.raises(WithheldTableError, match="btr"):
         reconciliation.rows(provider="DEU", year=2021)
+
+
+# IDA's climate share of its spending: 0.36 under ONE, 0.40 under the OECD's imputed
+# shares (`AGENCY_SPENDING`, `AGENCY_SHARES`).
+IDA_SHARES = {"ONE": 0.36, "OECD": 0.40}
+
+
+def _group(
+    reconciliation: Reconciliation,
+    party: str,
+    year: int,
+    group: str | None,
+    method: str = "ONE",
+) -> dict:
+    rows = reconciliation.multilateral.filter(
+        pl.col("institution_group").eq_missing(group), party=party, year=year
+    ).filter(method=method)
+    assert rows.height == 1
+    return rows.row(0, named=True)
+
+
+def test_multilateral_sets_each_group_against_the_release() -> None:
+    # Germany commits 72m a year to IDA, in the World Bank group, and earmarks 4m
+    # Principal for adaptation through the LDCF, which it counts in full.
+    reconciliation = SNAP.reconcile(providers="DEU", method=["ONE", "OECD"])
+
+    for method, share in IDA_SHARES.items():
+        bank = _group(reconciliation, "DEU", 2022, "World Bank", method)
+        assert bank["flow"] == "commitments"
+        assert (bank["btr_core_face"], bank["btr_climate_specific_face"]) == (
+            pytest.approx(55e6),
+            pytest.approx(13.2e6),
+        )
+        assert bank["core_contributions"] == pytest.approx(72e6)
+        assert bank["attributed_core"] == pytest.approx(share * 72e6)
+        assert bank["crs_earmarked"] == 0
+        assert bank["btr_core_over_core_contributions"] == pytest.approx(55 / 72)
+        assert bank[
+            "btr_climate_specific_over_attributed_and_earmarked"
+        ] == pytest.approx(13.2 / (share * 72))
+    fund = _group(reconciliation, "DEU", 2022, "Least Developed Countries Fund")
+    assert fund["btr_core_face"] is None
+    assert (fund["core_contributions"], fund["attributed_core"]) == (0, 0)
+    assert fund["crs_earmarked"] == pytest.approx(4e6)
+    assert fund["btr_core_over_core_contributions"] is None
+    assert fund["btr_climate_specific_over_attributed_and_earmarked"] == (
+        pytest.approx(22 / 4)
+    )
+    # The early warning initiative is in no group.
+    unmapped = _group(reconciliation, "DEU", 2022, None)
+    assert unmapped["btr_climate_specific_face"] == pytest.approx(5.5e6)
+    assert unmapped["btr_climate_specific_over_attributed_and_earmarked"] is None
+
+
+def test_multilateral_reads_disbursements_and_keeps_release_only_groups() -> None:
+    # Norway reports disbursements, the GCF in 2022 and not the World Bank, where
+    # it disburses 15m to IDA. Its 6m earmarked GCF money is Significant on both
+    # objectives, which Norway's default counts at 0.3.
+    reconciliation = SNAP.reconcile(providers="NOR")
+
+    fund = _group(reconciliation, "NOR", 2022, "Green Climate Fund")
+    assert (fund["flow"], fund["btr_core_face"]) == ("disbursements", 0)
+    assert fund["crs_earmarked"] == pytest.approx(0.3 * 6e6)
+    bank = _group(reconciliation, "NOR", 2022, "World Bank")
+    assert bank["btr_core_face"] is None
+    assert bank["btr_climate_specific_face"] is None
+    assert bank["core_contributions"] == pytest.approx(15e6)
+    assert bank["attributed_core"] == pytest.approx(0.36 * 15e6)
+
+
+def _germany_gives_to_no_group(frame: pl.DataFrame) -> pl.DataFrame:
+    """Germany's 5m 2022 commitment to channel 40000, which no group holds."""
+    gift = pl.DataFrame(
+        {
+            "provider_code": [5],
+            "channel_code": [40000],
+            "year": [2022],
+            "flow": ["commitments"],
+            "contribution_usd": [5e6],
+        },
+        schema=frame.schema,
+    )
+    return pl.concat([frame, gift])
+
+
+def test_the_null_group_holds_release_money_no_group_holds(tmp_path: Path) -> None:
+    release = copy_release(
+        tmp_path / "r", edits={"core_contributions": _germany_gives_to_no_group}
+    )
+    reconciliation = cf.load(path=release).reconcile(providers="DEU")
+
+    unmapped = _group(reconciliation, "DEU", 2022, None)
+    assert unmapped["btr_climate_specific_face"] == pytest.approx(5.5e6)
+    assert unmapped["core_contributions"] == pytest.approx(5e6)
+    assert unmapped["btr_core_over_core_contributions"] is None
+
+
+def _germany_past_the_crs(frame: pl.DataFrame) -> pl.DataFrame:
+    """Germany's 2022 as a year past the build's CRS."""
+    past = (pl.col("provider_code") == 5) & (pl.col("year") == 2022)
+    return frame.with_columns(amount_usd=pl.when(~past).then(pl.col("amount_usd")))
+
+
+def _germany_in_2023(frame: pl.DataFrame) -> pl.DataFrame:
+    """Germany's 2022 Table III.2 totals again as 2023, a year `btr_crs_unlinked`
+    holds no row of."""
+    later = frame.filter(party="DEU", year=2022).with_columns(
+        year=pl.lit(2023, pl.Int16)
+    )
+    return pl.concat([frame, later])
+
+
+def test_multilateral_release_side_is_missing_past_the_crs(tmp_path: Path) -> None:
+    release = copy_release(
+        tmp_path / "r",
+        edits={
+            "btr_crs_unlinked": _germany_past_the_crs,
+            "btr_multilateral_totals": _germany_in_2023,
+        },
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", CoverageWarning)
+        reconciliation = cf.load(path=release).reconcile(
+            providers="DEU", years=[2021, 2022, 2023]
+        )
+
+    release_side = ["core_contributions", "attributed_core", "crs_earmarked"]
+    table = reconciliation.multilateral
+    for year in (2022, 2023):
+        rows = table.filter(year=year)
+        assert rows.height == 3
+        assert rows.select(release_side).null_count().row(0) == (3, 3, 3)
+        assert rows["btr_climate_specific_face"].sum() == pytest.approx(40.7e6)
+    covered = _group(reconciliation, "DEU", 2021, "World Bank")
+    assert covered["core_contributions"] == pytest.approx(72e6)
+
+
+def test_only_multilateral_reads_the_table_iii_2_tables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    read: list[str] = []
+    scan = Release.table
+
+    def recorded(release: Release, name: str) -> pl.LazyFrame:
+        read.append(name)
+        return scan(release, name)
+
+    monkeypatch.setattr(Release, "table", recorded)
+    reconciliation = SNAP.reconcile()
+    reconciliation.table  # noqa: B018 - reads the bilateral comparison
+
+    iii_2 = {"btr_multilateral_totals", "btr_institution_groups", "btr_crs_earmarked"}
+    assert not iii_2 & set(read)
+    reconciliation.multilateral  # noqa: B018 - reads the Table III.2 comparison
+    assert iii_2 <= set(read)
+
+
+def test_france_reports_table_iii_2_alone_and_reads_against_the_release() -> None:
+    # France disburses 25m a year to the AfDB and reports 22m core, 5.5m
+    # climate-specific in 2022, with no Table III.1 row that year.
+    reconciliation = SNAP.reconcile(providers="FRA")
+
+    assert reconciliation.table.is_empty()
+    bank = _group(reconciliation, "FRA", 2022, "African Development Bank")
+    assert bank["btr_core_face"] == pytest.approx(22e6)
+    assert bank["core_contributions"] == pytest.approx(25e6)
+    assert bank["attributed_core"] > 0
+    assert bank["crs_earmarked"] == 0

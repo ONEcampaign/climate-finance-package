@@ -1,8 +1,10 @@
-"""BTR1 Table III.1 workbooks, read by header role.
+"""BTR1 Table III.1 and Table III.2 workbooks, read by header role.
 
 Parties add, drop and reorder columns, so each column's role comes from its header
 label: a text column's from the header row's label prefix, an amount column's from
-its currency label and the "Face value" or "Grant equivalent" label spanning it.
+its currency label and the "Face value" or "Grant equivalent" label spanning it. In
+Table III.2 (multilateral channels) the "Core/general" or "Climate-specific" label
+spanning an amount column names its group too, and the "Outflows" columns go unread.
 """
 
 import json
@@ -10,7 +12,7 @@ import re
 import warnings
 import zipfile
 from collections import Counter
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -127,14 +129,21 @@ _PARTY_PROVIDERS = {"EUU": 918}
 
 # Parties whose Table III.1 amounts are in millions. Their workbooks do not say so.
 _MILLIONS = frozenset({"GBR", "USA"})
-# A sheet whose median amount is below this reads as millions. It checks `_MILLIONS`
-# against the data: those two parties' sheets have medians of 0.5 to 1.4, every
-# other party's are above 1,000.
+# A Table III.1 sheet whose median amount is below this reads as millions. It checks
+# `_MILLIONS` against the data: those two parties' sheets have medians of 0.5 to 1.4,
+# every other party's are above 1,000.
 _MILLIONS_BELOW = 10.0
+# The same for Table III.2, whose contributions run larger. The two parties' sheets
+# have medians of 1.8 to 68, every other party's are above 2,000.
+_MULTILATERAL_MILLIONS_BELOW = 1_000.0
 
 # Indonesia's sheet names no year. Each row's year sits in its "Additional
 # information" cell.
 _YEAR_ROLES = {"IDN": "additional_information"}
+
+# Ireland's 2022 Table III.2 writes each text cell from "Recipient" on one column
+# right of its label. Its institution and amount cells sit under theirs.
+_MULTILATERAL_TEXT_SHIFTS = {("IRL", 2022): 1}
 
 # Rows that each cover a whole channel or programme of a party.
 _AGGREGATE_TITLES = frozenset(
@@ -147,6 +156,14 @@ _AGGREGATE_TITLES = frozenset(
 
 # "Table1_2021", "Table 1_2022", "Table1-2021" and Canada's "Table III.1".
 _SHEET = re.compile(r"Table\s*(?:III\.)?\s*1(?:\s*[_\- ]\s*(\d{4}))?", re.IGNORECASE)
+# The same names of Table III.2.
+_MULTILATERAL_SHEET = re.compile(
+    r"Table\s*(?:III\.)?\s*2(?:\s*[_\- ]\s*(\d{4}))?", re.IGNORECASE
+)
+# The sheet names of each table a workbook holds, Table III.1 ("bilateral") and
+# Table III.2 ("multilateral").
+_TABLE_SHEETS = {"bilateral": _SHEET, "multilateral": _MULTILATERAL_SHEET}
+_TABLES = tuple(_TABLE_SHEETS)
 _NOTATION = frozenset({"NA", "N/A", "UA", "NR", "NE", "NO", "IE", "C", "-"})
 _THOUSANDS = re.compile(r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?")
 _TOTAL = re.compile(r"(sub-?\s?)?total\b", re.IGNORECASE)
@@ -166,6 +183,19 @@ _TEXT_ROLES = (
     ("year", "year"),
 )
 _AMOUNTS = ("face_domestic", "face_usd", "grant_equiv_domestic", "grant_equiv_usd")
+_KINDS = ("face", "grant_equiv")
+# Table III.2 names the multilateral institution and has no year column.
+_MULTILATERAL_TEXT_ROLES = (
+    ("institution", "institution"),
+    *((role, prefix) for role, prefix in _TEXT_ROLES if role != "year"),
+)
+# Table III.2's two inflow groups, a contribution to the institution's core budget
+# and one earmarked for climate. They do not add.
+_GROUPS = ("core", "climate_specific")
+_MULTILATERAL_AMOUNTS = tuple(
+    f"{group}_{role}" for group in _GROUPS for role in _AMOUNTS
+)
+_MULTILATERAL_KINDS = tuple(f"{group}_{kind}" for group in _GROUPS for kind in _KINDS)
 # Belgium reports its disbursements as "provided". Chile's "terminado" (finished)
 # and "en curso" (ongoing) leave open whether the amount is committed or disbursed.
 _STATUSES = {
@@ -198,12 +228,52 @@ DROP_REASONS = ("blank", "notation", "total")
 _DRAFT = re.compile(r"(?<![a-z])(started|awaiting_submission)(?![a-z])", re.IGNORECASE)
 
 
+class _Layout(NamedTuple):
+    """Where one table's header block sits and which roles its columns take."""
+
+    # Label prefixes, any of which marks the header row.
+    anchors: tuple[str, ...]
+    # Rows from the header row, itself included, that may hold the currency labels.
+    depth: int
+    text_roles: tuple[tuple[str, str], ...]
+    required: tuple[str, ...]
+    # Whether a "Core/general" or "Climate-specific" label spans each amount column.
+    grouped: bool
+    # The amount pairs `_fill_usd` fills, each a "{kind}_domestic" and "{kind}_usd".
+    kinds: tuple[str, ...]
+    millions_below: float
+
+
+_BILATERAL = _Layout(
+    anchors=("recipient",),
+    depth=4,
+    text_roles=_TEXT_ROLES,
+    required=("recipient", "title", *_AMOUNTS),
+    grouped=False,
+    kinds=_KINDS,
+    millions_below=_MILLIONS_BELOW,
+)
+# Canada's Table III.2 puts the "Amount" label four rows above "Institution".
+_MULTILATERAL = _Layout(
+    anchors=("institution", "amount"),
+    depth=5,
+    text_roles=_MULTILATERAL_TEXT_ROLES,
+    required=("institution", *_MULTILATERAL_AMOUNTS),
+    grouped=True,
+    kinds=_MULTILATERAL_KINDS,
+    millions_below=_MULTILATERAL_MILLIONS_BELOW,
+)
+
+
 class BtrArchive(NamedTuple):
-    """The archive's rows in the `btr` schema, and one `btr_workbooks` row per
-    workbook saying what was read from it."""
+    """The archive's Table III.1 rows in the `btr` schema, and one `btr_workbooks`
+    row per workbook saying what was read from it; its Table III.2 rows, and the
+    same per-workbook record of them."""
 
     rows: pl.DataFrame
     workbooks: pl.DataFrame
+    multilateral: pl.DataFrame
+    multilateral_workbooks: pl.DataFrame
 
 
 def read_btr_workbook(path: Path, *, party: str) -> pl.DataFrame:
@@ -229,7 +299,9 @@ def read_btr_workbook(path: Path, *, party: str) -> pl.DataFrame:
             rate the sheet's own rows contradict, or a status is outside the
             vocabulary.
     """
-    return _frame(_read_workbook(path, party=party)[0])
+    return _frame(
+        _read_workbook(path, party=party, tables=("bilateral",))["bilateral"][0]
+    )
 
 
 def ingest_unfccc(archive_dir: Path, *, out_path: Path) -> Path:
@@ -240,11 +312,19 @@ def ingest_unfccc(archive_dir: Path, *, out_path: Path) -> Path:
     `manual` since a person downloads the files in a browser. A later build compares
     the hashes to detect a changed workbook.
 
+    It reads Table III.1 alone, so a Table III.2 sheet the build would refuse does
+    not stop it.
+
     Raises:
         SourceUnavailableError: as `read_btr_archive`.
-        ValueError: as `read_btr_archive`.
+        ValueError: as `read_btr_archive` for Table III.1.
     """
-    btr = read_btr_archive(archive_dir).rows
+    btr = _bilateral(
+        [
+            _read_workbook(path, party=party, tables=("bilateral",))
+            for path, party in archive_files(archive_dir)
+        ]
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     btr.sort(schema.BTR.sort_key).write_parquet(out_path)
     manifest = _raw_manifest([path for path, _ in archive_files(archive_dir)])
@@ -256,41 +336,74 @@ def ingest_unfccc(archive_dir: Path, *, out_path: Path) -> Path:
 
 
 def read_btr_archive(archive_dir: Path) -> BtrArchive:
-    """Every workbook the archive manifest lists, as one `btr` table, with what was
-    read from each workbook.
+    """Every workbook the archive manifest lists, as one `btr` table and one table
+    of Table III.2 rows, with what was read from each workbook for each.
 
-    Each party's year must come from one sheet. A draft and a final copy of a
-    workbook both giving rows stop the read. A workbook row of `btr_workbooks` names
-    its party, the Table III.1 sheets read (as `btr.source_file` names them, none for
-    a workbook without one), the rows kept, the sheet rows dropped for each of
-    `DROP_REASONS`, and `draft_marker`, the tool state in the file name that marks
-    an unsubmitted workbook.
+    Each party's year must come from one sheet of each table. A draft and a final
+    copy of a workbook both giving rows stop the read. A workbook row of
+    `btr_workbooks` names its party, the Table III.1 sheets read (as
+    `btr.source_file` names them, none for a workbook without one), the rows kept,
+    the sheet rows dropped for each of `DROP_REASONS`, and `draft_marker`, the tool
+    state in the file name that marks an unsubmitted workbook.
+    `multilateral_workbooks` records the Table III.2 sheets the same way.
+
+    A Table III.2 row gives one institution's inflows: `institution` (a blank cell
+    takes the one above), the core/general and the climate-specific amounts, each
+    as face value and grant equivalent in the domestic currency and USD
+    (`core_amount_domestic`, `core_grant_equiv_domestic`, `core_face_usd`,
+    `core_grant_equiv_usd` and the same under `climate_specific_`), then
+    `currency`, `recipient`, `title`, `status`, `channel`, `funding_source`,
+    `instrument`, `support_type`, `sector`, `additional_information` and
+    `source_file` as in `btr`. Its `row_id` is "BTRM-{party}-{year}-{sheet row}".
+    Rows are kept, dropped, scaled and filled as `read_btr_workbook` does Table
+    III.1's; the outflow columns are not read.
 
     Raises:
         SourceUnavailableError: as `archive_files`.
-        ValueError: for a party's year given by more than one sheet, or a sheet
-            `read_btr_workbook` refuses.
+        ValueError: for a party's year given by more than one sheet of a table, or
+            a sheet `read_btr_workbook` refuses, of either table.
     """
     read = [
         _read_workbook(path, party=party) for path, party in archive_files(archive_dir)
     ]
-    btr = pl.concat(_frame(rows) for rows, _ in read)
-    sheets = btr.group_by("party", "year").agg(pl.col("source_file").unique().sort())
+    btr = _bilateral(read)
+    workbooks = _workbook_frame([tables["bilateral"][1] for tables in read])
+    multilateral = pl.concat(
+        _multilateral_frame(tables["multilateral"][0]) for tables in read
+    )
+    _check_one_sheet_per_year(multilateral, table="Table III.2")
+    multilateral_workbooks = _workbook_frame(
+        [tables["multilateral"][1] for tables in read]
+    )
+    return BtrArchive(
+        rows=btr.sort(schema.BTR.sort_key),
+        workbooks=workbooks.sort(schema.BTR_WORKBOOKS.sort_key),
+        multilateral=multilateral.sort("row_id"),
+        multilateral_workbooks=multilateral_workbooks.sort(
+            schema.BTR_WORKBOOKS.sort_key
+        ),
+    )
+
+
+def _check_one_sheet_per_year(rows: pl.DataFrame, *, table: str) -> None:
+    sheets = rows.group_by("party", "year").agg(pl.col("source_file").unique().sort())
     repeated = sheets.filter(pl.col("source_file").list.len() > 1)
     if not repeated.is_empty():
-        raise ValueError(f"Several sheets give one party's year: {repeated.rows()}")
-    schema.validate(schema.BTR, btr)
+        raise ValueError(
+            f"Several sheets give one party's year of {table}: {repeated.rows()}"
+        )
+
+
+def _workbook_frame(entries: list[dict[str, object]]) -> pl.DataFrame:
+    """`_read_workbook` records of one table as `btr_workbooks` rows."""
     workbooks = pl.DataFrame(
-        [entry for _, entry in read],
+        entries,
         schema={
             name: column.dtype for name, column in schema.BTR_WORKBOOKS.columns.items()
         },
     )
     schema.validate(schema.BTR_WORKBOOKS, workbooks)
-    return BtrArchive(
-        rows=btr.sort(schema.BTR.sort_key),
-        workbooks=workbooks.sort(schema.BTR_WORKBOOKS.sort_key),
-    )
+    return workbooks
 
 
 def archive_files(archive_dir: Path) -> list[tuple[Path, str]]:
@@ -526,38 +639,66 @@ def _workbooks(path: Path) -> Iterator[tuple[str, IO[bytes]]]:
                 yield f"{path.name}/{member}", BytesIO(archive.read(member))
 
 
+type _Sheet = Sequence[Sequence[object]]
+type _SheetRows = tuple[list[dict[str, object]], Counter[str]]
+type _TableRead = tuple[list[dict[str, object]], dict[str, object]]
+
+
+def _bilateral(read: Sequence[dict[str, _TableRead]]) -> pl.DataFrame:
+    """The Table III.1 rows of the workbooks `read` gives, checked to take each
+    party's year from one sheet, in the `btr` schema."""
+    btr = pl.concat(_frame(tables["bilateral"][0]) for tables in read)
+    _check_one_sheet_per_year(btr, table="Table III.1")
+    schema.validate(schema.BTR, btr)
+    return btr
+
+
 def _read_workbook(
-    path: Path, *, party: str
-) -> tuple[list[dict[str, object]], dict[str, object]]:
-    """A workbook's rows, and its `btr_workbooks` row."""
-    rows: list[dict[str, object]] = []
-    sheets: list[str] = []
-    dropped: Counter[str] = Counter()
+    path: Path, *, party: str, tables: Sequence[str] = _TABLES
+) -> dict[str, _TableRead]:
+    """A workbook's rows of each of `tables`, "bilateral" (Table III.1) and
+    "multilateral" (Table III.2), each with its `btr_workbooks` row. The sheets of
+    other tables are not read."""
+    readers = {table: _READERS[table] for table in tables}
+    rows: dict[str, list[dict[str, object]]] = {table: [] for table in readers}
+    sheets: dict[str, list[str]] = {table: [] for table in readers}
+    dropped: dict[str, Counter[str]] = {table: Counter() for table in readers}
     for member, handle in _workbooks(path):
-        for title, year, sheet in _table_sheets(handle):
+        for table, title, year, sheet in _table_sheets(handle, tables=tables):
             source_file = f"{member}#{title}"
-            kept, lost = _sheet_rows(
+            kept, lost = readers[table](
                 sheet, party=party, year=year, source_file=source_file
             )
-            rows.extend(kept)
-            sheets.append(source_file)
-            dropped.update(lost)
+            rows[table].extend(kept)
+            sheets[table].append(source_file)
+            dropped[table].update(lost)
     draft = _DRAFT.search(path.name)
-    return rows, {
-        "file": path.name,
-        "party": party,
-        "sheets": sheets,
-        "rows_kept": len(rows),
-        **{f"dropped_{reason}": dropped[reason] for reason in DROP_REASONS},
-        "draft_marker": draft[1].lower() if draft else None,
+    return {
+        table: (
+            rows[table],
+            {
+                "file": path.name,
+                "party": party,
+                "sheets": sheets[table],
+                "rows_kept": len(rows[table]),
+                **{
+                    f"dropped_{reason}": dropped[table][reason]
+                    for reason in DROP_REASONS
+                },
+                "draft_marker": draft[1].lower() if draft else None,
+            },
+        )
+        for table in readers
     }
 
 
 def _table_sheets(
-    handle: IO[bytes],
-) -> list[tuple[str, int | None, list[tuple[object, ...]]]]:
-    """Each Table III.1 sheet in a workbook: its title, the year its title names and
-    its cell values."""
+    handle: IO[bytes], *, tables: Sequence[str]
+) -> list[tuple[str, str, int | None, list[tuple[object, ...]]]]:
+    """Each sheet of `tables`, Table III.1 ("bilateral") and Table III.2
+    ("multilateral"), in a workbook: its table, its title, the year its title names
+    and its cell values."""
+    patterns = {table: _TABLE_SHEETS[table] for table in tables}
     with warnings.catch_warnings():
         # openpyxl drops the cells' input rules, which leaves their values as they are.
         warnings.filterwarnings("ignore", "Data Validation extension", UserWarning)
@@ -565,29 +706,31 @@ def _table_sheets(
         try:
             return [
                 (
+                    table,
                     sheet.title,
                     int(match[1]) if match[1] else None,
                     list(sheet.iter_rows(values_only=True)),
                 )
                 for sheet in workbook.worksheets
-                if (match := _SHEET.fullmatch(sheet.title.strip()))
+                for table, pattern in patterns.items()
+                if (match := pattern.fullmatch(sheet.title.strip()))
             ]
         finally:
             workbook.close()
 
 
 def _sheet_rows(
-    sheet: Sequence[Sequence[object]],
-    *,
-    party: str,
-    year: int | None,
-    source_file: str,
-) -> tuple[list[dict[str, object]], Counter[str]]:
+    sheet: _Sheet, *, party: str, year: int | None, source_file: str
+) -> _SheetRows:
     """The activity rows of one Table III.1 sheet, amounts in USD units, and the
     count of rows dropped for each of `DROP_REASONS`. A row with neither a title
     nor an amount, such as a footnote, is not counted."""
-    header, first_data = _header_block(sheet, source_file=source_file)
-    columns = _column_roles(sheet[header:first_data], source_file=source_file)
+    header, first_data = _header_block(
+        sheet, layout=_BILATERAL, source_file=source_file
+    )
+    columns = _column_roles(
+        sheet[header:first_data], layout=_BILATERAL, source_file=source_file
+    )
     rows: list[dict[str, object]] = []
     amount_rows: list[_Amounts] = []
     dropped: Counter[str] = Counter()
@@ -621,35 +764,127 @@ def _sheet_rows(
         amount_rows.append(amounts)
     if amount_rows:
         _fill_usd(
-            amount_rows, rate=_exchange_rate(sheet), party=party, sheet=source_file
+            amount_rows,
+            rate=_exchange_rate(sheet),
+            party=party,
+            sheet=source_file,
+            layout=_BILATERAL,
         )
     kept = [{**row, **amounts} for row, amounts in zip(rows, amount_rows, strict=True)]
     return kept, dropped
 
 
+def _multilateral_rows(
+    sheet: _Sheet, *, party: str, year: int | None, source_file: str
+) -> _SheetRows:
+    """The institution rows of one Table III.2 sheet, amounts in USD units, and the
+    count of rows dropped for each of `DROP_REASONS`, as `_sheet_rows` reads Table
+    III.1. A blank institution cell takes the institution above it, so a row under
+    a dropped one still names it. A total row's label is not passed on.
+
+    A row with no text in any text column is no institution's. With a number in an
+    amount cell it is an unlabelled sum (the United States' 2021 sheet) and counts
+    as a total. Without one it is a footnote (Indonesia writes "NA = Not
+    Applicable" in an amount column) or a row of notation keys."""
+    header, first_data = _header_block(
+        sheet, layout=_MULTILATERAL, source_file=source_file
+    )
+    columns = _column_roles(
+        sheet[header:first_data], layout=_MULTILATERAL, source_file=source_file
+    )
+    if shift := _MULTILATERAL_TEXT_SHIFTS.get((party, year)):
+        columns |= {
+            role: column + shift
+            for role, column in columns.items()
+            if role != "institution" and role not in _MULTILATERAL_AMOUNTS
+        }
+    rows: list[dict[str, object]] = []
+    amount_rows: list[_Amounts] = []
+    dropped: Counter[str] = Counter()
+    institution = None
+    for number, cells in enumerate(sheet[first_data:], start=first_data + 1):
+        record = {role: _cell(cells, column) for role, column in columns.items()}
+        cells_read = {role: record.pop(role) for role in _MULTILATERAL_AMOUNTS}
+        labels = {role: _text(value) for role, value in record.items()}
+        if not any(labels.values()):
+            if any(_is_amount(value) for value in cells_read.values()):
+                dropped["total"] += 1
+            elif any(_is_notation(value) for value in cells_read.values()):
+                dropped["notation"] += 1
+            continue
+        amounts = {role: _number(value) for role, value in cells_read.items()}
+        own = labels.pop("institution")
+        is_total = any(
+            _TOTAL.match(label or "")
+            for label in (own, labels.get("recipient"), labels.get("title"))
+        )
+        if own and not is_total:
+            institution = own
+        if all(amount is None for amount in amounts.values()):
+            if any(_is_notation(value) for value in cells_read.values()):
+                dropped["notation"] += 1
+            elif labels.get("title"):
+                dropped["blank"] += 1
+            continue
+        if is_total:
+            dropped["total"] += 1
+            continue
+        if year is None:
+            raise ValueError(f"{source_file} row {number}: no year in the sheet name")
+        rows.append(
+            {
+                "party": party,
+                "year": year,
+                "row": number,
+                "source_file": source_file,
+                "institution": institution,
+                **labels,
+            }
+        )
+        amount_rows.append(amounts)
+    if amount_rows:
+        _fill_usd(
+            amount_rows,
+            rate=_exchange_rate(sheet),
+            party=party,
+            sheet=source_file,
+            layout=_MULTILATERAL,
+        )
+    kept = [{**row, **amounts} for row, amounts in zip(rows, amount_rows, strict=True)]
+    return kept, dropped
+
+
+# The row reader of each table.
+_READERS: dict[str, Callable[..., _SheetRows]] = {
+    "bilateral": _sheet_rows,
+    "multilateral": _multilateral_rows,
+}
+
+
 def _header_block(
-    sheet: Sequence[Sequence[object]], *, source_file: str
+    sheet: _Sheet, *, layout: _Layout, source_file: str
 ) -> tuple[int, int]:
     """The header row's index and the first data row's index.
 
-    The header row holds the "Recipient" label. The block ends at the row holding the
-    currency labels, or at the "Face value" row under it where a party puts it there
-    (the USA).
+    The header row is the first holding a label that starts with one of the
+    layout's anchors ("Recipient" in Table III.1). The block ends at the row holding
+    the currency labels, or at the "Face value" row under it where a party puts it
+    there (the USA).
     """
     header = next(
         (
             i
             for i, row in enumerate(sheet)
-            if any(_label(cell).startswith("recipient") for cell in row)
+            if any(_label(cell).startswith(layout.anchors) for cell in row)
         ),
         None,
     )
     if header is None:
-        raise ValueError(f"{source_file}: no 'Recipient' header row")
+        raise ValueError(f"{source_file}: no {layout.anchors[0]!r} header row")
     end = next(
         (
             i
-            for i in range(header, min(header + 4, len(sheet)))
+            for i in range(header, min(header + layout.depth, len(sheet)))
             if any(_CURRENCY_LABEL.match(_label(cell)) for cell in sheet[i])
         ),
         None,
@@ -675,13 +910,41 @@ def _value_kind(label: str) -> str | None:
     return None
 
 
+def _amount_group(label: str) -> str | None:
+    """The Table III.2 amount group a header label names, or "outflows"."""
+    if label.startswith("core"):
+        return "core"
+    if label.startswith("climate-specific"):
+        return "climate_specific"
+    if label.startswith("outflows"):
+        return "outflows"
+    return None
+
+
+def _spans(
+    labels: list[list[str]], kind: Callable[[str], str | None]
+) -> list[set[str]]:
+    """Per column, what the labels spanning it name: each label in a row spans right
+    to the next label in that row."""
+    spans: list[set[str]] = [set() for _ in labels[0]]
+    for row in labels:
+        current = None
+        for j, label in enumerate(row):
+            if label:
+                current = kind(label)
+            if current is not None:
+                spans[j].add(current)
+    return spans
+
+
 def _column_roles(
-    block: Sequence[Sequence[object]], *, source_file: str
+    block: _Sheet, *, layout: _Layout, source_file: str
 ) -> dict[str, int]:
     """Each role's column. A text column takes the role of its topmost label that
     names one (Canada repeats the labels in a lower row). A "Face value" or "Grant
-    equivalent" label spans right to the next label in its row. A currency column
-    takes the one above or below it."""
+    equivalent" label spans right to the next label in its row, and so does a group
+    label of Table III.2. A currency column takes the one above or below it. A
+    grouped layout leaves the "Outflows" columns out."""
     width = max(len(row) for row in block)
     labels = [
         [_label(row[j]) if j < len(row) else "" for j in range(width)] for row in block
@@ -692,7 +955,7 @@ def _column_roles(
             (
                 role
                 for row in labels
-                for role, prefix in _TEXT_ROLES
+                for role, prefix in layout.text_roles
                 if row[j].startswith(prefix)
             ),
             None,
@@ -706,6 +969,7 @@ def _column_roles(
             if label:
                 current = _value_kind(label)
             kinds[j] = kinds[j] or current
+    groups = _spans(labels, _amount_group) if layout.grouped else None
     for j in range(width):
         currency = next(
             (row[j] for row in labels if _CURRENCY_LABEL.match(row[j])), None
@@ -715,24 +979,38 @@ def _column_roles(
         if kinds[j] is None:
             raise ValueError(f"{source_file}: column {j + 1} has no face value label")
         role = f"{kinds[j]}_{'usd' if currency.startswith('usd') else 'domestic'}"
+        if groups is not None:
+            if "outflows" in groups[j]:
+                continue
+            named = sorted(groups[j] & set(_GROUPS))
+            if len(named) != 1:
+                raise ValueError(
+                    f"{source_file}: column {j + 1} has no single amount group"
+                )
+            role = f"{named[0]}_{role}"
         if role in roles:
             raise ValueError(f"{source_file}: two {role} columns")
         roles[role] = j
-    missing = [role for role in ("recipient", "title", *_AMOUNTS) if role not in roles]
+    missing = [role for role in layout.required if role not in roles]
     if missing:
         raise ValueError(f"{source_file}: no columns for {missing}")
     return roles
 
 
 def _fill_usd(
-    amount_rows: list[_Amounts], *, rate: float | None, party: str, sheet: str
+    amount_rows: list[_Amounts],
+    *,
+    rate: float | None,
+    party: str,
+    sheet: str,
+    layout: _Layout,
 ) -> None:
     """Scale a sheet's amounts to units and fill each empty USD amount at the sheet's
     rate, in place."""
     positive = [
         v for row in amount_rows for v in row.values() if v is not None and v > 0
     ]
-    in_millions = bool(positive) and median(positive) < _MILLIONS_BELOW
+    in_millions = bool(positive) and median(positive) < layout.millions_below
     if in_millions != (party in _MILLIONS):
         unit = "millions" if in_millions else "units"
         raise ValueError(f"{sheet}: amounts read as {unit}, unlike the party's unit")
@@ -741,7 +1019,7 @@ def _fill_usd(
         for role, value in row.items():
             if value is not None:
                 row[role] = value * scale
-    for kind in ("face", "grant_equiv"):
+    for kind in layout.kinds:
         domestic, usd = f"{kind}_domestic", f"{kind}_usd"
         to_fill = sum(
             row[usd] is None and row[domestic] is not None for row in amount_rows
@@ -832,13 +1110,7 @@ def _frame(rows: list[dict[str, object]]) -> pl.DataFrame:
             **dict.fromkeys(_AMOUNTS, pl.Float64),
         },
     )
-    unknown = [
-        status
-        for status in frame["status"].drop_nulls().str.to_lowercase().unique().sort()
-        if status not in _STATUSES and status.upper() not in _NOTATION
-    ]
-    if unknown:
-        raise ValueError(f"Statuses outside the vocabulary: {unknown}")
+    _check_statuses(frame)
     codes = {
         name: code
         for name in frame["recipient"].drop_nulls().unique()
@@ -853,11 +1125,7 @@ def _frame(rows: list[dict[str, object]]) -> pl.DataFrame:
             pl.col("row").cast(pl.String).str.pad_start(5, "0"),
         ),
         party="party",
-        provider_code=pl.col("party").replace_strict(
-            {party: party_provider(party) for party in frame["party"].unique()},
-            default=None,
-            return_dtype=pl.Int32,
-        ),
+        provider_code=_provider_code(frame),
         year="year",
         recipient="recipient",
         recipient_code=pl.col("recipient").replace_strict(
@@ -866,15 +1134,13 @@ def _frame(rows: list[dict[str, object]]) -> pl.DataFrame:
         title="title",
         amount_domestic="face_domestic",
         grant_equiv_domestic="grant_equiv_domestic",
-        currency=pl.col("party").replace_strict(_CURRENCIES, return_dtype=pl.String),
+        currency=_CURRENCY,
         face_usd="face_usd",
         grant_equiv_usd="grant_equiv_usd",
         dac_rate=pl.lit(None, dtype=pl.Float64),
         face_usd_at_dac=pl.lit(None, dtype=pl.Float64),
         grant_equiv_usd_at_dac=pl.lit(None, dtype=pl.Float64),
-        status=pl.col("status")
-        .str.to_lowercase()
-        .replace_strict(_STATUSES, default=None, return_dtype=pl.String),
+        status=_STATUS,
         channel="channel",
         funding_source="funding_source",
         instrument="instrument",
@@ -886,6 +1152,78 @@ def _frame(rows: list[dict[str, object]]) -> pl.DataFrame:
         .fill_null(value=False),
         source_file="source_file",
     )
+
+
+def _multilateral_frame(rows: list[dict[str, object]]) -> pl.DataFrame:
+    """Rows of `_multilateral_rows` as the Table III.2 table `read_btr_archive`
+    describes."""
+    frame = pl.DataFrame(
+        rows,
+        schema={
+            "party": pl.String,
+            "year": pl.Int16,
+            "row": pl.Int32,
+            "source_file": pl.String,
+            **{role: pl.String for role, _ in _MULTILATERAL_TEXT_ROLES},
+            **dict.fromkeys(_MULTILATERAL_AMOUNTS, pl.Float64),
+        },
+    )
+    _check_statuses(frame)
+    # `btr` names the face value in the domestic currency `amount_domestic`.
+    amounts = {
+        role.replace("face_domestic", "amount_domestic"): pl.col(role)
+        for role in _MULTILATERAL_AMOUNTS
+    }
+    return frame.select(
+        row_id=pl.format(
+            "BTRM-{}-{}-{}",
+            "party",
+            "year",
+            pl.col("row").cast(pl.String).str.pad_start(5, "0"),
+        ),
+        party="party",
+        provider_code=_provider_code(frame),
+        year="year",
+        institution="institution",
+        recipient="recipient",
+        title="title",
+        **amounts,
+        currency=_CURRENCY,
+        status=_STATUS,
+        channel="channel",
+        funding_source="funding_source",
+        instrument="instrument",
+        support_type="support_type",
+        sector="sector",
+        additional_information="additional_information",
+        source_file="source_file",
+    )
+
+
+_CURRENCY = pl.col("party").replace_strict(_CURRENCIES, return_dtype=pl.String)
+_STATUS = (
+    pl.col("status")
+    .str.to_lowercase()
+    .replace_strict(_STATUSES, default=None, return_dtype=pl.String)
+)
+
+
+def _provider_code(frame: pl.DataFrame) -> pl.Expr:
+    return pl.col("party").replace_strict(
+        {party: party_provider(party) for party in frame["party"].unique()},
+        default=None,
+        return_dtype=pl.Int32,
+    )
+
+
+def _check_statuses(frame: pl.DataFrame) -> None:
+    unknown = [
+        status
+        for status in frame["status"].drop_nulls().str.to_lowercase().unique().sort()
+        if status not in _STATUSES and status.upper() not in _NOTATION
+    ]
+    if unknown:
+        raise ValueError(f"Statuses outside the vocabulary: {unknown}")
 
 
 def party_provider(party: str) -> int | None:
@@ -920,6 +1258,10 @@ def _text(value: object) -> str | None:
     lines = [line.strip() for line in str(value).splitlines()]
     kept = [line for line in lines if line and line.upper() not in _NOTATION]
     return re.sub(r"\s+", " ", " ".join(kept)).strip() or None
+
+
+def _is_amount(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
 
 
 def _is_notation(value: object) -> bool:
