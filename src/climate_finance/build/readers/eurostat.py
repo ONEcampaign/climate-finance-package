@@ -47,6 +47,10 @@ LINES: dict[str, tuple[int | None, int | None]] = {
     "COMM": (EU_INSTITUTIONS, None),
     "EIB": (EU_INSTITUTIONS, EIB_AGENCY),
 }
+# The lines `reconcile_eurostat` compares: every line with a provider, so all but
+# `EU27_2020`. The eurostat_reconciliation gate expects each of them in every year
+# it compares.
+COMPARED_LINES = tuple(geo for geo, (provider, _) in LINES.items() if provider)
 
 
 def read_eurostat(path: Path) -> pl.DataFrame:

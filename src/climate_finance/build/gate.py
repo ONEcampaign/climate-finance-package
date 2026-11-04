@@ -83,7 +83,9 @@ from climate_finance.build import evaluate, listings
 from climate_finance.build.config import DriftCause, EurostatGap
 from climate_finance.build.errors import GateFailedError
 from climate_finance.build.normalise.crs import allocated_population
+from climate_finance.build.readers.eurostat import COMPARED_LINES
 from climate_finance.build.sums import ordered_sum
+from climate_finance.query import EUROSTAT_YEARS
 from climate_finance.schema import (
     RELEASE_TABLES,
     ReleaseManifest,
@@ -1184,7 +1186,10 @@ def eurostat_gate(
     whose gap moved from the recorded `gap_eur` by more than the larger of
     `max_move_share` of Eurostat's figure and `min_gap_eur`. An entry whose
     line-year is within tolerance, or absent, fails as stale, so the entries stay
-    true. Without `reconciliation`, or with an empty one, the gate fails.
+    true. A line-year of `COMPARED_LINES` in `EUROSTAT_YEARS` that
+    `reconciliation` lacks fails as missing, so a partial Eurostat response or a
+    dropped observation cannot pass unseen. Without `reconciliation`, or with an
+    empty one, the gate fails.
     """
     if reconciliation is None:
         return _row(
@@ -1217,6 +1222,17 @@ def eurostat_gate(
         (gap - pl.col("recorded_eur")).abs()
         > pl.max_horizontal(config.max_move_share * eurostat, config.min_gap_eur)
     )
+    expected = pl.DataFrame(
+        [(geo, year) for geo in COMPARED_LINES for year in EUROSTAT_YEARS],
+        schema={"geo": pl.String(), "year": pl.Int16()},
+        orient="row",
+    )
+    missing = [
+        f"{geo}/{year}"
+        for geo, year in expected.join(reconciliation, on=key, how="anti")
+        .sort(key)
+        .iter_rows()
+    ]
     compared = (
         reconciliation.select(*key, "eurostat_eur", "gap_eur", "gap_share")
         .join(recorded, on=key, how="full", coalesce=True)
@@ -1243,6 +1259,7 @@ def eurostat_gate(
         ).fill_null("none")
 
     groups = {
+        f"line-years missing from {_EUROSTAT_TABLE}": missing,
         "line-years over tolerance without a recorded gap": line_years(
             "unrecorded", pl.format("gap EUR {}", eur_m("gap_eur"))
         ),

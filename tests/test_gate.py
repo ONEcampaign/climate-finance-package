@@ -49,7 +49,9 @@ from climate_finance.build.link.packet import (
     NAMED_CODES,
     packet_pairs_path,
 )
+from climate_finance.build.readers.eurostat import COMPARED_LINES, LINES
 from climate_finance.build.stages import REGISTRY, raw_dir, table_path
+from climate_finance.query import EUROSTAT_YEARS
 from climate_finance.schema import (
     STAGE_TABLES,
     ReleaseManifest,
@@ -202,9 +204,10 @@ def release_dir(tmp_path: Path) -> Path:
     (raw_dir(release_dir) / CRS_FILE).parent.mkdir(parents=True)
     RAW_CRS.write_parquet(raw_dir(release_dir) / CRS_FILE)
     for stage, table in (("normalise", "crdf"), ("assemble", "commitments")):
-        _edit(table_path(release_dir, stage, table), _commit_in_2022)
-    _edit(table_path(release_dir, "assemble", EUROSTAT), _eib_2022)
-    _rehash(release_dir / "assemble", ("commitments", EUROSTAT))
+        _edit(table_path(release_dir, stage, table), _commit_in_eurostat_years)
+    _edit(table_path(release_dir, "assemble", "core_contributions"), _contribute_yearly)
+    _edit(table_path(release_dir, "assemble", EUROSTAT), _every_line)
+    _rehash(release_dir / "assemble", ("commitments", "core_contributions", EUROSTAT))
     return release_dir
 
 
@@ -226,20 +229,52 @@ def _rehash(assembled: Path, names: tuple[str, ...]) -> None:
     )
 
 
-def _commit_in_2022(frame: pl.DataFrame) -> pl.DataFrame:
-    """R1 again as R2 in 2022, unlinked, so the release covers a Eurostat year in
-    the published CRDF and the release alike."""
-    r2 = frame.filter(row_id="R1").with_columns(
-        row_id=pl.lit("R2"), year=pl.lit(2022, pl.Int16), vintage=pl.lit(2022, pl.Int16)
-    )
-    return pl.concat([frame, r2])
+def _commit_in_eurostat_years(frame: pl.DataFrame) -> pl.DataFrame:
+    """R1 again in each Eurostat year, unlinked, so the release covers every year
+    the eurostat_reconciliation gate compares, in the published CRDF and the
+    release alike."""
+    copies = [
+        frame.filter(row_id="R1").with_columns(
+            row_id=pl.lit(f"R{year}"),
+            year=pl.lit(year, pl.Int16),
+            vintage=pl.lit(year, pl.Int16),
+        )
+        for year in EUROSTAT_YEARS
+    ]
+    return pl.concat([frame, *copies])
 
 
-def _eib_2022(frame: pl.DataFrame) -> pl.DataFrame:
-    """One Eurostat line-year, the EIB's 2022, whose EUR 50m gap is under the floor,
-    since the release holds no EIB rows."""
-    return frame.filter(geo="EIB", year=2020).with_columns(
-        year=pl.lit(2022, pl.Int16), value_eur=pl.lit(50e6)
+def _contribute_yearly(frame: pl.DataFrame) -> pl.DataFrame:
+    """Norway's 2021 contribution again at 0 in each Eurostat year and flow, so
+    `core_contributions` holds every year the comparison reads."""
+    copies = [
+        frame.head(1).with_columns(
+            year=pl.lit(year, pl.Int16), flow=pl.lit(flow), contribution_usd=0.0
+        )
+        for year in EUROSTAT_YEARS
+        for flow in ("commitments", "disbursements")
+    ]
+    return pl.concat([frame, *copies])
+
+
+def _every_line(frame: pl.DataFrame) -> pl.DataFrame:
+    """Every compared Eurostat line in every compared year at EUR 50m, a gap under
+    the floor, since the release holds none of their rows."""
+    return pl.DataFrame(
+        [
+            {
+                "geo": geo,
+                "provider_code": LINES[geo][0],
+                "agency_code": LINES[geo][1],
+                "year": year,
+                "value_eur": 50e6,
+                "obs_flag": None,
+                "last_update": frame["last_update"][0],
+            }
+            for geo in COMPARED_LINES
+            for year in EUROSTAT_YEARS
+        ],
+        schema=frame.schema,
     )
 
 
@@ -1141,12 +1176,14 @@ def test_a_waiver_lets_an_empty_precision_gate_through(release_dir: Path) -> Non
     ]
 
 
-def _eurostat(*, year: int = 2022, eur: float) -> Callable:
-    """An edit setting the fixture's one Eurostat line, the EIB's, to `year` and
-    `eur`."""
-    return lambda frame: frame.with_columns(
-        year=pl.lit(year, pl.Int16), value_eur=pl.lit(eur)
-    )
+def _eib(*, eur: float) -> dict[str, Callable]:
+    """An edit setting the EIB's 2022 Eurostat figure to `eur`."""
+    eib = (pl.col("geo") == "EIB") & (pl.col("year") == 2022)
+    return {
+        EUROSTAT: lambda frame: frame.with_columns(
+            value_eur=pl.when(eib).then(eur).otherwise("value_eur")
+        )
+    }
 
 
 def _gap(geo: str, year: int, gap_eur: float) -> EurostatGap:
@@ -1154,33 +1191,51 @@ def _gap(geo: str, year: int, gap_eur: float) -> EurostatGap:
 
 
 @pytest.mark.parametrize(
-    ("line", "gaps", "passed", "named"),
+    ("edits", "gaps", "passed", "named"),
     [
+        ({}, (), True, "0 recorded"),
         # Above the EUR 100m floor and 10% of Eurostat's figure.
-        (_eurostat(eur=500e6), (), False, "without a recorded gap: EIB/2022"),
-        (_eurostat(eur=500e6), (_gap("EIB", 2022, 480e6),), True, "1 recorded"),
+        (_eib(eur=500e6), (), False, "without a recorded gap: EIB/2022"),
+        (_eib(eur=500e6), (_gap("EIB", 2022, 480e6),), True, "1 recorded"),
         # A EUR 200m move is above both EUR 100m and 5% of EUR 500m.
         (
-            _eurostat(eur=500e6),
+            _eib(eur=500e6),
             (_gap("EIB", 2022, 300e6),),
             False,
             "moved: EIB/2022 (gap EUR 500m, recorded 300m)",
         ),
         # A recorded gap now under the floor, and one of no line-year, are stale.
-        (_eurostat(eur=50e6), (_gap("EIB", 2022, 50e6),), False, "stale"),
-        (_eurostat(eur=50e6), (_gap("DE", 2022, 1e9),), False, "stale"),
-        # A Eurostat year the release holds no commitments for has no release figure.
-        (_eurostat(year=2023, eur=50e6), (), False, "EIB/2023 (gap EUR none)"),
+        ({}, (_gap("EIB", 2022, 50e6),), False, "stale"),
+        ({}, (_gap("XX", 2022, 1e9),), False, "stale"),
+        # A year the release holds no commitments for has no release figure.
+        (
+            {"commitments": lambda frame: frame.filter(pl.col("year") != 2023)},
+            (),
+            False,
+            "AT/2023 (gap EUR none)",
+        ),
+        # A line-year Eurostat's table lacks, as from a partial response.
+        (
+            {
+                EUROSTAT: lambda frame: frame.filter(
+                    ~((pl.col("geo") == "MT") & (pl.col("year") == 2023))
+                )
+            },
+            (),
+            False,
+            "line-years missing from eurostat_climate_finance: MT/2023",
+        ),
     ],
 )
 def test_eurostat_gaps_over_tolerance_need_a_recorded_gap_that_holds(
     release_dir: Path,
-    line: Callable[[pl.DataFrame], pl.DataFrame],
+    edits: dict[str, Callable[[pl.DataFrame], pl.DataFrame]],
     gaps: tuple[EurostatGap, ...],
     passed: bool,
     named: str,
 ) -> None:
-    _edit(table_path(release_dir, "assemble", EUROSTAT), line)
+    for table, edit in edits.items():
+        _edit(table_path(release_dir, "assemble", table), edit)
 
     row = (
         _report(release_dir, eurostat_gaps=gaps)
