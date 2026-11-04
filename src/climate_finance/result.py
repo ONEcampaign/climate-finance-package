@@ -1295,20 +1295,32 @@ _UNTRACED = {
 class Reconciliation:
     """A party-by-year comparison of BTR reports with OECD data.
 
-    `table` holds one row per party, year, status and method (see
-    `query.reconcile`).
+    `table` holds one row per party, year, status and method for Table III.1 (see
+    `query.reconcile`), and `multilateral` one row per party, year, status,
+    institution group and method for Table III.2 (see `Release.reconcile`).
     """
 
     def __init__(
-        self, *, table: pl.LazyFrame, rows: Callable[[], pl.LazyFrame]
+        self,
+        *,
+        table: pl.LazyFrame,
+        multilateral: Callable[[], pl.LazyFrame],
+        rows: Callable[[], pl.LazyFrame],
     ) -> None:
         self._table = table
+        self._multilateral = multilateral
         self._rows = rows
 
     @cached_property
     def table(self) -> pl.DataFrame:
         """The comparison, computed on first access."""
         return self._table.collect()
+
+    @cached_property
+    def multilateral(self) -> pl.DataFrame:
+        """The Table III.2 comparison, read and computed on first access, so
+        `table` reads none of its tables."""
+        return self._multilateral().collect()
 
     def __repr__(self) -> str:
         return f"{self._title()}\n{self.table!r}"

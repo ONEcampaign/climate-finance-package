@@ -1,12 +1,12 @@
 # How to reproduce the BTR tables
 
-A published release ships the BTR reconciliation totals (`btr_totals` and `btr_crs_unlinked`) and leaves out the parsed rows of each party's Biennial Transparency Report (`btr`) and their links to CRS records (`btr_links`). The UNFCCC's terms make its documents public domain only where no change to the content is introduced, and parsed rows change it. Build the two tables locally from workbooks you download yourself, and `release.reconcile()` then works row by row on that build.
+A published release ships the BTR reconciliation totals (`btr_totals`, `btr_crs_unlinked`, `btr_multilateral_totals`, and `btr_crs_earmarked`) and leaves out the parsed rows of each party's Biennial Transparency Report (`btr` for Table III.1 and `btr_multilateral` for Table III.2) and their links to CRS records (`btr_links`). The UNFCCC's terms make its documents public domain only where no change to the content is introduced, and parsed rows change it. Build the three tables locally from workbooks you download yourself, and `release.reconcile()` then works row by row on that build.
 
 ## Before you start
 
 - Install the `build` extra with `pip install "climate-finance[build]>=2"`.
 - Have a `build.toml` and the bulk CRS file, set up as in [How to cut a release](cut-a-release.md).
-- Download the workbooks in a browser from the UNFCCC's [first Biennial Transparency Reports](https://unfccc.int/first-biennial-transparency-reports) page. For each party, take the common tabular format tables on support, the workbook that holds Table III.1. Canada and the EU publish theirs as a zip of workbooks. Keep the zip whole, since the build reads it as it is.
+- Download the workbooks in a browser from the UNFCCC's [first Biennial Transparency Reports](https://unfccc.int/first-biennial-transparency-reports) page. For each party, take the common tabular format tables on support, the workbook that holds Tables III.1 and III.2. Canada and the EU publish theirs as a zip of workbooks. Keep the zip whole, since the build reads it as it is.
 
 ## Steps
 
@@ -46,7 +46,7 @@ A published release ships the BTR reconciliation totals (`btr_totals` and `btr_c
 
    A workbook whose layout it cannot read, whose amounts contradict the party's unit, or whose status falls outside `committed` and `disbursed` stops the read with the file named. A draft and a final copy that give the same party's year also stop it, so keep one copy of each.
 
-4. Build. Every build writes `btr`, `btr_links`, `btr_totals`, and `btr_crs_unlinked` into `releases/<RELEASE>/assemble/` beside the other tables. Only the packed release that `cf-build release` writes leaves out `btr` and `btr_links`, so open the assemble directory and not a pack.
+4. Build. Every build writes `btr`, `btr_links`, `btr_totals`, `btr_crs_unlinked`, `btr_multilateral`, and `btr_multilateral_totals` into `releases/<RELEASE>/assemble/` beside the other tables. Only the packed release that `cf-build release` writes leaves out `btr`, `btr_links`, and `btr_multilateral`, so open the assemble directory and not a pack.
 
    ```bash
    cf-build build 2026a-btr --config build.toml --out-dir releases
@@ -64,9 +64,9 @@ A published release ships the BTR reconciliation totals (`btr_totals` and `btr_c
 
 ## Verify it worked
 
-`release.table("btr")` holds rows for each party you downloaded. The build's `normalise/btr_workbooks.parquet` lists each workbook with the rows kept and dropped by reason, and the `sources.json` of a pack that `cf-build release` writes carries the same list. A party whose workbook gives no rows has every row dropped there, most often because its amounts are blank or a notation key such as "NR".
+`release.table("btr")` holds rows for each party you downloaded, and `release.table("btr_multilateral")` the Table III.2 rows of each party that fills that table. The build's `normalise/btr_workbooks.parquet` lists each workbook with the rows kept and dropped by reason, `normalise/btr_multilateral_workbooks.parquet` does the same for Table III.2, and the `sources.json` of a pack that `cf-build release` writes carries both lists. A party whose workbook gives no rows has every row dropped there, most often because its amounts are blank or a notation key such as "NR".
 
 ## Next
 
 - [How to reconcile a party's BTR report with OECD data](reconcile-with-btr.md) reads the comparison.
-- [Release tables](../reference/release-tables.md) lists the columns of `btr` and `btr_links`.
+- [Release tables](../reference/release-tables.md) lists the columns of `btr`, `btr_links`, and `btr_multilateral`.

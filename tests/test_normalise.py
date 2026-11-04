@@ -750,9 +750,14 @@ def test_run_normalise_writes_every_table_from_raw(
 
     hashes = run_stage("normalise", context)
 
-    # `orgs` is written with recoveries, and `ledger`, `btr` and `btr_workbooks`
-    # when the config names ledgers and a BTR archive.
-    btr_tables = {"btr", "btr_workbooks"}
+    # `orgs` is written with recoveries, and `ledger` and the four BTR tables when
+    # the config names ledgers and a BTR archive.
+    btr_tables = {
+        "btr",
+        "btr_workbooks",
+        "btr_multilateral",
+        "btr_multilateral_workbooks",
+    }
     expected = set(schema.STAGE_TABLES["normalise"]) - {"orgs", "ledger", *btr_tables}
     assert set(hashes) == (
         expected

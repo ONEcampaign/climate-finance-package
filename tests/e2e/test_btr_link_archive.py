@@ -392,7 +392,7 @@ def _with_btr_tables(
         out / "btr_totals.parquet"
     )
     assemble.btr_crs_unlinked(
-        crs, btr=rows.lazy(), links=links.lazy()
+        crs, party_years=rows.lazy(), links=links.lazy()
     ).collect().write_parquet(out / "btr_crs_unlinked.parquet")
     # The CRS of 2021 and 2022, so the years compared.
     assemble.total_flows(crs).collect().write_parquet(out / "total_flows.parquet")

@@ -955,7 +955,7 @@ COMPARATORS = (
 )
 # Per BTR status, the comparators of its flow, the one it reads against first, and
 # the CRS flow `oecd_only_usd` sums.
-_STATUS_FLOWS = {
+_STATUS_FLOWS: dict[str, tuple[tuple[str, ...], Flow]] = {
     "committed": (COMPARATORS[:3], "commitments"),
     "disbursed": (COMPARATORS[3:], "disbursements"),
 }
@@ -983,6 +983,35 @@ def _party_coefficients(release: Release) -> pl.LazyFrame:
             weight_source="citation_significant",
             coefficient_basis=_coefficient_basis("significant"),
         )
+    )
+
+
+def _status_flow() -> pl.Expr:
+    """The CRS flow of a BTR row's `status` (`_STATUS_FLOWS`), null for none."""
+    return pl.col("status").replace_strict(
+        {status: flow for status, (_, flow) in _STATUS_FLOWS.items()},
+        default=None,
+        return_dtype=pl.String,
+    )
+
+
+def _at_party_weight(
+    release: Release, records: pl.LazyFrame, *, keys: Sequence[str]
+) -> pl.LazyFrame:
+    """The `amount_usd` of CRS `records` weighted by their Rio markers at
+    `ONE`'s coefficients of each record's agency under `_PARTY_RULE`, as the
+    CRDF comparators weight, summed by `keys`, with `crs_method_share` the share
+    that rests on `ONE`'s coefficients in place of the party's own."""
+    # Every record weighs by its markers, so it has no shares.
+    shares = ("climate_share", "share_adaptation", "share_mitigation", "share_overlap")
+    value = (
+        pl.col("amount_usd") * weights(_PARTY_RULE, **_COEFFICIENT_INPUTS)["climate"]
+    )
+    return (
+        _coefficients(release, records, method=ONE)
+        .with_columns(pl.lit(None, pl.Float64).alias(name) for name in shares)
+        .group_by(*keys)
+        .agg(amount_usd=ordered_sum(value), crs_method_share=_method_share(value))
     )
 
 
@@ -1064,6 +1093,9 @@ def reconcile(
     `THIN_COMPARATOR_USD`. `btr_grant_equivalent_over_crs_grant_equivalent` divides
     `btr_grant_equivalent` by its comparator on every row, null where that is zero.
 
+    `Reconciliation.multilateral` sets each party's Table III.2 contributions
+    against the release by institution group (`_multilateral`).
+
     Raises:
         FormatQueryError: when the release's data format predates
             `MEMORANDUM_FORMAT` (`_require_memorandum_rows`).
@@ -1079,11 +1111,6 @@ def reconcile(
             ordered_sum(face.filter(condition))
         )
 
-    flow = pl.col("status").replace_strict(
-        {status: flow for status, (_, flow) in _STATUS_FLOWS.items()},
-        default=None,
-        return_dtype=pl.String,
-    )
     reported = (
         totals.group_by(*_PARTY_YEAR, "provider_code", "status")
         .agg(
@@ -1103,7 +1130,7 @@ def reconcile(
             party_rate=pl.when(pl.col("btr_face_reported") > 0).then(
                 pl.col("dac_rate") * pl.col("btr_face") / pl.col("btr_face_reported")
             ),
-            flow=flow,
+            flow=_status_flow(),
         )
         .join(
             release.table("btr_crs_unlinked").select(
@@ -1145,33 +1172,14 @@ def reconcile(
             crdf_at_100=ordered_sum(crdf_at(significant=pl.lit(1.0))),
         )
     )
-    crs_value = (
-        pl.col("amount_usd") * weights(_PARTY_RULE, **_COEFFICIENT_INPUTS)["climate"]
-    )
 
     def crs_at_party_weight(records: pl.LazyFrame) -> pl.LazyFrame:
-        """The year's `amount_usd` of CRS `records` on Rio-marked records at
-        `ONE`'s coefficients of each record's agency, weighted as the CRDF
-        comparators weight."""
+        """The year's `amount_usd` of the party-years' bilateral CRS `records` at
+        the party's weight (`_at_party_weight`)."""
         flows = records.filter(bilateral).join(
             party_years, on=["provider_code", "year"], how="semi"
         )
-        # Every record weighs by its markers, so it has no shares.
-        shares = (
-            "climate_share",
-            "share_adaptation",
-            "share_mitigation",
-            "share_overlap",
-        )
-        return (
-            _coefficients(release, flows, method=ONE)
-            .with_columns(pl.lit(None, pl.Float64).alias(name) for name in shares)
-            .group_by("provider_code", "year")
-            .agg(
-                amount_usd=ordered_sum(crs_value),
-                crs_method_share=_method_share(crs_value),
-            )
-        )
+        return _at_party_weight(release, flows, keys=("provider_code", "year"))
 
     def total(flow: str) -> pl.LazyFrame:
         return release.table("total_flows").filter(pl.col("flow") == flow)
@@ -1287,7 +1295,176 @@ def reconcile(
     )
     return Reconciliation(
         table=with_names(table),
+        multilateral=lambda: with_names(
+            _multilateral(release, conditions=conditions, method=method)
+        ),
         rows=lambda: with_names(_reconciliation_rows(release, conditions=conditions)),
+    )
+
+
+# The release flows a BTR status reads against, in `_STATUS_FLOWS`.
+_STATUS_CRS_FLOWS: tuple[Flow, ...] = tuple(flow for _, flow in _STATUS_FLOWS.values())
+_GROUP_KEY = ("provider_code", "year", "flow", "institution_group")
+_MULTILATERAL_KEY = ("party", "provider_code", "year", "status", "institution_group")
+_RELEASE_SIDE = ("core_contributions", "attributed_core", "crs_earmarked")
+
+
+def _multilateral(
+    release: Release, *, conditions: Sequence[pl.Expr], method: Method | MethodRange
+) -> pl.LazyFrame:
+    """Each party's BTR Table III.2 totals against the release's multilateral
+    finance of the party, one row per party, year, status, institution group and
+    method.
+
+    The BTR side comes from `btr_multilateral_totals`: `btr_core_face` and
+    `btr_climate_specific_face` at the DAC rate of the year, and
+    `btr_core_face_reported` and `btr_climate_specific_face_reported` at the
+    party's own conversion. The release side covers the CRS flow of the status
+    (`flow`, as `_STATUS_FLOWS` gives it): `core_contributions` sums the party's
+    `core_contributions` to the group's channels (`btr_institution_groups`);
+    `attributed_core` is their climate value under `method`, attributed by
+    contributions as the provider view attributes them; and `crs_earmarked` is the
+    party's `btr_crs_earmarked` amounts through the group's channels, weighted at
+    the party's coefficients as `crs_disbursed_at_party_weight` weights.
+
+    A full join keeps a group that only one side holds. Its BTR columns are null
+    where the party reports no row for it, and its release columns zero where the
+    release holds no money of the party through it. The row with a null
+    `institution_group` holds the BTR amounts of institutions the name map leaves
+    out and the release amounts through channels no group holds. The release
+    columns are null for rows without a status, and for a provider-year the
+    build's CRS does not cover (null in `btr_crs_unlinked`), as for a year past its
+    last. `btr_core_over_core_contributions` divides `btr_core_face` by
+    `core_contributions`, and
+    `btr_climate_specific_over_attributed_and_earmarked` divides
+    `btr_climate_specific_face` by `attributed_core` plus `crs_earmarked`, each
+    null where the denominator is zero or null.
+    """
+    totals = release.table("btr_multilateral_totals").filter(*conditions)
+    btr = totals.select(
+        *_MULTILATERAL_KEY,
+        btr_core_face="core_face_usd_at_dac",
+        btr_core_face_reported="core_face_usd",
+        btr_climate_specific_face="climate_specific_face_usd_at_dac",
+        btr_climate_specific_face_reported="climate_specific_face_usd",
+    )
+    # Each party-year-status with its flow, and whether the build's CRS covers the
+    # provider-year, as `btr_crs_unlinked` tells.
+    statuses = (
+        totals.select("party", "provider_code", "year", "status")
+        .unique()
+        .with_columns(flow=_status_flow())
+        .join(
+            release.table("btr_crs_unlinked").select(
+                "provider_code",
+                "year",
+                "flow",
+                covered=pl.col("amount_usd").is_not_null(),
+            ),
+            on=["provider_code", "year", "flow"],
+            how="left",
+        )
+    )
+    flows = statuses.select("provider_code", "year", "flow").drop_nulls().unique()
+    groups = release.table("btr_institution_groups")
+
+    def by_group(frame: pl.LazyFrame, **amounts: pl.Expr) -> pl.LazyFrame:
+        """`frame` in the party-years' flows summed by institution group, null for
+        a channel no group holds."""
+        return (
+            frame.join(flows, on=["provider_code", "year", "flow"], how="semi")
+            .join(groups, on="channel_code", how="left")
+            .group_by(*_GROUP_KEY)
+            .agg(**amounts)
+        )
+
+    core = by_group(
+        release.table("core_contributions"),
+        core_contributions=ordered_sum(pl.col("contribution_usd")),
+    )
+    earmarked = _at_party_weight(
+        release,
+        release.table("btr_crs_earmarked")
+        .join(flows, on=["provider_code", "year", "flow"], how="semi")
+        .join(groups, on="channel_code", how="left"),
+        keys=_GROUP_KEY,
+    ).select(*_GROUP_KEY, crs_earmarked="amount_usd")
+    covered = pl.col("covered").fill_null(value=False)
+    frames = []
+    for each in method.methods if isinstance(method, MethodRange) else (method,):
+        attributed = by_group(
+            pl.concat(
+                _weigh(
+                    _coefficients(
+                        release,
+                        _attributed_rows(release, flow=flow, method=each).join(
+                            flows.filter(pl.col("flow") == flow),
+                            on=["provider_code", "year"],
+                            how="semi",
+                        ),
+                        method=each,
+                    ),
+                    method=each,
+                ).with_columns(flow=pl.lit(flow))
+                for flow in _STATUS_CRS_FLOWS
+            ),
+            attributed_core=ordered_sum(pl.col("value")),
+        )
+        release_side = (
+            core.join(
+                attributed, on=_GROUP_KEY, how="full", coalesce=True, nulls_equal=True
+            )
+            .join(earmarked, on=_GROUP_KEY, how="full", coalesce=True, nulls_equal=True)
+            .join(
+                statuses.select("party", "provider_code", "year", "status", "flow"),
+                on=["provider_code", "year", "flow"],
+            )
+            .drop("flow")
+        )
+        frames.append(
+            btr.join(
+                release_side,
+                on=_MULTILATERAL_KEY,
+                how="full",
+                coalesce=True,
+                nulls_equal=True,
+            )
+            .join(
+                statuses,
+                on=["party", "provider_code", "year", "status"],
+                how="left",
+                nulls_equal=True,
+            )
+            .with_columns(
+                pl.when(covered).then(pl.col(name).fill_null(0.0)).alias(name)
+                for name in _RELEASE_SIDE
+            )
+            .with_columns(method=pl.lit(label(each)))
+        )
+    climate = pl.col("attributed_core") + pl.col("crs_earmarked")
+    return (
+        pl.concat(frames)
+        .with_columns(
+            btr_core_over_core_contributions=_ratio(
+                pl.col("btr_core_face"), pl.col("core_contributions")
+            ),
+            btr_climate_specific_over_attributed_and_earmarked=_ratio(
+                pl.col("btr_climate_specific_face"), climate
+            ),
+        )
+        .select(
+            *_MULTILATERAL_KEY,
+            "method",
+            "flow",
+            "btr_core_face",
+            "btr_core_face_reported",
+            "btr_climate_specific_face",
+            "btr_climate_specific_face_reported",
+            *_RELEASE_SIDE,
+            "btr_core_over_core_contributions",
+            "btr_climate_specific_over_attributed_and_earmarked",
+        )
+        .sort("party", "year", "status", "institution_group", "method", nulls_last=True)
     )
 
 

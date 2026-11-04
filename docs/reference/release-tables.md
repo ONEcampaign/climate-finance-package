@@ -4,18 +4,18 @@ As of 2.0. A build writes the parquet tables below, each sorted by its key so th
 
 ## Files in a release
 
-A release is a folder, `climate-finance-<name>/`, packed as one `.tar.zst`. It holds the tables below except `btr` and `btr_links`, `release.json`, and `sources.json`, and none of the build's stage records:
+A release is a folder, `climate-finance-<name>/`, packed as one `.tar.zst`. It holds the tables below except `btr`, `btr_links`, and `btr_multilateral`, `release.json`, and `sources.json`, and none of the build's stage records:
 
 - `release.json` has the release's data format as `data_format`, each table's sha256 and row count, the source and model versions, the code and environment that built it under `build`, every build switch and year range under `settings`, the years each source holds under `years`, the gate results, the `precision_gate_waived` flag and the waiver's reason as `precision_waiver`, and under `withheld_tables` each table the pack leaves out, with a note on how to build it. `cf.load()` checks every other table of the release's data format against it and raises `ReleaseIntegrityError` on a mismatch. A pack that fails its sha256 in the release index is refused before it unpacks.
-- `sources.json` lists each source with its version, URLs, licence, and any note on rows the release leaves out, and, under `provider_reports`, the annual reports behind the modelled line's disbursement ratios, cited by title, year, and page. The entry `oecd_attribution` credits the OECD report behind `outflow_shares` and `developed_providers`. The BTR archive's entry, `unfccc_btr1`, carries the note from `withheld_tables` and a `workbooks` list, one entry per BTR workbook read, with its file, party, the sheets read, the rows kept, the rows dropped as blank, as a notation key, or as a total, and any draft marker in the file name (`started` or `awaiting_submission`).
+- `sources.json` lists each source with its version, URLs, licence, and any note on rows the release leaves out, and, under `provider_reports`, the annual reports behind the modelled line's disbursement ratios, cited by title, year, and page. The entry `oecd_attribution` credits the OECD report behind `outflow_shares` and `developed_providers`. The BTR archive's entry, `unfccc_btr1`, carries the note from `withheld_tables` and a `workbooks` list, one entry per BTR workbook read, with its file, party, the sheets read, the rows kept, the rows dropped as blank, as a notation key, or as a total, and any draft marker in the file name (`started` or `awaiting_submission`), and a `multilateral_workbooks` list, the same record of each workbook's Table III.2 sheets.
 
 The release holds only processed tables and metadata. The Green Climate Fund's ledger rows are withheld. [How linking works](../explanation/how-linking-works.md) explains why, and `commitments.withheld_usd` states their amount.
 
 `build` holds `package_source_sha256`, the sha256 over the files of the climate-finance package that built the release; `python`, the exact Python version; `environment_sha256`, the sha256 over the sorted `name==version` lines of every installed distribution; `dependencies`, the exact versions of polars, pyarrow, duckdb, splink, scikit-learn, numpy, scipy, pandas, pydantic, rapidfuzz, oda-reader, openpyxl, pydeflate, resolvekit, sentence-transformers, torch, transformers, and tokenizers where installed; and `stage_identities`, the sha256 of each build stage's `stage.json` before assemble. Every query result carries it in `meta.build`, and `explain()` prints the package source and environment digests.
 
-The data format is a whole number, independent of the package version, and this package writes format 3. The format goes up by one when a release table, a column of one, or a `release.json` field is added, removed, or changes meaning. A package reads every format up to its own: `cf.load()` raises `ReleaseFormatError` for a newer format, naming the format a later climate-finance reads, and opens an older one. On a release whose format predates a table, `release.table()` and any query that reads the table raise `FormatTableError`. Format 2 adds `btr_coefficients`. Format 3 adds `psi_flag` and the tables `outflow_shares` and `developed_providers`, and its `total_flows` and `quality` leave memorandum rows out. On a release of format 1 or 2 the queries raise `FormatQueryError`, since its totals hold memorandum records, and `release.table()` still reads its tables.
+The data format is a whole number, independent of the package version, and this package writes format 3. The format goes up by one when a release table, a column of one, or a `release.json` field is added, removed, or changes meaning. A package reads every format up to its own: `cf.load()` raises `ReleaseFormatError` for a newer format, naming the format a later climate-finance reads, and opens an older one. On a release whose format predates a table, `release.table()` and any query that reads the table raise `FormatTableError`. Format 2 adds `btr_coefficients`. Format 3 adds `psi_flag` and the tables `outflow_shares`, `developed_providers`, `btr_multilateral`, `btr_multilateral_totals`, `btr_institution_groups`, and `btr_crs_earmarked`, and its `total_flows` and `quality` leave memorandum rows out. On a release of format 1 or 2 the queries raise `FormatQueryError`, since its totals hold memorandum records, and `release.table()` still reads its tables.
 
-The published release also leaves out the row-level BTR tables `btr` and `btr_links` until the UNFCCC confirms its terms cover them, and `release.table("btr")` on it raises `WithheldTableError`. A build from BTR workbooks downloaded from the UNFCCC writes both. `btr_totals` and `btr_crs_unlinked` hold the reconciliation totals in either, and `btr_coefficients` the coefficients the BTR rows imply.
+The published release also leaves out the row-level BTR tables `btr`, `btr_links`, and `btr_multilateral` until the UNFCCC confirms its terms cover them, and `release.table("btr")` on it raises `WithheldTableError`. A build from BTR workbooks downloaded from the UNFCCC writes all three. `btr_totals`, `btr_crs_unlinked`, `btr_multilateral_totals`, and `btr_crs_earmarked` hold the reconciliation totals in either, and `btr_coefficients` the coefficients the BTR rows imply.
 
 ## Memorandum rows
 
@@ -138,11 +138,50 @@ Key `party`, `year`, `status`, `funding`, `currency`, `linked`. The `btr` rows s
 
 ## `btr_crs_unlinked`
 
-Key `provider_code`, `year`, `flow`. The OECD side of the reconciliation that no BTR row reaches, for each BTR party's DAC provider and each year its BTR rows cover:
+Key `provider_code`, `year`, `flow`. The OECD side of the reconciliation that no BTR row reaches, for each BTR party's DAC provider and each year its `btr` or `btr_multilateral` rows cover:
 
 - `provider_code`, `year`.
 - `flow`: `commitments` or `disbursements`.
 - `amount_usd`: the flow's sum over the provider's bilateral CRS records of the year with a Rio marker of 1 or 2 that no `btr_crs` link reaches, zero where every such record is linked, and null where the build's CRS holds no record of the provider and year, as for a year past the last complete CRS year.
+
+## `btr_multilateral`
+
+Key `row_id`. Parsed rows of Table III.2 of the Biennial Transparency Reports, each party's contributions through multilateral channels, one institution to a row. A build writes it when its configuration names a BTR archive, and a published release leaves it out, as it does `btr`:
+
+- `row_id` ("BTRM-{party}-{year}-{sheet row}"), `party`, `provider_code`, `year`, `source_file`: as in `btr`.
+- `institution`: the institution as the party names it. A blank cell takes the institution of the row above.
+- `institution_group`: the group of CRS channel codes the institution belongs to, as `btr_institution_groups` lists them from `build/btr_institutions.toml`, and null for a name the map leaves out. A group holds every channel of one institution, so the World Bank holds IBRD, IDA, and IDA's HIPC and MDRI channels, and the African, Asian, and Inter-American development banks hold their concessional funds, since parties name the bank for a contribution to its fund. The map leaves out a name that ties to no single channel of the Multisystem channel list, such as the ICRC or "IPCC/UNFCCC". On the BTR1 archive it groups 99% of the Table III.2 core and climate-specific face value of 2021 and 2022, USD 36.2bn of 36.5bn.
+- `recipient`, `title`, `channel`, `funding_source`, `instrument`, `support_type`, `sector`, `additional_information`: the row's text as reported.
+- `core_amount_domestic`, `core_face_usd`, `core_grant_equiv_domestic`, `core_grant_equiv_usd`: the core/general contribution, as face value and grant equivalent, in `currency` and in USD at the party's own conversion.
+- `climate_specific_amount_domestic`, `climate_specific_face_usd`, `climate_specific_grant_equiv_domestic`, `climate_specific_grant_equiv_usd`: the climate-specific contribution in the same four columns. Core and climate-specific amounts do not add. A party reports a core contribution in full and its climate share as climate-specific, or an earmarked contribution as climate-specific alone.
+- `currency`, `dac_rate`: as in `btr`.
+- `core_face_usd_at_dac`, `core_grant_equiv_usd_at_dac`, `climate_specific_face_usd_at_dac`, `climate_specific_grant_equiv_usd_at_dac`: the domestic amounts at `dac_rate`, or the party's own USD where the domestic amount or the rate is missing.
+- `status`: `committed` or `disbursed`.
+
+## `btr_multilateral_totals`
+
+Key `party`, `year`, `status`, `institution_group`. The `btr_multilateral` rows summed, which is what the multilateral reconciliation reads where the release leaves out the rows. Rows whose institution is in no group sum into the row with a null `institution_group`:
+
+- `party`, `provider_code`, `year`, `status`, `institution_group`: as in `btr_multilateral`.
+- `rows`: the number of rows.
+- `core_face_usd`, `core_grant_equiv_usd`, `core_face_usd_at_dac`, `core_grant_equiv_usd_at_dac`, `climate_specific_face_usd`, `climate_specific_grant_equiv_usd`, `climate_specific_face_usd_at_dac`, `climate_specific_grant_equiv_usd_at_dac`: the rows' sums, null where every row lacks the amount.
+
+## `btr_institution_groups`
+
+Key `channel_code`. The CRS channel codes of each institution group of `btr_multilateral`, one row per code. No code is in two groups, so a sum over a group's codes counts each channel once:
+
+- `institution_group`: the group.
+- `channel_code`: one of its CRS channel codes.
+
+## `btr_crs_earmarked`
+
+Key `provider_code`, `agency_code`, `year`, `channel_code`, `flow`, `rio_adaptation`, `rio_mitigation`. Bilateral CRS amounts that a provider delivers through the channel of an institution group, such as an earmarked contribution to a Green Climate Fund programme, on records that no `btr_crs` link reaches. A party may report such money in Table III.2 though the release holds it among its bilateral records. The table covers each BTR party's DAC provider and each year its `btr` or `btr_multilateral` rows cover. A key with no amount has no row, so a provider-year with no row holds no such money, or lies past the last complete CRS year, as `btr_crs_unlinked` tells:
+
+- `provider_code`, `agency_code`, `year`: the records' provider, agency, and year.
+- `channel_code`: the records' channel, one of `btr_institution_groups`.
+- `flow`: `commitments`, `disbursements`, or `grant_equivalent`.
+- `rio_adaptation`, `rio_mitigation`: the records' Rio markers, 0 for none. Every record has a marker of 1 or 2 on at least one objective, so a query weights the amounts by marker and agency as it weights `total_flows`.
+- `amount_usd`: the flow's sum over the bilateral records (Bi_Multi 1, 3, 7, or 8) of the key, less those the provider reports for memorandum.
 
 ## `disbursement_profile`
 
@@ -292,7 +331,7 @@ Key `currency`, `base_year`, `entity_code`, `year`. The multipliers from US doll
 - World Bank Finances One: the World Bank Data Catalog licence, CC BY 4.0 by default and set per dataset.
 - IMF: derivative works with attribution. Commercial use and automated bulk download need permission.
 - IATI files of banks and funds: the publisher's licence in the IATI Registry.
-- UNFCCC Biennial Transparency Reports: the UNFCCC terms of use, public domain where no change to the content is introduced and the source is acknowledged. Parsed rows change the content, so the published release ships the totals in `btr_totals` and `btr_crs_unlinked` and leaves out `btr` and `btr_links` until the UNFCCC confirms its terms cover them.
+- UNFCCC Biennial Transparency Reports: the UNFCCC terms of use, public domain where no change to the content is introduced and the source is acknowledged. Parsed rows change the content, so the published release ships the totals in `btr_totals`, `btr_crs_unlinked`, `btr_multilateral_totals`, and `btr_crs_earmarked` and leaves out `btr`, `btr_links`, and `btr_multilateral` until the UNFCCC confirms its terms cover them.
 - Green Climate Fund projects API and readiness list: the Fund's website terms allow use for private study, research, and teaching, and bar commercial derivative works without written consent. The API states no terms of its own. Their rows are withheld. Its IATI files are CC0 on the IATI Registry, and their rows ship.
 - Human-coded adaptation labels of Weikmans et al.: they fit the map behind Jev's adaptation levels. The release omits the rows.
 

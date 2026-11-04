@@ -1,0 +1,527 @@
+# The institution groups of BTR Table III.2, which the normalise stage gives each
+# row's `institution` (`btr_multilateral.institution_group`). A group holds the CRS
+# channel codes of the Multisystem channel list that its names cover, and no code
+# sits in two groups, so a group's core contributions are its codes' sum. The World
+# Bank holds IBRD and IDA with IDA's HIPC and MDRI channels, and the African, Asian
+# and Inter-American banks hold their concessional funds: parties name the bank for
+# a contribution to its fund, as Italy's "African Development Bank" rows do for the
+# African Development Fund.
+#
+# Names are keys as `btr_institutions.institution_key` writes them: accents
+# dropped, case folded, each run of other characters than letters and digits one
+# space. One name sits in one group. A name left out keeps a null group: one that
+# names no single channel of the list (the ICRC, the GPE, CAFI, "IPCC/UNFCCC"), or
+# a fund or initiative the list holds no code for.
+
+["World Bank"]
+channel_codes = [44001, 44002, 44003, 44007]
+names = [
+    "16 world bank",
+    "ibrd international bank for reconstruction and development the world bank4",
+    "ibrd tf world bank",
+    "ida international development association the world bank exkl ida mdri",
+    "international bank for reconstruction and development",
+    "international bank for reconstruction and development ibrd",
+    "international bank for reconstuction and development",
+    "international bank of reconstruction and development",
+    "international development association",
+    "international development association heavily indebted poor countries debt initiative tf",
+    "international development association ida",
+    "international development association multilateral debt relief initiative",
+    "world bank",
+    "world bank group",
+    "world bank group international development agency",
+    "world bank ida",
+    "world bank international bank for reconstruction and development",
+    "world bank international development association",
+    "worldbank group",
+    "worldbank group ida aid international development association",
+    "worldbank group ida heavily indebted poor countries debt initiative trust fund hipc",
+    "worldbank group international bank for reconstruction and development ibrd",
+]
+
+["International Finance Corporation"]
+channel_codes = [44004]
+names = [
+    "10 international finance corporation",
+    "ifc international finance corporation ifc mf",
+    "international finance corporation",
+    "international finance corporation ifc",
+    "other international finance corporation",
+]
+
+["International Monetary Fund"]
+channel_codes = [43001, 43002, 43003, 43004, 43005, 43006, 43007]
+names = ["imf", "international monetary fund"]
+
+["African Development Bank"]
+channel_codes = [46002, 46003]
+names = [
+    "afr db african development bank3",
+    "afr df african development fund exkl afr df mdri",
+    "african development bank",
+    "african development bank ordinary capital afr db mf",
+    "african development bank special fund",
+    "african development bank special fund afr db sp f",
+    "african development fund",
+    "african development fund loan",
+    "other african development fund",
+]
+
+["Asian Development Bank"]
+channel_codes = [46004, 46005]
+names = [
+    "3 asian development bank",
+    "as df asian development fund4",
+    "asdb special fund",
+    "asian development bank",
+    "asian development fund",
+    "other asian development fund",
+]
+
+["Inter-American Development Bank"]
+channel_codes = [46012, 46013]
+names = [
+    "inter american development bank",
+    "inter american investment corporation inter american development bank5",
+    "other inter american investment corporation",
+]
+
+["Asian Infrastructure Investment Bank"]
+channel_codes = [46026]
+names = [
+    "asian infrastructure investment bank",
+    "other asian infrastructure investment bank",
+]
+
+["Caribbean Development Bank"]
+channel_codes = [46009]
+names = ["caribbean development bank"]
+
+["Development Bank of Latin America"]
+channel_codes = [46008]
+names = ["development bank of latin america"]
+
+["European Bank for Reconstruction and Development"]
+channel_codes = [46015, 46016, 46017, 46018, 46019]
+names = ["european bank for reconstruction and development"]
+
+["Council of Europe Development Bank"]
+channel_codes = [46024]
+names = [
+    "council of europe development bank",
+    "council of europe development bank ceb",
+]
+
+["Nordic Development Fund"]
+channel_codes = [47128]
+names = ["ndf nordic development fund", "nordic development fund"]
+
+["EU budget"]
+channel_codes = [42001]
+names = ["budget eu commission"]
+
+["European Development Fund"]
+channel_codes = [42003]
+names = ["europees ontwikkelingsfonds eof edf fed", "european development fund"]
+
+["European Investment Bank"]
+channel_codes = [42004]
+names = [
+    "eib european investment bank",
+    "european investment bank",
+    "european investment bank eib mf",
+]
+
+["Green Climate Fund"]
+channel_codes = [41317]
+names = [
+    "contribution to the first replenishment of the green climate fund",
+    "gcf green climate fund",
+    "green climate fund",
+    "green climate fund gcf",
+]
+
+["Global Environment Facility"]
+channel_codes = [47044]
+names = [
+    "7 global environment facility",
+    "gef global environment facility trust fund the world bank",
+    "global environment facility",
+    "global environment facility gef",
+    "global environment facility gef fem",
+    "global environment facility trust fund gef fem",
+    "global environmental facility gef",
+]
+
+["Least Developed Countries Fund"]
+channel_codes = [47129]
+names = [
+    "global environment facility least developed countries fund",
+    "least developed countries fund",
+    "least developed countries fund ldcf",
+    "least developed country fund",
+]
+
+["Special Climate Change Fund"]
+channel_codes = [47130]
+names = ["special climate change fund"]
+
+["Climate Investment Funds"]
+channel_codes = [47134, 47135]
+names = [
+    "clean technology fund",
+    "climate investment funds",
+    "climate investment funds ctf",
+    "strategic climate fund",
+]
+
+["Adaptation Fund"]
+channel_codes = [47111]
+names = ["adaptation fund"]
+
+["Multilateral Fund for the Implementation of the Montreal Protocol"]
+channel_codes = [47078]
+names = [
+    "mlf multilateral fund for the implementation of the montreal protocol",
+    "montreal protocol",
+    "montreal protocol multilateral fund",
+    "montreal protocoll",
+    # Germany's 2021 "MP", titled "German contribtuion to the MP", which its 2022
+    # sheet names "Montreal Protocoll".
+    "mp",
+    "multilateral fund for the implementation core",
+    "multilateral fund for the implementation of the montreal protocol",
+    "multilateral fund montreal protocol",
+    "multilateral fund of the montreal protocol",
+    "multirateral fund for the implementation of the montreal protocol",
+    "other montreal fund",
+    "other multilateral fund for the implementation of the montreal protocol",
+    "other the multilateral fund for the implementation of the montreal protocol",
+    "specialized united nations bodies montreal protocol",
+]
+
+["United Nations Framework Convention on Climate Change"]
+channel_codes = [41316]
+names = [
+    "kyoto protocol",
+    "other united nations framework convention on climate change",
+    "specialized united nations bodies unfccc",
+    "trust for supplementary activities unfccc",
+    "trust fund for supplementary activities and unfccc",
+    "un framework convention on climate change",
+    "unfccc",
+    "unfccc gender team",
+    "unfccc kp",
+    "unfccc kyoto protocol",
+    "united nations framework convention on climate change",
+    "united nations framework convention on climate change unfccc",
+]
+
+["Intergovernmental Panel on Climate Change"]
+channel_codes = [47067]
+names = [
+    "intergovernmental panel on climate change",
+    "intergovernmental panel on climate change ipcc",
+    "intergovernmental panel on climate change trust fund contribution",
+    "ipcc",
+    "ipcc intergovernmental panel on climate change",
+    "other intergovernmental panel on climate change",
+    "other ipcc",
+    "other ipcc task force on national greenhouse gas inventories technical support unit",
+]
+
+["CGIAR"]
+channel_codes = [47015]
+names = [
+    "cgiar",
+    "cgiar gcrai consultative group on international agricultural research",
+    "consultative group for international agricultural research",
+    "consultative group for international agricultural research multilateral projects window 2",
+    "consultative group on international agricultural research",
+    "other cgiar",
+]
+
+["International Fund for Agricultural Development"]
+channel_codes = [41108]
+names = [
+    "ifad",
+    "ifad international fund for agricultural development",
+    "international fund for agricultural development",
+    "international fund for agricultural development ifad",
+    "international fund for agricultural development loan",
+    "international fund for agriculture development",
+    "other ifad",
+    "other international fund for agricultural development",
+    "un international fund for agricultural development",
+]
+
+["Food and Agriculture Organization"]
+channel_codes = [41301]
+names = [
+    "fao",
+    "fao food and agricultural organisation",
+    "food and agricultural organisation",
+    "food and agricultural organisation of the un fao",
+    "food and agricultural organization of the united nations",
+    "food and agriculture organisation",
+    "food and agriculture organisation of the united nations",
+    "food and agriculture organization",
+    "food and agriculture organization fao",
+    "food and agriculture organization for the united nations",
+    "food and agriculture organization of the united nations",
+    "other fao",
+    "other food and agriculture organisation",
+    "the food and agricultural organization fao",
+    "united nations food and agriculture organisation",
+    "united nations food and agriculture organization",
+    "vn fao wvo food and agricultural organisation",
+]
+
+["United Nations Development Programme"]
+channel_codes = [41114]
+names = [
+    "14 united nations development programme 8",
+    "undp",
+    "united nations development programme",
+    "united nations development programme undp",
+    "vn undp development programme",
+]
+
+["United Nations Environment Programme"]
+channel_codes = [41116]
+names = [
+    "15 united nations environment programme",
+    "unep",
+    "united nations environment program",
+    "united nations environment programme",
+    "united nations environment programme unep",
+    "vn unep milieu programma",
+]
+
+["World Food Programme"]
+channel_codes = [41140]
+names = [
+    "un world food programma",
+    "united nations world food programme",
+    "vn wvp wfp pam world food programme",
+    "wfp",
+    "wfp world food programme",
+    "world food programme",
+]
+
+["United Nations Children's Fund"]
+channel_codes = [41122]
+names = [
+    "other unicef",
+    "unicef",
+    "united nations children s fund",
+    "vn unicef children s fund",
+]
+
+["United Nations Population Fund"]
+channel_codes = [41119]
+names = [
+    "unfpa",
+    "united nations population fund",
+    "vn unfpa fnuap un population fund",
+]
+
+["United Nations High Commissioner for Refugees"]
+channel_codes = [41121]
+names = ["unhcr", "vn unhcr office of the high commissioner for refugees"]
+
+["World Health Organization"]
+channel_codes = [41143, 41307, 41321]
+names = [
+    "vn wgo who world health organisation",
+    "who",
+    "world health organisation",
+    "world health organization",
+]
+
+["International Labour Organization"]
+channel_codes = [41144, 41302]
+names = [
+    "ilo",
+    "international labour organisation",
+    "un international labour organisation ilo iao oit",
+    "un international labour organisation ilo iao oit prt",
+]
+
+["UNESCO"]
+channel_codes = [41304]
+names = [
+    "other united nations educational scientific and cultural organization",
+    "unesco",
+    "united nations educational scientific and cultural organization unesco",
+    "vn unesco educational scientific and cultural organisation f",
+]
+
+["United Nations Industrial Development Organization"]
+channel_codes = [41123]
+names = [
+    "other united nations industrial development organization",
+    "un industrial development organization core",
+    "unido united nations industrial development organisation",
+    "unido united nations industrial development organisation itpo",
+]
+
+["United Nations Office for the Coordination of Humanitarian Affairs"]
+channel_codes = [41127]
+names = [
+    "ocha",
+    "united nations office of co ordination of humanitarian affairs",
+    "vn ocha office of co ordination of humanitarian affairs prt mf",
+]
+
+["United Nations Relief and Works Agency"]
+channel_codes = [41130]
+names = ["unrwa"]
+
+["UN Women"]
+channel_codes = [41146]
+names = ["un women", "united nations women"]
+
+["United Nations Office for Disaster Risk Reduction"]
+channel_codes = [41315]
+names = [
+    "international strategy for disaster reduction",
+    "other unisdr",
+    "other united nation office for disaster risk reduction",
+    "undrr",
+]
+
+["World Meteorological Organization"]
+channel_codes = [41309]
+names = [
+    "other world meteorological organization",
+    "wmo",
+    "world meteorological organisation",
+    "world meteorological organisation contribution",
+    "world meteorological organisation wmo",
+    "world meteorological organization",
+    "world meteorological organization voluntary cooperation program wmo vcp",
+]
+
+["United Nations Convention to Combat Desertification"]
+channel_codes = [41101]
+names = [
+    "convention to combat desertification",
+    "other unccd",
+    "other united nations convention to combat desertification",
+    "un convention to combat desertification unccd",
+    "unccd",
+    "unccd convention to combat desertification",
+    "unccd un convention to combat desertification",
+    "unccd united nations convention to combat desertification",
+    "united nations convention to combat desertification",
+    "vn ccd convention to combat desertification",
+]
+
+["United Nations University"]
+channel_codes = [41134]
+names = ["united nations university"]
+
+["United Nations Volunteers"]
+channel_codes = [41135]
+names = ["unv united nations volunteers"]
+
+["United Nations Peacebuilding Fund"]
+channel_codes = [41141]
+names = ["undp united nations peacebuilding fund", "united nations peacebuilding fund"]
+
+["UN Multi-Partner Trust Fund Office"]
+channel_codes = [41401]
+names = ["un multi partner trust fund office"]
+
+["UNAIDS"]
+channel_codes = [41110]
+names = ["vn unaids programme on hiv aids"]
+
+["Office of the High Commissioner for Human Rights"]
+channel_codes = [41313]
+names = ["ohchr", "un ohchr office of the high commissioner for human rights"]
+
+["UN-Habitat"]
+channel_codes = [41120]
+names = ["un habitat"]
+
+["United Nations Economic Commission for Europe"]
+channel_codes = [41314]
+names = ["unece", "united nations economic commission for europe"]
+
+["UN peace operations"]
+channel_codes = [41310]
+names = ["un department of peacekeeping operations undpko"]
+
+["International Atomic Energy Agency"]
+channel_codes = [41107, 41312]
+names = ["international atomic energy agency"]
+
+["Global Green Growth Institute"]
+channel_codes = [47136]
+names = ["global green growth institute", "other global green growth institute"]
+
+["International Renewable Energy Agency"]
+channel_codes = [47144]
+names = [
+    "international renewable energy agency",
+    "international renewable energy agency irena",
+    "irena",
+    "other international renewable energy agency",
+]
+
+["International Organization for Migration"]
+channel_codes = [47066]
+names = ["international organisation for migration iom oim", "iom"]
+
+["Global Fund to Fight AIDS, Tuberculosis and Malaria"]
+channel_codes = [47045]
+names = ["global fund to fight aids tuberculosis and malaria gfatm fmstm gfatm"]
+
+["Private Infrastructure Development Group"]
+channel_codes = [47086]
+names = ["other pidg"]
+
+["International Centre for Advanced Mediterranean Agronomic Studies"]
+channel_codes = [47019]
+names = ["ciheam international centre for advanced mediterranean agronomic studies"]
+
+["International Tropical Timber Organization"]
+channel_codes = [47073]
+names = ["other international tropical timber organization"]
+
+["OECD Development Centre"]
+channel_codes = [47081]
+names = ["oecd development centre"]
+
+["Council of Europe"]
+channel_codes = [47138]
+names = ["council of europe"]
+
+["CITES"]
+channel_codes = [47022]
+names = [
+    "cites",
+    "convention on international trade in endangered species of wild flora and fauna",
+]
+
+["European and Mediterranean Plant Protection Organisation"]
+channel_codes = [47036]
+names = ["european and mediterranean plant protection organization"]
+
+["Mekong River Commission"]
+channel_codes = [47077]
+names = [
+    "mekong river commission for sustainable development",
+    "mekong river commission mrc",
+]
+
+["Organization for Security and Co-operation in Europe"]
+channel_codes = [47131]
+names = ["osce"]
+
+["Sahel and West Africa Club"]
+channel_codes = [47029]
+names = ["club du sahel"]

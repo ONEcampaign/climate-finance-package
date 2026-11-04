@@ -44,6 +44,7 @@ from climate_finance.build.allocate import (
     marked_records,
     untraced_records,
 )
+from climate_finance.build.btr_institutions import institution_map
 from climate_finance.build.errors import (
     ConfigError,
     ReleaseInvariantError,
@@ -1068,6 +1069,116 @@ def test_btr_totals_sum_the_rows_by_status_funding_currency_and_link() -> None:
     ]
 
 
+def test_btr_multilateral_totals_sum_the_rows_by_status_and_institution_group() -> None:
+    # Norway: two World Bank disbursements, one without a core amount, a GCF
+    # commitment, and an institution in no group.
+    rows = (
+        ("M1", "disbursed", "World Bank", 10.0, 2.0),
+        ("M2", "disbursed", "World Bank", None, 3.0),
+        ("M3", "committed", "Green Climate Fund", None, 40.0),
+        ("M4", "disbursed", None, 1.0, 0.5),
+    )
+    btr = pl.DataFrame(
+        {
+            "row_id": [row[0] for row in rows],
+            "party": "NOR",
+            "provider_code": NOR,
+            "year": 2021,
+            "status": [row[1] for row in rows],
+            "institution_group": [row[2] for row in rows],
+            **{
+                f"{group}_{amount}": [row[index] for row in rows]
+                for group, index in (("core", 3), ("climate_specific", 4))
+                for amount in (
+                    "face_usd",
+                    "grant_equiv_usd",
+                    "face_usd_at_dac",
+                    "grant_equiv_usd_at_dac",
+                )
+            },
+        },
+        schema_overrides={"year": pl.Int16, "provider_code": pl.Int32},
+    )
+    totals = release.btr_multilateral_totals(btr.lazy()).collect()
+
+    schema.validate(schema.BTR_MULTILATERAL_TOTALS, totals)
+    assert totals.sort("status", "institution_group", nulls_last=True).select(
+        "status",
+        "institution_group",
+        "rows",
+        "core_face_usd",
+        "climate_specific_grant_equiv_usd_at_dac",
+    ).rows() == [
+        ("committed", "Green Climate Fund", 1, None, 40.0),
+        ("disbursed", "World Bank", 2, 10.0, 5.0),
+        ("disbursed", None, 1, 1.0, 0.5),
+    ]
+
+
+def test_btr_institution_groups_list_each_code_of_each_group_once() -> None:
+    groups = release.btr_institution_groups(institution_map().groups)
+
+    schema.validate(schema.BTR_INSTITUTION_GROUPS, groups)
+    assert not groups["channel_code"].is_duplicated().any()
+    assert groups.filter(institution_group="World Bank")["channel_code"].to_list() == [
+        44001,
+        44002,
+        44003,
+        44007,
+    ]
+
+
+def test_btr_crs_earmarked_sums_unlinked_climate_records_through_group_channels() -> (
+    None
+):
+    # Norway's 2021 records through the GCF (41317): e1 and e2 differ in agency, e3
+    # in markers, l1 is linked from a BTR row, m1 carries no Rio marker, n1 is a core
+    # contribution, p1 is reported for memorandum, and o1 goes through a channel in
+    # no group. 2023 is a year no BTR row of Norway covers.
+    gcf = {"year": 2021, "channel_code": 41317, "rio_mitigation": 1}
+    crs = crs_records(
+        gcf | {"record_id": "e1", "commitment_usd": 10.0, "disbursement_usd": 4.0},
+        gcf | {"record_id": "e2", "agency_code": 2, "disbursement_usd": 3.0},
+        gcf | {"record_id": "e3", "rio_adaptation": 2, "disbursement_usd": 2.0},
+        gcf | {"record_id": "e4", "disbursement_usd": 1.0},
+        gcf | {"record_id": "l1", "disbursement_usd": 50.0},
+        gcf | {"record_id": "m1", "rio_mitigation": 0, "disbursement_usd": 50.0},
+        gcf | {"record_id": "n1", "bi_multi": 2, "disbursement_usd": 50.0},
+        gcf | {"record_id": "p1", "psi_flag": 4, "disbursement_usd": 50.0},
+        gcf | {"record_id": "o1", "channel_code": 99999, "disbursement_usd": 50.0},
+        gcf | {"record_id": "y1", "year": 2023, "disbursement_usd": 50.0},
+    )
+    links = pl.DataFrame(
+        {
+            "task": ["btr_crs", "trace"],
+            "left_id": ["BTR-NOR-2021-00001", "c21"],
+            "right_id": ["l1", "e1"],
+        }
+    )
+    party_years = pl.DataFrame(
+        {"provider_code": [NOR, NOR, None], "year": [2021, 2021, 2021]},
+        schema={"provider_code": pl.Int32, "year": pl.Int16},
+    )
+    channels = release.btr_institution_groups({"Green Climate Fund": (41317,)})
+
+    built = release.btr_crs_earmarked(
+        crs.lazy(),
+        party_years=party_years.lazy(),
+        links=links.lazy(),
+        channels=channels.lazy(),
+    ).collect()
+
+    schema.validate(schema.BTR_CRS_EARMARKED, built)
+    assert built.sort(schema.BTR_CRS_EARMARKED.sort_key).select(
+        "agency_code", "year", "flow", "rio_adaptation", "rio_mitigation", "amount_usd"
+    ).rows() == [
+        (1, 2021, "commitments", 0, 1, 10.0),
+        (1, 2021, "disbursements", 0, 1, 5.0),
+        (1, 2021, "disbursements", 2, 1, 2.0),
+        (2, 2021, "disbursements", 0, 1, 3.0),
+    ]
+
+
 def test_btr_crs_unlinked_sums_the_climate_records_no_btr_row_reaches() -> None:
     # Of Norway's bilateral 2021 records, d21 is linked, u21 and c21 are not, m21
     # carries no Rio marker and the core contribution is not bilateral. Norway's
@@ -1107,7 +1218,7 @@ def test_btr_crs_unlinked_sums_the_climate_records_no_btr_row_reaches() -> None:
     )
 
     built = release.btr_crs_unlinked(
-        crs.lazy(), btr=btr.lazy(), links=links.lazy()
+        crs.lazy(), party_years=btr.lazy(), links=links.lazy()
     ).collect()
 
     schema.validate(schema.BTR_CRS_UNLINKED, built)

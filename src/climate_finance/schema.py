@@ -557,6 +557,53 @@ BTR_WORKBOOKS = _table(
     draft_marker=_str(nullable=True, values=("started", "awaiting_submission")),
 )
 
+# One row per BTR Table III.2 row: a party's inflow to a multilateral institution in a
+# year, as `readers.btr.read_btr_archive` reads it. `institution_group` is the group of
+# CRS channel codes `build/btr_institutions.toml` gives the institution, null for a
+# name it leaves out. The core/general (`core_`) and climate-specific
+# (`climate_specific_`) amounts do not add. Each holds the face value and grant
+# equivalent in `currency` and at the party's own USD conversion, and restated at
+# `dac_rate` as `btr` restates its amounts.
+BTR_MULTILATERAL = _table(
+    "btr_multilateral",
+    ("row_id",),
+    row_id=_str(),
+    party=_str(),
+    provider_code=_code(nullable=True),
+    year=_year(),
+    institution=_str(nullable=True),
+    institution_group=_str(nullable=True),
+    recipient=_str(nullable=True),
+    title=_str(nullable=True),
+    core_amount_domestic=_f64(nullable=True),
+    core_face_usd=_usd(nullable=True),
+    core_grant_equiv_domestic=_f64(nullable=True),
+    core_grant_equiv_usd=_usd(nullable=True),
+    climate_specific_amount_domestic=_f64(nullable=True),
+    climate_specific_face_usd=_usd(nullable=True),
+    climate_specific_grant_equiv_domestic=_f64(nullable=True),
+    climate_specific_grant_equiv_usd=_usd(nullable=True),
+    currency=_str(nullable=True),
+    dac_rate=_f64(nullable=True),
+    core_face_usd_at_dac=_usd(nullable=True),
+    core_grant_equiv_usd_at_dac=_usd(nullable=True),
+    climate_specific_face_usd_at_dac=_usd(nullable=True),
+    climate_specific_grant_equiv_usd_at_dac=_usd(nullable=True),
+    status=_str(nullable=True, values=("committed", "disbursed")),
+    channel=_str(nullable=True),
+    funding_source=_str(nullable=True),
+    instrument=_str(nullable=True),
+    support_type=_str(nullable=True),
+    sector=_str(nullable=True),
+    additional_information=_str(nullable=True),
+    source_file=_str(),
+)
+
+# `btr_workbooks` for the Table III.2 sheets.
+BTR_MULTILATERAL_WORKBOOKS = _table(
+    "btr_multilateral_workbooks", BTR_WORKBOOKS.sort_key, **BTR_WORKBOOKS.columns
+)
+
 # One row per resolved organisation name and role. An agency name resolves within
 # the donor it was printed under, so one name can hold a row per donor.
 ORGS = _table(
@@ -1382,11 +1429,72 @@ BTR_TOTALS = _table(
     dac_rate=_f64(nullable=True),
 )
 
-# For each BTR party's DAC provider and each year its BTR rows cover, the bilateral
-# CRS amount of each flow on climate-marked records (higher Rio marker 1 or 2) that
-# no `btr_crs` link reaches: the reconciliation's OECD-only side, as the release
-# holds no CRS records. Zero where every such record is linked, and null where the
-# build's CRS holds no record of the provider and year, as for a year past its last.
+# The `btr_multilateral` rows summed by party, year, status and institution group,
+# the multilateral reconciliation's BTR side in a release that leaves out the rows.
+# `rows` counts the rows. An amount is null where every row of the group lacks it.
+BTR_MULTILATERAL_TOTALS = _table(
+    "btr_multilateral_totals",
+    ("party", "year", "status", "institution_group"),
+    party=_str(),
+    provider_code=_code(nullable=True),
+    year=_year(),
+    status=_str(nullable=True, values=("committed", "disbursed")),
+    institution_group=_str(nullable=True),
+    rows=_count(),
+    core_face_usd=_usd(nullable=True),
+    core_grant_equiv_usd=_usd(nullable=True),
+    core_face_usd_at_dac=_usd(nullable=True),
+    core_grant_equiv_usd_at_dac=_usd(nullable=True),
+    climate_specific_face_usd=_usd(nullable=True),
+    climate_specific_grant_equiv_usd=_usd(nullable=True),
+    climate_specific_face_usd_at_dac=_usd(nullable=True),
+    climate_specific_grant_equiv_usd_at_dac=_usd(nullable=True),
+)
+
+# The CRS channel codes of each institution group of `btr_multilateral`, one row per
+# code, from `build/btr_institutions.toml`. No code is in two groups.
+BTR_INSTITUTION_GROUPS = _table(
+    "btr_institution_groups",
+    ("channel_code",),
+    institution_group=_str(),
+    channel_code=_code(),
+)
+
+# For each BTR party's DAC provider and each year its Table III.1 or III.2 rows
+# cover, the bilateral CRS amounts (`BILATERAL`) on climate-marked records (higher Rio
+# marker 1 or 2) delivered through a channel of `btr_institution_groups` that no
+# `btr_crs` link reaches, money a party may report in Table III.2 that the release
+# holds among its bilateral records. Summed by agency, channel, flow and the
+# record's two Rio markers, so a query weights it as it weights `total_flows`, and
+# without the records reported for memorandum (`MEMORANDUM_PSI_FLAGS`). A key with
+# no amount has no row.
+BTR_CRS_EARMARKED = _table(
+    "btr_crs_earmarked",
+    (
+        "provider_code",
+        "agency_code",
+        "year",
+        "channel_code",
+        "flow",
+        "rio_adaptation",
+        "rio_mitigation",
+    ),
+    provider_code=_code(),
+    agency_code=_code(nullable=True),
+    year=_year(),
+    channel_code=_code(),
+    flow=_str(values=FLOWS),
+    rio_adaptation=Column(pl.Int8(), values=RIO_MARKERS),
+    rio_mitigation=Column(pl.Int8(), values=RIO_MARKERS),
+    amount_usd=_usd(),
+)
+
+# For each BTR party's DAC provider and each year its Table III.1 or III.2 rows
+# cover, the bilateral CRS amount of each flow on climate-marked records (higher
+# Rio marker 1 or 2) that no `btr_crs` link reaches: the reconciliation's
+# OECD-only side, as the release holds no CRS records. Zero where every such
+# record is linked, and null where the build's CRS holds no record of the provider
+# and year, as for a year past its last.
 BTR_CRS_UNLINKED = _table(
     "btr_crs_unlinked",
     ("provider_code", "year", "flow"),
@@ -1530,6 +1638,10 @@ RELEASE_TABLES = _by_name(
     BTR_LINKS,
     BTR_TOTALS,
     BTR_CRS_UNLINKED,
+    BTR_MULTILATERAL,
+    BTR_MULTILATERAL_TOTALS,
+    BTR_INSTITUTION_GROUPS,
+    BTR_CRS_EARMARKED,
     DISBURSEMENT_PROFILE,
     QUALITY,
     UNTRACED,
@@ -1607,9 +1719,17 @@ FORMAT_TABLES: Mapping[int, frozenset[str]] = {
     ),
     # Format 2 adds `btr_coefficients`.
     2: _FORMAT_2_TABLES,
-    # Format 3 adds `psi_flag` (`MEMORANDUM_FORMAT`), `outflow_shares` and
-    # `developed_providers`.
-    3: _FORMAT_2_TABLES | {"outflow_shares", "developed_providers"},
+    # Format 3 adds `psi_flag` (`MEMORANDUM_FORMAT`), `outflow_shares`,
+    # `developed_providers` and the Table III.2 tables.
+    3: _FORMAT_2_TABLES
+    | {
+        "outflow_shares",
+        "developed_providers",
+        "btr_multilateral",
+        "btr_multilateral_totals",
+        "btr_institution_groups",
+        "btr_crs_earmarked",
+    },
 }
 
 STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
@@ -1624,6 +1744,8 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
         EXTERNAL,
         BTR,
         BTR_WORKBOOKS,
+        BTR_MULTILATERAL,
+        BTR_MULTILATERAL_WORKBOOKS,
         ORGS,
         LEDGER,
     ),
@@ -1650,15 +1772,24 @@ STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
     "assemble": RELEASE_TABLES,
 }
 # Tables a stage may leave out. A stage that reads one that was not written raises
-# StageInputMissingError. `orgs` is written when recoveries are on, `btr` and
-# `btr_workbooks` when the build config names a BTR archive, `ledger` when it
-# names ledger sources.
+# StageInputMissingError. `orgs` is written when recoveries are on, `btr`,
+# `btr_workbooks`, `btr_multilateral` and `btr_multilateral_workbooks` when the build
+# config names a BTR archive, `ledger` when it names ledger sources.
 # `bank_year_overlap` is written by the bank-ledger gap fill, `review_queue` by the
 # review queue and `pair_labels` by the ledger check. With their switches off the two
 # stages pass the tables they carry forward through unchanged. `jev_flags` is written
 # when `jev_flags` is on.
 OPTIONAL_STAGE_TABLES: Mapping[str, frozenset[str]] = {
-    "normalise": frozenset({"btr", "btr_workbooks", "orgs", "ledger"}),
+    "normalise": frozenset(
+        {
+            "btr",
+            "btr_workbooks",
+            "btr_multilateral",
+            "btr_multilateral_workbooks",
+            "orgs",
+            "ledger",
+        }
+    ),
     "fill": frozenset({"bank_year_overlap"}),
     "review": frozenset({"review_queue", "pair_labels"}),
     "flag": frozenset({"jev_flags"}),

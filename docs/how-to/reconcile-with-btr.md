@@ -1,6 +1,6 @@
 # How to reconcile a party's BTR report with OECD data
 
-Reconcile a party's Biennial Transparency Report (BTR) total against the OECD figures for the same party and year to find where the two disagree, or to check whether a figure from `spending()` is close to what the donor told the UNFCCC. The comparison covers the bilateral total of Table III.1. The workbooks' Tables III.2 and III.3 are unread.
+Reconcile a party's Biennial Transparency Report (BTR) total against the OECD figures for the same party and year to find where the two disagree, or to check whether a figure from `spending()` is close to what the donor told the UNFCCC. `table` compares the bilateral total of Table III.1, and `multilateral` the contributions through multilateral channels of Table III.2. The workbooks' Table III.3 is unread.
 
 A published release holds the reconciliation aggregates, so `release.reconcile()` compares totals there. The BTR rows behind them, and `rows(provider=..., year=...)`, need a local build from the workbooks, which [How to reproduce the BTR tables](reproduce-btr-tables.md) sets up.
 
@@ -61,6 +61,33 @@ release = cf.load_example()
    ```output
    [('BTR-DEU-2021', 'DEU-B-R1', False), ('BTR-DEU-2021', 'DEU-B-R2', False)]
    ```
+
+## Reconcile multilateral contributions
+
+Table III.2 lists each institution a party paid, with a core/general amount and a climate-specific amount on one row. `multilateral` sums the rows by institution group, a set of CRS channel codes such as IBRD and IDA for the World Bank, and sets each group against the release:
+
+- `btr_core_face` against `core_contributions`, the party's core contributions to the group's channels in the status's flow, commitments for committed rows and disbursements for disbursed rows.
+- `btr_climate_specific_face` against `attributed_core` plus `crs_earmarked`. `attributed_core` is the climate value of those core contributions under the method, at each channel's climate share, as the provider view attributes them. `crs_earmarked` is the party's bilateral climate-marked CRS money through the group's channels that no Table III.1 row links to, at the party's own coefficients, since a party can report an earmarked contribution in Table III.2 that the release holds among its bilateral records. That money also counts on the release side of `table`, in its CRS comparators and `oecd_only_usd`, so the release sides of the two tables overlap and do not add.
+
+```python
+multilateral = release.reconcile(providers="Germany", years=2022).multilateral
+for row in multilateral.iter_rows(named=True):
+    core = row["btr_core_over_core_contributions"]
+    climate = row["btr_climate_specific_over_attributed_and_earmarked"]
+    print(
+        row["institution_group"], core and round(core, 2), climate and round(climate, 2)
+    )
+```
+
+```output
+Least Developed Countries Fund None 5.5
+World Bank 0.76 0.51
+None None None
+```
+
+Germany reports its LDCF money as climate-specific with no core amount, so only the climate-specific ratio reads, and its USD 4m of earmarked CRS money is the release's whole side. Read both ratios before calling a gap, since a party that books a contribution in only one column shows a null or inflated ratio in the other.
+
+The group a party names is in `institution_group`, and a group that only one side holds still has a row: a null BTR side where the party reported nothing to the group, and a zero release side where the release holds nothing of the party through it. The row with a null `institution_group` holds the BTR amounts of institutions the name map leaves out, such as Germany's early warning initiative here, and the release's money through channels no group holds. The release side is null in a year past the release's last complete CRS year, where `oecd_only_usd` is null too.
 
 ## What the comparison measures
 
