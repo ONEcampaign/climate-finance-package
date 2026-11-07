@@ -41,6 +41,18 @@ links is left out of the later ones:
   length (`rounded_digits`). It links to a commitment of the same agency and
   recipient whose number starts with those digits and has that length, under a
   similar title, where the disbursements that match it share one title.
+- `repair_reform_measure`: an IMF Resilience and Sustainability Trust tranche,
+  numbered `CCCyyyyRMn` (`REFORM_MEASURE`), to the commitment of the same agency
+  and recipient under the same measure number with the year removed
+  (`reform_measure`), placed no later than the record year. Where that number
+  names more than one crs id among the agency's commitments in the recipient, the
+  one whose long description equals the record's takes the link, and the record
+  links to none when no single crs id has it. The IMF files each year's tranches
+  under a new year and the same measure number, `BGD2024RM5` paying `BGD2023RM5`,
+  while it annotates or rewords the text: `BEN2024RM11` appends a "Modified RM"
+  note to `BEN2023RM11`'s text, and `RWA2024RM13` repeats `RWA2022RM8`'s. It also
+  reuses titles across measures, filing a green public investment measure as
+  "Disaster risk management #2", so the title rule leaves these numbers alone.
 - `repair_title_recipient`: the same agency, recipient and title words in any
   order (`title_words`), where those words name one crs id among all the agency's
   commitments in the recipient and one project among the disbursements that match
@@ -110,11 +122,14 @@ TITLE_MIN_CHARS = 15
 CORE_MIN_CHARS = 4
 # A number whose units sit in this many countries names a programme.
 PROGRAMME_COUNTRIES = 3
+# An IMF RST reform measure: the recipient's ISO code, the year and the measure.
+REFORM_MEASURE = r"^([A-Z]{3})\d{4}(RM\d+)$"
 
 _PN = ("donor_code", "agency_code", "award")
 _CORE = ("donor_code", "agency_code", "core")
 _PLACE = ("donor_code", "agency_code", "recipient_code")
 _TITLE_KEY = (*_PLACE, "title_words")
+_MEASURE_KEY = (*_PLACE, "measure")
 _LINE = ("donor_code", "line_id")
 # What `_settle` reads of a rule's candidate pairs. Commitment columns end in `_c`.
 _PAIR = (
@@ -207,8 +222,12 @@ def repair_keys(
             d, c, key=_CORE, programmes=programmes[_CORE]
         ),
         "repair_afdb_scientific": _rounded_numbers,
+        "repair_reform_measure": lambda d, c: _reform_measures(
+            d, c, committed=committed
+        ),
         "repair_title_recipient": lambda d, c: _same_title(
-            d, c.join(unique_titles, on=_TITLE_KEY)
+            d.filter(reform_measure(pl.col("project_number")).is_null()),
+            c.join(unique_titles, on=_TITLE_KEY),
         ),
         # It runs last, so `found` holds every earlier rule's links.
         "repair_stray_country": lambda d, c: _stray_country(
@@ -321,6 +340,45 @@ def _unique_titles(commitments: pl.DataFrame) -> pl.DataFrame:
         .agg(ids=pl.col("crs_id").drop_nulls().n_unique())
         .filter(pl.col("ids") == 1)
         .select(_TITLE_KEY)
+    )
+
+
+def reform_measure(project_number: pl.Expr) -> pl.Expr:
+    """An IMF RST number without its year, as `BGD2024RM5` to `BGDRM5`, or null
+    for any other number."""
+    return pl.when(project_number.str.contains(REFORM_MEASURE)).then(
+        project_number.str.replace(REFORM_MEASURE, "${1}${2}")
+    )
+
+
+def _reform_measures(
+    disbursements: pl.DataFrame,
+    commitments: pl.DataFrame,
+    *,
+    committed: pl.DataFrame,
+) -> pl.DataFrame:
+    """Pairs equal on place and `reform_measure`, grouped by them, to the open
+    `commitments`. A measure number that names more than one crs id among the
+    `committed` units in the record's window links to the crs id whose long
+    description equals the record's. The group key then names that crs id, so the
+    units of a group reach the same commitments, and a record whose text names
+    more than one crs id falls in two groups, which `_settle` refuses.
+
+    The crs ids are counted over every commitment unit, linked or not, so a record
+    whose text names a commitment the exact tiers reached takes no other."""
+    measure = reform_measure(pl.col("project_number"))
+    pairs = _candidates(
+        disbursements.with_columns(measure=measure),
+        committed.with_columns(measure=measure),
+        on=_MEASURE_KEY,
+        key=_MEASURE_KEY,
+    )
+    one_id = pl.col("crs_id_c").n_unique().over("left_id") == 1
+    same_text = (pl.col("description") == pl.col("description_c")).fill_null(False)
+    return (
+        pairs.filter(one_id | same_text)
+        .with_columns(key=pl.concat_str(["key", "crs_id_c"], separator="|"))
+        .join(commitments.select(right_id="unit_id"), on="right_id", how="semi")
     )
 
 

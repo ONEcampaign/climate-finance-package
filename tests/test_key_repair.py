@@ -115,6 +115,12 @@ def _disbursement(**fields: object) -> dict[str, object]:
             {"crs_id": "B", "project_number": "2.10015E+12", "title": "EGGSP phase II"},
             "repair_afdb_scientific",
         ),
+        # An IMF RST tranche under the next year's number for its measure.
+        (
+            {"crs_id": "A", "project_number": "BEN2023RM4"},
+            {"crs_id": "B", "project_number": "BEN2024RM4"},
+            "repair_reform_measure",
+        ),
         (
             {"crs_id": "A", "title": "Rural water supply, phase two"},
             {"crs_id": "B", "title": "Phase two: rural water supply"},
@@ -674,6 +680,89 @@ def test_the_title_rule_counts_two_spellings_of_one_rounded_number_once() -> Non
         "d": {"repair_title_recipient": ["c"]},
         "d2": {"repair_title_recipient": ["c"]},
     }
+
+
+# Two commitments under one measure number, and a text for each.
+_RM13 = "Develop a financing mechanism for local disaster response"
+_RM13_2023 = "Adopt a national disaster risk financing strategy"
+_C23 = _commitment(
+    crs_id="B", project_number="RWA2023RM13", year=2020, long_description=_RM13_2023
+)
+
+
+@pytest.mark.parametrize(
+    ("other", "text", "linked"),
+    [
+        # The IMF appends a note to the measure's text when it modifies it.
+        ({}, f"{_RM13}Modified RM - Adopt it by end-2024", ["c22"]),
+        # The number names two crs ids, and the text names one of them.
+        ({"c23": _C23}, _RM13_2023, ["c23"]),
+        # The text names neither, or both.
+        ({"c23": _C23}, "Publish a green taxonomy", []),
+        ({"c23": {**_C23, "long_description": _RM13}}, _RM13, []),
+        # The text names c22, which the crs_id tier gave to p.
+        (
+            {
+                "c23": _C23,
+                "p": _disbursement(crs_id="A", project_number="RWA2022RM13"),
+            },
+            _RM13,
+            [],
+        ),
+    ],
+)
+def test_a_reform_measure_links_by_its_number_without_the_year(
+    other: dict[str, dict[str, object]], text: str, linked: list[str]
+) -> None:
+    # d shares c22's title, which the title rule leaves alone, since the IMF
+    # reuses titles across measures.
+    title = "Disaster risk management #2"
+    repaired = _repaired(
+        {
+            "c22": _commitment(
+                crs_id="A",
+                project_number="RWA2022RM13",
+                title=title,
+                long_description=_RM13,
+            ),
+            "d": _disbursement(
+                crs_id="D",
+                project_number="RWA2024RM13",
+                title=title,
+                long_description=text,
+            ),
+            **other,
+        }
+    )
+    assert repaired == ({"d": {"repair_reform_measure": linked}} if linked else {})
+
+
+def test_units_whose_texts_settle_a_measure_apart_sit_in_two_groups() -> None:
+    # d and e pay RWA RM13 in one year, and their texts name c22 and c23, so one
+    # group would pool d's disbursement into c23.
+    units, links, _ = _links(
+        {
+            "c22": _commitment(
+                crs_id="A", project_number="RWA2022RM13", long_description=_RM13
+            ),
+            "c23": _C23,
+            "d": _disbursement(
+                crs_id="D", project_number="RWA2024RM13", long_description=_RM13
+            ),
+            "e": _disbursement(
+                crs_id="E", project_number="RWA2024RM13", long_description=_RM13_2023
+            ),
+        }
+    )
+    names = dict(zip(units["unit_id"], units["record_ids"].list.first(), strict=True))
+    groups = {
+        (names[left], names[right]): group
+        for left, right, group in links.filter(link_method="repair_reform_measure")
+        .select("left_id", "right_id", "group_id")
+        .iter_rows()
+    }
+    assert set(groups) == {("d", "c22"), ("e", "c23")}
+    assert groups["d", "c22"] != groups["e", "c23"]
 
 
 def test_the_title_rule_ignores_short_titles() -> None:

@@ -49,6 +49,7 @@ KEY_REPAIR_METHODS = (
     "repair_new_crs_id",
     "repair_pn_variant",
     "repair_afdb_scientific",
+    "repair_reform_measure",
     "repair_title_recipient",
     "repair_stray_country",
 )
