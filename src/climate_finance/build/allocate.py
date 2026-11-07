@@ -960,7 +960,7 @@ def allocate_to_rows(
             allocated_usd=pl.col("allocated_usd") * pl.col("weight"),
         )
     )
-    to_rows = _to_first_rows(to_rows, crdf=crdf)
+    to_rows = _to_first_rows(to_rows, crdf=crdf, weights=weights)
     rest = grouped.join(spread, on="group_id", how="left").select(
         pl.lit(None, dtype=pl.String).alias("row_id"),
         "record_id",
@@ -1011,26 +1011,30 @@ def allocate_to_rows(
     )
 
 
-def _to_first_rows(to_rows: pl.DataFrame, *, crdf: pl.LazyFrame) -> pl.DataFrame:
+def _to_first_rows(
+    to_rows: pl.DataFrame, *, crdf: pl.LazyFrame, weights: pl.DataFrame
+) -> pl.DataFrame:
     """Move each repeat row's allocations to the row it repeats (`repeat_of`).
 
     A republished commitment is the same commitment, so its disbursement belongs to
     the first row. The first row keeps its own allocations and takes its repeats'
-    up to its face, in record order; the rest goes to a null `row_id`, as the part
-    of a commitment without a CRDF row does.
+    up to the face status reads it against, its `crs_face_usd` from `weights`
+    (its own face outside every group), in record order. The rest goes to a null
+    `row_id`, as the part of a commitment without a CRDF row does.
     """
-    rows = crdf.select("row_id", "repeat_of", "face_usd").collect()
+    rows = (
+        crdf.select("row_id", "repeat_of", "face_usd")
+        .collect()
+        .join(weights.select("row_id", "crs_face_usd"), on="row_id", how="left")
+    )
     amount = pl.col("allocated_usd")
     repeat = pl.col("repeat_of").is_not_null()
     headroom = (pl.col("face") - pl.col("before")).clip(lower_bound=0.0)
+    cap = pl.col("crs_face_usd").fill_null(pl.col("face_usd")).clip(lower_bound=0.0)
     ordered = (
         to_rows.join(rows.select("row_id", "repeat_of"), on="row_id", how="left")
         .with_columns(first=pl.coalesce("repeat_of", "row_id"))
-        .join(
-            rows.select(first="row_id", face=pl.col("face_usd").clip(lower_bound=0.0)),
-            on="first",
-            how="left",
-        )
+        .join(rows.select(first="row_id", face=cap), on="first", how="left")
         .sort(
             "first",
             repeat,
@@ -1180,7 +1184,8 @@ def compute_status(
         amount over `crs_face_usd`. `disbursed_usd` sums the row's allocations in the
         dollars disbursed, so it can sit below face for a disbursed commitment when
         exchange rates move between the commitment and disbursement years. The ratio
-        reads `disbursed` at `DISBURSED_RATIO` or more, `partly_disbursed` above 0. With
+        reads `disbursed` at `DISBURSED_RATIO` or more, `partly_disbursed` above 0. A
+        row with no positive `crs_face_usd` has ratio 0, whatever it holds. With
         nothing allocated a row is `not_traceable` when not `traceable`, else
         `no_disbursement_record`. A pending row is `pending_review` whatever its ratio.
         `project_disbursing` marks a no-record row whose id is disbursing.

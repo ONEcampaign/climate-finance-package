@@ -874,17 +874,23 @@ def test_a_group_gives_its_allocation_to_its_first_row_and_not_its_repeat(
 
 
 @pytest.mark.parametrize(
-    ("first_face", "expected"),
-    [(100.0, {"first": 100.0}), (60.0, {"first": 60.0, None: 40.0})],
+    ("first_face", "first_crs_face", "expected"),
+    [
+        (100.0, 100.0, {"first": 100.0}),
+        (60.0, 100.0, {"first": 60.0, None: 40.0}),
+        # The first row's CRS face sits below its CRDF face: it takes up to the
+        # CRS face, which status reads it against.
+        (110.0, 90.0, {"first": 90.0, None: 10.0}),
+    ],
 )
 def test_a_repeat_hands_its_allocation_to_its_first_row_up_to_face(
-    first_face: float, expected: dict[str | None, float]
+    first_face: float, first_crs_face: float, expected: dict[str | None, float]
 ) -> None:
     # The 2022 row republishes the 2021 commitment under the crs id the bulk
     # records it with in 2022, so it links to the 2022 commitment alone.
     crs, crdf, units, links = link(
         [
-            record("c21", 2021, commit=100.0, crs_id="A"),
+            record("c21", 2021, commit=first_crs_face, crs_id="A"),
             record("c22", 2022, commit=100.0, crs_id="B"),
             record("d23", 2023, disburse=100.0, crs_id="B"),
         ],
@@ -944,8 +950,12 @@ def test_status_reads_allocated_over_face() -> None:
             none=(100.0, True, False),
             lost=(100.0, False, False),
             ledger=(100.0, False, False),
+            # The fill stage routes a negative face's share as a negative amount.
+            negative=(-100.0, True, False),
         ),
-        allocations=allocations(full=100.0, ninety=90.0, part=89.0, ledger=1.0),
+        allocations=allocations(
+            full=100.0, ninety=90.0, part=89.0, ledger=1.0, negative=-100.0
+        ),
     )
     assert statuses(status) == {
         "full": "disbursed",
@@ -954,6 +964,7 @@ def test_status_reads_allocated_over_face() -> None:
         "none": "no_disbursement_record",
         "lost": "not_traceable",
         "ledger": "partly_disbursed",
+        "negative": "no_disbursement_record",
     }
 
 
