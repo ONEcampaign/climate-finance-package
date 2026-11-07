@@ -226,13 +226,6 @@ def load_gates(path: Path = GATES_YAML) -> GateConfig:
     return GateConfig.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
-def release_path(path: Path) -> Path:
-    """The release directory at `path`: its `assemble/` when `path` is a build's
-    directory, else `path` itself, a directory `cf.load(path=...)` opens."""
-    assembled = path / "assemble"
-    return assembled if (assembled / "release.json").exists() else path
-
-
 def run_gates(
     release_dir: Path,
     *,

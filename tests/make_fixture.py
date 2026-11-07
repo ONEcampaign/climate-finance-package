@@ -761,6 +761,7 @@ def build_tables() -> dict[str, pl.DataFrame]:
             "psi_flag": None,
             "crs_id": f"{year}00{row_id}" if has_ids else None,
             "project_number": f"PN-{row_id}" if has_ids else None,
+            "title": f"Climate project {row_id}",
             "rio_adaptation": rio_a,
             "rio_mitigation": rio_m,
             "climate_share": share,

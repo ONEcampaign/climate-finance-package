@@ -3,12 +3,13 @@ OXFAM_LOW, OXFAM_HIGH and OXFAM, and the marker rules that turn Rio markers or
 climate components into objective weights. ONE reads each provider's own coefficients;
 MARKERS applies one set of coefficients to every provider."""
 
-from typing import Literal, Self
+from typing import TYPE_CHECKING, Literal, NoReturn, Self
 
 import polars as pl
 from pydantic import Field, StrictBool, field_validator
 
 from climate_finance.catalogue import Catalogue
+from climate_finance.errors import RemovedError
 from climate_finance.frozen import Frozen
 from climate_finance.schema import OBJECTIVES
 
@@ -124,6 +125,28 @@ _NAMED = {
     "OXFAM_HIGH": OXFAM_HIGH,
 }
 _RANGES = {"RANGE": RANGE, "OXFAM": OXFAM}
+# Names the methods had before 2.0's release: each one's name now, and the note its
+# use raises. `method="PROVIDER"` raises an unknown name, `cf.methods.PROVIDER` a
+# removed one.
+RENAMED = {
+    "PROVIDER": (
+        "ONE",
+        "Method 'PROVIDER' is now named ONE, each provider's own coefficients. The "
+        "flat 40% and 100% rule that ONE named before is MARKERS.",
+    )
+}
+
+
+# Hidden from type checkers, which would otherwise type every misspelt attribute as
+# this function's return.
+if not TYPE_CHECKING:
+
+    def __getattr__(name: str) -> NoReturn:
+        # A `RemovedError` is no `AttributeError`, so `from climate_finance.methods
+        # import PROVIDER` shows its message too.
+        if name in RENAMED:
+            raise RemovedError(f"cf.methods.{name}", replacement=RENAMED[name][1])
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def uses_imputed_shares(method: Method) -> bool:

@@ -1,6 +1,6 @@
 {
   "release": "synthetic-example",
-  "data_format": 3,
+  "data_format": 4,
   "created_at": "2026-10-21T00:00:00Z",
   "package_version": "2.0.0.dev0",
   "build": {
@@ -92,7 +92,7 @@
       "rows": 275
     },
     "commitments": {
-      "sha256": "3e84a875c0fa6b67bf035b22bc3090c794ac38322d30573d765ca260dfb9de0f",
+      "sha256": "abf28e640c297062b10361a4c9885700d8ab5b1692b9ac20c9529872fa97742b",
       "rows": 14
     },
     "reflows": {

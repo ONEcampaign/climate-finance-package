@@ -88,8 +88,7 @@ def resolve(
     as "World Bank", names every provider of the group. An integer is a DAC
     code and an `Agency` an agency, both kept when the listings hold them. An agency
     is listed in `data/agencies.csv`, or is agency 0 or 1 of a listed provider, which
-    the OECD files use for the provider itself. An agency whose provider is also
-    named is dropped, since the provider covers it. Recipients have no agencies.
+    the OECD files use for the provider itself. Recipients have no agencies.
 
     Raises:
         UnknownProviderError: for a provider name of no entry, or of several, or a
@@ -97,8 +96,9 @@ def resolve(
         UnknownRecipientError: for a recipient name of no entry, or of several, or
             a code the listings lack.
         InvalidInputError: for a value of another type, a bool included, for an
-            `Agency` among recipients, or for an empty iterable, which would select
-            no rows.
+            `Agency` among recipients, for an empty iterable, which would select
+            no rows, or for a provider named beside one of its agencies, whose rows
+            the provider already holds.
     """
     if values is None:
         return None
@@ -107,16 +107,28 @@ def resolve(
         for value in each_value(values, kind=kind)
         for target in targets_of(value, kind=kind)
     }
-    covered = {target for target in targets if isinstance(target, int)}
-    return tuple(
-        sorted(
-            (
-                target
-                for target in targets
-                if not (isinstance(target, Agency) and target.provider in covered)
-            ),
-            key=_order,
-        )
+    if covered := sorted(
+        (
+            target
+            for target in targets
+            if isinstance(target, Agency) and target.provider in targets
+        ),
+        key=_order,
+    ):
+        raise _covered_error(covered[0])
+    return tuple(sorted(targets, key=_order))
+
+
+def _covered_error(agency: Agency) -> InvalidInputError:
+    """The error for `agency` named beside its provider, with the two queries that
+    split the provider's rows."""
+    provider = _code_names("providers")[agency.provider]
+    return InvalidInputError(
+        f"providers names {provider} ({agency.provider}) and its agency "
+        f"{agency_name(agency)} ({agency!r}), whose rows {provider} already holds. "
+        f"To split them, query providers={agency!r} for the agency and "
+        f"providers={agency.provider} for {provider} as a whole, whose difference "
+        "is the rest, or read the agency_code of Result.rows()."
     )
 
 

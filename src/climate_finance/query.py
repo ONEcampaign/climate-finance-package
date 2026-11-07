@@ -255,6 +255,7 @@ ROW_COLUMNS: dict[str, pl.DataType] = {
     "flow_category": pl.Int32(),
     "flow_code": pl.Int32(),
     "finance_t": pl.Int32(),
+    "crs_id": pl.String(),
     "project_number": pl.String(),
     "title": pl.String(),
     "status": pl.String(),
