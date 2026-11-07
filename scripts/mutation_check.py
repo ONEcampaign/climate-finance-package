@@ -253,9 +253,33 @@ KEY_REPAIR = {
         '"repair_afdb_scientific": _rounded_numbers,',
         '"repair_afdb_scientific": lambda d, c: _rounded_numbers(d, c).clear(),',
     ),
+    "rule_reform_measure": (
+        "d, c, committed=committed\n        ),",
+        "d, c, committed=committed\n        ).clear(),",
+    ),
+    "measure_text_breaks_tie": (
+        "pairs.filter(one_id | same_text)",
+        "pairs.filter(one_id)",
+    ),
+    "measure_key_names_crs_id": (
+        '.with_columns(key=pl.concat_str(["key", "crs_id_c"], separator="|"))',
+        "",
+    ),
+    "measure_counts_linked_commitments": (
+        "committed.with_columns(measure=measure)",
+        "commitments.with_columns(measure=measure)",
+    ),
+    "measure_open_commitments_only": (
+        'commitments.select(right_id="unit_id"), on="right_id", how="semi"',
+        'commitments.select(right_id="unit_id"), on="right_id", how="left"',
+    ),
+    "title_rule_skips_reform_measures": (
+        'd.filter(reform_measure(pl.col("project_number")).is_null()),',
+        "d,",
+    ),
     "rule_title_recipient": (
-        "d, c.join(unique_titles, on=_TITLE_KEY)\n        ),",
-        "d, c.join(unique_titles, on=_TITLE_KEY)\n        ).clear(),",
+        "c.join(unique_titles, on=_TITLE_KEY),\n        ),",
+        "c.join(unique_titles, on=_TITLE_KEY),\n        ).clear(),",
     ),
     "rule_stray_country": (
         'agreements = {"repair_stray_country": _AGREES | pl.col("records_agree")}',
@@ -292,7 +316,10 @@ KEY_REPAIR = {
         ".str.len_chars() >= TITLE_MIN_CHARS)",
         ".str.len_chars() >= 0)",
     ),
-    "unique_title_commitments": ('.filter(pl.col("ids") == 1)', ""),
+    "unique_title_commitments": (
+        '.filter(pl.col("ids") == 1)\n        .select(_TITLE_KEY)',
+        ".select(_TITLE_KEY)",
+    ),
     "rounded_length": ('        full.str.len_chars() == pl.col("digits"),\n', ""),
     "rounded_title_choice": (
         'pl.col("title_ratio") >= TITLE_AGREES\n    ).filter',

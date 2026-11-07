@@ -295,7 +295,7 @@ print(sorted(result.rows(origin="disbursement")["link_method"].unique()))
 ```
 
 ```output
-['crosswalk_amount', 'crs_id', 'pn_recipient', 'title_recipient']
+['crosswalk_amount', 'crs_id', 'repair_reform_measure', 'title_recipient']
 ```
 
 The synthetic release behind these examples carries `crosswalk_amount` and `title_recipient` as disbursement links. A build writes both only as routes from a CRDF row to its CRS commitment. [How linking works](../explanation/how-linking-works.md) lists the methods it writes.

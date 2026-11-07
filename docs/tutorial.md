@@ -59,7 +59,7 @@ for row in result.rows(origin="disbursement").iter_rows(named=True):
 2023 JPN-1-R2 title_recipient partly_disbursed
 2023 JPN-SPLIT crs_id partly_disbursed
 2023 JPN-3-R1 crosswalk_amount partly_disbursed
-2023 JPN-SPLIT pn_recipient partly_disbursed
+2023 JPN-SPLIT repair_reform_measure partly_disbursed
 ```
 
 A link is certain when two conditions hold. First, it is a `crs_id`, `crs_id_purpose`, `crs_id_parent`, or `wb_loan` link whose records agree on recipient and project number, or a record's link to its own commitment. Second, the commitment's CRDF row reached its CRS commitment by a certain route. In this release only the 2023 `crs_id` link qualifies, which gives the 12.0 in the `low` column above. Every other method estimates the link from a project number, a title, a trained model, or a crosswalk, and counts in `value` alone. The synthetic release gives its records every link method the schema names, so it also carries methods that no build writes as disbursement links, such as `weak_classifier`, `crosswalk_amount`, and `title_recipient` above. [How linking works](explanation/how-linking-works.md) lists the methods a build writes.

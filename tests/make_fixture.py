@@ -148,8 +148,8 @@ FINANCE_TYPE = {11: 110, 13: 421}
 
 # The records a certain link carries, which count in the low bound. Every other
 # record's link is estimated. Each takes the next certain method, and the rest take
-# the estimated methods in turn, so a new method changes no low bound. It needs a
-# slot of its own, or the fixture refuses to build.
+# the estimated methods in turn, less those `SPLIT_ALLOCATIONS` names, so a new method
+# changes no low bound. It needs a slot of its own, or the fixture refuses to build.
 CERTAIN_RECORDS = frozenset(
     {
         "DEU-1-R0",
@@ -172,7 +172,7 @@ SPLIT_GRANT_EQUIV = 18e6
 # (row_id, allocated_usd, link_method, link_probability)
 SPLIT_ALLOCATIONS = (
     ("JPN-1", 12e6, "crs_id", 1.0),
-    ("JPN-3", 10e6, "pn_recipient", 0.85),
+    ("JPN-3", 10e6, "repair_reform_measure", 0.85),
 )
 # A bank-ledger gap fill on AFDB-1 has no CRS link, so no method or probability.
 LEDGER_RECORD = "AFDB-1-LEDGER"
@@ -732,8 +732,13 @@ def build_tables() -> dict[str, pl.DataFrame]:
     )
 
     certain_methods = itertools.cycle(CERTAIN_METHODS)
+    fixed = {method for _, _, method, _ in SPLIT_ALLOCATIONS}
     estimated_methods = itertools.cycle(
-        [method for method in LINK_METHODS if method not in CERTAIN_METHODS]
+        [
+            method
+            for method in LINK_METHODS
+            if method not in CERTAIN_METHODS and method not in fixed
+        ]
     )
     commitments: dict[str, dict[str, object]] = {}
     disbursement_rows: list[dict[str, object]] = []
@@ -810,10 +815,6 @@ def build_tables() -> dict[str, pl.DataFrame]:
             )
             objective_rows.extend(_objectives(commitment, record_id))
 
-    used = {row["link_method"] for row in disbursement_rows}
-    if missing := set(LINK_METHODS) - used:
-        raise ValueError(f"fixture misses link methods {sorted(missing)}")
-
     for row_id, allocated, link_method, probability in SPLIT_ALLOCATIONS:
         disbursement_rows.append(
             _allocation(
@@ -829,6 +830,9 @@ def build_tables() -> dict[str, pl.DataFrame]:
             )
         )
     objective_rows.extend(_objectives(commitments["JPN-1"], SPLIT_RECORD))
+    used = {row["link_method"] for row in disbursement_rows}
+    if missing := set(LINK_METHODS) - used:
+        raise ValueError(f"fixture misses link methods {sorted(missing)}")
     split = next(row for row in disbursement_rows if row["record_id"] == SPLIT_RECORD)
     untraced_rows = [
         {
