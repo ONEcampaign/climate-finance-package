@@ -188,7 +188,8 @@ Key `provider_code`, `agency_code`, `year`, `channel_code`, `flow`, `rio_adaptat
 Key `group`, `years_since`. The cumulative disbursed share of traceable climate value by years since commitment:
 
 - `group`: `all`, `bilateral`, or `multilateral`.
-- `years_since`, `cumulative_share`.
+- `years_since`: the years after the commitment year.
+- `cumulative_share`: the disbursed share of traceable climate value. Each `years_since` pools only the vintages old enough to reach it, so later rows rest on fewer and older cohorts; the series can fall and is not one cohort's path.
 - `vintages`: the commitment years observed that long.
 
 ## `quality`
@@ -300,7 +301,7 @@ Key `provider_code`, `agency_code`, `marker`. For each scope of `provider_coeffi
 
 ## `jev_flags`
 
-Key `record_id`. Jev's answers about each CRS record from `jev_flags_first_year` to `crs_last_complete` with a Rio mitigation or adaptation marker of 1 or 2 and a positive commitment or disbursement, beside the record's own facts. The table has no rows in a build with `jev_flags` off, and `release.json` records the switch under `settings`. `release.jev_flags()` reads it and adds `in_release`. The flags change no total. The columns are:
+Key `record_id`. Jev's answers about each CRS record from `jev_flags_first_year` to `crs_last_complete` with a Rio mitigation or adaptation marker of 1 or 2 and a positive commitment or disbursement, beside the record's own facts. Core contributions and CRDF rows with no CRS match lie outside it. The table has no rows in a build with `jev_flags` off, and `release.json` records the switch under `settings`. `release.jev_flags()` reads it and adds `in_release`. The flags change no total. The columns are:
 
 - `record_id`, `year`: the CRS record and its year.
 - `provider_code`, `agency_code`, `recipient_code`, `purpose_code`, `flow_code`, `project_number`, `crs_id`, `title`: the record's own fields.

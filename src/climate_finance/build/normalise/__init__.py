@@ -55,14 +55,17 @@ def run_normalise(context: StageContext) -> StageOutput:
     its institution group. The four are written only when the build config names a
     BTR archive. `crdf` marks rows repeated across
     vintages (`repeat_of`) and gains child rows for the bilateral aggregate rows
-    the bulk records rebuild (`parent_row_id`). `crdf_span` holds the recipient
+    the bulk records rebuild (`parent_row_id`). The parent rows stay beside their
+    children, so a sum of the recipient-perspective rows, the perspective
+    `commitments` holds, must drop every row whose `row_id` is another row's
+    `parent_row_id`; `assemble` leaves them out. `crdf_span` holds the recipient
     rows of the year before the first CRDF year, which the recipient file holds
     where the CRDF does, less those a row of the first CRDF year repeats, with
     their aggregates rebuilt and `repeat_of` null. `orgs` resolves the CRS's and
     CRDF's provider, agency and channel names to DAC codes, and is written only
-    when recoveries are on. `ledger` holds the bank ledgers for the years
-    `raw_manifest` records for them, and is written only when the build config
-    names them.
+    when recoveries are on. `ledger` holds the bank ledgers for the
+    years `raw_manifest` records for them, and is written only when the build
+    config names them.
     """
     raw = context.raw_dir
     years = fetched_years(context)

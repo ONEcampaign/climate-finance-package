@@ -455,7 +455,11 @@ class Release:
         experimental: bool = False,
     ) -> pl.DataFrame:
         """Jev's answers about the release's climate-marked CRS records, one row per
-        record, with the record's facts for checking it.
+        record, with the record's facts for checking it. The table covers CRS
+        records from `jev_flags_first_year` (2015 by default) to
+        `years.crs_last_complete` with a Rio adaptation or mitigation marker of 1
+        or 2 and a positive commitment or disbursement; core contributions and CRDF
+        rows with no CRS match lie outside it.
 
         `provider` and `year` take the forms `quality`'s `providers` and `years`
         take; None takes every record. `flagged="no_aim"` keeps records whose text

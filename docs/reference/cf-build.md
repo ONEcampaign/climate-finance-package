@@ -19,6 +19,8 @@ A command that refuses its input, such as a misspelt `build.toml` key or a faile
 
 `cf-build build RELEASE` runs the stages in order and writes each stage's tables to `<out-dir>/<RELEASE>/<stage>/`, sorted by key. Two offline builds from one raw manifest give the same sha256 for every table. The stages are `fetch`, `normalise`, `link`, `allocate`, `fill`, `review`, `label`, `flag`, `measure`, and `assemble`. `cf.load(path=...)` opens `<out-dir>/<RELEASE>/assemble/` as a release directory.
 
+The `normalise` stage's `crdf` table holds each aggregate parent row beside the child rows rebuilt from it, and a child's `parent_row_id` names its parent. `commitments` holds the recipient-perspective rows. To reproduce its money from this table, keep the recipient-perspective rows and drop every row whose `row_id` appears as another row's `parent_row_id`, or the sum counts the money twice. The published `commitments` table already excludes the parents.
+
 ## `cf-build build`
 
 ```bash
