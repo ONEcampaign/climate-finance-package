@@ -187,7 +187,7 @@ Sets each line of Eurostat's `sdg_13_50`, the climate finance of an EU member st
 
 ### `Release.jev_flags(*, provider, year, flagged, experimental)`
 
-Returns a polars DataFrame of Jev's answers about the CRS records the release flags, one row per record, with the record's provider, agency, recipient, year, title, purpose, flow, commitment and disbursement, both Rio markers and CRS id. The table is empty unless the release was built with `jev_flags` on. [About the methods](../explanation/methods.md#jev-flags) describes the four questions and the cuts.
+Returns a polars DataFrame of Jev's answers about the CRS records the release flags, one row per record, with the record's provider, agency, recipient, year, title, purpose, flow, commitment and disbursement, both Rio markers and CRS id. The table is empty unless the release was built with `jev_flags` on. It covers CRS records from `jev_flags_first_year` (2015 by default) to `years.crs_last_complete` with a Rio adaptation or mitigation marker of 1 or 2 and a positive commitment or disbursement, so core contributions and CRDF rows with no CRS match lie outside it. [About the methods](../explanation/methods.md#jev-flags) describes the four questions and the cuts.
 
 - `provider` (`str | int | Iterable[str | int] | None`). Providers named as `quality()` names `providers`. An agency raises `InvalidInputError` naming its provider. `None` takes all.
 - `year` (`int | Iterable[int] | None`). The records' CRS years. `None` takes all.
@@ -200,7 +200,7 @@ Raises `MissingLabelsError` naming `jev_flags` for a release built with it off, 
 
 ### `Release.disbursement_profile()`
 
-Returns a polars DataFrame of the cumulative disbursed share of traceable climate value by years since commitment, for the groups `all`, `bilateral`, and `multilateral`. `vintages` counts the commitment years observed for that duration.
+Returns a polars DataFrame of the cumulative disbursed share of traceable climate value by years since commitment, for the groups `all`, `bilateral`, and `multilateral`. `vintages` counts the commitment years observed for that duration. Each `years_since` pools only the vintages old enough to reach it, so later rows rest on fewer and older cohorts; the series can fall and is not one cohort's path.
 
 ### `Release.table(name)`
 

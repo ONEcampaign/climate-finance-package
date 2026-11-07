@@ -1221,6 +1221,8 @@ def disbursement_profile(
     one's disbursed share of face weighs by its climate value. A commitment counts
     at `years_since` only when its year plus `years_since` is at most `last_year`,
     so each row pools the vintages observed that long, and `vintages` counts them.
+    Later rows rest on fewer and older cohorts, so the series can fall and is not
+    one cohort's path.
     """
     traceable = (
         commitments.filter(pl.col("repeat_of").is_null(), pl.col("face_usd") > 0)
