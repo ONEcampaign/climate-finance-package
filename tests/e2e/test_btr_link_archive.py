@@ -380,12 +380,7 @@ def _with_btr_tables(
     coefficients.write_parquet(out / "provider_coefficients.parquet")
     btr_coefficients(
         rows,
-        links=btr_links.join(
-            crs.select("record_id", "agency_code").collect(),
-            on="record_id",
-            how="left",
-            validate="m:1",
-        ),
+        links=assemble.btr_coefficient_links(links.lazy(), crs=crs).collect(),
         coefficients=coefficients,
     ).write_parquet(out / "btr_coefficients.parquet")
     assemble.btr_totals(rows.lazy(), links=btr_links.lazy()).collect().write_parquet(
@@ -523,26 +518,27 @@ def test_method_shares_follow_where_each_party_takes_its_coefficients(
 # For each provider and agency that assesses case by case, and each marker: the
 # coefficient its BTR implies, which `ONE` takes, why there is none, and the
 # components behind it, after those above a share of 1.1 leave the evidence.
-# Belgium, France's AFD and the UK take both markers from their BTR and Luxembourg
-# its significant one. The rest, the US among them, have too little linked
-# evidence or none, and Australia keeps its stated default.
+# France's AFD and the UK take both markers from their BTR. Belgium, Luxembourg,
+# Slovakia and Estonia link only on the pooled map, which no labels of theirs
+# check, so their coefficients fall back. The rest, the US among them, have too
+# little linked evidence or none, and Australia keeps its stated default.
 type Scope = tuple[int, int | None, str]
 CASE_BY_CASE: dict[Scope, tuple[float | None, str, str | None, int]] = {
-    (2, None, "principal"): (0.902, "btr", None, 154),
-    (2, None, "significant"): (0.158, "btr", None, 203),
+    (2, None, "principal"): (None, "fallback", "unchecked_pool", 0),
+    (2, None, "significant"): (None, "fallback", "unchecked_pool", 0),
     (4, 3, "principal"): (0.863, "btr", None, 77),
     (4, 3, "significant"): (0.618, "btr", None, 67),
     (12, None, "principal"): (0.89, "btr", None, 104),
     (12, None, "significant"): (0.398, "btr", None, 74),
     (18, None, "principal"): (None, "fallback", "no_links", 0),
     (18, None, "significant"): (None, "fallback", "no_links", 0),
-    (22, None, "principal"): (None, "fallback", "thin", 83),
-    (22, None, "significant"): (0.543, "btr", None, 86),
-    (69, None, "principal"): (None, "fallback", "thin", 10),
-    (69, None, "significant"): (None, "fallback", "thin", 30),
+    (22, None, "principal"): (None, "fallback", "unchecked_pool", 0),
+    (22, None, "significant"): (None, "fallback", "unchecked_pool", 0),
+    (69, None, "principal"): (None, "fallback", "unchecked_pool", 0),
+    (69, None, "significant"): (None, "fallback", "unchecked_pool", 0),
     (75, None, "principal"): (None, "fallback", "no_links", 0),
     (75, None, "significant"): (None, "fallback", "no_links", 0),
-    (82, None, "principal"): (None, "fallback", "unaligned", 0),
+    (82, None, "principal"): (None, "fallback", "unchecked_pool", 0),
     (82, None, "significant"): (None, "fallback", "no_links", 0),
     (84, None, "principal"): (None, "fallback", "no_links", 0),
     (84, None, "significant"): (None, "fallback", "no_links", 0),

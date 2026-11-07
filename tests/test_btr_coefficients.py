@@ -17,7 +17,7 @@ from climate_finance.schema import (
     validate,
 )
 
-GBR, FRA, AFD = 12, 4, 3
+GBR, FRA, AFD, BEL = 12, 4, 3, 2
 # Enough components, each of USD 2m, for a coefficient.
 COMPONENTS = MIN_COMPONENTS
 GROSS = 2e6
@@ -35,11 +35,17 @@ def _rows(
     status: str = "committed",
     count: int = COMPONENTS,
     agency: int = 1,
+    calibration: str | None = None,
+    link_method: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    """`count` BTR rows of `party`, each linked to one CRS record of its own."""
+    """`count` BTR rows of `party`, each linked to one CRS record of its own by
+    `link_method`, by default by id where `calibration` is None and by the model on
+    `calibration`'s map otherwise."""
+    link_method = link_method or ("btr_id" if calibration is None else "btr_splink")
     rows, links = [], []
     for index in range(count):
-        row_id = f"BTR-{party}-{agency}-{marker}-{status}-{index}"
+        key = f"{party}-{agency}-{marker}-{status}-{link_method}-{calibration}"
+        row_id = f"BTR-{key}-{index}"
         rows.append(
             {
                 "row_id": row_id,
@@ -61,6 +67,8 @@ def _rows(
                 "disbursement_usd": disbursement,
                 "rio_adaptation": marker,
                 "rio_mitigation": 0,
+                "calibration": calibration,
+                "link_method": link_method,
             }
         )
     return rows, links
@@ -76,7 +84,9 @@ def _frames(*parts: tuple[list[dict], list[dict]]) -> tuple[pl.DataFrame, pl.Dat
         pl.col(name).cast(BTR_LINKS.columns[name].dtype)
         for name in ("provider_code", "rio_adaptation", "rio_mitigation")
     )
-    return btr, link_frame.with_columns(pl.col("agency_code").cast(pl.Int32))
+    return btr, link_frame.with_columns(
+        pl.col("agency_code").cast(pl.Int32), pl.col("calibration").cast(pl.String)
+    )
 
 
 def _coefficients(*rows: dict) -> pl.DataFrame:
@@ -120,6 +130,104 @@ def test_a_case_by_case_party_takes_its_btr_share_on_the_flow_it_follows() -> No
     }
 
 
+@pytest.mark.parametrize(
+    ("calibration", "significant"),
+    [
+        ("own", 0.4),
+        ("pooled", 0.4),
+        ("reviewed", 0.4),
+        # Links on a pooled map that no labels of the party checked are no
+        # evidence, so the id links' 0.6 stands alone, as it does for model links
+        # that name no map.
+        ("pooled_unchecked", 0.6),
+        (None, 0.6),
+    ],
+)
+def test_links_on_an_unchecked_pooled_map_leave_the_evidence(
+    *, calibration: str | None, significant: float
+) -> None:
+    # The UK's id links give its principal components and significant ones at 0.6.
+    # As many significant ones at 0.2 link by the model on `calibration`'s map.
+    btr, links = _frames(
+        _rows("GBR", GBR, marker=2, btr_usd=GROSS, commitment=GROSS, disbursement=0.0),
+        _rows(
+            "GBR",
+            GBR,
+            marker=1,
+            btr_usd=0.6 * GROSS,
+            commitment=GROSS,
+            disbursement=0.0,
+        ),
+        _rows(
+            "GBR",
+            GBR,
+            marker=1,
+            btr_usd=0.2 * GROSS,
+            commitment=GROSS,
+            disbursement=0.0,
+            calibration=calibration,
+            link_method="btr_splink",
+        ),
+    )
+
+    table = _table(btr, links, _coefficients({"provider_code": GBR}))
+
+    assert table[(GBR, None, "significant")][:2] == (
+        pytest.approx(significant),
+        "btr",
+    )
+
+
+@pytest.mark.parametrize("accepted", [False, True])
+def test_a_scope_only_unchecked_links_reach_falls_back_for_the_pool(
+    *, accepted: bool
+) -> None:
+    # Belgium links only on the pooled map, unchecked, so every scope those links
+    # reach falls back for the pool, even agency 2's principal one, too thin for a
+    # coefficient on any links. Agency 2's significant scope has no links at all.
+    # Once people accept its provider-level links, those count.
+    provider_level = "reviewed" if accepted else "pooled_unchecked"
+    btr, links = _frames(
+        *(
+            _rows(
+                "BEL",
+                BEL,
+                marker=marker,
+                btr_usd=share * GROSS,
+                commitment=GROSS,
+                disbursement=0.0,
+                agency=agency,
+                count=count,
+                calibration=calibration,
+            )
+            for marker, share, agency, count, calibration in (
+                (2, 1.0, 1, COMPONENTS, provider_level),
+                (1, 0.5, 1, COMPONENTS, provider_level),
+                (2, 1.0, 2, 1, "pooled_unchecked"),
+            )
+        )
+    )
+    coefficients = _coefficients(
+        {"provider_code": BEL}, {"provider_code": BEL, "agency_code": 2}
+    )
+
+    provider = (
+        {
+            (BEL, None, "principal"): (pytest.approx(1.0), "btr", None, COMPONENTS),
+            (BEL, None, "significant"): (pytest.approx(0.5), "btr", None, COMPONENTS),
+        }
+        if accepted
+        else {
+            (BEL, None, "principal"): (None, "fallback", "unchecked_pool", 0),
+            (BEL, None, "significant"): (None, "fallback", "unchecked_pool", 0),
+        }
+    )
+    assert _table(btr, links, coefficients) == provider | {
+        (BEL, 2, "principal"): (None, "fallback", "unchecked_pool", 0),
+        (BEL, 2, "significant"): (None, "fallback", "no_links", 0),
+    }
+
+
 def test_rows_and_records_that_share_links_count_their_money_once() -> None:
     # In each group two BTR rows of 1m link to two records of 2m, one row to both
     # and one to the second, so the component holds 2m of BTR money on 4m of CRS:
@@ -156,6 +264,8 @@ def test_rows_and_records_that_share_links_count_their_money_once() -> None:
                     "disbursement_usd": GROSS,
                     "rio_adaptation": 1,
                     "rio_mitigation": 0,
+                    "calibration": None,
+                    "link_method": "btr_id",
                 }
             )
     btr, link_frame = _frames(principal, (rows, links))
@@ -351,7 +461,7 @@ def test_thin_evidence_and_stated_coefficients_keep_their_own() -> None:
 def test_a_build_without_btr_rows_has_no_coefficients() -> None:
     btr = pl.DataFrame(schema=BTR.dtypes)
     links = pl.DataFrame(schema=BTR_LINKS.dtypes).with_columns(
-        agency_code=pl.lit(None, pl.Int32)
+        agency_code=pl.lit(None, pl.Int32), calibration=pl.lit(None, pl.String)
     )
 
     table = btr_coefficients(

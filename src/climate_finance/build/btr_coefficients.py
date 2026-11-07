@@ -22,6 +22,15 @@ its own) takes, per Rio marker, the CRS-weighted share of its aligned components
 records all belong to the scope and carry that highest marker. It needs
 `MIN_COMPONENTS` such components and `MIN_LINKED_USD` of CRS amount, the least
 evidence at which no coefficient of the first BTRs rests on a few activities.
+
+The evidence counts a `btr_id` link and a link whose `calibration` (`COUNTED`) says
+its party's own map, a pooled map its party's labels checked, or an accepting
+decision vouches for it. A `btr_splink` link on a pooled map no labels of its party
+checked (`pooled_unchecked`, `link.btr.calibrate`) rests on the held-out evidence
+behind the pooled map's floor alone, and counts for nothing. A scope that no counted
+link reaches while others do has reason `unchecked_pool`, and takes the BTR's
+coefficient once people label the party's rows on the pooled map and they pass the
+check, or accept the links themselves.
 """
 
 import numpy as np
@@ -57,6 +66,8 @@ _FLOWS = {"committed": "commitment_usd", "disbursed": "disbursement_usd"}
 _LEVELS = dict(zip((1, 2), COEFFICIENT_MARKERS, strict=True))
 _LEVELS_BY_NAME = {name: level for level, name in _LEVELS.items()}
 _SCOPE = ["provider_code", "agency_code"]
+# The `calibration` of a link the evidence counts beside every `btr_id` link.
+COUNTED = ("own", "pooled", "reviewed")
 
 
 def btr_coefficients(
@@ -69,12 +80,40 @@ def btr_coefficients(
     Args:
         btr: The `btr` table. Rows without a status or a face value in USD at the DAC
             rate, and aggregate rows, are left out.
-        links: The `btr_links` table with each record's `agency_code`.
+        links: The `btr_links` table with each record's `agency_code` and each
+            link's `calibration` (`schema.LINKS`). Only `btr_id` links and those
+            whose `calibration` is in `COUNTED` are evidence.
         coefficients: The `provider_coefficients` table.
 
     Returns:
         One row per scope and marker, as `schema.BTR_COEFFICIENTS` describes them.
     """
+    checked = links.filter(
+        (pl.col("link_method") == "btr_id") | pl.col("calibration").is_in(COUNTED)
+    )
+    table = _coefficients(btr, links=checked, coefficients=coefficients)
+    keys = ["provider_code", "agency_code", "marker"]
+    # A scope the counted links leave unreached that any link reaches.
+    reached = _coefficients(btr, links=links, coefficients=coefficients).select(
+        *keys, reached=pl.col("reason").ne_missing("no_links")
+    )
+    return (
+        table.join(
+            reached, on=keys, nulls_equal=True, validate="1:1", maintain_order="left"
+        )
+        .with_columns(
+            reason=pl.when((pl.col("reason") == "no_links") & pl.col("reached"))
+            .then(pl.lit("unchecked_pool"))
+            .otherwise("reason")
+        )
+        .select(*_COLUMNS)
+    )
+
+
+def _coefficients(
+    btr: pl.DataFrame, *, links: pl.DataFrame, coefficients: pl.DataFrame
+) -> pl.DataFrame:
+    """`btr_coefficients` on every link of `links`."""
     components, records = btr_components(btr, links=links, coefficients=coefficients)
     kept = pl.col("btr_usd") <= MAX_SHARE * pl.col("gross")
     evidence = (

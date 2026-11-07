@@ -450,12 +450,7 @@ def assemble(context: StageContext) -> dict[str, pl.DataFrame]:
         "developed_providers": developed_providers(attribution),
         "btr_coefficients": btr_coefficients(
             btr,
-            links=linked_btr.join(
-                crs.select("record_id", "agency_code").collect(),
-                on="record_id",
-                how="left",
-                validate="m:1",
-            ),
+            links=btr_coefficient_links(links, crs=crs).collect(),
             coefficients=coefficients,
         ),
         "jev_flags": flags,
@@ -774,6 +769,24 @@ def btr_links(links: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame:
             validate="m:1",
         )
         .select(list(BTR_LINKS.columns))
+    )
+
+
+def btr_coefficient_links(links: pl.LazyFrame, *, crs: pl.LazyFrame) -> pl.LazyFrame:
+    """The `btr_links` of `links` with each record's `agency_code` and each link's
+    `calibration`, as `btr_coefficients` reads them."""
+    calibration = links.filter(pl.col("task") == "btr_crs").select(
+        "calibration", row_id="left_id", record_id="right_id"
+    )
+    return (
+        btr_links(links, crs=crs)
+        .join(calibration, on=["row_id", "record_id"], how="left", validate="1:1")
+        .join(
+            crs.select("record_id", "agency_code"),
+            on="record_id",
+            how="left",
+            validate="m:1",
+        )
     )
 
 

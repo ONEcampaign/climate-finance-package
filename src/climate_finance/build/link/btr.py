@@ -32,8 +32,8 @@ party's labels only from `POOLED_FLOOR` up, where every party's labels agree, an
 only while its own labels there agree with the pooled map (`POOLED_CHECK_SHARE`).
 A map with fewer of either outcome links nothing, and a weight below a map's lowest
 label reads 0. A row the id tier did not link takes its best candidate when the
-calibrated probability is at least `LINK_PROBABILITY`. Unlinked rows are UNFCCC
-only.
+calibrated probability is at least `LINK_PROBABILITY`, and its link records the map
+it read (`calibration`). Unlinked rows are UNFCCC only.
 
 Id rows score high, so few labels sit at the low weights where most id-less rows
 do. `calibration_draw` draws id-less rows there for people to label, and, for a
@@ -272,6 +272,7 @@ def link_btr(
                     *_PAIR,
                     "probability",
                     "model_version",
+                    "calibration",
                     link_method=pl.lit("btr_splink"),
                     p_model="p_raw",
                 ),
@@ -499,7 +500,8 @@ def calibrate(
     best: pl.DataFrame, *, truth: pl.DataFrame, labels: pl.DataFrame | None = None
 ) -> pl.DataFrame:
     """`best` (one scored candidate per BTR row, with `party` and `match_weight`)
-    with `probability`, null where no map reads the row.
+    with `probability`, null where no map reads the row, and `calibration`, the map
+    the party's rows read (`schema.BTR_CALIBRATIONS`), null where none does.
 
     A row with id records (`truth`: row_id, record_id) labels its best candidate 1
     when the candidate is one of them, else 0. A `human` or `agent` decision of task
@@ -541,18 +543,21 @@ def calibrate(
         party for party, check in checks.items() if check.passes
     ]
     pooled = _map(labelled.filter(pl.col("party").is_in(pool)))
-    frames = [best.clear().with_columns(probability=pl.lit(None, dtype=pl.Float64))]
+    unread = {
+        "probability": pl.lit(None, dtype=pl.Float64),
+        "calibration": pl.lit(None, dtype=pl.String),
+    }
+    frames = [best.clear().with_columns(**unread)]
     for (party,), scored in best.group_by("party", maintain_order=True):
         own, check = maps[party], checks.get(party)
         if own is not None:
-            mapping, floor = own, -math.inf
+            mapping, floor, calibration = own, -math.inf, "own"
         elif pooled is not None and check is not None and not check.fails:
             mapping, floor = pooled, POOLED_FLOOR
+            calibration = "pooled" if check.passes else "pooled_unchecked"
         else:
             _log_unlinked(party, rows=scored.height, check=check, pooled=pooled)
-            frames.append(
-                scored.with_columns(probability=pl.lit(None, dtype=pl.Float64))
-            )
+            frames.append(scored.with_columns(**unread))
             continue
         weights = scored["match_weight"].to_numpy()
         probability = pl.Series(
@@ -560,7 +565,8 @@ def calibrate(
             dtype=pl.Float64,
         )
         read = scored.with_columns(
-            probability=pl.when(pl.col("match_weight") >= floor).then(probability)
+            probability=pl.when(pl.col("match_weight") >= floor).then(probability),
+            calibration=pl.lit(calibration),
         )
         linked = (
             read.join(truth, on="row_id", how="anti")
@@ -1166,8 +1172,8 @@ def _count(con: duckdb.DuckDBPyConnection, sql: str) -> int:
 
 
 def _as_links(pairs: pl.DataFrame) -> pl.DataFrame:
-    """`pairs` (row_id, record_id, link_method, probability, and optionally p_model
-    and model_version) as `links` rows of task `btr_crs`."""
+    """`pairs` (row_id, record_id, link_method, probability, and optionally p_model,
+    model_version and calibration) as `links` rows of task `btr_crs`."""
     given: Mapping[str, pl.Expr] = {
         "task": pl.lit("btr_crs"),
         "left_id": pl.col("row_id"),
@@ -1176,7 +1182,13 @@ def _as_links(pairs: pl.DataFrame) -> pl.DataFrame:
         "review": pl.lit(value=False),
         **{
             name: pl.col(name)
-            for name in ("link_method", "probability", "p_model", "model_version")
+            for name in (
+                "link_method",
+                "probability",
+                "p_model",
+                "model_version",
+                "calibration",
+            )
             if name in pairs.columns
         },
     }

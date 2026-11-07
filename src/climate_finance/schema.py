@@ -74,6 +74,12 @@ LINK_METHODS = (
     "eib_amount",
 )
 LINK_TASKS = ("crdf_crs", "trace", "btr_crs")
+# What vouches for a `btr_crs` link: the calibration map a `btr_splink` link read
+# (`link.btr.calibrate`), which is the party's own, the map pooled over every party
+# with the party's labels from the floor up checking it, or the pooled map with too
+# few of those labels to check it; or a `human` or `agent` decision that accepted
+# the link (`decisions.override_links`).
+BTR_CALIBRATIONS = ("own", "pooled", "pooled_unchecked", "reviewed")
 REVIEW_REASONS = (
     "band",
     "jev_band",
@@ -659,6 +665,11 @@ LINKS = _table(
     model_version=_str(nullable=True),
     jev_model=_str(nullable=True),
     label_set=_str(nullable=True),
+    # On a `btr_crs` link, what vouches for it (`BTR_CALIBRATIONS`): `reviewed` where
+    # a decision accepted it, else on a `btr_splink` link the calibration map its
+    # probability read. Null on a `btr_id` link no decision accepted and on the
+    # links of other tasks.
+    calibration=_str(nullable=True, values=BTR_CALIBRATIONS),
     ledger_check=_str(nullable=True, values=LEDGER_CHECKS),
     # On a trace link, whether its records disagree on recipient or project number
     # (`flag_disagreement`); null on other tasks.
@@ -1567,18 +1578,21 @@ COEFFICIENT_MARKERS = ("significant", "principal")
 # `provider_coefficients`, the share its BTR implies, or the method's own.
 COEFFICIENT_SOURCES = ("stated", "btr", "fallback")
 # Why `btr_coefficients` gives no coefficient: no linked BTR row reaches the scope's
-# records, the party's amounts do not line up with its CRS records, or the linked
-# evidence is below the minimum.
-BTR_COEFFICIENT_REASONS = ("no_links", "unaligned", "thin")
+# records, the party's amounts do not line up with its CRS records, the linked
+# evidence is below the minimum, or no link the evidence counts reaches the scope
+# while links on an unchecked pooled map do.
+BTR_COEFFICIENT_REASONS = ("no_links", "unaligned", "thin", "unchecked_pool")
 
 # For each scope of `provider_coefficients` (a provider, or one of its agencies) of a
 # BTR party and each Rio marker, the climate share of CRS value the party's BTR Table 1
 # reports on activities so marked, and which coefficient `ONE` takes. BTR rows and
 # CRS records that share links form a component, whose share is its BTR climate amount
-# over the CRS amount of its records. `coefficient` is the share across
-# the scope's components whose records all carry one highest Rio marker, weighted by
-# CRS amount, and null with `reason` set where the evidence gives none. `components`
-# and `linked_usd` count those components and their CRS amount, and
+# over the CRS amount of its records. The evidence counts a `btr_id` link and a link
+# whose `calibration` is `own`, `pooled` or `reviewed`; a scope that no counted link
+# reaches while others do has `reason` `unchecked_pool`. `coefficient` is the share
+# across the scope's components whose records all carry one highest Rio marker,
+# weighted by CRS amount, and null with `reason` set where the evidence gives none.
+# `components` and `linked_usd` count those components and their CRS amount, and
 # `evidence_first_year` to `evidence_last_year` the BTR years they cover. A component
 # whose share exceeds 1.1 leaves the evidence as a link error or a claim larger than
 # the money; `dropped`, `dropped_usd`, and `dropped_btr_usd` count those components
