@@ -31,6 +31,8 @@ from climate_finance.build.link.btr import (
     linked_pairs,
     score_party,
 )
+from climate_finance.build.link.decisions import override_links
+from climate_finance.build.link.keys import links_frame
 from climate_finance.build.link.packet import btr_digests
 
 _BTR_DEFAULTS: dict[str, object] = {
@@ -303,12 +305,13 @@ def test_a_party_without_enough_labels_takes_the_pooled_map(
     truth = pl.concat([truth, pl.DataFrame({"row_id": ["b0"], "record_id": ["rb0"]})])
 
     with caplog.at_level(logging.INFO):
-        probability = dict(
-            calibrate(pl.concat([a, b]), truth=truth)
-            .select("row_id", "probability")
-            .iter_rows()
-        )
+        calibrated = calibrate(pl.concat([a, b]), truth=truth)
+    probability = dict(calibrated.select("row_id", "probability").iter_rows())
 
+    assert dict(calibrated.select("party", "calibration").unique().iter_rows()) == {
+        "a": "own",
+        "B": "pooled_unchecked",
+    }
     assert probability["a0"] == 1.0
     assert probability[f"a{n}"] == 0.0
     assert probability["b1"] == 1.0
@@ -356,12 +359,15 @@ def test_a_partys_labels_from_the_floor_up_can_reject_the_pooled_map(
     )
 
     with caplog.at_level(logging.INFO):
-        found = dict(
-            calibrate(pl.concat([a, b, c]), truth=truth)
-            .select("row_id", "probability")
-            .iter_rows()
-        )
+        calibrated = calibrate(pl.concat([a, b, c]), truth=truth)
+    found = dict(calibrated.select("row_id", "probability").iter_rows())
 
+    # C reads the pool unchecked either way, and B reads it checked or not at all.
+    assert dict(calibrated.select("party", "calibration").unique().iter_rows()) == {
+        "a": "own",
+        "B": "pooled" if kept else None,
+        "C": "pooled_unchecked",
+    }
     logged = {r.args[0]: (r.levelno, r.args[1:]) for r in caplog.records}
     if kept:
         # B's labels join the pool: at weight 10, 54 of 60 right.
@@ -680,6 +686,9 @@ def test_the_model_links_only_once_ids_calibrate_it() -> None:
     assert methods["btr_id"] == 100
     by_model = links.filter(link_method="btr_splink")
     assert by_model.height > 0
+    # Each model link names the map it read, the party's own.
+    assert by_model["calibration"].unique().to_list() == ["own"]
+    assert links.filter(link_method="btr_id")["calibration"].null_count() == 100
     # Each model link joins a row to its own activity's record.
     assert (by_model["left_id"].str.slice(1) == by_model["right_id"].str.slice(1)).all()
 
@@ -739,3 +748,50 @@ def test_linked_pairs_sum_a_programme_and_follow_the_row_status() -> None:
         ("GBR", 2021, 40.0, 100.0, 2, False),
         ("NOR", 2021, 10.0, 25.0, 1, True),
     ]
+
+
+def test_a_link_a_decision_accepts_counts_as_reviewed() -> None:
+    # Belgium's model links read the pooled map unchecked. A person accepts one, and
+    # a trace link accepted beside it has no calibration to set.
+    links = links_frame(
+        pl.DataFrame(
+            {
+                "task": ["btr_crs", "btr_crs", "trace"],
+                "left_id": ["BEL-1", "BEL-2", "d1"],
+                "right_id": ["r1", "r2", "c1"],
+                "link_method": ["btr_splink", "btr_splink", "classifier"],
+                "probability": [0.6, 0.7, 0.8],
+                "calibration": ["pooled_unchecked", "pooled_unchecked", None],
+            }
+        ),
+        {
+            name: pl.col(name)
+            for name in (
+                "task",
+                "left_id",
+                "right_id",
+                "link_method",
+                "probability",
+                "calibration",
+            )
+        }
+        | {"review": pl.lit(value=False)},
+    )
+    labels = pl.DataFrame(
+        {
+            "task": ["btr_crs", "trace"],
+            "left_id": ["BEL-1", "d1"],
+            "right_id": ["r1", "c1"],
+            "pair_label_source": ["human", "human"],
+            "is_match": [True, True],
+        }
+    )
+
+    overridden = override_links(links, labels=labels)
+
+    schema.validate(schema.LINKS, overridden)
+    assert dict(overridden.select("left_id", "calibration").iter_rows()) == {
+        "BEL-1": "reviewed",
+        "BEL-2": "pooled_unchecked",
+        "d1": None,
+    }

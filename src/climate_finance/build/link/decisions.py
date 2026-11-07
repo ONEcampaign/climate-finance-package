@@ -147,8 +147,9 @@ def standing_decisions(decided: pl.DataFrame, *, key: str | list[str]) -> pl.Dat
 
 def override_links(links: pl.DataFrame, *, labels: pl.DataFrame) -> pl.DataFrame:
     """`links` with the `human` and `agent` pair labels of `labels` applied:
-    accepted links at probability 1 with records that agree, rejected links dropped
-    (`drop_pairs`). A label on a pair the build did not link changes nothing."""
+    accepted links at probability 1 with records that agree, an accepted `btr_crs`
+    link at calibration `reviewed`, and rejected links dropped (`drop_pairs`). A
+    label on a pair the build did not link changes nothing."""
     accepted = accepted_pairs(labels)
     kept = drop_pairs(links, pairs=rejected_pairs(labels), accepted=accepted)
     is_accepted = pl.col("accepted").fill_null(False)
@@ -164,6 +165,9 @@ def override_links(links: pl.DataFrame, *, labels: pl.DataFrame) -> pl.DataFrame
             records_disagree=pl.when(is_accepted & pl.col("records_disagree"))
             .then(False)
             .otherwise("records_disagree"),
+            calibration=pl.when(is_accepted & (pl.col("task") == "btr_crs"))
+            .then(pl.lit("reviewed"))
+            .otherwise("calibration"),
         )
         .drop("accepted")
     )
