@@ -71,6 +71,7 @@ from climate_finance.release import IndexEntry, ReleaseIndex
 from climate_finance.schema import (
     BTR_WORKBOOKS,
     DATA_FORMAT,
+    BlindSample,
     Column,
     ReleaseManifest,
     TableSchema,
@@ -502,6 +503,8 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
     monkeypatch.setattr(release.build_package, "build", fake_build)
     monkeypatch.setattr(gate, "run_gates", fake_gates)
     previous = built_release(tmp_path / "previous")
+    (tmp_path / "sample").mkdir()
+    (tmp_path / "sample" / "design.parquet").write_bytes(b"a design")
 
     pack = release.cut_release(
         RELEASE,
@@ -527,6 +530,10 @@ def test_cut_release_gates_records_the_results_and_the_waiver_then_packs(
     )
     assert manifest.precision_gate_waived is waive
     assert manifest.precision_waiver == waiver
+    assert manifest.blind_sample == BlindSample(
+        directory="sample",
+        design_sha256=hashlib.sha256(b"a design").hexdigest(),
+    )
     assert manifest.gates == {
         "precision": [{"passed": waive}],
         "drift": [{"passed": True}],

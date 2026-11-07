@@ -620,6 +620,46 @@ def test_a_decision_counts_only_for_the_pair_it_decided(release_dir: Path) -> No
     assert swapped["label_source"].to_list() == [None, None]
 
 
+def test_decisions_count_for_the_same_design_drawn_under_another_release_name(
+    release_dir: Path,
+) -> None:
+    design = _label(release_dir, rejected=set())
+    decisions = release_dir.parent / "decisions.parquet"
+    renamed = release_dir.parent / "2026b"
+    renamed.symlink_to(release_dir, target_is_directory=True)
+    redrawn = draw_blind_sample(
+        release_dir=renamed,
+        out_dir=release_dir.parent / "redrawn",
+        decisions=decisions,
+        rule=GATES_CONFIG.precision,
+    )
+    # A design and decisions whose ids lead with the release they were drawn for.
+    legacy = release_dir.parent / "legacy"
+    legacy.mkdir()
+    prefixed = pl.format("2026a/{}", "sample_id")
+    pl.read_parquet(design).with_columns(sample_id=prefixed).write_parquet(
+        design_path(legacy)
+    )
+    legacy_decisions = release_dir.parent / "legacy-decisions.parquet"
+    pl.read_parquet(decisions).with_columns(sample_id=prefixed).write_parquet(
+        legacy_decisions
+    )
+
+    for drawn, decided in (
+        (design_path(redrawn), decisions),
+        (design_path(legacy), decisions),
+        (design, legacy_decisions),
+    ):
+        labels = read_sample_labels(drawn, decisions=decided)
+        assert labels["correct"].to_list() == [True, True]
+    # Without the sample the gate says how many blind-sample decisions it left unread.
+    unread = "no blind sample given; 2 blind-sample decisions unread"
+    details = _report(release_dir).filter(
+        pl.col("gate").is_in(["precision", "human_audit"])
+    )
+    assert details["detail"].to_list() == [unread, unread]
+
+
 @pytest.mark.parametrize(
     ("label_source", "share", "passed"), [("human", 1.0, True), ("agent", 0.0, False)]
 )
@@ -732,7 +772,7 @@ GATE_MODEL = StratumPrecision(thresholds={"model": 0.9})
 def test_precision_fails_a_sample_that_failed_at_an_earlier_look() -> None:
     rule = GATES_CONFIG.precision
     pairs = _frame_pairs([(NOR, "key", 2000)])
-    design = sample_design(pairs, rule=rule, release="r").sort("draw")
+    design = sample_design(pairs, rule=rule).sort("draw")
     # The first 15 pairs drawn are wrong, so the first look fails, and the cap reads
     # enough right draws to pass.
     wrong = design["left_id"].unique(maintain_order=True).head(15)

@@ -88,6 +88,7 @@ from climate_finance.build.errors import (
     SyntheticReleaseError,
     UnpublishedSettingsError,
 )
+from climate_finance.build.evaluate import design_path
 from climate_finance.build.fetch import (
     BTR_SOURCE,
     CONVERSION_FACTORS_FILE,
@@ -150,6 +151,7 @@ from climate_finance.schema import (
     TOTAL_FLOWS,
     UNALLOCATED,
     UNTRACED,
+    BlindSample,
     ReleaseManifest,
     TableEntry,
     TableSchema,
@@ -1474,7 +1476,8 @@ def cut_release(
     The gates read the blind-sample labels from the config's review decisions, the
     sample from the directory `sample` and the previous release from `previous`, a
     pack or a directory (`previous_baseline`). Their rows, keyed by gate name, the
-    previous release's name and pack sha256 and any waiver go into `release.json`.
+    sample directory's name and design sha256 (`schema.BlindSample`), the previous
+    release's name and pack sha256 and any waiver go into `release.json`.
     The pack is `<out_dir>/climate-finance-<release>.tar.zst`.
 
     Fetching and network access are two choices. Unset, `offline` leaves network
@@ -1540,6 +1543,14 @@ def cut_release(
             "gates": gate.gate_results_json(results),
             "precision_gate_waived": waive_precision is not None,
             "precision_waiver": waive_precision,
+            "blind_sample": (
+                None
+                if sample is None
+                else BlindSample(
+                    directory=sample.name,
+                    design_sha256=sha256_file(design_path(sample)),
+                )
+            ),
             "previous_release": (
                 None if baseline is None else baseline.release.manifest.release
             ),
