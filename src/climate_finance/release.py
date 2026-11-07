@@ -53,9 +53,11 @@ from climate_finance.result import (
 from climate_finance.schema import (
     DATA_FORMAT,
     FORMAT_TABLES,
+    MEMORANDUM_FORMAT,
     NET_FLOWS,
     RELEASE_TABLES,
     ReleaseManifest,
+    format_columns,
     scan_table,
     sha256_file,
 )
@@ -91,6 +93,8 @@ EXAMPLE_DIR = Path(__file__).parent / "data" / "example"
 SYNTHETIC_RELEASE = "synthetic-example"
 # Where releases are published, for the error `load` gives before the first one.
 RELEASES_PAGE = "https://github.com/ONEcampaign/climate-finance-package/releases"
+# The stage directory of a build's release directory that holds the release.
+_ASSEMBLE_DIR = "assemble"
 # A release name is one path segment of letters, digits, dots, underscores and
 # hyphens that does not start with a dot, so it cannot climb out of a directory.
 _RELEASE_NAME = r"[A-Za-z0-9_][A-Za-z0-9._-]*"
@@ -555,6 +559,9 @@ def load(
 ) -> Release:
     """Open a release from `path`, or download `release` into `cache_dir` once.
 
+    `path` is a directory holding `release.json`: an unpacked pack, or a build's
+    `<release_dir>/assemble/`. A build's release directory itself opens its
+    `assemble/`.
     Without `path`, `release` is looked up in the release index shipped in the wheel,
     or with `refresh=True` in the newest index online. A release already in
     `cache_dir` (else `CLIMATE_FINANCE_CACHE_DIR`, else `~/.cache/climate-finance`)
@@ -582,7 +589,7 @@ def load(
             the index online is malformed.
     """
     if path is not None:
-        return _open(Path(path).resolve())
+        return _open(release_root(Path(path).resolve()))
     index = _fetch_index() if refresh else _shipped_index()
     name = _resolve(index, release, refreshed=refresh)
     entry = index.releases[name]
@@ -612,6 +619,17 @@ def load(
             _discard(target, keep=entry.sha256, failed=opened)
     _download(entry, target=target)
     return _open(target, release=name)
+
+
+def release_root(path: Path) -> Path:
+    """The release directory `path` names: `path` itself when it holds a
+    `release.json`, as an unpacked pack does, else its `assemble/` when that holds
+    one, as a build's release directory does, else `path`, which `cf.load` then
+    refuses for its missing `release.json`."""
+    assembled = path / _ASSEMBLE_DIR
+    if not (path / "release.json").exists() and (assembled / "release.json").is_file():
+        return assembled
+    return path
 
 
 def load_example() -> Release:
@@ -658,10 +676,12 @@ def _open(path: Path, *, release: str | None = None) -> Release:
     """Open the release in `path` once every table of its data format matches
     `release.json`.
 
-    A release of the current data format must also hold every column `schema.py`
-    declares for each of its tables, so a pack built before a column was added is
-    refused, since reading it would fill that column with nulls. Older formats keep
-    the columns they were written with.
+    A release of a data format from `MEMORANDUM_FORMAT` on must also hold every
+    column `schema.py` declares for each of its tables, less the columns later
+    formats add (`schema.format_columns`), so a pack built before a column of its
+    format was added is refused, since reading it would fill that column with nulls.
+    A release of an older format, which the queries refuse, keeps the columns it
+    was written with.
 
     The data format is read before the rest of `release.json`, so a release of a
     newer format, which may carry fields this package does not know, raises
@@ -680,7 +700,10 @@ def _open(path: Path, *, release: str | None = None) -> Release:
             )
         manifest = ReleaseManifest.model_validate_json(text)
     except (FileNotFoundError, IsADirectoryError, NotADirectoryError) as error:
-        raise ReleaseIntegrityError(f"{path} has no release.json") from error
+        raise ReleaseIntegrityError(
+            f"{path} has no release.json. Pass the directory a pack unpacks to, or "
+            "a build's release directory or its assemble/ directory"
+        ) from error
     except ValueError as error:  # bad JSON, bad fields or undecodable bytes
         raise ReleaseIntegrityError(f"{manifest_path} is malformed: {error}") from error
     if manifest.data_format not in FORMAT_TABLES:
@@ -704,9 +727,10 @@ def _open(path: Path, *, release: str | None = None) -> Release:
             continue
         if actual != entry.sha256:
             problems.append(f"{name}: sha256 {actual}, release.json has {entry.sha256}")
-        elif manifest.data_format == DATA_FORMAT and name in RELEASE_TABLES:
+        elif manifest.data_format >= MEMORANDUM_FORMAT and name in RELEASE_TABLES:
             held = pl.read_parquet_schema(file)
-            if missing := [c for c in RELEASE_TABLES[name].columns if c not in held]:
+            expected = format_columns(name, data_format=manifest.data_format)
+            if missing := [column for column in expected if column not in held]:
                 problems.append(f"{name}: lacks columns {missing}")
     if problems:
         raise ReleaseIntegrityError(

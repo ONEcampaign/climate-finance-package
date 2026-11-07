@@ -181,9 +181,10 @@ class SchemaError(ClimateFinanceError):
 
 
 class RemovedError(ClimateFinanceError):
-    """A 1.x call, choice or module that 2.0 removed, or whose meaning 2.0 changed.
-    `removed` names it, and `replacement` says what to use in 2.0 or that nothing
-    replaces it."""
+    """A 1.x call, choice or module that 2.0 removed, or whose meaning 2.0 changed,
+    or a name a method had before 2.0's release, as `cf.methods.PROVIDER`. `removed`
+    names it, and `replacement` says what to use in 2.0 or that nothing replaces
+    it."""
 
     def __init__(self, removed: str, *, replacement: str) -> None:
         self.removed = removed

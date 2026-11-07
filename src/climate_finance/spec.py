@@ -36,6 +36,7 @@ from climate_finance.methods import (
     OXFAM_HIGH,
     OXFAM_LOW,
     RANGE,
+    RENAMED,
     Method,
     MethodRange,
     label,
@@ -203,6 +204,9 @@ def _named_method(name: str) -> Method | MethodRange:
     key = name.strip().upper()
     if key in _METHODS:
         return _METHODS[key]
+    if key in RENAMED:
+        renamed, note = RENAMED[key]
+        raise UnknownNameError(name, kind="method", suggestions=(renamed,), note=note)
     raise UnknownNameError(
         name, kind="method", suggestions=get_close_matches(key, _METHODS)
     )
@@ -312,8 +316,11 @@ class Spec(Frozen):
     `providers` and `recipients` take names, DAC codes or, for providers,
     `Agency` values, one or many, and hold the codes and agencies they name, sorted
     and without duplicates (`catalogue.resolve`). So `providers=["Japan", 701]` and
-    `providers=701` give equal specs, and a provider beside one of its agencies
-    covers it. An agency serialises as `{"provider": 918, "agency": 3}`.
+    `providers=701` give equal specs. A provider beside one of its agencies raises
+    `InvalidInputError`, since the provider's rows hold the agency's and its result
+    could not split them: `providers=Agency(provider=918, agency=3)` and
+    `providers=918` give the EIB and EU Institutions as a whole. An agency
+    serialises as `{"provider": 918, "agency": 3}`.
 
     `years` takes an integer or integers, such as `range(2015, 2023)`, and holds
     them sorted and without duplicates. `method` takes a `Method`, a `MethodRange`, a

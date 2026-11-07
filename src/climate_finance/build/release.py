@@ -114,6 +114,7 @@ from climate_finance.release import (
     SYNTHETIC_RELEASE,
     load,
     release_dirname,
+    release_root,
     unpack_release,
 )
 from climate_finance.schema import (
@@ -1587,7 +1588,7 @@ def previous_baseline(previous: Path | None) -> Generator[Baseline | None]:
         raise BuildError(f"--previous {previous} does not exist")
     pack: Path | None = previous
     if previous.is_dir():
-        directory = gate.release_path(previous)
+        directory = release_root(previous)
         if (stamp := directory / PACK_SHA256).exists():
             sha256 = stamp.read_text(encoding="utf-8").strip()
             yield Baseline(load(path=directory), sha256)

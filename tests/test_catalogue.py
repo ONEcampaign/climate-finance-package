@@ -9,6 +9,7 @@ from polars.testing import assert_frame_equal
 
 import climate_finance as cf
 from climate_finance.catalogue import Agency, Catalogue, resolve
+from climate_finance.errors import InvalidInputError
 from climate_finance.spec import Flow, SpecInputs, read_provider_codes
 
 SNAP = cf.load(path=FIXTURE_DIR)
@@ -70,7 +71,6 @@ EIB = Agency(provider=918, agency=3)
         (["DEU", "Allemagne", 5, " Germany ", "DE", np.int64(5)], "providers", (5,)),
         ("EIB", "providers", (EIB,)),
         ("EC", "providers", (Agency(provider=918, agency=1),)),
-        (["EIB", 918], "providers", (918,)),
         ([EIB, "KfW", 4, "4"], "providers", (4, Agency(provider=5, agency=2), EIB)),
         # Agency 0 and 1 stand for the provider itself, listed or not.
         (Agency(provider=4, agency=0), "providers", (Agency(provider=4, agency=0),)),
@@ -88,6 +88,16 @@ def test_resolve_reads_any_common_form_as_codes_and_agencies(
     expected: tuple[int | Agency, ...] | None,
 ) -> None:
     assert resolve(values, kind=kind) == expected
+
+
+@pytest.mark.parametrize(
+    "values", [["EIB", 918], ["EU Institutions", EIB], [918, EIB, "Japan"]]
+)
+def test_a_provider_beside_its_own_agency_raises(
+    values: list[str | int | Agency],
+) -> None:
+    with pytest.raises(InvalidInputError):
+        SNAP.spending(providers=values)
 
 
 @pytest.mark.parametrize(

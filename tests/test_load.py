@@ -41,6 +41,14 @@ def test_load_opens_the_fixture_with_its_manifest(as_path) -> None:
     assert release.table("commitments").collect().height == 14
 
 
+def test_load_opens_a_build_release_directory_through_its_assemble_stage(
+    tmp_path: Path,
+) -> None:
+    assembled = copy_release(tmp_path / "assemble")
+
+    assert cf.load(path=tmp_path).path == assembled
+
+
 def test_a_release_prints_its_name_flow_years_and_tables(tmp_path: Path) -> None:
     published = copy_release(tmp_path / "2026a")
     path = published / "release.json"
@@ -373,11 +381,35 @@ def test_a_release_before_memorandum_rows_reads_its_tables_and_refuses_queries(
         assert (raised.value.data_format, raised.value.needed) == (2, 3), name
 
 
+def _set_format(release: Path, data_format: int) -> Path:
+    """`release` with its `release.json` stating `data_format`."""
+    manifest = release / "release.json"
+    written = ReleaseManifest.model_validate_json(manifest.read_text(encoding="utf-8"))
+    manifest.write_text(
+        written.model_copy(update={"data_format": data_format}).model_dump_json(),
+        encoding="utf-8",
+    )
+    return release
+
+
+def test_a_format_3_release_opens_without_commitment_titles(tmp_path: Path) -> None:
+    path = copy_release(
+        tmp_path / "release", edits={"commitments": lambda f: f.drop("title")}
+    )
+
+    rows = cf.load(path=_set_format(path, 3)).spending(flow="commitments").rows()
+
+    assert rows.height > 0
+    assert rows["title"].null_count() == rows.height
+
+
+@pytest.mark.parametrize("data_format", [DATA_FORMAT, 3])
 def test_a_release_lacking_a_schema_column_is_refused_naming_it(
-    tmp_path: Path,
+    tmp_path: Path, data_format: int
 ) -> None:
-    # A pack built before `finance_t` joined the schema would query with nulls.
-    cf.load(path=copy_release(tmp_path / "control"))
+    # A pack built before `finance_t` joined the schema, within format 3, would
+    # query with nulls.
+    cf.load(path=_set_format(copy_release(tmp_path / "control"), data_format))
     no_finance_t: dict[str, Callable[[pl.DataFrame], pl.DataFrame]] = {
         name: lambda frame: frame.drop("finance_t")
         for name in ("disbursements", "untraced")
@@ -385,7 +417,7 @@ def test_a_release_lacking_a_schema_column_is_refused_naming_it(
     path = copy_release(tmp_path / "release", edits=no_finance_t)
 
     with pytest.raises(ReleaseIntegrityError) as raised:
-        cf.load(path=path)
+        cf.load(path=_set_format(path, data_format))
 
     message = str(raised.value)
     assert "disbursements: lacks columns ['finance_t']" in message

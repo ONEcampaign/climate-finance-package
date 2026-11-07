@@ -1074,6 +1074,8 @@ COMMITMENTS = _table(
     psi_flag=_code(nullable=True),
     crs_id=_str(nullable=True),
     project_number=_str(nullable=True),
+    # The CRDF row's title, from data format 4.
+    title=_str(nullable=True),
     rio_adaptation=_rio(),
     rio_mitigation=_rio(),
     climate_share=_f64(nullable=True),
@@ -1682,7 +1684,7 @@ RELEASE_TABLES = _by_name(
 # The data format of the releases this package writes, and the newest it reads.
 # It goes up by one when a release table, a column a query reads or a `release.json`
 # field is added, removed or changes meaning, independent of the package version.
-DATA_FORMAT = 3
+DATA_FORMAT = 4
 # The first data format whose tables carry `psi_flag` and whose `total_flows` and
 # `quality` leave memorandum rows out. The queries refuse an older release, whose
 # totals hold the memorandum records.
@@ -1715,6 +1717,15 @@ _FORMAT_2_TABLES = frozenset(
         "conversion_factors",
     }
 )
+_FORMAT_3_TABLES = _FORMAT_2_TABLES | {
+    "outflow_shares",
+    "developed_providers",
+    "btr_multilateral",
+    "btr_multilateral_totals",
+    "btr_institution_groups",
+    "btr_crs_earmarked",
+    "eurostat_climate_finance",
+}
 FORMAT_TABLES: Mapping[int, frozenset[str]] = {
     1: frozenset(
         {
@@ -1744,17 +1755,31 @@ FORMAT_TABLES: Mapping[int, frozenset[str]] = {
     2: _FORMAT_2_TABLES,
     # Format 3 adds `psi_flag` (`MEMORANDUM_FORMAT`), `outflow_shares`,
     # `developed_providers`, `eurostat_climate_finance` and the Table III.2 tables.
-    3: _FORMAT_2_TABLES
-    | {
-        "outflow_shares",
-        "developed_providers",
-        "btr_multilateral",
-        "btr_multilateral_totals",
-        "btr_institution_groups",
-        "btr_crs_earmarked",
-        "eurostat_climate_finance",
-    },
+    3: _FORMAT_3_TABLES,
+    # Format 4 adds `commitments.title` (`FORMAT_COLUMNS`).
+    4: _FORMAT_3_TABLES,
 }
+# The columns each data format after `MEMORANDUM_FORMAT` adds to the tables an
+# earlier format holds, by format number and table. A release of a format from
+# `MEMORANDUM_FORMAT` on holds every column the schema declares, less these columns
+# of later formats (`format_columns`).
+FORMAT_COLUMNS: Mapping[int, Mapping[str, frozenset[str]]] = {
+    4: {"commitments": frozenset({"title"})},
+}
+
+
+def format_columns(table: str, *, data_format: int) -> tuple[str, ...]:
+    """The columns of release table `table` that a release of `data_format`, from
+    `MEMORANDUM_FORMAT` on, holds: those the schema declares, less the ones later
+    formats add (`FORMAT_COLUMNS`)."""
+    later = {
+        column
+        for added_in, tables in FORMAT_COLUMNS.items()
+        if added_in > data_format
+        for column in tables.get(table, ())
+    }
+    return tuple(c for c in RELEASE_TABLES[table].columns if c not in later)
+
 
 STAGE_TABLES: Mapping[str, Mapping[str, TableSchema]] = {
     "fetch": _by_name(RAW_MANIFEST),

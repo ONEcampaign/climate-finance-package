@@ -274,8 +274,6 @@ def test_a_spec_holds_sorted_codes_and_agencies_whatever_names_them() -> None:
         701,
         {"provider": 918, "agency": 3},
     ]
-    # A provider covers its agencies.
-    assert Spec(providers=["EU Institutions", "EIB"]).providers == (EU_INSTITUTIONS,)
 
 
 @pytest.mark.parametrize(
@@ -353,11 +351,18 @@ def test_a_method_reads_from_its_name_ignoring_case(
     assert Spec.model_validate_json(spec.model_dump_json()) == spec
 
 
-def test_an_unknown_method_name_suggests_close_ones() -> None:
+@pytest.mark.parametrize(
+    ("method", "suggestion"),
+    [("OECDD", "OECD"), (["MARKERS", "provider"], "ONE")],
+    ids=["misspelt", "renamed"],
+)
+def test_an_unknown_method_name_suggests_close_ones(
+    method: str | list[str], suggestion: str
+) -> None:
     with pytest.raises(cf.UnknownNameError) as raised:
-        SNAP.spending(method="OECDD")
+        SNAP.spending(method=method)
 
-    assert raised.value.suggestions == ("OECD",)
+    assert raised.value.suggestions == (suggestion,)
 
 
 @pytest.mark.parametrize(
@@ -1468,6 +1473,16 @@ def test_oda_only_counts_disbursements_by_flow_code_and_fills_by_category() -> N
     assert fills["record_id"].to_list() == [LEDGER_RECORD]
     assert fills["flow_category"].to_list() == [10]
     assert result.modelled.is_empty()
+
+
+@pytest.mark.parametrize("column", ["crs_id", "title"])
+def test_commitment_rows_carry_the_crs_id_and_title_of_their_row(column: str) -> None:
+    rows = SNAP.spending(flow="commitments").rows().filter(origin="commitment")
+    held = SNAP.table("commitments").select("row_id", column).collect()
+
+    joined = rows.join(held, on="row_id", validate="m:1", suffix="_held")
+    assert joined[column].drop_nulls().len() > 0
+    assert_series_equal(joined[column], joined[f"{column}_held"], check_names=False)
 
 
 _FLOW_AND_FINANCE = ("flow_category", "finance_t")

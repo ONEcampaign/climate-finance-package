@@ -1,13 +1,14 @@
 """Marker rules, ported from 1.2.3's `transform_markers_into_indicators` tests."""
 
 from collections.abc import Callable
+from operator import attrgetter
 
 import polars as pl
 import pytest
 from make_fixture import DEU, FIXTURE_DIR, FRA, JPN, NOR
 
 import climate_finance as cf
-from climate_finance.errors import InvalidInputError
+from climate_finance.errors import InvalidInputError, RemovedError
 from climate_finance.methods import (
     MARKERS,
     OECD,
@@ -183,6 +184,13 @@ def test_a_method_or_agency_refuses_with_the_package_error(
 ) -> None:
     with pytest.raises(InvalidInputError, match=match):
         build()
+
+
+def test_the_renamed_provider_method_raises_naming_one() -> None:
+    with pytest.raises(RemovedError) as raised:
+        attrgetter("PROVIDER")(cf.methods)
+
+    assert raised.value.removed == "cf.methods.PROVIDER"
 
 
 def _marker_row(
