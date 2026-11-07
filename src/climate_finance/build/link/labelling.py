@@ -48,8 +48,10 @@ from climate_finance.build.link.decisions import (
     DIGESTS,
     LABEL_COLUMNS,
     LABELS,
+    ONE_TAG,
     import_labels,
     read_decisions,
+    sample_key,
     standing_decisions,
 )
 from climate_finance.build.link.packet import (
@@ -170,7 +172,8 @@ class QueuedPair:
 
 def sample_pairs(sample_dir: Path) -> list[QueuedPair]:
     """Every pair of the blind sample in `sample_dir`, with the draws it backs in
-    `design.parquet`, in provider, batch and pair order.
+    `design.parquet`, in provider, batch and pair order, keyed by its
+    `decisions.sample_key`.
 
     Raises:
         LabellingError: when `sample_dir` holds no design or no packets.
@@ -182,6 +185,7 @@ def sample_pairs(sample_dir: Path) -> list[QueuedPair]:
         )
     draws = (
         pl.read_parquet(design, columns=["sample_id", "provider_code", "link_method"])
+        .with_columns(sample_id=sample_key(pl.col("sample_id")))
         .group_by("sample_id")
         .agg(
             provider=pl.col("provider_code").first(),
@@ -198,6 +202,7 @@ def sample_pairs(sample_dir: Path) -> list[QueuedPair]:
             pl.read_parquet(pairs_file)
             .select("pair", "task", "left_id", "right_id", "sample_id")
             .with_columns(
+                sample_id=sample_key(pl.col("sample_id")),
                 packet=pl.lit(str(packet)),
                 batch=pl.lit(int(packet.stem.removeprefix("batch-"))),
             )
@@ -227,8 +232,9 @@ def packet_pairs(packet: Path, *, release_dir: Path) -> list[QueuedPair]:
     disbursement unit's donor, from the release in `release_dir`.
 
     Raises:
-        LabellingError: when `packet` has no pairs file, holds blind-sample pairs,
-            or names a row or unit the release lacks.
+        LabellingError: when `packet` has no pairs file, holds blind-sample pairs
+            or pairs without a review reason (`decisions.ONE_TAG`), or names a row
+            or unit the release lacks.
         PacketReleaseMismatchError: when a `btr_crs` pair's digests in the pairs
             file differ from those of the release's row and record
             (`packet.btr_digests`), as for a packet written from another release.
@@ -244,6 +250,11 @@ def packet_pairs(packet: Path, *, release_dir: Path) -> list[QueuedPair]:
     if pairs["sample_id"].is_not_null().any():
         raise LabellingError(
             f"{packet} holds blind-sample pairs; label them through SAMPLE_DIR"
+        )
+    if untagged := pairs.filter(~ONE_TAG).height:
+        raise LabellingError(
+            f"{untagged} pairs of {packet} carry no review_reason, so no answer on "
+            "them could be recorded; write the packet with `cf-build queue`"
         )
     btr = pairs.filter(task="btr_crs").select("left_id")
     trace = pairs.filter(pl.col("task") != "btr_crs").select("left_id")

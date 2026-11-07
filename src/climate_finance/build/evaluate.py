@@ -75,6 +75,8 @@ from climate_finance.build.link.decisions import (
     PAIR,
     pair_decisions,
     read_decision_labels,
+    read_decisions,
+    sample_key,
     standing_decisions,
 )
 from climate_finance.build.link.packet import code_names, write_packet
@@ -327,7 +329,7 @@ def draw_blind_sample(
     from climate_finance.build.stages import raw_dir, table_path
 
     pairs = allocated_pairs(release_dir, decisions=decisions)
-    design = sample_design(pairs, rule=rule, release=release_dir.name)
+    design = sample_design(pairs, rule=rule)
     out_dir.mkdir(parents=True, exist_ok=True)
     design.write_parquet(design_path(out_dir))
 
@@ -357,15 +359,15 @@ def draw_blind_sample(
     return out_dir
 
 
-def sample_design(
-    pairs: pl.DataFrame, *, rule: PrecisionRule, release: str
-) -> pl.DataFrame:
+def sample_design(pairs: pl.DataFrame, *, rule: PrecisionRule) -> pl.DataFrame:
     """One row per draw of the blind sample of `pairs` (`allocated_pairs`), drawn
     from their `sample_frame`.
 
     Each row carries its provider's `population` (`population_fingerprints`). A
-    pair's `sample_id` is `<release>/<provider>/<population>/<first draw>`, with the
-    population's first 12 hex digits, shared by its draws. Each provider draws
+    pair's `sample_id` is `<provider>/<population>/<first draw>`, with the
+    population's first 12 hex digits, shared by its draws. The id names no
+    release, so the same design drawn for another release gives the same ids and
+    the decisions on them still count. Each provider draws
     from its own random stream, seeded by `rule.seed` and its code, over its pairs
     in pair order, so a provider's draws do not change with the order of `pairs`
     or with the other providers.
@@ -385,8 +387,7 @@ def sample_design(
         .join(population_fingerprints(pairs), on="provider_code")
         .with_columns(
             sample_id=pl.format(
-                "{}/{}/{}/{}",
-                pl.lit(release),
+                "{}/{}/{}",
                 "provider_code",
                 pl.col("population").str.head(12),
                 first.cast(pl.String).str.zfill(3),
@@ -497,8 +498,10 @@ def read_sample_labels(design: Path, *, decisions: Path) -> pl.DataFrame:
 
     A decision counts for a draw only when its `sample_id` and its pair (`task`,
     `left_id`, `right_id`) are the draw's, so a pair drawn under a reused id stays
-    undecided. A draw's standing decision is the one `decisions.standing_decisions`
-    keeps among those, as for the review queue's pairs.
+    undecided. Both ids are compared as their `decisions.sample_key`, so a design
+    or decision whose ids lead with a release name still matches. A draw's
+    standing decision is the one `decisions.standing_decisions` keeps among those,
+    as for the review queue's pairs.
 
     Raises:
         ReviewDecisionsError: when `decisions` does not exist, since the sample's
@@ -512,7 +515,9 @@ def read_sample_labels(design: Path, *, decisions: Path) -> pl.DataFrame:
             "record them with `cf-build import-labels`, or point "
             "sources.review_decisions in build.toml at the file it wrote."
         )
-    drawn = pl.read_parquet(design)
+    drawn = pl.read_parquet(design).with_columns(
+        sample_id=sample_key(pl.col("sample_id"))
+    )
     weights = pl.col("weight_usd", "stratum_usd")
     if bad := drawn.filter(
         pl.any_horizontal(~(weights.is_finite() & (weights > 0)).fill_null(False))
@@ -522,7 +527,7 @@ def read_sample_labels(design: Path, *, decisions: Path) -> pl.DataFrame:
             "a finite positive amount"
         )
     key = ["sample_id", *PAIR]
-    sampled = pl.read_parquet(decisions).join(
+    sampled = read_decisions(decisions).join(
         drawn.select(key).unique(), on=key, how="semi"
     )
     decided = standing_decisions(sampled, key=key).select(

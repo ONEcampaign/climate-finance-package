@@ -532,13 +532,21 @@ def test_a_btr_queue_packet_is_served_and_its_answers_are_queue_decisions(
     with pytest.raises(PacketReleaseMismatchError) as refused:
         packet_pairs(packet, release_dir=release)
     assert refused.value.code == "packet_release_mismatch"
-    packet = write_btr_packet(
-        pl.DataFrame({"left_id": rows, "right_id": ["r1"] * 2}),
-        btr=pl.scan_parquet(table_path(release, "normalise", "btr")),
-        crs=pl.scan_parquet(table_path(release, "normalise", "crs")),
-        out=tmp_path / "btr.md",
-        title="BTR calibration queue",
-    )
+
+    def rewrite(**reason: str) -> Path:
+        return write_btr_packet(
+            pl.DataFrame({"left_id": rows, "right_id": ["r1"] * 2, **reason}),
+            btr=pl.scan_parquet(table_path(release, "normalise", "btr")),
+            crs=pl.scan_parquet(table_path(release, "normalise", "crs")),
+            out=tmp_path / "btr.md",
+            title="BTR calibration queue",
+        )
+
+    # Without a review reason no answer could be recorded, so the page refuses the
+    # packet before anyone starts.
+    with pytest.raises(LabellingError, match=r"2 pairs .* carry no review_reason"):
+        packet_pairs(rewrite(), release_dir=release)
+    packet = rewrite(review_reason="calibration")
     pairs = packet_pairs(packet, release_dir=release)
     revised = Session(
         release_dir=release,

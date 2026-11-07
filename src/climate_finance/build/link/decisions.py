@@ -41,6 +41,26 @@ LABELS = {"match": "accept", "no_match": "reject"}
 CALIBRATION_REASON = "calibration"
 # What a split trace group's `group_id` ends in, before the part's rank.
 SPLIT = "|split|"
+# Whether a pair carries exactly one of the queue's `review_reason` and the blind
+# sample's `sample_id`, the tag that says which kind of decision its answer is.
+ONE_TAG = (
+    pl.sum_horizontal(
+        pl.col("review_reason").is_not_null(), pl.col("sample_id").is_not_null()
+    )
+    == 1
+)
+
+
+def sample_key(sample_id: pl.Expr) -> pl.Expr:
+    """The blind-sample id `sample_id`, `<provider>/<population>/<first draw>`
+    (`evaluate.sample_design`), with the release name that an id of four parts
+    leads with dropped, so a decision on a draw keeps matching the draw when the
+    same design is drawn under another release's name."""
+    return (
+        pl.when(sample_id.str.count_matches("/") == 3)
+        .then(sample_id.str.replace(r"^[^/]*/", ""))
+        .otherwise(sample_id)
+    )
 
 
 def rejected_pairs(labels: pl.DataFrame) -> pl.DataFrame:
@@ -61,13 +81,18 @@ def _decided(labels: pl.DataFrame) -> pl.DataFrame:
 
 def read_decisions(path: Path) -> pl.DataFrame:
     """The review-decisions table at `path`, with the columns of
-    `schema.REVIEW_DECISIONS` a file written before them lacks set to null."""
+    `schema.REVIEW_DECISIONS` a file written before them lacks set to null, and
+    each `sample_id` read as its `sample_key`."""
     decided = pl.read_parquet(path)
-    return decided.with_columns(
-        pl.lit(None, dtype=dtype).alias(name)
-        for name, dtype in schema.REVIEW_DECISIONS.dtypes.items()
-        if name not in decided.columns
-    ).select(list(schema.REVIEW_DECISIONS.columns))
+    return (
+        decided.with_columns(
+            pl.lit(None, dtype=dtype).alias(name)
+            for name, dtype in schema.REVIEW_DECISIONS.dtypes.items()
+            if name not in decided.columns
+        )
+        .select(list(schema.REVIEW_DECISIONS.columns))
+        .with_columns(sample_id=sample_key(pl.col("sample_id")))
+    )
 
 
 def read_decision_labels(path: Path) -> pl.DataFrame:
@@ -286,7 +311,8 @@ def import_labels(
     (and `sample_id`), so importing a changed or repeated answer leaves one row. An
     agent's decisions append, since each round stands as a decision of its own.
     A decision keeps the digests of its sides that the pairs file holds, which a
-    BTR packet writes (`packet.btr_digests`).
+    BTR packet writes (`packet.btr_digests`). Every `sample_id` in the table, old
+    and new, is written as its `sample_key`.
 
     Args:
         packet: the packet the CSV answers (`packet.write_packet`).
@@ -375,7 +401,7 @@ def import_labels(
             round=pl.lit(label_round, dtype=pl.String),
             note=pl.col("reason").replace("", None),
             review_reason="review_reason",
-            sample_id="sample_id",
+            sample_id=sample_key(pl.col("sample_id")),
             decided_at=pl.lit(datetime.now(UTC)),
             left_digest="left_digest",
             right_digest="right_digest",
@@ -385,10 +411,7 @@ def import_labels(
             for name, dtype in schema.REVIEW_DECISIONS.dtypes.items()
         )
     )
-    tags = pl.sum_horizontal(
-        pl.col("review_reason").is_not_null(), pl.col("sample_id").is_not_null()
-    )
-    if new.filter(tags != 1).height:
+    if new.filter(~ONE_TAG).height:
         raise ReviewDecisionsError(
             f"the pairs of {packet} need one of review_reason or sample_id each"
         )

@@ -79,7 +79,7 @@ cf-build label BUILD_DIR --packet FILE --reviewer NAME [--config build.toml] [--
 Serves a page on `127.0.0.1` for labelling one person's share of the blind sample in `SAMPLE_DIR`, and opens it in a browser. The share is the judgement calls, the pairs whose link no certain rule made, in a stable hash order of their sample ids until their draws reach `human_audit.min_share` of all the sample's draws, with 50 spot checks of pairs a certain rule linked spread among them. A pair already decided by a person stays in the queue, counted as done and skipped. `BUILD_DIR` supplies the records the page shows.
 
 - `--reviewer` names the person in the decisions.
-- `--packet` serves every pair of a review queue packet written by `queue`, in place of `SAMPLE_DIR`, in the packet's order. Its answers carry no sample id, so the build reads them as queue decisions. A BTR packet written from another release, whose rows or records differ from `BUILD_DIR`'s, is refused with `PacketReleaseMismatchError` (`packet_release_mismatch`).
+- `--packet` serves every pair of a review queue packet written by `queue`, in place of `SAMPLE_DIR`, in the packet's order. Its answers carry no sample id, so the build reads them as queue decisions. A packet whose pairs carry no review reason is refused with `LabellingError`, since no answer on them could be recorded. A BTR packet written from another release, whose rows or records differ from `BUILD_DIR`'s, is refused with `PacketReleaseMismatchError` (`packet_release_mismatch`).
 - `--config` (default `build.toml`) names the file whose `sources.review_decisions` receives the decisions.
 - `--port` sets the port. The default of 0 picks a free one.
 - `--no-browser` prints the address without opening it.
@@ -94,7 +94,7 @@ cf-build gate BUILD_DIR [--config build.toml] [--sample DIR] [--previous PATH] [
 
 Evaluates the [release gates](release-gates.md), prints one line per gate row, and exits with status 1 when a row fails.
 
-- `--sample` passes the sample directory that `sample` wrote. The gate reads the sample's labels from `sources.review_decisions` in the configuration and raises `ReviewDecisionsError` when that file is missing. Without `--sample`, every provider fails precision and every gated stratum fails stratum precision, and the human audit fails.
+- `--sample` passes the sample directory that `sample` wrote. The gate reads the sample's labels from `sources.review_decisions` in the configuration and raises `ReviewDecisionsError` when that file is missing. Without `--sample`, every provider fails precision and every gated stratum fails stratum precision, and the human audit fails. Their detail then counts the blind-sample decisions the review decisions hold, as in `no blind sample given; 51 blind-sample decisions unread`.
 - `--previous` sets the previous release for the drift gate: a pack, a release directory, or a build directory, read as `release` reads it, so `gate` previews the comparison the cut makes. A path that does not exist raises `BuildError`, and a file that is no pack raises `ReleaseIntegrityError`. The drift gate reads its causes from `drift_causes` in the configuration.
 - `--first-release` passes the drift gate when no previous release exists. `publish` refuses a release cut this way once the index lists a release.
 - `--report` exits with status 0 when a row fails.
@@ -113,7 +113,7 @@ Parses an archive of BTR workbooks listed in its manifest and writes the rows to
 cf-build release RELEASE [--config build.toml] [--out-dir releases] [--sample DIR] [--previous PATH] [--first-release] [--waive-precision REASON] [--offline | --no-offline]
 ```
 
-Builds, gates, and packs a release. The build runs every stage, since the review decisions it reads hold the blind sample's labels. It writes `<out-dir>/climate-finance-<RELEASE>.tar.zst`, which holds the release tables, `release.json` with the gate results, and `sources.json`. Members go in name order with fixed owners and the release's creation time, so one release packs to the same bytes.
+Builds, gates, and packs a release. The build runs every stage, since the review decisions it reads hold the blind sample's labels. It writes `<out-dir>/climate-finance-<RELEASE>.tar.zst`, which holds the release tables, `release.json` with the gate results and the name of the `--sample` directory and the sha256 of the design the gates read, and `sources.json`. Members go in name order with fixed owners and the release's creation time, so one release packs to the same bytes.
 
 - `--waive-precision REASON` packs despite failed precision, stratum-precision, and human-audit gates, marks the failed rows `waived`, and records the waiver and `REASON` in `release.json` as `precision_gate_waived` and `precision_waiver`.
 - `--offline` refuses network access, so fetch reuses the sources and Jev answers from its cache alone. `--no-offline` fetches afresh and lets Jev answer. Without either, the configuration's `offline` sets network access, and an earlier build of `RELEASE` in `--out-dir` that fetched its sources has fetch reuse them, so the release comes from the sources the blind sample was drawn on while Jev answers the questions new review decisions raise.

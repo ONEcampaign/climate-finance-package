@@ -82,6 +82,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from climate_finance.build import evaluate, listings
 from climate_finance.build.config import DriftCause, EurostatGap
 from climate_finance.build.errors import GateFailedError
+from climate_finance.build.link.decisions import read_decisions
 from climate_finance.build.normalise.crs import allocated_population
 from climate_finance.build.readers.eurostat import COMPARED_LINES
 from climate_finance.build.sums import ordered_sum
@@ -253,7 +254,8 @@ def run_gates(
         decisions: the review-decisions parquet holding the blind-sample labels.
         sample: the blind sample's directory, where `evaluate.draw_blind_sample`
             wrote its design; without one, every provider fails precision and the
-            human audit fails.
+            human audit fails, and their details count the blind-sample decisions
+            in `decisions` left unread.
         previous: the previous release, opened (`release.previous_baseline`).
         first_release: pass the drift gate when there is no previous release.
         drift_causes: the recorded causes of provider-year moves, from
@@ -299,8 +301,15 @@ def run_gates(
             evaluate.design_path(sample), decisions=decisions
         )
     )
+    unread = (
+        read_decisions(decisions).filter(pl.col("sample_id").is_not_null()).height
+        if sample is None and decisions.exists()
+        else 0
+    )
     pairs = evaluate.allocated_pairs(release_dir, decisions=decisions)
-    precision = precision_gate(pairs, labels=labels, rule=gates.precision)
+    precision = precision_gate(
+        pairs, labels=labels, rule=gates.precision, unread=unread
+    )
     results = pl.concat(
         [
             precision,
@@ -310,7 +319,7 @@ def run_gates(
                 rule=gates.precision,
                 config=gates.stratum_precision,
             ),
-            human_audit_gate(labels, config=gates.human_audit),
+            human_audit_gate(labels, config=gates.human_audit, unread=unread),
             conservation_gate(
                 allocations=scan("fill", "allocations"),
                 links=links,
@@ -414,6 +423,14 @@ def _row(
     )
 
 
+def _no_sample(unread: int) -> str:
+    """The detail of a row the gate read no blind sample for, when the review
+    decisions hold `unread` blind-sample decisions."""
+    if not unread:
+        return "no blind sample"
+    return f"no blind sample given; {unread} blind-sample decisions unread"
+
+
 def _scan_if_present(path: Path) -> pl.LazyFrame | None:
     return scan_table(path) if path.exists() else None
 
@@ -432,6 +449,7 @@ def precision_gate(
     *,
     labels: pl.DataFrame | None,
     rule: evaluate.PrecisionRule,
+    unread: int = 0,
 ) -> pl.DataFrame:
     """One row per provider with allocated pairs (`evaluate.allocated_pairs`) or
     sampled draws (`labels`, from `evaluate.read_sample_labels`): its estimate and
@@ -449,7 +467,9 @@ def precision_gate(
     method, stratum or value, so the sample and its weights describe another
     population. So does every provider of a design that records no population, as
     nothing ties it to this build. With no allocated pairs one row fails, as nothing
-    is certified.
+    is certified. A provider without a sample fails as `no_sample`, its detail
+    counting the `unread` blind-sample decisions the review decisions hold
+    (`_no_sample`).
     """
     if pairs.is_empty():
         return _row(
@@ -511,7 +531,7 @@ def precision_gate(
         .when(whole)
         .then(pl.lit("every allocated pair links a unit to itself"))
         .when(pl.col("design").is_null())
-        .then(pl.lit("no blind sample"))
+        .then(pl.lit(_no_sample(unread)))
         .otherwise(
             pl.when(earlier)
             .then(
@@ -675,18 +695,21 @@ def stratum_precision_gate(
 
 
 def human_audit_gate(
-    labels: pl.DataFrame | None, *, config: HumanAudit
+    labels: pl.DataFrame | None, *, config: HumanAudit, unread: int = 0
 ) -> pl.DataFrame:
     """The share of the blind sample's draws (`labels`, from
     `evaluate.read_sample_labels`) whose standing decision is a person's, over every
-    provider. It fails without a sample or with an empty one."""
+    provider. It fails without a sample, its detail counting the `unread`
+    blind-sample decisions the review decisions hold, or with an empty one."""
     if labels is None or labels.is_empty():
         return _row(
             "human_audit",
             value=None,
             threshold=config.min_share,
             passed=False,
-            detail="no blind sample" if labels is None else "the blind sample is empty",
+            detail=(
+                _no_sample(unread) if labels is None else "the blind sample is empty"
+            ),
             code="no_sample" if labels is None else "empty_sample",
         )
     people = int((labels["label_source"] == "human").sum())

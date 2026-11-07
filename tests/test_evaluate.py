@@ -41,7 +41,7 @@ def _pairs() -> pl.DataFrame:
 def test_the_weights_sum_to_the_population_in_every_stratum() -> None:
     pairs = _pairs()
 
-    design = sample_design(pairs, rule=RULE, release="r")
+    design = sample_design(pairs, rule=RULE)
 
     population = pairs.group_by("provider_code", "stratum").agg(
         pl.col("allocated_usd").sum(), pairs=pl.len()
@@ -59,7 +59,7 @@ def test_the_weights_sum_to_the_population_in_every_stratum() -> None:
 
 def test_a_small_provider_is_a_census_and_a_large_one_draws_to_the_cap() -> None:
     pairs = _pairs()
-    design = sample_design(pairs, rule=RULE, release="r").sort("draw")
+    design = sample_design(pairs, rule=RULE).sort("draw")
 
     small = design.filter(provider_code=SMALL)
     assert small["design"].unique().to_list() == ["census"]
@@ -99,7 +99,7 @@ def test_a_small_stratum_draws_its_minimum_and_counts_at_its_value_share() -> No
         schema_overrides={"provider_code": pl.Int32},
     )
 
-    design = sample_design(pairs, rule=RULE, release="r")
+    design = sample_design(pairs, rule=RULE)
     # Every model link is wrong and every other link right.
     labels = design.with_columns(
         correct=pl.col("stratum") != "model", label_source=pl.lit("human")
@@ -123,8 +123,8 @@ def test_self_linked_pairs_stay_out_of_the_sample() -> None:
         .with_columns(right_id="left_id", allocated_usd=pl.col("allocated_usd") * 10)
     )
 
-    design = sample_design(pairs, rule=RULE, release="r")
-    with_own = sample_design(pl.concat([pairs, own]), rule=RULE, release="r")
+    design = sample_design(pairs, rule=RULE)
+    with_own = sample_design(pl.concat([pairs, own]), rule=RULE)
 
     assert with_own.filter(self_linked()).is_empty()
     assert with_own.sort("provider_code", "draw").equals(
@@ -135,10 +135,8 @@ def test_self_linked_pairs_stay_out_of_the_sample() -> None:
 def test_the_design_is_the_same_on_every_draw() -> None:
     pairs = _pairs()
 
-    first = sample_design(pairs, rule=RULE, release="r")
-    again = sample_design(
-        pairs.sample(fraction=1.0, shuffle=True, seed=3), rule=RULE, release="r"
-    )
+    first = sample_design(pairs, rule=RULE)
+    again = sample_design(pairs.sample(fraction=1.0, shuffle=True, seed=3), rule=RULE)
 
     assert first.sort("provider_code", "draw").equals(
         again.sort("provider_code", "draw")
@@ -153,8 +151,8 @@ def test_a_changed_population_draws_under_new_sample_ids() -> None:
         .otherwise("allocated_usd")
     )
 
-    first = sample_design(pairs, rule=RULE, release="r")
-    again = sample_design(changed, rule=RULE, release="r")
+    first = sample_design(pairs, rule=RULE)
+    again = sample_design(changed, rule=RULE)
 
     def ids(design: pl.DataFrame, provider: int) -> set[str]:
         return set(design.filter(provider_code=provider)["sample_id"])

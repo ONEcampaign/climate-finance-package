@@ -2888,6 +2888,18 @@ class BuildIdentity(BaseModel):
     stage_identities: dict[str, str]
 
 
+class BlindSample(BaseModel):
+    """The blind sample the release's precision and human-audit gates read: the
+    name of the `cf-build release --sample` directory, with no path, so a pack
+    carries no local path, and the sha256 of the design file in it, which
+    identifies the sample."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    directory: str
+    design_sha256: str
+
+
 class ReleaseManifest(BaseModel):
     """The contents of `release.json`.
 
@@ -2917,6 +2929,8 @@ class ReleaseManifest(BaseModel):
     # Why `cf-build release --waive-precision` let the precision, stratum-precision
     # and human-audit gates fail, null without a waiver.
     precision_waiver: str | None = None
+    # The blind sample the gates read, null when they read none.
+    blind_sample: BlindSample | None = None
     previous_release: str | None = None
     # The sha256 of the pack the drift gate's previous release came from, null when
     # the copy it read records none. `cf-build publish` checks it against the index.
