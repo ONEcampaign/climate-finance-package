@@ -124,7 +124,10 @@ ALLOCATE = {
         'return recipient.join(parents, on="row_id", how="anti")',
         "return recipient",
     ),
-    "repeats_to_first_rows": ("    to_rows = _to_first_rows(to_rows, crdf=crdf)\n", ""),
+    "repeats_to_first_rows": (
+        "    to_rows = _to_first_rows(to_rows, crdf=crdf, weights=weights)\n",
+        "",
+    ),
     "repeat_in_its_first_rows_group_takes_no_weight": (
         'pl.when(pl.col("first_in_group"))',
         "pl.when(pl.lit(False))",
@@ -132,6 +135,10 @@ ALLOCATE = {
     "first_row_face_cap": (
         ".then(pl.min_horizontal(amount, headroom.fill_null(0.0)))",
         ".then(amount)",
+    ),
+    "first_row_cap_is_its_crs_face": (
+        'cap = pl.col("crs_face_usd").fill_null(pl.col("face_usd"))',
+        'cap = pl.col("face_usd")',
     ),
     "status_over_crs_face": (
         'face = pl.col("crs_face_usd")',
